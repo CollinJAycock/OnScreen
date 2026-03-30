@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, transcodeApi, type ItemDetail, type ChildItem, type ItemFile, type MatchCandidate } from '$lib/api';
+  import { itemApi, mediaApi, transcodeApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate } from '$lib/api';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -182,6 +182,40 @@
   let seasonEpisodes: Map<string, ChildItem[]> = new Map();
   let selectedSeasonId: string | null = null;
   $: isDetailView = item != null && (item.type === 'show' || item.type === 'season');
+  $: isPhoto = item != null && item.type === 'photo';
+
+  // Photo viewer state
+  let photoSiblings: MediaItem[] = [];
+  $: photoIndex = photoSiblings.findIndex(p => p.id === id);
+  $: prevPhoto = photoIndex > 0 ? photoSiblings[photoIndex - 1] : null;
+  $: nextPhoto = photoIndex >= 0 && photoIndex < photoSiblings.length - 1 ? photoSiblings[photoIndex + 1] : null;
+
+  let photoZoom = 1;
+  let photoPanning = false;
+  let photoPanX = 0;
+  let photoPanY = 0;
+  let photoPanStartX = 0;
+  let photoPanStartY = 0;
+
+  function onPhotoWheel(e: WheelEvent) {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    photoZoom = Math.max(0.5, Math.min(5, photoZoom + delta));
+    if (photoZoom <= 1) { photoPanX = 0; photoPanY = 0; }
+  }
+  function onPhotoPanStart(e: MouseEvent) {
+    if (photoZoom <= 1) return;
+    photoPanning = true;
+    photoPanStartX = e.clientX - photoPanX;
+    photoPanStartY = e.clientY - photoPanY;
+  }
+  function onPhotoPanMove(e: MouseEvent) {
+    if (!photoPanning) return;
+    photoPanX = e.clientX - photoPanStartX;
+    photoPanY = e.clientY - photoPanStartY;
+  }
+  function onPhotoPanEnd() { photoPanning = false; }
+  function resetPhotoZoom() { photoZoom = 1; photoPanX = 0; photoPanY = 0; }
   $: selectedEpisodes = selectedSeasonId ? (seasonEpisodes.get(selectedSeasonId) ?? []) : [];
 
   // ── Fix Match modal state ──────────────────────────────────────────────────
@@ -280,6 +314,19 @@
       // Shows and seasons: load detail view instead of trying to play.
       if (item.type === 'show' || item.type === 'season') {
         await loadShowDetail();
+        return;
+      }
+
+      // Photos: no video to set up, just display the image.
+      if (item.type === 'photo') {
+        photoZoom = 1;
+        photoPanX = 0;
+        photoPanY = 0;
+        // Load siblings for arrow navigation (only once per library).
+        if (!photoSiblings.length || !photoSiblings.some(p => p.id === item!.id)) {
+          const r = await mediaApi.listItems(item.library_id, 500, 0, { sort: 'title', sort_dir: 'asc' });
+          photoSiblings = r.items;
+        }
         return;
       }
 
@@ -504,6 +551,13 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    // Photo viewer keys
+    if (isPhoto) {
+      if (e.key === 'ArrowRight' && nextPhoto) { e.preventDefault(); goto(`/watch/${nextPhoto.id}`); }
+      if (e.key === 'ArrowLeft' && prevPhoto) { e.preventDefault(); goto(`/watch/${prevPhoto.id}`); }
+      if (e.key === 'Escape') { e.preventDefault(); goBack(); }
+      return;
+    }
     if (!videoEl) return;
     // Close menus on Escape
     if (e.key === 'Escape') { showQualityMenu = false; showSubtitleMenu = false; return; }
@@ -645,7 +699,53 @@
 
 <svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:webkitfullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; }} />
 
-{#if !isDetailView}
+{#if isPhoto && item}
+<!-- Photo viewer -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="photo-viewer" on:wheel={onPhotoWheel} on:mousedown={onPhotoPanStart} on:mousemove={onPhotoPanMove} on:mouseup={onPhotoPanEnd} on:mouseleave={onPhotoPanEnd}>
+  {#if loading}
+    <div class="center-msg"><div class="spinner"></div></div>
+  {:else if error}
+    <div class="center-msg">
+      <p class="err-text">{error}</p>
+      <button class="back-btn" on:click={goBack}>← Back</button>
+    </div>
+  {:else}
+    <img
+      class="photo-image"
+      src="/artwork/{item.poster_path}?v={item.updated_at}"
+      alt={item.title}
+      draggable="false"
+      style="transform: scale({photoZoom}) translate({photoPanX / photoZoom}px, {photoPanY / photoZoom}px);"
+    />
+    <div class="photo-toolbar">
+      <button class="photo-btn" on:click={goBack} title="Back">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+      </button>
+      <span class="photo-title">{item.title}</span>
+      <button class="photo-btn" on:click={resetPhotoZoom} title="Reset zoom">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 0 0 1.48-5.34c-.47-2.78-2.79-5-5.59-5.34a6.505 6.505 0 0 0-7.27 7.27c.34 2.8 2.56 5.12 5.34 5.59a6.5 6.5 0 0 0 5.34-1.48l.27.28v.79l4.26 4.25a1 1 0 0 0 1.41-1.41L15.5 14zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        {Math.round(photoZoom * 100)}%
+      </button>
+      <button class="photo-btn" on:click={() => { photoZoom = Math.min(5, photoZoom + 0.25); }} title="Zoom in">+</button>
+      <button class="photo-btn" on:click={() => { photoZoom = Math.max(0.5, photoZoom - 0.25); if (photoZoom <= 1) { photoPanX = 0; photoPanY = 0; } }} title="Zoom out">−</button>
+      {#if photoSiblings.length > 1}
+        <span class="photo-counter">{photoIndex + 1} / {photoSiblings.length}</span>
+      {/if}
+    </div>
+    {#if prevPhoto}
+      <button class="photo-nav photo-nav-left" on:click={() => goto(`/watch/${prevPhoto.id}`)} title="Previous (←)">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+      </button>
+    {/if}
+    {#if nextPhoto}
+      <button class="photo-nav photo-nav-right" on:click={() => goto(`/watch/${nextPhoto.id}`)} title="Next (→)">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+      </button>
+    {/if}
+  {/if}
+</div>
+{:else if !isDetailView}
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
   class="player-container"
@@ -1676,4 +1776,89 @@
     color: #777; font-size: 0.78rem; cursor: pointer;
   }
   .match-cancel:hover { color: #bbb; border-color: rgba(255,255,255,0.15); }
+
+  /* ── Photo viewer ───────────────────────────────────── */
+  .photo-viewer {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: grab;
+  }
+  .photo-viewer:active { cursor: grabbing; }
+  .photo-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    user-select: none;
+    transition: transform 0.1s ease-out;
+  }
+  .photo-toolbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .photo-viewer:hover .photo-toolbar { opacity: 1; }
+  .photo-title {
+    flex: 1;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .photo-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    padding: 0.4rem 0.6rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .photo-btn:hover { background: rgba(255,255,255,0.2); }
+  .photo-btn svg { width: 20px; height: 20px; }
+  .photo-counter {
+    color: rgba(255,255,255,0.6);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+  .photo-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0,0,0,0.4);
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.3s, background 0.2s;
+  }
+  .photo-viewer:hover .photo-nav { opacity: 1; }
+  .photo-nav:hover { background: rgba(0,0,0,0.7); }
+  .photo-nav-left { left: 1rem; }
+  .photo-nav-right { right: 1rem; }
 </style>

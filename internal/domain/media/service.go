@@ -117,6 +117,7 @@ type Querier interface {
 	MarkMediaFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMediaFileDeleted(ctx context.Context, id uuid.UUID) error
 	UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error
+	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
 	ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]File, error)
 }
@@ -319,6 +320,14 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 		// Path known — mark active, update hash, and refresh probe metadata.
 		if err := s.rw.MarkMediaFileActive(ctx, existing.ID); err != nil {
 			return nil, false, fmt.Errorf("mark file active %s: %w", existing.ID, err)
+		}
+		// Reassign to a different item if the scanner resolved a new owner
+		// (e.g. photos that were previously collapsed by title dedup).
+		if existing.MediaItemID != p.MediaItemID {
+			if err := s.rw.UpdateMediaFileItemID(ctx, existing.ID, p.MediaItemID); err != nil {
+				return nil, false, fmt.Errorf("reassign file item %s: %w", existing.ID, err)
+			}
+			existing.MediaItemID = p.MediaItemID
 		}
 		if p.FileHash != nil {
 			if err := s.rw.UpdateMediaFileHash(ctx, existing.ID, *p.FileHash); err != nil {

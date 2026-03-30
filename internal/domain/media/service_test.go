@@ -204,6 +204,7 @@ func (m *mockQuerier) MarkMediaFileDeleted(_ context.Context, id uuid.UUID) erro
 	return nil
 }
 func (m *mockQuerier) UpdateMediaFileHash(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (m *mockQuerier) UpdateMediaFileItemID(_ context.Context, _ uuid.UUID, _ uuid.UUID) error { return nil }
 func (m *mockQuerier) UpdateMediaFileTechnicalMetadata(_ context.Context, _ uuid.UUID, _ CreateFileParams) error {
 	return nil
 }

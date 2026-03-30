@@ -4,7 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -238,4 +244,26 @@ func parseFrameRate(s string) float64 {
 func parseTimeToMS(s string) int64 {
 	f, _ := strconv.ParseFloat(s, 64)
 	return int64(f * 1000)
+}
+
+// ProbeImage extracts dimensions from an image file using Go's image package.
+// Returns a minimal ProbeResult with resolution only (no duration, codecs, etc.).
+func ProbeImage(path string) *ProbeResult {
+	f, err := os.Open(path)
+	if err != nil {
+		return &ProbeResult{}
+	}
+	defer f.Close()
+
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return &ProbeResult{}
+	}
+	w, h := cfg.Width, cfg.Height
+	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	return &ProbeResult{
+		Container:   &container,
+		ResolutionW: &w,
+		ResolutionH: &h,
+	}
 }

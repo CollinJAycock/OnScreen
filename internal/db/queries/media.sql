@@ -412,6 +412,12 @@ SET file_hash  = $2,
     scanned_at = NOW()
 WHERE id = $1;
 
+-- name: UpdateMediaFileItemID :exec
+UPDATE media_files
+SET media_item_id = $2,
+    scanned_at    = NOW()
+WHERE id = $1;
+
 -- name: UpdateMediaFileTechnicalMetadata :exec
 UPDATE media_files
 SET container        = $2,

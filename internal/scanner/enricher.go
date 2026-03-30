@@ -113,7 +113,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 	}
 
 	result, err := agent.SearchMovie(ctx, searchTitle, year)
-	if err != nil {
+	if err != nil || result == nil {
 		// No result or API error — not a scan-blocking error.
 		e.logger.InfoContext(ctx, "tmdb search found no result",
 			"title", item.Title, "year", year, "err", err)
@@ -204,7 +204,7 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	}
 
 	result, err := agent.SearchTV(ctx, searchTitle, year)
-	if err != nil {
+	if err != nil || result == nil {
 		e.logger.InfoContext(ctx, "tmdb tv search found no result",
 			"title", item.Title, "err", err)
 		return nil
@@ -781,6 +781,9 @@ func (e *Enricher) SearchMovieCandidates(ctx context.Context, query string) ([]T
 	result, err := agent.SearchMovie(ctx, query, 0)
 	if err != nil {
 		return nil, err
+	}
+	if result == nil {
+		return nil, nil
 	}
 	// SearchMovie returns a single result — wrap it. For a proper multi-result
 	// movie search we'd add SearchMovieCandidates to the Agent interface; for now

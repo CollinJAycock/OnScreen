@@ -367,6 +367,7 @@ export interface ItemFile {
 
 export interface ItemDetail {
   id: string;
+  library_id: string;
   title: string;
   type: string;
   year?: number;

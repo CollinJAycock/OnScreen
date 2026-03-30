@@ -124,6 +124,7 @@ type ItemFileResponse struct {
 // ItemDetailResponse is the full JSON response for a media item.
 type ItemDetailResponse struct {
 	ID            string             `json:"id"`
+	LibraryID     string             `json:"library_id"`
 	Title         string             `json:"title"`
 	Type          string             `json:"type"`
 	Year          *int               `json:"year,omitempty"`
@@ -198,6 +199,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	out := ItemDetailResponse{
 		ID:            item.ID.String(),
+		LibraryID:     item.LibraryID.String(),
 		Title:         item.Title,
 		Type:          item.Type,
 		Year:          item.Year,

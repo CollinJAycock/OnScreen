@@ -29,6 +29,13 @@ var validExtensions = map[string]bool{
 	".ogg": true, ".opus": true,
 }
 
+// imageExtensions is the set of image formats recognised for photo libraries.
+var imageExtensions = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true,
+	".webp": true, ".bmp": true, ".tiff": true, ".tif": true,
+	".heic": true, ".avif": true,
+}
+
 // yearRE matches a 4-digit year, optionally surrounded by parentheses or dots.
 var yearRE = regexp.MustCompile(`[\.\s]\(?(\d{4})\)?`)
 
@@ -176,7 +183,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 				return
 			}
 
-			item, file, isNew, err := s.processFile(ctx, libraryID, libraryType, path)
+			item, file, isNew, err := s.processFile(ctx, libraryID, libraryType, path, paths)
 			if err != nil {
 				s.logger.WarnContext(ctx, "file scan error", "path", path, "err", err)
 				return
@@ -240,7 +247,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 // Returns the item, file, whether the file is newly discovered, and any error.
 // Enrichment is NOT run here — callers collect the returned item+file and
 // run enrichment after all file I/O is done (see ScanLibrary).
-func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryType string, path string) (*media.Item, *media.File, bool, error) {
+func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryType string, path string, roots []string) (*media.Item, *media.File, bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("stat %s: %w", path, err)
@@ -256,10 +263,12 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// entirely — just mark the file active and return.
 	// We still load the parent item to check whether it needs enrichment
 	// (e.g. a file scanned before the TMDB key was configured).
-	if hash != nil {
+	// Photos skip the fast path so that each file always gets its own
+	// item (avoids stale 1:N mapping from prior dedup bugs).
+	if hash != nil && libraryType != "photo" {
 		if existing, err := s.media.GetFileByPath(ctx, path); err == nil &&
 			existing.FileHash != nil && *existing.FileHash == *hash &&
-			existing.DurationMS != nil &&
+			(existing.DurationMS != nil || isImageFile(path)) &&
 			existing.Status != "deleted" {
 			if err := s.media.MarkFileActive(ctx, existing.ID); err != nil {
 				s.logger.WarnContext(ctx, "mark file active failed", "path", path, "err", err)
@@ -273,11 +282,17 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		}
 	}
 
-	probe, err := ProbeFile(ctx, path)
-	if err != nil {
-		s.logger.WarnContext(ctx, "ffprobe failed, storing minimal metadata",
-			"path", path, "err", err)
-		probe = &ProbeResult{}
+	var probe *ProbeResult
+	if isImageFile(path) {
+		probe = ProbeImage(path)
+	} else {
+		var probeErr error
+		probe, probeErr = ProbeFile(ctx, path)
+		if probeErr != nil {
+			s.logger.WarnContext(ctx, "ffprobe failed, storing minimal metadata",
+				"path", path, "err", probeErr)
+			probe = &ProbeResult{}
+		}
 	}
 
 	// Resolve or create the owning media item.
@@ -297,6 +312,26 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		item, showErr = s.processShowHierarchy(ctx, libraryID, path)
 		if showErr != nil {
 			return nil, nil, false, fmt.Errorf("show hierarchy for %s: %w", path, showErr)
+		}
+	} else if libraryType == "photo" {
+		// Photos: each file is its own item. Use the raw filename stem
+		// (no year extraction) to avoid title-based deduplication collapsing
+		// IMG_2024.jpg and IMG_2025.jpg into the same item.
+		stem := filepath.Base(path)
+		stem = stem[:len(stem)-len(filepath.Ext(stem))]
+		title := strings.ReplaceAll(strings.ReplaceAll(stem, "_", " "), ".", " ")
+		if title == "" {
+			title = "Photo"
+		}
+		var createErr error
+		item, createErr = s.media.FindOrCreateItem(ctx, media.CreateItemParams{
+			LibraryID: libraryID,
+			Type:      "photo",
+			Title:     title,
+			SortTitle: stem, // keep original stem for natural sort order
+		})
+		if createErr != nil {
+			return nil, nil, false, fmt.Errorf("find or create item for %s: %w", path, createErr)
 		}
 	} else {
 		title, year := parseFilename(path)
@@ -341,6 +376,23 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// Item-level duration_ms is set by TMDB enrichment or the progress endpoint.
 	// File-level duration_ms (set above via CreateOrUpdateFile) is the authoritative
 	// source for the player — no need to copy it to the item here.
+
+	// Photos use the file itself as the poster. Set poster_path to the
+	// relative path from the library root so /artwork/* can resolve it.
+	if libraryType == "photo" && item.PosterPath == nil {
+		for _, root := range roots {
+			if rel, relErr := filepath.Rel(root, path); relErr == nil && !strings.HasPrefix(rel, "..") {
+				relSlash := filepath.ToSlash(rel)
+				s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+					ID:         item.ID,
+					Title:      item.Title,
+					SortTitle:  item.SortTitle,
+					PosterPath: &relSlash,
+				})
+				break
+			}
+		}
+	}
 
 	return item, file, isNew, nil
 }
@@ -481,7 +533,7 @@ func fileTypeForLibrary(libraryType string) string {
 	case "music":
 		return "track"
 	case "photo":
-		return "movie" // photos reuse movie type for simplicity
+		return "photo"
 	default:
 		return "movie"
 	}
@@ -495,7 +547,12 @@ var musicExtensions = map[string]bool{
 
 func isMediaFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	return validExtensions[ext]
+	return validExtensions[ext] || imageExtensions[ext]
+}
+
+func isImageFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return imageExtensions[ext]
 }
 
 func isMusicFile(path string) bool {
@@ -523,6 +580,8 @@ func badPosterPath(p string) bool {
 // cause episodes to be re-enriched on every scan.
 func itemNeedsEnrich(item *media.Item) bool {
 	switch item.Type {
+	case "photo":
+		return false
 	case "episode":
 		if item.ThumbPath != nil {
 			return badPosterPath(*item.ThumbPath)

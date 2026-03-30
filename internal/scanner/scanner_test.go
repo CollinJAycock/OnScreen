@@ -139,7 +139,10 @@ func TestIsMediaFile(t *testing.T) {
 		{"movie.flac", true},
 		{"movie.mp3", true},
 		{"movie.txt", false},
-		{"movie.jpg", false},
+		{"movie.jpg", true},
+		{"movie.png", true},
+		{"movie.gif", true},
+		{"movie.webp", true},
 		{"movie.exe", false},
 		{"movie", false},
 	}
@@ -160,7 +163,7 @@ func TestFileTypeForLibrary(t *testing.T) {
 		{"movie", "movie"},
 		{"show", "episode"},
 		{"music", "track"},
-		{"photo", "movie"},
+		{"photo", "photo"},
 		{"unknown", "movie"},
 		{"", "movie"},
 	}

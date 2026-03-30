@@ -70,6 +70,8 @@
 
   $: id = $page.params.id;
 
+  $: isPhotoLibrary = library?.type === 'photo';
+
   // Client-side text filter on already-loaded items
   $: filtered = query
     ? allItems.filter(i => i.title.toLowerCase().includes(query.toLowerCase()))
@@ -294,7 +296,7 @@
       <button class="clear-link" on:click={() => query = ''}>Clear filter</button>
     </div>
   {:else}
-    <div class="grid">
+    <div class="grid" class:photo-grid={isPhotoLibrary}>
       {#each filtered as item (item.id)}
         <a class="item" href="/watch/{item.id}" tabindex="0">
           <div class="poster">
@@ -306,12 +308,14 @@
               </div>
             {/if}
             <div class="poster-overlay">
-              <div class="play-icon">▶</div>
+              {#if !isPhotoLibrary}<div class="play-icon">▶</div>{/if}
               <div class="overlay-title">{item.title}</div>
-              <div class="overlay-meta">
-                {#if item.year}{item.year}{/if}
-                {#if item.duration_ms} · {dur(item.duration_ms)}{/if}
-              </div>
+              {#if !isPhotoLibrary}
+                <div class="overlay-meta">
+                  {#if item.year}{item.year}{/if}
+                  {#if item.duration_ms} · {dur(item.duration_ms)}{/if}
+                </div>
+              {/if}
             </div>
             {#if item.rating}
               <div class="rating">{item.rating.toFixed(1)}</div>
@@ -522,8 +526,19 @@
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
     gap: 1rem;
   }
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.5rem;
+  }
 
   .item { display: flex; flex-direction: column; text-decoration: none; color: inherit; }
+
+  .photo-grid .poster {
+    aspect-ratio: 4/3;
+  }
+  .photo-grid .poster img {
+    object-fit: cover;
+  }
 
   .poster {
     aspect-ratio: 2/3;
