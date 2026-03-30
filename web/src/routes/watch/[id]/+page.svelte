@@ -143,6 +143,7 @@
     destroyHls();
     item = null;
     siblings = [];
+    musicChildren = [];
     hlsOffsetSec = 0;
     hlsActive = false;
     selectedQuality = qualityOptions[0];
@@ -181,7 +182,10 @@
   let seasons: ChildItem[] = [];
   let seasonEpisodes: Map<string, ChildItem[]> = new Map();
   let selectedSeasonId: string | null = null;
-  $: isDetailView = item != null && (item.type === 'show' || item.type === 'season');
+  $: isDetailView = item != null && (item.type === 'show' || item.type === 'season' || item.type === 'artist' || item.type === 'album');
+
+  // Music detail state
+  let musicChildren: ChildItem[] = []; // albums (for artist) or tracks (for album)
   $: isPhoto = item != null && item.type === 'photo';
 
   // Photo viewer state
@@ -293,6 +297,16 @@
     }
   }
 
+  async function loadMusicDetail() {
+    if (!item) return;
+    const r = await itemApi.children(item.id);
+    if (item.type === 'artist') {
+      musicChildren = r.items.filter(c => c.type === 'album').sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
+    } else if (item.type === 'album') {
+      musicChildren = r.items.filter(c => c.type === 'track').sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    }
+  }
+
   async function selectSeason(seasonId: string) {
     selectedSeasonId = seasonId;
     if (!seasonEpisodes.has(seasonId)) {
@@ -314,6 +328,12 @@
       // Shows and seasons: load detail view instead of trying to play.
       if (item.type === 'show' || item.type === 'season') {
         await loadShowDetail();
+        return;
+      }
+
+      // Artists and albums: load music detail view.
+      if (item.type === 'artist' || item.type === 'album') {
+        await loadMusicDetail();
         return;
       }
 
@@ -1107,26 +1127,65 @@
       {/if}
     {/if}
 
-    <!-- Episode list -->
-    <div class="episode-list">
-      {#each selectedEpisodes as ep}
-        <a href="/watch/{ep.id}" class="episode-row">
-          <div class="ep-number">{ep.index ?? '—'}</div>
-          <div class="ep-info">
-            <div class="ep-title">{ep.title}</div>
-            {#if ep.summary}
-              <div class="ep-summary">{ep.summary}</div>
+    <!-- Episode list (shows/seasons) -->
+    {#if item.type === 'show' || item.type === 'season'}
+      <div class="episode-list">
+        {#each selectedEpisodes as ep}
+          <a href="/watch/{ep.id}" class="episode-row">
+            <div class="ep-number">{ep.index ?? '—'}</div>
+            <div class="ep-info">
+              <div class="ep-title">{ep.title}</div>
+              {#if ep.summary}
+                <div class="ep-summary">{ep.summary}</div>
+              {/if}
+            </div>
+            {#if ep.duration_ms}
+              <div class="ep-duration">{Math.round(ep.duration_ms / 60000)}m</div>
             {/if}
-          </div>
-          {#if ep.duration_ms}
-            <div class="ep-duration">{Math.round(ep.duration_ms / 60000)}m</div>
-          {/if}
-        </a>
-      {/each}
-      {#if selectedEpisodes.length === 0}
-        <div class="ep-empty">No episodes found.</div>
-      {/if}
-    </div>
+          </a>
+        {/each}
+        {#if selectedEpisodes.length === 0}
+          <div class="ep-empty">No episodes found.</div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Music: album grid (artist) or track list (album) -->
+    {#if item.type === 'artist'}
+      <div class="music-album-grid">
+        {#each musicChildren as album}
+          <a class="music-album-card" href="/watch/{album.id}">
+            {#if album.poster_path}
+              <img src="/artwork/{album.poster_path}?v={album.updated_at}" alt={album.title} />
+            {:else}
+              <div class="music-album-blank">♪</div>
+            {/if}
+            <div class="music-album-title">{album.title}</div>
+            {#if album.year}<div class="music-album-year">{album.year}</div>{/if}
+          </a>
+        {/each}
+        {#if musicChildren.length === 0}
+          <div class="ep-empty">No albums found.</div>
+        {/if}
+      </div>
+    {:else if item.type === 'album'}
+      <div class="episode-list">
+        {#each musicChildren as track}
+          <a href="/watch/{track.id}" class="episode-row">
+            <div class="ep-number">{track.index ?? '—'}</div>
+            <div class="ep-info">
+              <div class="ep-title">{track.title}</div>
+            </div>
+            {#if track.duration_ms}
+              <div class="ep-duration">{Math.floor(track.duration_ms / 60000)}:{String(Math.floor((track.duration_ms % 60000) / 1000)).padStart(2, '0')}</div>
+            {/if}
+          </a>
+        {/each}
+        {#if musicChildren.length === 0}
+          <div class="ep-empty">No tracks found.</div>
+        {/if}
+      </div>
+    {/if}
   </div>
 </div>
 {/if}
@@ -1869,4 +1928,50 @@
   .photo-nav:hover { background: rgba(0,0,0,0.7); }
   .photo-nav-left { left: 1rem; }
   .photo-nav-right { right: 1rem; }
+
+  /* ── Music ──────────────────────────────────────────── */
+  .music-album-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 1rem;
+    padding: 0 1.5rem 2rem;
+  }
+  .music-album-card {
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .music-album-card img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 8px;
+    background: #111118;
+  }
+  .music-album-blank {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    background: #111118;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    color: #333;
+  }
+  .music-album-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #e0e0e0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .music-album-year {
+    font-size: 0.75rem;
+    color: #666;
+  }
+  .music-album-card:hover .music-album-title { color: #fff; }
 </style>

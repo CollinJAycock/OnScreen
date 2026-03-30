@@ -361,24 +361,25 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 
 	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.Sort != "title" || !fp.SortAsc
 
+	rootType := rootItemType(lib.Type)
 	var items []media.Item
 	var total int64
 	if hasFilter {
-		items, err = h.media.ListItemsFiltered(r.Context(), id, lib.Type, limit, offset, fp)
+		items, err = h.media.ListItemsFiltered(r.Context(), id, rootType, limit, offset, fp)
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "list media items filtered", "library_id", id, "err", err)
 			respond.InternalError(w, r)
 			return
 		}
-		total, _ = h.media.CountItemsFiltered(r.Context(), id, lib.Type, fp)
+		total, _ = h.media.CountItemsFiltered(r.Context(), id, rootType, fp)
 	} else {
-		items, err = h.media.ListItems(r.Context(), id, lib.Type, limit, offset)
+		items, err = h.media.ListItems(r.Context(), id, rootType, limit, offset)
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "list media items", "library_id", id, "err", err)
 			respond.InternalError(w, r)
 			return
 		}
-		total, _ = h.media.CountItems(r.Context(), id, lib.Type)
+		total, _ = h.media.CountItems(r.Context(), id, rootType)
 	}
 
 	out := make([]MediaItemResponse, len(items))
@@ -422,4 +423,19 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 
 func parseUUID(r *http.Request, param string) (uuid.UUID, error) {
 	return uuid.Parse(chi.URLParam(r, param))
+}
+
+// rootItemType maps a library type to the DB item type used for top-level items.
+// Music libraries store artists as top-level items; show libraries store shows.
+func rootItemType(libraryType string) string {
+	switch libraryType {
+	case "music":
+		return "artist"
+	case "show":
+		return "show"
+	case "photo":
+		return "photo"
+	default:
+		return libraryType // "movie" → "movie"
+	}
 }
