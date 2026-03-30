@@ -237,3 +237,98 @@ func TestClientSupportsHDR(t *testing.T) {
 		}
 	}
 }
+
+// TestDecide_CodecMatrix covers every codec/container combination present in the
+// actual media library (derived from SELECT DISTINCT container, video_codec, audio_codec
+// FROM media_files WHERE status='active'). Each case asserts whether the server
+// should DirectPlay, DirectStream, or Transcode when the web player declares the
+// capabilities of a typical modern browser (h264 video, aac/mp3 audio, mp4/ts containers).
+func TestDecide_CodecMatrix(t *testing.T) {
+	// Capabilities of the OnScreen web player after our codec fixes:
+	// - Video: h264 only for remux; AV1/VP9 require full transcode
+	// - Audio: aac, mp3, opus, flac (no AC-3, E-AC-3, DTS, TrueHD)
+	// - Containers: mp4, ts (via HLS.js)
+	webPlayerCaps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac:mp3:opus:flac,protocols=mp4:ts")
+
+	cases := []struct {
+		name      string
+		container string
+		video     string
+		audio     string
+		want      Decision
+		reason    string
+	}{
+		// ── AVI files (Good Eats older seasons) ────────────────────────────────
+		{"avi/msmpeg4v2/mp3", "avi", "msmpeg4v2", "mp3", DecisionTranscode,
+			"msmpeg4v2 not browser-playable, AVI not supported"},
+		{"avi/msmpeg4v3/mp3", "avi", "msmpeg4v3", "mp3", DecisionTranscode,
+			"msmpeg4v3 not browser-playable"},
+		{"avi/mpeg4/mp3", "avi", "mpeg4", "mp3", DecisionTranscode,
+			"mpeg4-part2 (Xvid/DivX) not browser-playable"},
+
+		// ── MOV/MP4 files ──────────────────────────────────────────────────────
+		{"mov/h264/aac", "mp4", "h264", "aac", DecisionDirectPlay,
+			"faststart MP4 with h264/aac is direct play"},
+		{"mov/hevc/aac", "mp4", "hevc", "aac", DecisionTranscode,
+			"web player doesn't declare HEVC support → transcode"},
+		{"mov/hevc/eac3", "mp4", "hevc", "eac3", DecisionTranscode,
+			"HEVC video + E-AC-3 audio, both unsupported"},
+
+		// ── MKV files ──────────────────────────────────────────────────────────
+		{"mkv/h264/aac", "mkv", "h264", "aac", DecisionDirectStream,
+			"h264/aac supported but MKV container not → remux to MPEG-TS"},
+		{"mkv/h264/ac3", "mkv", "h264", "ac3", DecisionTranscode,
+			"h264 OK but AC-3 audio not browser-supported → transcode audio"},
+		{"mkv/h264/eac3", "mkv", "h264", "eac3", DecisionTranscode,
+			"E-AC-3 (Dolby Digital Plus) not browser-supported"},
+		{"mkv/h264/dts", "mkv", "h264", "dts", DecisionTranscode,
+			"DTS not browser-supported"},
+		{"mkv/h264/truehd", "mkv", "h264", "truehd", DecisionTranscode,
+			"TrueHD not browser-supported"},
+		{"mkv/h264/opus", "mkv", "h264", "opus", DecisionDirectStream,
+			"h264/opus both supported, remux MKV→MPEG-TS"},
+		{"mkv/hevc/eac3", "mkv", "hevc", "eac3", DecisionTranscode,
+			"HEVC + E-AC-3, both require transcode"},
+		{"mkv/hevc/ac3", "mkv", "hevc", "ac3", DecisionTranscode,
+			"HEVC + AC-3, both require transcode"},
+		{"mkv/hevc/aac", "mkv", "hevc", "aac", DecisionTranscode,
+			"HEVC not declared by web player → transcode video"},
+		{"mkv/hevc/dts", "mkv", "hevc", "dts", DecisionTranscode,
+			"HEVC + DTS, both require transcode"},
+		{"mkv/hevc/truehd", "mkv", "hevc", "truehd", DecisionTranscode,
+			"HEVC + TrueHD, both require transcode"},
+		{"mkv/av1/opus", "mkv", "av1", "opus", DecisionTranscode,
+			"AV1 not declared by web player (MPEG-TS can't carry AV1) → transcode"},
+		{"mkv/av1/dts", "mkv", "av1", "dts", DecisionTranscode,
+			"AV1 + DTS, both require transcode"},
+		{"mkv/av1/aac", "mkv", "av1", "aac", DecisionTranscode,
+			"AV1 not in web player caps → transcode"},
+		{"mkv/h264/flac", "mkv", "h264", "flac", DecisionDirectStream,
+			"h264/flac both supported, remux MKV→MPEG-TS"},
+
+		// ── MPEG-TS files ──────────────────────────────────────────────────────
+		{"ts/mpeg2video/ac3", "ts", "mpeg2video", "ac3", DecisionTranscode,
+			"MPEG-2 video not browser-playable"},
+		{"ts/h264/dts", "ts", "h264", "dts", DecisionTranscode,
+			"h264 OK but DTS audio not supported → transcode audio"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			file := media.File{
+				ID:          uuid.New(),
+				MediaItemID: uuid.New(),
+				FilePath:    "/media/test." + tc.container,
+				VideoCodec:  strPtr(tc.video),
+				AudioCodec:  strPtr(tc.audio),
+				Container:   strPtr(tc.container),
+				ResolutionW: intPtr(1920),
+				ResolutionH: intPtr(1080),
+			}
+			got := Decide(file, webPlayerCaps, defaultServerCaps)
+			if got != tc.want {
+				t.Errorf("%s: want %s, got %s — %s", tc.name, tc.want, got, tc.reason)
+			}
+		})
+	}
+}

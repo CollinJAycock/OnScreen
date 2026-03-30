@@ -77,15 +77,20 @@
   let skipAutoSeek = false;
 
   // Audio codecs that browsers can decode natively.
-  // Everything else (DTS, TrueHD, etc.) needs a transcode pass.
+  // Audio codecs browsers can decode natively in MP4/WebM containers.
+  // AC-3, E-AC-3, DTS, TrueHD, ALAC, MP2, raw PCM are not reliably supported
+  // in any browser — they must be transcoded to AAC.
   const browserAudioCodecs = new Set([
-    'aac', 'mp3', 'opus', 'flac', 'vorbis', 'alac',
-    'mp2', 'pcm_s16le', 'pcm_f32le',
+    'aac', 'mp3', 'opus', 'flac', 'vorbis',
   ]);
-  // Containers browsers handle reliably for direct play.
+  // Containers browsers handle reliably for direct play (faststart MP4/MOV/WebM).
   const browserContainers = new Set(['mp4', 'webm', 'mov']);
-  // Video codecs browsers can decode natively (H.264 universally, VP8/VP9 most browsers).
+  // Video codecs browsers can decode natively.
   const browserVideoCodecs = new Set(['h264', 'vp8', 'vp9', 'av1']);
+  // Video codecs that can be stream-copied (remuxed) into MPEG-TS for HLS.js.
+  // AV1 and VP8/VP9 are NOT here: MPEG-TS cannot carry AV1, and VP8/VP9 are
+  // WebM-only — putting them in MPEG-TS produces an unplayable stream.
+  const remuxableVideoCodecs = new Set(['h264']);
 
   /** True when the browser can play this file directly — compatible container + codecs + faststart. */
   function canDirectPlay(file: ItemFile | undefined): boolean {
@@ -103,11 +108,11 @@
     return true;
   }
 
-  /** True when the video can be stream-copied (remuxed) instead of re-encoded. */
+  /** True when the video can be stream-copied (remuxed) into MPEG-TS HLS instead of re-encoded. */
   function canRemuxVideo(file: ItemFile | undefined): boolean {
     if (!file) return false;
     const videoCodec = (file.video_codec ?? '').toLowerCase();
-    return browserVideoCodecs.has(videoCodec);
+    return remuxableVideoCodecs.has(videoCodec);
   }
 
   // HLS transcode state
