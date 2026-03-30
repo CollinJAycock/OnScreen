@@ -1,5 +1,6 @@
 # Build output
 /onscreen
+*.exe
 /bin/
 
 # Frontend build (never committed — built by make build or CI)
@@ -33,3 +34,6 @@ coverage.html
 
 # Go
 vendor/
+
+# Vite temp files
+web/vite.config.ts.timestamp-*
