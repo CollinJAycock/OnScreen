@@ -1,0 +1,299 @@
+package transcode
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/onscreen/onscreen/internal/valkey"
+)
+
+const (
+	sessionTTL    = 4 * time.Hour
+	heartbeatTTL  = 10 * time.Second
+	workerTTL     = 15 * time.Second
+	workerRefresh = 5 * time.Second
+)
+
+// Session represents an active transcode or direct-stream session.
+type Session struct {
+	ID             string    `json:"id"`
+	UserID         uuid.UUID `json:"user_id"`
+	MediaItemID    uuid.UUID `json:"media_item_id"`
+	FileID         uuid.UUID `json:"file_id"`
+	WorkerID       string    `json:"worker_id"`
+	WorkerAddr     string    `json:"worker_addr"`
+	Decision       string    `json:"decision"` // "directPlay"|"directStream"|"transcode"
+	FilePath       string    `json:"file_path"`
+	PositionMS     int64     `json:"position_ms"`
+	CreatedAt      time.Time `json:"created_at"`
+	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
+	ClientName     string    `json:"client_name,omitempty"`
+	ClientID       string    `json:"client_id,omitempty"`
+	SegToken       string    `json:"seg_token,omitempty"`
+}
+
+// WorkerRegistration is the record a transcode worker writes to Valkey.
+type WorkerRegistration struct {
+	ID             string    `json:"id"`
+	Addr           string    `json:"addr"` // "host:port" of the worker HTTP server
+	Capabilities   []string  `json:"capabilities"`
+	MaxSessions    int       `json:"max_sessions"`
+	ActiveSessions int       `json:"active_sessions"`
+	RegisteredAt   time.Time `json:"registered_at"`
+}
+
+// SessionStore manages transcode sessions in Valkey.
+type SessionStore struct {
+	v *valkey.Client
+}
+
+// NewSessionStore creates a SessionStore backed by the given Valkey client.
+func NewSessionStore(v *valkey.Client) *SessionStore {
+	return &SessionStore{v: v}
+}
+
+// Create stores a new session. TTL is sessionTTL (4 hours).
+func (s *SessionStore) Create(ctx context.Context, sess Session) error {
+	b, err := json.Marshal(sess)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+	return s.v.Set(ctx, sessionKey(sess.ID), string(b), sessionTTL)
+}
+
+// Get retrieves a session by ID.
+func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
+	raw, err := s.v.Get(ctx, sessionKey(id))
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	var sess Session
+	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		return nil, fmt.Errorf("unmarshal session: %w", err)
+	}
+	return &sess, nil
+}
+
+// Delete removes a session.
+func (s *SessionStore) Delete(ctx context.Context, id string) error {
+	return s.v.Del(ctx, sessionKey(id))
+}
+
+// List returns all active sessions by scanning Valkey for session keys.
+func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
+	keys, err := s.v.Scan(ctx, "transcode:session:*")
+	if err != nil {
+		return nil, fmt.Errorf("list session keys: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	pipe := s.v.Raw().Pipeline()
+	cmds := make([]*redis.StringCmd, len(keys))
+	for i, k := range keys {
+		cmds[i] = pipe.Get(ctx, k)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("pipeline get sessions: %w", err)
+	}
+
+	sessions := make([]Session, 0, len(keys))
+	for _, cmd := range cmds {
+		raw, err := cmd.Result()
+		if err != nil {
+			continue
+		}
+		var sess Session
+		if err := json.Unmarshal([]byte(raw), &sess); err == nil {
+			sessions = append(sessions, sess)
+		}
+	}
+	return sessions, nil
+}
+
+// DeleteByMedia removes all sessions for the given media item.
+// Called by the progress endpoint on "stopped" to clean up even if the client
+// never explicitly hits the Stop endpoint (e.g. tab closed after playback ends).
+func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID) error {
+	keys, err := s.v.Scan(ctx, "transcode:session:*")
+	if err != nil || len(keys) == 0 {
+		return err
+	}
+	pipe := s.v.Raw().Pipeline()
+	cmds := make([]*redis.StringCmd, len(keys))
+	for i, k := range keys {
+		cmds[i] = pipe.Get(ctx, k)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return err
+	}
+	for i, cmd := range cmds {
+		raw, err := cmd.Result()
+		if err != nil {
+			continue
+		}
+		var sess Session
+		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+			continue
+		}
+		if sess.MediaItemID == mediaItemID {
+			_ = s.v.Del(ctx, keys[i])
+		}
+	}
+	return nil
+}
+
+// UpdatePositionByMedia finds the active session for the given media item and
+// updates its PositionMS. Silently no-ops if no matching session exists.
+//
+// NOTE: concurrent position updates for the same session may race (lost update).
+// A Valkey WATCH/MULTI/EXEC or Lua script would provide atomicity.
+func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uuid.UUID, positionMS int64) error {
+	keys, err := s.v.Scan(ctx, "transcode:session:*")
+	if err != nil || len(keys) == 0 {
+		return err
+	}
+	pipe := s.v.Raw().Pipeline()
+	cmds := make([]*redis.StringCmd, len(keys))
+	for i, k := range keys {
+		cmds[i] = pipe.Get(ctx, k)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return err
+	}
+	for i, cmd := range cmds {
+		raw, err := cmd.Result()
+		if err != nil {
+			continue
+		}
+		var sess Session
+		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+			continue
+		}
+		if sess.MediaItemID != mediaItemID {
+			continue
+		}
+		sess.PositionMS = positionMS
+		sess.LastActivityAt = time.Now()
+		b, err := json.Marshal(sess)
+		if err != nil {
+			continue
+		}
+		ttl := s.v.Raw().TTL(ctx, keys[i]).Val()
+		if ttl <= 0 {
+			ttl = sessionTTL
+		}
+		_ = s.v.Set(ctx, keys[i], string(b), ttl)
+		break
+	}
+	return nil
+}
+
+// SetHeartbeat writes/refreshes the session heartbeat key (2s TTL reset to 10s).
+// Called by the worker every 2 seconds while an FFmpeg process is active.
+func (s *SessionStore) SetHeartbeat(ctx context.Context, id string) error {
+	return s.v.Set(ctx, heartbeatKey(id), "1", heartbeatTTL)
+}
+
+// IsAlive returns true if the session heartbeat is still valid.
+func (s *SessionStore) IsAlive(ctx context.Context, id string) (bool, error) {
+	_, err := s.v.Get(ctx, heartbeatKey(id))
+	if err == valkey.ErrNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RegisterWorker writes a worker registration record to Valkey with workerTTL.
+func (s *SessionStore) RegisterWorker(ctx context.Context, reg WorkerRegistration) error {
+	b, err := json.Marshal(reg)
+	if err != nil {
+		return fmt.Errorf("marshal worker: %w", err)
+	}
+	return s.v.Set(ctx, workerKey(reg.ID), string(b), workerTTL)
+}
+
+// ListWorkers returns all registered workers.
+func (s *SessionStore) ListWorkers(ctx context.Context) ([]WorkerRegistration, error) {
+	keys, err := s.v.Scan(ctx, "worker:*")
+	if err != nil {
+		return nil, fmt.Errorf("list worker keys: %w", err)
+	}
+	var workers []WorkerRegistration
+	for _, k := range keys {
+		raw, err := s.v.Get(ctx, k)
+		if err != nil {
+			continue
+		}
+		var reg WorkerRegistration
+		if err := json.Unmarshal([]byte(raw), &reg); err == nil {
+			workers = append(workers, reg)
+		}
+	}
+	return workers, nil
+}
+
+// EnqueueJob pushes a transcode job onto the Valkey queue.
+func (s *SessionStore) EnqueueJob(ctx context.Context, job TranscodeJob) error {
+	b, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("marshal job: %w", err)
+	}
+	return s.v.Raw().RPush(ctx, "transcode:queue", string(b)).Err()
+}
+
+// DequeueJob blocks up to timeout waiting for a job from the Valkey queue.
+// Returns (nil, nil) on timeout.
+func (s *SessionStore) DequeueJob(ctx context.Context, timeout time.Duration) (*TranscodeJob, error) {
+	results, err := s.v.Raw().BLPop(ctx, timeout, "transcode:queue").Result()
+	if err == redis.Nil {
+		return nil, nil // timeout, no job
+	}
+	if err != nil {
+		return nil, fmt.Errorf("blpop: %w", err)
+	}
+	if len(results) < 2 {
+		return nil, nil
+	}
+	var job TranscodeJob
+	if err := json.Unmarshal([]byte(results[1]), &job); err != nil {
+		return nil, fmt.Errorf("unmarshal job: %w", err)
+	}
+	return &job, nil
+}
+
+// TranscodeJob holds the parameters for an FFmpeg transcode job.
+type TranscodeJob struct {
+	SessionID       string    `json:"session_id"`
+	FilePath        string    `json:"file_path"`
+	SessionDir      string    `json:"session_dir"`
+	StartOffsetSec  float64   `json:"start_offset_sec"`
+	Decision        string    `json:"decision"`
+	Encoder         string    `json:"encoder"`
+	Width           int       `json:"width"`
+	Height          int       `json:"height"`
+	BitrateKbps     int       `json:"bitrate_kbps"`
+	AudioCodec      string    `json:"audio_codec"`
+	AudioChannels   int       `json:"audio_channels"`
+	NeedsToneMap    bool      `json:"needs_tone_map"`
+	SubtitleStreams  []int     `json:"subtitle_streams,omitempty"`
+	EnqueuedAt      time.Time `json:"enqueued_at"`
+}
+
+// NewSessionID generates a new transcode session ID.
+func NewSessionID() string {
+	return uuid.New().String()
+}
+
+func sessionKey(id string) string   { return "transcode:session:" + id }
+func heartbeatKey(id string) string { return "transcode:heartbeat:" + id }
+func workerKey(id string) string    { return "worker:" + id }

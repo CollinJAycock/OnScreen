@@ -1,0 +1,651 @@
+// cmd/server is the OnScreen API server entrypoint.
+// It wires all dependencies, starts the HTTP server, and handles graceful shutdown.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+
+	"github.com/onscreen/onscreen/internal/api"
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	v1 "github.com/onscreen/onscreen/internal/api/v1"
+	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/artwork"
+	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/config"
+	"github.com/onscreen/onscreen/internal/db"
+	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/domain/library"
+	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/metadata/tmdb"
+	"github.com/onscreen/onscreen/internal/metadata/tvdb"
+	"github.com/onscreen/onscreen/internal/observability"
+	"github.com/onscreen/onscreen/internal/scanner"
+	"github.com/onscreen/onscreen/internal/streaming"
+	"github.com/onscreen/onscreen/internal/transcode"
+	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/valkey"
+	"github.com/onscreen/onscreen/internal/worker"
+
+	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// version and buildTime are injected by the Makefile via ldflags.
+var (
+	version   = "dev"
+	buildTime = "unknown"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	// ── Config ────────────────────────────────────────────────────────────────
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	// ── Logging ───────────────────────────────────────────────────────────────
+	logLevel, err := cfg.LogLevelVar()
+	if err != nil {
+		return fmt.Errorf("log level: %w", err)
+	}
+	logger := observability.NewLogger(logLevel)
+	slog.SetDefault(logger)
+
+	logger.Info("starting onscreen server", "version", version, "build_time", buildTime)
+
+	// ── Hot-reloadable config (ADR-027) ───────────────────────────────────────
+	hot := config.NewHotReloadable(cfg)
+	config.WatchSIGHUP(logger, hot, cfg, logLevel)
+
+	// ── Prometheus ────────────────────────────────────────────────────────────
+	promReg := prometheus.NewRegistry()
+	promReg.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	metrics := observability.NewMetrics(promReg)
+
+	// ── Database (rw + ro, ADR-021) ───────────────────────────────────────────
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	rwPool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("rw db pool: %w", err)
+	}
+	defer rwPool.Close()
+
+	roPool, err := db.NewPool(ctx, cfg.DatabaseROURL)
+	if err != nil {
+		return fmt.Errorf("ro db pool: %w", err)
+	}
+	defer roPool.Close()
+
+	// ── Valkey ────────────────────────────────────────────────────────────────
+	valkeyClient, err := valkey.New(ctx, cfg.ValkeyURL)
+	if err != nil {
+		return fmt.Errorf("valkey: %w", err)
+	}
+	defer valkeyClient.Close()
+
+	// ── Auth ──────────────────────────────────────────────────────────────────
+	secretKey := auth.DeriveKey32(cfg.SecretKey)
+	tokenMaker, err := auth.NewTokenMaker(secretKey)
+	if err != nil {
+		return fmt.Errorf("token maker: %w", err)
+	}
+	encryptor, err := auth.NewEncryptor(secretKey)
+	if err != nil {
+		return fmt.Errorf("encryptor: %w", err)
+	}
+
+	// ── Rate limiter ──────────────────────────────────────────────────────────
+	rateLimiter := valkey.NewRateLimiter(valkeyClient, logger,
+		func() { metrics.RateLimitFailOpen.Inc() })
+
+	// ── Domain services ───────────────────────────────────────────────────────
+	rwQ := &libraryAdapter{q: gen.New(rwPool)}
+	roQ := &libraryAdapter{q: gen.New(roPool)}
+	rwMQ := &mediaAdapter{q: gen.New(rwPool)}
+	roMQ := &mediaAdapter{q: gen.New(roPool)}
+
+	mediaSvc := media.NewService(rwMQ, roMQ, logger)
+
+	// ── Settings service ─────────────────────────────────────────────────────
+	settingsSvc := settings.New(rwPool, logger)
+
+	// Seed TMDB key from environment on first run (won't overwrite a DB value).
+	if cfg.TMDBAPIKey != "" {
+		if settingsSvc.TMDBAPIKey(ctx) == "" {
+			if err := settingsSvc.SetTMDBAPIKey(ctx, cfg.TMDBAPIKey); err != nil {
+				logger.Warn("failed to seed TMDB key from env", "err", err)
+			}
+		}
+	}
+
+	// ── Artwork ───────────────────────────────────────────────────────────────
+	artworkMgr := artwork.New(cfg.CachePath)
+
+	// ── Metadata enricher ─────────────────────────────────────────────────────
+	// agentFn is called per newly discovered file and returns a TMDB client
+	// built from the current DB setting, or nil if no key is configured.
+	// This allows changing the API key at runtime without restarting.
+	var (
+		agentMu    sync.Mutex
+		agentKey   string
+		agentCache metadata.Agent
+	)
+	agentFn := func() metadata.Agent {
+		// Use a non-cancellable context so that scan goroutines (which outlive
+		// the signal context) can still read the TMDB key during shutdown drain.
+		key := settingsSvc.TMDBAPIKey(context.WithoutCancel(ctx))
+		if key == "" {
+			key = cfg.TMDBAPIKey // fallback: env var (used before migration runs)
+		}
+		agentMu.Lock()
+		defer agentMu.Unlock()
+		if key != agentKey {
+			agentKey = key
+			if key == "" {
+				agentCache = nil
+			} else {
+				agentCache = tmdb.New(key, cfg.TMDBRateLimit, "")
+			}
+		}
+		return agentCache
+	}
+	// scanPathsFn returns all active library scan paths — used by the enricher
+	// to convert absolute artwork paths to paths relative to the library root,
+	// and by the router to serve artwork files.
+	// Initially returns an empty slice; once libSvc is created we replace it.
+	var scanPathsFn func() []string
+	scanPathsFn = func() []string { return nil }
+	metaAgent := scanner.NewEnricher(agentFn, artworkMgr, mediaSvc, func() []string { return scanPathsFn() }, logger)
+
+	// Wire TVDB fallback — reads key from DB setting, falls back to env var.
+	// Uses lazy init so the key can be set at runtime via the settings UI.
+	var (
+		tvdbMu    sync.Mutex
+		tvdbKey   string
+		tvdbCache scanner.TVDBFallback
+	)
+	metaAgent.SetTVDBFallbackFn(func() scanner.TVDBFallback {
+		key := settingsSvc.TVDBAPIKey(context.WithoutCancel(ctx))
+		if key == "" {
+			key = cfg.TVDBAPIKey
+		}
+		if key == "" {
+			return nil
+		}
+		tvdbMu.Lock()
+		defer tvdbMu.Unlock()
+		if key != tvdbKey {
+			tvdbKey = key
+			tvdbCache = tvdb.New(key)
+			logger.Info("tvdb fallback enabled for TV episode enrichment")
+		}
+		return tvdbCache
+	})
+
+	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger)
+	libEnqueuer := &scanEnqueuer{
+		scanner:   libScanner,
+		libSvc:    nil,
+		db:        gen.New(rwPool),
+		logger:    logger,
+		serverCtx: ctx,
+		watchers:  make(map[uuid.UUID]*scanner.Watcher),
+	}
+	libSvc := library.NewService(rwQ, roQ, libEnqueuer, logger)
+	libEnqueuer.libSvc = libSvc
+
+	// Now that libSvc exists, wire up scanPathsFn for artwork path resolution.
+	scanPathsFn = func() []string {
+		libs, err := libSvc.List(context.WithoutCancel(ctx))
+		if err != nil {
+			return nil
+		}
+		var paths []string
+		for _, lib := range libs {
+			paths = append(paths, lib.Paths...)
+		}
+		return paths
+	}
+
+	// Start watching all libraries that already exist (from a previous run).
+	if existingLibs, err := libSvc.List(ctx); err == nil {
+		for _, lib := range existingLibs {
+			lib := lib
+			libEnqueuer.watchLibrary(lib.ID, lib.Paths)
+		}
+	} else {
+		logger.Warn("could not load libraries for fs watching", "err", err)
+	}
+
+	// Watch event service (Phase 2).
+	rwWQ := &watchEventAdapter{q: gen.New(rwPool)}
+	roWQ := &watchEventAdapter{q: gen.New(roPool)}
+	watchSvc := watchevent.NewService(rwWQ, roWQ, logger)
+
+	// ── Transcode session store + segment token (Phase 2) ─────────────────────
+	sessionStore := transcode.NewSessionStore(valkeyClient)
+	segTokenMgr := transcode.NewSegmentTokenManager(valkeyClient)
+
+	// ── API handlers ──────────────────────────────────────────────────────────
+	authSvc := &authService{
+		db:     gen.New(rwPool),
+		tokens: tokenMaker,
+		logger: logger,
+	}
+
+	authMiddleware := middleware.NewAuthenticator(tokenMaker)
+
+	libHandler := v1.NewLibraryHandler(libSvc, logger).WithMedia(mediaSvc)
+	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
+	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger)
+	auditLogger := audit.New(gen.New(rwPool), logger)
+
+	authHandler := v1.NewAuthHandler(authSvc, logger).WithAudit(auditLogger)
+
+	userSvc := newUserService(gen.New(rwPool))
+
+	userHandler := v1.NewUserHandler(userSvc).WithDB(gen.New(rwPool)).WithTokenMaker(tokenMaker, logger).WithAudit(auditLogger)
+	fsHandler := v1.NewFSHandler()
+	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
+	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
+	streamTracker := streaming.NewTracker()
+	analyticsHandler := v1.NewAnalyticsHandler(gen.New(roPool), logger)
+	hubHandler := v1.NewHubHandler(gen.New(roPool), logger)
+	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger)
+	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger)
+	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
+	// Derive a stable machine ID from the secret key so webhook payloads
+	// identify this server consistently across restarts without a dedicated config field.
+	machineID := uuid.NewSHA1(uuid.NameSpaceDNS, []byte(cfg.SecretKey)).String()
+	webhookDispatcher := worker.NewWebhookDispatcher(
+		gen.New(rwPool),
+		mediaSvc,
+		encryptor,
+		worker.WebhookServerInfo{Title: "OnScreen", MachineID: machineID},
+		logger,
+	)
+	libEnqueuer.webhookDispatcher = webhookDispatcher
+	matchAdapter := &matchSearchAdapter{enricher: metaAgent}
+	arrAdapter := &arrLibraryAdapter{libSvc: libSvc, scanner: libEnqueuer}
+	arrHandler := v1.NewArrHandler(settingsSvc, arrAdapter, logger)
+	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, streamTracker, logger)
+	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger)
+
+	// ── Embedded transcode worker ─────────────────────────────────────────────
+	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
+	// single-node deployments. Encoder detection is best-effort; falls back to
+	// libx264 software encoding if ffmpeg/hardware is unavailable.
+	encoders, err := transcode.DetectEncoders(ctx, cfg.TranscodeEncoders)
+	if err != nil {
+		logger.Warn("encoder detection failed, defaulting to software", "err", err)
+		encoders = []transcode.Encoder{transcode.EncoderSoftware}
+	}
+	logger.Info("transcode encoders", "encoders", transcode.EncoderNames(encoders))
+	embeddedWorker := transcode.NewWorker(
+		transcode.WorkerID(),
+		"127.0.0.1:7073",
+		sessionStore,
+		encoders,
+		cfg.TranscodeMaxSessions,
+		logger,
+	)
+
+	// ── Email / SMTP (optional) ──────────────────────────────────────────────
+	emailSender := email.NewSender(email.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+	})
+	if emailSender != nil {
+		logger.Info("smtp email enabled", "host", cfg.SMTPHost, "from", cfg.SMTPFrom)
+	}
+
+	emailHandler := v1.NewEmailHandler(emailSender, logger)
+	passwordResetDB := &passwordResetAdapter{q: gen.New(rwPool)}
+	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, cfg.BaseURL, logger)
+	inviteDB := &inviteAdapter{q: gen.New(rwPool)}
+	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, cfg.BaseURL, logger)
+
+	// ── Google OAuth2 SSO (optional) ─────────────────────────────────────────
+	var googleAuthHandler *v1.GoogleOAuthHandler
+	if cfg.GoogleOAuthEnabled() {
+		googleSvc := v1.NewGoogleAuthService(
+			gen.New(rwPool),
+			authSvc.issueTokenPair,
+			logger,
+		)
+		googleAuthHandler = v1.NewGoogleOAuthHandler(
+			cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.BaseURL,
+			googleSvc, logger,
+		)
+		logger.Info("google SSO enabled")
+	}
+
+	var githubAuthHandler *v1.GitHubOAuthHandler
+	if cfg.GitHubOAuthEnabled() {
+		githubAuthHandler = v1.NewGitHubOAuthHandler(
+			cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL,
+			gen.New(rwPool), authSvc.issueTokenPair, logger,
+		)
+		logger.Info("github SSO enabled")
+	}
+
+	var discordAuthHandler *v1.DiscordOAuthHandler
+	if cfg.DiscordOAuthEnabled() {
+		discordAuthHandler = v1.NewDiscordOAuthHandler(
+			cfg.DiscordClientID, cfg.DiscordClientSecret, cfg.BaseURL,
+			gen.New(rwPool), authSvc.issueTokenPair, logger,
+		)
+		logger.Info("discord SSO enabled")
+	}
+
+	// ── Router ────────────────────────────────────────────────────────────────
+	h := &api.Handlers{
+		Library:     libHandler,
+		Webhook:     webhookHandler,
+		Auth:        authHandler,
+		User:        userHandler,
+		FS:          fsHandler,
+		Settings:    settingsHandler,
+		Analytics:       analyticsHandler,
+		NativeSessions:  nativeSessionsHandler,
+		Hub:             hubHandler,
+		Search:          searchHandler,
+		History:         historyHandler,
+		Items:           itemHandler,
+		NativeTranscode: nativeTranscodeHandler,
+		Arr:             arrHandler,
+		GoogleAuth:      googleAuthHandler,
+		GitHubAuth:      githubAuthHandler,
+		DiscordAuth:     discordAuthHandler,
+		Audit:           auditHandler,
+		Email:           emailHandler,
+		PasswordReset:   passwordResetHandler,
+		Invite:          inviteHandler,
+		StreamTracker:  streamTracker,
+		Artwork:      artworkMgr,
+		ArtworkRoots: scanPathsFn,
+		MediaPath:    cfg.MediaPath,
+		Logger:      logger,
+		Metrics:     metrics,
+		Auth_mw:     authMiddleware,
+		RateLimiter: rateLimiter,
+	}
+	router := api.NewRouter(h)
+
+	// ── Health endpoints ──────────────────────────────────────────────────────
+	liveH, readyH := observability.HealthHandler(
+		&db.PingablePool{Pool: rwPool},
+		valkeyClient,
+		logger,
+	)
+
+	mainMux := http.NewServeMux()
+	mainMux.Handle("/", router)
+	mainMux.HandleFunc("/health/live", liveH)
+	mainMux.HandleFunc("/health/ready", readyH)
+
+	// ── Metrics server (separate port, ADR) ──────────────────────────────────
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", observability.MetricsHandler(promReg))
+	metricsMux.HandleFunc("/health/live", liveH)
+
+	// ── Background workers ────────────────────────────────────────────────────
+	partitionWorker := worker.NewPartitionWorker(rwPool, cfg.RetainMonths, logger)
+	hubRefreshWorker := worker.NewHubRefreshWorker(rwPool, 5*time.Minute, logger)
+	periodicScanWorker := newPeriodicScanWorker(libSvc, libEnqueuer, logger)
+
+	// ── Servers ───────────────────────────────────────────────────────────────
+	apiServer := &http.Server{
+		Addr:         cfg.ListenAddr,
+		Handler:      mainMux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	metricsServer := &http.Server{
+		Addr:        cfg.MetricsAddr,
+		Handler:     metricsMux,
+		ReadTimeout: 10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	// ── Start everything ──────────────────────────────────────────────────────
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		logger.Info("api server listening", "addr", cfg.ListenAddr)
+		if err := apiServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("api server: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		logger.Info("metrics server listening", "addr", cfg.MetricsAddr)
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("metrics server: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		partitionWorker.Run(gCtx)
+		return nil
+	})
+
+	g.Go(func() error {
+		hubRefreshWorker.Run(gCtx)
+		return nil
+	})
+
+	g.Go(func() error {
+		periodicScanWorker.Run(gCtx)
+		return nil
+	})
+
+	g.Go(func() error {
+		if err := embeddedWorker.Start(gCtx); err != nil {
+			logger.Warn("transcode worker exited", "err", err)
+		}
+		return nil
+	})
+
+	// Graceful shutdown on context cancellation (SIGTERM/SIGINT).
+	g.Go(func() error {
+		<-gCtx.Done()
+		logger.Info("shutdown signal received")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := apiServer.Shutdown(shutdownCtx); err != nil {
+			logger.Error("api server shutdown error", "err", err)
+		}
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			logger.Error("metrics server shutdown error", "err", err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	logger.Info("server stopped")
+	return nil
+}
+
+// scanEnqueuer implements library.ScanEnqueuer and scanner.WatchTrigger.
+// It manages per-library filesystem watchers and drives the real scanner.
+type scanEnqueuer struct {
+	scanner           *scanner.Scanner
+	libSvc            *library.Service
+	db                *gen.Queries // for hub refresh after scan
+	logger            *slog.Logger
+	serverCtx         context.Context // outlives individual HTTP requests
+	webhookDispatcher *worker.WebhookDispatcher
+
+	watchMu  sync.Mutex
+	watchers map[uuid.UUID]*scanner.Watcher // one watcher per library
+}
+
+func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) error {
+	lib, err := e.libSvc.Get(ctx, libraryID)
+	if err != nil {
+		return fmt.Errorf("get library for scan: %w", err)
+	}
+	e.logger.Info("scan enqueued", "library_id", libraryID, "paths", lib.Paths)
+	go func() {
+		scanCtx := context.WithoutCancel(e.serverCtx)
+		result, err := e.scanner.ScanLibrary(scanCtx, libraryID, lib.Type, lib.Paths)
+		if err != nil {
+			e.logger.Error("scan failed", "library_id", libraryID, "err", err)
+			return
+		}
+		e.logger.Info("scan finished",
+			"library_id", libraryID,
+			"found", result.Found,
+			"new", result.New,
+			"duration_ms", result.Duration.Milliseconds(),
+		)
+		// Reset the scan interval timer so periodic scans don't re-trigger immediately.
+		if err := e.libSvc.MarkScanCompleted(context.WithoutCancel(e.serverCtx), libraryID); err != nil {
+			e.logger.Warn("mark scan completed", "library_id", libraryID, "err", err)
+		}
+		// Refresh hub views so recently-added reflects the scan results immediately.
+		if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
+			e.logger.Warn("refresh hub after scan", "library_id", libraryID, "err", err)
+		}
+		// Ensure the library is being watched after its first scan.
+		e.watchLibrary(libraryID, lib.Paths)
+		// Dispatch library.scan.complete webhook event.
+		if e.webhookDispatcher != nil {
+			e.webhookDispatcher.Dispatch("library.scan.complete", uuid.Nil, uuid.Nil)
+		}
+	}()
+	return nil
+}
+
+// TriggerDirectoryScan implements scanner.WatchTrigger.
+// Called by the per-library Watcher when fsnotify detects a change.
+func (e *scanEnqueuer) TriggerDirectoryScan(_ context.Context, libraryID uuid.UUID, dirPath string) error {
+	lib, err := e.libSvc.Get(e.serverCtx, libraryID)
+	if err != nil {
+		return fmt.Errorf("get library: %w", err)
+	}
+	e.logger.Info("fs change detected, scanning directory",
+		"library_id", libraryID, "dir", dirPath)
+	go func() {
+		scanCtx := context.WithoutCancel(e.serverCtx)
+		result, err := e.scanner.ScanLibrary(scanCtx, libraryID, lib.Type, []string{dirPath})
+		if err != nil {
+			e.logger.Error("directory scan failed",
+				"library_id", libraryID, "dir", dirPath, "err", err)
+			return
+		}
+		if result.New > 0 {
+			e.logger.Info("directory scan found new files",
+				"library_id", libraryID, "dir", dirPath,
+				"new", result.New, "duration_ms", result.Duration.Milliseconds())
+			// Refresh hub so new items appear in recently added.
+			if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
+				e.logger.Warn("refresh hub after dir scan", "err", err)
+			}
+		}
+	}()
+	return nil
+}
+
+// watchLibrary starts a watcher for a library if one isn't already running.
+// Safe to call multiple times for the same library.
+func (e *scanEnqueuer) watchLibrary(libraryID uuid.UUID, paths []string) {
+	e.watchMu.Lock()
+	defer e.watchMu.Unlock()
+
+	if _, exists := e.watchers[libraryID]; exists {
+		return // already watching
+	}
+
+	w, err := scanner.NewWatcher(e, e.logger)
+	if err != nil {
+		e.logger.Warn("failed to create fs watcher", "library_id", libraryID, "err", err)
+		return
+	}
+	if err := w.WatchLibrary(libraryID, paths); err != nil {
+		e.logger.Warn("failed to watch library paths", "library_id", libraryID, "err", err)
+		w.Close()
+		return
+	}
+	e.watchers[libraryID] = w
+
+	go w.Run(e.serverCtx, libraryID)
+	e.logger.Info("watching library for changes", "library_id", libraryID, "paths", paths)
+}
+
+// periodicScanWorker checks every minute for libraries whose scan_interval has
+// elapsed and enqueues a fresh scan. This is the fallback for environments
+// (e.g. WSL watching a Windows-side drive) where fsnotify events are not
+// delivered for changes made outside the Linux filesystem.
+type periodicScanWorker struct {
+	libSvc  *library.Service
+	enq     *scanEnqueuer
+	logger  *slog.Logger
+}
+
+func newPeriodicScanWorker(libSvc *library.Service, enq *scanEnqueuer, logger *slog.Logger) *periodicScanWorker {
+	return &periodicScanWorker{libSvc: libSvc, enq: enq, logger: logger}
+}
+
+func (w *periodicScanWorker) Run(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.tick(ctx)
+		}
+	}
+}
+
+func (w *periodicScanWorker) tick(ctx context.Context) {
+	libs, err := w.libSvc.ListDueForScan(ctx)
+	if err != nil {
+		w.logger.Warn("periodic scan: list due libraries", "err", err)
+		return
+	}
+	for _, lib := range libs {
+		lib := lib
+		w.logger.Info("periodic scan: enqueueing", "library_id", lib.ID, "name", lib.Name)
+		if err := w.enq.EnqueueScan(ctx, lib.ID); err != nil {
+			w.logger.Warn("periodic scan: enqueue failed", "library_id", lib.ID, "err", err)
+		}
+	}
+}
+

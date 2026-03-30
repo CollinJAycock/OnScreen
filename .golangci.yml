@@ -1,0 +1,48 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - goimports
+    - misspell
+    - revive
+    - gosec
+    - exhaustive
+    - noctx
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - contextcheck
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: error-return
+        severity: warning
+  gosec:
+    excludes:
+      - G304  # file path from variable — reviewed case by case
+  goimports:
+    local-prefixes: github.com/onscreen/onscreen
+
+issues:
+  exclude-rules:
+    # Generated code
+    - path: internal/db/gen/
+      linters:
+        - all
+    # Test files
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+
+run:
+  timeout: 5m

@@ -1,0 +1,306 @@
+package transcode
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+var segmentBaseDir = filepath.Join(os.TempDir(), "onscreen", "sessions")
+
+const heartbeatInterval = 2 * time.Second
+
+// Worker is a transcode worker that picks up jobs from the Valkey queue,
+// runs FFmpeg, and serves HLS segments via a local HTTP server (ADR-008).
+type Worker struct {
+	id             string
+	addr           string // "host:port" — advertised to the API for segment proxying
+	store          *SessionStore
+	encoders       []Encoder
+	logger         *slog.Logger
+	activeSessions atomic.Int32
+	maxSessions    int
+	mu             sync.Mutex
+	activeJobs     map[string]*os.Process // session_id → ffmpeg PID
+}
+
+// NewWorker creates a transcode Worker.
+func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSessions int, logger *slog.Logger) *Worker {
+	if maxSessions <= 0 {
+		maxSessions = 4
+	}
+	return &Worker{
+		id:          id,
+		addr:        addr,
+		store:       store,
+		encoders:    encoders,
+		maxSessions: maxSessions,
+		logger:      logger,
+		activeJobs:  make(map[string]*os.Process),
+	}
+}
+
+// Start runs the worker: registers, starts the HTTP segment server,
+// runs the heartbeat loop, and processes the job queue until ctx is cancelled.
+func (w *Worker) Start(ctx context.Context) error {
+	// Clean up any orphaned session directories from a prior crash.
+	w.sweepOrphanedSessions()
+
+	if err := w.register(ctx); err != nil {
+		return fmt.Errorf("worker register: %w", err)
+	}
+
+	go w.heartbeatLoop(ctx)
+	go w.startSegmentServer(ctx)
+
+	w.logger.Info("transcode worker ready",
+		"id", w.id,
+		"addr", w.addr,
+		"encoders", EncoderNames(w.encoders),
+		"max_sessions", w.maxSessions,
+	)
+
+	return w.jobLoop(ctx)
+}
+
+// register writes the worker registration record to Valkey.
+func (w *Worker) register(ctx context.Context) error {
+	return w.store.RegisterWorker(ctx, WorkerRegistration{
+		ID:             w.id,
+		Addr:           w.addr,
+		Capabilities:   EncoderNames(w.encoders),
+		MaxSessions:    w.maxSessions,
+		ActiveSessions: int(w.activeSessions.Load()),
+		RegisteredAt:   time.Now(),
+	})
+}
+
+// heartbeatLoop refreshes the worker Valkey key every workerRefresh seconds.
+func (w *Worker) heartbeatLoop(ctx context.Context) {
+	t := time.NewTicker(workerRefresh)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := w.register(ctx); err != nil {
+				w.logger.Warn("worker heartbeat failed", "err", err)
+			}
+		}
+	}
+}
+
+// jobLoop blocks on the Valkey queue and processes jobs sequentially.
+// Multiple workers run concurrently in separate goroutines.
+func (w *Worker) jobLoop(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		if int(w.activeSessions.Load()) >= w.maxSessions {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(500 * time.Millisecond):
+				continue
+			}
+		}
+
+		job, err := w.store.DequeueJob(ctx, 5*time.Second)
+		if err != nil {
+			w.logger.Warn("dequeue error", "err", err)
+			continue
+		}
+		if job == nil {
+			continue // timeout, loop again
+		}
+
+		w.activeSessions.Add(1)
+		go func(j TranscodeJob) {
+			defer w.activeSessions.Add(-1)
+			if err := w.runJob(ctx, j); err != nil {
+				w.logger.Error("transcode job failed",
+					"session_id", j.SessionID, "err", err)
+			}
+		}(*job)
+	}
+}
+
+// runJob executes a single transcode job.
+func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
+	// Ensure session directory exists.
+	if err := os.MkdirAll(job.SessionDir, 0755); err != nil {
+		return fmt.Errorf("mkdir session dir: %w", err)
+	}
+
+	var ffArgs []string
+	switch job.Decision {
+	case "directStream":
+		ffArgs = BuildDirectStream(job.FilePath, job.SessionDir, job.StartOffsetSec)
+	default:
+		enc := Encoder(job.Encoder)
+		if enc == "" {
+			enc = BestEncoder(w.encoders)
+		}
+		ffArgs = BuildHLS(BuildArgs{
+			InputPath:    job.FilePath,
+			StartOffset:  job.StartOffsetSec,
+			Encoder:      enc,
+			IsVAAPI:      enc == EncoderVAAPI,
+			Width:        job.Width,
+			Height:       job.Height,
+			BitrateKbps:  job.BitrateKbps,
+			NeedsToneMap: job.NeedsToneMap,
+			AudioCodec:   job.AudioCodec,
+			AudioChannels: job.AudioChannels,
+			SubtitleStreams: job.SubtitleStreams,
+			SessionDir:   job.SessionDir,
+			SegmentPrefix: "seg",
+		})
+	}
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start ffmpeg: %w", err)
+	}
+
+	// Track PID for kill on session stop.
+	w.mu.Lock()
+	w.activeJobs[job.SessionID] = cmd.Process
+	w.mu.Unlock()
+
+	// Heartbeat loop while FFmpeg runs.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	t := time.NewTicker(heartbeatInterval)
+	defer t.Stop()
+
+loop:
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				w.logger.Warn("ffmpeg exited with error",
+					"session_id", job.SessionID, "err", err)
+			} else {
+				w.logger.Info("ffmpeg completed", "session_id", job.SessionID)
+			}
+			break loop
+		case <-t.C:
+			if err := w.store.SetHeartbeat(context.Background(), job.SessionID); err != nil {
+				w.logger.Warn("heartbeat write failed",
+					"session_id", job.SessionID, "err", err)
+			}
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			break loop
+		}
+	}
+
+	w.mu.Lock()
+	delete(w.activeJobs, job.SessionID)
+	w.mu.Unlock()
+
+	return nil
+}
+
+// KillSession terminates an in-progress FFmpeg process for a session.
+func (w *Worker) KillSession(sessionID string) {
+	w.mu.Lock()
+	p, ok := w.activeJobs[sessionID]
+	w.mu.Unlock()
+	if ok {
+		_ = p.Kill()
+	}
+}
+
+// startSegmentServer runs a minimal HTTP server to serve HLS segments.
+// The API proxy forwards segment requests to this server.
+func (w *Worker) startSegmentServer(ctx context.Context) {
+	mux := http.NewServeMux()
+
+	// Serve files from /tmp/onscreen/sessions/{session_id}/
+	mux.HandleFunc("/segments/", func(rw http.ResponseWriter, r *http.Request) {
+		// Path: /segments/{session_id}/{filename}
+		rel := r.URL.Path[len("/segments/"):]
+		abs := filepath.Join(segmentBaseDir, rel)
+
+		// Basic path traversal check.
+		clean := filepath.Clean(abs)
+		base := filepath.Clean(segmentBaseDir) + string(os.PathSeparator)
+		if clean != filepath.Clean(segmentBaseDir) && !strings.HasPrefix(clean, base) {
+			http.Error(rw, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		http.ServeFile(rw, r, clean)
+	})
+
+	srv := &http.Server{
+		Addr:         w.addr,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		w.logger.Error("segment server error", "err", err)
+	}
+}
+
+// sweepOrphanedSessions removes session directories left by a prior crash.
+func (w *Worker) sweepOrphanedSessions() {
+	entries, err := os.ReadDir(segmentBaseDir)
+	if err != nil {
+		return // base dir doesn't exist yet — fine
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			dir := filepath.Join(segmentBaseDir, e.Name())
+			w.logger.Info("sweeping orphaned session dir", "dir", dir)
+			_ = os.RemoveAll(dir)
+		}
+	}
+}
+
+// SessionDir returns the local filesystem path for a session's HLS segments.
+func SessionDir(sessionID string) string {
+	return filepath.Join(segmentBaseDir, sessionID)
+}
+
+// WorkerID generates a stable UUID-based worker ID.
+func WorkerID() string {
+	return uuid.New().String()
+}
+
+// EncoderNames returns the string names of the given encoders.
+func EncoderNames(encoders []Encoder) []string {
+	names := make([]string, len(encoders))
+	for i, e := range encoders {
+		names[i] = string(e)
+	}
+	return names
+}

@@ -1,0 +1,241 @@
+package scanner
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// ProbeResult holds the technical metadata extracted from a media file by ffprobe.
+type ProbeResult struct {
+	Container      *string
+	VideoCodec     *string
+	AudioCodec     *string
+	ResolutionW    *int
+	ResolutionH    *int
+	Bitrate        *int64
+	DurationMs     *int64
+	HDRType        *string
+	FrameRate      *float64
+	AudioStreams    []byte
+	SubtitleStreams []byte
+	Chapters       []byte
+}
+
+// ffprobeOutput is the top-level ffprobe JSON output structure.
+type ffprobeOutput struct {
+	Streams []ffprobeStream `json:"streams"`
+	Format  ffprobeFormat   `json:"format"`
+	Chapters []ffprobeChapter `json:"chapters"`
+}
+
+type ffprobeStream struct {
+	Index         int               `json:"index"`
+	CodecName     string            `json:"codec_name"`
+	CodecType     string            `json:"codec_type"`
+	Width         int               `json:"width"`
+	Height        int               `json:"height"`
+	RFrameRate    string            `json:"r_frame_rate"`
+	BitRate       string            `json:"bit_rate"`
+	Channels      int               `json:"channels"`
+	Tags          map[string]string `json:"tags"`
+	Disposition   map[string]int    `json:"disposition"`
+	ColorTransfer string            `json:"color_transfer"`
+	ColorPrimaries string           `json:"color_primaries"`
+	SideDataList  []ffprobeSideData `json:"side_data_list"`
+}
+
+type ffprobeSideData struct {
+	SideDataType string `json:"side_data_type"`
+}
+
+type ffprobeFormat struct {
+	Filename   string `json:"filename"`
+	FormatName string `json:"format_name"`
+	Duration   string `json:"duration"`
+	BitRate    string `json:"bit_rate"`
+}
+
+type ffprobeChapter struct {
+	ID        int               `json:"id"`
+	StartTime string            `json:"start_time"`
+	EndTime   string            `json:"end_time"`
+	Tags      map[string]string `json:"tags"`
+}
+
+// ProbeFile runs ffprobe on the given path and returns extracted metadata.
+// Returns an empty ProbeResult (not an error) if ffprobe is not installed.
+// probesize and analyzeduration cap how much data ffprobe reads — without
+// them, ffprobe on MPEG-TS files can scan the entire file to detect streams.
+func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
+	// 30s hard timeout so a stuck ffprobe doesn't stall the whole scan.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	args := []string{
+		"-v", "quiet",
+		"-probesize", "50000000",      // read at most 50 MB to detect streams
+		"-analyzeduration", "5000000", // analyze at most 5 s of stream data
+		"-print_format", "json",
+		"-show_streams",
+		"-show_format",
+		"-show_chapters",
+		path,
+	}
+
+	cmd := exec.CommandContext(ctx, "ffprobe", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe: %w", err)
+	}
+
+	var probe ffprobeOutput
+	if err := json.Unmarshal(out, &probe); err != nil {
+		return nil, fmt.Errorf("ffprobe parse: %w", err)
+	}
+
+	result := &ProbeResult{}
+
+	// Format / container.
+	if probe.Format.FormatName != "" {
+		// ffprobe returns comma-separated format names; take the first.
+		fmtName := strings.SplitN(probe.Format.FormatName, ",", 2)[0]
+		result.Container = &fmtName
+	}
+	if probe.Format.BitRate != "" {
+		if br, err := strconv.ParseInt(probe.Format.BitRate, 10, 64); err == nil {
+			result.Bitrate = &br
+		}
+	}
+	if probe.Format.Duration != "" {
+		if dur, err := strconv.ParseFloat(probe.Format.Duration, 64); err == nil && dur > 0 {
+			ms := int64(dur * 1000)
+			result.DurationMs = &ms
+		}
+	}
+
+	var audioStreams []map[string]any
+	var subtitleStreams []map[string]any
+
+	for _, s := range probe.Streams {
+		switch s.CodecType {
+		case "video":
+			// Skip attached pictures (embedded cover art in MKV/MP4).
+			if s.Disposition["attached_pic"] == 1 {
+				continue
+			}
+			if result.VideoCodec == nil {
+				result.VideoCodec = &s.CodecName
+				if s.Width > 0 {
+					result.ResolutionW = &s.Width
+				}
+				if s.Height > 0 {
+					result.ResolutionH = &s.Height
+				}
+				if fps := parseFrameRate(s.RFrameRate); fps > 0 {
+					result.FrameRate = &fps
+				}
+				result.HDRType = detectHDR(&s)
+			}
+
+		case "audio":
+			lang := s.Tags["language"]
+			title := s.Tags["title"]
+			audioStreams = append(audioStreams, map[string]any{
+				"index":    s.Index,
+				"codec":    s.CodecName,
+				"channels": s.Channels,
+				"language": lang,
+				"title":    title,
+			})
+			if result.AudioCodec == nil {
+				result.AudioCodec = &s.CodecName
+			}
+
+		case "subtitle":
+			lang := s.Tags["language"]
+			title := s.Tags["title"]
+			forced := s.Disposition["forced"] == 1
+			subtitleStreams = append(subtitleStreams, map[string]any{
+				"index":    s.Index,
+				"codec":    s.CodecName,
+				"language": lang,
+				"title":    title,
+				"forced":   forced,
+			})
+		}
+	}
+
+	// Marshal JSONB columns.
+	if len(audioStreams) > 0 {
+		b, _ := json.Marshal(audioStreams)
+		result.AudioStreams = b
+	}
+	if len(subtitleStreams) > 0 {
+		b, _ := json.Marshal(subtitleStreams)
+		result.SubtitleStreams = b
+	}
+
+	// Chapters.
+	if len(probe.Chapters) > 0 {
+		var chapters []map[string]any
+		for _, c := range probe.Chapters {
+			title := c.Tags["title"]
+			startMS := parseTimeToMS(c.StartTime)
+			endMS := parseTimeToMS(c.EndTime)
+			chapters = append(chapters, map[string]any{
+				"title":    title,
+				"start_ms": startMS,
+				"end_ms":   endMS,
+			})
+		}
+		b, _ := json.Marshal(chapters)
+		result.Chapters = b
+	}
+
+	return result, nil
+}
+
+// detectHDR returns the HDR type string or nil for SDR content.
+func detectHDR(s *ffprobeStream) *string {
+	// Check side data for HDR metadata.
+	for _, sd := range s.SideDataList {
+		switch sd.SideDataType {
+		case "DOVI configuration record":
+			t := "dolby_vision"
+			return &t
+		case "Content light level metadata":
+			t := "hdr10"
+			return &t
+		}
+	}
+	// Fallback: check color transfer / primaries.
+	switch s.ColorTransfer {
+	case "smpte2084":
+		t := "hdr10"
+		return &t
+	case "arib-std-b67":
+		t := "hlg"
+		return &t
+	}
+	return nil
+}
+
+func parseFrameRate(s string) float64 {
+	// ffprobe returns "24000/1001" format.
+	var num, den int
+	if n, _ := fmt.Sscanf(s, "%d/%d", &num, &den); n == 2 && den > 0 {
+		return float64(num) / float64(den)
+	}
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
+}
+
+func parseTimeToMS(s string) int64 {
+	f, _ := strconv.ParseFloat(s, 64)
+	return int64(f * 1000)
+}

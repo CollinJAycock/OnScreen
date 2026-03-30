@@ -1,0 +1,430 @@
+<script lang="ts">
+  import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
+  import { authApi, libraryApi, api, type Library } from '$lib/api';
+
+  let ready = false; // false until we confirm setup is still needed
+  let step = 1; // 1 = create account, 2 = add library (optional), 3 = done
+
+  onMount(async () => {
+    try {
+      const status = await authApi.setupStatus();
+      if (!status.setup_required) {
+        goto('/login');
+        return;
+      }
+    } catch {
+      // If the endpoint fails, allow setup to proceed
+    }
+    ready = true;
+  });
+
+  // Step 1 fields
+  let username = '';
+  let email = '';
+  let password = '';
+  let confirmPassword = '';
+  let registerError = '';
+  let registering = false;
+
+  // Step 2 fields
+  let libName = '';
+  let libType = 'movie';
+  let libPath = '';
+  let addingLib = false;
+  let libError = '';
+
+  async function handleRegister() {
+    if (password !== confirmPassword) {
+      registerError = 'Passwords do not match.';
+      return;
+    }
+    registerError = '';
+    registering = true;
+    try {
+      await authApi.register(username, password, email || undefined);
+      // Auto-login after registration.
+      const pair = await authApi.login(username, password);
+      api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
+      step = 2;
+    } catch (e: unknown) {
+      registerError = e instanceof Error ? e.message : 'Registration failed.';
+    } finally {
+      registering = false;
+    }
+  }
+
+  async function handleAddLibrary() {
+    addingLib = true;
+    libError = '';
+    try {
+      await libraryApi.create({
+        name: libName,
+        type: libType as Library['type'],
+        scan_paths: [libPath]
+      });
+      step = 3;
+    } catch (e: unknown) {
+      libError = e instanceof Error ? e.message : 'Failed to add library.';
+    } finally {
+      addingLib = false;
+    }
+  }
+
+  function skipLibrary() {
+    step = 3;
+  }
+
+  function finish() {
+    goto('/');
+  }
+</script>
+
+<svelte:head>
+  <title>OnScreen — Setup</title>
+</svelte:head>
+
+{#if ready}
+<div class="setup-container">
+  <div class="setup-card">
+    <div class="logo">
+      <img src="/favicon-96x96.png" alt="OnScreen" width="36" height="36" class="logo-icon" />
+      <h1>OnScreen</h1>
+    </div>
+
+    <div class="steps">
+      <div class="step" class:active={step === 1} class:done={step > 1}>
+        <span class="step-dot">{step > 1 ? '✓' : '1'}</span>
+        <span>Account</span>
+      </div>
+      <div class="step-line" class:done={step > 1}></div>
+      <div class="step" class:active={step === 2} class:done={step > 2}>
+        <span class="step-dot">{step > 2 ? '✓' : '2'}</span>
+        <span>Library</span>
+      </div>
+      <div class="step-line" class:done={step > 2}></div>
+      <div class="step" class:active={step === 3}>
+        <span class="step-dot">3</span>
+        <span>Done</span>
+      </div>
+    </div>
+
+    {#if step === 1}
+      <form on:submit|preventDefault={handleRegister}>
+        <h2>Create Admin Account</h2>
+        <div class="field">
+          <label for="s-username">Username</label>
+          <input id="s-username" bind:value={username} type="text" required autocomplete="username" placeholder="Choose a username" />
+        </div>
+        <div class="field">
+          <label for="s-email">Email <span class="optional">(optional)</span></label>
+          <input id="s-email" bind:value={email} type="email" autocomplete="email" placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="s-password">Password</label>
+          <input id="s-password" bind:value={password} type="password" required autocomplete="new-password" placeholder="Min 8 characters" />
+        </div>
+        <div class="field">
+          <label for="s-confirm">Confirm Password</label>
+          <input id="s-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder="Repeat password" />
+        </div>
+        {#if registerError}
+          <div class="error-banner">{registerError}</div>
+        {/if}
+        <button type="submit" disabled={registering} class="btn-primary">
+          {registering ? 'Creating...' : 'Create Account'}
+        </button>
+      </form>
+    {:else if step === 2}
+      <form on:submit|preventDefault={handleAddLibrary}>
+        <h2>Add Your First Library</h2>
+        <p class="step-desc">Point OnScreen at your media folder. You can add more later.</p>
+        <div class="field">
+          <label for="s-libname">Library Name</label>
+          <input id="s-libname" bind:value={libName} type="text" placeholder="My Movies" />
+        </div>
+        <div class="field">
+          <label for="s-libtype">Type</label>
+          <select id="s-libtype" bind:value={libType}>
+            <option value="movie">Movies</option>
+            <option value="show">TV Shows</option>
+            <option value="music">Music</option>
+            <option value="photo">Photos</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="s-libpath">Scan Path</label>
+          <input id="s-libpath" bind:value={libPath} type="text" placeholder="/media/movies" />
+        </div>
+        {#if libError}
+          <div class="error-banner">{libError}</div>
+        {/if}
+        <div class="btn-row">
+          <button type="submit" disabled={addingLib || !libName || !libPath} class="btn-primary">
+            {addingLib ? 'Adding...' : 'Add Library'}
+          </button>
+          <button type="button" class="btn-secondary" on:click={skipLibrary}>
+            Skip
+          </button>
+        </div>
+      </form>
+    {:else}
+      <div class="done-section">
+        <div class="done-icon">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <circle cx="24" cy="24" r="24" fill="rgba(52,211,153,0.12)"/>
+            <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h2>You're all set</h2>
+        <p class="step-desc">OnScreen is ready. Your library scan will start in the background.</p>
+        <button class="btn-primary" on:click={finish}>Go to Dashboard</button>
+      </div>
+    {/if}
+  </div>
+</div>
+{/if}
+
+<style>
+  .setup-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #07070d;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+
+  .setup-card {
+    background: #0e0e18;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 16px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .logo-icon { border-radius: 8px; }
+
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #eeeef8;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+
+  h2 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #eeeef8;
+    margin: 0 0 1.25rem;
+  }
+
+  /* ── Step indicator ─────────────────────────────────────────────────── */
+  .steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 2rem;
+  }
+
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    color: #44445a;
+    font-weight: 500;
+  }
+
+  .step.active { color: #a89ffa; }
+  .step.done { color: #34d399; }
+
+  .step-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+  }
+
+  .step.active .step-dot {
+    background: rgba(124,106,247,0.15);
+    border-color: rgba(124,106,247,0.4);
+    color: #a89ffa;
+  }
+
+  .step.done .step-dot {
+    background: rgba(52,211,153,0.12);
+    border-color: rgba(52,211,153,0.3);
+    color: #34d399;
+  }
+
+  .step-line {
+    width: 32px;
+    height: 1px;
+    background: rgba(255,255,255,0.06);
+    margin: 0 0.5rem;
+  }
+
+  .step-line.done {
+    background: rgba(52,211,153,0.3);
+  }
+
+  /* ── Form fields ────────────────────────────────────────────────────── */
+  .field {
+    margin-bottom: 1rem;
+  }
+
+  label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #8888a0;
+    margin-bottom: 0.4rem;
+    letter-spacing: 0.02em;
+  }
+
+  .optional {
+    color: #55556a;
+    font-weight: 400;
+  }
+
+  input, select {
+    width: 100%;
+    padding: 0.7rem 0.85rem;
+    background: #111120;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    color: #eeeef8;
+    outline: none;
+    font-family: inherit;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-sizing: border-box;
+  }
+
+  input::placeholder { color: #44445a; }
+
+  input:focus, select:focus {
+    border-color: rgba(124,106,247,0.5);
+    box-shadow: 0 0 0 3px rgba(124,106,247,0.1);
+  }
+
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2355556a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.85rem center;
+    padding-right: 2.5rem;
+  }
+
+  select option {
+    background: #111120;
+    color: #eeeef8;
+  }
+
+  .step-desc {
+    color: #55556a;
+    font-size: 0.82rem;
+    margin: -0.75rem 0 1.25rem;
+    line-height: 1.5;
+  }
+
+  .error-banner {
+    background: rgba(248,113,113,0.08);
+    border: 1px solid rgba(248,113,113,0.2);
+    border-radius: 8px;
+    padding: 0.55rem 0.8rem;
+    color: #fca5a5;
+    font-size: 0.82rem;
+    margin-bottom: 1rem;
+  }
+
+  /* ── Buttons ────────────────────────────────────────────────────────── */
+  .btn-primary {
+    width: 100%;
+    padding: 0.75rem;
+    background: #7c6af7;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+  }
+
+  .btn-primary:hover:not(:disabled) { background: #6b5ce6; }
+  .btn-primary:active:not(:disabled) { transform: scale(0.98); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-secondary {
+    padding: 0.75rem 1.5rem;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    color: #8888a0;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .btn-secondary:hover {
+    background: rgba(255,255,255,0.07);
+    color: #b0b0c8;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .btn-row .btn-primary { flex: 1; }
+
+  /* ── Done section ───────────────────────────────────────────────────── */
+  .done-section {
+    text-align: center;
+    padding: 1rem 0;
+  }
+
+  .done-icon {
+    margin-bottom: 1rem;
+  }
+
+  .done-section h2 {
+    margin-bottom: 0.5rem;
+  }
+
+  .done-section .step-desc {
+    margin: 0 0 1.5rem;
+  }
+
+  /* ── Mobile ─────────────────────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .setup-card {
+      max-width: 100%;
+      padding: 2rem 1.5rem;
+      margin: 0 1rem;
+      border-radius: 14px;
+    }
+  }
+</style>

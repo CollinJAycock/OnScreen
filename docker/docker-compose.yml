@@ -1,0 +1,95 @@
+name: onscreen
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: onscreen
+      POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
+      POSTGRES_DB: onscreen
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: ghcr.io/pressly/goose:v3.24.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      -dir /migrations postgres
+      "postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable" up
+    volumes:
+      - ../internal/db/migrations:/migrations:ro
+    restart: "no"
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    restart: unless-stopped
+    ports:
+      - "7070:7070"
+      - "127.0.0.1:7071:7071"
+    volumes:
+      - media_data:/media
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7070/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    image: ${ONSCREEN_IMAGE:-onscreen}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["/usr/local/bin/worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      WORKER_ADDR: ":7073"
+    restart: unless-stopped
+    volumes:
+      - media_data:/media
+
+volumes:
+  postgres_data:
+  media_data:

@@ -1,0 +1,104 @@
+package v1
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"strconv"
+
+	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/db/gen"
+)
+
+// SearchDB defines the database queries the search handler needs.
+type SearchDB interface {
+	SearchMediaItems(ctx context.Context, arg gen.SearchMediaItemsParams) ([]gen.SearchMediaItemsRow, error)
+	SearchMediaItemsGlobal(ctx context.Context, arg gen.SearchMediaItemsGlobalParams) ([]gen.SearchMediaItemsGlobalRow, error)
+}
+
+// SearchHandler serves media search results.
+type SearchHandler struct {
+	db     SearchDB
+	logger *slog.Logger
+}
+
+// NewSearchHandler creates a SearchHandler.
+func NewSearchHandler(db SearchDB, logger *slog.Logger) *SearchHandler {
+	return &SearchHandler{db: db, logger: logger}
+}
+
+// SearchResult is a compact result for search display.
+type SearchResult struct {
+	ID         string  `json:"id"`
+	LibraryID  string  `json:"library_id"`
+	Title      string  `json:"title"`
+	Type       string  `json:"type"`
+	Year       *int    `json:"year,omitempty"`
+	PosterPath *string `json:"poster_path,omitempty"`
+	ThumbPath  *string `json:"thumb_path,omitempty"`
+}
+
+// Search handles GET /api/v1/search?q=...&library_id=...&limit=20.
+func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		respond.BadRequest(w, r, "search query required")
+		return
+	}
+
+	limit := int32(20)
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+			limit = int32(n)
+		}
+	}
+
+	var results []SearchResult
+	var err error
+
+	if libID := r.URL.Query().Get("library_id"); libID != "" {
+		uid, parseErr := uuid.Parse(libID)
+		if parseErr != nil {
+			respond.BadRequest(w, r, "invalid library_id")
+			return
+		}
+		rows, qErr := h.db.SearchMediaItems(r.Context(), gen.SearchMediaItemsParams{
+			LibraryID:      uid,
+			PlaintoTsquery: query,
+			Limit:          limit,
+		})
+		err = qErr
+		results = make([]SearchResult, 0, len(rows))
+		for _, row := range rows {
+			results = append(results, SearchResult{
+				ID: row.ID.String(), LibraryID: row.LibraryID.String(),
+				Title: row.Title, Type: row.Type,
+				Year: intPtrFrom32(row.Year), PosterPath: row.PosterPath, ThumbPath: row.ThumbPath,
+			})
+		}
+	} else {
+		rows, qErr := h.db.SearchMediaItemsGlobal(r.Context(), gen.SearchMediaItemsGlobalParams{
+			PlaintoTsquery: query,
+			Limit:          limit,
+		})
+		err = qErr
+		results = make([]SearchResult, 0, len(rows))
+		for _, row := range rows {
+			results = append(results, SearchResult{
+				ID: row.ID.String(), LibraryID: row.LibraryID.String(),
+				Title: row.Title, Type: row.Type,
+				Year: intPtrFrom32(row.Year), PosterPath: row.PosterPath, ThumbPath: row.ThumbPath,
+			})
+		}
+	}
+
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "search query failed", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	respond.Success(w, r, results)
+}

@@ -1,0 +1,137 @@
+name: onscreen-ha
+
+# HA example stack: 3 API instances + pgBouncer (session mode) + Valkey
+# See ADR-020 for pgBouncer pool mode decision.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: onscreen
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS required}
+      POSTGRES_DB: onscreen
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgbouncer:
+    image: bitnami/pgbouncer:1.23.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE: onscreen
+      POSTGRESQL_USERNAME: onscreen
+      POSTGRESQL_PASSWORD: ${DB_PASS}
+      PGBOUNCER_POOL_MODE: session         # ADR-020: session mode for pgx/v5 prepared statements
+      PGBOUNCER_MAX_CLIENT_CONN: 1000
+      PGBOUNCER_DEFAULT_POOL_SIZE: 25
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: ghcr.io/pressly/goose:v3.24.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      -dir /migrations postgres
+      "postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=${DB_SSLMODE:-require}" up
+    volumes:
+      - ../internal/db/migrations:/migrations:ro
+    restart: "no"
+
+  onscreen:
+    image: ghcr.io/onscreen/onscreen:${ONSCREEN_VERSION:-latest}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS}@pgbouncer:5432/onscreen?sslmode=${DB_SSLMODE:-require}&default_query_exec_mode=exec
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+    volumes:
+      - media_data:/media:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7070/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    image: ghcr.io/onscreen/onscreen:${ONSCREEN_VERSION:-latest}
+    entrypoint: ["/usr/local/bin/worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS}@pgbouncer:5432/onscreen?sslmode=${DB_SSLMODE:-require}&default_query_exec_mode=exec
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+    volumes:
+      - media_data:/media
+    # TODO: Add a proper HTTP healthcheck once the worker exposes a /health
+    # endpoint. For now, verify the worker process is still running.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f worker || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      onscreen:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_CERT_PATH:-./certs/onscreen.crt}:/etc/ssl/certs/onscreen.crt:ro
+      - ${TLS_KEY_PATH:-./certs/onscreen.key}:/etc/ssl/private/onscreen.key:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  valkey_data:
+  media_data:

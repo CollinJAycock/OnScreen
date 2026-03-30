@@ -1,0 +1,82 @@
+package middleware
+
+import (
+	"fmt"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/valkey"
+)
+
+// RateLimitConfig defines limits for a specific endpoint class.
+type RateLimitConfig struct {
+	Limit  int
+	Window time.Duration
+}
+
+var (
+	// AuthLimit applies to /auth/login — 10 req/min per IP.
+	AuthLimit = RateLimitConfig{Limit: 10, Window: time.Minute}
+	// SessionLimit applies to all authenticated endpoints — 1000 req/min per token.
+	SessionLimit = RateLimitConfig{Limit: 1000, Window: time.Minute}
+)
+
+// RateLimit returns a middleware that enforces the given rate limit config.
+// keyFn extracts the rate limit key from the request (e.g. client IP or session hash).
+func RateLimit(limiter *valkey.RateLimiter, cfg RateLimitConfig, keyFn func(r *http.Request) string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := keyFn(r)
+			allowed, remaining, resetAt, err := limiter.Allow(r.Context(), key, cfg.Limit, cfg.Window)
+			if err != nil {
+				http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+				return
+			}
+
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", cfg.Limit))
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+			if !resetAt.IsZero() {
+				w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetAt.Unix()))
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(resetAt).Seconds())))
+			}
+
+			if !allowed {
+				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// IPKey returns a key function that uses the client IP for rate limiting.
+func IPKey(prefix string) func(r *http.Request) string {
+	return func(r *http.Request) string {
+		ip := clientIP(r)
+		return fmt.Sprintf("%s:%s", prefix, ip)
+	}
+}
+
+// SessionKey returns a key function using the user ID hash, falling back to IP.
+func SessionKey(prefix string) func(r *http.Request) string {
+	return func(r *http.Request) string {
+		claims := ClaimsFromContext(r.Context())
+		if claims == nil {
+			return IPKey(prefix)(r)
+		}
+		return fmt.Sprintf("%s:%s", prefix, auth.HashToken(claims.UserID.String()))
+	}
+}
+
+// clientIP extracts the client IP from r.RemoteAddr.
+// chi's RealIP middleware (applied globally) already rewrites RemoteAddr
+// from X-Forwarded-For / X-Real-IP, so we don't re-parse those headers here.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}

@@ -1,0 +1,15 @@
+.git
+.github
+.env*
+*.exe
+bin/
+coverage.out
+coverage.html
+node_modules/
+web/node_modules/
+web/.svelte-kit/
+internal/webui/dist/
+docs/
+*.md
+!README.md
+!LICENSE

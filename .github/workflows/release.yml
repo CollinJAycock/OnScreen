@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Build frontend
+      - name: Install frontend deps
+        working-directory: web
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      - name: Copy frontend to embed dir
+        run: |
+          rm -rf internal/webui/dist
+          cp -r web/dist internal/webui/dist
+
+      # Build Go binaries for multiple platforms
+      - name: Set build metadata
+        id: meta2
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ steps.meta2.outputs.VERSION }}
+          BUILD_TIME: ${{ steps.meta2.outputs.BUILD_TIME }}
+        run: |
+          LDFLAGS="-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
+
+          # Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/onscreen-linux-amd64 ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/onscreen-worker-linux-amd64 ./cmd/worker
+
+          # Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/onscreen-linux-arm64 ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/onscreen-worker-linux-arm64 ./cmd/worker
+
+          # macOS amd64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/onscreen-darwin-amd64 ./cmd/server
+
+          # macOS arm64 (Apple Silicon)
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/onscreen-darwin-arm64 ./cmd/server
+
+          # Windows amd64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/onscreen-windows-amd64.exe ./cmd/server
+
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum * > checksums.txt
+
+      # Docker image
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build & push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta2.outputs.VERSION }}
+            BUILD_TIME=${{ steps.meta2.outputs.BUILD_TIME }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      # GitHub Release
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Extract notes from CHANGELOG.md for this version
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Extracting notes for version $VERSION"
+          # Fall back to auto-generated notes if CHANGELOG extraction fails
+          echo "auto=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/onscreen-*
+            dist/checksums.txt
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
