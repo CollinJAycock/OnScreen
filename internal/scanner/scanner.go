@@ -613,24 +613,50 @@ func itemNeedsEnrich(item *media.Item) bool {
 // is missing a poster. This ensures episodes trigger re-enrichment of their
 // parent show/season when artwork is absent.
 func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool {
-	if item.Type != "episode" || item.ParentID == nil {
-		return false
+	switch item.Type {
+	case "episode":
+		if item.ParentID == nil {
+			return false
+		}
+		// Check season.
+		season, err := s.media.GetItem(ctx, *item.ParentID)
+		if err != nil || season == nil {
+			return false
+		}
+		if season.PosterPath == nil {
+			return true
+		}
+		// Check show.
+		if season.ParentID == nil {
+			return false
+		}
+		show, err := s.media.GetItem(ctx, *season.ParentID)
+		if err != nil || show == nil {
+			return false
+		}
+		return show.PosterPath == nil
+
+	case "track":
+		if item.ParentID == nil {
+			return false
+		}
+		// Check album.
+		album, err := s.media.GetItem(ctx, *item.ParentID)
+		if err != nil || album == nil {
+			return false
+		}
+		if album.PosterPath == nil {
+			return true
+		}
+		// Check artist.
+		if album.ParentID == nil {
+			return false
+		}
+		artist, err := s.media.GetItem(ctx, *album.ParentID)
+		if err != nil || artist == nil {
+			return false
+		}
+		return artist.PosterPath == nil
 	}
-	// Check season.
-	season, err := s.media.GetItem(ctx, *item.ParentID)
-	if err != nil || season == nil {
-		return false
-	}
-	if season.PosterPath == nil {
-		return true
-	}
-	// Check show.
-	if season.ParentID == nil {
-		return false
-	}
-	show, err := s.media.GetItem(ctx, *season.ParentID)
-	if err != nil || show == nil {
-		return false
-	}
-	return show.PosterPath == nil
+	return false
 }

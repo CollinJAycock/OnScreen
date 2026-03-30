@@ -45,12 +45,13 @@ type ScanPathsProvider func() []string
 // the artwork manager. Returning nil from agentFn disables enrichment —
 // this lets the TMDB key be set at runtime via server settings without restart.
 type Enricher struct {
-	agentFn    func() metadata.Agent // returns nil when no key is configured
-	tvdbFn     func() TVDBFallback   // returns nil when no key is configured
-	artwork    ArtworkFetcher
-	updater    ItemUpdater
-	scanPaths  ScanPathsProvider
-	logger     *slog.Logger
+	agentFn      func() metadata.Agent      // returns nil when no key is configured
+	tvdbFn       func() TVDBFallback        // returns nil when no key is configured
+	musicAgentFn func() metadata.MusicAgent // returns nil when not configured
+	artwork      ArtworkFetcher
+	updater      ItemUpdater
+	scanPaths    ScanPathsProvider
+	logger       *slog.Logger
 }
 
 // NewEnricher creates an Enricher.
@@ -78,6 +79,12 @@ func (e *Enricher) SetTVDBFallbackFn(fn func() TVDBFallback) {
 	e.tvdbFn = fn
 }
 
+// SetMusicAgentFn sets the lazy factory for the music metadata client.
+// The function is called per enrichment — return nil to skip music enrichment.
+func (e *Enricher) SetMusicAgentFn(fn func() metadata.MusicAgent) {
+	e.musicAgentFn = fn
+}
+
 // Enrich implements MetadataAgent. It's called for newly discovered files.
 // Errors are logged but never propagated — a metadata failure must not abort a scan.
 func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.File) error {
@@ -94,8 +101,14 @@ func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.Fil
 		return e.enrichSeason(ctx, agent, item, file)
 	case "episode":
 		return e.enrichEpisode(ctx, agent, item, file)
+	case "artist", "album", "track":
+		if e.musicAgentFn != nil {
+			if ma := e.musicAgentFn(); ma != nil {
+				return e.enrichMusicItem(ctx, ma, item, file)
+			}
+		}
+		return nil
 	default:
-		// Music, photo enrichment not yet implemented.
 		return nil
 	}
 }
@@ -508,6 +521,146 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 		"season", *season.Index,
 		"episode", *item.Index,
 	)
+	return nil
+}
+
+// enrichMusicItem enriches an artist or album item using a MusicAgent.
+// For artists it fetches an artist photo and biography.
+// For albums it fetches cover art, description, year, and genre.
+// The file path is used to determine the directory for artwork storage.
+func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgent, item *media.Item, file *media.File) error {
+	// Determine the directory where artwork should be stored.
+	// For albums the file sits in the album dir; for artists it's one level up.
+	artDir := ""
+	if file != nil {
+		dir := filepath.Dir(file.FilePath)
+		if item.Type == "artist" {
+			dir = filepath.Dir(dir) // go up past the album dir
+		}
+		artDir = dir
+	}
+
+	switch item.Type {
+	case "track":
+		// Tracks themselves are not enriched; walk up and enrich album then artist.
+		if item.ParentID == nil {
+			return nil
+		}
+		album, err := e.updater.GetItem(ctx, *item.ParentID)
+		if err != nil || album == nil {
+			return nil
+		}
+		albumDir := ""
+		if file != nil {
+			albumDir = filepath.Dir(file.FilePath)
+		}
+		if album.PosterPath == nil {
+			if err := e.enrichAlbum(ctx, agent, album, albumDir); err != nil {
+				e.logger.WarnContext(ctx, "album enrich failed", "album_id", album.ID, "err", err)
+			}
+		}
+		if album.ParentID == nil {
+			return nil
+		}
+		artist, err := e.updater.GetItem(ctx, *album.ParentID)
+		if err != nil || artist == nil {
+			return nil
+		}
+		artistDir := ""
+		if file != nil {
+			artistDir = filepath.Dir(filepath.Dir(file.FilePath))
+		}
+		if artist.PosterPath == nil {
+			if err := e.enrichArtist(ctx, agent, artist, artistDir); err != nil {
+				e.logger.WarnContext(ctx, "artist enrich failed", "artist_id", artist.ID, "err", err)
+			}
+		}
+		return nil
+
+	case "artist":
+		return e.enrichArtist(ctx, agent, item, artDir)
+
+	case "album":
+		return e.enrichAlbum(ctx, agent, item, artDir)
+	}
+	return nil
+}
+
+func (e *Enricher) enrichArtist(ctx context.Context, agent metadata.MusicAgent, item *media.Item, artDir string) error {
+	result, err := agent.SearchArtist(ctx, item.Title)
+	if err != nil {
+		return fmt.Errorf("audiodb search artist %q: %w", item.Title, err)
+	}
+	if result == nil {
+		return nil
+	}
+	p := media.UpdateItemMetadataParams{
+		ID:        item.ID,
+		Title:     item.Title,
+		SortTitle: item.SortTitle,
+	}
+	if result.Biography != "" {
+		p.Summary = &result.Biography
+	}
+	if result.ThumbURL != "" && artDir != "" && e.artwork != nil {
+		if abs, err := e.artwork.DownloadPoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
+			rel := e.relPath(abs)
+			p.PosterPath = &rel
+		}
+	}
+	if result.FanartURL != "" && artDir != "" && e.artwork != nil {
+		if abs, err := e.artwork.DownloadFanart(ctx, item.ID, result.FanartURL, artDir); err == nil {
+			rel := e.relPath(abs)
+			p.FanartPath = &rel
+		}
+	}
+	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
+		return fmt.Errorf("update artist metadata: %w", err)
+	}
+	e.logger.InfoContext(ctx, "artist enriched", "item_id", item.ID, "name", item.Title)
+	return nil
+}
+
+func (e *Enricher) enrichAlbum(ctx context.Context, agent metadata.MusicAgent, item *media.Item, artDir string) error {
+	artistName := ""
+	if item.ParentID != nil {
+		if parent, err := e.updater.GetItem(ctx, *item.ParentID); err == nil {
+			artistName = parent.Title
+		}
+	}
+	result, err := agent.SearchAlbum(ctx, artistName, item.Title)
+	if err != nil {
+		return fmt.Errorf("audiodb search album %q/%q: %w", artistName, item.Title, err)
+	}
+	if result == nil {
+		return nil
+	}
+	p := media.UpdateItemMetadataParams{
+		ID:        item.ID,
+		Title:     item.Title,
+		SortTitle: item.SortTitle,
+		Year:      item.Year,
+		Genres:    item.Genres,
+	}
+	if result.Description != "" {
+		p.Summary = &result.Description
+	}
+	if result.Year > 0 {
+		p.Year = &result.Year
+	}
+	if len(result.Genres) > 0 {
+		p.Genres = result.Genres
+	}
+	if result.ThumbURL != "" && artDir != "" && e.artwork != nil {
+		if abs, err := e.artwork.DownloadPoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
+			rel := e.relPath(abs)
+			p.PosterPath = &rel
+		}
+	}
+	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
+		return fmt.Errorf("update album metadata: %w", err)
+	}
+	e.logger.InfoContext(ctx, "album enriched", "item_id", item.ID, "title", item.Title)
 	return nil
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
 	"github.com/onscreen/onscreen/internal/observability"
@@ -204,6 +205,10 @@ func run() error {
 		}
 		return tvdbCache
 	})
+
+	// Wire TheAudioDB for music enrichment — no API key required.
+	audiodbClient := audiodb.New()
+	metaAgent.SetMusicAgentFn(func() metadata.MusicAgent { return audiodbClient })
 
 	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger)
 	libEnqueuer := &scanEnqueuer{

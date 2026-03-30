@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, transcodeApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, transcodeApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate } from '$lib/api';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -186,6 +186,23 @@
 
   // Music detail state
   let musicChildren: ChildItem[] = []; // albums (for artist) or tracks (for album)
+  let musicScanning = false;
+
+  async function scanMusicLibrary() {
+    if (!item || musicScanning) return;
+    musicScanning = true;
+    try {
+      await libraryApi.scan(item.library_id);
+      // Poll for updated children a few times.
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        await loadMusicDetail();
+        if (musicChildren.length > 0) break;
+      }
+    } catch { /* ignore */ } finally {
+      musicScanning = false;
+    }
+  }
   $: isPhoto = item != null && item.type === 'photo';
 
   // Photo viewer state
@@ -1065,7 +1082,7 @@
     </div>
   {/if}
 
-  <div class="detail-content">
+  <div class="detail-content" class:no-hero={!item.fanart_path}>
     <button class="detail-back" on:click={() => history.back()}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><polyline points="15 18 9 12 15 6"/></svg>
       Back
@@ -1148,6 +1165,18 @@
           <div class="ep-empty">No episodes found.</div>
         {/if}
       </div>
+    {/if}
+
+    <!-- Music scan button -->
+    {#if item.type === 'artist' || item.type === 'album'}
+      <button class="music-scan-btn" class:running={musicScanning} disabled={musicScanning} on:click={scanMusicLibrary}>
+        {#if musicScanning}
+          <span class="spin">⟳</span> Scanning…
+        {:else}
+          <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M8 2.5A5.5 5.5 0 1013.5 8a.75.75 0 011.5 0 7 7 0 11-3.5-6.062V.75a.75.75 0 011.5 0v3a.75.75 0 01-.75.75h-3a.75.75 0 010-1.5h1.335A5.472 5.472 0 008 2.5z" clip-rule="evenodd"/></svg>
+          Scan Library
+        {/if}
+      </button>
     {/if}
 
     <!-- Music: album grid (artist) or track list (album) -->
@@ -1599,6 +1628,9 @@
     padding: 0 2rem 3rem;
     z-index: 1;
   }
+  .detail-content.no-hero {
+    margin-top: 2rem;
+  }
   .detail-back {
     display: inline-flex; align-items: center; gap: 0.35rem;
     background: none; border: none;
@@ -1930,6 +1962,21 @@
   .photo-nav-right { right: 1rem; }
 
   /* ── Music ──────────────────────────────────────────── */
+  .music-scan-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin: 0 1.5rem 1rem;
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px;
+    color: rgba(255,255,255,0.7);
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .music-scan-btn:hover { border-color: rgba(124,106,247,0.5); color: #fff; }
+  .music-scan-btn.running { opacity: 0.6; cursor: not-allowed; }
+  .music-scan-btn:disabled { cursor: not-allowed; }
   .music-album-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

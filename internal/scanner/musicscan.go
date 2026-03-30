@@ -80,6 +80,7 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	}
 
 	// 4. Extract embedded album art if available and poster is missing or stale.
+	// Artist posters come from the metadata enricher (TheAudioDB), not album art.
 	if tags.AlbumArt {
 		s.extractAlbumArt(ctx, album, path, roots)
 	}
@@ -89,11 +90,11 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 
 // extractAlbumArt reads the embedded picture from a music file and writes
 // poster.jpg next to the music file (in the album directory).
-// On success it updates the album item's poster_path.
-func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string, roots []string) {
+// On success it updates the album item's poster_path and returns the relative path.
+func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string, roots []string) string {
 	artData, err := readEmbeddedArtwork(filePath)
 	if err != nil || len(artData) == 0 {
-		return
+		return ""
 	}
 
 	// Store poster.jpg in the same directory as the music file.
@@ -119,7 +120,7 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 		if album.PosterPath == nil || *album.PosterPath != relPath {
 			s.updateAlbumPoster(ctx, album, relPath)
 		}
-		return
+		return relPath
 	}
 
 	// The embedded art may be PNG or JPEG. We always write JPEG for consistency.
@@ -140,10 +141,11 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
 		s.logger.WarnContext(ctx, "failed to write album art",
 			"album_id", album.ID, "err", err)
-		return
+		return ""
 	}
 
 	s.updateAlbumPoster(ctx, album, relPath)
+	return relPath
 }
 
 // updateAlbumPoster sets the album's poster_path in the database.
