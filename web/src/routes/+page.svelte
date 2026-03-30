@@ -228,7 +228,7 @@
 {/if}
 
 <style>
-  .page { padding: 2.5rem 2.5rem 4rem; max-width: 1200px; }
+  .page { padding: 2.5rem 2.5rem 4rem; max-width: 1200px; --card-w: clamp(120px, 14vw, 160px); }
 
   .banner-error {
     background: rgba(248,113,113,0.1);
@@ -261,7 +261,7 @@
   .hub-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
   .hub-card {
-    flex: 0 0 140px;
+    flex: 0 0 var(--card-w);
     text-decoration: none;
     color: inherit;
     transition: transform 0.15s, box-shadow 0.15s;
@@ -271,14 +271,14 @@
   }
   .hub-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
   .hub-card img {
-    width: 140px;
-    height: 210px;
+    width: var(--card-w);
+    height: calc(var(--card-w) * 1.5);
     object-fit: cover;
     display: block;
   }
   .hub-poster-blank {
-    width: 140px;
-    height: 210px;
+    width: var(--card-w);
+    height: calc(var(--card-w) * 1.5);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -312,8 +312,8 @@
   }
 
   .hub-card.skeleton {
-    width: 140px;
-    height: 250px;
+    width: var(--card-w);
+    height: calc(var(--card-w) * 1.5 + 40px);
     background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
@@ -490,17 +490,9 @@
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
-    .page { padding: 1.25rem 1rem 5rem; }
+    .page { padding: 1.25rem 1rem 5rem; --card-w: clamp(100px, 28vw, 130px); }
 
-    .hub-card { flex: 0 0 120px; }
-    .hub-card img { width: 120px; height: 180px; }
-    .hub-poster-blank { width: 120px; height: 180px; }
-    .hub-card.skeleton { width: 120px; height: 215px; }
-
-    .grid {
-      grid-template-columns: 1fr;
-    }
-
+    .grid { grid-template-columns: 1fr; }
     .lib-tile { min-height: 120px; padding: 1rem 1.1rem; }
     .tile-actions { opacity: 1; }
   }
