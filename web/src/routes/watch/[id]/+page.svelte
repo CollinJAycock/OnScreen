@@ -120,6 +120,9 @@
   // True while an HLS session is active. Needed to distinguish HLS-at-offset-0
   // from direct play (both have hlsOffsetSec === 0).
   let hlsActive = false;
+  // True when the current HLS session is a remux (video copy). Used to detect
+  // when the browser can't decode the remuxed video and escalate to full transcode.
+  let hlsIsRemux = false;
 
   // Reactive: available quality options filtered to source resolution
   $: sourceHeight = item?.files?.[0]?.resolution_h ?? 0;
@@ -468,17 +471,18 @@
       const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy);
       transcodeSessionId = sess.session_id;
       transcodeToken = sess.token;
-      attachHls(sess.playlist_url, posMs / 1000, wasPlaying);
+      attachHls(sess.playlist_url, posMs / 1000, wasPlaying, videoCopy);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Transcode failed';
     }
   }
 
-  function attachHls(playlistUrl: string, startSec: number, autoPlay: boolean) {
+  function attachHls(playlistUrl: string, startSec: number, autoPlay: boolean, isRemux: boolean = false) {
     // The HLS stream begins at t=0 representing content position startSec.
     // We track the offset ourselves; do NOT seek inside the stream.
     hlsOffsetSec = startSec;
     hlsActive = true;
+    hlsIsRemux = isRemux;
 
     // Use file-level duration (from ffprobe) first, then fall back to item-level.
     const file = item?.files?.[0];
@@ -540,6 +544,7 @@
     }
     hlsActive = false;
     hlsOffsetSec = 0;
+    hlsIsRemux = false;
   }
 
   async function stopTranscodeSession() {
@@ -558,26 +563,28 @@
   let buffering = false;
 
   function onVideoLoaded() {
+    // If the browser received video segments but videoWidth is 0, it can't decode
+    // the video codec (e.g. Hi10P H.264, HEVC in remux). Escalate to full transcode.
+    if (videoEl.videoWidth === 0 && item?.files?.[0]) {
+      const file = item.files[0];
+      const posMs = hlsActive
+        ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
+        : (item.view_offset_ms > 0 ? item.view_offset_ms : 0);
+      if (!hlsActive && canRemuxVideo(file)) {
+        // Direct play failed — try remux first.
+        switchToTranscode(0, posMs, true);
+      } else {
+        // Remux also failed (hlsIsRemux) or no remux option — full transcode.
+        const h = file.resolution_h ?? 1080;
+        switchToTranscode(h, posMs);
+      }
+      return;
+    }
+
     if (!hlsActive) {
       if (isFinite(videoEl.duration) && videoEl.duration > 0) {
         duration = videoEl.duration;
       }
-
-      // If the browser can decode audio but not the video track (e.g. Hi10P H.264,
-      // HEVC, or an unrecognised codec stored as null in the DB), videoWidth is 0
-      // after metadata loads. Fall back to the remux/transcode path automatically.
-      if (videoEl.videoWidth === 0 && item?.files?.[0]) {
-        const file = item.files[0];
-        const posMs = item.view_offset_ms > 0 ? item.view_offset_ms : 0;
-        if (canRemuxVideo(file)) {
-          switchToTranscode(0, posMs, true);
-        } else {
-          const h = file.resolution_h ?? 1080;
-          switchToTranscode(h, posMs);
-        }
-        return;
-      }
-
       // Resume from last saved position.
       if (!skipAutoSeek && item && item.view_offset_ms > 0) {
         const offsetSec = item.view_offset_ms / 1000;
