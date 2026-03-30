@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { analyticsApi, sessionsApi, type AnalyticsData, type DayCount, type DayBytes, type ActiveSession } from '$lib/api';
+  import { api, analyticsApi, sessionsApi, type AnalyticsData, type DayCount, type DayBytes, type ActiveSession } from '$lib/api';
 
   let data: AnalyticsData | null = null;
   let loading = true;
@@ -31,7 +31,9 @@
   }
 
   onMount(() => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const user = api.getUser();
+    if (!user) { goto('/login'); return; }
+    if (!user.is_admin) { goto('/'); return; }
     ready = true;
     refresh();
     refreshSessions();

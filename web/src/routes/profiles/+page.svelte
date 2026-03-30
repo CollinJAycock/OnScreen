@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { profileApi, type ManagedProfile } from '$lib/api';
+  import { api, profileApi, type ManagedProfile } from '$lib/api';
 
   let profiles: ManagedProfile[] = [];
   let loading = true;
@@ -20,7 +20,9 @@
   const avatars = ['#7c6af7', '#f7836a', '#6af7a7', '#f7d76a', '#6ac5f7', '#f76adb'];
 
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const user = api.getUser();
+    if (!user) { goto('/login'); return; }
+    if (!user.is_admin) { goto('/'); return; }
     await load();
   });
 

@@ -166,12 +166,14 @@
           </svg>
           Search
         </a>
-        <a href="/analytics" class="nav-link" class:active={path.startsWith('/analytics')}>
-          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-            <path d="M15.5 2A1.5 1.5 0 0014 3.5v13a1.5 1.5 0 003 0v-13A1.5 1.5 0 0015.5 2zM9.5 6A1.5 1.5 0 008 7.5v9a1.5 1.5 0 003 0v-9A1.5 1.5 0 009.5 6zM3.5 10A1.5 1.5 0 002 11.5v5a1.5 1.5 0 003 0v-5A1.5 1.5 0 003.5 10z"/>
-          </svg>
-          Analytics
-        </a>
+        {#if isAdmin}
+          <a href="/analytics" class="nav-link" class:active={path.startsWith('/analytics')}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path d="M15.5 2A1.5 1.5 0 0014 3.5v13a1.5 1.5 0 003 0v-13A1.5 1.5 0 0015.5 2zM9.5 6A1.5 1.5 0 008 7.5v9a1.5 1.5 0 003 0v-9A1.5 1.5 0 009.5 6zM3.5 10A1.5 1.5 0 002 11.5v5a1.5 1.5 0 003 0v-5A1.5 1.5 0 003.5 10z"/>
+            </svg>
+            Analytics
+          </a>
+        {/if}
         <a href="/collections" class="nav-link" class:active={path.startsWith('/collections')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z"/>
@@ -184,12 +186,14 @@
           </svg>
           History
         </a>
-        <a href="/profiles" class="nav-link" class:active={path.startsWith('/profiles')}>
-          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-            <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM14.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.569-1.175 6.002 6.002 0 0111.908 0c.058.467-.172.92-.57 1.174A9.953 9.953 0 017 18a9.953 9.953 0 01-5.385-1.572zM14.5 16h-.106c.07-.297.088-.611.048-.933a7.47 7.47 0 00-1.588-3.755 4.502 4.502 0 015.874 2.636.818.818 0 01-.36.98A7.465 7.465 0 0114.5 16z"/>
-          </svg>
-          Profiles
-        </a>
+        {#if isAdmin}
+          <a href="/profiles" class="nav-link" class:active={path.startsWith('/profiles')}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM14.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.569-1.175 6.002 6.002 0 0111.908 0c.058.467-.172.92-.57 1.174A9.953 9.953 0 017 18a9.953 9.953 0 01-5.385-1.572zM14.5 16h-.106c.07-.297.088-.611.048-.933a7.47 7.47 0 00-1.588-3.755 4.502 4.502 0 015.874 2.636.818.818 0 01-.36.98A7.465 7.465 0 0114.5 16z"/>
+            </svg>
+            Profiles
+          </a>
+        {/if}
         {#if isAdmin}
           <a href="/settings" class="nav-link" class:active={path.startsWith('/settings')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
