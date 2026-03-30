@@ -211,7 +211,14 @@ loop:
 			}
 			break loop
 		case <-t.C:
-			if err := w.store.SetHeartbeat(context.Background(), job.SessionID); err != nil {
+			bg := context.Background()
+			// If the session no longer exists in Valkey (client stopped it), kill FFmpeg.
+			if _, err := w.store.Get(bg, job.SessionID); err != nil {
+				w.logger.Info("session deleted — killing ffmpeg", "session_id", job.SessionID)
+				_ = cmd.Process.Kill()
+				break loop
+			}
+			if err := w.store.SetHeartbeat(bg, job.SessionID); err != nil {
 				w.logger.Warn("heartbeat write failed",
 					"session_id", job.SessionID, "err", err)
 			}
