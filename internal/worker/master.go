@@ -20,16 +20,24 @@ const (
 // maintenance, periodic library scans). Any instance can become master if
 // the current master disappears (TTL expires on crash/restart).
 type MasterLock struct {
-	v      *valkey.Client
-	id     string // unique per-process ID
-	logger *slog.Logger
-	held   atomic.Bool
+	v               *valkey.Client
+	id              string // unique per-process ID
+	logger          *slog.Logger
+	held            atomic.Bool
+	refreshInterval time.Duration // how often Run ticks; overridden in tests
+	checkInterval   time.Duration // how often RunIfMaster checks; overridden in tests
 }
 
 // NewMasterLock creates a MasterLock. instanceID must be unique per process
 // (e.g. a UUID generated at startup).
 func NewMasterLock(v *valkey.Client, instanceID string, logger *slog.Logger) *MasterLock {
-	return &MasterLock{v: v, id: instanceID, logger: logger}
+	return &MasterLock{
+		v:               v,
+		id:              instanceID,
+		logger:          logger,
+		refreshInterval: masterRefresh,
+		checkInterval:   2 * time.Second,
+	}
 }
 
 // IsMaster reports whether this instance currently holds the master lock.
@@ -42,7 +50,7 @@ func (m *MasterLock) IsMaster() bool { return m.held.Load() }
 func (m *MasterLock) Run(ctx context.Context) {
 	m.tryAcquire(ctx)
 
-	ticker := time.NewTicker(masterRefresh)
+	ticker := time.NewTicker(m.refreshInterval)
 	defer ticker.Stop()
 
 	for {
@@ -75,7 +83,7 @@ func (m *MasterLock) RunIfMaster(ctx context.Context, fn func(context.Context)) 
 		running bool
 	)
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(m.checkInterval)
 	defer ticker.Stop()
 
 	for {
