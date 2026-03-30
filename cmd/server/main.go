@@ -276,7 +276,7 @@ func run() error {
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
-	streamTracker := streaming.NewTracker()
+	streamTracker := streaming.NewValkeyTracker(valkeyClient)
 	analyticsHandler := v1.NewAnalyticsHandler(gen.New(roPool), logger)
 	hubHandler := v1.NewHubHandler(gen.New(roPool), logger)
 	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger)
@@ -425,6 +425,10 @@ func run() error {
 	partitionWorker := worker.NewPartitionWorker(rwPool, cfg.RetainMonths, logger)
 	hubRefreshWorker := worker.NewHubRefreshWorker(rwPool, 5*time.Minute, logger)
 	periodicScanWorker := newPeriodicScanWorker(libSvc, libEnqueuer, logger)
+	// masterLock ensures only one instance runs singleton workers (hub refresh,
+	// partition maintenance, periodic scans). Any instance can take over if the
+	// current master crashes — the lock TTL (15 s) bounds the failover window.
+	masterLock := worker.NewMasterLock(valkeyClient, uuid.New().String(), logger)
 
 	// ── Servers ───────────────────────────────────────────────────────────────
 	apiServer := &http.Server{
@@ -461,17 +465,22 @@ func run() error {
 	})
 
 	g.Go(func() error {
-		partitionWorker.Run(gCtx)
+		masterLock.Run(gCtx)
 		return nil
 	})
 
 	g.Go(func() error {
-		hubRefreshWorker.Run(gCtx)
+		masterLock.RunIfMaster(gCtx, partitionWorker.Run)
 		return nil
 	})
 
 	g.Go(func() error {
-		periodicScanWorker.Run(gCtx)
+		masterLock.RunIfMaster(gCtx, hubRefreshWorker.Run)
+		return nil
+	})
+
+	g.Go(func() error {
+		masterLock.RunIfMaster(gCtx, periodicScanWorker.Run)
 		return nil
 	})
 

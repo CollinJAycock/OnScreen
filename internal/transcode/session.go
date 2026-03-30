@@ -195,6 +195,31 @@ func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uu
 	return nil
 }
 
+// SetWorkerInfo stamps the session with the worker ID and address that claimed
+// the job. The API uses WorkerAddr to proxy segment requests to the correct
+// worker in multi-instance deployments.
+func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, workerAddr string) error {
+	raw, err := s.v.Get(ctx, sessionKey(sessionID))
+	if err != nil {
+		return fmt.Errorf("get session for worker stamp: %w", err)
+	}
+	var sess Session
+	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		return fmt.Errorf("unmarshal session: %w", err)
+	}
+	sess.WorkerID = workerID
+	sess.WorkerAddr = workerAddr
+	b, err := json.Marshal(sess)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+	ttl := s.v.Raw().TTL(ctx, sessionKey(sessionID)).Val()
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	return s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
+}
+
 // SetHeartbeat writes/refreshes the session heartbeat key (2s TTL reset to 10s).
 // Called by the worker every 2 seconds while an FFmpeg process is active.
 func (s *SessionStore) SetHeartbeat(ctx context.Context, id string) error {

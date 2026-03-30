@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -23,6 +24,17 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
+
+// workerClient is shared across all segment/playlist proxy requests to the
+// worker's local segment HTTP server. Connection pooling avoids per-request
+// TCP handshakes on the internal network.
+var workerClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
 
 // NativeTranscodeMediaService defines the media operations needed by the native transcode handler.
 type NativeTranscodeMediaService interface {
@@ -277,20 +289,19 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	}
 
 	// Sanitize sessionID to prevent path traversal.
-	sessDir := transcode.SessionDir(filepath.Base(sessionID))
-	playlistPath := filepath.Join(sessDir, "index.m3u8")
+	sessID := filepath.Base(sessionID)
+	sessDir := transcode.SessionDir(sessID)
 
-	// Wait up to 10s for FFmpeg to produce at least 2 segments before serving
-	// the initial playlist. One segment = 4 s of content; HLS.js polls the playlist
-	// every targetDuration (4 s), so a single-segment playlist causes HLS.js to
-	// exhaust its buffer exactly at the first poll boundary, producing a visible stall.
-	// At remux speed (≥20× real-time) the second segment appears within ~0.4 s, so
-	// this adds negligible startup latency. On subsequent polls (playlist already
-	// served) we return immediately without waiting.
-	seg1Path := filepath.Join(sessDir, "seg00001.ts")
+	// Resolve the worker address for this session. Once the worker claims the
+	// job it stamps WorkerAddr on the session; we use it to proxy requests in
+	// multi-instance deployments. In single-instance mode WorkerAddr is still
+	// set (to the embedded worker's loopback address), so proxying is used
+	// universally and local-disk fallback is only a last resort.
+	var workerAddr string
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(seg1Path); err == nil {
+		if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.WorkerAddr != "" {
+			workerAddr = sess.WorkerAddr
 			break
 		}
 		select {
@@ -301,7 +312,22 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	data, err := os.ReadFile(playlistPath)
+	// Wait for at least 2 segments before serving the initial playlist so
+	// HLS.js has enough buffer to survive its first playlist-poll interval (4 s).
+	const seg1Name = "seg00001.ts"
+	for time.Now().Before(deadline) {
+		if workerReady(ctx, workerAddr, sessID, seg1Name, filepath.Join(sessDir, seg1Name)) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	data, err := fetchFromWorker(ctx, workerAddr, sessID, "index.m3u8", filepath.Join(sessDir, "index.m3u8"))
 	if err != nil {
 		http.Error(w, "playlist not ready", http.StatusServiceUnavailable)
 		return
@@ -332,9 +358,84 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	sessDir := transcode.SessionDir(filepath.Base(sessionID))
-	segPath := filepath.Join(sessDir, segName)
-	http.ServeFile(w, r, segPath)
+	sessID := filepath.Base(sessionID)
+	sessDir := transcode.SessionDir(sessID)
+	localPath := filepath.Join(sessDir, segName)
+
+	// Look up the worker that owns this session and proxy to its segment server.
+	var workerAddr string
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
+		workerAddr = sess.WorkerAddr
+	}
+
+	if workerAddr != "" {
+		proxyWorkerFile(w, r, workerAddr, sessID, segName)
+		return
+	}
+	// Fallback: local disk (worker not yet stamped or same-machine embedded worker).
+	http.ServeFile(w, r, localPath)
+}
+
+// workerReady returns true if the named file is available — either via a HEAD
+// request to the worker's segment server or by stat-ing the local path.
+func workerReady(ctx context.Context, workerAddr, sessID, name, localPath string) bool {
+	if workerAddr != "" {
+		url := fmt.Sprintf("http://%s/segments/%s/%s", workerAddr, sessID, name)
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := workerClient.Do(req)
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}
+	_, err := os.Stat(localPath)
+	return err == nil
+}
+
+// fetchFromWorker retrieves file content from the worker's segment server or
+// falls back to reading from the local filesystem.
+func fetchFromWorker(ctx context.Context, workerAddr, sessID, name, localPath string) ([]byte, error) {
+	if workerAddr != "" {
+		url := fmt.Sprintf("http://%s/segments/%s/%s", workerAddr, sessID, name)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := workerClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		return io.ReadAll(resp.Body)
+	}
+	return os.ReadFile(localPath)
+}
+
+// proxyWorkerFile streams a file from the worker's segment HTTP server to the
+// client. Used for segment (.ts) requests in multi-instance deployments.
+func proxyWorkerFile(w http.ResponseWriter, r *http.Request, workerAddr, sessID, name string) {
+	url := fmt.Sprintf("http://%s/segments/%s/%s", workerAddr, sessID, name)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+	resp, err := workerClient.Do(req)
+	if err != nil {
+		http.Error(w, "segment unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "segment not found", resp.StatusCode)
+		return
+	}
+	w.Header().Set("Content-Type", "video/MP2T")
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // sanitizePathComponent strips directory traversal from a path component.

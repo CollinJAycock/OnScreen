@@ -181,6 +181,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 
+	// Stamp the session with this worker's address so the API can proxy
+	// segment and playlist requests to us in multi-instance deployments.
+	if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr); err != nil {
+		w.logger.Warn("set worker info on session", "session_id", job.SessionID, "err", err)
+	}
+
 	// Track PID for kill on session stop.
 	w.mu.Lock()
 	w.activeJobs[job.SessionID] = cmd.Process
