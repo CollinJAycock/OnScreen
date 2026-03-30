@@ -228,7 +228,7 @@
 {/if}
 
 <style>
-  .page { padding: 2.5rem 2.5rem 4rem; max-width: 1200px; }
+  .page { padding: 2.5rem 2.5rem 4rem; }
 
   .banner-error {
     background: rgba(248,113,113,0.1);
@@ -261,7 +261,7 @@
   .hub-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
   .hub-card {
-    --card-w: clamp(120px, 11vw, 200px);
+    --card-w: clamp(120px, 10vw, 220px);
     flex: 0 0 var(--card-w);
     text-decoration: none;
     color: inherit;
