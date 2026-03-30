@@ -482,7 +482,16 @@
     if (fileDurMs) duration = fileDurMs / 1000;
 
     if (Hls.isSupported()) {
-      hlsInstance = new Hls();
+      hlsInstance = new Hls({
+        // Buffer up to 60 s ahead (default 30 s) to reduce mid-playback stalls.
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        // Start fetching the next segment before the current one finishes.
+        startFragPrefetch: true,
+        // Lower stall threshold so recovery kicks in faster.
+        highBufferWatchdogPeriod: 3,
+        lowBufferWatchdogPeriod: 1,
+      });
       hlsInstance.loadSource(playlistUrl);
       hlsInstance.attachMedia(videoEl);
       hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {

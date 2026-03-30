@@ -145,14 +145,21 @@ func BuildHLS(a BuildArgs) []string {
 	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d.ts")
 	playlistPath := filepath.Join(a.SessionDir, "index.m3u8")
 
+	hlsFlags := "independent_segments"
+	if !videoCopy {
+		// Only delete old segments during a full re-encode (saves disk space).
+		// For video-copy (remux) we keep all segments so backward seeks never
+		// try to fetch a deleted segment and cause a rebuffer stall.
+		hlsFlags += "+delete_segments"
+	}
 	args = append(args,
 		"-f", "hls",
 		"-hls_time", fmt.Sprint(SegmentDuration),
-		"-hls_list_size", "0",     // keep all segments in playlist
+		"-hls_list_size", "0", // keep all segments in playlist
 		"-hls_segment_type", "mpegts",
-		"-hls_flags", "independent_segments+delete_segments",
+		"-hls_flags", hlsFlags,
 		"-hls_segment_filename", segPattern,
-		"-hls_delete_threshold", "5", // keep last 5 segments on disk
+		"-hls_delete_threshold", "30", // keep last 2 minutes on disk during re-encode
 		playlistPath,
 	)
 
