@@ -8,6 +8,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -244,6 +245,51 @@ func parseFrameRate(s string) float64 {
 func parseTimeToMS(s string) int64 {
 	f, _ := strconv.ParseFloat(s, 64)
 	return int64(f * 1000)
+}
+
+// IsFaststart reports whether an MP4/MOV file has its moov atom before mdat
+// (i.e. is "faststart"). Non-faststart files require the browser to fetch the
+// end of the file before playback can begin, causing silence and buffering.
+// Returns true for any file format that isn't MP4/MOV (no concern there).
+func IsFaststart(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".mp4" && ext != ".mov" && ext != ".m4v" && ext != ".m4a" {
+		return true // not an ISOBMFF container — not applicable
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return true // assume ok if we can't read
+	}
+	defer f.Close()
+
+	// Walk the top-level atoms looking for moov before mdat.
+	buf := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(f, buf); err != nil {
+			break
+		}
+		size := int64(buf[0])<<24 | int64(buf[1])<<16 | int64(buf[2])<<8 | int64(buf[3])
+		atom := string(buf[4:8])
+		if atom == "moov" {
+			return true // moov before mdat → faststart
+		}
+		if atom == "mdat" {
+			return false // mdat before moov → not faststart
+		}
+		// Skip past this atom's body. size includes the 8-byte header.
+		// size == 0 means "extends to EOF"; size == 1 means 64-bit extended size.
+		// Both are rare in practice; treat as non-faststart to be safe.
+		if size == 0 || size == 1 {
+			return false
+		}
+		body := size - 8
+		if body > 0 {
+			if _, err := f.Seek(body, io.SeekCurrent); err != nil {
+				break
+			}
+		}
+	}
+	return true // couldn't determine — assume ok
 }
 
 // ProbeImage extracts dimensions from an image file using Go's image package.

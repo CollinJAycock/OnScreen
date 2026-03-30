@@ -20,6 +20,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 )
 
@@ -117,6 +118,7 @@ type ItemFileResponse struct {
 	Bitrate         *int64               `json:"bitrate,omitempty"`
 	HDRType         *string              `json:"hdr_type,omitempty"`
 	DurationMS      *int64               `json:"duration_ms,omitempty"`
+	Faststart       bool                 `json:"faststart"`
 	AudioStreams    []AudioStreamJSON    `json:"audio_streams"`
 	SubtitleStreams []SubtitleStreamJSON `json:"subtitle_streams"`
 }
@@ -235,6 +237,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Bitrate:         f.Bitrate,
 			HDRType:         f.HDRType,
 			DurationMS:      f.DurationMS,
+			Faststart:       scanner.IsFaststart(f.FilePath),
 			AudioStreams:    parseJSONBAudioStreams(f.AudioStreams),
 			SubtitleStreams: parseJSONBSubtitleStreams(f.SubtitleStreams),
 		})

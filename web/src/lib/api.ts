@@ -361,6 +361,7 @@ export interface ItemFile {
   bitrate?: number;
   hdr_type?: string;
   duration_ms?: number;
+  faststart: boolean;
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
 }

@@ -87,7 +87,7 @@
   // Video codecs browsers can decode natively (H.264 universally, VP8/VP9 most browsers).
   const browserVideoCodecs = new Set(['h264', 'vp8', 'vp9', 'av1']);
 
-  /** True when the browser can play this file directly — compatible container + codecs. */
+  /** True when the browser can play this file directly — compatible container + codecs + faststart. */
   function canDirectPlay(file: ItemFile | undefined): boolean {
     if (!file) return false;
     const container = (file.container ?? '').toLowerCase();
@@ -96,6 +96,10 @@
     if (!browserContainers.has(container)) return false;
     if (videoCodec && !browserVideoCodecs.has(videoCodec)) return false;
     if (audioCodec && !browserAudioCodecs.has(audioCodec)) return false;
+    // Non-faststart MP4/MOV files have moov at the end — the browser must
+    // fetch the tail of the file before playback can begin, causing silence
+    // and buffering. Route these through the remux path instead.
+    if (!file.faststart) return false;
     return true;
   }
 
