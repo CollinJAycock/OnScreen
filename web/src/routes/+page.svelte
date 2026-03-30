@@ -228,7 +228,7 @@
 {/if}
 
 <style>
-  .page { padding: 2.5rem 2.5rem 4rem; max-width: 1200px; --card-w: clamp(120px, 14vw, 160px); }
+  .page { padding: 2.5rem 2.5rem 4rem; max-width: 1200px; }
 
   .banner-error {
     background: rgba(248,113,113,0.1);
@@ -261,6 +261,7 @@
   .hub-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
   .hub-card {
+    --card-w: clamp(120px, 11vw, 200px);
     flex: 0 0 var(--card-w);
     text-decoration: none;
     color: inherit;
@@ -490,7 +491,8 @@
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
-    .page { padding: 1.25rem 1rem 5rem; --card-w: clamp(100px, 28vw, 130px); }
+    .page { padding: 1.25rem 1rem 5rem; }
+    .hub-card { --card-w: clamp(90px, 26vw, 130px); }
 
     .grid { grid-template-columns: 1fr; }
     .lib-tile { min-height: 120px; padding: 1rem 1.1rem; }
