@@ -435,6 +435,15 @@ SET container        = $2,
     scanned_at       = NOW()
 WHERE id = $1;
 
+-- name: ListActiveFilesForLibrary :many
+SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
+       mf.audio_codec, mf.resolution_w, mf.resolution_h, mf.bitrate, mf.hdr_type, mf.frame_rate,
+       mf.audio_streams, mf.subtitle_streams, mf.chapters, mf.file_hash,
+       mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+WHERE mi.library_id = $1 AND mf.status = 'active';
+
 -- name: ListMissingFilesOlderThan :many
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
