@@ -223,6 +223,9 @@ func (m *mockQuerier) CountMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ 
 func (m *mockQuerier) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]File, error) {
+	return nil, nil
+}
 
 func newService(t *testing.T) (*Service, *mockQuerier) {
 	t.Helper()

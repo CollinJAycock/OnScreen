@@ -108,6 +108,9 @@ func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error    
 func (m *mockMediaService) GetFiles(_ context.Context, _ uuid.UUID) ([]media.File, error) {
 	return nil, nil
 }
+func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]media.File, error) {
+	return nil, nil
+}
 
 func newTestScanner(svc *mockMediaService) *Scanner {
 	return New(svc, nil, nil, slog.Default())
