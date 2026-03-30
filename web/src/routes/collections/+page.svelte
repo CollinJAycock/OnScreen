@@ -37,6 +37,7 @@
   }
 
   async function deleteCollection(id: string) {
+    if (!confirm('Delete this collection? This cannot be undone.')) return;
     try {
       await collectionApi.delete(id);
       collections = collections.filter(c => c.id !== id);

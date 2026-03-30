@@ -104,6 +104,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate resolution: must be non-negative and within server caps.
+	if body.Height < 0 {
+		respond.BadRequest(w, r, "height must be non-negative")
+		return
+	}
+	if body.Height > h.cfg.TranscodeMaxHeight {
+		respond.BadRequest(w, r, fmt.Sprintf("height exceeds server maximum of %d", h.cfg.TranscodeMaxHeight))
+		return
+	}
+
 	// Select the file to transcode.
 	var file *media.File
 	if body.FileID != nil && *body.FileID != "" {

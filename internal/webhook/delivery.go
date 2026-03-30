@@ -10,11 +10,40 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
+
+// SafeTransport returns an *http.Transport that rejects connections to private,
+// loopback, and link-local IP addresses at dial time. This prevents DNS rebinding
+// attacks where a hostname resolves to a public IP at validation time but is
+// re-pointed to an internal IP before the actual HTTP request is made.
+func SafeTransport() *http.Transport {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("split host port: %w", err)
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s: %w", host, err)
+			}
+			for _, ip := range ips {
+				if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
+					return nil, fmt.Errorf("webhook target %s resolves to private address %s", host, ip.IP)
+				}
+			}
+			// All IPs are public — dial the original address.
+			return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
+		},
+	}
+}
 
 // Deliver POSTs body to ep.Url with optional HMAC-SHA256 signing.
 // If the endpoint has an encrypted secret, it is decrypted and used to sign

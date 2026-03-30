@@ -56,6 +56,7 @@
   }
 
   async function deleteProfile(id: string) {
+    if (!confirm('Delete this profile? Watch history and progress will be lost.')) return;
     try {
       await profileApi.delete(id);
       profiles = profiles.filter(p => p.id !== id);

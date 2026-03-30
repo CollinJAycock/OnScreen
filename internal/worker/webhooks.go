@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,6 +49,7 @@ type WebhookDispatcher struct {
 	client *http.Client
 	logger *slog.Logger
 	sem    chan struct{} // concurrency limiter for delivery goroutines
+	wg     sync.WaitGroup
 }
 
 // NewWebhookDispatcher creates a WebhookDispatcher.
@@ -63,7 +65,7 @@ func NewWebhookDispatcher(
 		media:  media,
 		enc:    enc,
 		server: server,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{Timeout: 10 * time.Second, Transport: webhook.SafeTransport()},
 		logger: logger,
 		sem:    make(chan struct{}, maxConcurrentDeliveries),
 	}
@@ -95,13 +97,21 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 			}
 			ep := ep // capture loop var
 			// Acquire semaphore slot — blocks if maxConcurrentDeliveries are in-flight.
+			d.wg.Add(1)
 			d.sem <- struct{}{}
 			go func() {
+				defer d.wg.Done()
 				defer func() { <-d.sem }()
 				d.deliverWithRetry(ep, body)
 			}()
 		}
 	}()
+}
+
+// Close blocks until all in-flight webhook deliveries have completed.
+// Call during graceful shutdown to avoid losing webhook events.
+func (d *WebhookDispatcher) Close() {
+	d.wg.Wait()
 }
 
 // WebhookPayload is the webhook payload sent to external endpoints (Overseerr, Tautulli, etc.).
