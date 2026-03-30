@@ -395,7 +395,12 @@
     const file = item.files[0];
     // Signal intent to auto-play so controls don't flash a paused state.
     paused = false;
-    if (canDirectPlay(file)) {
+    if (!file.video_codec) {
+      // Audio-only file (FLAC, MP3, AAC, Opus) — browser <video> element can play
+      // these natively from the raw stream without any transcoding.
+      videoEl.src = file.stream_url;
+      videoEl.load();
+    } else if (canDirectPlay(file)) {
       // Direct play — browser handles container + codecs natively.
       videoEl.src = file.stream_url;
       videoEl.load();
@@ -570,7 +575,8 @@
   function onVideoLoaded() {
     // If the browser received video segments but videoWidth is 0, it can't decode
     // the video codec (e.g. Hi10P H.264, HEVC in remux). Escalate to full transcode.
-    if (videoEl.videoWidth === 0 && item?.files?.[0]) {
+    // Skip this check for audio-only files — they legitimately have no video track.
+    if (videoEl.videoWidth === 0 && item?.files?.[0] && item.files[0].video_codec) {
       const file = item.files[0];
       const posMs = hlsActive
         ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
