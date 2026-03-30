@@ -55,6 +55,7 @@ type MediaService interface {
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
+	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
 }
 
 // ConcurrencyProvider lets the scanner read current concurrency limits from
@@ -122,6 +123,11 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 				return nil
 			}
 			if !isMediaFile(path) {
+				return nil
+			}
+			// Image files are only valid in photo libraries; skip them elsewhere
+			// to avoid treating downloaded artwork (poster.jpg, fanart.jpg) as items.
+			if isImageFile(path) && libraryType != "photo" {
 				return nil
 			}
 			if !s.isAllowedPath(path, paths) {
@@ -207,6 +213,11 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 	// network phase (TMDB search + artwork download) so the scan "completes"
 	// promptly even when metadata fetching is slow.
 	wg.Wait()
+
+	// Post-scan stale-file detection: any file the DB thinks is active but
+	// wasn't encountered on disk (e.g. after a scan-path change) gets marked
+	// missing so the frontend stops serving broken stream URLs.
+	s.markOrphanedFiles(ctx, libraryID, filePaths)
 
 	if s.agent != nil && len(enrichQueue) > 0 {
 		enrichConc := fileConcurrency
@@ -659,4 +670,32 @@ func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool 
 		return artist.PosterPath == nil
 	}
 	return false
+}
+
+// markOrphanedFiles marks any DB-active files for this library that were not
+// seen during the current scan pass as missing. This handles scan-path changes
+// where old file records would otherwise remain "active" with broken paths.
+func (s *Scanner) markOrphanedFiles(ctx context.Context, libraryID uuid.UUID, seenPaths []string) {
+	seen := make(map[string]struct{}, len(seenPaths))
+	for _, p := range seenPaths {
+		seen[p] = struct{}{}
+	}
+
+	active, err := s.media.ListActiveFilesForLibrary(ctx, libraryID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "list active files for orphan check failed",
+			"library_id", libraryID, "err", err)
+		return
+	}
+	for _, f := range active {
+		if _, ok := seen[f.FilePath]; !ok {
+			if err := s.media.MarkMissing(ctx, f.ID); err != nil {
+				s.logger.WarnContext(ctx, "mark orphaned file missing",
+					"file_id", f.ID, "path", f.FilePath, "err", err)
+			} else {
+				s.logger.InfoContext(ctx, "marked orphaned file missing",
+					"file_id", f.ID, "path", f.FilePath)
+			}
+		}
+	}
 }

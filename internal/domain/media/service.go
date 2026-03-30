@@ -120,6 +120,7 @@ type Querier interface {
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
 	ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]File, error)
+	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error)
 }
 
 // CreateItemParams holds the input for creating a media item.
@@ -370,6 +371,12 @@ func (s *Service) MarkMissing(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("mark missing %s: %w", id, err)
 	}
 	return nil
+}
+
+// ListActiveFilesForLibrary returns all active files whose parent item belongs
+// to the given library. Used by the scanner to detect orphaned file records.
+func (s *Service) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error) {
+	return s.rw.ListActiveFilesForLibrary(ctx, libraryID)
 }
 
 // PromoteExpiredMissing finds files that have been missing longer than the

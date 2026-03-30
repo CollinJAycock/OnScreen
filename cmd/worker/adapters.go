@@ -523,6 +523,18 @@ func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before tim
 	return out, nil
 }
 
+func (a *mediaAdapter) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error) {
+	fs, err := a.q.ListActiveFilesForLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.File, len(fs))
+	for i, f := range fs {
+		out[i] = genMediaFileToFile(f)
+	}
+	return out, nil
+}
+
 // Stub methods for media.Querier — worker doesn't need filtered listing.
 func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
 	return a.ListMediaItems(ctx, libraryID, itemType, limit, offset)

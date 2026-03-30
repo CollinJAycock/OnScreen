@@ -672,6 +672,18 @@ func (a *mediaAdapter) UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, 
 	return a.q.UpdateMediaFileItemID(ctx, gen.UpdateMediaFileItemIDParams{ID: id, MediaItemID: itemID})
 }
 
+func (a *mediaAdapter) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error) {
+	fs, err := a.q.ListActiveFilesForLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.File, len(fs))
+	for i, f := range fs {
+		out[i] = genMediaFileToFile(f)
+	}
+	return out, nil
+}
+
 func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]media.File, error) {
 	fs, err := a.q.ListMissingFilesOlderThan(ctx, pgtype.Timestamptz{Time: before, Valid: true})
 	if err != nil {
