@@ -555,7 +555,7 @@
     if (isPhoto) {
       if (e.key === 'ArrowRight' && nextPhoto) { e.preventDefault(); goto(`/watch/${nextPhoto.id}`); }
       if (e.key === 'ArrowLeft' && prevPhoto) { e.preventDefault(); goto(`/watch/${prevPhoto.id}`); }
-      if (e.key === 'Escape') { e.preventDefault(); goBack(); }
+      if (e.key === 'Escape') { e.preventDefault(); goBackToLibrary(); }
       return;
     }
     if (!videoEl) return;
@@ -690,6 +690,14 @@
     history.back();
   }
 
+  function goBackToLibrary() {
+    if (item?.library_id) {
+      goto(`/libraries/${item.library_id}`);
+    } else {
+      history.back();
+    }
+  }
+
   $: progress = duration > 0 ? currentTime / duration : 0;
   $: showNextEpisodePrompt = nextEpisode != null && duration > 0 && (ended || duration - currentTime < 60);
   $: streamURL = item?.files?.[0]?.stream_url ?? '';
@@ -708,7 +716,7 @@
   {:else if error}
     <div class="center-msg">
       <p class="err-text">{error}</p>
-      <button class="back-btn" on:click={goBack}>← Back</button>
+      <button class="back-btn" on:click={goBackToLibrary}>← Back</button>
     </div>
   {:else}
     <img
@@ -719,8 +727,8 @@
       style="transform: scale({photoZoom}) translate({photoPanX / photoZoom}px, {photoPanY / photoZoom}px);"
     />
     <div class="photo-toolbar">
-      <button class="photo-btn" on:click={goBack} title="Back">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+      <button class="photo-btn" on:click={goBackToLibrary} title="Close (Esc)">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
       </button>
       <span class="photo-title">{item.title}</span>
       <button class="photo-btn" on:click={resetPhotoZoom} title="Reset zoom">
