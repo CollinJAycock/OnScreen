@@ -22,7 +22,7 @@ import (
 
 // processMusicHierarchy reads tags from a music file and ensures the
 // artist -> album -> track hierarchy exists. Returns the track item.
-func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID, path string) (*media.Item, error) {
+func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID, path string, roots []string) (*media.Item, error) {
 	tags, err := ReadMusicTags(path)
 	if err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 
 	// 4. Extract embedded album art if available and album has no poster yet.
 	if tags.AlbumArt && album.PosterPath == nil {
-		s.extractAlbumArt(ctx, album, path)
+		s.extractAlbumArt(ctx, album, path, roots)
 	}
 
 	return track, nil
@@ -90,7 +90,7 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 // extractAlbumArt reads the embedded picture from a music file and writes
 // poster.jpg next to the music file (in the album directory).
 // On success it updates the album item's poster_path.
-func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string) {
+func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string, roots []string) {
 	artData, err := readEmbeddedArtwork(filePath)
 	if err != nil || len(artData) == 0 {
 		return
@@ -100,9 +100,19 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 	absDir := filepath.Dir(filePath)
 	posterFile := filepath.Join(absDir, "poster.jpg")
 
-	// Compute a path relative to the album dir name for DB storage.
+	// Compute a path relative to the library root for DB storage.
 	// The /artwork/* route resolves this against library scan_paths.
-	relPath := filepath.ToSlash(filepath.Join(filepath.Base(absDir), "poster.jpg"))
+	relPath := ""
+	for _, root := range roots {
+		if rel, err := filepath.Rel(root, posterFile); err == nil && !strings.HasPrefix(rel, "..") {
+			relPath = filepath.ToSlash(rel)
+			break
+		}
+	}
+	if relPath == "" {
+		// Fallback: use album-dir/poster.jpg (may not resolve correctly).
+		relPath = filepath.ToSlash(filepath.Join(filepath.Base(absDir), "poster.jpg"))
+	}
 
 	// Skip if already extracted.
 	if _, err := os.Stat(posterFile); err == nil {

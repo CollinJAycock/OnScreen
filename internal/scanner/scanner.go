@@ -303,7 +303,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	var item *media.Item
 	if libraryType == "music" && isMusicFile(path) {
 		var musicErr error
-		item, musicErr = s.processMusicHierarchy(ctx, libraryID, path)
+		item, musicErr = s.processMusicHierarchy(ctx, libraryID, path, roots)
 		if musicErr != nil {
 			return nil, nil, false, fmt.Errorf("music hierarchy for %s: %w", path, musicErr)
 		}
@@ -376,6 +376,17 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// Item-level duration_ms is set by TMDB enrichment or the progress endpoint.
 	// File-level duration_ms (set above via CreateOrUpdateFile) is the authoritative
 	// source for the player — no need to copy it to the item here.
+
+	// Tracks: copy duration from the probe result to the item so the
+	// children API can return it without joining against media_files.
+	if libraryType == "music" && item.Type == "track" && probe.DurationMs != nil && item.DurationMS == nil {
+		s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+			ID:         item.ID,
+			Title:      item.Title,
+			SortTitle:  item.SortTitle,
+			DurationMS: probe.DurationMs,
+		})
+	}
 
 	// Photos use the file itself as the poster. Set poster_path to the
 	// relative path from the library root so /artwork/* can resolve it.
