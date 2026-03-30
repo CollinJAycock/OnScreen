@@ -263,9 +263,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// entirely — just mark the file active and return.
 	// We still load the parent item to check whether it needs enrichment
 	// (e.g. a file scanned before the TMDB key was configured).
-	// Photos skip the fast path so that each file always gets its own
-	// item (avoids stale 1:N mapping from prior dedup bugs).
-	if hash != nil && libraryType != "photo" {
+	// Photos and music skip the fast path: photos need per-file items,
+	// music needs album art and track duration propagated to items.
+	if hash != nil && libraryType != "photo" && libraryType != "music" {
 		if existing, err := s.media.GetFileByPath(ctx, path); err == nil &&
 			existing.FileHash != nil && *existing.FileHash == *hash &&
 			(existing.DurationMS != nil || isImageFile(path)) &&
@@ -379,7 +379,8 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 
 	// Tracks: copy duration from the probe result to the item so the
 	// children API can return it without joining against media_files.
-	if libraryType == "music" && item.Type == "track" && probe.DurationMs != nil && item.DurationMS == nil {
+	if libraryType == "music" && item.Type == "track" && probe.DurationMs != nil &&
+		(item.DurationMS == nil || *item.DurationMS != *probe.DurationMs) {
 		s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
 			ID:         item.ID,
 			Title:      item.Title,

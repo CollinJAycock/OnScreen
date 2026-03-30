@@ -79,8 +79,8 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 		return nil, err
 	}
 
-	// 4. Extract embedded album art if available and album has no poster yet.
-	if tags.AlbumArt && album.PosterPath == nil {
+	// 4. Extract embedded album art if available and poster is missing or stale.
+	if tags.AlbumArt {
 		s.extractAlbumArt(ctx, album, path, roots)
 	}
 
@@ -114,10 +114,11 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 		relPath = filepath.ToSlash(filepath.Join(filepath.Base(absDir), "poster.jpg"))
 	}
 
-	// Skip if already extracted.
+	// If poster.jpg already exists on disk, just ensure the DB path is correct.
 	if _, err := os.Stat(posterFile); err == nil {
-		// File exists — just make sure the DB is updated.
-		s.updateAlbumPoster(ctx, album, relPath)
+		if album.PosterPath == nil || *album.PosterPath != relPath {
+			s.updateAlbumPoster(ctx, album, relPath)
+		}
 		return
 	}
 
