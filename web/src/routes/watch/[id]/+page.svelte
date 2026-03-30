@@ -562,6 +562,22 @@
       if (isFinite(videoEl.duration) && videoEl.duration > 0) {
         duration = videoEl.duration;
       }
+
+      // If the browser can decode audio but not the video track (e.g. Hi10P H.264,
+      // HEVC, or an unrecognised codec stored as null in the DB), videoWidth is 0
+      // after metadata loads. Fall back to the remux/transcode path automatically.
+      if (videoEl.videoWidth === 0 && item?.files?.[0]) {
+        const file = item.files[0];
+        const posMs = item.view_offset_ms > 0 ? item.view_offset_ms : 0;
+        if (canRemuxVideo(file)) {
+          switchToTranscode(0, posMs, true);
+        } else {
+          const h = file.resolution_h ?? 1080;
+          switchToTranscode(h, posMs);
+        }
+        return;
+      }
+
       // Resume from last saved position.
       if (!skipAutoSeek && item && item.view_offset_ms > 0) {
         const offsetSec = item.view_offset_ms / 1000;
