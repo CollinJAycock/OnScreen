@@ -1,14 +1,8 @@
 package worker
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -20,6 +14,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/webhook"
 )
 
 // WebhookServerInfo identifies this server in webhook payloads.
@@ -190,31 +185,9 @@ func (d *WebhookDispatcher) deliverWithRetry(ep gen.WebhookEndpoint, body []byte
 	}
 }
 
-// deliverWebhookHTTP POSTs body to ep.Url, signing with HMAC-SHA256 if secret is set.
+// deliverWebhookHTTP delegates to the shared webhook.Deliver helper.
 func deliverWebhookHTTP(ctx context.Context, client *http.Client, enc *auth.Encryptor, ep gen.WebhookEndpoint, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.Url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if ep.Secret != nil && *ep.Secret != "" {
-		if rawSecret, decErr := enc.Decrypt(*ep.Secret); decErr == nil {
-			mac := hmac.New(sha256.New, []byte(rawSecret))
-			mac.Write(body)
-			req.Header.Set("X-OnScreen-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-		}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	// Drain the response body to enable TCP connection reuse by net/http.
-	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("non-2xx response: %d", resp.StatusCode)
-	}
-	return nil
+	return webhook.Deliver(ctx, client, enc, ep, body)
 }
 
 func webhookEvent(eventType string) string {
