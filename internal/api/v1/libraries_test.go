@@ -105,6 +105,15 @@ func (m *mockMediaLister) CountItems(_ context.Context, _ uuid.UUID, _ string) (
 	}
 	return m.count, nil
 }
+func (m *mockMediaLister) ListItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _, _ int32, _ media.FilterParams) ([]media.Item, error) {
+	return m.ListItems(nil, uuid.Nil, "", 0, 0)
+}
+func (m *mockMediaLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _ media.FilterParams) (int64, error) {
+	return m.CountItems(nil, uuid.Nil, "")
+}
+func (m *mockMediaLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
 
 func newLibHandler(svc *mockLibraryService) *LibraryHandler {
 	return NewLibraryHandler(svc, slog.Default())

@@ -680,6 +680,193 @@ func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before tim
 	return out, nil
 }
 
+func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
+	p := gen.ListMediaItemsByTitleParams{
+		LibraryID: libraryID,
+		Type:      itemType,
+		Limit:     limit,
+		Offset:    offset,
+		Genre:     f.Genre,
+		YearMin:   intPtrToInt32Ptr(f.YearMin),
+		YearMax:   intPtrToInt32Ptr(f.YearMax),
+		RatingMin: float64PtrToNumeric(f.RatingMin),
+	}
+
+	sort := f.Sort
+	if sort == "" {
+		sort = "title"
+	}
+
+	switch sort + "_" + boolDir(f.SortAsc) {
+	case "title_asc":
+		rows, err := a.q.ListMediaItemsByTitle(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredTitleRowToItem), nil
+
+	case "title_desc":
+		dp := gen.ListMediaItemsByTitleDescParams(p)
+		rows, err := a.q.ListMediaItemsByTitleDesc(ctx, dp)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredTitleDescRowToItem), nil
+
+	case "year_asc":
+		yp := gen.ListMediaItemsByYearParams(p)
+		rows, err := a.q.ListMediaItemsByYear(ctx, yp)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredYearRowToItem), nil
+
+	case "year_desc":
+		ydp := gen.ListMediaItemsByYearDescParams(p)
+		rows, err := a.q.ListMediaItemsByYearDesc(ctx, ydp)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredYearDescRowToItem), nil
+
+	case "rating_desc":
+		rp := gen.ListMediaItemsByRatingParams(p)
+		rows, err := a.q.ListMediaItemsByRating(ctx, rp)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredRatingRowToItem), nil
+
+	case "rating_asc":
+		rap := gen.ListMediaItemsByRatingAscParams(p)
+		rows, err := a.q.ListMediaItemsByRatingAsc(ctx, rap)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredRatingAscRowToItem), nil
+
+	case "created_at_desc":
+		dap := gen.ListMediaItemsByDateAddedParams(p)
+		rows, err := a.q.ListMediaItemsByDateAdded(ctx, dap)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredDateAddedRowToItem), nil
+
+	case "created_at_asc":
+		daap := gen.ListMediaItemsByDateAddedAscParams(p)
+		rows, err := a.q.ListMediaItemsByDateAddedAsc(ctx, daap)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredDateAddedAscRowToItem), nil
+
+	default:
+		// Fallback to title asc.
+		rows, err := a.q.ListMediaItemsByTitle(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredTitleRowToItem), nil
+	}
+}
+
+func boolDir(asc bool) string {
+	if asc {
+		return "asc"
+	}
+	return "desc"
+}
+
+func convertFilteredRows[T any](rows []T, conv func(T) media.Item) []media.Item {
+	out := make([]media.Item, len(rows))
+	for i, r := range rows {
+		out[i] = conv(r)
+	}
+	return out
+}
+
+// Row converters for each sorted query — they all have the same column set.
+func genFilteredTitleRowToItem(r gen.ListMediaItemsByTitleRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredTitleDescRowToItem(r gen.ListMediaItemsByTitleDescRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredYearRowToItem(r gen.ListMediaItemsByYearRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredYearDescRowToItem(r gen.ListMediaItemsByYearDescRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredRatingRowToItem(r gen.ListMediaItemsByRatingRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredRatingAscRowToItem(r gen.ListMediaItemsByRatingAscRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredDateAddedRowToItem(r gen.ListMediaItemsByDateAddedRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredDateAddedAscRowToItem(r gen.ListMediaItemsByDateAddedAscRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+
+func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
+	return a.q.CountMediaItemsFiltered(ctx, gen.CountMediaItemsFilteredParams{
+		LibraryID: libraryID,
+		Type:      itemType,
+		Genre:     f.Genre,
+		YearMin:   intPtrToInt32Ptr(f.YearMin),
+		YearMax:   intPtrToInt32Ptr(f.YearMax),
+		RatingMin: float64PtrToNumeric(f.RatingMin),
+	})
+}
+
+func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
+	return a.q.ListDistinctGenres(ctx, libraryID)
+}
+
 // ── hubAdapter ───────────────────────────────────────────────────────────────
 
 type hubAdapter struct{ q *gen.Queries }

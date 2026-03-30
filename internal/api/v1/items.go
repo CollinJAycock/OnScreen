@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
@@ -557,4 +561,55 @@ func asFloat64(v any) float64 {
 func asBool(v any) bool {
 	b, _ := v.(bool)
 	return b
+}
+
+// ServeSubtitle handles GET /media/subtitles/{fileId}/{streamIndex}.
+// Extracts a subtitle stream from the media file and returns it as WebVTT.
+// Only text-based subtitle codecs (srt, ass, subrip, mov_text, webvtt) are supported.
+func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
+	fileID, err := uuid.Parse(chi.URLParam(r, "fileId"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid file id")
+		return
+	}
+	streamIdx, err := strconv.Atoi(chi.URLParam(r, "streamIndex"))
+	if err != nil || streamIdx < 0 {
+		respond.BadRequest(w, r, "invalid stream index")
+		return
+	}
+
+	file, err := h.media.GetFile(r.Context(), fileID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get file for subtitle", "id", fileID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	if file.Status != "active" {
+		respond.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	cmd := exec.CommandContext(r.Context(), "ffmpeg",
+		"-i", file.FilePath,
+		"-map", fmt.Sprintf("0:%d", streamIdx),
+		"-f", "webvtt",
+		"-v", "quiet",
+		"pipe:1",
+	)
+	cmd.Stdout = w
+	if err := cmd.Run(); err != nil {
+		// If we haven't written headers yet, return an error.
+		// Otherwise the connection was likely closed by the client.
+		h.logger.WarnContext(r.Context(), "subtitle extraction failed",
+			"file_id", fileID, "stream", streamIdx, "err", err)
+	}
 }

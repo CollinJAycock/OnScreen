@@ -267,11 +267,21 @@ export interface MediaItem {
   summary?: string;
   rating?: number;
   duration_ms?: number;
+  genres?: string[];
   poster_path?: string;
   created_at: string;
 }
 
 export type SortField = 'title' | 'year' | 'rating' | 'created_at';
+
+export interface ListItemsParams {
+  sort?: SortField;
+  sort_dir?: 'asc' | 'desc';
+  genre?: string;
+  year_min?: number;
+  year_max?: number;
+  rating_min?: number;
+}
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
@@ -304,10 +314,20 @@ export const fsApi = {
 // ── Media Items ───────────────────────────────────────────────────────────────
 
 export const mediaApi = {
-  listItems: (libraryId: string, limit = 50, offset = 0) =>
-    api.requestList<MediaItem>(
-      `/libraries/${libraryId}/items?limit=${limit}&offset=${offset}`
-    ),
+  listItems: (libraryId: string, limit = 50, offset = 0, params?: ListItemsParams) => {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    qs.set('offset', String(offset));
+    if (params?.sort) qs.set('sort', params.sort);
+    if (params?.sort_dir) qs.set('sort_dir', params.sort_dir);
+    if (params?.genre) qs.set('genre', params.genre);
+    if (params?.year_min != null) qs.set('year_min', String(params.year_min));
+    if (params?.year_max != null) qs.set('year_max', String(params.year_max));
+    if (params?.rating_min != null) qs.set('rating_min', String(params.rating_min));
+    return api.requestList<MediaItem>(`/libraries/${libraryId}/items?${qs.toString()}`);
+  },
+  genres: (libraryId: string) =>
+    api.get<string[]>(`/libraries/${libraryId}/genres`),
   enrichItem: (id: string) =>
     api.post<void>(`/items/${id}/enrich`)
 };
@@ -387,6 +407,62 @@ export interface MatchCandidate {
   poster_url?: string;
   rating?: number;
 }
+
+// ── Collections & Playlists ──────────────────────────────────────────────────
+
+export interface Collection {
+  id: string;
+  name: string;
+  description?: string;
+  type: 'auto_genre' | 'playlist';
+  genre?: string;
+  poster_path?: string;
+  created_at: string;
+}
+
+export interface CollectionItem {
+  id: string;
+  title: string;
+  type: string;
+  year?: number;
+  rating?: number;
+  poster_path?: string;
+  duration_ms?: number;
+  position?: number;
+}
+
+export const collectionApi = {
+  list: () => api.get<Collection[]>('/collections'),
+  get: (id: string) => api.get<Collection>(`/collections/${id}`),
+  create: (name: string, description?: string) =>
+    api.post<Collection>('/collections', { name, description }),
+  update: (id: string, name: string, description?: string) =>
+    api.patch<Collection>(`/collections/${id}`, { name, description }),
+  delete: (id: string) => api.delete(`/collections/${id}`),
+  items: (id: string, limit = 50, offset = 0) =>
+    api.requestList<CollectionItem>(`/collections/${id}/items?limit=${limit}&offset=${offset}`),
+  addItem: (collectionId: string, mediaItemId: string) =>
+    api.post<void>(`/collections/${collectionId}/items`, { media_item_id: mediaItemId }),
+  removeItem: (collectionId: string, itemId: string) =>
+    api.delete(`/collections/${collectionId}/items/${itemId}`),
+};
+
+export interface ManagedProfile {
+  id: string;
+  username: string;
+  avatar_url?: string;
+  has_pin: boolean;
+  created_at: string;
+}
+
+export const profileApi = {
+  list: () => api.get<ManagedProfile[]>('/profiles'),
+  create: (username: string, avatar_url?: string, pin?: string) =>
+    api.post<ManagedProfile>('/profiles', { username, avatar_url, pin }),
+  update: (id: string, username: string, avatar_url?: string) =>
+    api.patch<ManagedProfile>(`/profiles/${id}`, { username, avatar_url }),
+  delete: (id: string) => api.delete(`/profiles/${id}`),
+};
 
 export const itemApi = {
   get: (id: string) => api.get<ItemDetail>(`/items/${id}`),

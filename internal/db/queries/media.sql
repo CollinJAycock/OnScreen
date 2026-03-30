@@ -137,6 +137,156 @@ WHERE deleted_at IS NULL
 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
 LIMIT $2;
 
+-- name: ListMediaItemsByTitle :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY sort_title ASC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByTitleDesc :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY sort_title DESC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByYear :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY year ASC NULLS LAST, sort_title ASC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByYearDesc :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY year DESC NULLS LAST, sort_title ASC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByRating :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY rating DESC NULLS LAST, sort_title ASC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByRatingAsc :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY rating ASC NULLS LAST, sort_title ASC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByDateAdded :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY created_at DESC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByDateAddedAsc :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+ORDER BY created_at ASC
+LIMIT $3 OFFSET $4;
+
+-- name: CountMediaItemsFiltered :one
+SELECT COUNT(*) FROM media_items
+WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'));
+
+-- name: ListDistinctGenres :many
+SELECT DISTINCT g::text AS genre
+FROM media_items, unnest(genres) AS g
+WHERE library_id = $1 AND deleted_at IS NULL
+ORDER BY genre;
+
 -- name: ListHubRecentlyAdded :many
 SELECT library_id, media_id, type, title, year, rating, poster_path, created_at
 FROM hub_recently_added

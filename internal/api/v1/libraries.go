@@ -58,7 +58,10 @@ func toLibraryResponse(lib *library.Library) LibraryResponse {
 // MediaItemLister is an optional service for listing items within a library.
 type MediaItemLister interface {
 	ListItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]media.Item, error)
+	ListItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error)
 	CountItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
+	CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error)
+	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 }
 
 // MediaItemResponse is the JSON shape for a media item in the v1 API.
@@ -70,6 +73,7 @@ type MediaItemResponse struct {
 	Summary    *string  `json:"summary,omitempty"`
 	Rating     *float64 `json:"rating,omitempty"`
 	DurationMS *int64   `json:"duration_ms,omitempty"`
+	Genres     []string `json:"genres,omitempty"`
 	PosterPath *string  `json:"poster_path,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  int64     `json:"updated_at"`
@@ -326,14 +330,56 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 		offset = int32(v)
 	}
 
-	items, err := h.media.ListItems(r.Context(), id, lib.Type, limit, offset)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list media items", "library_id", id, "err", err)
-		respond.InternalError(w, r)
-		return
+	// Parse filter/sort params.
+	q := r.URL.Query()
+	fp := media.FilterParams{
+		Sort:    "title",
+		SortAsc: true,
+	}
+	if g := q.Get("genre"); g != "" {
+		fp.Genre = &g
+	}
+	if v, err := strconv.Atoi(q.Get("year_min")); err == nil {
+		fp.YearMin = &v
+	}
+	if v, err := strconv.Atoi(q.Get("year_max")); err == nil {
+		fp.YearMax = &v
+	}
+	if v, err := strconv.ParseFloat(q.Get("rating_min"), 64); err == nil {
+		fp.RatingMin = &v
+	}
+	if s := q.Get("sort"); s != "" {
+		fp.Sort = s
+	}
+	if q.Get("sort_dir") == "desc" {
+		fp.SortAsc = false
+	} else if q.Get("sort_dir") == "asc" {
+		fp.SortAsc = true
+	} else if fp.Sort == "rating" || fp.Sort == "created_at" || fp.Sort == "year" {
+		fp.SortAsc = false // default desc for rating/date/year
 	}
 
-	total, _ := h.media.CountItems(r.Context(), id, lib.Type)
+	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.Sort != "title" || !fp.SortAsc
+
+	var items []media.Item
+	var total int64
+	if hasFilter {
+		items, err = h.media.ListItemsFiltered(r.Context(), id, lib.Type, limit, offset, fp)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "list media items filtered", "library_id", id, "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		total, _ = h.media.CountItemsFiltered(r.Context(), id, lib.Type, fp)
+	} else {
+		items, err = h.media.ListItems(r.Context(), id, lib.Type, limit, offset)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "list media items", "library_id", id, "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		total, _ = h.media.CountItems(r.Context(), id, lib.Type)
+	}
 
 	out := make([]MediaItemResponse, len(items))
 	for i, item := range items {
@@ -345,12 +391,33 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Summary:    item.Summary,
 			Rating:     item.Rating,
 			DurationMS: item.DurationMS,
+			Genres:     item.Genres,
 			PosterPath: item.PosterPath,
 			CreatedAt:  item.CreatedAt,
 			UpdatedAt:  item.UpdatedAt.UnixMilli(),
 		}
 	}
 	respond.List(w, r, out, total, "")
+}
+
+// Genres handles GET /api/v1/libraries/:id/genres.
+func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
+	if h.media == nil {
+		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid library id")
+		return
+	}
+	genres, err := h.media.ListDistinctGenres(r.Context(), id)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list genres", "library_id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, genres)
 }
 
 func parseUUID(r *http.Request, param string) (uuid.UUID, error) {

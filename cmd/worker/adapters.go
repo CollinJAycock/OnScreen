@@ -519,6 +519,17 @@ func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before tim
 	return out, nil
 }
 
+// Stub methods for media.Querier — worker doesn't need filtered listing.
+func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
+	return a.ListMediaItems(ctx, libraryID, itemType, limit, offset)
+}
+func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
+	return a.CountMediaItems(ctx, libraryID, itemType)
+}
+func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
 // ── sessionCleanupAdapter ─────────────────────────────────────────────────────
 
 // sessionCleanupAdapter wraps gen.Queries to implement worker.SessionCleanupService.

@@ -37,6 +37,7 @@ type Handlers struct {
 	History         *v1.HistoryHandler
 	Items           *v1.ItemHandler
 	NativeTranscode *v1.NativeTranscodeHandler
+	Collections     *v1.CollectionHandler
 	Arr             *v1.ArrHandler           // incoming arr app notifications
 	GoogleAuth      *v1.GoogleOAuthHandler  // nil when SSO not configured
 	GitHubAuth      *v1.GitHubOAuthHandler  // nil when SSO not configured
@@ -83,6 +84,7 @@ func NewRouter(h *Handlers) http.Handler {
 	// No auth required — UUID is opaque; browser video elements cannot send tokens.
 	if h.Items != nil {
 		r.Get("/media/stream/{id}", h.Items.StreamFile)
+		r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
 	}
 
 	// Native HLS playlist + segment endpoints — auth via segment token in query param,
@@ -223,6 +225,7 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/libraries", h.Library.List)
 			r.Get("/libraries/{id}", h.Library.Get)
 			r.Get("/libraries/{id}/items", h.Library.Items)
+			r.Get("/libraries/{id}/genres", h.Library.Genres)
 
 			// Library mutations — admin only.
 			r.Group(func(r chi.Router) {
@@ -331,6 +334,26 @@ func NewRouter(h *Handlers) http.Handler {
 			// Active sessions.
 			if h.NativeSessions != nil {
 				r.Get("/sessions", h.NativeSessions.List)
+			}
+
+			// Managed profiles — any authenticated user can manage their own.
+			if h.User != nil {
+				r.Get("/profiles", h.User.ListProfiles)
+				r.Post("/profiles", h.User.CreateProfile)
+				r.Patch("/profiles/{id}", h.User.UpdateProfile)
+				r.Delete("/profiles/{id}", h.User.DeleteProfile)
+			}
+
+			// Collections & playlists.
+			if h.Collections != nil {
+				r.Get("/collections", h.Collections.List)
+				r.Get("/collections/{id}", h.Collections.Get)
+				r.Post("/collections", h.Collections.Create)
+				r.Patch("/collections/{id}", h.Collections.Update)
+				r.Delete("/collections/{id}", h.Collections.Delete)
+				r.Get("/collections/{id}/items", h.Collections.Items)
+				r.Post("/collections/{id}/items", h.Collections.AddItem)
+				r.Delete("/collections/{id}/items/{itemId}", h.Collections.RemoveItem)
 			}
 
 			// Individual media items — player, children, progress, on-demand enrich.

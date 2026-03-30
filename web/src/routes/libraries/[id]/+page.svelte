@@ -2,7 +2,18 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, mediaApi, type Library, type MediaItem, type SortField } from '$lib/api';
+  import { libraryApi, mediaApi, type Library, type MediaItem, type SortField, type ListItemsParams } from '$lib/api';
+  import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
+
+  let playlistPickerItemId = '';
+  let showPlaylistPicker = false;
+
+  function openPlaylistPicker(e: MouseEvent, itemId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    playlistPickerItemId = itemId;
+    showPlaylistPicker = true;
+  }
 
   let alive = true;
   let enrichingIds = new Set<string>();
@@ -14,12 +25,11 @@
     enrichingIds = new Set(enrichingIds).add(itemId);
     try {
       await mediaApi.enrichItem(itemId);
-      // Poll for poster_path to appear
       for (let i = 0; i < 10; i++) {
         if (!alive || id !== capturedId) break;
         await new Promise(r => setTimeout(r, 2000));
         if (!alive || id !== capturedId) break;
-        const r = await mediaApi.listItems(capturedId, PAGE, 0);
+        const r = await mediaApi.listItems(capturedId, PAGE, 0, filterParams());
         const updated = r.items.find(x => x.id === itemId);
         if (updated?.poster_path) {
           allItems = allItems.map(x => x.id === itemId ? updated : x);
@@ -48,30 +58,36 @@
   let sortField: SortField = 'title';
   let sortAsc = true;
 
+  // Filters
+  let genres: string[] = [];
+  let selectedGenre = '';
+  let yearMin = '';
+  let yearMax = '';
+  let ratingMin = '';
+
   let mounted = false;
   let prevId = '';
 
   $: id = $page.params.id;
 
-  $: filtered = allItems
-    .filter(i => !query || i.title.toLowerCase().includes(query.toLowerCase()))
-    .sort((a, b) => {
-      let av: string | number = sortField === 'title' ? a.title.toLowerCase()
-        : sortField === 'year' ? (a.year ?? 0)
-        : sortField === 'rating' ? (a.rating ?? 0)
-        : a.created_at;
-      let bv: string | number = sortField === 'title' ? b.title.toLowerCase()
-        : sortField === 'year' ? (b.year ?? 0)
-        : sortField === 'rating' ? (b.rating ?? 0)
-        : b.created_at;
-      if (av === bv) return 0;
-      return (av < bv ? -1 : 1) * (sortAsc ? 1 : -1);
-    });
+  // Client-side text filter on already-loaded items
+  $: filtered = query
+    ? allItems.filter(i => i.title.toLowerCase().includes(query.toLowerCase()))
+    : allItems;
+
+  function filterParams(): ListItemsParams {
+    const p: ListItemsParams = { sort: sortField, sort_dir: sortAsc ? 'asc' : 'desc' };
+    if (selectedGenre) p.genre = selectedGenre;
+    if (yearMin) p.year_min = parseInt(yearMin);
+    if (yearMax) p.year_max = parseInt(yearMax);
+    if (ratingMin) p.rating_min = parseFloat(ratingMin);
+    return p;
+  }
 
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     prevId = id;
-    await Promise.all([loadLibrary(), loadItems()]);
+    await Promise.all([loadLibrary(), loadItems(), loadGenres()]);
     mounted = true;
   });
 
@@ -87,8 +103,11 @@
     loadingItems = true;
     error = '';
     library = null;
+    genres = [];
+    selectedGenre = '';
     loadLibrary();
     loadItems();
+    loadGenres();
   }
 
   async function loadLibrary() {
@@ -97,13 +116,18 @@
     finally { loadingLib = false; }
   }
 
-  async function loadItems() {
+  async function loadGenres() {
+    try { genres = await mediaApi.genres(id); }
+    catch { /* non-critical */ }
+  }
+
+  async function loadItems(append = false) {
     loadingItems = true;
     try {
-      const r = await mediaApi.listItems(id, PAGE, offset);
-      allItems = [...allItems, ...r.items];
+      const r = await mediaApi.listItems(id, PAGE, append ? offset : 0, filterParams());
+      allItems = append ? [...allItems, ...r.items] : r.items;
       total = r.total;
-      offset += r.items.length;
+      offset = append ? offset + r.items.length : r.items.length;
       hasMore = offset < total;
     } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
     finally { loadingItems = false; }
@@ -115,9 +139,6 @@
     const capturedId = id;
     try {
       await libraryApi.scan(capturedId);
-      // Scan is async on the server. Poll until items appear, then keep polling
-      // a little longer to pick up artwork from the enrichment step (which runs
-      // after item creation and can take several seconds for TMDB + download).
       const prevTotal = total;
       let sawChange = false;
       let enrichDeadline = 0;
@@ -126,7 +147,7 @@
         if (!alive || id !== capturedId) break;
         await new Promise(r => setTimeout(r, 3000));
         if (!alive || id !== capturedId) break;
-        const r = await mediaApi.listItems(capturedId, PAGE, 0);
+        const r = await mediaApi.listItems(capturedId, PAGE, 0, filterParams());
         allItems = r.items;
         total = r.total;
         offset = r.items.length;
@@ -134,10 +155,9 @@
         const countChanged = r.total !== prevTotal || (r.total > 0 && allItems.length === 0);
         if (countChanged && !sawChange) {
           sawChange = true;
-          enrichDeadline = Date.now() + 20_000; // allow 20s more for enrichment
+          enrichDeadline = Date.now() + 20_000;
         }
         if (sawChange && Date.now() >= enrichDeadline) {
-          // Check if any items still lack artwork
           const missingArt = r.items.some(item => !item.poster_path);
           if (missingArt) enrichTimedOut = true;
           break;
@@ -154,7 +174,7 @@
     }
   }
 
-  async function refresh() {
+  async function applyFilters() {
     allItems = [];
     offset = 0;
     total = 0;
@@ -165,6 +185,7 @@
   function toggleSort(f: SortField) {
     if (sortField === f) sortAsc = !sortAsc;
     else { sortField = f; sortAsc = f === 'title'; }
+    applyFilters();
   }
 
   function dur(ms?: number) {
@@ -245,6 +266,15 @@
       {/each}
     </div>
 
+    {#if genres.length > 0}
+      <select class="filter-select" bind:value={selectedGenre} on:change={applyFilters}>
+        <option value="">All Genres</option>
+        {#each genres as g}
+          <option value={g}>{g}</option>
+        {/each}
+      </select>
+    {/if}
+
     <div class="count">
       {#if query}{filtered.length} / {allItems.length}{:else}{total} items{/if}
     </div>
@@ -294,6 +324,11 @@
                 on:click={(e) => enrichItem(e, item.id)}
               >⟳</button>
             {/if}
+            <button
+              class="add-playlist-btn"
+              title="Add to playlist"
+              on:click={(e) => openPlaylistPicker(e, item.id)}
+            >+</button>
           </div>
           <div class="item-foot">
             <div class="item-title">{item.title}</div>
@@ -313,13 +348,19 @@
 
     {#if hasMore && !loadingItems}
       <div class="load-more">
-        <button class="load-btn" on:click={loadItems}>
+        <button class="load-btn" on:click={() => loadItems(true)}>
           Load more — {total - offset} remaining
         </button>
       </div>
     {/if}
   {/if}
 </div>
+
+<PlaylistPicker
+  mediaItemId={playlistPickerItemId}
+  open={showPlaylistPicker}
+  on:close={() => showPlaylistPicker = false}
+/>
 
 <style>
   .page { padding: 2.5rem 2.5rem 5rem; }
@@ -461,6 +502,18 @@
   .sort-pill:hover { background: rgba(255,255,255,0.07); color: #8888aa; }
   .sort-pill.on { background: rgba(124,106,247,0.1); border-color: rgba(124,106,247,0.3); color: #a89ffa; }
 
+  .filter-select {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 7px;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.75rem;
+    color: #8888aa;
+    cursor: pointer;
+  }
+  .filter-select:focus { outline: none; border-color: #7c6af7; }
+  .filter-select option { background: #111118; color: #eeeef8; }
+
   .count { margin-left: auto; font-size: 0.75rem; color: #33333d; white-space: nowrap; }
 
   /* Poster grid */
@@ -556,6 +609,28 @@
   .refresh-art:hover { color: #fff; }
   .refresh-art.spinning { animation: spin 0.8s linear infinite; opacity: 1; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  .add-playlist-btn {
+    position: absolute;
+    bottom: 0.35rem;
+    left: 0.35rem;
+    background: rgba(0,0,0,0.65);
+    border: none;
+    border-radius: 50%;
+    color: rgba(255,255,255,0.6);
+    font-size: 1rem;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+    line-height: 1;
+  }
+  .item:hover .add-playlist-btn { opacity: 1; }
+  .add-playlist-btn:hover { color: #7c6af7; }
 
   .item-foot { padding: 0.4rem 0.1rem 0; }
   .item-title {

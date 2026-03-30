@@ -4,6 +4,9 @@
   import { page } from '$app/stores';
   import { itemApi, transcodeApi, type ItemDetail, type ChildItem, type ItemFile, type MatchCandidate } from '$lib/api';
   import Hls from 'hls.js';
+  import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
+
+  let showPlaylistPicker = false;
 
   $: id = $page.params.id;
 
@@ -52,6 +55,23 @@
   ];
   let selectedQuality: QualityOption = qualityOptions[0];
   let showQualityMenu = false;
+
+  // Subtitle picker
+  let showSubtitleMenu = false;
+  let selectedSubtitle: import('$lib/api').SubtitleStream | null = null;
+
+  // Text-based subtitle codecs that ffmpeg can convert to WebVTT.
+  const textSubCodecs = new Set(['srt', 'subrip', 'ass', 'ssa', 'mov_text', 'webvtt', 'text']);
+
+  // Activate/deactivate subtitle tracks when selection changes.
+  $: if (videoEl?.textTracks?.length) {
+    for (let i = 0; i < videoEl.textTracks.length; i++) {
+      videoEl.textTracks[i].mode = selectedSubtitle ? 'showing' : 'hidden';
+    }
+  }
+
+  $: textSubtitles = (item?.files?.[0]?.subtitle_streams ?? [])
+    .filter(s => textSubCodecs.has(s.codec.toLowerCase()));
 
   // Skip the auto-seek in onVideoLoaded during quality switches
   let skipAutoSeek = false;
@@ -419,13 +439,15 @@
 
   // ── Video events ──────────────────────────────────────────────────────────────
 
+  // Buffering indicator — shown while the browser is waiting for data.
+  let buffering = false;
+
   function onVideoLoaded() {
     if (!hlsActive) {
-      // Direct play: videoEl.duration is authoritative.
       if (isFinite(videoEl.duration) && videoEl.duration > 0) {
         duration = videoEl.duration;
       }
-      // Resume from last saved position (skip during quality switches).
+      // Resume from last saved position.
       if (!skipAutoSeek && item && item.view_offset_ms > 0) {
         const offsetSec = item.view_offset_ms / 1000;
         if (duration - offsetSec > 30) {
@@ -434,10 +456,11 @@
       }
       skipAutoSeek = false;
     }
-    // HLS mode: duration is set once in attachHls from item.duration_ms.
-    // Do NOT read videoEl.duration here — it grows as segments are produced.
     videoEl.play().catch(() => {});
   }
+
+  function onWaiting()  { buffering = true; }
+  function onPlaying()  { buffering = false; }
 
   function onTimeUpdate() {
     if (!seeking) currentTime = videoEl.currentTime + hlsOffsetSec;
@@ -482,8 +505,8 @@
 
   function onKeyDown(e: KeyboardEvent) {
     if (!videoEl) return;
-    // Close quality menu on Escape
-    if (e.key === 'Escape') { showQualityMenu = false; return; }
+    // Close menus on Escape
+    if (e.key === 'Escape') { showQualityMenu = false; showSubtitleMenu = false; return; }
     switch (e.key) {
       case ' ':
       case 'k':
@@ -596,7 +619,7 @@
   function onMouseMove() { resetHideTimer(); }
   function onMouseLeave() {
     if (!paused && hideTimer) clearTimeout(hideTimer);
-    if (!paused && !showQualityMenu) showControls = false;
+    if (!paused && !showQualityMenu && !showSubtitleMenu) showControls = false;
   }
 
   function fmtTime(sec: number): string {
@@ -620,7 +643,7 @@
 
 <svelte:head><title>{item?.title ?? 'Watch'} — OnScreen</title></svelte:head>
 
-<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:webkitfullscreenchange={onFullscreenChange} on:click={() => showQualityMenu = false} />
+<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:webkitfullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; }} />
 
 {#if !isDetailView}
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -652,11 +675,28 @@
       on:play={onPlay}
       on:pause={onPause}
       on:ended={onEnded}
-      preload="metadata"
-      autoplay
+      on:waiting={onWaiting}
+      on:playing={onPlaying}
+      preload="auto"
     >
-      <track kind="captions" />
+      {#if selectedSubtitle && item?.files?.[0]}
+        <track
+          kind="subtitles"
+          src="/media/subtitles/{item.files[0].id}/{selectedSubtitle.index}"
+          srclang={selectedSubtitle.language || 'en'}
+          label={selectedSubtitle.title || selectedSubtitle.language || 'Unknown'}
+          default
+        />
+      {:else}
+        <track kind="captions" />
+      {/if}
     </video>
+
+    {#if buffering}
+      <div class="buffer-overlay">
+        <div class="spinner"></div>
+      </div>
+    {/if}
 
     <!-- Fanart background (blurred, behind controls) -->
     {#if item.fanart_path}
@@ -767,6 +807,54 @@
           </div>
 
           <div class="controls-right">
+            <!-- Add to playlist -->
+            <button class="icon-btn small" on:click|stopPropagation={() => showPlaylistPicker = true} title="Add to playlist">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+            </button>
+
+            <!-- Subtitle picker -->
+            {#if textSubtitles.length > 0}
+              <div class="quality-picker" on:click|stopPropagation>
+                <button
+                  class="icon-btn small quality-btn"
+                  on:click|stopPropagation={() => { showSubtitleMenu = !showSubtitleMenu; showQualityMenu = false; }}
+                  title="Subtitles"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                    <path d="M7 15h4M13 15h4M7 11h10"/>
+                  </svg>
+                  <span class="quality-label">{selectedSubtitle ? (selectedSubtitle.language || 'Sub') : 'Off'}</span>
+                </button>
+
+                {#if showSubtitleMenu}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label="Subtitle options">
+                    <button
+                      class="quality-option"
+                      class:active={selectedSubtitle === null}
+                      on:click={() => { selectedSubtitle = null; showSubtitleMenu = false; }}
+                      role="menuitem"
+                    >Off</button>
+                    {#each textSubtitles as sub}
+                      <button
+                        class="quality-option"
+                        class:active={selectedSubtitle?.index === sub.index}
+                        on:click={() => { selectedSubtitle = sub; showSubtitleMenu = false; }}
+                        role="menuitem"
+                      >
+                        {sub.title || sub.language || `Track ${sub.index}`}
+                        {#if sub.forced} (forced){/if}
+                        {#if sub.language && sub.title} — {sub.language}{/if}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
             <!-- Quality picker -->
             <div class="quality-picker" on:click|stopPropagation>
               <button
@@ -995,6 +1083,14 @@
     <button class="match-cancel" on:click={() => showMatchModal = false}>Cancel</button>
   </div>
 </div>
+{/if}
+
+{#if item}
+  <PlaylistPicker
+    mediaItemId={item.id}
+    open={showPlaylistPicker}
+    on:close={() => showPlaylistPicker = false}
+  />
 {/if}
 
 <style>
@@ -1301,6 +1397,16 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  .buffer-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 5;
+  }
 
   /* ── Detail view (shows / seasons) ───────────────── */
   .detail-page {

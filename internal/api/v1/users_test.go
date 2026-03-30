@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
@@ -87,6 +88,18 @@ func (m *mockUserDB) CountAdmins(_ context.Context) (int64, error) {
 
 func (m *mockUserDB) UpdateUserPassword(_ context.Context, _ gen.UpdateUserPasswordParams) error {
 	return m.updatePasswordErr
+}
+func (m *mockUserDB) ListManagedProfiles(_ context.Context, _ pgtype.UUID) ([]gen.ListManagedProfilesRow, error) {
+	return nil, nil
+}
+func (m *mockUserDB) CreateManagedProfile(_ context.Context, _ gen.CreateManagedProfileParams) (gen.CreateManagedProfileRow, error) {
+	return gen.CreateManagedProfileRow{}, nil
+}
+func (m *mockUserDB) UpdateManagedProfile(_ context.Context, _ gen.UpdateManagedProfileParams) (gen.UpdateManagedProfileRow, error) {
+	return gen.UpdateManagedProfileRow{}, nil
+}
+func (m *mockUserDB) DeleteManagedProfile(_ context.Context, _ gen.DeleteManagedProfileParams) error {
+	return nil
 }
 
 func authedRequest(r *http.Request) *http.Request {

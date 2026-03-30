@@ -81,17 +81,30 @@ type File struct {
 	CreatedAt   time.Time
 }
 
+// FilterParams holds optional filter/sort parameters for listing items.
+type FilterParams struct {
+	Genre     *string
+	YearMin   *int
+	YearMax   *int
+	RatingMin *float64
+	Sort      string // title, year, rating, created_at
+	SortAsc   bool
+}
+
 // Querier defines the DB operations this service needs.
 type Querier interface {
 	GetMediaItem(ctx context.Context, id uuid.UUID) (Item, error)
 	GetMediaItemByTMDBID(ctx context.Context, libraryID uuid.UUID, tmdbID int) (Item, error)
 	ListMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]Item, error)
+	ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f FilterParams) ([]Item, error)
 	ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]Item, error)
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
+	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
+	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
 
 	GetMediaFile(ctx context.Context, id uuid.UUID) (File, error)
@@ -225,6 +238,33 @@ func (s *Service) CountItems(ctx context.Context, libraryID uuid.UUID, itemType 
 		return 0, fmt.Errorf("count media items: %w", err)
 	}
 	return n, nil
+}
+
+// ListItemsFiltered returns media items with server-side filtering and sorting.
+func (s *Service) ListItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f FilterParams) ([]Item, error) {
+	items, err := s.ro.ListMediaItemsFiltered(ctx, libraryID, itemType, limit, offset, f)
+	if err != nil {
+		return nil, fmt.Errorf("list media items filtered: %w", err)
+	}
+	return items, nil
+}
+
+// CountItemsFiltered returns the count of items matching the given filters.
+func (s *Service) CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error) {
+	n, err := s.ro.CountMediaItemsFiltered(ctx, libraryID, itemType, f)
+	if err != nil {
+		return 0, fmt.Errorf("count media items filtered: %w", err)
+	}
+	return n, nil
+}
+
+// ListDistinctGenres returns unique genres for a library.
+func (s *Service) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
+	genres, err := s.ro.ListDistinctGenres(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list genres: %w", err)
+	}
+	return genres, nil
 }
 
 // SearchItems performs full-text search within a library.

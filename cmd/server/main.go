@@ -379,6 +379,7 @@ func run() error {
 		History:         historyHandler,
 		Items:           itemHandler,
 		NativeTranscode: nativeTranscodeHandler,
+		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger),
 		Arr:             arrHandler,
 		GoogleAuth:      googleAuthHandler,
 		GitHubAuth:      githubAuthHandler,

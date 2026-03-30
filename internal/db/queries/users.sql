@@ -1,12 +1,14 @@
 -- name: GetUser :one
 SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       parent_user_id, avatar_url
 FROM users
 WHERE id = $1;
 
 -- name: GetUserByUsername :one
 SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       parent_user_id, avatar_url
 FROM users
 WHERE username = $1;
 
@@ -20,7 +22,8 @@ ORDER BY username;
 INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id;
+          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          parent_user_id, avatar_url;
 
 -- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
@@ -44,19 +47,40 @@ UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1;
 SELECT COUNT(*) FROM users WHERE is_admin = true;
 
 -- name: ListSwitchableUsers :many
-SELECT id, username, is_admin, (pin IS NOT NULL) AS has_pin
+SELECT id, username, is_admin, (pin IS NOT NULL) AS has_pin, avatar_url, parent_user_id
 FROM users
 ORDER BY username;
 
+-- name: ListManagedProfiles :many
+SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at
+FROM users
+WHERE parent_user_id = $1
+ORDER BY username;
+
+-- name: CreateManagedProfile :one
+INSERT INTO users (username, parent_user_id, avatar_url, pin, is_admin)
+VALUES ($1, $2, $3, $4, false)
+RETURNING id, username, avatar_url, created_at;
+
+-- name: DeleteManagedProfile :exec
+DELETE FROM users WHERE id = $1 AND parent_user_id = $2;
+
+-- name: UpdateManagedProfile :one
+UPDATE users SET username = $2, avatar_url = $3, updated_at = NOW()
+WHERE id = $1 AND parent_user_id = $4
+RETURNING id, username, avatar_url, created_at;
+
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       parent_user_id, avatar_url
 FROM users
 WHERE email = $1;
 
 -- name: GetUserByGoogleID :one
 SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       parent_user_id, avatar_url
 FROM users
 WHERE google_id = $1;
 
@@ -71,11 +95,13 @@ WHERE id = $1;
 INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id;
+          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          parent_user_id, avatar_url;
 
 -- name: GetUserByGitHubID :one
 SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       parent_user_id, avatar_url
 FROM users
 WHERE github_id = $1;
 
@@ -90,11 +116,13 @@ WHERE id = $1;
 INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id;
+          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          parent_user_id, avatar_url;
 
 -- name: GetUserByDiscordID :one
 SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       parent_user_id, avatar_url
 FROM users
 WHERE discord_id = $1;
 
@@ -109,4 +137,5 @@ WHERE id = $1;
 INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id;
+          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          parent_user_id, avatar_url;

@@ -35,7 +35,7 @@ func NewSender(cfg Config) *Sender {
 
 // Send sends an email with the given subject and HTML body to the recipients.
 func (s *Sender) Send(to []string, subject, htmlBody string) error {
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
 
 	msg := buildMessage(s.cfg.From, to, subject, htmlBody)
 

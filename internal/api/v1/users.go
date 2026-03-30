@@ -56,6 +56,10 @@ type UserDB interface {
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
 	CountAdmins(ctx context.Context) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) error
+	ListManagedProfiles(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListManagedProfilesRow, error)
+	CreateManagedProfile(ctx context.Context, arg gen.CreateManagedProfileParams) (gen.CreateManagedProfileRow, error)
+	UpdateManagedProfile(ctx context.Context, arg gen.UpdateManagedProfileParams) (gen.UpdateManagedProfileRow, error)
+	DeleteManagedProfile(ctx context.Context, arg gen.DeleteManagedProfileParams) error
 }
 
 // UserHandler handles /api/v1/users endpoints.
@@ -407,4 +411,171 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 	setAuthCookies(w, r, tokenPair)
 	respond.Success(w, r, tokenPair)
+}
+
+// ── Managed profiles ──────────────────────────────────────────────────────────
+
+type profileResponse struct {
+	ID        string  `json:"id"`
+	Username  string  `json:"username"`
+	AvatarURL *string `json:"avatar_url,omitempty"`
+	HasPIN    bool    `json:"has_pin"`
+	CreatedAt string  `json:"created_at"`
+}
+
+// ListProfiles handles GET /api/v1/profiles.
+func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	parentPG := pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}
+	rows, err := h.db.ListManagedProfiles(r.Context(), parentPG)
+	if err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]profileResponse, len(rows))
+	for i, row := range rows {
+		out[i] = profileResponse{
+			ID:        row.ID.String(),
+			Username:  row.Username,
+			AvatarURL: row.AvatarUrl,
+			HasPIN:    row.HasPin == true,
+			CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
+		}
+	}
+	respond.Success(w, r, out)
+}
+
+// CreateProfile handles POST /api/v1/profiles.
+func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	var body struct {
+		Username  string  `json:"username"`
+		AvatarURL *string `json:"avatar_url"`
+		PIN       *string `json:"pin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" {
+		respond.BadRequest(w, r, "username is required")
+		return
+	}
+	var pinHash *string
+	if body.PIN != nil && *body.PIN != "" {
+		if len(*body.PIN) != 4 {
+			respond.BadRequest(w, r, "PIN must be exactly 4 digits")
+			return
+		}
+		h, err := bcrypt.GenerateFromPassword([]byte(*body.PIN), 10)
+		if err != nil {
+			respond.InternalError(w, r)
+			return
+		}
+		s := string(h)
+		pinHash = &s
+	}
+	parentPG := pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}
+	row, err := h.db.CreateManagedProfile(r.Context(), gen.CreateManagedProfileParams{
+		Username:     body.Username,
+		ParentUserID: parentPG,
+		AvatarUrl:    body.AvatarURL,
+		Pin:          pinHash,
+	})
+	if err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "create managed profile", "err", err)
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Created(w, r, profileResponse{
+		ID:        row.ID.String(),
+		Username:  row.Username,
+		AvatarURL: row.AvatarUrl,
+		HasPIN:    pinHash != nil,
+		CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
+	})
+}
+
+// UpdateProfile handles PATCH /api/v1/profiles/{id}.
+func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	profileID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid profile id")
+		return
+	}
+	var body struct {
+		Username  string  `json:"username"`
+		AvatarURL *string `json:"avatar_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" {
+		respond.BadRequest(w, r, "username is required")
+		return
+	}
+	parentPG := pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}
+	row, err := h.db.UpdateManagedProfile(r.Context(), gen.UpdateManagedProfileParams{
+		ID:           profileID,
+		Username:     body.Username,
+		AvatarUrl:    body.AvatarURL,
+		ParentUserID: parentPG,
+	})
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	respond.Success(w, r, profileResponse{
+		ID:        row.ID.String(),
+		Username:  row.Username,
+		AvatarURL: row.AvatarUrl,
+		CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
+	})
+}
+
+// DeleteProfile handles DELETE /api/v1/profiles/{id}.
+func (h *UserHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	profileID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid profile id")
+		return
+	}
+	parentPG := pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}
+	if err := h.db.DeleteManagedProfile(r.Context(), gen.DeleteManagedProfileParams{
+		ID:           profileID,
+		ParentUserID: parentPG,
+	}); err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	respond.NoContent(w)
 }
