@@ -117,6 +117,7 @@
                 <div class="hub-progress-bar" style="width:{progressPct(item)}%"></div>
               </div>
               <div class="hub-label">{item.title}</div>
+              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
             </a>
           {/each}
         </div>
