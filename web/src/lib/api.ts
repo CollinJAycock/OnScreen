@@ -153,6 +153,7 @@ export class ApiClient {
   put = <T>(path: string, body?: unknown) => this.request<T>('PUT', path, body);
   patch = <T>(path: string, body?: unknown) => this.request<T>('PATCH', path, body);
   del = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
+  delete = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
 }
 
 export const api = new ApiClient();
@@ -270,6 +271,7 @@ export interface MediaItem {
   genres?: string[];
   poster_path?: string;
   created_at: string;
+  updated_at: string;
 }
 
 export type SortField = 'title' | 'year' | 'rating' | 'created_at';

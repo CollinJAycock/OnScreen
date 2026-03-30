@@ -28,7 +28,7 @@
   let prevId = '';
   let savedTimeout: ReturnType<typeof setTimeout>;
 
-  $: id = $page.params.id;
+  $: id = $page.params.id!;
 
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }

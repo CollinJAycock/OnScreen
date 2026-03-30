@@ -244,7 +244,7 @@
             <div class="hbar-row">
               <span class="hbar-label">{label}</span>
               <div class="hbar-track">
-                <div class="hbar-fill" style="width:{pct(val, totalRes)}%; background:{color}"></div>
+                <div class="hbar-fill" style="width:{pct(Number(val), totalRes)}%; background:{color}"></div>
               </div>
               <span class="hbar-count">{val}</span>
             </div>

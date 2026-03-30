@@ -13,7 +13,7 @@
   }
 
   let name = '';
-  let type = 'movie';
+  let type: 'movie' | 'show' | 'music' | 'photo' = 'movie';
   let paths: string[] = [''];
   let agent = 'tmdb';
   let language = 'en';

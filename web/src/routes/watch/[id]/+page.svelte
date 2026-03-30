@@ -8,7 +8,7 @@
 
   let showPlaylistPicker = false;
 
-  $: id = $page.params.id;
+  $: id = $page.params.id!;
 
   let mounted = false;
   let prevId = '';
@@ -142,6 +142,8 @@
 
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    // Safari uses the prefixed event name for fullscreen changes.
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
     prevId = id;
     await load();
     mounted = true;
@@ -170,6 +172,7 @@
 
   onDestroy(() => {
     clearTimers();
+    document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
     window.removeEventListener('mousemove', onSeekMouseMove);
     window.removeEventListener('mouseup', onSeekMouseUp);
     if (videoEl && !videoEl.paused && item) {
@@ -506,10 +509,8 @@
         maxMaxBufferLength: 120,
         // Start fetching the next segment before the current one finishes.
         startFragPrefetch: true,
-        // Detect stalls quickly. During normal playback highBufferWatchdogPeriod
-        // is used; lowBufferWatchdogPeriod only fires when the player is stuck.
+        // Detect stalls quickly during normal playback.
         highBufferWatchdogPeriod: 3,
-        lowBufferWatchdogPeriod: 0.1,
         // Force playback to start at position 0 in the HLS timeline (not the live edge).
         startPosition: 0,
         // Disable live sync seeking. For EVENT playlists (remux/transcode), HLS.js
@@ -807,7 +808,8 @@
 
 <svelte:head><title>{item?.title ?? 'Watch'} — OnScreen</title></svelte:head>
 
-<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:webkitfullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; }} />
+<!-- svelte-ignore avoid-is -->
+<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; }} />
 
 {#if isPhoto && item}
 <!-- Photo viewer -->

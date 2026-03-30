@@ -68,7 +68,7 @@
   let mounted = false;
   let prevId = '';
 
-  $: id = $page.params.id;
+  $: id = $page.params.id!;
 
   $: isPhotoLibrary = library?.type === 'photo';
 
@@ -175,6 +175,8 @@
       scanning = false;
     }
   }
+
+  async function refresh() { await loadItems(); }
 
   async function applyFilters() {
     allItems = [];
