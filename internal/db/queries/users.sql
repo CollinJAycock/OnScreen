@@ -65,10 +65,25 @@ RETURNING id, username, avatar_url, created_at;
 -- name: DeleteManagedProfile :exec
 DELETE FROM users WHERE id = $1 AND parent_user_id = $2;
 
+-- name: DeleteManagedProfileAdmin :exec
+DELETE FROM users WHERE id = $1 AND parent_user_id IS NOT NULL;
+
 -- name: UpdateManagedProfile :one
 UPDATE users SET username = $2, avatar_url = $3, updated_at = NOW()
 WHERE id = $1 AND parent_user_id = $4
 RETURNING id, username, avatar_url, created_at;
+
+-- name: UpdateManagedProfileAdmin :one
+UPDATE users SET username = $2, avatar_url = $3, updated_at = NOW()
+WHERE id = $1 AND parent_user_id IS NOT NULL
+RETURNING id, username, avatar_url, parent_user_id, created_at;
+
+-- name: ListAllManagedProfiles :many
+SELECT u.id, u.username, u.avatar_url, (u.pin IS NOT NULL) AS has_pin, u.created_at,
+       u.parent_user_id AS owner_id, p.username AS owner_username
+FROM users u
+JOIN users p ON p.id = u.parent_user_id
+ORDER BY p.username, u.username;
 
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, is_admin, pin,

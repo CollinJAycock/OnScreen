@@ -348,11 +348,14 @@ func (s *stubUserDB) DeleteUser(_ context.Context, _ uuid.UUID) error         { 
 func (s *stubUserDB) SetUserAdmin(_ context.Context, _ gen.SetUserAdminParams) error {
 	return nil
 }
-func (s *stubUserDB) CountAdmins(_ context.Context) (int64, error)                { return 1, nil }
+func (s *stubUserDB) CountAdmins(_ context.Context) (int64, error) { return 1, nil }
 func (s *stubUserDB) UpdateUserPassword(_ context.Context, _ gen.UpdateUserPasswordParams) error {
 	return nil
 }
 func (s *stubUserDB) ListManagedProfiles(_ context.Context, _ pgtype.UUID) ([]gen.ListManagedProfilesRow, error) {
+	return nil, nil
+}
+func (s *stubUserDB) ListAllManagedProfiles(_ context.Context) ([]gen.ListAllManagedProfilesRow, error) {
 	return nil, nil
 }
 func (s *stubUserDB) CreateManagedProfile(_ context.Context, _ gen.CreateManagedProfileParams) (gen.CreateManagedProfileRow, error) {
@@ -361,9 +364,13 @@ func (s *stubUserDB) CreateManagedProfile(_ context.Context, _ gen.CreateManaged
 func (s *stubUserDB) UpdateManagedProfile(_ context.Context, _ gen.UpdateManagedProfileParams) (gen.UpdateManagedProfileRow, error) {
 	return gen.UpdateManagedProfileRow{}, nil
 }
+func (s *stubUserDB) UpdateManagedProfileAdmin(_ context.Context, _ gen.UpdateManagedProfileAdminParams) (gen.UpdateManagedProfileAdminRow, error) {
+	return gen.UpdateManagedProfileAdminRow{}, nil
+}
 func (s *stubUserDB) DeleteManagedProfile(_ context.Context, _ gen.DeleteManagedProfileParams) error {
 	return nil
 }
+func (s *stubUserDB) DeleteManagedProfileAdmin(_ context.Context, _ uuid.UUID) error { return nil }
 
 // stubAnalyticsDB implements the analyticsQuerier used by AnalyticsHandler.
 type stubAnalyticsDB struct{}

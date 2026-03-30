@@ -92,15 +92,22 @@ func (m *mockUserDB) UpdateUserPassword(_ context.Context, _ gen.UpdateUserPassw
 func (m *mockUserDB) ListManagedProfiles(_ context.Context, _ pgtype.UUID) ([]gen.ListManagedProfilesRow, error) {
 	return nil, nil
 }
+func (m *mockUserDB) ListAllManagedProfiles(_ context.Context) ([]gen.ListAllManagedProfilesRow, error) {
+	return nil, nil
+}
 func (m *mockUserDB) CreateManagedProfile(_ context.Context, _ gen.CreateManagedProfileParams) (gen.CreateManagedProfileRow, error) {
 	return gen.CreateManagedProfileRow{}, nil
 }
 func (m *mockUserDB) UpdateManagedProfile(_ context.Context, _ gen.UpdateManagedProfileParams) (gen.UpdateManagedProfileRow, error) {
 	return gen.UpdateManagedProfileRow{}, nil
 }
+func (m *mockUserDB) UpdateManagedProfileAdmin(_ context.Context, _ gen.UpdateManagedProfileAdminParams) (gen.UpdateManagedProfileAdminRow, error) {
+	return gen.UpdateManagedProfileAdminRow{}, nil
+}
 func (m *mockUserDB) DeleteManagedProfile(_ context.Context, _ gen.DeleteManagedProfileParams) error {
 	return nil
 }
+func (m *mockUserDB) DeleteManagedProfileAdmin(_ context.Context, _ uuid.UUID) error { return nil }
 
 func authedRequest(r *http.Request) *http.Request {
 	ctx := middleware.WithClaims(r.Context(), &auth.Claims{
