@@ -160,8 +160,16 @@ func BuildHLS(a BuildArgs) []string {
 		"-hls_flags", hlsFlags,
 		"-hls_segment_filename", segPattern,
 		"-hls_delete_threshold", "30", // keep last 2 minutes on disk during re-encode
-		playlistPath,
 	)
+	// Mark remux sessions as EVENT so HLS.js starts from segment 0 rather than
+	// jumping to the live edge. For video-copy, FFmpeg runs 10-100x real-time,
+	// so by the time HLS.js loads the playlist it sees many segments and would
+	// otherwise skip ahead (liveSyncDurationCount=3 × targetDuration behind
+	// the last segment), causing a stall waiting for segments past the live edge.
+	if videoCopy {
+		args = append(args, "-hls_playlist_type", "event")
+	}
+	args = append(args, playlistPath)
 
 	return args
 }

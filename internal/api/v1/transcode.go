@@ -277,19 +277,27 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	}
 
 	// Sanitize sessionID to prevent path traversal.
-	playlistPath := filepath.Join(transcode.SessionDir(filepath.Base(sessionID)), "index.m3u8")
+	sessDir := transcode.SessionDir(filepath.Base(sessionID))
+	playlistPath := filepath.Join(sessDir, "index.m3u8")
 
-	// Wait up to 10s for FFmpeg to create the playlist.
+	// Wait up to 10s for FFmpeg to produce at least 2 segments before serving
+	// the initial playlist. One segment = 4 s of content; HLS.js polls the playlist
+	// every targetDuration (4 s), so a single-segment playlist causes HLS.js to
+	// exhaust its buffer exactly at the first poll boundary, producing a visible stall.
+	// At remux speed (≥20× real-time) the second segment appears within ~0.4 s, so
+	// this adds negligible startup latency. On subsequent polls (playlist already
+	// served) we return immediately without waiting.
+	seg1Path := filepath.Join(sessDir, "seg00001.ts")
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(playlistPath); err == nil {
+		if _, err := os.Stat(seg1Path); err == nil {
 			break
 		}
 		select {
 		case <-ctx.Done():
 			http.Error(w, "request cancelled", http.StatusServiceUnavailable)
 			return
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 
@@ -301,6 +309,7 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 
 	rewritten := rewritePlaylist(data, sessionID, token)
 	w.Header().Set("Content-Type", "application/x-mpegURL")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write(rewritten)
 }
 

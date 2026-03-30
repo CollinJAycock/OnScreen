@@ -492,9 +492,27 @@
         maxMaxBufferLength: 120,
         // Start fetching the next segment before the current one finishes.
         startFragPrefetch: true,
-        // Lower stall threshold so recovery kicks in faster.
+        // Detect stalls quickly. During normal playback highBufferWatchdogPeriod
+        // is used; lowBufferWatchdogPeriod only fires when the player is stuck.
         highBufferWatchdogPeriod: 3,
-        lowBufferWatchdogPeriod: 1,
+        lowBufferWatchdogPeriod: 0.1,
+        // Force playback to start at position 0 in the HLS timeline (not the live edge).
+        startPosition: 0,
+        // Disable live sync seeking. For EVENT playlists (remux/transcode), HLS.js
+        // periodically seeks the player forward to stay within liveSyncDurationCount
+        // segments of the live edge. As FFmpeg races ahead, this causes the player to
+        // jump forward and eventually catch the actual live edge and stall. Setting
+        // these very high effectively disables the live-sync seek until ENDLIST appears.
+        liveSyncDurationCount: 999,
+        liveMaxLatencyDurationCount: 1002, // must be > liveSyncDurationCount + 1
+        // Some source files have an edit list / chapter track that shifts MPEG-TS
+        // timestamps so the buffer starts at PTS > 0 (e.g. 1.467 s). With
+        // startPosition=0, currentTime=0 but no data exists there, causing a stall.
+        // nudgeMaxRetry=0 tells HLS.js to skip the 3 one-second nudge attempts and
+        // immediately seek to buffered.start(0) on the first watchdog tick (~100 ms).
+        // We do NOT manually set videoEl.currentTime because that triggers a SourceBuffer
+        // flush in HLS.js, evicting the segments we already buffered.
+        nudgeMaxRetry: 0,
       });
       hlsInstance.loadSource(playlistUrl);
       hlsInstance.attachMedia(videoEl);
