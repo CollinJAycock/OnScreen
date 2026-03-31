@@ -20,7 +20,7 @@ A modern, open-source media server built for correctness, simplicity, and high a
 ### Prerequisites
 
 - Go 1.25+
-- Node.js 22+
+- Node.js 24+
 - PostgreSQL 16+
 - Valkey (or Redis) 7+
 - FFmpeg (for transcoding)
