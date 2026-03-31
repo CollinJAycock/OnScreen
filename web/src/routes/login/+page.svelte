@@ -143,18 +143,18 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #07070d;
+    background: var(--bg-primary);
     font-family: system-ui, -apple-system, sans-serif;
   }
 
   .login-card {
     background: #0e0e18;
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
     border-radius: 16px;
     padding: 2.5rem;
     width: 100%;
     max-width: 380px;
-    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    box-shadow: 0 24px 80px var(--shadow);
   }
 
   .logo {
@@ -172,14 +172,14 @@
   h1 {
     font-size: 1.5rem;
     font-weight: 700;
-    color: #eeeef8;
+    color: var(--text-primary);
     margin: 0;
     letter-spacing: -0.02em;
   }
 
   .subtitle {
     text-align: center;
-    color: #55556a;
+    color: var(--text-muted);
     font-size: 0.85rem;
     margin: 0 0 2rem;
   }
@@ -201,7 +201,7 @@
 
   .forgot-link {
     font-size: 0.75rem;
-    color: #55556a;
+    color: var(--text-muted);
     text-decoration: none;
     transition: color 0.15s;
   }
@@ -223,30 +223,30 @@
     width: 100%;
     padding: 0.7rem 0.85rem;
     background: #111120;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid var(--border);
     border-radius: 8px;
     font-size: 0.95rem;
-    color: #eeeef8;
+    color: var(--text-primary);
     outline: none;
     transition: border-color 0.15s, box-shadow 0.15s;
     box-sizing: border-box;
   }
 
   input::placeholder {
-    color: #44445a;
+    color: var(--text-muted);
   }
 
   input:focus {
     border-color: rgba(124,106,247,0.5);
-    box-shadow: 0 0 0 3px rgba(124,106,247,0.1);
+    box-shadow: 0 0 0 3px var(--accent-bg);
   }
 
   .error-banner {
-    background: rgba(248,113,113,0.08);
-    border: 1px solid rgba(248,113,113,0.2);
+    background: var(--error-bg);
+    border: 1px solid var(--error-bg);
     border-radius: 8px;
     padding: 0.55rem 0.8rem;
-    color: #fca5a5;
+    color: var(--error);
     font-size: 0.82rem;
     margin-bottom: 1rem;
   }
@@ -254,7 +254,7 @@
   .btn-primary {
     width: 100%;
     padding: 0.75rem;
-    background: #7c6af7;
+    background: var(--accent);
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -283,7 +283,7 @@
     align-items: center;
     gap: 0.75rem;
     margin: 1.5rem 0;
-    color: #44445a;
+    color: var(--text-muted);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -293,7 +293,7 @@
     content: '';
     flex: 1;
     height: 1px;
-    background: rgba(255,255,255,0.06);
+    background: var(--border);
   }
 
   .sso-buttons {
@@ -308,8 +308,8 @@
     justify-content: center;
     gap: 0.45rem;
     padding: 0.65rem 0.5rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     color: #b0b0c8;
     font-size: 0.8rem;
@@ -319,7 +319,7 @@
   }
 
   .sso-btn:hover {
-    background: rgba(255,255,255,0.07);
+    background: var(--border);
     border-color: rgba(255,255,255,0.14);
     color: #ddddf0;
   }
@@ -331,7 +331,7 @@
   }
 
   .setup-link a {
-    color: #55556a;
+    color: var(--text-muted);
     text-decoration: none;
     transition: color 0.15s;
   }

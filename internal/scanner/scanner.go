@@ -616,7 +616,14 @@ func itemNeedsEnrich(item *media.Item) bool {
 		if item.PosterPath == nil {
 			return true
 		}
-		return badPosterPath(*item.PosterPath)
+		if badPosterPath(*item.PosterPath) {
+			return true
+		}
+		// Movies and shows need a content rating for parental filters.
+		if (item.Type == "movie" || item.Type == "show") && item.ContentRating == nil {
+			return true
+		}
+		return false
 	}
 }
 

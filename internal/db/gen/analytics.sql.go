@@ -235,6 +235,7 @@ type SessionMediaItem struct {
 	Type       string
 	PosterPath pgtype.Text
 	DurationMS pgtype.Int8
+	Bitrate    pgtype.Int8 // file bitrate in bits/s (only set for file-path lookups)
 }
 
 func (q *Queries) GetMediaItemsForSessions(ctx context.Context, ids []uuid.UUID) ([]SessionMediaItem, error) {
@@ -257,7 +258,7 @@ func (q *Queries) GetMediaItemsForSessions(ctx context.Context, ids []uuid.UUID)
 // ── Sessions: file-path lookup ────────────────────────────────────────────────
 
 const getMediaItemByFilePath = `
-SELECT mi.id, mi.title, mi.year, mi.type, mi.poster_path, mi.duration_ms
+SELECT mi.id, mi.title, mi.year, mi.type, mi.poster_path, mi.duration_ms, mf.bitrate
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mf.file_path = $1 AND mi.deleted_at IS NULL
@@ -266,7 +267,7 @@ LIMIT 1`
 func (q *Queries) GetMediaItemByFilePath(ctx context.Context, filePath string) (*SessionMediaItem, error) {
 	var i SessionMediaItem
 	err := q.db.QueryRow(ctx, getMediaItemByFilePath, filePath).Scan(
-		&i.ID, &i.Title, &i.Year, &i.Type, &i.PosterPath, &i.DurationMS,
+		&i.ID, &i.Title, &i.Year, &i.Type, &i.PosterPath, &i.DurationMS, &i.Bitrate,
 	)
 	if err != nil {
 		return nil, err

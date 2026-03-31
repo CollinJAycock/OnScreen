@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, transcodeApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, transcodeApi, userApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream } from '$lib/api';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -43,15 +43,16 @@
   // Progress save timer
   let progressTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Quality picker
-  type QualityOption = { label: string; height: number };
+  // Quality picker — width is used for filtering (stable across aspect ratios),
+  // height is sent to the backend for the actual transcode resolution.
+  type QualityOption = { label: string; height: number; width: number };
   const qualityOptions: QualityOption[] = [
-    { label: 'Auto (Direct Play)', height: 0 },
-    { label: '4K (2160p)',         height: 2160 },
-    { label: '1080p',              height: 1080 },
-    { label: '720p',               height: 720 },
-    { label: '480p',               height: 480 },
-    { label: '360p',               height: 360 },
+    { label: 'Auto (Direct Play)', height: 0,    width: 0 },
+    { label: '4K (2160p)',         height: 2160, width: 3840 },
+    { label: '1080p',              height: 1080, width: 1920 },
+    { label: '720p',               height: 720,  width: 1280 },
+    { label: '480p',               height: 480,  width: 854 },
+    { label: '360p',               height: 360,  width: 640 },
   ];
   let selectedQuality: QualityOption = qualityOptions[0];
   let showQualityMenu = false;
@@ -59,6 +60,10 @@
   // Subtitle picker
   let showSubtitleMenu = false;
   let selectedSubtitle: import('$lib/api').SubtitleStream | null = null;
+
+  // Audio track picker
+  let showAudioMenu = false;
+  let selectedAudioIndex = -1; // -1 = default (first track)
 
   // Text-based subtitle codecs that ffmpeg can convert to WebVTT.
   const textSubCodecs = new Set(['srt', 'subrip', 'ass', 'ssa', 'mov_text', 'webvtt', 'text']);
@@ -72,6 +77,8 @@
 
   $: textSubtitles = (item?.files?.[0]?.subtitle_streams ?? [])
     .filter(s => textSubCodecs.has(s.codec.toLowerCase()));
+
+  $: audioStreams = item?.files?.[0]?.audio_streams ?? [];
 
   // Skip the auto-seek in onVideoLoaded during quality switches
   let skipAutoSeek = false;
@@ -129,10 +136,19 @@
   // when the browser can't decode the remuxed video and escalate to full transcode.
   let hlsIsRemux = false;
 
-  // Reactive: available quality options filtered to source resolution
-  $: sourceHeight = item?.files?.[0]?.resolution_h ?? 0;
+  // Reactive: available quality options filtered to source resolution.
+  // Use width for filtering — it's a stable indicator of quality tier regardless
+  // of aspect ratio (a 1920x800 scope movie is still "1080p" quality).
+  // Allow 5% tolerance so files like 1918x796 still qualify as "1080p tier".
+  // Hide "Auto (Direct Play)" when the file requires transcoding.
+  $: sourceWidth = item?.files?.[0]?.resolution_w ?? 0;
+  $: sourceFile = item?.files?.[0];
+  $: canAuto = canDirectPlay(sourceFile) || canRemuxVideo(sourceFile);
   $: availableQualities = qualityOptions.filter(
-    q => q.height === 0 || sourceHeight === 0 || q.height <= sourceHeight
+    q => {
+      if (q.height === 0) return canAuto;
+      return sourceWidth === 0 || q.width <= sourceWidth * 1.05;
+    }
   );
 
   $: nextEpisode = (() => {
@@ -387,10 +403,27 @@
         siblings = r.items.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       }
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load';
+      const msg = e instanceof Error ? e.message : 'Failed to load';
+      error = msg.toLowerCase().includes('forbidden') || msg.toLowerCase().includes('insufficient permissions')
+        ? 'This content is restricted by your profile\'s content rating.'
+        : msg;
     } finally {
       loading = false;
     }
+    // Auto-select preferred audio/subtitle tracks based on user preferences.
+    try {
+      const prefs = await userApi.getPreferences();
+      if (prefs.preferred_subtitle_lang && !selectedSubtitle) {
+        const match = textSubtitles.find(s => s.language === prefs.preferred_subtitle_lang);
+        if (match) selectedSubtitle = match;
+      }
+      if (prefs.preferred_audio_lang && item?.files?.[0]?.audio_streams?.length) {
+        const streams = item.files[0].audio_streams;
+        const idx = streams.findIndex(s => s.language === prefs.preferred_audio_lang);
+        if (idx >= 0 && idx !== 0) selectedAudioIndex = idx;
+      }
+    } catch { /* preferences unavailable — use defaults */ }
+
     // Wait for Svelte to render the <video> element (gated on item && streamURL).
     await tick();
     if (!item?.files?.[0]?.stream_url || !videoEl) return;
@@ -398,24 +431,30 @@
     const file = item.files[0];
     // Signal intent to auto-play so controls don't flash a paused state.
     paused = false;
+    // Non-default audio track selected — must go through transcode even for direct-playable files.
+    const needsAudioSwitch = selectedAudioIndex > 0;
+
     if (!file.video_codec) {
       // Audio-only file (FLAC, MP3, AAC, Opus) — browser <video> element can play
       // these natively from the raw stream without any transcoding.
       videoEl.src = file.stream_url;
       videoEl.load();
-    } else if (canDirectPlay(file)) {
+    } else if (canDirectPlay(file) && !needsAudioSwitch) {
       // Direct play — browser handles container + codecs natively.
       videoEl.src = file.stream_url;
       videoEl.load();
-    } else if (canRemuxVideo(file)) {
-      // Video is browser-compatible (H.264) but audio or container is not.
+    } else if (canRemuxVideo(file) || (canDirectPlay(file) && needsAudioSwitch)) {
+      // Video is browser-compatible (H.264) but audio or container is not,
+      // or a non-default audio track was selected.
       // Stream-copy the video and only transcode audio → fast, lossless video.
       const posMs = item.view_offset_ms > 0 ? item.view_offset_ms : 0;
       await switchToTranscode(0, posMs, true);
     } else {
       // Full transcode needed (non-browser video codec like HEVC/VC-1/MPEG-2).
-      const height = file.resolution_h ?? 1080;
-      const match = availableQualities.find(q => q.height === height)
+      // Find the best quality tier by width (e.g. 1920-wide scope movie → 1080p tier).
+      const w = file.resolution_w ?? 1920;
+      const match = availableQualities.filter(q => q.width > 0 && q.width <= w * 1.05)
+                      .sort((a, b) => b.width - a.width)[0]
                  ?? availableQualities.find(q => q.height > 0)
                  ?? qualityOptions[2]; // 1080p fallback
       selectedQuality = match;
@@ -481,12 +520,37 @@
     destroyHls();
 
     try {
-      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy);
+      const audioIdx = selectedAudioIndex >= 0 ? selectedAudioIndex : undefined;
+      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx);
       transcodeSessionId = sess.session_id;
       transcodeToken = sess.token;
       attachHls(sess.playlist_url, posMs / 1000, wasPlaying, videoCopy);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Transcode failed';
+    }
+  }
+
+  async function selectAudioTrack(index: number) {
+    if (index === selectedAudioIndex) { showAudioMenu = false; return; }
+    selectedAudioIndex = index;
+    showAudioMenu = false;
+
+    if (!item || !item.files?.length) return;
+    const posMs = Math.floor(currentTime * 1000);
+    skipAutoSeek = true;
+
+    if (index <= 0 && canDirectPlay(item.files[0])) {
+      // Switching back to default track on a direct-playable file — go back to direct play.
+      await switchToDirectPlay(posMs);
+    } else {
+      // Non-default audio → transcode. Use remux if video is browser-compatible.
+      const file = item.files[0];
+      if (canRemuxVideo(file) || canDirectPlay(file)) {
+        await switchToTranscode(0, posMs, true);
+      } else {
+        const h = selectedQuality.height > 0 ? selectedQuality.height : (file.resolution_h ?? 1080);
+        await switchToTranscode(h, posMs);
+      }
     }
   }
 
@@ -663,7 +727,7 @@
     }
     if (!videoEl) return;
     // Close menus on Escape
-    if (e.key === 'Escape') { showQualityMenu = false; showSubtitleMenu = false; return; }
+    if (e.key === 'Escape') { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; return; }
     switch (e.key) {
       case ' ':
       case 'k':
@@ -755,9 +819,12 @@
     if (!document.fullscreenElement) {
       await (containerEl.requestFullscreen || (containerEl as any).webkitRequestFullscreen)?.call(containerEl).catch(() => {});
       fullscreen = true;
+      // Lock to landscape on mobile.
+      try { await (screen.orientation as any)?.lock?.('landscape'); } catch {}
     } else {
       await (document.exitFullscreen || (document as any).webkitExitFullscreen)?.call(document).catch(() => {});
       fullscreen = false;
+      try { screen.orientation?.unlock?.(); } catch {}
     }
   }
 
@@ -776,7 +843,7 @@
   function onMouseMove() { resetHideTimer(); }
   function onMouseLeave() {
     if (!paused && hideTimer) clearTimeout(hideTimer);
-    if (!paused && !showQualityMenu && !showSubtitleMenu) showControls = false;
+    if (!paused && !showQualityMenu && !showSubtitleMenu && !showAudioMenu) showControls = false;
   }
 
   function fmtTime(sec: number): string {
@@ -801,6 +868,165 @@
     }
   }
 
+  // ── Mobile touch gestures ──────────────────────────────────────────────────
+  let isMobile = false;
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchStartTime = 0;
+  let touchGesture: 'none' | 'seek' | 'volume' | 'brightness' | 'swipe-down' = 'none';
+  let gestureLabel = '';
+  let showGestureLabel = false;
+  // Double-tap state
+  let lastTapTime = 0;
+  let lastTapX = 0;
+  let rippleX = 0;
+  let rippleY = 0;
+  let rippleSide: 'left' | 'right' | '' = '';
+  let showRipple = false;
+  let rippleTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Bottom sheet state (mobile menus)
+  let showBottomSheet: 'quality' | 'subtitle' | 'audio' | '' = '';
+  // Brightness overlay
+  let brightnessLevel = 1;
+
+  $: if (typeof window !== 'undefined') {
+    isMobile = window.matchMedia('(max-width: 768px), (pointer: coarse)').matches;
+  }
+
+  function onTouchStart(e: TouchEvent) {
+    if (!videoEl || isDetailView || isPhoto) return;
+    const t = e.touches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    touchStartTime = Date.now();
+    touchGesture = 'none';
+  }
+
+  function onTouchMove(e: TouchEvent) {
+    if (!videoEl || touchGesture === 'none' && !e.touches.length) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchStartX;
+    const dy = t.clientY - touchStartY;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+
+    // Determine gesture direction if not yet locked in.
+    if (touchGesture === 'none') {
+      if (absDx < 10 && absDy < 10) return; // dead zone
+      if (absDx > absDy) {
+        touchGesture = 'seek';
+      } else if (dy > 0 && absDy > absDx * 2) {
+        touchGesture = 'swipe-down';
+      } else {
+        // Vertical gesture: left half = brightness, right half = volume
+        const w = containerEl?.clientWidth ?? window.innerWidth;
+        touchGesture = touchStartX < w / 2 ? 'brightness' : 'volume';
+      }
+    }
+
+    e.preventDefault();
+
+    if (touchGesture === 'seek') {
+      const seekDelta = dx / 3; // ~3px per second
+      const target = Math.max(0, Math.min(duration, currentTime + seekDelta));
+      gestureLabel = `${seekDelta >= 0 ? '+' : ''}${Math.round(seekDelta)}s`;
+      showGestureLabel = true;
+    } else if (touchGesture === 'volume') {
+      const volDelta = -dy / 200;
+      const newVol = Math.max(0, Math.min(1, volume + volDelta));
+      videoEl.volume = newVol;
+      volume = newVol;
+      if (volume > 0) { videoEl.muted = false; muted = false; }
+      gestureLabel = `Volume ${Math.round(volume * 100)}%`;
+      showGestureLabel = true;
+      // Reset touch origin for continuous adjustment.
+      touchStartY = t.clientY;
+    } else if (touchGesture === 'brightness') {
+      const brDelta = -dy / 200;
+      brightnessLevel = Math.max(0.2, Math.min(1, brightnessLevel + brDelta));
+      gestureLabel = `Brightness ${Math.round(brightnessLevel * 100)}%`;
+      showGestureLabel = true;
+      touchStartY = t.clientY;
+    }
+  }
+
+  function onTouchEnd(e: TouchEvent) {
+    if (!videoEl || isDetailView || isPhoto) return;
+    const now = Date.now();
+    const elapsed = now - touchStartTime;
+
+    if (touchGesture === 'seek') {
+      // Apply final seek position.
+      const t = e.changedTouches[0];
+      const dx = t.clientX - touchStartX;
+      const seekDelta = dx / 3;
+      seekToContentTime(currentTime + seekDelta);
+    } else if (touchGesture === 'swipe-down') {
+      const t = e.changedTouches[0];
+      const dy = t.clientY - touchStartY;
+      if (dy > 100) {
+        // Swipe down = dismiss player
+        goBack();
+        showGestureLabel = false;
+        touchGesture = 'none';
+        return;
+      }
+    } else if (touchGesture === 'none' && elapsed < 300) {
+      // Tap — check for double-tap.
+      const t = e.changedTouches[0];
+      const timeSinceLastTap = now - lastTapTime;
+      const distFromLastTap = Math.abs(t.clientX - lastTapX);
+
+      if (timeSinceLastTap < 350 && distFromLastTap < 80) {
+        // Double-tap detected
+        const w = containerEl?.clientWidth ?? window.innerWidth;
+        const third = w / 3;
+        rippleX = t.clientX;
+        rippleY = t.clientY;
+
+        if (t.clientX < third) {
+          seekToContentTime(currentTime - 10);
+          rippleSide = 'left';
+          triggerRipple();
+        } else if (t.clientX > w - third) {
+          seekToContentTime(currentTime + 10);
+          rippleSide = 'right';
+          triggerRipple();
+        } else {
+          // Center double-tap = toggle play.
+          togglePlay();
+        }
+        lastTapTime = 0;
+      } else {
+        lastTapTime = now;
+        lastTapX = t.clientX;
+        // Single tap — toggle controls after a short delay.
+        setTimeout(() => {
+          if (Date.now() - lastTapTime >= 300 && lastTapTime === now) {
+            resetHideTimer();
+          }
+        }, 310);
+      }
+    }
+
+    showGestureLabel = false;
+    touchGesture = 'none';
+  }
+
+  function triggerRipple() {
+    showRipple = true;
+    if (rippleTimeout) clearTimeout(rippleTimeout);
+    rippleTimeout = setTimeout(() => { showRipple = false; rippleSide = ''; }, 500);
+  }
+
+  // Open bottom sheet on mobile instead of popup menus.
+  function openMobileMenu(menu: 'quality' | 'subtitle' | 'audio') {
+    showBottomSheet = menu;
+    showQualityMenu = false;
+    showSubtitleMenu = false;
+    showAudioMenu = false;
+  }
+
   $: progress = duration > 0 ? currentTime / duration : 0;
   $: showNextEpisodePrompt = nextEpisode != null && duration > 0 && (ended || duration - currentTime < 60);
   $: streamURL = item?.files?.[0]?.stream_url ?? '';
@@ -809,7 +1035,7 @@
 <svelte:head><title>{item?.title ?? 'Watch'} — OnScreen</title></svelte:head>
 
 <!-- svelte-ignore avoid-is -->
-<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; }} />
+<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }} />
 
 {#if isPhoto && item}
 <!-- Photo viewer -->
@@ -865,6 +1091,10 @@
   bind:this={containerEl}
   on:mousemove={onMouseMove}
   on:mouseleave={onMouseLeave}
+  on:touchstart={onTouchStart}
+  on:touchmove={onTouchMove}
+  on:touchend={onTouchEnd}
+  style={brightnessLevel < 1 ? `filter: brightness(${brightnessLevel})` : ''}
   role="region"
   aria-label="Video player"
 >
@@ -912,7 +1142,7 @@
 
     <!-- Fanart background (blurred, behind controls) -->
     {#if item.fanart_path}
-      <div class="fanart-bg" style="background-image:url('/artwork/{item.fanart_path}?v={item.updated_at}')"></div>
+      <div class="fanart-bg" style="background-image:url('/artwork/{item.fanart_path}?v={item.updated_at}&w=640')"></div>
     {/if}
 
     <!-- Controls overlay -->
@@ -1031,7 +1261,7 @@
               <div class="quality-picker" on:click|stopPropagation>
                 <button
                   class="icon-btn small quality-btn"
-                  on:click|stopPropagation={() => { showSubtitleMenu = !showSubtitleMenu; showQualityMenu = false; }}
+                  on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('subtitle'); } else { showSubtitleMenu = !showSubtitleMenu; showQualityMenu = false; showAudioMenu = false; } }}
                   title="Subtitles"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
@@ -1067,11 +1297,46 @@
               </div>
             {/if}
 
+            <!-- Audio track picker -->
+            {#if audioStreams.length > 1}
+              <div class="quality-picker" on:click|stopPropagation>
+                <button
+                  class="icon-btn small quality-btn"
+                  on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('audio'); } else { showAudioMenu = !showAudioMenu; showQualityMenu = false; showSubtitleMenu = false; } }}
+                  title="Audio track"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M9 18V5l12-2v13"/>
+                    <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                  </svg>
+                  <span class="quality-label">{selectedAudioIndex >= 0 ? (audioStreams[selectedAudioIndex]?.language || `Track ${selectedAudioIndex}`) : (audioStreams[0]?.language || 'Default')}</span>
+                </button>
+
+                {#if showAudioMenu}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label="Audio track options">
+                    {#each audioStreams as stream, i}
+                      <button
+                        class="quality-option"
+                        class:active={(selectedAudioIndex < 0 && i === 0) || selectedAudioIndex === i}
+                        on:click={() => selectAudioTrack(i)}
+                        role="menuitem"
+                      >
+                        {stream.title || stream.language || `Track ${stream.index}`}
+                        {#if stream.language && stream.title} — {stream.language}{/if}
+                        {#if stream.channels} ({stream.channels}ch){/if}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
             <!-- Quality picker -->
             <div class="quality-picker" on:click|stopPropagation>
               <button
                 class="icon-btn small quality-btn"
-                on:click|stopPropagation={() => showQualityMenu = !showQualityMenu}
+                on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('quality'); } else { showQualityMenu = !showQualityMenu; showSubtitleMenu = false; showAudioMenu = false; } }}
                 title="Quality"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
@@ -1130,6 +1395,73 @@
       </div>
     {/if}
 
+    <!-- Double-tap ripple animation -->
+    {#if showRipple}
+      <div class="ripple-overlay {rippleSide}">
+        <div class="ripple-circle" style="left:{rippleX}px;top:{rippleY}px"></div>
+        <span class="ripple-label">{rippleSide === 'left' ? '−10s' : '+10s'}</span>
+      </div>
+    {/if}
+
+    <!-- Touch gesture label -->
+    {#if showGestureLabel}
+      <div class="gesture-label">{gestureLabel}</div>
+    {/if}
+
+    <!-- Mobile bottom sheet menus -->
+    {#if showBottomSheet}
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="bottom-sheet-backdrop" on:click={() => { showBottomSheet = ''; }}>
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="bottom-sheet" on:click|stopPropagation>
+          <div class="bottom-sheet-handle"></div>
+          {#if showBottomSheet === 'quality'}
+            <div class="bottom-sheet-title">Quality</div>
+            {#each availableQualities as q}
+              <button
+                class="bottom-sheet-option"
+                class:active={q === selectedQuality}
+                on:click={() => { selectQuality(q); showBottomSheet = ''; }}
+              >{q.label}</button>
+            {/each}
+          {:else if showBottomSheet === 'subtitle'}
+            <div class="bottom-sheet-title">Subtitles</div>
+            <button
+              class="bottom-sheet-option"
+              class:active={selectedSubtitle === null}
+              on:click={() => { selectedSubtitle = null; showBottomSheet = ''; }}
+            >Off</button>
+            {#each textSubtitles as sub}
+              <button
+                class="bottom-sheet-option"
+                class:active={selectedSubtitle?.index === sub.index}
+                on:click={() => { selectedSubtitle = sub; showBottomSheet = ''; }}
+              >
+                {sub.title || sub.language || `Track ${sub.index}`}
+                {#if sub.forced} (forced){/if}
+                {#if sub.language && sub.title} — {sub.language}{/if}
+              </button>
+            {/each}
+          {:else if showBottomSheet === 'audio'}
+            <div class="bottom-sheet-title">Audio Track</div>
+            {#each audioStreams as stream, i}
+              <button
+                class="bottom-sheet-option"
+                class:active={(selectedAudioIndex < 0 && i === 0) || selectedAudioIndex === i}
+                on:click={() => { selectAudioTrack(i); showBottomSheet = ''; }}
+              >
+                {stream.title || stream.language || `Track ${stream.index}`}
+                {#if stream.language && stream.title} — {stream.language}{/if}
+                {#if stream.channels} ({stream.channels}ch){/if}
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    {/if}
+
   {:else if item}
     <div class="center-msg">
       <p class="err-text">No playable file found for this item.</p>
@@ -1144,7 +1476,7 @@
 <div class="detail-page">
   <!-- Fanart hero -->
   {#if item.fanart_path}
-    <div class="detail-hero" style="background-image:url('/artwork/{item.fanart_path}?v={item.updated_at}')">
+    <div class="detail-hero" style="background-image:url('/artwork/{item.fanart_path}?v={item.updated_at}&w=1280')">
       <div class="detail-hero-fade"></div>
     </div>
   {/if}
@@ -1157,7 +1489,7 @@
 
     <div class="detail-header">
       {#if item.poster_path}
-        <img class="detail-poster" src="/artwork/{item.poster_path}?v={item.updated_at}" alt="{item.title}" />
+        <img class="detail-poster" src="/artwork/{item.poster_path}?v={item.updated_at}&w=300" alt="{item.title}" />
       {/if}
       <div class="detail-meta">
         <h1 class="detail-title">{item.title}</h1>
@@ -1252,7 +1584,7 @@
         {#each musicChildren as album}
           <a class="music-album-card" href="/watch/{album.id}">
             {#if album.poster_path}
-              <img src="/artwork/{album.poster_path}?v={album.updated_at}" alt={album.title} />
+              <img src="/artwork/{album.poster_path}?v={album.updated_at}&w=300" alt={album.title} loading="lazy" />
             {:else}
               <div class="music-album-blank">♪</div>
             {/if}
@@ -1674,9 +2006,9 @@
   /* ── Detail view (shows / seasons) ───────────────── */
   .detail-page {
     position: fixed; inset: 0;
-    background: #0a0a10;
+    background: var(--bg-primary);
     overflow-y: auto;
-    color: #eeeef8;
+    color: var(--text-primary);
   }
   .detail-hero {
     position: relative;
@@ -1686,7 +2018,7 @@
   }
   .detail-hero-fade {
     position: absolute; inset: 0;
-    background: linear-gradient(to bottom, transparent 30%, #0a0a10 100%);
+    background: linear-gradient(to bottom, transparent 30%, var(--bg-primary) 100%);
   }
   .detail-content {
     position: relative;
@@ -1701,11 +2033,11 @@
   .detail-back {
     display: inline-flex; align-items: center; gap: 0.35rem;
     background: none; border: none;
-    color: #888; font-size: 0.8rem;
+    color: var(--text-secondary); font-size: 0.8rem;
     cursor: pointer; margin-bottom: 1.25rem;
     padding: 0;
   }
-  .detail-back:hover { color: #ccc; }
+  .detail-back:hover { color: var(--text-primary); }
 
   .detail-header {
     display: flex; gap: 1.5rem;
@@ -1716,7 +2048,7 @@
     border-radius: 8px;
     object-fit: cover;
     flex-shrink: 0;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 24px var(--shadow);
   }
   .detail-meta { flex: 1; min-width: 0; }
   .detail-title {
@@ -1726,12 +2058,12 @@
   }
   .detail-tags {
     display: flex; gap: 0.75rem;
-    font-size: 0.8rem; color: #666;
+    font-size: 0.8rem; color: var(--text-muted);
     margin-bottom: 0.4rem;
   }
-  .detail-genres { font-size: 0.78rem; color: #555; margin-bottom: 0.75rem; }
+  .detail-genres { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.75rem; }
   .detail-summary {
-    font-size: 0.82rem; color: #888;
+    font-size: 0.82rem; color: var(--text-secondary);
     line-height: 1.6; margin: 0;
     display: -webkit-box;
     -webkit-line-clamp: 4;
@@ -1749,27 +2081,27 @@
   .season-tabs::-webkit-scrollbar { display: none; }
   .season-tab {
     padding: 0.4rem 0.9rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.06);
+    background: var(--input-bg);
+    border: 1px solid var(--border);
     border-radius: 6px;
-    color: #777; font-size: 0.78rem; font-weight: 500;
+    color: var(--text-muted); font-size: 0.78rem; font-weight: 500;
     cursor: pointer; white-space: nowrap;
     transition: all 0.12s;
   }
-  .season-tab:hover { color: #bbb; border-color: rgba(255,255,255,0.12); }
+  .season-tab:hover { color: var(--text-secondary); border-color: var(--border-strong); }
   .season-tab.active {
-    background: rgba(124,106,247,0.12);
-    border-color: rgba(124,106,247,0.3);
-    color: #a89ffa;
+    background: var(--accent-bg);
+    border-color: var(--accent);
+    color: var(--accent-text);
   }
   .season-dropdown {
     margin-bottom: 1.25rem;
   }
   .season-dropdown select {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
-    color: #ccc;
+    color: var(--text-primary);
     font-size: 0.82rem;
     font-weight: 500;
     padding: 0.45rem 2rem 0.45rem 0.75rem;
@@ -1781,12 +2113,12 @@
   }
   .season-dropdown select:focus {
     outline: none;
-    border-color: rgba(124,106,247,0.4);
-    box-shadow: 0 0 0 3px rgba(124,106,247,0.1);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
   }
   .season-dropdown select option {
-    background: #16161f;
-    color: #ccc;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
   }
 
   /* Episode list */
@@ -1796,24 +2128,24 @@
   .episode-row {
     display: flex; align-items: flex-start; gap: 1rem;
     padding: 0.85rem 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid var(--border);
     text-decoration: none; color: inherit;
     transition: background 0.1s;
   }
-  .episode-row:hover { background: rgba(255,255,255,0.03); }
+  .episode-row:hover { background: var(--bg-hover); }
   .ep-number {
     width: 2rem; flex-shrink: 0;
     font-size: 0.85rem; font-weight: 600;
-    color: #444; text-align: center;
+    color: var(--text-muted); text-align: center;
     padding-top: 0.1rem;
   }
   .ep-info { flex: 1; min-width: 0; }
   .ep-title {
     font-size: 0.88rem; font-weight: 500;
-    color: #ddd; margin-bottom: 0.2rem;
+    color: var(--text-primary); margin-bottom: 0.2rem;
   }
   .ep-summary {
-    font-size: 0.75rem; color: #555;
+    font-size: 0.75rem; color: var(--text-muted);
     line-height: 1.5;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -1821,26 +2153,26 @@
     overflow: hidden;
   }
   .ep-duration {
-    font-size: 0.75rem; color: #444;
+    font-size: 0.75rem; color: var(--text-muted);
     flex-shrink: 0; padding-top: 0.15rem;
   }
   .ep-empty {
     padding: 2rem; text-align: center;
-    font-size: 0.85rem; color: #444;
+    font-size: 0.85rem; color: var(--text-muted);
   }
 
   /* Fix Match button */
   .fix-match-btn {
     display: inline-flex; align-items: center; gap: 0.35rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
-    color: #777; font-size: 0.75rem; font-weight: 500;
+    color: var(--text-muted); font-size: 0.75rem; font-weight: 500;
     cursor: pointer; padding: 0.35rem 0.7rem;
     margin-bottom: 1.5rem;
     transition: all 0.12s;
   }
-  .fix-match-btn:hover { color: #bbb; border-color: rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); }
+  .fix-match-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-hover); }
 
   /* Match modal overlay */
   .match-overlay {
@@ -1851,8 +2183,8 @@
     padding: 1rem;
   }
   .match-modal {
-    background: #13131a;
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
     border-radius: 12px;
     width: 100%; max-width: 520px; max-height: 80vh;
     display: flex; flex-direction: column;
@@ -1860,35 +2192,35 @@
     overflow: hidden;
   }
   .match-modal h2 {
-    font-size: 1.1rem; font-weight: 700; color: #eeeef8;
+    font-size: 1.1rem; font-weight: 700; color: var(--text-primary);
     margin: 0 0 0.25rem;
   }
   .match-hint {
-    font-size: 0.75rem; color: #555; margin: 0 0 1rem;
+    font-size: 0.75rem; color: var(--text-muted); margin: 0 0 1rem;
   }
   .match-search-form {
     display: flex; gap: 0.5rem; margin-bottom: 0.75rem;
   }
   .match-input {
     flex: 1;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--input-bg);
+    border: 1px solid var(--border);
     border-radius: 7px;
     padding: 0.45rem 0.7rem;
-    font-size: 0.85rem; color: #eeeef8;
+    font-size: 0.85rem; color: var(--text-primary);
     outline: none;
   }
-  .match-input:focus { border-color: #7c6af7; box-shadow: 0 0 0 3px rgba(124,106,247,0.12); }
+  .match-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   .match-search-btn {
     padding: 0.45rem 0.8rem;
-    background: #7c6af7; border: none; border-radius: 7px;
+    background: var(--accent); border: none; border-radius: 7px;
     color: #fff; font-size: 0.8rem; font-weight: 600;
     cursor: pointer; white-space: nowrap;
   }
-  .match-search-btn:hover { background: #8f7ef9; }
+  .match-search-btn:hover { background: var(--accent-hover); }
   .match-search-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .match-error {
-    font-size: 0.78rem; color: #fca5a5;
+    font-size: 0.78rem; color: var(--error);
     padding: 0.4rem 0; margin-bottom: 0.5rem;
   }
   .match-results {
@@ -1904,17 +2236,17 @@
     text-align: left; color: inherit;
     transition: all 0.1s;
   }
-  .match-result:hover { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
+  .match-result:hover { background: var(--bg-hover); border-color: var(--border); }
   .match-result:disabled { opacity: 0.5; cursor: wait; }
   .match-poster {
     width: 48px; height: 72px; object-fit: cover;
     border-radius: 4px; flex-shrink: 0;
-    background: #1a1a24;
+    background: var(--bg-elevated);
   }
   .match-poster-blank {
     width: 48px; height: 72px;
     border-radius: 4px; flex-shrink: 0;
-    background: #1a1a24;
+    background: var(--bg-elevated);
   }
   .match-result-info { flex: 1; min-width: 0; }
   .match-result-title { font-size: 0.85rem; font-weight: 500; color: #ddd; }
@@ -1937,7 +2269,7 @@
   }
   .match-cancel {
     align-self: flex-end;
-    background: none; border: 1px solid rgba(255,255,255,0.08);
+    background: none; border: 1px solid var(--border);
     border-radius: 6px; padding: 0.35rem 0.8rem;
     color: #777; font-size: 0.78rem; cursor: pointer;
   }
@@ -2062,13 +2394,13 @@
     aspect-ratio: 1;
     object-fit: cover;
     border-radius: 8px;
-    background: #111118;
+    background: var(--bg-elevated);
   }
   .music-album-blank {
     width: 100%;
     aspect-ratio: 1;
     border-radius: 8px;
-    background: #111118;
+    background: var(--bg-elevated);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2088,4 +2420,170 @@
     color: #666;
   }
   .music-album-card:hover .music-album-title { color: #fff; }
+
+  /* ── Double-tap ripple ───────────────────────────────── */
+  .ripple-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 15;
+    display: flex;
+    align-items: center;
+  }
+  .ripple-overlay.left { justify-content: flex-start; padding-left: 3rem; }
+  .ripple-overlay.right { justify-content: flex-end; padding-right: 3rem; }
+  .ripple-circle {
+    position: absolute;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    transform: translate(-50%, -50%) scale(0);
+    animation: rippleExpand 0.5s ease-out forwards;
+  }
+  @keyframes rippleExpand {
+    0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+  }
+  .ripple-label {
+    color: #fff;
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    animation: rippleFade 0.5s ease-out forwards;
+  }
+  @keyframes rippleFade {
+    0% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1.2); }
+  }
+
+  /* ── Touch gesture label ─────────────────────────────── */
+  .gesture-label {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    pointer-events: none;
+    z-index: 16;
+    backdrop-filter: blur(4px);
+  }
+
+  /* ── Bottom sheet (mobile menus) ─────────────────────── */
+  .bottom-sheet-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 40;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .bottom-sheet {
+    background: rgba(15,15,25,0.97);
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 0.5rem 0 1rem;
+    backdrop-filter: blur(16px);
+    animation: sheetUp 0.2s ease-out;
+  }
+  @keyframes sheetUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+  .bottom-sheet-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.25);
+    margin: 0.5rem auto 0.75rem;
+  }
+  .bottom-sheet-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 1.25rem 0.5rem;
+  }
+  .bottom-sheet-option {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.85);
+    font-size: 0.92rem;
+    padding: 0.75rem 1.25rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .bottom-sheet-option:hover { background: rgba(255,255,255,0.06); }
+  .bottom-sheet-option.active {
+    color: #7c6af7;
+    font-weight: 600;
+  }
+
+  /* ── Mobile responsive ───────────────────────────────── */
+  @media (max-width: 768px), (pointer: coarse) {
+    /* Larger touch targets */
+    .icon-btn {
+      padding: 0.6rem;
+      min-width: 44px;
+      min-height: 44px;
+    }
+    .icon-btn.small {
+      padding: 0.5rem;
+      min-width: 44px;
+      min-height: 44px;
+    }
+
+    /* Wider seek bar touch target */
+    .seek-bar {
+      height: 28px;
+      padding: 8px 0;
+    }
+    .seek-track {
+      height: 8px;
+      border-radius: 4px;
+    }
+    .seek-thumb {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Hide volume slider on mobile (replaced by gesture) */
+    .volume-slider { display: none; }
+
+    /* Compact controls for smaller screens */
+    .top-bar { padding: 0.75rem 1rem; }
+    .bottom-bar { padding: 0 1rem 0.75rem; }
+
+    .controls-left, .controls-right { gap: 0; }
+
+    .time { font-size: 0.72rem; }
+
+    .quality-label { display: none; }
+
+    /* Next episode card */
+    .next-episode {
+      right: 0.75rem;
+      bottom: 4.5rem;
+    }
+
+    /* Detail page mobile adjustments */
+    .detail-content { padding: 0 1rem 2rem; }
+    .detail-header { flex-direction: column; gap: 1rem; }
+    .detail-poster { width: 120px; }
+    .detail-title { font-size: 1.3rem; }
+  }
 </style>

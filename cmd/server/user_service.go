@@ -109,9 +109,13 @@ func (s *userService) VerifyPIN(ctx context.Context, userID uuid.UUID, rawPIN st
 		return nil, v1.ErrInvalidCredentials
 	}
 
-	return &v1.PINSwitchResult{
+	result := &v1.PINSwitchResult{
 		UserID:   user.ID,
 		Username: user.Username,
 		IsAdmin:  user.IsAdmin,
-	}, nil
+	}
+	if user.MaxContentRating != nil {
+		result.MaxContentRating = *user.MaxContentRating
+	}
+	return result, nil
 }

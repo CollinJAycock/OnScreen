@@ -191,18 +191,18 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #07070d;
+    background: var(--bg-primary);
     font-family: system-ui, -apple-system, sans-serif;
   }
 
   .setup-card {
     background: #0e0e18;
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
     border-radius: 16px;
     padding: 2.5rem;
     width: 100%;
     max-width: 420px;
-    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    box-shadow: 0 24px 80px var(--shadow);
   }
 
   .logo {
@@ -218,7 +218,7 @@
   h1 {
     font-size: 1.4rem;
     font-weight: 700;
-    color: #eeeef8;
+    color: var(--text-primary);
     margin: 0;
     letter-spacing: -0.02em;
   }
@@ -226,7 +226,7 @@
   h2 {
     font-size: 1.05rem;
     font-weight: 600;
-    color: #eeeef8;
+    color: var(--text-primary);
     margin: 0 0 1.25rem;
   }
 
@@ -244,12 +244,12 @@
     align-items: center;
     gap: 0.35rem;
     font-size: 0.75rem;
-    color: #44445a;
+    color: var(--text-muted);
     font-weight: 500;
   }
 
-  .step.active { color: #a89ffa; }
-  .step.done { color: #34d399; }
+  .step.active { color: var(--accent-text); }
+  .step.done { color: var(--success); }
 
   .step-dot {
     width: 22px;
@@ -260,27 +260,27 @@
     justify-content: center;
     font-size: 0.65rem;
     font-weight: 700;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     flex-shrink: 0;
   }
 
   .step.active .step-dot {
-    background: rgba(124,106,247,0.15);
+    background: var(--accent-bg);
     border-color: rgba(124,106,247,0.4);
-    color: #a89ffa;
+    color: var(--accent-text);
   }
 
   .step.done .step-dot {
-    background: rgba(52,211,153,0.12);
+    background: var(--success-bg);
     border-color: rgba(52,211,153,0.3);
-    color: #34d399;
+    color: var(--success);
   }
 
   .step-line {
     width: 32px;
     height: 1px;
-    background: rgba(255,255,255,0.06);
+    background: var(--border);
     margin: 0 0.5rem;
   }
 
@@ -303,7 +303,7 @@
   }
 
   .optional {
-    color: #55556a;
+    color: var(--text-muted);
     font-weight: 400;
   }
 
@@ -311,21 +311,21 @@
     width: 100%;
     padding: 0.7rem 0.85rem;
     background: #111120;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     font-size: 0.95rem;
-    color: #eeeef8;
+    color: var(--text-primary);
     outline: none;
     font-family: inherit;
     transition: border-color 0.15s, box-shadow 0.15s;
     box-sizing: border-box;
   }
 
-  input::placeholder { color: #44445a; }
+  input::placeholder { color: var(--text-muted); }
 
   input:focus, select:focus {
     border-color: rgba(124,106,247,0.5);
-    box-shadow: 0 0 0 3px rgba(124,106,247,0.1);
+    box-shadow: 0 0 0 3px var(--accent-bg);
   }
 
   select {
@@ -338,22 +338,22 @@
 
   select option {
     background: #111120;
-    color: #eeeef8;
+    color: var(--text-primary);
   }
 
   .step-desc {
-    color: #55556a;
+    color: var(--text-muted);
     font-size: 0.82rem;
     margin: -0.75rem 0 1.25rem;
     line-height: 1.5;
   }
 
   .error-banner {
-    background: rgba(248,113,113,0.08);
-    border: 1px solid rgba(248,113,113,0.2);
+    background: var(--error-bg);
+    border: 1px solid var(--error-bg);
     border-radius: 8px;
     padding: 0.55rem 0.8rem;
-    color: #fca5a5;
+    color: var(--error);
     font-size: 0.82rem;
     margin-bottom: 1rem;
   }
@@ -362,7 +362,7 @@
   .btn-primary {
     width: 100%;
     padding: 0.75rem;
-    background: #7c6af7;
+    background: var(--accent);
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -378,8 +378,8 @@
 
   .btn-secondary {
     padding: 0.75rem 1.5rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     color: #8888a0;
     font-size: 0.95rem;
@@ -389,7 +389,7 @@
   }
 
   .btn-secondary:hover {
-    background: rgba(255,255,255,0.07);
+    background: var(--border);
     color: #b0b0c8;
   }
 

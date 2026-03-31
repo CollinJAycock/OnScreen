@@ -15,7 +15,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
@@ -359,7 +361,14 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 		fp.SortAsc = false // default desc for rating/date/year
 	}
 
-	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.Sort != "title" || !fp.SortAsc
+	// Inject content rating ceiling from auth claims.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if rk := contentrating.MaxRatingRank(claims.MaxContentRating); rk != nil {
+			fp.MaxRatingRank = rk
+		}
+	}
+
+	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Sort != "title" || !fp.SortAsc
 
 	rootType := rootItemType(lib.Type)
 	var items []media.Item

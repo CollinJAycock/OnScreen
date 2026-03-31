@@ -371,6 +371,15 @@ func (s *stubUserDB) DeleteManagedProfile(_ context.Context, _ gen.DeleteManaged
 	return nil
 }
 func (s *stubUserDB) DeleteManagedProfileAdmin(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubUserDB) GetUserPreferences(_ context.Context, _ uuid.UUID) (gen.GetUserPreferencesRow, error) {
+	return gen.GetUserPreferencesRow{}, nil
+}
+func (s *stubUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPreferencesParams) error {
+	return nil
+}
+func (s *stubUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUserContentRatingParams) error {
+	return nil
+}
 
 // stubAnalyticsDB implements the analyticsQuerier used by AnalyticsHandler.
 type stubAnalyticsDB struct{}

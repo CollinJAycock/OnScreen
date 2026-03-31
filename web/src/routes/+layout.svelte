@@ -7,6 +7,13 @@
   import { derived } from 'svelte/store';
   import Logo from '$lib/components/Logo.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
+  import NotificationBell from '$lib/components/NotificationBell.svelte';
+  import NotificationPanel from '$lib/components/NotificationPanel.svelte';
+  import { theme } from '$lib/stores/theme';
+  import { initNotifications, stopNotifications } from '$lib/stores/notifications';
+
+  let currentTheme: 'light' | 'dark' | 'system';
+  theme.subscribe(v => { currentTheme = v; });
 
   let checking = true;
 
@@ -23,8 +30,10 @@
   let pinDigits = '';
   let pinError = '';
   let switching = false;
+  let notifOpen = false;
 
   onMount(async () => {
+    theme.init();
     try {
       const status = await authApi.setupStatus();
       if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
@@ -49,6 +58,7 @@
           api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
           currentUsername = pair.username;
           isAdmin = pair.is_admin;
+          initNotifications();
         }
       } catch {}
       // Strip the query param.
@@ -62,6 +72,7 @@
     if (user) {
       currentUsername = user.username;
       isAdmin = user.is_admin;
+      initNotifications();
     }
   });
 
@@ -108,6 +119,8 @@
       api.setUser(newUser);
       currentUsername = newUser.username;
       isAdmin = newUser.is_admin;
+      stopNotifications();
+      initNotifications();
       closeSwitcher();
       window.location.href = '/';
     } catch (e: unknown) {
@@ -119,9 +132,14 @@
   }
 
   async function logout() {
+    stopNotifications();
     try { await authApi.logout(); } catch { /* ignore */ }
     api.setUser(null);
     goto('/login');
+  }
+
+  function handleWindowClick() {
+    if (notifOpen) notifOpen = false;
   }
 
   $: path = $page.url.pathname;
@@ -138,6 +156,7 @@
   }
 </script>
 
+<svelte:window on:click={handleWindowClick} />
 <ToastContainer />
 
 {#if checking}
@@ -205,6 +224,21 @@
       </nav>
 
       <div class="sidebar-foot">
+        <div class="notif-wrapper">
+          <NotificationBell bind:open={notifOpen} />
+          {#if notifOpen}
+            <NotificationPanel on:close={() => { notifOpen = false; }} />
+          {/if}
+        </div>
+        <button class="theme-toggle" aria-label="Toggle theme" on:click={() => theme.toggle()}>
+          {#if currentTheme === 'light' || (currentTheme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: light)').matches)}
+            <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
+            Dark mode
+          {:else}
+            <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/></svg>
+            Light mode
+          {/if}
+        </button>
         <button class="user-switch-btn" aria-label="Switch user" on:click={openSwitcher}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a4.978 4.978 0 00-3.462 1.393A5.99 5.99 0 0010 15a5.99 5.99 0 003.462-1.607A4.978 4.978 0 0010 12z" clip-rule="evenodd"/>
@@ -311,11 +345,58 @@
 {/if}
 
 <style>
+  :global(:root), :global([data-theme="dark"]) {
+    --bg-primary: #07070d;
+    --bg-secondary: #0c0c15;
+    --bg-elevated: #111118;
+    --bg-hover: rgba(255,255,255,0.05);
+    --text-primary: #eeeef8;
+    --text-secondary: #8888aa;
+    --text-muted: #55556a;
+    --accent: #7c6af7;
+    --accent-hover: #8f7ef9;
+    --accent-bg: rgba(124,106,247,0.12);
+    --accent-text: #a89ffa;
+    --border: rgba(255,255,255,0.055);
+    --border-strong: rgba(255,255,255,0.12);
+    --error: #fca5a5;
+    --error-bg: rgba(248,113,113,0.12);
+    --success: #86efac;
+    --success-bg: rgba(52,211,153,0.12);
+    --info: #93c5fd;
+    --info-bg: rgba(96,165,250,0.12);
+    --shadow: rgba(0,0,0,0.5);
+    --input-bg: rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) {
+    --bg-primary: #f5f5f7;
+    --bg-secondary: #ffffff;
+    --bg-elevated: #ffffff;
+    --bg-hover: rgba(0,0,0,0.04);
+    --text-primary: #1a1a2e;
+    --text-secondary: #666680;
+    --text-muted: #9999aa;
+    --accent: #6c5ce7;
+    --accent-hover: #5a4bd6;
+    --accent-bg: rgba(108,92,231,0.08);
+    --accent-text: #6c5ce7;
+    --border: rgba(0,0,0,0.08);
+    --border-strong: rgba(0,0,0,0.15);
+    --error: #ef4444;
+    --error-bg: rgba(239,68,68,0.08);
+    --success: #22c55e;
+    --success-bg: rgba(34,197,94,0.08);
+    --info: #3b82f6;
+    --info-bg: rgba(59,130,246,0.08);
+    --shadow: rgba(0,0,0,0.12);
+    --input-bg: rgba(0,0,0,0.03);
+  }
+
   :global(*, *::before, *::after) { box-sizing: border-box; margin: 0; padding: 0; }
   :global(body) {
     font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
-    background: #07070d;
-    color: #eeeef8;
+    background: var(--bg-primary);
+    color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
   }
   :global(a) { color: inherit; }
@@ -325,7 +406,7 @@
     align-items: center;
     justify-content: center;
     height: 100vh;
-    background: #07070d;
+    background: var(--bg-primary);
   }
   .splash :global(.logo-icon) {
     animation: pulse 1.8s ease-in-out infinite;
@@ -336,8 +417,8 @@
   .sidebar {
     width: 216px;
     flex-shrink: 0;
-    background: #0c0c15;
-    border-right: 1px solid rgba(255,255,255,0.055);
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     padding: 0;
@@ -348,7 +429,7 @@
     align-items: center;
     padding: 1.1rem 1.1rem 0.9rem;
     text-decoration: none;
-    border-bottom: 1px solid rgba(255,255,255,0.055);
+    border-bottom: 1px solid var(--border);
     margin-bottom: 0.5rem;
   }
 
@@ -360,18 +441,18 @@
     gap: 0.6rem;
     padding: 0.5rem 0.65rem;
     border-radius: 7px;
-    color: #66667a;
+    color: var(--text-muted);
     text-decoration: none;
     font-size: 0.82rem;
     font-weight: 500;
     transition: background 0.12s, color 0.12s;
   }
-  .nav-link:hover { background: rgba(255,255,255,0.05); color: #aaaacc; }
-  .nav-link.active { background: rgba(124,106,247,0.14); color: #a89ffa; }
+  .nav-link:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .nav-link.active { background: var(--accent-bg); color: var(--accent-text); }
 
   .sidebar-foot {
     padding: 0.6rem;
-    border-top: 1px solid rgba(255,255,255,0.055);
+    border-top: 1px solid var(--border);
   }
   .signout {
     display: flex;
@@ -382,12 +463,34 @@
     background: none;
     border: none;
     border-radius: 7px;
-    color: #44445a;
+    color: var(--text-muted);
     font-size: 0.78rem;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .signout:hover { background: rgba(255,255,255,0.05); color: #8888aa; }
+  .signout:hover { background: var(--bg-hover); color: var(--text-secondary); }
+
+  .notif-wrapper {
+    position: relative;
+    margin-bottom: 0.25rem;
+  }
+
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    background: none;
+    border: none;
+    border-radius: 7px;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    margin-bottom: 0.25rem;
+  }
+  .theme-toggle:hover { background: var(--bg-hover); color: var(--text-secondary); }
 
   .user-switch-btn {
     display: flex;
@@ -398,20 +501,20 @@
     background: none;
     border: none;
     border-radius: 7px;
-    color: #8888aa;
+    color: var(--text-secondary);
     font-size: 0.78rem;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
     margin-bottom: 0.25rem;
   }
-  .user-switch-btn:hover { background: rgba(255,255,255,0.05); color: #aaaacc; }
+  .user-switch-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
   .user-switch-btn .chevron { margin-left: auto; opacity: 0.5; }
 
   .main {
     flex: 1;
     overflow-y: auto;
-    background: #07070d;
+    background: var(--bg-primary);
   }
 
   /* User switcher overlay */
@@ -428,13 +531,13 @@
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
   .switcher-panel {
-    background: #111118;
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
     border-radius: 14px;
     width: 320px;
     max-height: 420px;
     overflow-y: auto;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    box-shadow: 0 20px 60px var(--shadow);
     animation: slideUp 0.15s ease-out;
   }
   @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -444,16 +547,16 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.9rem 1rem 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--border);
     font-size: 0.82rem;
     font-weight: 600;
-    color: #eeeef8;
+    color: var(--text-primary);
   }
   .switcher-close {
-    background: none; border: none; color: #55556a; cursor: pointer;
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
     padding: 0.2rem; border-radius: 5px; transition: color 0.12s;
   }
-  .switcher-close:hover { color: #aaaacc; }
+  .switcher-close:hover { color: var(--text-secondary); }
 
   .switcher-list {
     padding: 0.4rem;
@@ -467,13 +570,13 @@
     background: none;
     border: none;
     border-radius: 8px;
-    color: #eeeef8;
+    color: var(--text-primary);
     font-size: 0.82rem;
     cursor: pointer;
     transition: background 0.12s;
     text-align: left;
   }
-  .switcher-user:hover:not(.disabled) { background: rgba(255,255,255,0.05); }
+  .switcher-user:hover:not(.disabled) { background: var(--bg-hover); }
   .switcher-user.disabled {
     opacity: 0.4;
     cursor: not-allowed;
@@ -482,8 +585,8 @@
   .switcher-avatar {
     width: 32px; height: 32px;
     border-radius: 50%;
-    background: rgba(124,106,247,0.18);
-    color: #a89ffa;
+    background: var(--accent-bg);
+    color: var(--accent-text);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -514,14 +617,14 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #7c6af7;
-    background: rgba(124,106,247,0.12);
+    color: var(--accent);
+    background: var(--accent-bg);
     padding: 0.12rem 0.4rem;
     border-radius: 4px;
   }
   .switcher-no-pin {
     font-size: 0.7rem;
-    color: #44445a;
+    color: var(--text-muted);
     margin-left: auto;
     white-space: nowrap;
   }
@@ -540,27 +643,27 @@
     align-self: flex-start;
     background: none;
     border: none;
-    color: #55556a;
+    color: var(--text-muted);
     font-size: 0.75rem;
     cursor: pointer;
     padding: 0.2rem 0;
     transition: color 0.12s;
   }
-  .switcher-back:hover { color: #aaaacc; }
+  .switcher-back:hover { color: var(--text-secondary); }
 
   .switcher-pin-user {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 0.4rem;
-    color: #eeeef8;
+    color: var(--text-primary);
     font-size: 0.88rem;
     font-weight: 500;
     margin: 0.3rem 0;
   }
   .switcher-pin-label {
     font-size: 0.72rem;
-    color: #55556a;
+    color: var(--text-muted);
   }
   .switcher-pin-input {
     width: 140px;
@@ -568,26 +671,26 @@
     letter-spacing: 0.5em;
     font-size: 1.4rem;
     padding: 0.6rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.12);
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 10px;
-    color: #eeeef8;
+    color: var(--text-primary);
     font-family: monospace;
     outline: none;
     transition: border-color 0.15s;
   }
   .switcher-pin-input:focus {
-    border-color: #7c6af7;
-    box-shadow: 0 0 0 3px rgba(124,106,247,0.12);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
   }
   .switcher-pin-input::placeholder { color: #2a2a3d; letter-spacing: 0.4em; }
   .switcher-pin-error {
     font-size: 0.75rem;
-    color: #fca5a5;
+    color: var(--error);
   }
   .switcher-pin-loading {
     font-size: 0.75rem;
-    color: #7c6af7;
+    color: var(--accent);
   }
 
   /* ── Mobile: bottom tab bar ────────────────────────────────────────────── */
@@ -603,7 +706,7 @@
       height: auto;
       flex-direction: row;
       border-right: none;
-      border-top: 1px solid rgba(255,255,255,0.055);
+      border-top: 1px solid var(--border);
       z-index: 900;
       padding: 0;
     }

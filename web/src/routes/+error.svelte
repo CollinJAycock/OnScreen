@@ -29,33 +29,33 @@
     padding: 2rem;
     text-align: center;
     background: #0e0e14;
-    color: #eeeef8;
+    color: var(--text-primary);
   }
   .error-code {
     font-size: 5rem;
     font-weight: 900;
-    color: #7c6af7;
+    color: var(--accent);
     line-height: 1;
     margin-bottom: 0.5rem;
   }
   .error-message {
     font-size: 1.3rem;
     font-weight: 600;
-    color: #aaaacc;
+    color: var(--text-secondary);
     margin-bottom: 1rem;
   }
   .error-detail {
     font-size: 0.85rem;
-    color: #66667a;
+    color: var(--text-muted);
     max-width: 400px;
     margin-bottom: 2rem;
   }
   .back-link {
     padding: 0.5rem 1.2rem;
-    background: rgba(124,106,247,0.12);
+    background: var(--accent-bg);
     border: 1px solid rgba(124,106,247,0.25);
     border-radius: 8px;
-    color: #a89ffa;
+    color: var(--accent-text);
     font-size: 0.85rem;
     font-weight: 600;
     text-decoration: none;

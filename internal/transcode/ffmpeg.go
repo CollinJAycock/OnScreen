@@ -31,9 +31,10 @@ type BuildArgs struct {
 	IsVAAPI      bool // VAAPI needs hwupload filter
 
 	// Audio (ADR-018)
-	AudioCodec      string // "copy" | "aac"
-	AudioChannels   int    // 0 = keep source
-	AudioBitrateKbps int   // 0 = auto
+	AudioCodec       string // "copy" | "aac"
+	AudioChannels    int    // 0 = keep source
+	AudioBitrateKbps int    // 0 = auto
+	AudioStreamIndex int    // -1 = default (first); >= 0 = specific stream index
 
 	// Subtitles
 	ExtractSubtitles bool
@@ -110,6 +111,15 @@ func BuildHLS(a BuildArgs) []string {
 			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", SegmentDuration),
 			"-sc_threshold", "0",
 		)
+	}
+
+	// ── Stream mapping ───────────────────────────────────────────────────────
+	// Map video stream explicitly so we can independently select an audio stream.
+	args = append(args, "-map", "0:v:0")
+	if a.AudioStreamIndex >= 0 {
+		args = append(args, "-map", fmt.Sprintf("0:a:%d", a.AudioStreamIndex))
+	} else {
+		args = append(args, "-map", "0:a:0")
 	}
 
 	// ── Audio ────────────────────────────────────────────────────────────────

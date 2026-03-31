@@ -38,6 +38,7 @@ import (
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
 
@@ -211,13 +212,16 @@ func run() error {
 	metaAgent.SetMusicAgentFn(func() metadata.MusicAgent { return audiodbClient })
 
 	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger)
+	notifBrokerEarly := notification.NewBroker()
+	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
-		scanner:   libScanner,
-		libSvc:    nil,
-		db:        gen.New(rwPool),
-		logger:    logger,
-		serverCtx: ctx,
-		watchers:  make(map[uuid.UUID]*scanner.Watcher),
+		scanner:      libScanner,
+		libSvc:       nil,
+		db:           gen.New(rwPool),
+		logger:       logger,
+		serverCtx:    ctx,
+		watchers:     make(map[uuid.UUID]*scanner.Watcher),
+		notifService: notifServiceEarly,
 	}
 	libSvc := library.NewService(rwQ, roQ, libEnqueuer, logger)
 	libEnqueuer.libSvc = libSvc
@@ -372,6 +376,10 @@ func run() error {
 		logger.Info("discord SSO enabled")
 	}
 
+	// ── Notifications ────────────────────────────────────────────────────────
+	_ = notifServiceEarly // used by scanEnqueuer above
+	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger)
+
 	// ── Router ────────────────────────────────────────────────────────────────
 	h := &api.Handlers{
 		Library:     libHandler,
@@ -396,6 +404,7 @@ func run() error {
 		Email:           emailHandler,
 		PasswordReset:   passwordResetHandler,
 		Invite:          inviteHandler,
+		Notifications:   notifHandler,
 		StreamTracker:  streamTracker,
 		Artwork:      artworkMgr,
 		ArtworkRoots: scanPathsFn,
@@ -527,6 +536,7 @@ type scanEnqueuer struct {
 	logger            *slog.Logger
 	serverCtx         context.Context // outlives individual HTTP requests
 	webhookDispatcher *worker.WebhookDispatcher
+	notifService      *notification.Service
 
 	watchMu      sync.Mutex
 	watchers     map[uuid.UUID]*scanner.Watcher // one watcher per library
@@ -572,6 +582,10 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		// Dispatch library.scan.complete webhook event.
 		if e.webhookDispatcher != nil {
 			e.webhookDispatcher.Dispatch("library.scan.complete", uuid.Nil, uuid.Nil)
+		}
+		// Send in-app notification if new items were found.
+		if e.notifService != nil && result.New > 0 {
+			e.notifService.NotifyScanComplete(context.WithoutCancel(e.serverCtx), lib.Name, result.New)
 		}
 	}()
 	return nil

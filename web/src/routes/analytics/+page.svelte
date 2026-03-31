@@ -167,14 +167,15 @@
             {@const pct = s.duration_ms && s.duration_ms > 0 ? Math.min(100, (s.position_ms / s.duration_ms) * 100) : 0}
             <div class="stream-card">
               {#if s.poster_path}
-                <img class="stream-poster" src="/artwork/{s.poster_path}" alt={s.title} />
+                <img class="stream-poster" src="/artwork/{s.poster_path}?w=150" alt={s.title} />
               {:else}
                 <div class="stream-poster placeholder"></div>
               {/if}
               <div class="stream-info">
                 <div class="stream-title">{s.title}{#if s.year} <span class="muted">({s.year})</span>{/if}</div>
                 <div class="stream-meta">
-                  <span class="stream-decision" class:transcode={s.decision === 'transcode'}>{s.decision === 'directPlay' ? 'Direct Play' : s.decision === 'directStream' ? 'Direct Stream' : 'Transcoding'}</span>
+                  <span class="stream-decision" class:transcode={s.decision === 'transcode'}>{s.decision === 'directPlay' ? 'Direct Play' : s.decision === 'directStream' ? 'Direct Stream' : s.decision === 'remux' ? 'Remux' : 'Transcoding'}</span>
+                  {#if s.bitrate_kbps}<span class="muted">· {(s.bitrate_kbps / 1000).toFixed(1)} Mbps</span>{/if}
                   {#if s.client_name}<span class="muted">· {s.client_name}</span>{/if}
                 </div>
                 <div class="stream-progress-track">
@@ -321,7 +322,7 @@
               <div class="top-row">
                 <span class="top-rank">{i + 1}</span>
                 {#if item.poster_path}
-                  <img class="top-thumb" src="/artwork/{item.poster_path}" alt={item.title} />
+                  <img class="top-thumb" src="/artwork/{item.poster_path}?w=150" alt={item.title} />
                 {:else}
                   <div class="top-thumb placeholder"></div>
                 {/if}
@@ -380,12 +381,12 @@
 
   .page-header { margin-bottom: 1.8rem; }
   h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
-  h2 { font-size: 0.78rem; font-weight: 600; color: #66667a; text-transform: uppercase;
+  h2 { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
        letter-spacing: 0.07em; margin-bottom: 1rem; }
 
-  .empty { color: #44445a; padding: 4rem; text-align: center; }
+  .empty { color: var(--text-muted); padding: 4rem; text-align: center; }
   .error { color: #f76a6a; }
-  .muted { color: #44445a; }
+  .muted { color: var(--text-muted); }
   .small { font-size: 0.82rem; }
 
   /* ── Stat cards ──────────────────────────────────────────────────────── */
@@ -396,13 +397,13 @@
     margin-bottom: 1.8rem;
   }
   .card {
-    background: #0c0c15;
-    border: 1px solid rgba(255,255,255,0.055);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 1.1rem 1.2rem;
   }
   .card-value { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.03em; }
-  .card-label { font-size: 0.75rem; color: #44445a; margin-top: 0.2rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .card-label { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem; text-transform: uppercase; letter-spacing: 0.06em; }
 
   /* ── Grid layout ─────────────────────────────────────────────────────── */
   .grid {
@@ -412,8 +413,8 @@
   }
 
   .panel {
-    background: #0c0c15;
-    border: 1px solid rgba(255,255,255,0.055);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 1.2rem 1.4rem;
   }
@@ -437,14 +438,14 @@
     position: relative;
     cursor: default;
   }
-  .bar-col:hover .bar-fill { background: #a89ffa; }
+  .bar-col:hover .bar-fill { background: var(--accent-text); }
   .bar-col:hover .bar-fill.bw { background: #3ab8f7; }
   .bar-fill.bw { background: #5b8cf7; }
   .bar-col:hover .bar-tip { opacity: 1; }
   .bar-fill {
     width: 100%;
     min-height: 2px;
-    background: #7c6af7;
+    background: var(--accent);
     border-radius: 2px 2px 0 0;
     transition: background 0.1s;
   }
@@ -452,8 +453,8 @@
     position: absolute;
     top: -22px;
     font-size: 0.65rem;
-    color: #eeeef8;
-    background: #1a1a2e;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
     border-radius: 3px;
     padding: 1px 4px;
     white-space: nowrap;
@@ -465,55 +466,55 @@
     display: grid;
     grid-template-columns: repeat(30, 1fr);
     font-size: 0.65rem;
-    color: #44445a;
+    color: var(--text-muted);
   }
   .bar-x-labels span { grid-row: 1; white-space: nowrap; }
 
   /* ── Horizontal bar rows ─────────────────────────────────────────────── */
   .hbars { display: flex; flex-direction: column; gap: 0.55rem; }
   .hbar-row { display: flex; align-items: center; gap: 0.6rem; }
-  .hbar-label { width: 52px; font-size: 0.78rem; color: #aaaacc; flex-shrink: 0; }
-  .hbar-track { flex: 1; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
+  .hbar-label { width: 52px; font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0; }
+  .hbar-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
   .hbar-fill  { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
-  .hbar-count { width: 32px; text-align: right; font-size: 0.75rem; color: #44445a; flex-shrink: 0; }
+  .hbar-count { width: 32px; text-align: right; font-size: 0.75rem; color: var(--text-muted); flex-shrink: 0; }
 
   /* ── Libraries ───────────────────────────────────────────────────────── */
   .lib-list { display: flex; flex-direction: column; gap: 0.5rem; }
   .lib-row  { display: flex; justify-content: space-between; align-items: center; }
   .lib-name { font-size: 0.85rem; }
-  .lib-meta { display: flex; gap: 1rem; font-size: 0.75rem; color: #44445a; }
+  .lib-meta { display: flex; gap: 1rem; font-size: 0.75rem; color: var(--text-muted); }
 
   /* ── Most played ─────────────────────────────────────────────────────── */
   .top-list { display: flex; flex-direction: column; gap: 0.55rem; }
   .top-row  { display: flex; align-items: center; gap: 0.65rem; }
-  .top-rank { width: 16px; font-size: 0.72rem; color: #44445a; text-align: right; flex-shrink: 0; }
+  .top-rank { width: 16px; font-size: 0.72rem; color: var(--text-muted); text-align: right; flex-shrink: 0; }
   .top-thumb {
     width: 28px; height: 42px; border-radius: 3px; object-fit: cover; flex-shrink: 0;
   }
   .top-thumb.placeholder {
-    background: rgba(255,255,255,0.06); border-radius: 3px;
+    background: var(--border); border-radius: 3px;
   }
   .top-info { width: 130px; flex-shrink: 0; }
   .top-title { font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .top-year  { font-size: 0.72rem; color: #44445a; }
-  .top-bar-wrap { flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
-  .top-bar  { height: 100%; background: #7c6af7; border-radius: 3px; }
-  .top-count { width: 28px; text-align: right; font-size: 0.75rem; color: #44445a; flex-shrink: 0; }
+  .top-year  { font-size: 0.72rem; color: var(--text-muted); }
+  .top-bar-wrap { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .top-bar  { height: 100%; background: var(--accent); border-radius: 3px; }
+  .top-count { width: 28px; text-align: right; font-size: 0.75rem; color: var(--text-muted); flex-shrink: 0; }
 
   /* ── Recent plays table ──────────────────────────────────────────────── */
   .recent-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   .recent-table th {
-    text-align: left; font-size: 0.7rem; font-weight: 600; color: #44445a;
+    text-align: left; font-size: 0.7rem; font-weight: 600; color: var(--text-muted);
     text-transform: uppercase; letter-spacing: 0.06em;
     padding: 0 0.75rem 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--border);
   }
-  .recent-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .recent-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--bg-hover); }
   .recent-table tr:last-child td { border-bottom: none; }
-  .col-title { color: #eeeef8; }
+  .col-title { color: var(--text-primary); }
   .badge {
     font-size: 0.68rem; padding: 2px 6px; border-radius: 4px;
-    background: rgba(124,106,247,0.15); color: #a89ffa;
+    background: var(--accent-bg); color: var(--accent-text);
     text-transform: capitalize;
   }
 
@@ -522,11 +523,11 @@
     margin: 0 0 1.5rem;
     padding: 1rem 1.25rem;
     background: rgba(124,106,247,0.07);
-    border: 1px solid rgba(124,106,247,0.18);
+    border: 1px solid var(--accent-bg);
     border-radius: 10px;
   }
   .now-playing h2 {
-    font-size: 0.78rem; font-weight: 600; color: #a89ffa;
+    font-size: 0.78rem; font-weight: 600; color: var(--accent-text);
     text-transform: uppercase; letter-spacing: 0.06em;
     margin-bottom: 0.9rem;
     display: flex; align-items: center; gap: 0.5rem;
@@ -542,27 +543,27 @@
   }
   .stream-poster {
     width: 44px; height: 64px; border-radius: 4px;
-    object-fit: cover; flex-shrink: 0; background: #1a1a2e;
+    object-fit: cover; flex-shrink: 0; background: var(--bg-secondary);
   }
-  .stream-poster.placeholder { background: #1a1a2e; }
+  .stream-poster.placeholder { background: var(--bg-secondary); }
   .stream-info { flex: 1; min-width: 0; }
   .stream-title {
-    font-size: 0.85rem; font-weight: 600; color: #eeeef8;
+    font-size: 0.85rem; font-weight: 600; color: var(--text-primary);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     margin-bottom: 0.2rem;
   }
   .stream-meta {
-    font-size: 0.72rem; color: #66667a; margin-bottom: 0.4rem;
+    font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.4rem;
     display: flex; align-items: center; gap: 0.4rem;
   }
   .stream-decision { color: #3ab8f7; }
   .stream-decision.transcode { color: #f7a03a; }
   .stream-progress-track {
-    height: 3px; background: rgba(255,255,255,0.08);
+    height: 3px; background: var(--border-strong);
     border-radius: 2px; overflow: hidden; margin-bottom: 0.25rem;
   }
   .stream-progress-fill {
-    height: 100%; background: #7c6af7;
+    height: 100%; background: var(--accent);
     border-radius: 2px; transition: width 1s linear;
   }
   .stream-times { font-size: 0.68rem; }

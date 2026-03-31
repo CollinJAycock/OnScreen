@@ -1,14 +1,16 @@
 -- name: GetUser :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE id = $1;
 
 -- name: GetUserByUsername :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE username = $1;
 
@@ -23,7 +25,8 @@ INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url;
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
 
 -- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
@@ -52,7 +55,7 @@ FROM users
 ORDER BY username;
 
 -- name: ListManagedProfiles :many
-SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at
+SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at, max_content_rating
 FROM users
 WHERE parent_user_id = $1
 ORDER BY username;
@@ -80,7 +83,7 @@ RETURNING id, username, avatar_url, parent_user_id, created_at;
 
 -- name: ListAllManagedProfiles :many
 SELECT u.id, u.username, u.avatar_url, (u.pin IS NOT NULL) AS has_pin, u.created_at,
-       u.parent_user_id AS owner_id, p.username AS owner_username
+       u.parent_user_id AS owner_id, p.username AS owner_username, u.max_content_rating
 FROM users u
 JOIN users p ON p.id = u.parent_user_id
 ORDER BY p.username, u.username;
@@ -88,14 +91,16 @@ ORDER BY p.username, u.username;
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE email = $1;
 
 -- name: GetUserByGoogleID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE google_id = $1;
 
@@ -111,12 +116,14 @@ INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url;
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
 
 -- name: GetUserByGitHubID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE github_id = $1;
 
@@ -132,12 +139,14 @@ INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url;
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
 
 -- name: GetUserByDiscordID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE discord_id = $1;
 
@@ -153,4 +162,23 @@ INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url;
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+
+-- name: GetUserPreferences :one
+SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+FROM users
+WHERE id = $1;
+
+-- name: UpdateUserPreferences :exec
+UPDATE users
+SET preferred_audio_lang = $2,
+    preferred_subtitle_lang = $3,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: UpdateUserContentRating :exec
+UPDATE users
+SET max_content_rating = $2,
+    updated_at = NOW()
+WHERE id = $1;

@@ -39,6 +39,7 @@ type Session struct {
 	ClientName     string    `json:"client_name,omitempty"`
 	ClientID       string    `json:"client_id,omitempty"`
 	SegToken       string    `json:"seg_token,omitempty"`
+	BitrateKbps    int       `json:"bitrate_kbps,omitempty"`
 }
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.
@@ -341,10 +342,11 @@ type TranscodeJob struct {
 	Width           int       `json:"width"`
 	Height          int       `json:"height"`
 	BitrateKbps     int       `json:"bitrate_kbps"`
-	AudioCodec      string    `json:"audio_codec"`
-	AudioChannels   int       `json:"audio_channels"`
-	NeedsToneMap    bool      `json:"needs_tone_map"`
-	SubtitleStreams  []int     `json:"subtitle_streams,omitempty"`
+	AudioCodec       string    `json:"audio_codec"`
+	AudioChannels    int       `json:"audio_channels"`
+	AudioStreamIndex int      `json:"audio_stream_index"` // -1 = default
+	NeedsToneMap     bool     `json:"needs_tone_map"`
+	SubtitleStreams  []int    `json:"subtitle_streams,omitempty"`
 	EnqueuedAt      time.Time `json:"enqueued_at"`
 }
 

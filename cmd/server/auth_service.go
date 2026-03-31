@@ -108,11 +108,15 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		return nil, fmt.Errorf("refresh: rotate session: %w", err)
 	}
 
-	accessToken, err := s.tokens.IssueAccessToken(auth.Claims{
+	refreshClaims := auth.Claims{
 		UserID:   user.ID,
 		Username: user.Username,
 		IsAdmin:  user.IsAdmin,
-	})
+	}
+	if user.MaxContentRating != nil {
+		refreshClaims.MaxContentRating = *user.MaxContentRating
+	}
+	accessToken, err := s.tokens.IssueAccessToken(refreshClaims)
 	if err != nil {
 		return nil, fmt.Errorf("refresh: issue access token: %w", err)
 	}
@@ -137,11 +141,15 @@ func (s *authService) Logout(ctx context.Context, refreshToken string) error {
 
 // issueTokenPair creates an access + refresh token and persists the session.
 func (s *authService) issueTokenPair(ctx context.Context, user gen.User) (*v1.TokenPair, error) {
-	accessToken, err := s.tokens.IssueAccessToken(auth.Claims{
+	claims := auth.Claims{
 		UserID:   user.ID,
 		Username: user.Username,
 		IsAdmin:  user.IsAdmin,
-	})
+	}
+	if user.MaxContentRating != nil {
+		claims.MaxContentRating = *user.MaxContentRating
+	}
+	accessToken, err := s.tokens.IssueAccessToken(claims)
 	if err != nil {
 		return nil, fmt.Errorf("issue access token: %w", err)
 	}

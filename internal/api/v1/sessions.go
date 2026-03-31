@@ -44,16 +44,17 @@ func NewNativeSessionsHandler(
 }
 
 type activeSession struct {
-	ID         string  `json:"id"`
-	Decision   string  `json:"decision"`
-	PositionMS int64   `json:"position_ms"`
-	ClientName string  `json:"client_name,omitempty"`
-	StartedAt  string  `json:"started_at"`
-	Title      string  `json:"title"`
-	Year       *int    `json:"year,omitempty"`
-	Type       string  `json:"type,omitempty"`
-	PosterPath *string `json:"poster_path,omitempty"`
-	DurationMS *int64  `json:"duration_ms,omitempty"`
+	ID          string  `json:"id"`
+	Decision    string  `json:"decision"`
+	PositionMS  int64   `json:"position_ms"`
+	ClientName  string  `json:"client_name,omitempty"`
+	StartedAt   string  `json:"started_at"`
+	Title       string  `json:"title"`
+	Year        *int    `json:"year,omitempty"`
+	Type        string  `json:"type,omitempty"`
+	PosterPath  *string `json:"poster_path,omitempty"`
+	DurationMS  *int64  `json:"duration_ms,omitempty"`
+	BitrateKbps *int    `json:"bitrate_kbps,omitempty"`
 }
 
 // List handles GET /api/v1/sessions.
@@ -104,6 +105,10 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 				ClientName: s.ClientName,
 				StartedAt:  s.CreatedAt.Format("2006-01-02T15:04:05Z"),
 				Title:      filepath.Base(s.FilePath),
+			}
+			if s.BitrateKbps > 0 {
+				br := s.BitrateKbps
+				as.BitrateKbps = &br
 			}
 			if mi, ok := itemMap[s.MediaItemID]; ok {
 				as.Title = mi.Title
@@ -162,6 +167,10 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 					as.DurationMS = &mi.DurationMS.Int64
 				} else if durMS > 0 {
 					as.DurationMS = &durMS
+				}
+				if mi.Bitrate.Valid {
+					br := int(mi.Bitrate.Int64 / 1000) // bits/s → kbps
+					as.BitrateKbps = &br
 				}
 			}
 			resp = append(resp, as)

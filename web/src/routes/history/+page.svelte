@@ -107,7 +107,7 @@
         <a class="history-row" href="/watch/{item.media_id}">
           <div class="thumb-cell">
             {#if item.thumb_path}
-              <img src="/artwork/{item.thumb_path}" alt={item.title} loading="lazy" />
+              <img src="/artwork/{item.thumb_path}?w=150" alt={item.title} loading="lazy" />
             {:else}
               <div class="thumb-blank">
                 <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
@@ -160,15 +160,15 @@
   .page-title {
     font-size: 1.1rem;
     font-weight: 700;
-    color: #eeeef8;
+    color: var(--text-primary);
     letter-spacing: -0.02em;
     margin-bottom: 1.5rem;
   }
 
   .banner-error {
-    background: rgba(248,113,113,0.1);
-    border: 1px solid rgba(248,113,113,0.2);
-    color: #fca5a5;
+    background: var(--error-bg);
+    border: 1px solid var(--error);
+    color: var(--error);
     padding: 0.65rem 1rem;
     border-radius: 8px;
     font-size: 0.8rem;
@@ -179,7 +179,7 @@
   .skeleton-list { display: flex; flex-direction: column; gap: 1px; }
   .skeleton-row {
     height: 64px;
-    background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
     border-radius: 8px;
@@ -195,13 +195,13 @@
     padding: 6rem 2rem;
     gap: 0.5rem;
   }
-  .empty-icon { color: #2a2a40; margin-bottom: 0.75rem; }
-  .empty-title { font-size: 1rem; font-weight: 600; color: #555577; }
-  .empty-sub { font-size: 0.82rem; color: #33333d; }
+  .empty-icon { color: var(--text-muted); margin-bottom: 0.75rem; }
+  .empty-title { font-size: 1rem; font-weight: 600; color: var(--text-muted); }
+  .empty-sub { font-size: 0.82rem; color: var(--text-muted); }
 
   /* ── History list ────────────────────────────────────────────────────────── */
   .history-list {
-    border: 1px solid rgba(255,255,255,0.055);
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
     background: rgba(255,255,255,0.015);
@@ -215,7 +215,7 @@
     text-decoration: none;
     color: inherit;
     transition: background 0.12s;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid var(--bg-hover);
   }
   .history-row:last-child { border-bottom: none; }
   .history-row:hover { background: rgba(255,255,255,0.035); }
@@ -235,11 +235,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #1a1a2e, #0f0f18);
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
     border-radius: 4px;
     font-size: 0.7rem;
     font-weight: 700;
-    color: rgba(255,255,255,0.12);
+    color: var(--border-strong);
   }
 
   /* Info */
@@ -247,7 +247,7 @@
   .info-title {
     font-size: 0.82rem;
     font-weight: 600;
-    color: #cccce0;
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -270,7 +270,7 @@
   }
   .meta-year {
     font-size: 0.7rem;
-    color: rgba(255,255,255,0.3);
+    color: var(--text-muted);
   }
 
   /* Detail columns */
@@ -286,11 +286,11 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: rgba(255,255,255,0.2);
+    color: var(--text-muted);
   }
   .detail-value {
     font-size: 0.76rem;
-    color: #8888aa;
+    color: var(--text-secondary);
     white-space: nowrap;
   }
 
@@ -315,16 +315,16 @@
     padding: 1.5rem 0;
   }
   .btn-load-more {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
-    color: #8888aa;
+    color: var(--text-secondary);
     font-size: 0.8rem;
     font-weight: 600;
     padding: 0.5rem 1.5rem;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .btn-load-more:hover { background: rgba(255,255,255,0.09); color: #aaaacc; }
+  .btn-load-more:hover { background: var(--border-strong); color: var(--text-secondary); }
   .btn-load-more:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

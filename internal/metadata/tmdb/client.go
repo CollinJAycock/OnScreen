@@ -93,7 +93,7 @@ func (c *Client) SearchTV(ctx context.Context, title string, year int) (*metadat
 	}
 
 	best := pickBestTVMatch(resp.Results, title)
-	result := c.tvToResult(best)
+	result := c.tvToResult(ctx, best)
 
 	// Fetch external IDs (TVDB) for the show — best-effort, don't fail the search.
 	if tvdbID, imdbID, err := c.GetTVExternalIDs(ctx, result.TMDBID); err == nil {
@@ -126,7 +126,7 @@ func (c *Client) SearchTVCandidates(ctx context.Context, query string) ([]metada
 	}
 	out := make([]metadata.TVShowResult, limit)
 	for i := 0; i < limit; i++ {
-		out[i] = *c.tvToResult(resp.Results[i])
+		out[i] = *c.tvToResult(ctx, resp.Results[i])
 	}
 	return out, nil
 }
@@ -234,7 +234,7 @@ func (c *Client) RefreshTV(ctx context.Context, tmdbID int) (*metadata.TVShowRes
 	if err := c.get(ctx, path, params, &tv); err != nil {
 		return nil, fmt.Errorf("tmdb refresh tv %d: %w", tmdbID, err)
 	}
-	result := c.tvToResult(tv)
+	result := c.tvToResult(ctx, tv)
 
 	// Fetch external IDs (TVDB) — best-effort.
 	if tvdbID, imdbID, err := c.GetTVExternalIDs(ctx, tmdbID); err == nil {
@@ -301,6 +301,7 @@ func (c *Client) movieToResult(ctx context.Context, m tmdbMovie) (*metadata.Movi
 	for i, g := range m.Genres {
 		genres[i] = g.Name
 	}
+	cert := c.getMovieCertification(ctx, m.ID)
 	return &metadata.MovieResult{
 		TMDBID:        m.ID,
 		IMDBID:        m.IMDBID,
@@ -310,6 +311,7 @@ func (c *Client) movieToResult(ctx context.Context, m tmdbMovie) (*metadata.Movi
 		Summary:       m.Overview,
 		Tagline:       m.Tagline,
 		Rating:        m.VoteAverage,
+		ContentRating: cert,
 		DurationMS:    int64(m.Runtime) * 60 * 1000,
 		Genres:        genres,
 		ReleaseDate:   release,
@@ -318,7 +320,7 @@ func (c *Client) movieToResult(ctx context.Context, m tmdbMovie) (*metadata.Movi
 	}, nil
 }
 
-func (c *Client) tvToResult(t tmdbTV) *metadata.TVShowResult {
+func (c *Client) tvToResult(ctx context.Context, t tmdbTV) *metadata.TVShowResult {
 	genres := make([]string, len(t.Genres))
 	for i, g := range t.Genres {
 		genres[i] = g.Name
@@ -329,6 +331,7 @@ func (c *Client) tvToResult(t tmdbTV) *metadata.TVShowResult {
 			year = d.Year()
 		}
 	}
+	cert := c.getTVContentRating(ctx, t.ID)
 	return &metadata.TVShowResult{
 		TMDBID:        t.ID,
 		Title:         t.Name,
@@ -336,10 +339,59 @@ func (c *Client) tvToResult(t tmdbTV) *metadata.TVShowResult {
 		FirstAirYear:  year,
 		Summary:       t.Overview,
 		Rating:        t.VoteAverage,
+		ContentRating: cert,
 		Genres:        genres,
 		PosterURL:     imageURL(t.PosterPath),
 		FanartURL:     imageURL(t.BackdropPath),
 	}
+}
+
+// getMovieCertification fetches the US certification (e.g. "PG-13") for a movie.
+// Best-effort: returns "" on any error.
+func (c *Client) getMovieCertification(ctx context.Context, tmdbID int) string {
+	var resp struct {
+		Results []struct {
+			Country      string `json:"iso_3166_1"`
+			ReleaseDates []struct {
+				Certification string `json:"certification"`
+			} `json:"release_dates"`
+		} `json:"results"`
+	}
+	path := fmt.Sprintf("/movie/%d/release_dates", tmdbID)
+	if err := c.get(ctx, path, nil, &resp); err != nil {
+		return ""
+	}
+	for _, r := range resp.Results {
+		if r.Country == "US" {
+			for _, rd := range r.ReleaseDates {
+				if rd.Certification != "" {
+					return rd.Certification
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// getTVContentRating fetches the US content rating (e.g. "TV-14") for a TV show.
+// Best-effort: returns "" on any error.
+func (c *Client) getTVContentRating(ctx context.Context, tmdbID int) string {
+	var resp struct {
+		Results []struct {
+			Country string `json:"iso_3166_1"`
+			Rating  string `json:"rating"`
+		} `json:"results"`
+	}
+	path := fmt.Sprintf("/tv/%d/content_ratings", tmdbID)
+	if err := c.get(ctx, path, nil, &resp); err != nil {
+		return ""
+	}
+	for _, r := range resp.Results {
+		if r.Country == "US" && r.Rating != "" {
+			return r.Rating
+		}
+	}
+	return ""
 }
 
 func imageURL(path string) string {

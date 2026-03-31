@@ -157,19 +157,20 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			enc = BestEncoder(w.encoders)
 		}
 		ffArgs = BuildHLS(BuildArgs{
-			InputPath:    job.FilePath,
-			StartOffset:  job.StartOffsetSec,
-			Encoder:      enc,
-			IsVAAPI:      enc == EncoderVAAPI,
-			Width:        job.Width,
-			Height:       job.Height,
-			BitrateKbps:  job.BitrateKbps,
-			NeedsToneMap: job.NeedsToneMap,
-			AudioCodec:   job.AudioCodec,
-			AudioChannels: job.AudioChannels,
-			SubtitleStreams: job.SubtitleStreams,
-			SessionDir:   job.SessionDir,
-			SegmentPrefix: "seg",
+			InputPath:        job.FilePath,
+			StartOffset:      job.StartOffsetSec,
+			Encoder:          enc,
+			IsVAAPI:          enc == EncoderVAAPI,
+			Width:            job.Width,
+			Height:           job.Height,
+			BitrateKbps:      job.BitrateKbps,
+			NeedsToneMap:     job.NeedsToneMap,
+			AudioCodec:       job.AudioCodec,
+			AudioChannels:    job.AudioChannels,
+			AudioStreamIndex: job.AudioStreamIndex,
+			SubtitleStreams:   job.SubtitleStreams,
+			SessionDir:       job.SessionDir,
+			SegmentPrefix:    "seg",
 		})
 	}
 

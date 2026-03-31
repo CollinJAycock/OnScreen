@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -46,6 +47,7 @@ type Handlers struct {
 	Email           *v1.EmailHandler
 	PasswordReset   *v1.PasswordResetHandler
 	Invite          *v1.InviteHandler
+	Notifications   *v1.NotificationHandler
 	StreamTracker   *streaming.Tracker
 	Artwork       *artwork.Manager
 	ArtworkRoots  func() []string // returns all library scan_paths for artwork serving
@@ -106,9 +108,29 @@ func NewRouter(h *Handlers) http.Handler {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
+
+			// Parse optional resize query params (?w=300&h=450).
+			wParam, _ := strconv.Atoi(req.URL.Query().Get("w"))
+			hParam, _ := strconv.Atoi(req.URL.Query().Get("h"))
+			if wParam > 1920 {
+				wParam = 1920
+			}
+			if hParam > 1920 {
+				hParam = 1920
+			}
+
 			for _, root := range h.ArtworkRoots() {
 				abs := filepath.Join(root, clean)
 				if _, err := os.Stat(abs); err == nil {
+					// Serve resized variant if dimensions requested.
+					if (wParam > 0 || hParam > 0) && h.Artwork != nil {
+						w.Header().Set("Content-Type", "image/jpeg")
+						w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
+						if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
+							h.Logger.Error("artwork resize failed", "path", abs, "error", err)
+						}
+						return
+					}
 					w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
 					http.ServeFile(w, req, abs)
 					return
@@ -246,12 +268,23 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/webhooks/{id}/test", h.Webhook.Test)
 			})
 
-			// User profile — PIN management + user switching.
+			// User profile — PIN management + user switching + preferences.
 			if h.User != nil {
 				r.Put("/users/me/pin", h.User.SetPIN)
 				r.Delete("/users/me/pin", h.User.ClearPIN)
+				r.Get("/users/me/preferences", h.User.GetPreferences)
+				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Get("/users/switchable", h.User.ListSwitchable)
 				r.Post("/auth/pin-switch", h.User.PINSwitch)
+			}
+
+			// Notifications.
+			if h.Notifications != nil {
+				r.Get("/notifications", h.Notifications.List)
+				r.Get("/notifications/unread-count", h.Notifications.UnreadCount)
+				r.Post("/notifications/{id}/read", h.Notifications.MarkRead)
+				r.Post("/notifications/read-all", h.Notifications.MarkAllRead)
+				r.Get("/notifications/stream", h.Notifications.Stream)
 			}
 
 			// User admin management — admin only.
@@ -262,6 +295,7 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Delete("/users/{id}", h.User.DeleteUser)
 					r.Patch("/users/{id}", h.User.SetAdmin)
 					r.Put("/users/{id}/password", h.User.ResetPassword)
+					r.Put("/users/{id}/content-rating", h.User.SetContentRating)
 				})
 			}
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -62,10 +63,14 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		RecentlyAdded:    []HubItem{},
 	}
 
+	// Convert max content rating from claims to a rank for SQL filtering.
+	maxRank := maxRatingRankFromClaims(claims.MaxContentRating)
+
 	// Continue watching — items the user has in progress.
 	cwRows, err := h.db.ListContinueWatching(r.Context(), gen.ListContinueWatchingParams{
-		UserID: claims.UserID,
-		Limit:  20,
+		UserID:        claims.UserID,
+		Limit:         20,
+		MaxRatingRank: maxRank,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "hub: continue watching", "err", err)
@@ -91,7 +96,8 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Recently added — newest items across all libraries.
 	// Fetch extra rows so we still have ≥20 after deduplication.
 	raRows, err := h.db.ListRecentlyAdded(r.Context(), gen.ListRecentlyAddedParams{
-		Limit: 40,
+		Limit:         40,
+		MaxRatingRank: maxRank,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "hub: recently added", "err", err)
@@ -137,4 +143,15 @@ func timestamptzToMilli(ts pgtype.Timestamptz) int64 {
 		return 0
 	}
 	return ts.Time.UnixMilli()
+}
+
+// maxRatingRankFromClaims converts a Claims.MaxContentRating string to the
+// *int32 expected by sqlc narg parameters. Returns nil when unrestricted.
+func maxRatingRankFromClaims(maxContentRating string) *int32 {
+	rk := contentrating.MaxRatingRank(maxContentRating)
+	if rk == nil {
+		return nil
+	}
+	v := int32(*rk)
+	return &v
 }

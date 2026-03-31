@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ApiClient, authApi, libraryApi, api } from './api';
+import { ApiClient, authApi, libraryApi, userApi, notificationApi, api } from './api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -220,6 +220,118 @@ describe('libraryApi', () => {
     vi.stubGlobal('fetch', fetch);
     await libraryApi.scan('42');
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/libraries/42/scan');
+  });
+});
+
+// ── userApi ──────────────────────────────────────────────────────────────────
+
+describe('userApi', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('getPreferences calls GET /users/me/preferences', async () => {
+    const prefs = { preferred_audio_lang: 'en', preferred_subtitle_lang: null, max_content_rating: 'PG-13' };
+    const fetch = mockFetch(200, { data: prefs });
+    vi.stubGlobal('fetch', fetch);
+    const result = await userApi.getPreferences();
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/me/preferences');
+    expect(result.preferred_audio_lang).toBe('en');
+    expect(result.max_content_rating).toBe('PG-13');
+  });
+
+  it('setPreferences calls PUT /users/me/preferences', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await userApi.setPreferences({
+      preferred_audio_lang: 'ja',
+      preferred_subtitle_lang: 'en',
+      max_content_rating: null
+    });
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/me/preferences');
+    const [, opts] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(opts.method).toBe('PUT');
+    const body = JSON.parse(opts.body as string);
+    expect(body.preferred_audio_lang).toBe('ja');
+    expect(body.preferred_subtitle_lang).toBe('en');
+  });
+
+  it('setContentRating calls PUT /users/:id/content-rating', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await userApi.setContentRating('user-123', 'PG-13');
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/user-123/content-rating');
+    const body = JSON.parse((fetch.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.max_content_rating).toBe('PG-13');
+  });
+
+  it('setContentRating sends null to clear restriction', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await userApi.setContentRating('user-123', null);
+    const body = JSON.parse((fetch.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.max_content_rating).toBeNull();
+  });
+
+  it('listSwitchable calls GET /users/switchable', async () => {
+    const users = [{ id: '1', username: 'alice', is_admin: false, has_pin: true }];
+    vi.stubGlobal('fetch', mockFetch(200, { data: users }));
+    const result = await userApi.listSwitchable();
+    expect(result).toHaveLength(1);
+    expect(result[0].username).toBe('alice');
+  });
+});
+
+// ── notificationApi ─────────────────────────────────────────────────────────
+
+describe('notificationApi', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('list calls GET /notifications with pagination', async () => {
+    const notifs = [{ id: '1', type: 'system', title: 'Test', body: '', read: false, created_at: 1000 }];
+    const fetch = mockFetch(200, { data: notifs });
+    vi.stubGlobal('fetch', fetch);
+    const result = await notificationApi.list(10, 5);
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/notifications?limit=10&offset=5');
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Test');
+  });
+
+  it('list uses default pagination', async () => {
+    const fetch = mockFetch(200, { data: [] });
+    vi.stubGlobal('fetch', fetch);
+    await notificationApi.list();
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/notifications?limit=20&offset=0');
+  });
+
+  it('unreadCount calls GET /notifications/unread-count', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { data: { count: 3 } }));
+    const result = await notificationApi.unreadCount();
+    expect(result.count).toBe(3);
+  });
+
+  it('markRead calls POST /notifications/:id/read', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await notificationApi.markRead('notif-abc');
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/notifications/notif-abc/read');
+    expect((fetch.mock.calls[0] as [string, RequestInit])[1].method).toBe('POST');
+  });
+
+  it('markAllRead calls POST /notifications/read-all', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await notificationApi.markAllRead();
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/notifications/read-all');
+    expect((fetch.mock.calls[0] as [string, RequestInit])[1].method).toBe('POST');
   });
 });
 

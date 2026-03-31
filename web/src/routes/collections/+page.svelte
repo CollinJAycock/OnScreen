@@ -113,16 +113,16 @@
 <style>
   .page { padding: 2.5rem; }
   .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-  h1 { font-size: 1.4rem; font-weight: 800; color: #eeeef8; }
-  h2 { font-size: 0.9rem; font-weight: 700; color: #66667a; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 1rem; }
+  h1 { font-size: 1.4rem; font-weight: 800; color: var(--text-primary); }
+  h2 { font-size: 0.9rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 1rem; }
   section { margin-bottom: 2.5rem; }
 
   .btn-create {
     padding: 0.42rem 0.85rem;
-    background: rgba(124,106,247,0.12);
+    background: var(--accent-bg);
     border: 1px solid rgba(124,106,247,0.25);
     border-radius: 7px;
-    color: #a89ffa;
+    color: var(--accent-text);
     font-size: 0.78rem;
     font-weight: 600;
     cursor: pointer;
@@ -133,19 +133,19 @@
     display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1.5rem;
   }
   .create-form input {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
     padding: 0.42rem 0.75rem;
-    color: #eeeef8;
+    color: var(--text-primary);
     font-size: 0.85rem;
     flex: 1;
     max-width: 300px;
   }
-  .create-form input:focus { outline: none; border-color: #7c6af7; }
+  .create-form input:focus { outline: none; border-color: var(--accent); }
   .btn-save {
     padding: 0.42rem 0.85rem;
-    background: #7c6af7;
+    background: var(--accent);
     border: none;
     border-radius: 7px;
     color: #fff;
@@ -156,10 +156,10 @@
   .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-cancel {
     padding: 0.42rem 0.85rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
-    color: #66667a;
+    color: var(--text-muted);
     font-size: 0.78rem;
     cursor: pointer;
   }
@@ -176,8 +176,8 @@
     align-items: center;
     justify-content: center;
     padding: 1.5rem 1rem;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--input-bg);
+    border: 1px solid var(--border);
     border-radius: 10px;
     text-decoration: none;
     color: inherit;
@@ -186,11 +186,11 @@
   }
   .card:hover { border-color: rgba(124,106,247,0.3); background: rgba(124,106,247,0.05); }
 
-  .card-icon { font-size: 1.5rem; margin-bottom: 0.5rem; color: #7c6af7; }
-  .card-name { font-size: 0.82rem; font-weight: 600; color: #aaaacc; text-align: center; }
+  .card-icon { font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--accent); }
+  .card-name { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); text-align: center; }
 
   .card.genre { padding: 1rem; }
-  .card.genre .card-name { color: #8888aa; }
+  .card.genre .card-name { color: var(--text-secondary); }
 
   .card-delete {
     position: absolute;
@@ -198,7 +198,7 @@
     right: 0.4rem;
     background: none;
     border: none;
-    color: #44445a;
+    color: var(--text-muted);
     font-size: 1rem;
     cursor: pointer;
     opacity: 0;
@@ -208,16 +208,16 @@
   .card-delete:hover { color: #f87171; }
 
   .error-bar {
-    background: rgba(248,113,113,0.1);
-    border: 1px solid rgba(248,113,113,0.2);
-    color: #fca5a5;
+    background: var(--error-bg);
+    border: 1px solid var(--error-bg);
+    color: var(--error);
     padding: 0.6rem 0.9rem;
     border-radius: 8px;
     font-size: 0.8rem;
     margin-bottom: 1.5rem;
   }
 
-  .loading { color: #44445a; font-size: 0.85rem; }
-  .empty { text-align: center; padding: 4rem 2rem; color: #44445a; }
-  .empty-sub { font-size: 0.8rem; color: #33333d; margin-top: 0.5rem; }
+  .loading { color: var(--text-muted); font-size: 0.85rem; }
+  .empty { text-align: center; padding: 4rem 2rem; color: var(--text-muted); }
+  .empty-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
 </style>

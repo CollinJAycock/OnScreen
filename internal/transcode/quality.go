@@ -58,6 +58,24 @@ func SelectQuality(
 		effectiveH = sourceH
 	}
 
+	// If the client didn't specify a bitrate, pick one from the profile ladder
+	// that matches the REQUESTED resolution (before source capping). This way
+	// "1080p" on a 796p source still gets the 1080p bitrate tier (20 Mbps)
+	// rather than falling to the 720p tier (4 Mbps) because source-capped
+	// effectiveH is only 796.
+	if clientBitrateKbps <= 0 {
+		bitrateH := effectiveH
+		if clientMaxHeight > 0 && clientMaxHeight > bitrateH {
+			bitrateH = clientMaxHeight
+		}
+		for _, p := range Profiles {
+			if p.MaxHeight <= bitrateH && p.Bitrate <= effectiveBitrate {
+				effectiveBitrate = p.Bitrate
+				break
+			}
+		}
+	}
+
 	return QualityProfile{
 		Name:      "custom",
 		Bitrate:   effectiveBitrate,

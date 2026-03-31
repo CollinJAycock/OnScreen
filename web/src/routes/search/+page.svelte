@@ -104,7 +104,10 @@
         <button class="result-card" on:click={() => navigate(item)}>
           <div class="poster-wrap">
             {#if item.poster_path || item.thumb_path}
-              <img src="/artwork/{item.poster_path ?? item.thumb_path}" alt={item.title} loading="lazy" />
+              <img src="/artwork/{item.poster_path ?? item.thumb_path}?w=300"
+                   srcset="/artwork/{item.poster_path ?? item.thumb_path}?w=150 150w, /artwork/{item.poster_path ?? item.thumb_path}?w=300 300w, /artwork/{item.poster_path ?? item.thumb_path}?w=450 450w"
+                   sizes="(max-width: 768px) 100px, 180px"
+                   alt={item.title} loading="lazy" />
             {:else}
               <div class="poster-blank">
                 <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
@@ -140,7 +143,7 @@
   h1 {
     font-size: 1.1rem;
     font-weight: 700;
-    color: #eeeef8;
+    color: var(--text-primary);
     letter-spacing: -0.02em;
     margin-bottom: 1.25rem;
   }
@@ -154,21 +157,21 @@
     left: 0.85rem;
     top: 50%;
     transform: translateY(-50%);
-    color: #44445a;
+    color: var(--text-muted);
     pointer-events: none;
   }
   .search-box input {
     width: 100%;
     padding: 0.65rem 2.5rem 0.65rem 2.5rem;
-    background: #111118;
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
     border-radius: 10px;
-    color: #eeeef8;
+    color: var(--text-primary);
     font-size: 0.88rem;
     outline: none;
     transition: border-color 0.15s;
   }
-  .search-box input::placeholder { color: #44445a; }
+  .search-box input::placeholder { color: var(--text-muted); }
   .search-box input:focus { border-color: rgba(124,106,247,0.5); }
   .clear-btn {
     position: absolute;
@@ -177,13 +180,13 @@
     transform: translateY(-50%);
     background: none;
     border: none;
-    color: #44445a;
+    color: var(--text-muted);
     cursor: pointer;
     padding: 0.2rem;
     display: flex;
     transition: color 0.12s;
   }
-  .clear-btn:hover { color: #8888aa; }
+  .clear-btn:hover { color: var(--text-secondary); }
 
   /* ── Results grid ──────────────────────────────────────────────────────── */
   .results-grid {
@@ -193,8 +196,8 @@
   }
 
   .result-card {
-    background: #111118;
-    border: 1px solid rgba(255,255,255,0.055);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
@@ -204,7 +207,7 @@
     padding: 0;
     font-family: inherit;
   }
-  .result-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .result-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px var(--shadow); }
 
   .poster-wrap img {
     width: 100%;
@@ -218,10 +221,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #1a1a2e, #0f0f18);
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
     font-size: 2rem;
     font-weight: 700;
-    color: rgba(255,255,255,0.12);
+    color: var(--border-strong);
   }
 
   .result-info { padding: 0.45rem 0.55rem 0.55rem; }
@@ -242,7 +245,7 @@
   .result-title {
     font-size: 0.75rem;
     font-weight: 600;
-    color: #cccce0;
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -250,13 +253,13 @@
   }
   .result-year {
     font-size: 0.65rem;
-    color: rgba(255,255,255,0.3);
+    color: var(--text-muted);
     margin-top: 0.1rem;
   }
 
   .result-card.skeleton {
     aspect-ratio: 2/3;
-    background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
     border: none;
@@ -272,9 +275,9 @@
     padding: 5rem 2rem;
     gap: 0.5rem;
   }
-  .empty-glyph { color: #2a2a40; margin-bottom: 0.75rem; }
-  .empty-title { font-size: 1rem; font-weight: 600; color: #555577; }
-  .empty-sub { font-size: 0.82rem; color: #33333d; }
+  .empty-glyph { color: var(--text-muted); margin-bottom: 0.75rem; }
+  .empty-title { font-size: 1rem; font-weight: 600; color: var(--text-muted); }
+  .empty-sub { font-size: 0.82rem; color: var(--text-muted); }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {

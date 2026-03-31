@@ -124,28 +124,28 @@
 
 <style>
   .backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    position: fixed; inset: 0; background: var(--shadow);
     display: flex; align-items: center; justify-content: center;
     z-index: 2000; animation: fadeIn 0.1s ease-out;
   }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
   .panel {
-    background: #111118; border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-elevated); border: 1px solid var(--border);
     border-radius: 12px; width: 320px; max-height: 420px; overflow-y: auto;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    box-shadow: 0 20px 60px var(--shadow);
   }
 
   .panel-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 0.8rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.06);
-    font-size: 0.85rem; font-weight: 600; color: #eeeef8;
+    padding: 0.8rem 1rem; border-bottom: 1px solid var(--border);
+    font-size: 0.85rem; font-weight: 600; color: var(--text-primary);
   }
   .close-btn {
-    background: none; border: none; color: #55556a; font-size: 1.1rem;
+    background: none; border: none; color: var(--text-muted); font-size: 1.1rem;
     cursor: pointer; padding: 0 0.2rem; line-height: 1;
   }
-  .close-btn:hover { color: #aaaacc; }
+  .close-btn:hover { color: var(--text-secondary); }
 
   .msg {
     padding: 0.5rem 1rem; font-size: 0.75rem;
@@ -158,21 +158,21 @@
   .playlist-row {
     display: flex; align-items: center; gap: 0.6rem; width: 100%;
     padding: 0.5rem 0.7rem; background: none; border: none;
-    border-radius: 7px; color: #cccce0; font-size: 0.82rem; cursor: pointer;
+    border-radius: 7px; color: var(--text-primary); font-size: 0.82rem; cursor: pointer;
     text-align: left; transition: background 0.1s;
   }
-  .playlist-row:hover { background: rgba(255,255,255,0.05); }
+  .playlist-row:hover { background: var(--bg-hover); }
   .playlist-row:disabled { opacity: 0.5; cursor: wait; }
-  .playlist-icon { color: #7c6af7; font-size: 1rem; }
+  .playlist-icon { color: var(--accent); font-size: 1rem; }
   .playlist-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .adding { color: #7c6af7; font-size: 0.72rem; }
+  .adding { color: var(--accent); font-size: 0.72rem; }
 
-  .empty { padding: 1rem; text-align: center; color: #44445a; font-size: 0.78rem; }
+  .empty { padding: 1rem; text-align: center; color: var(--text-muted); font-size: 0.78rem; }
 
   .new-btn {
     display: block; width: calc(100% - 0.6rem); margin: 0.3rem; padding: 0.45rem;
     background: rgba(124,106,247,0.08); border: 1px dashed rgba(124,106,247,0.25);
-    border-radius: 7px; color: #a89ffa; font-size: 0.78rem; font-weight: 600;
+    border-radius: 7px; color: var(--accent-text); font-size: 0.78rem; font-weight: 600;
     cursor: pointer; text-align: center;
   }
   .new-btn:hover { background: rgba(124,106,247,0.15); }
@@ -181,21 +181,21 @@
     display: flex; gap: 0.4rem; padding: 0.5rem; flex-wrap: wrap;
   }
   .create-row input {
-    flex: 1; min-width: 120px; background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;
-    padding: 0.35rem 0.6rem; color: #eeeef8; font-size: 0.8rem;
+    flex: 1; min-width: 120px; background: var(--input-bg);
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    padding: 0.35rem 0.6rem; color: var(--text-primary); font-size: 0.8rem;
   }
-  .create-row input:focus { outline: none; border-color: #7c6af7; }
+  .create-row input:focus { outline: none; border-color: var(--accent); }
   .btn-go {
-    padding: 0.35rem 0.6rem; background: #7c6af7; border: none; border-radius: 6px;
+    padding: 0.35rem 0.6rem; background: var(--accent); border: none; border-radius: 6px;
     color: #fff; font-size: 0.72rem; font-weight: 600; cursor: pointer; white-space: nowrap;
   }
   .btn-go:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-x {
-    padding: 0.35rem 0.5rem; background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
+    padding: 0.35rem 0.5rem; background: var(--input-bg);
+    border: 1px solid var(--border); border-radius: 6px;
     color: #66667a; font-size: 0.72rem; cursor: pointer;
   }
 
-  .loading { padding: 1rem; text-align: center; color: #44445a; font-size: 0.8rem; }
+  .loading { padding: 1rem; text-align: center; color: var(--text-muted); font-size: 0.8rem; }
 </style>

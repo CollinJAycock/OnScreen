@@ -62,7 +62,7 @@
   h1 {
     font-size: 1.25rem;
     font-weight: 700;
-    color: #eeeef8;
+    color: var(--text-primary);
     letter-spacing: -0.02em;
     margin-bottom: 1rem;
   }
@@ -77,18 +77,18 @@
     padding: 0.5rem 1rem;
     font-size: 0.78rem;
     font-weight: 500;
-    color: #55556a;
+    color: var(--text-muted);
     text-decoration: none;
     border-bottom: 2px solid transparent;
     transition: color 0.12s, border-color 0.12s;
     white-space: nowrap;
   }
   .tab:hover {
-    color: #aaaacc;
+    color: var(--text-secondary);
   }
   .tab.active {
-    color: #a89ffa;
-    border-bottom-color: #7c6af7;
+    color: var(--accent-text);
+    border-bottom-color: var(--accent);
   }
 
   @media (max-width: 768px) {

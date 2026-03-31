@@ -242,12 +242,12 @@
 
   .crumb {
     display: flex; align-items: center; gap: 0.4rem;
-    font-size: 0.75rem; color: #33333d; margin-bottom: 1.25rem;
+    font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;
   }
-  .crumb a { color: #55556a; text-decoration: none; }
-  .crumb a:hover { color: #aaaacc; }
+  .crumb a { color: var(--text-muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text-secondary); }
 
-  h1 { font-size: 1.25rem; font-weight: 700; color: #eeeef8; letter-spacing: -0.02em; margin-bottom: 1.75rem; }
+  h1 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; margin-bottom: 1.75rem; }
 
   .banner {
     padding: 0.6rem 0.9rem;
@@ -255,12 +255,12 @@
     font-size: 0.8rem;
     margin-bottom: 1.25rem;
   }
-  .banner.error { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2); color: #fca5a5; }
-  .banner.ok { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.2); color: #6ee7b7; }
+  .banner.error { background: var(--error-bg); border: 1px solid var(--error-bg); color: var(--error); }
+  .banner.ok { background: var(--success-bg); border: 1px solid var(--success-bg); color: var(--success); }
 
   .skeleton-block {
     height: 380px; border-radius: 10px;
-    background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
   }
@@ -270,53 +270,53 @@
 
   section {
     padding: 1.25rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.055);
+    border-bottom: 1px solid var(--border);
   }
 
   .sec-label {
     font-size: 0.68rem; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.09em;
-    color: #33333d; margin-bottom: 1rem;
+    color: var(--text-muted); margin-bottom: 1rem;
   }
 
   .field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.65rem; }
   .field:last-child { margin-bottom: 0; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-  label { font-size: 0.75rem; font-weight: 500; color: #44445a; }
+  label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
 
   input, select {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
     padding: 0.48rem 0.7rem;
     font-size: 0.85rem;
-    color: #eeeef8;
+    color: var(--text-primary);
     transition: border-color 0.15s;
     width: 100%;
   }
-  input:focus, select:focus { outline: none; border-color: #7c6af7; box-shadow: 0 0 0 3px rgba(124,106,247,0.12); }
-  select option { background: #13131e; }
-  ::placeholder { color: #2a2a3d; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  select option { background: var(--bg-elevated); }
+  ::placeholder { color: var(--text-muted); }
 
   .readonly {
     padding: 0.48rem 0.7rem;
-    border: 1px solid rgba(255,255,255,0.055);
+    border: 1px solid var(--border);
     border-radius: 7px;
     font-size: 0.85rem;
-    color: #33333d;
+    color: var(--text-muted);
     text-transform: capitalize;
   }
 
   .path-list { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem; }
   .path-row {
     display: flex; align-items: center;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 7px; overflow: hidden;
     transition: border-color 0.15s;
   }
-  .path-row:focus-within { border-color: #7c6af7; box-shadow: 0 0 0 3px rgba(124,106,247,0.12); }
-  .pfx { padding: 0 0.1rem 0 0.7rem; font-size: 0.82rem; color: #33333d; font-family: monospace; }
+  .path-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  .pfx { padding: 0 0.1rem 0 0.7rem; font-size: 0.82rem; color: var(--text-muted); font-family: monospace; }
   .path-in {
     flex: 1; background: none !important; border: none !important;
     box-shadow: none !important; padding: 0.48rem 0.4rem 0.48rem 0 !important;
@@ -326,8 +326,8 @@
   .browse-btn {
     padding: 0 0.55rem;
     background: none;
-    border-left: 1px solid rgba(255,255,255,0.07);
-    color: #44445a;
+    border-left: 1px solid var(--border);
+    color: var(--text-muted);
     cursor: pointer;
     align-self: stretch;
     display: flex;
@@ -335,20 +335,20 @@
     transition: color 0.12s, background 0.12s;
     flex-shrink: 0;
   }
-  .browse-btn:hover { background: rgba(124,106,247,0.08); color: #a89ffa; }
+  .browse-btn:hover { background: rgba(124,106,247,0.08); color: var(--accent-text); }
 
   .path-rm {
     padding: 0 0.6rem; background: none; border: none;
-    font-size: 1rem; color: #2e2e3d; cursor: pointer; align-self: stretch;
+    font-size: 1rem; color: var(--text-muted); cursor: pointer; align-self: stretch;
     display: flex; align-items: center; transition: color 0.12s;
   }
-  .path-rm:hover { color: #fca5a5; }
+  .path-rm:hover { color: var(--error); }
   .add-path {
-    background: none; border: none; color: #44445a;
+    background: none; border: none; color: var(--text-muted);
     font-size: 0.75rem; cursor: pointer; padding: 0;
     transition: color 0.12s;
   }
-  .add-path:hover { color: #a89ffa; }
+  .add-path:hover { color: var(--accent-text); }
 
   .form-foot {
     display: flex; justify-content: flex-end; align-items: center;
@@ -356,17 +356,17 @@
   }
   .btn-ghost {
     padding: 0.42rem 0.85rem; background: none;
-    border: 1px solid rgba(255,255,255,0.09);
-    border-radius: 7px; color: #55556a; font-size: 0.8rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px; color: var(--text-muted); font-size: 0.8rem;
     text-decoration: none; cursor: pointer; transition: all 0.12s;
   }
-  .btn-ghost:hover { border-color: rgba(255,255,255,0.18); color: #aaaacc; }
+  .btn-ghost:hover { border-color: var(--accent-bg); color: var(--text-secondary); }
   .btn-save {
-    padding: 0.42rem 0.9rem; background: #7c6af7;
+    padding: 0.42rem 0.9rem; background: var(--accent);
     border: none; border-radius: 7px; color: #fff;
     font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
   }
-  .btn-save:hover { background: #8f7ef9; }
+  .btn-save:hover { background: var(--accent-hover); }
   .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* Danger zone */
@@ -399,7 +399,7 @@
     font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: all 0.12s;
     white-space: nowrap;
   }
-  .btn-del-outline:hover { background: rgba(248,113,113,0.08); color: #fca5a5; border-color: rgba(248,113,113,0.4); }
+  .btn-del-outline:hover { background: rgba(248,113,113,0.08); color: var(--error); border-color: rgba(248,113,113,0.4); }
 
   /* Modal */
   .overlay {
@@ -409,17 +409,17 @@
     z-index: 100; padding: 1rem;
   }
   .dialog {
-    background: #13131e; border: 1px solid rgba(255,255,255,0.09);
+    background: var(--bg-elevated); border: 1px solid var(--border-strong);
     border-radius: 12px; padding: 1.5rem; max-width: 380px; width: 100%;
-    box-shadow: 0 24px 48px rgba(0,0,0,0.6);
+    box-shadow: 0 24px 48px var(--shadow);
   }
-  .dlg-title { font-size: 0.9rem; font-weight: 700; color: #eeeef8; margin-bottom: 0.5rem; }
-  .dlg-body { font-size: 0.8rem; color: #55556a; line-height: 1.55; margin-bottom: 1.25rem; }
+  .dlg-title { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.5rem; }
+  .dlg-body { font-size: 0.8rem; color: var(--text-muted); line-height: 1.55; margin-bottom: 1.25rem; }
   .dlg-foot { display: flex; justify-content: flex-end; gap: 0.5rem; }
   .btn-del-solid {
     padding: 0.42rem 0.9rem; background: rgba(248,113,113,0.15);
     border: 1px solid rgba(248,113,113,0.3);
-    border-radius: 7px; color: #fca5a5;
+    border-radius: 7px; color: var(--error);
     font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.12s;
   }
   .btn-del-solid:hover { background: rgba(248,113,113,0.25); }

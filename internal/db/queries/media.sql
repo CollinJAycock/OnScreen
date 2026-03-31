@@ -122,6 +122,7 @@ FROM media_items
 WHERE library_id = $1
   AND deleted_at IS NULL
   AND search_vector @@ plainto_tsquery('english', $2)
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
 LIMIT $3;
 
@@ -134,6 +135,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
 FROM media_items
 WHERE deleted_at IS NULL
   AND search_vector @@ plainto_tsquery('english', $1)
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
 LIMIT $2;
 
@@ -151,6 +153,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY sort_title ASC
 LIMIT $3 OFFSET $4;
 
@@ -168,6 +171,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY sort_title DESC
 LIMIT $3 OFFSET $4;
 
@@ -185,6 +189,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY year ASC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4;
 
@@ -202,6 +207,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY year DESC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4;
 
@@ -219,6 +225,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY rating DESC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4;
 
@@ -236,6 +243,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY rating ASC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4;
 
@@ -253,6 +261,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY created_at DESC
 LIMIT $3 OFFSET $4;
 
@@ -270,6 +279,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY created_at ASC
 LIMIT $3 OFFSET $4;
 
@@ -279,7 +289,8 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
-  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'));
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'));
 
 -- name: ListDistinctGenres :many
 SELECT DISTINCT g::text AS genre
@@ -307,6 +318,7 @@ FROM media_items
 WHERE deleted_at IS NULL
   AND type IN ('movie', 'show')
   AND (sqlc.narg('library_id')::uuid IS NULL OR library_id = sqlc.narg('library_id'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY created_at DESC
 LIMIT sqlc.arg('limit');
 
@@ -325,6 +337,7 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ws.user_id = $1
   AND ws.status = 'in_progress'
   AND m.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY ws.last_watched_at DESC
 LIMIT $2;
 

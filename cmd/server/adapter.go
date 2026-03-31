@@ -698,14 +698,15 @@ func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before tim
 
 func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
 	p := gen.ListMediaItemsByTitleParams{
-		LibraryID: libraryID,
-		Type:      itemType,
-		Limit:     limit,
-		Offset:    offset,
-		Genre:     f.Genre,
-		YearMin:   intPtrToInt32Ptr(f.YearMin),
-		YearMax:   intPtrToInt32Ptr(f.YearMax),
-		RatingMin: float64PtrToNumeric(f.RatingMin),
+		LibraryID:     libraryID,
+		Type:          itemType,
+		Limit:         limit,
+		Offset:        offset,
+		Genre:         f.Genre,
+		YearMin:       intPtrToInt32Ptr(f.YearMin),
+		YearMax:       intPtrToInt32Ptr(f.YearMax),
+		RatingMin:     float64PtrToNumeric(f.RatingMin),
+		MaxRatingRank: intPtrToInt32Ptr(f.MaxRatingRank),
 	}
 
 	sort := f.Sort
@@ -870,12 +871,13 @@ func genFilteredDateAddedAscRowToItem(r gen.ListMediaItemsByDateAddedAscRow) med
 
 func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
 	return a.q.CountMediaItemsFiltered(ctx, gen.CountMediaItemsFilteredParams{
-		LibraryID: libraryID,
-		Type:      itemType,
-		Genre:     f.Genre,
-		YearMin:   intPtrToInt32Ptr(f.YearMin),
-		YearMax:   intPtrToInt32Ptr(f.YearMax),
-		RatingMin: float64PtrToNumeric(f.RatingMin),
+		LibraryID:     libraryID,
+		Type:          itemType,
+		Genre:         f.Genre,
+		YearMin:       intPtrToInt32Ptr(f.YearMin),
+		YearMax:       intPtrToInt32Ptr(f.YearMax),
+		RatingMin:     float64PtrToNumeric(f.RatingMin),
+		MaxRatingRank: intPtrToInt32Ptr(f.MaxRatingRank),
 	})
 }
 

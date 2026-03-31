@@ -430,7 +430,7 @@
     margin-bottom: 1.75rem;
   }
 
-  h1 { font-size: 1.25rem; font-weight: 700; color: #eeeef8; letter-spacing: -0.02em; margin: 0; }
+  h1 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; margin: 0; }
 
   .banner {
     padding: 0.6rem 0.9rem;
@@ -442,21 +442,21 @@
 
   .skeleton-block {
     height: 120px; border-radius: 10px;
-    background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
   }
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
   .empty {
-    color: #44445a; font-size: 0.85rem;
+    color: var(--text-muted); font-size: 0.85rem;
     text-align: center; padding: 3rem 0;
   }
 
   /* Create form */
   .create-form {
     background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 1rem 1.25rem;
     margin-bottom: 1.25rem;
@@ -465,24 +465,24 @@
     display: flex; gap: 0.75rem; align-items: flex-end;
   }
   .field { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; }
-  label { font-size: 0.72rem; font-weight: 500; color: #44445a; }
+  label { font-size: 0.72rem; font-weight: 500; color: var(--text-muted); }
   input {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
     padding: 0.48rem 0.7rem;
     font-size: 0.85rem;
-    color: #eeeef8;
+    color: var(--text-primary);
     font-family: inherit;
     transition: border-color 0.15s;
     width: 100%;
   }
-  input:focus { outline: none; border-color: #7c6af7; box-shadow: 0 0 0 3px rgba(124,106,247,0.12); }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   ::placeholder { color: #2a2a3d; }
 
   /* Table */
   .table-wrap {
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
   }
@@ -492,24 +492,24 @@
     text-align: left; padding: 0.6rem 1rem;
     font-size: 0.68rem; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.07em;
-    color: #44445a; border-bottom: 1px solid rgba(255,255,255,0.06);
+    color: var(--text-muted); border-bottom: 1px solid var(--border);
   }
   td {
     padding: 0.7rem 1rem; font-size: 0.85rem; color: #ccccd8;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid var(--input-bg);
   }
   tr:last-child td { border-bottom: none; }
 
-  .username-cell { color: #eeeef8; font-weight: 500; }
+  .username-cell { color: var(--text-primary); font-weight: 500; }
   .you-badge {
     display: inline-block; margin-left: 0.5rem;
     font-size: 0.62rem; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.05em;
-    color: #7c6af7; background: rgba(124,106,247,0.12);
+    color: var(--accent); background: var(--accent-bg);
     border-radius: 4px; padding: 0.1rem 0.35rem;
     vertical-align: middle;
   }
-  .date-cell { color: #55556a; font-size: 0.8rem; }
+  .date-cell { color: var(--text-muted); font-size: 0.8rem; }
   .actions-col { width: 80px; }
   .actions-cell { text-align: right; }
 
@@ -517,7 +517,7 @@
   .admin-toggle {
     display: inline-flex; align-items: center; gap: 0.5rem;
     background: none; border: none; cursor: pointer; padding: 0.2rem 0;
-    color: #55556a; font-size: 0.8rem;
+    color: var(--text-muted); font-size: 0.8rem;
   }
   .admin-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
   .toggle-track {
@@ -525,7 +525,7 @@
     background: rgba(255,255,255,0.1); border-radius: 9px;
     position: relative; transition: background 0.2s;
   }
-  .admin-toggle.active .toggle-track { background: #7c6af7; }
+  .admin-toggle.active .toggle-track { background: var(--accent); }
   .toggle-thumb {
     position: absolute; top: 2px; left: 2px;
     width: 14px; height: 14px;
@@ -534,22 +534,22 @@
   }
   .admin-toggle.active .toggle-thumb { transform: translateX(14px); }
   .toggle-label { font-size: 0.78rem; }
-  .admin-toggle.active .toggle-label { color: #a89ffa; }
+  .admin-toggle.active .toggle-label { color: var(--accent-text); }
 
   /* Buttons */
   .btn-create {
-    padding: 0.4rem 0.8rem; background: #7c6af7;
+    padding: 0.4rem 0.8rem; background: var(--accent);
     border: none; border-radius: 7px; color: #fff;
     font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
   }
-  .btn-create:hover { background: #8f7ef9; }
+  .btn-create:hover { background: var(--accent-hover); }
   .btn-save {
-    padding: 0.48rem 1rem; background: #7c6af7;
+    padding: 0.48rem 1rem; background: var(--accent);
     border: none; border-radius: 7px; color: #fff;
     font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
     white-space: nowrap; align-self: flex-end;
   }
-  .btn-save:hover { background: #8f7ef9; }
+  .btn-save:hover { background: var(--accent-hover); }
   .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-reset {
     padding: 0.3rem 0.6rem; background: none;
@@ -569,23 +569,23 @@
   /* Overlay / dialog */
   .overlay {
     position: fixed; inset: 0; z-index: 100;
-    background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+    background: var(--shadow); backdrop-filter: blur(4px);
     display: flex; align-items: center; justify-content: center;
   }
   .dialog {
-    background: #16161f; border: 1px solid rgba(255,255,255,0.1);
+    background: #16161f; border: 1px solid var(--border-strong);
     border-radius: 12px; padding: 1.5rem; max-width: 400px; width: 90%;
   }
-  .dialog h2 { font-size: 1rem; font-weight: 600; color: #eeeef8; margin: 0 0 0.6rem 0; }
+  .dialog h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin: 0 0 0.6rem 0; }
   .dialog p { font-size: 0.85rem; color: #88889a; margin: 0 0 1.25rem 0; line-height: 1.5; }
-  .dialog strong { color: #eeeef8; }
+  .dialog strong { color: var(--text-primary); }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
   .btn-cancel {
-    padding: 0.4rem 0.8rem; background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.1); border-radius: 7px;
+    padding: 0.4rem 0.8rem; background: var(--border);
+    border: 1px solid var(--border-strong); border-radius: 7px;
     color: #ccccd8; font-size: 0.8rem; cursor: pointer; transition: background 0.15s;
   }
-  .btn-cancel:hover { background: rgba(255,255,255,0.1); }
+  .btn-cancel:hover { background: var(--border-strong); }
   .btn-confirm-delete {
     padding: 0.4rem 0.8rem; background: #dc2626;
     border: none; border-radius: 7px; color: #fff;
@@ -601,7 +601,7 @@
   .btn-invite {
     padding: 0.4rem 0.8rem; background: none;
     border: 1px solid rgba(124,106,247,0.3); border-radius: 7px;
-    color: #a89ffa; font-size: 0.78rem; font-weight: 600;
+    color: var(--accent-text); font-size: 0.78rem; font-weight: 600;
     cursor: pointer; transition: all 0.15s;
   }
   .btn-invite:hover { background: rgba(124,106,247,0.1); border-color: rgba(124,106,247,0.5); }
@@ -610,19 +610,19 @@
   .invite-url-box { margin-top: 0.75rem; }
   .url-row { display: flex; gap: 0.5rem; }
   .url-input {
-    flex: 1; font-size: 0.78rem; color: #a89ffa;
+    flex: 1; font-size: 0.78rem; color: var(--accent-text);
     background: rgba(124,106,247,0.06); border: 1px solid rgba(124,106,247,0.2);
     border-radius: 7px; padding: 0.45rem 0.7rem; cursor: text;
   }
   .btn-copy {
-    padding: 0.45rem 0.8rem; background: #7c6af7;
+    padding: 0.45rem 0.8rem; background: var(--accent);
     border: none; border-radius: 7px; color: #fff;
     font-size: 0.76rem; font-weight: 600; cursor: pointer;
     transition: background 0.15s; white-space: nowrap;
   }
-  .btn-copy:hover { background: #8f7ef9; }
+  .btn-copy:hover { background: var(--accent-hover); }
   .url-hint {
-    font-size: 0.7rem; color: #44445a; margin: 0.4rem 0 0;
+    font-size: 0.7rem; color: var(--text-muted); margin: 0.4rem 0 0;
   }
 
   /* Invites section */
@@ -642,8 +642,8 @@
     padding: 0.1rem 0.4rem;
   }
   .status-expired {
-    font-size: 0.72rem; font-weight: 600; color: #55556a;
-    background: rgba(255,255,255,0.04); border-radius: 4px;
+    font-size: 0.72rem; font-weight: 600; color: var(--text-muted);
+    background: var(--input-bg); border-radius: 4px;
     padding: 0.1rem 0.4rem;
   }
 </style>

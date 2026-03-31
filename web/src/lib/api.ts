@@ -234,8 +234,20 @@ export const userApi = {
   listSwitchable: () =>
     api.get<SwitchableUser[]>('/users/switchable'),
   pinSwitch: (userId: string, pin: string) =>
-    api.post<TokenPair>('/auth/pin-switch', { user_id: userId, pin })
+    api.post<TokenPair>('/auth/pin-switch', { user_id: userId, pin }),
+  getPreferences: () =>
+    api.get<UserPreferences>('/users/me/preferences'),
+  setPreferences: (prefs: UserPreferences) =>
+    api.put<void>('/users/me/preferences', prefs),
+  setContentRating: (userId: string, maxContentRating: string | null) =>
+    api.put<void>(`/users/${userId}/content-rating`, { max_content_rating: maxContentRating })
 };
+
+export interface UserPreferences {
+  preferred_audio_lang: string | null;
+  preferred_subtitle_lang: string | null;
+  max_content_rating: string | null;
+}
 
 // ── Libraries ─────────────────────────────────────────────────────────────────
 
@@ -459,6 +471,7 @@ export interface ManagedProfile {
   avatar_url?: string;
   has_pin: boolean;
   created_at: string;
+  max_content_rating?: string | null;
 }
 
 export const profileApi = {
@@ -578,6 +591,7 @@ export interface ActiveSession {
   type?: string;
   poster_path?: string;
   duration_ms?: number;
+  bitrate_kbps?: number;
 }
 
 export const sessionsApi = {
@@ -656,12 +670,13 @@ export interface TranscodeSession {
 }
 
 export const transcodeApi = {
-  start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean) =>
+  start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean, audioStreamIndex?: number) =>
     api.post<TranscodeSession>(`/items/${itemId}/transcode`, {
       file_id: fileId,
       height,
       position_ms: positionMs,
-      video_copy: videoCopy ?? false
+      video_copy: videoCopy ?? false,
+      audio_stream_index: audioStreamIndex ?? null
     }),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)
@@ -682,4 +697,27 @@ export interface AuditLogEntry {
 export const auditApi = {
   list: (limit = 50, offset = 0) =>
     api.get<AuditLogEntry[]>(`/audit?limit=${limit}&offset=${offset}`)
+};
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+export interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  item_id?: string;
+  read: boolean;
+  created_at: number;
+}
+
+export const notificationApi = {
+  list: (limit = 20, offset = 0) =>
+    api.get<Notification[]>(`/notifications?limit=${limit}&offset=${offset}`),
+  unreadCount: () =>
+    api.get<{ count: number }>('/notifications/unread-count'),
+  markRead: (id: string) =>
+    api.post<void>(`/notifications/${id}/read`, {}),
+  markAllRead: () =>
+    api.post<void>('/notifications/read-all', {}),
 };

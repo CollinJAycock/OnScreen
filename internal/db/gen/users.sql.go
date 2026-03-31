@@ -48,7 +48,8 @@ INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
 
 type CreateDiscordUserParams struct {
@@ -81,6 +82,9 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -90,7 +94,8 @@ INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
 
 type CreateGitHubUserParams struct {
@@ -123,6 +128,9 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -132,7 +140,8 @@ INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
 
 type CreateGoogleUserParams struct {
@@ -167,6 +176,9 @@ func (q *Queries) CreateGoogleUser(ctx context.Context, arg CreateGoogleUserPara
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -213,7 +225,8 @@ INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          parent_user_id, avatar_url
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
 
 type CreateUserParams struct {
@@ -246,6 +259,9 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -285,7 +301,8 @@ func (q *Queries) DeleteUser(ctx context.Context, id uuid.UUID) error {
 const getUser = `-- name: GetUser :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE id = $1
 `
@@ -308,6 +325,9 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -315,7 +335,8 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 const getUserByDiscordID = `-- name: GetUserByDiscordID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE discord_id = $1
 `
@@ -338,6 +359,9 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -345,7 +369,8 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE email = $1
 `
@@ -368,6 +393,9 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, erro
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -375,7 +403,8 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, erro
 const getUserByGitHubID = `-- name: GetUserByGitHubID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE github_id = $1
 `
@@ -398,6 +427,9 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -405,7 +437,8 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User
 const getUserByGoogleID = `-- name: GetUserByGoogleID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE google_id = $1
 `
@@ -428,6 +461,9 @@ func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
 	return i, err
 }
@@ -435,7 +471,8 @@ func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       parent_user_id, avatar_url
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
 WHERE username = $1
 `
@@ -458,7 +495,29 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.DiscordID,
 		&i.ParentUserID,
 		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
 	)
+	return i, err
+}
+
+const getUserPreferences = `-- name: GetUserPreferences :one
+SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+FROM users
+WHERE id = $1
+`
+
+type GetUserPreferencesRow struct {
+	PreferredAudioLang    *string `json:"preferred_audio_lang"`
+	PreferredSubtitleLang *string `json:"preferred_subtitle_lang"`
+	MaxContentRating      *string `json:"max_content_rating"`
+}
+
+func (q *Queries) GetUserPreferences(ctx context.Context, id uuid.UUID) (GetUserPreferencesRow, error) {
+	row := q.db.QueryRow(ctx, getUserPreferences, id)
+	var i GetUserPreferencesRow
+	err := row.Scan(&i.PreferredAudioLang, &i.PreferredSubtitleLang, &i.MaxContentRating)
 	return i, err
 }
 
@@ -527,20 +586,21 @@ func (q *Queries) LinkGoogleAccount(ctx context.Context, arg LinkGoogleAccountPa
 
 const listAllManagedProfiles = `-- name: ListAllManagedProfiles :many
 SELECT u.id, u.username, u.avatar_url, (u.pin IS NOT NULL) AS has_pin, u.created_at,
-       u.parent_user_id AS owner_id, p.username AS owner_username
+       u.parent_user_id AS owner_id, p.username AS owner_username, u.max_content_rating
 FROM users u
 JOIN users p ON p.id = u.parent_user_id
 ORDER BY p.username, u.username
 `
 
 type ListAllManagedProfilesRow struct {
-	ID            uuid.UUID          `json:"id"`
-	Username      string             `json:"username"`
-	AvatarUrl     *string            `json:"avatar_url"`
-	HasPin        interface{}        `json:"has_pin"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	OwnerID       pgtype.UUID        `json:"owner_id"`
-	OwnerUsername string             `json:"owner_username"`
+	ID               uuid.UUID          `json:"id"`
+	Username         string             `json:"username"`
+	AvatarUrl        *string            `json:"avatar_url"`
+	HasPin           interface{}        `json:"has_pin"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	OwnerID          pgtype.UUID        `json:"owner_id"`
+	OwnerUsername    string             `json:"owner_username"`
+	MaxContentRating *string            `json:"max_content_rating"`
 }
 
 func (q *Queries) ListAllManagedProfiles(ctx context.Context) ([]ListAllManagedProfilesRow, error) {
@@ -560,6 +620,7 @@ func (q *Queries) ListAllManagedProfiles(ctx context.Context) ([]ListAllManagedP
 			&i.CreatedAt,
 			&i.OwnerID,
 			&i.OwnerUsername,
+			&i.MaxContentRating,
 		); err != nil {
 			return nil, err
 		}
@@ -572,18 +633,19 @@ func (q *Queries) ListAllManagedProfiles(ctx context.Context) ([]ListAllManagedP
 }
 
 const listManagedProfiles = `-- name: ListManagedProfiles :many
-SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at
+SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at, max_content_rating
 FROM users
 WHERE parent_user_id = $1
 ORDER BY username
 `
 
 type ListManagedProfilesRow struct {
-	ID        uuid.UUID          `json:"id"`
-	Username  string             `json:"username"`
-	AvatarUrl *string            `json:"avatar_url"`
-	HasPin    interface{}        `json:"has_pin"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID               uuid.UUID          `json:"id"`
+	Username         string             `json:"username"`
+	AvatarUrl        *string            `json:"avatar_url"`
+	HasPin           interface{}        `json:"has_pin"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	MaxContentRating *string            `json:"max_content_rating"`
 }
 
 func (q *Queries) ListManagedProfiles(ctx context.Context, parentUserID pgtype.UUID) ([]ListManagedProfilesRow, error) {
@@ -601,6 +663,7 @@ func (q *Queries) ListManagedProfiles(ctx context.Context, parentUserID pgtype.U
 			&i.AvatarUrl,
 			&i.HasPin,
 			&i.CreatedAt,
+			&i.MaxContentRating,
 		); err != nil {
 			return nil, err
 		}
@@ -795,6 +858,23 @@ func (q *Queries) UpdateManagedProfileAdmin(ctx context.Context, arg UpdateManag
 	return i, err
 }
 
+const updateUserContentRating = `-- name: UpdateUserContentRating :exec
+UPDATE users
+SET max_content_rating = $2,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateUserContentRatingParams struct {
+	ID               uuid.UUID `json:"id"`
+	MaxContentRating *string   `json:"max_content_rating"`
+}
+
+func (q *Queries) UpdateUserContentRating(ctx context.Context, arg UpdateUserContentRatingParams) error {
+	_, err := q.db.Exec(ctx, updateUserContentRating, arg.ID, arg.MaxContentRating)
+	return err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1
 `
@@ -806,5 +886,24 @@ type UpdateUserPasswordParams struct {
 
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
 	_, err := q.db.Exec(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const updateUserPreferences = `-- name: UpdateUserPreferences :exec
+UPDATE users
+SET preferred_audio_lang = $2,
+    preferred_subtitle_lang = $3,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateUserPreferencesParams struct {
+	ID                    uuid.UUID `json:"id"`
+	PreferredAudioLang    *string   `json:"preferred_audio_lang"`
+	PreferredSubtitleLang *string   `json:"preferred_subtitle_lang"`
+}
+
+func (q *Queries) UpdateUserPreferences(ctx context.Context, arg UpdateUserPreferencesParams) error {
+	_, err := q.db.Exec(ctx, updateUserPreferences, arg.ID, arg.PreferredAudioLang, arg.PreferredSubtitleLang)
 	return err
 }

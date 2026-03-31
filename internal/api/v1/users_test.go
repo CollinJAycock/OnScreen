@@ -108,6 +108,16 @@ func (m *mockUserDB) DeleteManagedProfile(_ context.Context, _ gen.DeleteManaged
 	return nil
 }
 func (m *mockUserDB) DeleteManagedProfileAdmin(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockUserDB) GetUserPreferences(_ context.Context, _ uuid.UUID) (gen.GetUserPreferencesRow, error) {
+	return gen.GetUserPreferencesRow{}, nil
+}
+func (m *mockUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPreferencesParams) error {
+	return nil
+}
+
+func (m *mockUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUserContentRatingParams) error {
+	return nil
+}
 
 func authedRequest(r *http.Request) *http.Request {
 	ctx := middleware.WithClaims(r.Context(), &auth.Claims{

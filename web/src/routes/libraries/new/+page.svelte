@@ -142,12 +142,12 @@
 
   .crumb {
     display: flex; align-items: center; gap: 0.4rem;
-    font-size: 0.75rem; color: #33333d; margin-bottom: 1.25rem;
+    font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;
   }
-  .crumb a { color: #55556a; text-decoration: none; }
-  .crumb a:hover { color: #aaaacc; }
+  .crumb a { color: var(--text-muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text-secondary); }
 
-  h1 { font-size: 1.25rem; font-weight: 700; color: #eeeef8; letter-spacing: -0.02em; margin-bottom: 1.75rem; }
+  h1 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; margin-bottom: 1.75rem; }
 
   .error-bar {
     background: rgba(248,113,113,0.1);
@@ -163,7 +163,7 @@
 
   .section {
     padding: 1.25rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.055);
+    border-bottom: 1px solid var(--border);
   }
   .section:last-of-type { border-bottom: none; }
 
@@ -172,33 +172,33 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #44445a;
+    color: var(--text-muted);
     margin-bottom: 1rem;
   }
-  .hint { font-size: 0.78rem; color: #44445a; margin-top: -0.5rem; margin-bottom: 0.75rem; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: -0.5rem; margin-bottom: 0.75rem; }
 
   .field { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.75rem; }
   .field:last-child { margin-bottom: 0; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-  label { font-size: 0.78rem; font-weight: 500; color: #55556a; }
+  label { font-size: 0.78rem; font-weight: 500; color: var(--text-muted); }
 
   input:not([type="radio"]), select {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
     padding: 0.5rem 0.75rem;
     font-size: 0.85rem;
-    color: #eeeef8;
+    color: var(--text-primary);
     transition: border-color 0.15s, box-shadow 0.15s;
     width: 100%;
   }
   input:focus, select:focus {
     outline: none;
-    border-color: #7c6af7;
+    border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(124,106,247,0.15);
   }
-  select option { background: #13131e; }
-  ::placeholder { color: #33333d; }
+  select option { background: var(--bg-elevated); }
+  ::placeholder { color: var(--text-muted); }
 
   .type-picker {
     display: grid;
@@ -211,40 +211,40 @@
     align-items: center;
     gap: 0.35rem;
     padding: 0.75rem 0.5rem;
-    border: 1px solid rgba(255,255,255,0.07);
+    border: 1px solid var(--border);
     border-radius: 9px;
     cursor: pointer;
     font-size: 0.72rem;
-    color: #55556a;
+    color: var(--text-muted);
     transition: border-color 0.12s, background 0.12s, color 0.12s;
   }
   .type-opt input { display: none; }
   .type-icon { font-size: 1.4rem; line-height: 1; }
-  .type-opt:hover { border-color: rgba(255,255,255,0.14); color: #aaaacc; }
+  .type-opt:hover { border-color: rgba(255,255,255,0.14); color: var(--text-secondary); }
   .type-opt.selected {
-    border-color: #7c6af7;
+    border-color: var(--accent);
     background: rgba(124,106,247,0.1);
-    color: #a89ffa;
+    color: var(--accent-text);
   }
 
   .path-list { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem; }
   .path-row {
     display: flex;
     align-items: center;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
     overflow: hidden;
     transition: border-color 0.15s;
   }
   .path-row:focus-within {
-    border-color: #7c6af7;
+    border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(124,106,247,0.15);
   }
   .path-prefix {
     padding: 0 0.1rem 0 0.75rem;
     font-size: 0.85rem;
-    color: #44445a;
+    color: var(--text-muted);
     font-family: monospace;
     user-select: none;
   }
@@ -261,8 +261,8 @@
   .browse-btn {
     padding: 0 0.55rem;
     background: none;
-    border-left: 1px solid rgba(255,255,255,0.07);
-    color: #44445a;
+    border-left: 1px solid var(--border);
+    color: var(--text-muted);
     cursor: pointer;
     align-self: stretch;
     display: flex;
@@ -270,14 +270,14 @@
     transition: color 0.12s, background 0.12s;
     flex-shrink: 0;
   }
-  .browse-btn:hover { background: rgba(124,106,247,0.08); color: #a89ffa; }
+  .browse-btn:hover { background: rgba(124,106,247,0.08); color: var(--accent-text); }
 
   .path-remove {
     padding: 0 0.65rem;
     background: none;
     border: none;
     font-size: 1rem;
-    color: #33333d;
+    color: var(--text-muted);
     cursor: pointer;
     transition: color 0.12s;
     line-height: 1;
@@ -290,13 +290,13 @@
   .add-path {
     background: none;
     border: none;
-    color: #55556a;
+    color: var(--text-muted);
     font-size: 0.78rem;
     cursor: pointer;
     padding: 0;
     transition: color 0.12s;
   }
-  .add-path:hover { color: #a89ffa; }
+  .add-path:hover { color: var(--accent-text); }
 
   .form-foot {
     display: flex;
@@ -308,18 +308,18 @@
   .btn-ghost {
     padding: 0.45rem 0.9rem;
     background: none;
-    border: 1px solid rgba(255,255,255,0.09);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
-    color: #55556a;
+    color: var(--text-muted);
     font-size: 0.8rem;
     text-decoration: none;
     cursor: pointer;
     transition: border-color 0.12s, color 0.12s;
   }
-  .btn-ghost:hover { border-color: rgba(255,255,255,0.18); color: #aaaacc; }
+  .btn-ghost:hover { border-color: var(--border-strong); color: var(--text-secondary); }
   .btn-submit {
     padding: 0.45rem 1rem;
-    background: #7c6af7;
+    background: var(--accent);
     border: none;
     border-radius: 7px;
     color: #fff;
@@ -328,6 +328,6 @@
     cursor: pointer;
     transition: background 0.15s;
   }
-  .btn-submit:hover { background: #8f7ef9; }
+  .btn-submit:hover { background: var(--accent-hover); }
   .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -103,7 +103,10 @@
         {#each items as item (item.id)}
           <a class="card" href="/watch/{item.id}">
             {#if item.poster_path}
-              <img class="poster" src="/artwork/{item.poster_path}" alt={item.title} loading="lazy" />
+              <img class="poster" src="/artwork/{item.poster_path}?w=300"
+                   srcset="/artwork/{item.poster_path}?w=150 150w, /artwork/{item.poster_path}?w=300 300w, /artwork/{item.poster_path}?w=450 450w"
+                   sizes="(max-width: 768px) 100px, 180px"
+                   alt={item.title} loading="lazy" />
             {:else}
               <div class="poster placeholder">
                 <span>{item.type === 'movie' ? '🎬' : '📺'}</span>
@@ -131,31 +134,31 @@
   .page { padding: 2.5rem; }
   .header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; flex-wrap: wrap; }
   .back {
-    background: none; border: none; color: #66667a; font-size: 1.2rem; cursor: pointer; padding: 0;
+    background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; padding: 0;
   }
-  .back:hover { color: #eeeef8; }
-  h1 { font-size: 1.4rem; font-weight: 800; color: #eeeef8; margin: 0; }
-  .count { font-size: 0.78rem; color: #44445a; margin-left: auto; }
+  .back:hover { color: var(--text-primary); }
+  h1 { font-size: 1.4rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+  .count { font-size: 0.78rem; color: var(--text-muted); margin-left: auto; }
 
   .btn-edit {
-    padding: 0.3rem 0.65rem; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 6px; color: #66667a; font-size: 0.72rem; cursor: pointer;
+    padding: 0.3rem 0.65rem; background: var(--bg-hover); border: 1px solid var(--border-strong);
+    border-radius: 6px; color: var(--text-muted); font-size: 0.72rem; cursor: pointer;
   }
-  .btn-edit:hover { color: #aaaacc; border-color: rgba(255,255,255,0.15); }
+  .btn-edit:hover { color: var(--text-secondary); border-color: rgba(255,255,255,0.15); }
 
   .edit-form { display: flex; gap: 0.5rem; align-items: center; flex: 1; }
   .edit-form input {
-    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 7px; padding: 0.42rem 0.75rem; color: #eeeef8; font-size: 0.85rem; flex: 1; max-width: 300px;
+    background: var(--bg-hover); border: 1px solid var(--border-strong);
+    border-radius: 7px; padding: 0.42rem 0.75rem; color: var(--text-primary); font-size: 0.85rem; flex: 1; max-width: 300px;
   }
-  .edit-form input:focus { outline: none; border-color: #7c6af7; }
+  .edit-form input:focus { outline: none; border-color: var(--accent); }
   .btn-save {
-    padding: 0.35rem 0.7rem; background: #7c6af7; border: none; border-radius: 6px;
+    padding: 0.35rem 0.7rem; background: var(--accent); border: none; border-radius: 6px;
     color: #fff; font-size: 0.75rem; font-weight: 600; cursor: pointer;
   }
   .btn-cancel {
-    padding: 0.35rem 0.7rem; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 6px; color: #66667a; font-size: 0.75rem; cursor: pointer;
+    padding: 0.35rem 0.7rem; background: var(--bg-hover); border: 1px solid var(--border-strong);
+    border-radius: 6px; color: var(--text-muted); font-size: 0.75rem; cursor: pointer;
   }
 
   .grid {
@@ -167,7 +170,7 @@
   .card {
     display: flex; flex-direction: column; text-decoration: none; color: inherit;
     border-radius: 8px; overflow: hidden; position: relative;
-    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);
+    background: var(--input-bg); border: 1px solid var(--border);
     transition: border-color 0.15s, transform 0.15s;
   }
   .card:hover { border-color: rgba(124,106,247,0.3); transform: translateY(-2px); }
@@ -179,8 +182,8 @@
   }
 
   .meta { padding: 0.6rem 0.5rem; }
-  .title { font-size: 0.78rem; font-weight: 600; color: #cccce0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sub { font-size: 0.68rem; color: #55556a; margin-top: 0.2rem; }
+  .title { font-size: 0.78rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { font-size: 0.68rem; color: var(--text-muted); margin-top: 0.2rem; }
   .dot { margin: 0 0.25rem; }
 
   .remove {
@@ -194,10 +197,10 @@
   .remove:hover { color: #f87171; }
 
   .error-bar {
-    background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2);
-    color: #fca5a5; padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.5rem;
+    background: var(--error-bg); border: 1px solid var(--error-bg);
+    color: var(--error); padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.5rem;
   }
-  .loading { color: #44445a; font-size: 0.85rem; }
-  .empty { text-align: center; padding: 4rem 2rem; color: #44445a; }
-  .empty-sub { font-size: 0.8rem; color: #33333d; margin-top: 0.5rem; }
+  .loading { color: var(--text-muted); font-size: 0.85rem; }
+  .empty { text-align: center; padding: 4rem 2rem; color: var(--text-muted); }
+  .empty-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
 </style>

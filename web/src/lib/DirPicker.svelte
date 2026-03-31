@@ -140,8 +140,8 @@
   }
 
   .picker {
-    background: #0f0f18;
-    border: 1px solid rgba(255,255,255,0.1);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
     border-radius: 12px;
     width: 480px;
     max-width: 100%;
@@ -157,16 +157,16 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.9rem 1rem 0.75rem;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
+    border-bottom: 1px solid var(--border);
   }
-  .picker-title { font-size: 0.82rem; font-weight: 700; color: #eeeef8; }
+  .picker-title { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); }
   .close-btn {
     width: 24px; height: 24px;
     display: flex; align-items: center; justify-content: center;
     background: none; border: none; border-radius: 5px;
-    color: #44445a; cursor: pointer; transition: background 0.12s, color 0.12s;
+    color: var(--text-muted); cursor: pointer; transition: background 0.12s, color 0.12s;
   }
-  .close-btn:hover { background: rgba(255,255,255,0.07); color: #8888aa; }
+  .close-btn:hover { background: var(--border); color: var(--text-secondary); }
 
   .breadcrumb {
     display: flex;
@@ -175,17 +175,17 @@
     gap: 0;
     padding: 0.55rem 1rem;
     background: rgba(255,255,255,0.02);
-    border-bottom: 1px solid rgba(255,255,255,0.055);
+    border-bottom: 1px solid var(--border);
     min-height: 36px;
   }
   .bc-seg {
     background: none; border: none;
     font-size: 0.75rem; font-family: 'SF Mono', 'Consolas', monospace;
-    color: #7c6af7; cursor: pointer; padding: 0.1rem 0.2rem;
+    color: var(--accent); cursor: pointer; padding: 0.1rem 0.2rem;
     border-radius: 4px; transition: background 0.1s;
   }
   .bc-seg:hover { background: rgba(124,106,247,0.1); }
-  .bc-sep { font-size: 0.72rem; color: #2a2a3d; padding: 0 0.05rem; }
+  .bc-sep { font-size: 0.72rem; color: var(--text-muted); padding: 0 0.05rem; }
 
   .dir-list {
     flex: 1;
@@ -196,7 +196,7 @@
   }
   .dir-list::-webkit-scrollbar { width: 4px; }
   .dir-list::-webkit-scrollbar-track { background: transparent; }
-  .dir-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+  .dir-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
   .dir-item {
     display: flex;
@@ -208,31 +208,31 @@
     border: none;
     text-align: left;
     font-size: 0.82rem;
-    color: #8888aa;
+    color: var(--text-secondary);
     cursor: pointer;
     transition: background 0.1s, color 0.1s;
   }
-  .dir-item:hover { background: rgba(255,255,255,0.04); color: #eeeef8; }
+  .dir-item:hover { background: var(--input-bg); color: var(--text-primary); }
   .dir-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .folder-ico { color: #555577; flex-shrink: 0; }
-  .dir-item:hover .folder-ico { color: #7c6af7; }
-  .chevron { color: #2a2a3d; flex-shrink: 0; }
-  .dir-item:hover .chevron { color: #44445a; }
+  .folder-ico { color: var(--text-muted); flex-shrink: 0; }
+  .dir-item:hover .folder-ico { color: var(--accent); }
+  .chevron { color: var(--text-muted); flex-shrink: 0; }
+  .dir-item:hover .chevron { color: var(--text-muted); }
 
-  .dir-up { color: #44445a; }
-  .dir-up:hover { color: #8888aa; }
+  .dir-up { color: var(--text-muted); }
+  .dir-up:hover { color: var(--text-secondary); }
 
   .loading-state, .error-state, .empty-state {
     display: flex; align-items: center; justify-content: center;
-    padding: 2.5rem; font-size: 0.8rem; color: #33333d;
+    padding: 2.5rem; font-size: 0.8rem; color: var(--text-muted);
   }
-  .error-state { color: #fca5a5; }
+  .error-state { color: var(--error); }
   .spin { display: inline-block; animation: spin 0.7s linear infinite; margin-right: 0.4rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .picker-foot {
     padding: 0.75rem 1rem;
-    border-top: 1px solid rgba(255,255,255,0.07);
+    border-top: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -242,7 +242,7 @@
   .selected-path {
     font-size: 0.72rem;
     font-family: 'SF Mono', 'Consolas', monospace;
-    color: #44445a;
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -253,19 +253,19 @@
   .btn-cancel {
     padding: 0.38rem 0.8rem;
     background: none;
-    border: 1px solid rgba(255,255,255,0.09);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
-    color: #55556a; font-size: 0.78rem;
+    color: var(--text-muted); font-size: 0.78rem;
     cursor: pointer; transition: all 0.12s;
   }
-  .btn-cancel:hover { border-color: rgba(255,255,255,0.18); color: #aaaacc; }
+  .btn-cancel:hover { border-color: var(--border-strong); color: var(--text-secondary); }
   .btn-select {
     padding: 0.38rem 0.85rem;
-    background: #7c6af7;
+    background: var(--accent);
     border: none;
     border-radius: 7px;
     color: #fff; font-size: 0.78rem; font-weight: 600;
     cursor: pointer; transition: background 0.15s;
   }
-  .btn-select:hover { background: #8f7ef9; }
+  .btn-select:hover { background: var(--accent-hover); }
 </style>

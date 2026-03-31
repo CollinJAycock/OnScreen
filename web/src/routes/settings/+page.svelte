@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { settingsApi, userApi, emailApi, api } from '$lib/api';
-  import type { UserMeta } from '$lib/api';
+  import type { UserMeta, UserPreferences } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
@@ -28,6 +28,11 @@
   let pinPassword = '';
   let pinSaving = false;
   let pinError = '';
+
+  // Language preferences state
+  let prefAudioLang = '';
+  let prefSubtitleLang = '';
+  let prefSaving = false;
 
   onMount(async () => {
     try {
@@ -59,7 +64,30 @@
         if (me) hasPin = me.has_pin;
       }
     } catch { /* ignore — non-critical */ }
+
+    // Load language preferences
+    try {
+      const prefs = await userApi.getPreferences();
+      prefAudioLang = prefs.preferred_audio_lang ?? '';
+      prefSubtitleLang = prefs.preferred_subtitle_lang ?? '';
+    } catch { /* ignore — non-critical */ }
   });
+
+  async function savePreferences() {
+    prefSaving = true;
+    try {
+      await userApi.setPreferences({
+        preferred_audio_lang: prefAudioLang || null,
+        preferred_subtitle_lang: prefSubtitleLang || null,
+        max_content_rating: null
+      });
+      toast.success('Language preferences saved');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save preferences');
+    } finally {
+      prefSaving = false;
+    }
+  }
 
   async function save() {
     error = '';
@@ -391,6 +419,70 @@
       {/if}
     </section>
 
+    <section>
+      <div class="sec-label">Language Preferences</div>
+      <div class="hint" style="margin-top: -0.5rem;">
+        Set default audio and subtitle languages. The player will auto-select matching tracks when available.
+      </div>
+      <div class="field">
+        <label for="pref-audio">Preferred Audio Language</label>
+        <select id="pref-audio" bind:value={prefAudioLang}>
+          <option value="">None (use default)</option>
+          <option value="eng">English</option>
+          <option value="jpn">Japanese</option>
+          <option value="spa">Spanish</option>
+          <option value="fra">French</option>
+          <option value="deu">German</option>
+          <option value="ita">Italian</option>
+          <option value="por">Portuguese</option>
+          <option value="rus">Russian</option>
+          <option value="zho">Chinese</option>
+          <option value="kor">Korean</option>
+          <option value="hin">Hindi</option>
+          <option value="ara">Arabic</option>
+          <option value="tha">Thai</option>
+          <option value="pol">Polish</option>
+          <option value="nld">Dutch</option>
+          <option value="swe">Swedish</option>
+          <option value="nor">Norwegian</option>
+          <option value="dan">Danish</option>
+          <option value="fin">Finnish</option>
+          <option value="tur">Turkish</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="pref-sub">Preferred Subtitle Language</label>
+        <select id="pref-sub" bind:value={prefSubtitleLang}>
+          <option value="">None (disabled)</option>
+          <option value="eng">English</option>
+          <option value="jpn">Japanese</option>
+          <option value="spa">Spanish</option>
+          <option value="fra">French</option>
+          <option value="deu">German</option>
+          <option value="ita">Italian</option>
+          <option value="por">Portuguese</option>
+          <option value="rus">Russian</option>
+          <option value="zho">Chinese</option>
+          <option value="kor">Korean</option>
+          <option value="hin">Hindi</option>
+          <option value="ara">Arabic</option>
+          <option value="tha">Thai</option>
+          <option value="pol">Polish</option>
+          <option value="nld">Dutch</option>
+          <option value="swe">Swedish</option>
+          <option value="nor">Norwegian</option>
+          <option value="dan">Danish</option>
+          <option value="fin">Finnish</option>
+          <option value="tur">Turkish</option>
+        </select>
+      </div>
+      <div class="pref-foot">
+        <button class="btn-save" disabled={prefSaving} on:click={savePreferences}>
+          {prefSaving ? 'Saving...' : 'Save Preferences'}
+        </button>
+      </div>
+    </section>
+
   {/if}
 </div>
 
@@ -403,12 +495,12 @@
     font-size: 0.8rem;
     margin-bottom: 1.25rem;
   }
-  .banner.error { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2); color: #fca5a5; }
-  .banner.ok    { background: rgba(52,211,153,0.1);  border: 1px solid rgba(52,211,153,0.2);  color: #6ee7b7; }
+  .banner.error { background: var(--error-bg); border: 1px solid var(--error-bg); color: var(--error); }
+  .banner.ok    { background: var(--success-bg);  border: 1px solid var(--success-bg);  color: var(--success); }
 
   .skeleton-block {
     height: 100px; border-radius: 10px;
-    background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
   }
@@ -418,69 +510,77 @@
 
   section {
     padding: 1.25rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.055);
+    border-bottom: 1px solid var(--border);
     display: flex; flex-direction: column; gap: 1.25rem;
   }
 
   .sec-label {
     font-size: 0.68rem; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.09em;
-    color: #33333d;
+    color: var(--text-muted);
   }
 
   .field { display: flex; flex-direction: column; gap: 0.3rem; }
 
-  label { font-size: 0.75rem; font-weight: 500; color: #44445a; }
+  label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
 
-  input {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+  input, select {
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
     padding: 0.48rem 0.7rem;
     font-size: 0.85rem;
-    color: #eeeef8;
-    font-family: monospace;
+    color: var(--text-primary);
     transition: border-color 0.15s;
     width: 100%;
   }
-  input:focus { outline: none; border-color: #7c6af7; box-shadow: 0 0 0 3px rgba(124,106,247,0.12); }
-  ::placeholder { color: #2a2a3d; }
+  input {
+    font-family: monospace;
+  }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  ::placeholder { color: var(--text-muted); }
 
   .hint {
     font-size: 0.72rem;
-    color: #33333d;
+    color: var(--text-muted);
     line-height: 1.5;
     margin-top: 0.15rem;
   }
-  .hint a { color: #55556a; text-decoration: underline; }
-  .hint a:hover { color: #a89ffa; }
+  .hint a { color: var(--text-muted); text-decoration: underline; }
+  .hint a:hover { color: var(--accent-text); }
 
   .form-foot {
     display: flex; justify-content: flex-end;
     padding-top: 1.5rem;
   }
   .btn-save {
-    padding: 0.42rem 0.9rem; background: #7c6af7;
+    padding: 0.42rem 0.9rem; background: var(--accent);
     border: none; border-radius: 7px; color: #fff;
     font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
   }
-  .btn-save:hover { background: #8f7ef9; }
+  .btn-save:hover { background: var(--accent-hover); }
   .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  select { cursor: pointer; }
+  select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  select option { background: var(--bg-elevated); color: var(--text-primary); }
+
+  .pref-foot { display: flex; justify-content: flex-end; }
 
   /* Arr webhook URL */
   .url-box {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--input-bg);
+    border: 1px solid var(--border);
     border-radius: 7px;
     padding: 0.4rem 0.6rem;
   }
   .webhook-url {
     flex: 1;
     font-size: 0.75rem;
-    color: #8888a0;
+    color: var(--text-secondary);
     word-break: break-all;
     background: none;
     padding: 0;
@@ -489,16 +589,16 @@
   .btn-copy {
     flex-shrink: 0;
     padding: 0.3rem 0.6rem;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 5px;
-    color: #aaaacc;
+    color: var(--text-secondary);
     font-size: 0.72rem;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.12s;
   }
-  .btn-copy:hover { background: rgba(255,255,255,0.1); }
+  .btn-copy:hover { background: var(--border-strong); }
 
   /* Path mappings */
   .path-mapping-row {
@@ -508,15 +608,15 @@
     margin-bottom: 0.4rem;
   }
   .path-mapping-row input { flex: 1; min-width: 0; }
-  .arrow { color: #55556a; font-size: 0.85rem; flex-shrink: 0; }
+  .arrow { color: var(--text-muted); font-size: 0.85rem; flex-shrink: 0; }
   .btn-remove {
     flex-shrink: 0;
     width: 26px; height: 26px;
     display: flex; align-items: center; justify-content: center;
     background: rgba(248,113,113,0.08);
-    border: 1px solid rgba(248,113,113,0.2);
+    border: 1px solid var(--error-bg);
     border-radius: 5px;
-    color: #fca5a5;
+    color: var(--error);
     font-size: 1rem;
     cursor: pointer;
     transition: background 0.12s;
@@ -538,11 +638,11 @@
   }
   .email-test-row input { font-family: inherit; }
   code {
-    background: rgba(255,255,255,0.06);
+    background: var(--border);
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
     font-size: 0.72rem;
-    color: #8888a0;
+    color: var(--text-secondary);
   }
 
   /* PIN management */
@@ -554,24 +654,24 @@
   }
   .pin-status {
     font-size: 0.78rem;
-    color: #6ee7b7;
+    color: var(--success);
     font-weight: 500;
     margin-right: 0.3rem;
   }
-  .pin-status.off { color: #55556a; }
+  .pin-status.off { color: var(--text-muted); }
   .btn-outline {
     padding: 0.36rem 0.75rem;
     background: transparent;
-    border: 1px solid rgba(255,255,255,0.12);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
-    color: #aaaacc;
+    color: var(--text-secondary);
     font-size: 0.78rem;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s;
   }
-  .btn-outline:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.2); }
-  .btn-outline.btn-danger { color: #fca5a5; border-color: rgba(248,113,113,0.25); }
+  .btn-outline:hover { background: var(--bg-hover); border-color: var(--text-muted); }
+  .btn-outline.btn-danger { color: var(--error); border-color: rgba(248,113,113,0.25); }
   .btn-outline.btn-danger:hover { background: rgba(248,113,113,0.08); }
   .pin-form {
     display: flex;

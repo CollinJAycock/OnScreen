@@ -19,11 +19,12 @@ const (
 
 // Claims are the standard fields embedded in every Paseto access token.
 type Claims struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Username  string    `json:"username"`
-	IsAdmin   bool      `json:"is_admin"`
-	IssuedAt  time.Time `json:"iat"`
-	ExpiresAt time.Time `json:"exp"`
+	UserID           uuid.UUID `json:"user_id"`
+	Username         string    `json:"username"`
+	IsAdmin          bool      `json:"is_admin"`
+	MaxContentRating string    `json:"max_content_rating,omitempty"` // parental filter ceiling; empty = unrestricted
+	IssuedAt         time.Time `json:"iat"`
+	ExpiresAt        time.Time `json:"exp"`
 }
 
 // TokenMaker issues and validates Paseto v4 local tokens.
@@ -54,6 +55,9 @@ func (m *TokenMaker) IssueAccessToken(claims Claims) (string, error) {
 		isAdminStr = "true"
 	}
 	token.SetString("is_admin", isAdminStr)
+	if claims.MaxContentRating != "" {
+		token.SetString("max_content_rating", claims.MaxContentRating)
+	}
 
 	return token.V4Encrypt(m.key, nil), nil
 }
@@ -84,14 +88,16 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	username, _ := token.GetString("username")
 	isAdminStr, _ := token.GetString("is_admin")
 	isAdmin := isAdminStr == "true"
+	maxContentRating, _ := token.GetString("max_content_rating")
 	issuedAt, _ := token.GetIssuedAt()
 
 	return &Claims{
-		UserID:    userID,
-		Username:  username,
-		IsAdmin:   isAdmin,
-		IssuedAt:  issuedAt,
-		ExpiresAt: exp,
+		UserID:           userID,
+		Username:         username,
+		IsAdmin:          isAdmin,
+		MaxContentRating: maxContentRating,
+		IssuedAt:         issuedAt,
+		ExpiresAt:        exp,
 	}, nil
 }
 

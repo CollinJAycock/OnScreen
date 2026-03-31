@@ -461,3 +461,101 @@ func TestParseJSONBSubtitleStreams_InvalidJSON(t *testing.T) {
 		t.Errorf("want empty for invalid JSON, got %d", len(got))
 	}
 }
+
+// ── Content rating filtering ────────────────────────────────────────────────
+
+func TestItemGet_ContentRating_Blocked(t *testing.T) {
+	id := uuid.New()
+	rating := "R"
+	ms := &mockItemMedia{
+		item:  &media.Item{ID: id, Title: "Adult Movie", Type: "movie", ContentRating: &rating},
+		files: []media.File{},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	// User restricted to PG-13.
+	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
+		UserID:           uuid.New(),
+		Username:         "child",
+		MaxContentRating: "PG-13",
+	})
+	req = req.WithContext(ctx)
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status: got %d, want %d (R content blocked by PG-13 profile)", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestItemGet_ContentRating_Allowed(t *testing.T) {
+	id := uuid.New()
+	rating := "PG"
+	ms := &mockItemMedia{
+		item:  &media.Item{ID: id, Title: "Family Movie", Type: "movie", ContentRating: &rating},
+		files: []media.File{},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
+		UserID:           uuid.New(),
+		Username:         "child",
+		MaxContentRating: "PG-13",
+	})
+	req = req.WithContext(ctx)
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d (PG allowed by PG-13 profile)", rec.Code, http.StatusOK)
+	}
+}
+
+func TestItemGet_ContentRating_NoRestriction(t *testing.T) {
+	id := uuid.New()
+	rating := "NC-17"
+	ms := &mockItemMedia{
+		item:  &media.Item{ID: id, Title: "Unrestricted Movie", Type: "movie", ContentRating: &rating},
+		files: []media.File{},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	// User with no content rating restriction.
+	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
+		UserID:   uuid.New(),
+		Username: "admin",
+	})
+	req = req.WithContext(ctx)
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d (no restriction)", rec.Code, http.StatusOK)
+	}
+}
+
+func TestItemGet_ContentRating_UnratedContentBlocked(t *testing.T) {
+	id := uuid.New()
+	ms := &mockItemMedia{
+		item:  &media.Item{ID: id, Title: "Unrated Movie", Type: "movie"}, // nil ContentRating
+		files: []media.File{},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
+		UserID:           uuid.New(),
+		Username:         "child",
+		MaxContentRating: "G",
+	})
+	req = req.WithContext(ctx)
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status: got %d, want %d (unrated content blocked — treated as rank 4)", rec.Code, http.StatusForbidden)
+	}
+}

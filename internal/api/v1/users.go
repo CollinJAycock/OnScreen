@@ -36,9 +36,10 @@ type SwitchableUser struct {
 
 // PINSwitchResult is returned by VerifyPIN on success.
 type PINSwitchResult struct {
-	UserID   uuid.UUID
-	Username string
-	IsAdmin  bool
+	UserID           uuid.UUID
+	Username         string
+	IsAdmin          bool
+	MaxContentRating string
 }
 
 // UserService manages user profile operations.
@@ -63,6 +64,9 @@ type UserDB interface {
 	UpdateManagedProfileAdmin(ctx context.Context, arg gen.UpdateManagedProfileAdminParams) (gen.UpdateManagedProfileAdminRow, error)
 	DeleteManagedProfile(ctx context.Context, arg gen.DeleteManagedProfileParams) error
 	DeleteManagedProfileAdmin(ctx context.Context, id uuid.UUID) error
+	GetUserPreferences(ctx context.Context, id uuid.UUID) (gen.GetUserPreferencesRow, error)
+	UpdateUserPreferences(ctx context.Context, arg gen.UpdateUserPreferencesParams) error
+	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
 }
 
 // UserHandler handles /api/v1/users endpoints.
@@ -392,9 +396,10 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 
 	// Issue a new access token for the target user.
 	accessToken, err := h.tokens.IssueAccessToken(auth.Claims{
-		UserID:   result.UserID,
-		Username: result.Username,
-		IsAdmin:  result.IsAdmin,
+		UserID:           result.UserID,
+		Username:         result.Username,
+		IsAdmin:          result.IsAdmin,
+		MaxContentRating: result.MaxContentRating,
 	})
 	if err != nil {
 		if h.logger != nil {
@@ -419,13 +424,14 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 // ── Managed profiles ──────────────────────────────────────────────────────────
 
 type profileResponse struct {
-	ID            string  `json:"id"`
-	Username      string  `json:"username"`
-	AvatarURL     *string `json:"avatar_url,omitempty"`
-	HasPIN        bool    `json:"has_pin"`
-	CreatedAt     string  `json:"created_at"`
-	OwnerID       *string `json:"owner_id,omitempty"`       // admin only
-	OwnerUsername *string `json:"owner_username,omitempty"` // admin only
+	ID               string  `json:"id"`
+	Username         string  `json:"username"`
+	AvatarURL        *string `json:"avatar_url,omitempty"`
+	HasPIN           bool    `json:"has_pin"`
+	CreatedAt        string  `json:"created_at"`
+	MaxContentRating *string `json:"max_content_rating,omitempty"`
+	OwnerID          *string `json:"owner_id,omitempty"`       // admin only
+	OwnerUsername    *string `json:"owner_username,omitempty"` // admin only
 }
 
 // ListProfiles handles GET /api/v1/profiles.
@@ -452,13 +458,14 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 		for i, row := range rows {
 			ownerID := row.OwnerID.String()
 			out[i] = profileResponse{
-				ID:            row.ID.String(),
-				Username:      row.Username,
-				AvatarURL:     row.AvatarUrl,
-				HasPIN:        row.HasPin == true,
-				CreatedAt:     row.CreatedAt.Time.Format(time.RFC3339),
-				OwnerID:       &ownerID,
-				OwnerUsername: &row.OwnerUsername,
+				ID:               row.ID.String(),
+				Username:         row.Username,
+				AvatarURL:        row.AvatarUrl,
+				HasPIN:           row.HasPin == true,
+				CreatedAt:        row.CreatedAt.Time.Format(time.RFC3339),
+				MaxContentRating: row.MaxContentRating,
+				OwnerID:          &ownerID,
+				OwnerUsername:    &row.OwnerUsername,
 			}
 		}
 		respond.Success(w, r, out)
@@ -474,11 +481,12 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 	out := make([]profileResponse, len(rows))
 	for i, row := range rows {
 		out[i] = profileResponse{
-			ID:        row.ID.String(),
-			Username:  row.Username,
-			AvatarURL: row.AvatarUrl,
-			HasPIN:    row.HasPin == true,
-			CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
+			ID:               row.ID.String(),
+			Username:         row.Username,
+			AvatarURL:        row.AvatarUrl,
+			HasPIN:           row.HasPin == true,
+			CreatedAt:        row.CreatedAt.Time.Format(time.RFC3339),
+			MaxContentRating: row.MaxContentRating,
 		}
 	}
 	respond.Success(w, r, out)
@@ -658,6 +666,97 @@ func (h *UserHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 		ParentUserID: parentPG,
 	}); err != nil {
 		respond.NotFound(w, r)
+		return
+	}
+	respond.NoContent(w)
+}
+
+// ── Language preferences ─────────────────────────────────────────────────────
+
+type preferencesResponse struct {
+	PreferredAudioLang    *string `json:"preferred_audio_lang"`
+	PreferredSubtitleLang *string `json:"preferred_subtitle_lang"`
+	MaxContentRating      *string `json:"max_content_rating"`
+}
+
+// GetPreferences handles GET /api/v1/users/me/preferences.
+func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	row, err := h.db.GetUserPreferences(r.Context(), claims.UserID)
+	if err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, preferencesResponse{
+		PreferredAudioLang:    row.PreferredAudioLang,
+		PreferredSubtitleLang: row.PreferredSubtitleLang,
+		MaxContentRating:      row.MaxContentRating,
+	})
+}
+
+// SetPreferences handles PUT /api/v1/users/me/preferences.
+func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	var body struct {
+		PreferredAudioLang    *string `json:"preferred_audio_lang"`
+		PreferredSubtitleLang *string `json:"preferred_subtitle_lang"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	if err := h.db.UpdateUserPreferences(r.Context(), gen.UpdateUserPreferencesParams{
+		ID:                    claims.UserID,
+		PreferredAudioLang:    body.PreferredAudioLang,
+		PreferredSubtitleLang: body.PreferredSubtitleLang,
+	}); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
+}
+
+// SetContentRating handles PUT /api/v1/users/{id}/content-rating.
+// Only admins can set content ratings on any user.
+func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	var body struct {
+		MaxContentRating *string `json:"max_content_rating"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	if err := h.db.UpdateUserContentRating(r.Context(), gen.UpdateUserContentRatingParams{
+		ID:               targetID,
+		MaxContentRating: body.MaxContentRating,
+	}); err != nil {
+		respond.InternalError(w, r)
 		return
 	}
 	respond.NoContent(w)

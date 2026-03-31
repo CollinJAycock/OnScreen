@@ -137,6 +137,17 @@ type MediaItem struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
+type Notification struct {
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Type      string             `json:"type"`
+	Title     string             `json:"title"`
+	Body      string             `json:"body"`
+	ItemID    pgtype.UUID        `json:"item_id"`
+	Read      bool               `json:"read"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type PasswordResetToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
@@ -167,20 +178,23 @@ type Session struct {
 }
 
 type User struct {
-	ID              uuid.UUID          `json:"id"`
-	Username        string             `json:"username"`
-	Email           *string            `json:"email"`
-	PasswordHash    *string            `json:"password_hash"`
-	IsAdmin         bool               `json:"is_admin"`
-	Pin             *string            `json:"pin"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	GoogleID        *string            `json:"google_id"`
-	GoogleAvatarUrl *string            `json:"google_avatar_url"`
-	GithubID        *string            `json:"github_id"`
-	DiscordID       *string            `json:"discord_id"`
-	ParentUserID    pgtype.UUID        `json:"parent_user_id"`
-	AvatarUrl       *string            `json:"avatar_url"`
+	ID                    uuid.UUID          `json:"id"`
+	Username              string             `json:"username"`
+	Email                 *string            `json:"email"`
+	PasswordHash          *string            `json:"password_hash"`
+	IsAdmin               bool               `json:"is_admin"`
+	Pin                   *string            `json:"pin"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	GoogleID              *string            `json:"google_id"`
+	GoogleAvatarUrl       *string            `json:"google_avatar_url"`
+	GithubID              *string            `json:"github_id"`
+	DiscordID             *string            `json:"discord_id"`
+	ParentUserID          pgtype.UUID        `json:"parent_user_id"`
+	AvatarUrl             *string            `json:"avatar_url"`
+	PreferredAudioLang    *string            `json:"preferred_audio_lang"`
+	PreferredSubtitleLang *string            `json:"preferred_subtitle_lang"`
+	MaxContentRating      *string            `json:"max_content_rating"`
 }
 
 type WatchEvent struct {

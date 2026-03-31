@@ -36,15 +36,17 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND ($4::int IS NULL OR year >= $4)
   AND ($5::int IS NULL OR year <= $5)
   AND ($6::numeric IS NULL OR rating >= $6)
+  AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
 `
 
 type CountMediaItemsFilteredParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 func (q *Queries) CountMediaItemsFiltered(ctx context.Context, arg CountMediaItemsFilteredParams) (int64, error) {
@@ -55,6 +57,7 @@ func (q *Queries) CountMediaItemsFiltered(ctx context.Context, arg CountMediaIte
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -629,13 +632,15 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ws.user_id = $1
   AND ws.status = 'in_progress'
   AND m.deleted_at IS NULL
+  AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
 ORDER BY ws.last_watched_at DESC
 LIMIT $2
 `
 
 type ListContinueWatchingParams struct {
-	UserID uuid.UUID `json:"user_id"`
-	Limit  int32     `json:"limit"`
+	UserID        uuid.UUID `json:"user_id"`
+	Limit         int32     `json:"limit"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
 }
 
 type ListContinueWatchingRow struct {
@@ -673,7 +678,7 @@ type ListContinueWatchingRow struct {
 }
 
 func (q *Queries) ListContinueWatching(ctx context.Context, arg ListContinueWatchingParams) ([]ListContinueWatchingRow, error) {
-	rows, err := q.db.Query(ctx, listContinueWatching, arg.UserID, arg.Limit)
+	rows, err := q.db.Query(ctx, listContinueWatching, arg.UserID, arg.Limit, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}
@@ -1057,19 +1062,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY created_at DESC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByDateAddedParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByDateAddedRow struct {
@@ -1113,6 +1120,7 @@ func (q *Queries) ListMediaItemsByDateAdded(ctx context.Context, arg ListMediaIt
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -1175,19 +1183,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY created_at ASC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByDateAddedAscParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByDateAddedAscRow struct {
@@ -1231,6 +1241,7 @@ func (q *Queries) ListMediaItemsByDateAddedAsc(ctx context.Context, arg ListMedi
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -1293,19 +1304,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY rating DESC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByRatingParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByRatingRow struct {
@@ -1349,6 +1362,7 @@ func (q *Queries) ListMediaItemsByRating(ctx context.Context, arg ListMediaItems
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -1411,19 +1425,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY rating ASC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByRatingAscParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByRatingAscRow struct {
@@ -1467,6 +1483,7 @@ func (q *Queries) ListMediaItemsByRatingAsc(ctx context.Context, arg ListMediaIt
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -1529,19 +1546,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY sort_title ASC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByTitleParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByTitleRow struct {
@@ -1585,6 +1604,7 @@ func (q *Queries) ListMediaItemsByTitle(ctx context.Context, arg ListMediaItemsB
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -1647,19 +1667,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY sort_title DESC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByTitleDescParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByTitleDescRow struct {
@@ -1703,6 +1725,7 @@ func (q *Queries) ListMediaItemsByTitleDesc(ctx context.Context, arg ListMediaIt
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -1765,19 +1788,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY year ASC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByYearParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByYearRow struct {
@@ -1821,6 +1846,7 @@ func (q *Queries) ListMediaItemsByYear(ctx context.Context, arg ListMediaItemsBy
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -1883,19 +1909,21 @@ WHERE library_id = $1
   AND ($6::int IS NULL OR year >= $6)
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
 ORDER BY year DESC NULLS LAST, sort_title ASC
 LIMIT $3 OFFSET $4
 `
 
 type ListMediaItemsByYearDescParams struct {
-	LibraryID uuid.UUID      `json:"library_id"`
-	Type      string         `json:"type"`
-	Limit     int32          `json:"limit"`
-	Offset    int32          `json:"offset"`
-	Genre     *string        `json:"genre"`
-	YearMin   *int32         `json:"year_min"`
-	YearMax   *int32         `json:"year_max"`
-	RatingMin pgtype.Numeric `json:"rating_min"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByYearDescRow struct {
@@ -1939,6 +1967,7 @@ func (q *Queries) ListMediaItemsByYearDesc(ctx context.Context, arg ListMediaIte
 		arg.YearMin,
 		arg.YearMax,
 		arg.RatingMin,
+		arg.MaxRatingRank,
 	)
 	if err != nil {
 		return nil, err
@@ -2049,13 +2078,15 @@ FROM media_items
 WHERE deleted_at IS NULL
   AND type IN ('movie', 'show')
   AND ($1::uuid IS NULL OR library_id = $1)
+  AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
 ORDER BY created_at DESC
-LIMIT $2
+LIMIT $3
 `
 
 type ListRecentlyAddedParams struct {
-	LibraryID pgtype.UUID `json:"library_id"`
-	Limit     int32       `json:"limit"`
+	LibraryID     pgtype.UUID `json:"library_id"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	Limit         int32       `json:"limit"`
 }
 
 type ListRecentlyAddedRow struct {
@@ -2090,7 +2121,7 @@ type ListRecentlyAddedRow struct {
 }
 
 func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedParams) ([]ListRecentlyAddedRow, error) {
-	rows, err := q.db.Query(ctx, listRecentlyAdded, arg.LibraryID, arg.Limit)
+	rows, err := q.db.Query(ctx, listRecentlyAdded, arg.LibraryID, arg.MaxRatingRank, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2193,6 +2224,7 @@ FROM media_items
 WHERE library_id = $1
   AND deleted_at IS NULL
   AND search_vector @@ plainto_tsquery('english', $2)
+  AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
 LIMIT $3
 `
@@ -2201,6 +2233,7 @@ type SearchMediaItemsParams struct {
 	LibraryID      uuid.UUID `json:"library_id"`
 	PlaintoTsquery string    `json:"plainto_tsquery"`
 	Limit          int32     `json:"limit"`
+	MaxRatingRank  *int32    `json:"max_rating_rank"`
 }
 
 type SearchMediaItemsRow struct {
@@ -2235,7 +2268,12 @@ type SearchMediaItemsRow struct {
 }
 
 func (q *Queries) SearchMediaItems(ctx context.Context, arg SearchMediaItemsParams) ([]SearchMediaItemsRow, error) {
-	rows, err := q.db.Query(ctx, searchMediaItems, arg.LibraryID, arg.PlaintoTsquery, arg.Limit)
+	rows, err := q.db.Query(ctx, searchMediaItems,
+		arg.LibraryID,
+		arg.PlaintoTsquery,
+		arg.Limit,
+		arg.MaxRatingRank,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2292,6 +2330,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
 FROM media_items
 WHERE deleted_at IS NULL
   AND search_vector @@ plainto_tsquery('english', $1)
+  AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
 LIMIT $2
 `
@@ -2299,6 +2338,7 @@ LIMIT $2
 type SearchMediaItemsGlobalParams struct {
 	PlaintoTsquery string `json:"plainto_tsquery"`
 	Limit          int32  `json:"limit"`
+	MaxRatingRank  *int32 `json:"max_rating_rank"`
 }
 
 type SearchMediaItemsGlobalRow struct {
@@ -2333,7 +2373,7 @@ type SearchMediaItemsGlobalRow struct {
 }
 
 func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaItemsGlobalParams) ([]SearchMediaItemsGlobalRow, error) {
-	rows, err := q.db.Query(ctx, searchMediaItemsGlobal, arg.PlaintoTsquery, arg.Limit)
+	rows, err := q.db.Query(ctx, searchMediaItemsGlobal, arg.PlaintoTsquery, arg.Limit, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}

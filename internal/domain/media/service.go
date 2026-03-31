@@ -85,12 +85,13 @@ type File struct {
 
 // FilterParams holds optional filter/sort parameters for listing items.
 type FilterParams struct {
-	Genre     *string
-	YearMin   *int
-	YearMax   *int
-	RatingMin *float64
-	Sort      string // title, year, rating, created_at
-	SortAsc   bool
+	Genre         *string
+	YearMin       *int
+	YearMax       *int
+	RatingMin     *float64
+	MaxRatingRank *int // content_rating_rank() ceiling for parental filtering
+	Sort          string // title, year, rating, created_at
+	SortAsc       bool
 }
 
 // Querier defines the DB operations this service needs.

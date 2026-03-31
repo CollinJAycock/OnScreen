@@ -107,7 +107,10 @@
             {@const art = item.poster_path ?? item.thumb_path}
             <a class="hub-card" href="/watch/{item.id}">
               {#if art}
-                <img src="/artwork/{art}?v={item.updated_at}" alt={item.title} loading="lazy" />
+                <img src="/artwork/{art}?v={item.updated_at}&w=300"
+                     srcset="/artwork/{art}?v={item.updated_at}&w=150 150w, /artwork/{art}?v={item.updated_at}&w=300 300w, /artwork/{art}?v={item.updated_at}&w=450 450w"
+                     sizes="(max-width: 768px) 130px, 220px"
+                     alt={item.title} loading="lazy" />
               {:else}
                 <div class="hub-poster-blank">
                   <span>{item.title[0]?.toUpperCase()}</span>
@@ -132,7 +135,10 @@
           {#each recentlyAdded as item (item.id)}
             <a class="hub-card" href="/watch/{item.id}">
               {#if item.poster_path}
-                <img src="/artwork/{item.poster_path}?v={item.updated_at}" alt={item.title} loading="lazy" />
+                <img src="/artwork/{item.poster_path}?v={item.updated_at}&w=300"
+                     srcset="/artwork/{item.poster_path}?v={item.updated_at}&w=150 150w, /artwork/{item.poster_path}?v={item.updated_at}&w=300 300w, /artwork/{item.poster_path}?v={item.updated_at}&w=450 450w"
+                     sizes="(max-width: 768px) 130px, 220px"
+                     alt={item.title} loading="lazy" />
               {:else}
                 <div class="hub-poster-blank">
                   <span>{item.title[0]?.toUpperCase()}</span>
@@ -232,9 +238,9 @@
   .page { padding: 2.5rem 2.5rem 4rem; }
 
   .banner-error {
-    background: rgba(248,113,113,0.1);
-    border: 1px solid rgba(248,113,113,0.2);
-    color: #fca5a5;
+    background: var(--error-bg);
+    border: 1px solid var(--error);
+    color: var(--error);
     padding: 0.65rem 1rem;
     border-radius: 8px;
     font-size: 0.8rem;
@@ -246,7 +252,7 @@
   .hub-title {
     font-size: 1.1rem;
     font-weight: 700;
-    color: #eeeef8;
+    color: var(--text-primary);
     letter-spacing: -0.02em;
     margin-bottom: 0.85rem;
   }
@@ -256,10 +262,10 @@
     overflow-x: auto;
     padding-bottom: 0.5rem;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255,255,255,0.1) transparent;
+    scrollbar-color: var(--border-strong) transparent;
   }
   .hub-scroll::-webkit-scrollbar { height: 4px; }
-  .hub-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+  .hub-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
 
   .hub-card {
     --card-w: clamp(120px, 10vw, 220px);
@@ -269,9 +275,9 @@
     transition: transform 0.15s, box-shadow 0.15s;
     border-radius: 8px;
     overflow: hidden;
-    background: #111118;
+    background: var(--bg-elevated);
   }
-  .hub-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .hub-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px var(--shadow); }
   .hub-card img {
     width: var(--card-w);
     height: calc(var(--card-w) * 1.5);
@@ -284,25 +290,25 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #1a1a2e, #0f0f18);
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
     font-size: 2rem;
     font-weight: 700;
-    color: rgba(255,255,255,0.12);
+    color: var(--border-strong);
   }
   .hub-progress {
     height: 3px;
-    background: rgba(255,255,255,0.08);
+    background: var(--border-strong);
   }
   .hub-progress-bar {
     height: 100%;
-    background: #7c6af7;
+    background: var(--accent);
     border-radius: 0 1.5px 1.5px 0;
   }
   .hub-label {
     padding: 0.4rem 0.5rem 0.15rem;
     font-size: 0.72rem;
     font-weight: 600;
-    color: #cccce0;
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -310,13 +316,13 @@
   .hub-year {
     padding: 0 0.5rem 0.4rem;
     font-size: 0.65rem;
-    color: rgba(255,255,255,0.3);
+    color: var(--text-muted);
   }
 
   .hub-card.skeleton {
     width: var(--card-w);
     height: calc(var(--card-w) * 1.5 + 40px);
-    background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
   }
@@ -328,13 +334,13 @@
     justify-content: space-between;
     margin-bottom: 1.25rem;
   }
-  h1 { font-size: 1.1rem; font-weight: 700; color: #eeeef8; letter-spacing: -0.02em; }
+  h1 { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; }
 
   .btn-new {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    background: #7c6af7;
+    background: var(--accent);
     color: #fff;
     border: none;
     padding: 0.45rem 0.9rem;
@@ -346,14 +352,14 @@
     transition: background 0.15s;
     letter-spacing: 0.01em;
   }
-  .btn-new:hover { background: #8f7ef9; }
+  .btn-new:hover { background: var(--accent-hover); }
 
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 1px;
-    background: rgba(255,255,255,0.055);
-    border: 1px solid rgba(255,255,255,0.055);
+    background: var(--border);
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
   }
@@ -392,13 +398,13 @@
     height: 26px;
     border: none;
     border-radius: 5px;
-    background: rgba(255,255,255,0.08);
+    background: var(--border-strong);
     color: rgba(255,255,255,0.55);
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
   .tile-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
-  .tile-btn-danger:hover { background: rgba(248,113,113,0.2); color: #fca5a5; }
+  .tile-btn-danger:hover { background: var(--error); color: var(--error); }
 
   .tile-type {
     font-size: 0.68rem;
@@ -411,14 +417,14 @@
   .tile-name {
     font-size: 1rem;
     font-weight: 700;
-    color: #eeeef8;
+    color: var(--text-primary);
     letter-spacing: -0.01em;
     margin-bottom: 0.3rem;
     line-height: 1.3;
   }
   .tile-path {
     font-size: 0.72rem;
-    color: rgba(255,255,255,0.28);
+    color: var(--text-muted);
     font-family: 'SF Mono', 'Consolas', monospace;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -426,7 +432,7 @@
   }
 
   .skeleton {
-    background: linear-gradient(90deg, #111118 25%, #16161f 50%, #111118 75%);
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
     min-height: 140px;
@@ -441,9 +447,9 @@
     padding: 6rem 2rem;
     gap: 0.5rem;
   }
-  .empty-glyph { font-size: 2rem; color: #2a2a40; margin-bottom: 0.75rem; }
-  .empty-title { font-size: 1rem; font-weight: 600; color: #555577; }
-  .empty-sub { font-size: 0.82rem; color: #33333d; margin-bottom: 1.25rem; }
+  .empty-glyph { font-size: 2rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+  .empty-title { font-size: 1rem; font-weight: 600; color: var(--text-muted); }
+  .empty-sub { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1.25rem; }
 
   /* Dialog */
   .overlay {
@@ -454,34 +460,34 @@
     z-index: 100; padding: 1rem;
   }
   .dialog {
-    background: #13131e;
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
     border-radius: 12px;
     padding: 1.5rem;
     max-width: 380px;
     width: 100%;
-    box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+    box-shadow: 0 24px 48px var(--shadow);
   }
-  .dialog-title { font-size: 0.9rem; font-weight: 700; color: #eeeef8; margin-bottom: 0.5rem; }
-  .dialog-body { font-size: 0.8rem; color: #66667a; line-height: 1.5; margin-bottom: 1.25rem; }
+  .dialog-title { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.5rem; }
+  .dialog-body { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 1.25rem; }
   .dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
   .dbtn-cancel {
     padding: 0.45rem 0.9rem;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
     border-radius: 7px;
-    color: #8888aa;
+    color: var(--text-secondary);
     font-size: 0.8rem;
     cursor: pointer;
     transition: background 0.12s;
   }
-  .dbtn-cancel:hover { background: rgba(255,255,255,0.09); }
+  .dbtn-cancel:hover { background: var(--border-strong); }
   .dbtn-confirm {
     padding: 0.45rem 0.9rem;
     background: rgba(248,113,113,0.15);
     border: 1px solid rgba(248,113,113,0.3);
     border-radius: 7px;
-    color: #fca5a5;
+    color: var(--error);
     font-size: 0.8rem;
     font-weight: 600;
     cursor: pointer;

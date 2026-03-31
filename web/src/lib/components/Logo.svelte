@@ -33,7 +33,7 @@
   .logo-wordmark {
     font-weight: 700;
     letter-spacing: -0.02em;
-    color: #eeeef8;
+    color: var(--text-primary);
     line-height: 1;
   }
 

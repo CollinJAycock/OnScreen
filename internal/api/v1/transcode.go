@@ -81,10 +81,11 @@ func (h *NativeTranscodeHandler) SetSessionKiller(k SessionKiller) {
 }
 
 type transcodeStartRequest struct {
-	FileID     *string `json:"file_id,omitempty"`
-	Height     int     `json:"height"`      // 0 = no constraint (use source height)
-	PositionMS int64   `json:"position_ms"` // start offset in ms
-	VideoCopy  bool    `json:"video_copy"`  // true = copy video stream, only transcode audio
+	FileID           *string `json:"file_id,omitempty"`
+	Height           int     `json:"height"`             // 0 = no constraint (use source height)
+	PositionMS       int64   `json:"position_ms"`        // start offset in ms
+	VideoCopy        bool    `json:"video_copy"`         // true = copy video stream, only transcode audio
+	AudioStreamIndex *int    `json:"audio_stream_index"` // nil = default (first) audio stream
 }
 
 type transcodeStartResponse struct {
@@ -213,6 +214,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		decision = "remux"
 	}
 
+	// For remux, use the source file bitrate (video is copied unchanged).
+	// For full transcode, use the target bitrate from quality selection.
+	sessionBitrate := bitrateKbps
+	if body.VideoCopy && file.Bitrate != nil {
+		sessionBitrate = int(*file.Bitrate / 1000)
+	}
+
 	sess := transcode.Session{
 		ID:          sessionID,
 		UserID:      claims.UserID,
@@ -224,6 +232,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now(),
 		ClientName:  "OnScreenWeb",
 		SegToken:    segTok,
+		BitrateKbps: sessionBitrate,
 	}
 	if err := h.sessions.Create(ctx, sess); err != nil {
 		h.logger.WarnContext(ctx, "create transcode session", "err", err)
@@ -231,19 +240,25 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audioStreamIdx := -1 // -1 = default (let FFmpeg pick)
+	if body.AudioStreamIndex != nil && *body.AudioStreamIndex >= 0 {
+		audioStreamIdx = *body.AudioStreamIndex
+	}
+
 	job := transcode.TranscodeJob{
-		SessionID:      sessionID,
-		FilePath:       file.FilePath,
-		SessionDir:     transcode.SessionDir(sessionID),
-		StartOffsetSec: float64(body.PositionMS) / 1000.0,
-		Decision:       decision,
-		Encoder:        encoder,
-		Width:          width,
-		Height:         height,
-		BitrateKbps:    bitrateKbps,
-		AudioCodec:     "aac",
-		AudioChannels:  2,
-		EnqueuedAt:     time.Now(),
+		SessionID:        sessionID,
+		FilePath:         file.FilePath,
+		SessionDir:       transcode.SessionDir(sessionID),
+		StartOffsetSec:   float64(body.PositionMS) / 1000.0,
+		Decision:         decision,
+		Encoder:          encoder,
+		Width:            width,
+		Height:           height,
+		BitrateKbps:      bitrateKbps,
+		AudioCodec:       "aac",
+		AudioChannels:    2,
+		AudioStreamIndex: audioStreamIdx,
+		EnqueuedAt:       time.Now(),
 	}
 	if err := h.sessions.EnqueueJob(ctx, job); err != nil {
 		h.logger.ErrorContext(ctx, "enqueue transcode job failed", "session_id", sessionID, "err", err)

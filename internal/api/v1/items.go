@@ -18,6 +18,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/scanner"
@@ -177,6 +178,18 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "get item", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+
+	// Enforce content rating restriction from claims.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.Forbidden(w, r)
+			return
+		}
 	}
 
 	files, err := h.media.GetFiles(r.Context(), id)
@@ -483,6 +496,21 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 	if file.Status != "active" {
 		respond.NotFound(w, r)
 		return
+	}
+
+	// Enforce content rating restriction via the parent media item.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		item, err := h.media.GetItem(r.Context(), file.MediaItemID)
+		if err == nil {
+			cr := ""
+			if item.ContentRating != nil {
+				cr = *item.ContentRating
+			}
+			if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+				respond.Forbidden(w, r)
+				return
+			}
+		}
 	}
 
 	if h.tracker != nil && (r.Method == http.MethodGet || r.Method == http.MethodHead) {

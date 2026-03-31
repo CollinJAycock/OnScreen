@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
@@ -58,6 +59,12 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var results []SearchResult
 	var err error
 
+	// Extract content rating filter from auth claims.
+	var maxRank *int32
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+	}
+
 	if libID := r.URL.Query().Get("library_id"); libID != "" {
 		uid, parseErr := uuid.Parse(libID)
 		if parseErr != nil {
@@ -68,6 +75,7 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			LibraryID:      uid,
 			PlaintoTsquery: query,
 			Limit:          limit,
+			MaxRatingRank:  maxRank,
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))
@@ -82,6 +90,7 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		rows, qErr := h.db.SearchMediaItemsGlobal(r.Context(), gen.SearchMediaItemsGlobalParams{
 			PlaintoTsquery: query,
 			Limit:          limit,
+			MaxRatingRank:  maxRank,
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))
