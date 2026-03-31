@@ -221,6 +221,7 @@ func TestSecurityHeaders(t *testing.T) {
 		"X-Content-Type-Options": "nosniff",
 		"X-Frame-Options":       "DENY",
 		"Referrer-Policy":       "strict-origin-when-cross-origin",
+		"Permissions-Policy":    "camera=(), microphone=(), geolocation=()",
 	}
 	for header, expected := range want {
 		got := rec.Header().Get(header)
@@ -228,6 +229,60 @@ func TestSecurityHeaders(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", header, got, expected)
 		}
 	}
+}
+
+func TestSecurityHeaders_CSP(t *testing.T) {
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	handler.ServeHTTP(rec, req)
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("Content-Security-Policy header missing")
+	}
+
+	// Verify key directives are present.
+	requiredDirectives := []string{
+		"default-src 'self'",
+		"script-src 'self' 'unsafe-inline'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: https:",
+		"media-src 'self' blob:",
+		"frame-ancestors 'none'",
+	}
+	for _, d := range requiredDirectives {
+		found := false
+		for _, part := range splitCSP(csp) {
+			if part == d {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("CSP missing directive %q in %q", d, csp)
+		}
+	}
+}
+
+// splitCSP splits a CSP header on "; " boundaries.
+func splitCSP(csp string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(csp); i++ {
+		if i+1 < len(csp) && csp[i] == ';' && csp[i+1] == ' ' {
+			parts = append(parts, csp[start:i])
+			start = i + 2
+			i++ // skip the space
+		}
+	}
+	if start < len(csp) {
+		parts = append(parts, csp[start:])
+	}
+	return parts
 }
 
 // ── MaxBytesBody middleware ─────────────────────────────────────────────────

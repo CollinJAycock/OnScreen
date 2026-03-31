@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // mockQuerier is a minimal in-memory Querier for unit tests.
@@ -43,7 +44,7 @@ func (m *mockQuerier) GetWatchState(_ context.Context, userID, mediaID uuid.UUID
 	key := userID.String() + ":" + mediaID.String()
 	s, ok := m.states[key]
 	if !ok {
-		return WatchState{}, errors.New("no rows")
+		return WatchState{}, pgx.ErrNoRows
 	}
 	return s, nil
 }

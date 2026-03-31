@@ -8,10 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Sentinel errors returned by this package.
@@ -230,7 +230,7 @@ func (e *ValidationError) Error() string {
 // mapNotFound translates a DB "no rows" error to ErrNotFound.
 // Other errors pass through unchanged.
 func mapNotFound(err error) error {
-	if err != nil && strings.Contains(err.Error(), "no rows") {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	return err

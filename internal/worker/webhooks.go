@@ -50,6 +50,8 @@ type WebhookDispatcher struct {
 	logger *slog.Logger
 	sem    chan struct{} // concurrency limiter for delivery goroutines
 	wg     sync.WaitGroup
+	ctx    context.Context    // cancelled on Close to interrupt retries
+	cancel context.CancelFunc
 }
 
 // NewWebhookDispatcher creates a WebhookDispatcher.
@@ -60,6 +62,7 @@ func NewWebhookDispatcher(
 	server WebhookServerInfo,
 	logger *slog.Logger,
 ) *WebhookDispatcher {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &WebhookDispatcher{
 		db:     db,
 		media:  media,
@@ -68,13 +71,17 @@ func NewWebhookDispatcher(
 		client: &http.Client{Timeout: 10 * time.Second, Transport: webhook.SafeTransport()},
 		logger: logger,
 		sem:    make(chan struct{}, maxConcurrentDeliveries),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
 // Dispatch fires eventType to all enabled, subscribed endpoints.
 // Non-blocking — each delivery runs in its own goroutine.
 func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID) {
+	d.wg.Add(1)
 	go func() {
+		defer d.wg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -84,6 +91,7 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 			return
 		}
 
+		evt := webhookEvent(eventType)
 		payload := d.buildPayload(ctx, eventType, userID, mediaID)
 		body, err := json.Marshal(payload)
 		if err != nil {
@@ -92,7 +100,7 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 		}
 
 		for _, ep := range endpoints {
-			if !ep.Enabled || !slices.Contains(ep.Events, eventType) {
+			if !ep.Enabled || !slices.Contains(ep.Events, evt) {
 				continue
 			}
 			ep := ep // capture loop var
@@ -102,15 +110,15 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 			go func() {
 				defer d.wg.Done()
 				defer func() { <-d.sem }()
-				d.deliverWithRetry(ep, body)
+				d.deliverWithRetry(d.ctx, ep, body)
 			}()
 		}
 	}()
 }
 
-// Close blocks until all in-flight webhook deliveries have completed.
-// Call during graceful shutdown to avoid losing webhook events.
+// Close cancels in-flight retry sleeps and blocks until all deliveries finish.
 func (d *WebhookDispatcher) Close() {
+	d.cancel()
 	d.wg.Wait()
 }
 
@@ -161,18 +169,24 @@ func (d *WebhookDispatcher) buildPayload(ctx context.Context, eventType string, 
 	return p
 }
 
-// deliverWithRetry attempts delivery up to 3 times.
+// deliverWithRetry attempts delivery up to 3 times with cancellable sleeps.
 // Delays: attempt 1 immediate, attempt 2 +30s, attempt 3 +5min.
 // On total failure writes to webhook_failures.
-func (d *WebhookDispatcher) deliverWithRetry(ep gen.WebhookEndpoint, body []byte) {
+func (d *WebhookDispatcher) deliverWithRetry(ctx context.Context, ep gen.WebhookEndpoint, body []byte) {
 	delays := []time.Duration{0, 30 * time.Second, 5 * time.Minute}
 	var lastErr error
 	for attempt, delay := range delays {
 		if delay > 0 {
-			time.Sleep(delay)
+			select {
+			case <-ctx.Done():
+				return // shutdown — abandon retries
+			case <-time.After(delay):
+			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := deliverWebhookHTTP(ctx, d.client, d.enc, ep, body)
+		// Use a standalone timeout so that a shutdown cancel (ctx) interrupts
+		// retry sleeps but does not abort an in-flight HTTP request.
+		reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := deliverWebhookHTTP(reqCtx, d.client, d.enc, ep, body)
 		cancel()
 		if err == nil {
 			return
@@ -183,8 +197,7 @@ func (d *WebhookDispatcher) deliverWithRetry(ep gen.WebhookEndpoint, body []byte
 	}
 
 	// All attempts exhausted — record failure.
-	ctx := context.Background()
-	if _, err := d.db.CreateWebhookFailure(ctx, gen.CreateWebhookFailureParams{
+	if _, err := d.db.CreateWebhookFailure(context.Background(), gen.CreateWebhookFailureParams{
 		EndpointID:   ep.ID,
 		Url:          ep.Url,
 		Payload:      body,

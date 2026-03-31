@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -118,9 +119,33 @@ func run() error {
 		logger,
 	)
 
+	// ── Health server ─────────────────────────────────────────────────────────
+	liveH, readyH := observability.HealthHandler(
+		&db.PingablePool{Pool: rwPool},
+		valkeyClient,
+		logger,
+	)
+	healthMux := http.NewServeMux()
+	healthMux.HandleFunc("/health/live", liveH)
+	healthMux.HandleFunc("/health/ready", readyH)
+	healthSrv := &http.Server{Addr: cfg.WorkerHealthAddr, Handler: healthMux}
+
 	// ── Run all workers ───────────────────────────────────────────────────────
 	g, gCtx := errgroup.WithContext(ctx)
 
+	g.Go(func() error {
+		logger.Info("worker health server listening", "addr", cfg.WorkerHealthAddr)
+		if err := healthSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("health server: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		<-gCtx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return healthSrv.Shutdown(shutCtx)
+	})
 	g.Go(func() error {
 		partitionWorker.Run(gCtx)
 		return nil

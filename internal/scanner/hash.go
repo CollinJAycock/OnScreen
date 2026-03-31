@@ -29,7 +29,8 @@ const maxHashCacheEntries = 50000
 
 var (
 	hashCacheMu sync.Mutex
-	hashCache   = map[string]fileInfo{}
+	hashCache   = map[string]fileInfo{} // current generation
+	hashCacheOld = map[string]fileInfo{} // previous generation (read-only, evicted next overflow)
 )
 
 // HashFile computes a fast partial hash of a file using samples from the
@@ -39,6 +40,14 @@ func HashFile(ctx context.Context, path string, info os.FileInfo) (*string, erro
 	hashCacheMu.Lock()
 	if cached, ok := hashCache[path]; ok {
 		if cached.mtime.Equal(info.ModTime()) && cached.size == info.Size() {
+			hashCacheMu.Unlock()
+			s := cached.hash
+			return &s, nil
+		}
+	} else if cached, ok := hashCacheOld[path]; ok {
+		if cached.mtime.Equal(info.ModTime()) && cached.size == info.Size() {
+			// Promote from old generation so it survives the next eviction.
+			hashCache[path] = cached
 			hashCacheMu.Unlock()
 			s := cached.hash
 			return &s, nil
@@ -53,7 +62,9 @@ func HashFile(ctx context.Context, path string, info os.FileInfo) (*string, erro
 
 	hashCacheMu.Lock()
 	if len(hashCache) >= maxHashCacheEntries {
-		clear(hashCache)
+		// Rotate: current becomes old (read-only), old is discarded.
+		hashCacheOld = hashCache
+		hashCache = make(map[string]fileInfo, maxHashCacheEntries/2)
 	}
 	hashCache[path] = fileInfo{
 		mtime: info.ModTime(),

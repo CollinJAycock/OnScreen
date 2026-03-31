@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
 
 # ── Stage 1: build frontend ───────────────────────────────────────────────────
-FROM node:22-alpine AS frontend
+FROM node:24-alpine AS frontend
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN npm install --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-# ── Stage 2: build Go binary ──────────────────────────────────────────────────
+# ── Stage 2: build Go binaries ───────────────────────────────────────────────
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
@@ -18,10 +18,10 @@ RUN go mod download
 
 # Copy source
 COPY . .
-# Copy built frontend from stage 1
-COPY --from=frontend /app/web/dist ./web/dist
+# Copy built frontend from stage 1 into the embed path
+COPY --from=frontend /app/web/dist ./internal/webui/dist
 
-# Build server and worker
+# Build server, worker, and goose CLI
 ARG VERSION=dev
 ARG BUILD_TIME
 RUN CGO_ENABLED=0 GOOS=linux go build \
@@ -29,7 +29,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -o /bin/server ./cmd/server && \
     CGO_ENABLED=0 GOOS=linux go build \
       -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
-      -o /bin/worker ./cmd/worker
+      -o /bin/worker ./cmd/worker && \
+    CGO_ENABLED=0 GOOS=linux go install github.com/pressly/goose/v3/cmd/goose@v3.24.1 && \
+    cp $(go env GOPATH)/bin/goose /bin/goose
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
 FROM alpine:3.21
@@ -41,9 +43,9 @@ USER onscreen
 
 COPY --from=builder /bin/server  /usr/local/bin/server
 COPY --from=builder /bin/worker  /usr/local/bin/worker
+COPY --from=builder /bin/goose   /usr/local/bin/goose
 
 # Migrations are bundled; goose is run as a pipeline step, not on startup.
-# To run migrations: docker run --rm onscreen server migrate
 COPY --chown=onscreen:onscreen internal/db/migrations /migrations
 
 EXPOSE 7070 7071

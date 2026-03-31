@@ -17,6 +17,10 @@ const (
 	heartbeatTTL  = 10 * time.Second
 	workerTTL     = 15 * time.Second
 	workerRefresh = 5 * time.Second
+
+	// Index sets — O(active_sessions) instead of O(total_keys) SCAN.
+	sessionIndexKey = "transcode:sessions" // Set of active session IDs
+	workerIndexKey  = "transcode:workers"  // Set of active worker IDs
 )
 
 // Session represents an active transcode or direct-stream session.
@@ -63,7 +67,12 @@ func (s *SessionStore) Create(ctx context.Context, sess Session) error {
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
-	return s.v.Set(ctx, sessionKey(sess.ID), string(b), sessionTTL)
+	if err := s.v.Set(ctx, sessionKey(sess.ID), string(b), sessionTTL); err != nil {
+		return err
+	}
+	// Add to session index set for O(1) listing.
+	s.v.Raw().SAdd(ctx, sessionIndexKey, sess.ID)
+	return nil
 }
 
 // Get retrieves a session by ID.
@@ -81,17 +90,23 @@ func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
 
 // Delete removes a session.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
+	s.v.Raw().SRem(ctx, sessionIndexKey, id)
 	return s.v.Del(ctx, sessionKey(id))
 }
 
-// List returns all active sessions by scanning Valkey for session keys.
+// List returns all active sessions using the session index set (O(active_sessions)).
 func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
-	keys, err := s.v.Scan(ctx, "transcode:session:*")
+	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
 	if err != nil {
-		return nil, fmt.Errorf("list session keys: %w", err)
+		return nil, fmt.Errorf("list session index: %w", err)
 	}
-	if len(keys) == 0 {
+	if len(ids) == 0 {
 		return nil, nil
+	}
+
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = sessionKey(id)
 	}
 
 	pipe := s.v.Raw().Pipeline()
@@ -104,9 +119,11 @@ func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 	}
 
 	sessions := make([]Session, 0, len(keys))
-	for _, cmd := range cmds {
+	for i, cmd := range cmds {
 		raw, err := cmd.Result()
 		if err != nil {
+			// Session key expired but index entry lingers — clean up.
+			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
 			continue
 		}
 		var sess Session
@@ -121,9 +138,13 @@ func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 // Called by the progress endpoint on "stopped" to clean up even if the client
 // never explicitly hits the Stop endpoint (e.g. tab closed after playback ends).
 func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID) error {
-	keys, err := s.v.Scan(ctx, "transcode:session:*")
-	if err != nil || len(keys) == 0 {
+	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
+	if err != nil || len(ids) == 0 {
 		return err
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = sessionKey(id)
 	}
 	pipe := s.v.Raw().Pipeline()
 	cmds := make([]*redis.StringCmd, len(keys))
@@ -136,6 +157,7 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID)
 	for i, cmd := range cmds {
 		raw, err := cmd.Result()
 		if err != nil {
+			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
 			continue
 		}
 		var sess Session
@@ -143,6 +165,7 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID)
 			continue
 		}
 		if sess.MediaItemID == mediaItemID {
+			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
 			_ = s.v.Del(ctx, keys[i])
 		}
 	}
@@ -155,9 +178,13 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID)
 // NOTE: concurrent position updates for the same session may race (lost update).
 // A Valkey WATCH/MULTI/EXEC or Lua script would provide atomicity.
 func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uuid.UUID, positionMS int64) error {
-	keys, err := s.v.Scan(ctx, "transcode:session:*")
-	if err != nil || len(keys) == 0 {
+	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
+	if err != nil || len(ids) == 0 {
 		return err
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = sessionKey(id)
 	}
 	pipe := s.v.Raw().Pipeline()
 	cmds := make([]*redis.StringCmd, len(keys))
@@ -170,6 +197,7 @@ func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uu
 	for i, cmd := range cmds {
 		raw, err := cmd.Result()
 		if err != nil {
+			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
 			continue
 		}
 		var sess Session
@@ -244,19 +272,25 @@ func (s *SessionStore) RegisterWorker(ctx context.Context, reg WorkerRegistratio
 	if err != nil {
 		return fmt.Errorf("marshal worker: %w", err)
 	}
-	return s.v.Set(ctx, workerKey(reg.ID), string(b), workerTTL)
+	if err := s.v.Set(ctx, workerKey(reg.ID), string(b), workerTTL); err != nil {
+		return err
+	}
+	s.v.Raw().SAdd(ctx, workerIndexKey, reg.ID)
+	return nil
 }
 
 // ListWorkers returns all registered workers.
 func (s *SessionStore) ListWorkers(ctx context.Context) ([]WorkerRegistration, error) {
-	keys, err := s.v.Scan(ctx, "worker:*")
+	ids, err := s.v.Raw().SMembers(ctx, workerIndexKey).Result()
 	if err != nil {
-		return nil, fmt.Errorf("list worker keys: %w", err)
+		return nil, fmt.Errorf("list worker index: %w", err)
 	}
 	var workers []WorkerRegistration
-	for _, k := range keys {
-		raw, err := s.v.Get(ctx, k)
+	for _, id := range ids {
+		raw, err := s.v.Get(ctx, workerKey(id))
 		if err != nil {
+			// Worker key expired — clean up stale index entry.
+			s.v.Raw().SRem(ctx, workerIndexKey, id)
 			continue
 		}
 		var reg WorkerRegistration

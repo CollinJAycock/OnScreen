@@ -318,6 +318,9 @@ func run() error {
 		logger,
 	)
 
+	// Wire embedded worker into transcode handler so Stop can kill FFmpeg immediately.
+	nativeTranscodeHandler.SetSessionKiller(embeddedWorker)
+
 	// ── Email / SMTP (optional) ──────────────────────────────────────────────
 	emailSender := email.NewSender(email.Config{
 		Host:     cfg.SMTPHost,
@@ -525,17 +528,25 @@ type scanEnqueuer struct {
 	serverCtx         context.Context // outlives individual HTTP requests
 	webhookDispatcher *worker.WebhookDispatcher
 
-	watchMu  sync.Mutex
-	watchers map[uuid.UUID]*scanner.Watcher // one watcher per library
+	watchMu      sync.Mutex
+	watchers     map[uuid.UUID]*scanner.Watcher // one watcher per library
+	scanInFlight sync.Map // uuid.UUID → struct{} — libraries currently scanning
 }
 
 func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) error {
+	// Deduplicate: skip if a scan is already running for this library.
+	if _, loaded := e.scanInFlight.LoadOrStore(libraryID, struct{}{}); loaded {
+		e.logger.Info("scan already in flight, skipping", "library_id", libraryID)
+		return nil
+	}
 	lib, err := e.libSvc.Get(ctx, libraryID)
 	if err != nil {
+		e.scanInFlight.Delete(libraryID)
 		return fmt.Errorf("get library for scan: %w", err)
 	}
 	e.logger.Info("scan enqueued", "library_id", libraryID, "paths", lib.Paths)
 	go func() {
+		defer e.scanInFlight.Delete(libraryID)
 		scanCtx := context.WithoutCancel(e.serverCtx)
 		result, err := e.scanner.ScanLibrary(scanCtx, libraryID, lib.Type, lib.Paths)
 		if err != nil {

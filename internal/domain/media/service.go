@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 var (
@@ -198,6 +200,10 @@ type Service struct {
 	rw     Querier
 	ro     Querier
 	logger *slog.Logger
+
+	// createMu serializes FindOrCreate* calls for the same (library, title, year)
+	// to prevent duplicate items from concurrent scan goroutines.
+	createMu sync.Map // key string -> *sync.Mutex
 }
 
 // NewService constructs a MediaService.
@@ -436,12 +442,28 @@ func normalizeTitle(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// createMuFor returns a per-key mutex that serializes FindOrCreate* calls for
+// the same (library, type, title, year) tuple, preventing duplicate inserts.
+func (s *Service) createMuFor(p CreateItemParams) *sync.Mutex {
+	year := ""
+	if p.Year != nil {
+		year = fmt.Sprint(*p.Year)
+	}
+	key := fmt.Sprintf("%s:%s:%s:%s", p.LibraryID, p.Type, normalizeTitle(p.Title), year)
+	mu, _ := s.createMu.LoadOrStore(key, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
 // FindOrCreateItem looks up a media item by title (and year if provided) within
 // a library. If none is found it creates one with the supplied params.
 // This is used by the local scanner to ensure every file has an owning item.
 // Searches on rw (not ro) to avoid creating duplicates due to replication lag.
-// On create failure (concurrent insert race), retries the search once.
+// Serialized per (library, type, title, year) to prevent concurrent duplicate inserts.
 func (s *Service) FindOrCreateItem(ctx context.Context, p CreateItemParams) (*Item, error) {
+	mu := s.createMuFor(p)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if found := s.findItemByTitle(ctx, p); found != nil {
 		return found, nil
 	}
@@ -491,6 +513,10 @@ func (s *Service) findItemByTitle(ctx context.Context, p CreateItemParams) *Item
 // items, then filters by normalized title. This ensures hierarchical items
 // (artists, albums, seasons) are matched precisely within their parent context.
 func (s *Service) FindOrCreateHierarchyItem(ctx context.Context, p CreateItemParams) (*Item, error) {
+	mu := s.createMuFor(p)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if found := s.findHierarchyItem(ctx, p); found != nil {
 		return found, nil
 	}
@@ -543,7 +569,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 }
 
 func mapNotFound(err error) error {
-	if err != nil && strings.Contains(err.Error(), "no rows") {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	return err

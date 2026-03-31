@@ -64,7 +64,12 @@ export class ApiClient {
     if (resp.status === 401 && retry) {
       let refreshed: boolean;
       try {
-        refreshed = await (this.refreshPromise ?? (this.refreshPromise = this.tryRefresh()));
+        if (!this.refreshPromise) {
+          this.refreshPromise = this.tryRefresh().finally(() => {
+            this.refreshPromise = null;
+          });
+        }
+        refreshed = await this.refreshPromise;
       } catch {
         refreshed = false;
       }
@@ -133,17 +138,14 @@ export class ApiClient {
         credentials: 'same-origin'
       });
       if (!resp.ok) {
-        this.refreshPromise = null;
         return false;
       }
       const json = (await resp.json()) as ApiResponse<TokenPair>;
       const pair = json.data;
       // Update stored user metadata (tokens stay in httpOnly cookies).
       this.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
-      this.refreshPromise = null;
       return true;
     } catch {
-      this.refreshPromise = null;
       return false;
     }
   }

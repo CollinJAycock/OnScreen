@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
       POSTGRES_DB: onscreen
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
   valkey:
     image: valkey/valkey:8-alpine
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -28,15 +28,14 @@ services:
       retries: 10
 
   migrate:
-    image: ghcr.io/pressly/goose:v3.24.1
+    image: ${ONSCREEN_IMAGE:-onscreen-server}
+    entrypoint: ["/usr/local/bin/goose"]
     depends_on:
       postgres:
         condition: service_healthy
     command: >
       -dir /migrations postgres
       "postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable" up
-    volumes:
-      - ../internal/db/migrations:/migrations:ro
     restart: "no"
 
   server:
@@ -57,8 +56,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-debug}
     restart: unless-stopped
     ports:
-      - "7070:7070"
-      - "127.0.0.1:7071:7071"
+      - "${SERVER_PORT:-7070}:7070"
+      - "127.0.0.1:${DEBUG_PORT:-7071}:7071"
     volumes:
       - media_data:/media
     healthcheck:
@@ -87,6 +86,11 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       WORKER_ADDR: ":7073"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     volumes:
       - media_data:/media
 

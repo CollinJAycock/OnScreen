@@ -105,10 +105,8 @@ services:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
     volumes:
       - media_data:/media
-    # TODO: Add a proper HTTP healthcheck once the worker exposes a /health
-    # endpoint. For now, verify the worker process is still running.
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f worker || exit 1"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
       interval: 10s
       timeout: 3s
       retries: 5

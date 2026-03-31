@@ -62,7 +62,7 @@ test-int:
 ## test-e2e: run full stack tests via docker-compose (<5min)
 test-e2e:
 	docker compose -f docker/docker-compose.yml up -d --wait
-	$(GO) test -tags dev -count=1 -run E2E ./... ; ret=$$?; docker compose -f docker/docker-compose.yml down; exit $$ret
+	$(GO) test -tags e2e -count=1 -run E2E ./test/e2e/... ; ret=$$?; docker compose -f docker/docker-compose.yml down; exit $$ret
 
 ## lint: run golangci-lint
 lint:

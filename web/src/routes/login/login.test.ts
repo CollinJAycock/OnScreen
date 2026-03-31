@@ -8,8 +8,21 @@ const mockLogin = vi.hoisted(() => vi.fn());
 const mockSetUser = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
+const mockSetupStatus = vi.hoisted(() => vi.fn());
+const mockGoogleEnabled = vi.hoisted(() => vi.fn());
+const mockGithubEnabled = vi.hoisted(() => vi.fn());
+const mockDiscordEnabled = vi.hoisted(() => vi.fn());
+const mockForgotEnabled = vi.hoisted(() => vi.fn());
+
 vi.mock('$lib/api', () => ({
-  authApi: { login: mockLogin },
+  authApi: {
+    login: mockLogin,
+    setupStatus: mockSetupStatus,
+    googleEnabled: mockGoogleEnabled,
+    githubEnabled: mockGithubEnabled,
+    discordEnabled: mockDiscordEnabled,
+    forgotPasswordEnabled: mockForgotEnabled,
+  },
   api: { setUser: mockSetUser }
 }));
 
@@ -17,6 +30,11 @@ describe('Login page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mockSetupStatus.mockResolvedValue({ setup_required: false });
+    mockGoogleEnabled.mockResolvedValue({ enabled: false });
+    mockGithubEnabled.mockResolvedValue({ enabled: false });
+    mockDiscordEnabled.mockResolvedValue({ enabled: false });
+    mockForgotEnabled.mockResolvedValue({ enabled: false });
   });
 
   afterEach(() => {
@@ -35,9 +53,10 @@ describe('Login page', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('renders setup link', () => {
+  it('renders setup link when setup is required', async () => {
+    mockSetupStatus.mockResolvedValue({ setup_required: true });
     render(Page);
-    expect(screen.getByText(/set up onscreen/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/set up onscreen/i)).toBeInTheDocument());
   });
 
   it('calls login with entered credentials', async () => {

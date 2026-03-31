@@ -43,6 +43,11 @@ type NativeTranscodeMediaService interface {
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 }
 
+// SessionKiller can kill an in-progress FFmpeg process for a session.
+type SessionKiller interface {
+	KillSession(sessionID string)
+}
+
 // NativeTranscodeHandler handles HLS transcoding for the native web player.
 type NativeTranscodeHandler struct {
 	sessions *transcode.SessionStore
@@ -50,6 +55,7 @@ type NativeTranscodeHandler struct {
 	media    NativeTranscodeMediaService
 	cfg      *config.Config
 	logger   *slog.Logger
+	killer   SessionKiller // optional — set for embedded worker deployments
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.
@@ -67,6 +73,11 @@ func NewNativeTranscodeHandler(
 		cfg:      cfg,
 		logger:   logger,
 	}
+}
+
+// SetSessionKiller wires the embedded worker so Stop can kill FFmpeg immediately.
+func (h *NativeTranscodeHandler) SetSessionKiller(k SessionKiller) {
+	h.killer = k
 }
 
 type transcodeStartRequest struct {
@@ -268,6 +279,11 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		if sess.UserID != claims.UserID {
 			respond.Forbidden(w, r)
 			return
+		}
+		// Kill FFmpeg immediately if we have an embedded worker reference.
+		// This prevents the process from writing to a directory we're about to remove.
+		if h.killer != nil {
+			h.killer.KillSession(sessionID)
 		}
 		// Revoke the segment token — prefer session-stored token, fall back to query param.
 		revokeToken := sess.SegToken

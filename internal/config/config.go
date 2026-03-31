@@ -63,8 +63,8 @@ type Config struct {
 	TMDBRateLimit int    `env:"TMDB_RATE_LIMIT" envDefault:"20"` // req/s
 	TVDBAPIKey    string `env:"TVDB_API_KEY"`                     // TheTVDB v4 project key; enables episode fallback
 
-	// ── Subtitles ────────────────────────────────────────────────────────────
-	SubtitleOCREnabled bool `env:"SUBTITLE_OCR_ENABLED" envDefault:"false"`
+	// ── Worker ───────────────────────────────────────────────────────────────
+	WorkerHealthAddr string `env:"WORKER_HEALTH_ADDR" envDefault:":7074"`
 
 	// ── Observability ────────────────────────────────────────────────────────
 	// OTELEndpoint: tracing is disabled if unset.

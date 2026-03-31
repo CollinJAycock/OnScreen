@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ func (m *mockQuerier) GetLibrary(_ context.Context, id uuid.UUID) (Library, erro
 	if lib, ok := m.libs[id]; ok {
 		return lib, nil
 	}
-	return Library{}, errors.New("no rows in result set")
+	return Library{}, pgx.ErrNoRows
 }
 func (m *mockQuerier) ListLibraries(_ context.Context) ([]Library, error) {
 	if m.listErr != nil {
@@ -67,7 +68,7 @@ func (m *mockQuerier) UpdateLibrary(_ context.Context, p UpdateLibraryParams) (L
 	}
 	lib, ok := m.libs[p.ID]
 	if !ok {
-		return Library{}, errors.New("no rows in result set")
+		return Library{}, pgx.ErrNoRows
 	}
 	lib.Name = p.Name
 	m.libs[p.ID] = lib
@@ -78,7 +79,7 @@ func (m *mockQuerier) SoftDeleteLibrary(_ context.Context, id uuid.UUID) error {
 		return m.deleteErr
 	}
 	if _, ok := m.libs[id]; !ok {
-		return errors.New("no rows in result set")
+		return pgx.ErrNoRows
 	}
 	delete(m.libs, id)
 	return nil
@@ -405,7 +406,7 @@ func TestMapNotFound_OtherErrorPassthrough(t *testing.T) {
 }
 
 func TestMapNotFound_NoRowsBecomesErrNotFound(t *testing.T) {
-	err := errors.New("no rows in result set")
+	err := pgx.ErrNoRows
 	got := mapNotFound(err)
 	if !errors.Is(got, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", got)

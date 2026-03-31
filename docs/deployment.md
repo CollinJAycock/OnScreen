@@ -77,11 +77,11 @@
 | `TMDB_RATE_LIMIT` | `20` | TMDB API requests per second |
 | `TVDB_API_KEY` | (none) | TheTVDB v4 project key; enables episode metadata fallback |
 
-### Subtitles
+### Worker
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SUBTITLE_OCR_ENABLED` | `false` | Enable OCR extraction of bitmap subtitles (PGS/VobSub) |
+| `WORKER_HEALTH_ADDR` | `:7074` | Worker health server listen address (`/health/live`, `/health/ready`) |
 
 ### Observability
 

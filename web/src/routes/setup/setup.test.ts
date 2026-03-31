@@ -10,8 +10,10 @@ const mockCreateLib = vi.hoisted(() => vi.fn());
 const mockSetUser = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
+const mockSetupStatus = vi.hoisted(() => vi.fn());
+
 vi.mock('$lib/api', () => ({
-  authApi: { register: mockRegister, login: mockLogin },
+  authApi: { register: mockRegister, login: mockLogin, setupStatus: mockSetupStatus },
   libraryApi: { create: mockCreateLib },
   api: { setUser: mockSetUser }
 }));
@@ -20,24 +22,26 @@ describe('Setup page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mockSetupStatus.mockResolvedValue({ setup_required: true });
   });
 
   // ── Step 1: Create Account ─────────────────────────────────────────────────
 
-  it('starts on step 1 — Create Account', () => {
+  it('starts on step 1 — Create Account', async () => {
     render(Page);
-    expect(screen.getByText('Create Admin Account')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Create Admin Account')).toBeInTheDocument());
   });
 
-  it('shows all three step labels', () => {
+  it('shows all three step labels', async () => {
     render(Page);
-    expect(screen.getByText(/1\. Create Account/)).toBeInTheDocument();
-    expect(screen.getByText(/2\. Add Library/)).toBeInTheDocument();
-    expect(screen.getByText(/3\. Done/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Account')).toBeInTheDocument());
+    expect(screen.getByText('Library')).toBeInTheDocument();
+    expect(screen.getByText('Done')).toBeInTheDocument();
   });
 
   it('shows password mismatch error without calling API', async () => {
     render(Page);
+    await waitFor(() => screen.getByLabelText(/^username/i));
     await fireEvent.input(screen.getByLabelText(/^username/i), { target: { value: 'admin' } });
     await fireEvent.input(screen.getByLabelText(/^password$/i), { target: { value: 'abc' } });
     await fireEvent.input(screen.getByLabelText(/confirm password/i), { target: { value: 'xyz' } });
@@ -54,6 +58,7 @@ describe('Setup page', () => {
       expires_at: '', user_id: '1', username: 'admin', is_admin: true
     });
     render(Page);
+    await waitFor(() => screen.getByLabelText(/^username/i));
 
     await fireEvent.input(screen.getByLabelText(/^username/i), { target: { value: 'admin' } });
     await fireEvent.input(screen.getByLabelText(/^password$/i), { target: { value: 'secret' } });
@@ -66,6 +71,7 @@ describe('Setup page', () => {
   it('shows registration error when API fails', async () => {
     mockRegister.mockRejectedValue(new Error('Username taken'));
     render(Page);
+    await waitFor(() => screen.getByLabelText(/^password$/i));
 
     await fireEvent.input(screen.getByLabelText(/^password$/i), { target: { value: 'x' } });
     await fireEvent.input(screen.getByLabelText(/confirm password/i), { target: { value: 'x' } });
@@ -81,6 +87,7 @@ describe('Setup page', () => {
       expires_at: '', user_id: '1', username: 'admin', is_admin: true
     });
     render(Page);
+    await waitFor(() => screen.getByLabelText(/^password$/i));
 
     await fireEvent.input(screen.getByLabelText(/^password$/i), { target: { value: 'p' } });
     await fireEvent.input(screen.getByLabelText(/confirm password/i), { target: { value: 'p' } });
@@ -99,6 +106,7 @@ describe('Setup page', () => {
       access_token: 'tok', refresh_token: 'ref',
       expires_at: '', user_id: '1', username: 'admin', is_admin: true
     });
+    await waitFor(() => screen.getByLabelText(/^password$/i));
     await fireEvent.input(screen.getByLabelText(/^password$/i), { target: { value: 'p' } });
     await fireEvent.input(screen.getByLabelText(/confirm password/i), { target: { value: 'p' } });
     await fireEvent.submit(screen.getByText('Create Account').closest('form')!);
@@ -109,7 +117,7 @@ describe('Setup page', () => {
     render(Page);
     await advanceToStep2();
     await fireEvent.click(screen.getByRole('button', { name: /skip/i }));
-    await waitFor(() => expect(screen.getByText('Setup Complete')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/You're all set/)).toBeInTheDocument());
   });
 
   it('adding a library advances to step 3', async () => {
@@ -121,7 +129,7 @@ describe('Setup page', () => {
     await fireEvent.input(screen.getByPlaceholderText('/media/movies'), { target: { value: '/media/movies' } });
     await fireEvent.submit(screen.getByText('Add Library').closest('form')!);
 
-    await waitFor(() => expect(screen.getByText('Setup Complete')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/You're all set/)).toBeInTheDocument());
     expect(mockCreateLib).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'My Movies', scan_paths: ['/media/movies'] })
     );
@@ -145,7 +153,7 @@ describe('Setup page', () => {
     render(Page);
     await advanceToStep2();
     await fireEvent.click(screen.getByRole('button', { name: /skip/i }));
-    await waitFor(() => screen.getByText('Setup Complete'));
+    await waitFor(() => screen.getByText(/You're all set/));
     await fireEvent.click(screen.getByRole('button', { name: /go to dashboard/i }));
     expect(mockGoto).toHaveBeenCalledWith('/');
   });

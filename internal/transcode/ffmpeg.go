@@ -145,12 +145,14 @@ func BuildHLS(a BuildArgs) []string {
 	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d.ts")
 	playlistPath := filepath.Join(a.SessionDir, "index.m3u8")
 
-	hlsFlags := "independent_segments"
-	if !videoCopy {
-		// Only delete old segments during a full re-encode (saves disk space).
-		// For video-copy (remux) we keep all segments so backward seeks never
-		// try to fetch a deleted segment and cause a rebuffer stall.
-		hlsFlags += "+delete_segments"
+	hlsFlags := "independent_segments+delete_segments"
+	// For video-copy (remux), FFmpeg runs 10-100× real-time producing segments
+	// almost instantly. Use a generous delete threshold (150 segments ≈ 10 min at
+	// 4 s/segment) so backward seeks rarely hit a deleted file, while still
+	// bounding disk usage. For full re-encode, 30 segments (≈ 2 min) suffices.
+	deleteThreshold := 30
+	if videoCopy {
+		deleteThreshold = 150
 	}
 	args = append(args,
 		"-f", "hls",
@@ -159,7 +161,7 @@ func BuildHLS(a BuildArgs) []string {
 		"-hls_segment_type", "mpegts",
 		"-hls_flags", hlsFlags,
 		"-hls_segment_filename", segPattern,
-		"-hls_delete_threshold", "30", // keep last 2 minutes on disk during re-encode
+		"-hls_delete_threshold", fmt.Sprint(deleteThreshold),
 	)
 	// Mark remux sessions as EVENT so HLS.js starts from segment 0 rather than
 	// jumping to the live edge. For video-copy, FFmpeg runs 10-100x real-time,

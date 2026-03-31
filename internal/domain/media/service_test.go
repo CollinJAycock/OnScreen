@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ── mock ──────────────────────────────────────────────────────────────────────
@@ -41,10 +43,10 @@ func (m *mockQuerier) GetMediaItem(_ context.Context, id uuid.UUID) (Item, error
 	if it, ok := m.items[id]; ok {
 		return it, nil
 	}
-	return Item{}, errors.New("no rows in result set")
+	return Item{}, pgx.ErrNoRows
 }
 func (m *mockQuerier) GetMediaItemByTMDBID(_ context.Context, _ uuid.UUID, _ int) (Item, error) {
-	return Item{}, errors.New("no rows in result set")
+	return Item{}, pgx.ErrNoRows
 }
 func (m *mockQuerier) ListMediaItems(_ context.Context, libID uuid.UUID, _ string, _, _ int32) ([]Item, error) {
 	if m.listItemsErr != nil {
@@ -90,7 +92,7 @@ func (m *mockQuerier) CreateMediaItem(_ context.Context, p CreateItemParams) (It
 func (m *mockQuerier) UpdateMediaItemMetadata(_ context.Context, p UpdateItemMetadataParams) (Item, error) {
 	it, ok := m.items[p.ID]
 	if !ok {
-		return Item{}, errors.New("no rows in result set")
+		return Item{}, pgx.ErrNoRows
 	}
 	it.Title = p.Title
 	m.items[p.ID] = it
@@ -123,19 +125,19 @@ func (m *mockQuerier) GetMediaFile(_ context.Context, id uuid.UUID) (File, error
 			}
 		}
 	}
-	return File{}, errors.New("no rows in result set")
+	return File{}, pgx.ErrNoRows
 }
 func (m *mockQuerier) GetMediaFileByPath(_ context.Context, path string) (File, error) {
 	if f, ok := m.fileByPath[path]; ok {
 		return f, nil
 	}
-	return File{}, errors.New("no rows in result set")
+	return File{}, pgx.ErrNoRows
 }
 func (m *mockQuerier) GetMediaFileByHash(_ context.Context, hash string) (File, error) {
 	if f, ok := m.fileByHash[hash]; ok {
 		return f, nil
 	}
-	return File{}, errors.New("no rows in result set")
+	return File{}, pgx.ErrNoRows
 }
 func (m *mockQuerier) ListMediaFilesForItem(_ context.Context, itemID uuid.UUID) ([]File, error) {
 	return m.files[itemID], nil
@@ -495,7 +497,7 @@ func TestMapNotFound_NilPassthrough(t *testing.T) {
 }
 
 func TestMapNotFound_NoRowsBecomesErrNotFound(t *testing.T) {
-	err := errors.New("no rows in result set")
+	err := pgx.ErrNoRows
 	got := mapNotFound(err)
 	if !errors.Is(got, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", got)
@@ -954,5 +956,108 @@ func TestFindOrCreateHierarchyItem_RetryOnCreateRace(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when create fails and retry search finds nothing")
+	}
+}
+
+// ── Concurrent FindOrCreateItem (per-key mutex) ────────────────────────────
+
+// concurrentQuerier is a thread-safe mock that dynamically searches created
+// items, allowing concurrent FindOrCreateItem calls to observe each other's
+// creates (which the static mockQuerier cannot do).
+type concurrentQuerier struct {
+	mu    sync.Mutex
+	items []Item
+	mockQuerier // embedded for all other Querier methods
+}
+
+func (c *concurrentQuerier) SearchMediaItems(_ context.Context, libID uuid.UUID, _ string, _ int32) ([]Item, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []Item
+	for _, it := range c.items {
+		if it.LibraryID == libID {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
+
+func (c *concurrentQuerier) CreateMediaItem(_ context.Context, p CreateItemParams) (Item, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	it := Item{
+		ID:        uuid.New(),
+		LibraryID: p.LibraryID,
+		Type:      p.Type,
+		Title:     p.Title,
+		SortTitle: p.SortTitle,
+		Year:      p.Year,
+		ParentID:  p.ParentID,
+		Index:     p.Index,
+	}
+	c.items = append(c.items, it)
+	return it, nil
+}
+
+func TestFindOrCreateItem_ConcurrentSameKey(t *testing.T) {
+	cq := &concurrentQuerier{
+		mockQuerier: *newMockQuerier(),
+	}
+	svc := NewService(cq, cq, slog.Default())
+
+	libID := uuid.New()
+	params := CreateItemParams{
+		LibraryID: libID,
+		Type:      "movie",
+		Title:     "Concurrent Movie",
+		SortTitle: "concurrent movie",
+	}
+
+	const n = 20
+	results := make(chan *Item, n)
+	errs := make(chan error, n)
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			item, err := svc.FindOrCreateItem(context.Background(), params)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- item
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// All goroutines should get back the same item ID.
+	var firstID uuid.UUID
+	count := 0
+	for item := range results {
+		count++
+		if firstID == uuid.Nil {
+			firstID = item.ID
+		} else if item.ID != firstID {
+			t.Errorf("got different item IDs: %s vs %s — per-key mutex should prevent duplicates", item.ID, firstID)
+		}
+	}
+	if count != n {
+		t.Errorf("want %d results, got %d", n, count)
+	}
+
+	// Exactly 1 item should have been created.
+	cq.mu.Lock()
+	created := len(cq.items)
+	cq.mu.Unlock()
+	if created != 1 {
+		t.Errorf("want 1 created item, got %d — per-key mutex should prevent duplicate creates", created)
 	}
 }
