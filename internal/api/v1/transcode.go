@@ -258,6 +258,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		AudioCodec:       "aac",
 		AudioChannels:    2,
 		AudioStreamIndex: audioStreamIdx,
+		IsHEVC:          file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265")),
 		EnqueuedAt:       time.Now(),
 	}
 	workerAddr, err := h.sessions.DispatchJob(ctx, job)

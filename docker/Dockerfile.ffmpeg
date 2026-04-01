@@ -1,0 +1,62 @@
+# Pre-built FFmpeg with NVENC/NVDEC/CUVID support.
+# Build once and tag — reused by Dockerfile.gpu as a cached base.
+#
+#   docker build -f docker/Dockerfile.ffmpeg -t onscreen-ffmpeg:latest .
+#
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential nasm yasm pkg-config git wget \
+      libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
+      libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
+      libgnutls28-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# NVIDIA codec headers (required for nvenc/nvdec)
+RUN git clone --depth 1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git /tmp/nv-codec-headers && \
+    cd /tmp/nv-codec-headers && make install
+
+ARG FFMPEG_VERSION=6.1.2
+RUN wget -q https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -O /tmp/ffmpeg.tar.bz2 && \
+    cd /tmp && tar xjf ffmpeg.tar.bz2
+
+RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
+    ./configure \
+      --prefix=/usr/local \
+      --enable-gpl \
+      --enable-nonfree \
+      --enable-cuda-nvcc \
+      --enable-nvenc \
+      --enable-nvdec \
+      --enable-cuvid \
+      --enable-libnpp \
+      --extra-cflags=-I/usr/local/cuda/include \
+      --extra-ldflags=-L/usr/local/cuda/lib64 \
+      --enable-libx264 \
+      --enable-libx265 \
+      --enable-libfdk-aac \
+      --enable-libmp3lame \
+      --enable-libopus \
+      --enable-libvorbis \
+      --enable-libvpx \
+      --enable-libass \
+      --enable-libfreetype \
+      --enable-gnutls \
+      --disable-static \
+      --enable-shared && \
+    make -j$(nproc) && \
+    make install
+
+# Runtime image with just the built binaries and libs
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates tzdata wget \
+      libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
+      libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
+      libgnutls28-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
+COPY --from=builder /usr/local/lib/lib*.so* /usr/local/lib/
+RUN ldconfig

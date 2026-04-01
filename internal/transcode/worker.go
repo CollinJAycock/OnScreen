@@ -171,6 +171,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			StartOffset:      job.StartOffsetSec,
 			Encoder:          enc,
 			IsVAAPI:          enc == EncoderVAAPI,
+			IsHEVC:           job.IsHEVC,
 			Width:            job.Width,
 			Height:           job.Height,
 			BitrateKbps:      job.BitrateKbps,

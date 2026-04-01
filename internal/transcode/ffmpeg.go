@@ -30,6 +30,7 @@ type BuildArgs struct {
 	BitrateKbps int
 	NeedsToneMap bool // HDR→SDR tone mapping (ADR-030)
 	IsVAAPI      bool // VAAPI needs hwupload filter
+	IsHEVC       bool // source is HEVC — use explicit cuvid decoder for NVENC
 
 	// Audio (ADR-018)
 	AudioCodec       string // "copy" | "aac"
@@ -74,12 +75,22 @@ func BuildHLS(a BuildArgs) []string {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		// NVENC: enable CUDA hardware decode (CUVID) and keep decoded frames in
-		// GPU memory. -extra_hw_frames allocates additional decode surfaces to
-		// prevent pipeline stalls (matches Jellyfin's proven configuration).
+		// NVENC: Jellyfin-style CUDA hardware decode + GPU encode pipeline.
+		// Uses explicit hevc_cuvid decoder and CUDA device init to avoid
+		// deadlocks with PGS bitmap subtitle streams in the demuxer.
 		if a.Encoder == EncoderNVENC {
-			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
-				"-extra_hw_frames", "3")
+			args = append(args,
+				"-init_hw_device", "cuda=cu:0",
+				"-filter_hw_device", "cu",
+				"-hwaccel", "cuda",
+				"-hwaccel_output_format", "cuda",
+				"-extra_hw_frames", "5",
+			)
+			// Explicit CUVID decoder for HEVC sources — more stable than
+			// auto-detection which can deadlock on MKV files with PGS subs.
+			if a.IsHEVC {
+				args = append(args, "-c:v", "hevc_cuvid")
+			}
 		}
 		// AMF: use D3D11VA hardware decode to keep the pipeline on the GPU.
 		if a.Encoder == EncoderAMF {
@@ -251,7 +262,7 @@ func buildVideoFilter(a BuildArgs) string {
 		switch {
 		case a.Encoder == EncoderNVENC:
 			// GPU-side scaling via CUDA. -hwaccel_output_format cuda keeps frames on
-			// the GPU; scale_cuda does resize + 10-bit→NV12 conversion in one step.
+			// the GPU; scale_cuda does resize + NV12 conversion in one step.
 			filters = append(filters,
 				fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
 		case a.Encoder == EncoderVAAPI:

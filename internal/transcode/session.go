@@ -445,6 +445,7 @@ type TranscodeJob struct {
 	AudioChannels    int       `json:"audio_channels"`
 	AudioStreamIndex int      `json:"audio_stream_index"` // -1 = default
 	NeedsToneMap     bool     `json:"needs_tone_map"`
+	IsHEVC           bool     `json:"is_hevc"`
 	SubtitleStreams  []int    `json:"subtitle_streams,omitempty"`
 	EnqueuedAt      time.Time `json:"enqueued_at"`
 }
