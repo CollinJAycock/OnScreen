@@ -87,6 +87,11 @@ func BuildHLS(a BuildArgs) []string {
 		}
 	}
 
+	// Speed up container probing for files with many streams (e.g. Blu-ray
+	// rips with 10+ PGS subtitle tracks). Default analyzeduration is 0 which
+	// causes FFmpeg to stall analyzing bitmap subtitle streams it can't size.
+	args = append(args, "-analyzeduration", "10000000", "-probesize", "10000000")
+
 	args = append(args, "-i", a.InputPath)
 
 	// ── Video ────────────────────────────────────────────────────────────────
