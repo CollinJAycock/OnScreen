@@ -252,7 +252,9 @@ func buildVideoFilter(a BuildArgs) string {
 		case a.Encoder == EncoderNVENC:
 			// Software decode means frames are in system memory. Use regular scale
 			// filter — FFmpeg uploads to GPU automatically for h264_nvenc.
-			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
+			// Force yuv420p output: NVENC (Turing and older) cannot encode 10-bit
+			// H.264, so 10-bit HEVC sources must be converted to 8-bit first.
+			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,format=yuv420p", a.Width, a.Height))
 		case a.Encoder == EncoderVAAPI:
 			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 		default:
