@@ -75,23 +75,12 @@ func BuildHLS(a BuildArgs) []string {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		// NVENC: Jellyfin-style CUDA hardware decode + GPU encode pipeline.
-		// Uses explicit hevc_cuvid decoder and CUDA device init to avoid
-		// deadlocks with PGS bitmap subtitle streams in the demuxer.
-		if a.Encoder == EncoderNVENC {
-			args = append(args,
-				"-init_hw_device", "cuda=cu:0",
-				"-filter_hw_device", "cu",
-				"-hwaccel", "cuda",
-				"-hwaccel_output_format", "cuda",
-				"-extra_hw_frames", "5",
-			)
-			// Explicit CUVID decoder for HEVC sources — more stable than
-			// auto-detection which can deadlock on MKV files with PGS subs.
-			if a.IsHEVC {
-				args = append(args, "-c:v", "hevc_cuvid")
-			}
-		}
+		// NVENC: software decode + GPU encode. CUDA hardware decode
+		// (both -hwaccel cuda and hevc_cuvid) hangs on HEVC files with PGS
+		// bitmap subtitles on certain driver versions (tested: 570.x + Quadro
+		// RTX 5000). Software decode feeds raw frames to NVENC which handles
+		// the encode on GPU. Still achieves ~1.4x realtime on a Ryzen 5900X
+		// with Quadro RTX 5000 — fast enough for live playback.
 		// AMF: use D3D11VA hardware decode to keep the pipeline on the GPU.
 		if a.Encoder == EncoderAMF {
 			args = append(args, "-hwaccel", "d3d11va")
@@ -261,10 +250,9 @@ func buildVideoFilter(a BuildArgs) string {
 	if a.Width > 0 && a.Height > 0 {
 		switch {
 		case a.Encoder == EncoderNVENC:
-			// GPU-side scaling via CUDA. -hwaccel_output_format cuda keeps frames on
-			// the GPU; scale_cuda does resize + NV12 conversion in one step.
-			filters = append(filters,
-				fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
+			// Software decode means frames are in system memory. Use regular scale
+			// filter — FFmpeg uploads to GPU automatically for h264_nvenc.
+			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 		case a.Encoder == EncoderVAAPI:
 			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 		default:
