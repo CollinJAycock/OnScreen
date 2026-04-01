@@ -54,7 +54,6 @@
   let offset = 0;
   let total = 0;
   let hasMore = false;
-  let sentinel: HTMLDivElement;
 
   let query = '';
   let sortField: SortField = 'title';
@@ -69,7 +68,6 @@
 
   let mounted = false;
   let prevId = '';
-  let observer: IntersectionObserver | null = null;
 
   $: id = $page.params.id!;
 
@@ -89,31 +87,24 @@
     return p;
   }
 
-  function setupObserver() {
-    if (!observer) {
-      observer = new IntersectionObserver((entries) => {
-        if (entries[0]?.isIntersecting && hasMore && !loadingItems) {
-          loadItems(true);
-        }
-      }, { rootMargin: '400px' });
-    }
-  }
-
-  // Re-observe whenever the sentinel element binds/re-binds
-  $: if (sentinel && observer) {
-    observer.disconnect();
-    observer.observe(sentinel);
+  function infiniteScroll(node: HTMLElement) {
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && hasMore && !loadingItems) {
+        loadItems(true);
+      }
+    }, { rootMargin: '600px' });
+    obs.observe(node);
+    return { destroy() { obs.disconnect(); } };
   }
 
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
-    setupObserver();
     prevId = id;
     await Promise.all([loadLibrary(), loadItems(), loadGenres()]);
     mounted = true;
   });
 
-  onDestroy(() => { alive = false; observer?.disconnect(); });
+  onDestroy(() => { alive = false; });
 
   $: if (mounted && id && id !== prevId) {
     prevId = id;
@@ -377,7 +368,7 @@
     </div>
 
     {#if hasMore}
-      <div class="scroll-sentinel" bind:this={sentinel}></div>
+      <div class="scroll-sentinel" use:infiniteScroll></div>
       {#if loadingItems}
         <div class="loading-more">
           <span class="spin">&#8635;</span> Loading…
