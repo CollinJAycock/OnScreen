@@ -260,12 +260,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		AudioStreamIndex: audioStreamIdx,
 		EnqueuedAt:       time.Now(),
 	}
-	if err := h.sessions.EnqueueJob(ctx, job); err != nil {
-		h.logger.ErrorContext(ctx, "enqueue transcode job failed", "session_id", sessionID, "err", err)
+	workerAddr, err := h.sessions.DispatchJob(ctx, job)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "dispatch transcode job failed", "session_id", sessionID, "err", err)
 		// Clean up the orphaned Valkey session — FFmpeg will never start.
 		_ = h.sessions.Delete(ctx, sessionID)
 		respond.InternalError(w, r)
 		return
+	}
+	if workerAddr != "" {
+		h.logger.InfoContext(ctx, "dispatched to worker", "session_id", sessionID, "worker", workerAddr)
 	}
 
 	playlistURL := fmt.Sprintf("/api/v1/transcode/sessions/%s/playlist.m3u8?token=%s",

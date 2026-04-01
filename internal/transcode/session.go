@@ -44,12 +44,13 @@ type Session struct {
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.
 type WorkerRegistration struct {
-	ID             string    `json:"id"`
-	Addr           string    `json:"addr"` // "host:port" of the worker HTTP server
-	Capabilities   []string  `json:"capabilities"`
-	MaxSessions    int       `json:"max_sessions"`
-	ActiveSessions int       `json:"active_sessions"`
-	RegisteredAt   time.Time `json:"registered_at"`
+	ID             string            `json:"id"`
+	Addr           string            `json:"addr"` // "host:port" of the worker HTTP server
+	Capabilities   []string          `json:"capabilities"`
+	EncoderLabels  map[string]string `json:"encoder_labels,omitempty"` // encoder → human label (e.g. "h264_nvenc" → "NVIDIA GeForce RTX 5080")
+	MaxSessions    int               `json:"max_sessions"`
+	ActiveSessions int               `json:"active_sessions"`
+	RegisteredAt   time.Time         `json:"registered_at"`
 }
 
 // SessionStore manages transcode sessions in Valkey.
@@ -302,7 +303,8 @@ func (s *SessionStore) ListWorkers(ctx context.Context) ([]WorkerRegistration, e
 	return workers, nil
 }
 
-// EnqueueJob pushes a transcode job onto the Valkey queue.
+// EnqueueJob pushes a transcode job onto the global Valkey queue.
+// Prefer DispatchJob which routes to the best available worker.
 func (s *SessionStore) EnqueueJob(ctx context.Context, job TranscodeJob) error {
 	b, err := json.Marshal(job)
 	if err != nil {
@@ -311,10 +313,61 @@ func (s *SessionStore) EnqueueJob(ctx context.Context, job TranscodeJob) error {
 	return s.v.Raw().RPush(ctx, "transcode:queue", string(b)).Err()
 }
 
-// DequeueJob blocks up to timeout waiting for a job from the Valkey queue.
+// DispatchJob selects the best available worker and pushes the job to its
+// per-worker queue. GPU-capable workers are preferred, then the worker with
+// the most available capacity is chosen. Falls back to the global queue when
+// no workers are registered (e.g. embedded-only mode).
+//
+// A Valkey counter (transcode:dispatched:{addr}) tracks jobs dispatched but
+// not yet started by the worker. This prevents stale-heartbeat over-dispatch:
+// even though the heartbeat ActiveSessions updates every 5s, the dispatch
+// counter is incremented atomically here and decremented by the worker when
+// it starts processing the job.
+func (s *SessionStore) DispatchJob(ctx context.Context, job TranscodeJob) (string, error) {
+	workers, err := s.ListWorkers(ctx)
+	if err != nil || len(workers) == 0 {
+		return "", s.EnqueueJob(ctx, job)
+	}
+
+	// Read each worker's dispatch counter and add to ActiveSessions.
+	for i := range workers {
+		n, err := s.v.Raw().Get(ctx, dispatchCounterKey(workers[i].Addr)).Int()
+		if err == nil {
+			workers[i].ActiveSessions += n
+		}
+	}
+
+	best := selectWorker(workers)
+	b, err := json.Marshal(job)
+	if err != nil {
+		return "", fmt.Errorf("marshal job: %w", err)
+	}
+	// Atomically increment dispatch counter, then push job.
+	s.v.Raw().Incr(ctx, dispatchCounterKey(best.Addr))
+	s.v.Raw().Expire(ctx, dispatchCounterKey(best.Addr), workerTTL)
+	return best.Addr, s.v.Raw().RPush(ctx, workerQueueKey(best.Addr), string(b)).Err()
+}
+
+// AckDispatch decrements the dispatch counter when a worker starts processing
+// a job. Called by the worker after BLPOP returns a job from its queue.
+func (s *SessionStore) AckDispatch(ctx context.Context, workerAddr string) {
+	key := dispatchCounterKey(workerAddr)
+	val, err := s.v.Raw().Decr(ctx, key).Result()
+	if err == nil && val <= 0 {
+		s.v.Raw().Del(ctx, key)
+	}
+}
+
+func dispatchCounterKey(addr string) string {
+	return "transcode:dispatched:" + addr
+}
+
+// DequeueJob blocks up to timeout waiting for a job. Checks the worker's own
+// per-worker queue first, then the shared global queue as a fallback.
 // Returns (nil, nil) on timeout.
-func (s *SessionStore) DequeueJob(ctx context.Context, timeout time.Duration) (*TranscodeJob, error) {
-	results, err := s.v.Raw().BLPop(ctx, timeout, "transcode:queue").Result()
+func (s *SessionStore) DequeueJob(ctx context.Context, workerAddr string, timeout time.Duration) (*TranscodeJob, error) {
+	keys := []string{workerQueueKey(workerAddr), "transcode:queue"}
+	results, err := s.v.Raw().BLPop(ctx, timeout, keys...).Result()
 	if err == redis.Nil {
 		return nil, nil // timeout, no job
 	}
@@ -329,6 +382,52 @@ func (s *SessionStore) DequeueJob(ctx context.Context, timeout time.Duration) (*
 		return nil, fmt.Errorf("unmarshal job: %w", err)
 	}
 	return &job, nil
+}
+
+func workerQueueKey(addr string) string {
+	return "transcode:queue:worker:" + addr
+}
+
+// selectWorker picks the best worker for a new job. GPU-capable workers are
+// strongly preferred (score +1000), then the worker with the most available
+// capacity wins ties.
+func selectWorker(workers []WorkerRegistration) WorkerRegistration {
+	best := workers[0]
+	bestScore := workerScore(best)
+	for _, w := range workers[1:] {
+		s := workerScore(w)
+		if s > bestScore {
+			bestScore = s
+			best = w
+		}
+	}
+	return best
+}
+
+func workerScore(w WorkerRegistration) int {
+	avail := w.MaxSessions - w.ActiveSessions
+	if avail < 0 {
+		avail = 0
+	}
+	if avail == 0 {
+		return 0 // at capacity — don't prefer regardless of GPU
+	}
+	score := avail
+	for _, cap := range w.Capabilities {
+		if isGPUEncoder(cap) {
+			score += 1000
+			break
+		}
+	}
+	return score
+}
+
+func isGPUEncoder(enc string) bool {
+	switch Encoder(enc) {
+	case EncoderNVENC, EncoderAMF, EncoderQSV, EncoderVAAPI:
+		return true
+	}
+	return false
 }
 
 // TranscodeJob holds the parameters for an FFmpeg transcode job.

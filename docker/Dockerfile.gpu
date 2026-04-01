@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # GPU-enabled variant — uses Ubuntu for NVENC/VAAPI/QSV ffmpeg support.
 # Usage:
 #   docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up -d --build

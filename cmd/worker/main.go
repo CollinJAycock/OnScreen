@@ -108,10 +108,17 @@ func run() error {
 	settingsSvc := settings.New(rwPool, logger)
 	fleetCfg := settingsSvc.WorkerFleet(ctx)
 	encoderOverride := cfg.TranscodeEncoders
+	maxSessions := cfg.TranscodeMaxSessions
 	for _, slot := range fleetCfg.Workers {
-		if slot.Addr == workerAddr && slot.Encoder != "" {
-			encoderOverride = slot.Encoder
-			logger.Info("fleet config encoder override", "addr", workerAddr, "encoder", slot.Encoder)
+		if slot.Addr == workerAddr {
+			if slot.Encoder != "" {
+				encoderOverride = slot.Encoder
+				logger.Info("fleet config encoder override", "addr", workerAddr, "encoder", slot.Encoder)
+			}
+			if slot.MaxSessions > 0 {
+				maxSessions = slot.MaxSessions
+				logger.Info("fleet config max_sessions override", "addr", workerAddr, "max_sessions", slot.MaxSessions)
+			}
 			break
 		}
 	}
@@ -128,7 +135,7 @@ func run() error {
 		workerAddr,
 		sessionStore,
 		encoders,
-		cfg.TranscodeMaxSessions,
+		maxSessions,
 		logger,
 	)
 

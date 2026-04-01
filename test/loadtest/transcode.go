@@ -14,11 +14,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
@@ -68,6 +71,10 @@ func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur ti
 	fmt.Printf("Watch duration: %s per viewer\n", *watchDur)
 	fmt.Println()
 
+	// Ctrl+C cancels this context, which stops all viewers and triggers cleanup.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
 	// Discover all movies.
 	movies := discoverAllMovies(client, base, token)
 	if len(movies) == 0 {
@@ -107,10 +114,9 @@ func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur ti
 		}
 	}()
 
-	// Spawn viewers on the interval until duration expires.
+	// Spawn viewers on the interval until duration expires or Ctrl+C.
 	spawnEnd := time.After(dur)
 	spawnTicker := time.NewTicker(*interval)
-	// Spawn the first viewer immediately.
 	spawnViewer := func() {
 		idx := int(atomic.AddInt32(&viewerCount, 1))
 		movie := movies[rand.Intn(len(movies))]
@@ -124,7 +130,6 @@ func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur ti
 		go func() {
 			defer wg.Done()
 			active := atomic.AddInt32(&curActive, 1)
-			// Update peak.
 			for {
 				peak := atomic.LoadInt32(&peakActive)
 				if active <= peak || atomic.CompareAndSwapInt32(&peakActive, peak, active) {
@@ -133,7 +138,7 @@ func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur ti
 			}
 
 			fmt.Printf("  Viewer %d started: %s\n", idx, movie.Title)
-			runViewer(client, base, token, idx, movie, *watchDur, st, &totalSegs)
+			runViewer(ctx, client, base, token, idx, movie, *watchDur, st, &totalSegs)
 			atomic.AddInt32(&curActive, -1)
 			fmt.Printf("  Viewer %d finished: %d segs, %s\n", idx, st.segCount, formatBytes(st.segBytes))
 		}()
@@ -143,6 +148,9 @@ func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur ti
 loop:
 	for {
 		select {
+		case <-ctx.Done():
+			fmt.Println("\nCtrl+C received — stopping all viewers and cleaning up sessions...")
+			break loop
 		case <-spawnEnd:
 			break loop
 		case <-spawnTicker.C:
@@ -150,9 +158,10 @@ loop:
 		}
 	}
 	spawnTicker.Stop()
+	cancel() // signal all viewers to stop
 
-	// Wait for all viewers to finish their watch duration.
-	fmt.Printf("\nNo more new viewers. Waiting for %d active viewers to finish...\n",
+	// Wait for all viewers to finish — each will call stopTranscode via defer.
+	fmt.Printf("Waiting for %d active viewers to clean up...\n",
 		atomic.LoadInt32(&curActive))
 	wg.Wait()
 	ticker.Stop()
@@ -250,7 +259,7 @@ loop:
 
 // runViewer simulates a single viewer: starts a transcode, consumes segments
 // for watchDur, then stops the session.
-func runViewer(client *http.Client, base, token string, idx int, movie movieItem, watchDur time.Duration, st *viewerStats, totalSegs *int64) {
+func runViewer(ctx context.Context, client *http.Client, base, token string, idx int, movie movieItem, watchDur time.Duration, st *viewerStats, totalSegs *int64) {
 	sess, err := startTranscode(client, base, token, movie.ID, 1080)
 	if err != nil {
 		st.errors++
@@ -267,6 +276,11 @@ func runViewer(client *http.Client, base, token string, idx int, movie movieItem
 	startWait := time.Now()
 	var playlist string
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		p, err := fetchPlaylist(client, playlistURL)
 		if err == nil && p != "" {
 			playlist = p
@@ -281,8 +295,15 @@ func runViewer(client *http.Client, base, token string, idx int, movie movieItem
 	}
 	st.startLatency = time.Since(startWait)
 
-	// Consume segments until watch duration expires.
+	// Consume segments until watch duration expires or context cancelled.
 	for time.Since(viewStart) < watchDur {
+		select {
+		case <-ctx.Done():
+			st.watchTime = time.Since(viewStart)
+			return
+		default:
+		}
+
 		segments := parseSegmentURLs(playlist)
 		for _, segURL := range segments {
 			if seen[segURL] {
@@ -293,12 +314,23 @@ func runViewer(client *http.Client, base, token string, idx int, movie movieItem
 			if time.Since(viewStart) >= watchDur {
 				break
 			}
+			select {
+			case <-ctx.Done():
+				st.watchTime = time.Since(viewStart)
+				return
+			default:
+			}
 
 			t := time.Now()
-			resp, err := client.Get(base + segURL)
+			req, _ := http.NewRequestWithContext(ctx, "GET", base+segURL, nil)
+			resp, err := client.Do(req)
 			lat := time.Since(t)
 
 			if err != nil {
+				if ctx.Err() != nil {
+					st.watchTime = time.Since(viewStart)
+					return
+				}
 				st.errors++
 				continue
 			}
@@ -317,10 +349,19 @@ func runViewer(client *http.Client, base, token string, idx int, movie movieItem
 		}
 
 		// Poll for new segments — HLS player polls every ~2s.
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			st.watchTime = time.Since(viewStart)
+			return
+		case <-time.After(2 * time.Second):
+		}
 		st.playlistPolls++
 		p, err := fetchPlaylist(client, playlistURL)
 		if err != nil {
+			if ctx.Err() != nil {
+				st.watchTime = time.Since(viewStart)
+				return
+			}
 			st.errors++
 			continue
 		}

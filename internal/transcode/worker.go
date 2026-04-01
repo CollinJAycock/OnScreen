@@ -27,6 +27,7 @@ type Worker struct {
 	addr           string // "host:port" — advertised to the API for segment proxying
 	store          *SessionStore
 	encoders       []Encoder
+	encoderLabels  map[string]string // encoder → human label, detected once at startup
 	logger         *slog.Logger
 	activeSessions atomic.Int32
 	maxSessions    int
@@ -39,14 +40,21 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	if maxSessions <= 0 {
 		maxSessions = 4
 	}
+	// Detect GPU labels now while we have hardware access.
+	labels := make(map[string]string, len(encoders))
+	ctx := context.Background()
+	for _, e := range encoders {
+		labels[string(e)] = detectGPUName(ctx, e)
+	}
 	return &Worker{
-		id:          id,
-		addr:        addr,
-		store:       store,
-		encoders:    encoders,
-		maxSessions: maxSessions,
-		logger:      logger,
-		activeJobs:  make(map[string]*os.Process),
+		id:            id,
+		addr:          addr,
+		store:         store,
+		encoders:      encoders,
+		encoderLabels: labels,
+		maxSessions:   maxSessions,
+		logger:        logger,
+		activeJobs:    make(map[string]*os.Process),
 	}
 }
 
@@ -79,6 +87,7 @@ func (w *Worker) register(ctx context.Context) error {
 		ID:             w.id,
 		Addr:           w.addr,
 		Capabilities:   EncoderNames(w.encoders),
+		EncoderLabels:  w.encoderLabels,
 		MaxSessions:    w.maxSessions,
 		ActiveSessions: int(w.activeSessions.Load()),
 		RegisteredAt:   time.Now(),
@@ -120,7 +129,7 @@ func (w *Worker) jobLoop(ctx context.Context) error {
 			}
 		}
 
-		job, err := w.store.DequeueJob(ctx, 5*time.Second)
+		job, err := w.store.DequeueJob(ctx, w.addr, 5*time.Second)
 		if err != nil {
 			w.logger.Warn("dequeue error", "err", err)
 			continue
@@ -130,6 +139,7 @@ func (w *Worker) jobLoop(ctx context.Context) error {
 		}
 
 		w.activeSessions.Add(1)
+		w.store.AckDispatch(ctx, w.addr)
 		go func(j TranscodeJob) {
 			defer w.activeSessions.Add(-1)
 			if err := w.runJob(ctx, j); err != nil {

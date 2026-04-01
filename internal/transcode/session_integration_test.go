@@ -132,7 +132,7 @@ func TestIntegration_SessionStore_EnqueueDequeue(t *testing.T) {
 		t.Fatalf("EnqueueJob: %v", err)
 	}
 
-	got, err := store.DequeueJob(ctx, 2*time.Second)
+	got, err := store.DequeueJob(ctx, "test:7073", 2*time.Second)
 	if err != nil {
 		t.Fatalf("DequeueJob: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestIntegration_SessionStore_Dequeue_Timeout(t *testing.T) {
 	ctx := context.Background()
 
 	// Queue is empty — should return nil, nil after timeout.
-	got, err := store.DequeueJob(ctx, 100*time.Millisecond)
+	got, err := store.DequeueJob(ctx, "test:7073", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("DequeueJob timeout: %v", err)
 	}

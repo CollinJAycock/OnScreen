@@ -121,6 +121,25 @@ func probeEncoder(ctx context.Context, encoder string) bool {
 	return cmd.Run() == nil
 }
 
+// EncoderLabel returns a human-readable label for an encoder without probing hardware.
+// Used when the server doesn't have the GPU but a worker reports the capability.
+func EncoderLabel(enc Encoder) string {
+	switch enc {
+	case EncoderNVENC:
+		return "NVIDIA GPU"
+	case EncoderAMF:
+		return "AMD GPU"
+	case EncoderQSV:
+		return "Intel Quick Sync"
+	case EncoderVAAPI:
+		return "VA-API"
+	case EncoderSoftware:
+		return "Software (CPU)"
+	default:
+		return string(enc)
+	}
+}
+
 // detectGPUName tries to return a human-readable GPU name (e.g. "NVIDIA GeForce RTX 5080").
 // Falls back to a generic label based on the encoder type.
 func detectGPUName(ctx context.Context, enc Encoder) string {

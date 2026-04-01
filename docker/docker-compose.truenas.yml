@@ -1,0 +1,119 @@
+# OnScreen on TrueNAS Scale
+#
+# Prerequisites:
+#   1. Create dataset: apps pool → "OnScreen" (from TrueNAS UI)
+#   2. Copy this file + Dockerfile to the NAS:
+#        scp -r . root@10.0.0.66:/mnt/apps/OnScreen/
+#   3. Create .env file at /mnt/apps/OnScreen/docker/.env (see below)
+#   4. Deploy:
+#        cd /mnt/apps/OnScreen && docker compose -f docker/docker-compose.truenas.yml up -d --build
+#
+# .env file:
+#   SECRET_KEY=<generate with: openssl rand -hex 32>
+#   TMDB_API_KEY=<your tmdb key>
+#
+# GPU transcoding (optional — requires NVIDIA Container Toolkit on TrueNAS):
+#   Uncomment the deploy.resources section in the worker service below.
+
+name: onscreen
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: onscreen
+      POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
+      POSTGRES_DB: onscreen
+    volumes:
+      - /mnt/apps/OnScreen/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["/usr/local/bin/goose"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      -dir /migrations postgres
+      "postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable" up
+    restart: "no"
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${SERVER_PORT:-7070}:7070"
+    volumes:
+      - /mnt/media/Media:/media:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7070/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["/usr/local/bin/worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_ADDR: "worker:7073"
+      # TRANSCODE_ENCODERS: "nvenc"         # uncomment for GPU
+      # TRANSCODE_MAX_SESSIONS: "4"         # tune based on GPU VRAM
+    volumes:
+      - /mnt/media/Media:/media:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    # ── GPU passthrough (uncomment if NVIDIA Container Toolkit is installed) ──
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video]

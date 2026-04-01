@@ -53,6 +53,7 @@
   }
   let fleetLoaded = false;
   let fleetEmbeddedEnabled = true;
+  let fleetEmbeddedDisabledByEnv = false;
   let fleetEmbeddedEncoder = '';
   let fleetEmbeddedOnline = false;
   let fleetEmbeddedActiveSessions = 0;
@@ -110,6 +111,7 @@
     try {
       const f = await settingsApi.getFleet();
       fleetEmbeddedEnabled = f.embedded_enabled;
+      fleetEmbeddedDisabledByEnv = f.embedded_disabled_by_env || false;
       fleetEmbeddedEncoder = f.embedded_encoder || '';
       fleetEmbeddedOnline = f.embedded_online;
       fleetEmbeddedActiveSessions = f.embedded_active_sessions;
@@ -172,7 +174,7 @@
     try {
       const workers = fleetWorkers
         .filter(w => w.name.trim())
-        .map(w => ({ addr: w.addr || '', name: w.name.trim(), encoder: w.encoder }));
+        .map(w => ({ addr: w.addr || '', name: w.name.trim(), encoder: w.encoder, max_sessions: w.max_sessions || undefined }));
       await settingsApi.updateFleet({
         embedded_enabled: fleetEmbeddedEnabled,
         embedded_encoder: fleetEmbeddedEncoder,
@@ -182,6 +184,7 @@
       // Reload to get merged state with live data.
       const updated = await settingsApi.getFleet();
       fleetEmbeddedEnabled = updated.embedded_enabled;
+      fleetEmbeddedDisabledByEnv = updated.embedded_disabled_by_env || false;
       fleetEmbeddedEncoder = updated.embedded_encoder || '';
       fleetEmbeddedOnline = updated.embedded_online;
       fleetEmbeddedActiveSessions = updated.embedded_active_sessions;
@@ -537,16 +540,18 @@
       <div class="fleet-group">
         <div class="fleet-group-header">
           <label class="toggle-label">
-            <input type="checkbox" bind:checked={fleetEmbeddedEnabled} />
+            <input type="checkbox" bind:checked={fleetEmbeddedEnabled} disabled={fleetEmbeddedDisabledByEnv} />
             Embedded Worker
           </label>
-          {#if fleetEmbeddedOnline}
+          {#if fleetEmbeddedDisabledByEnv}
+            <span class="hint" style="margin-left: 0.5rem; font-size: 0.75rem;">Disabled by DISABLE_EMBEDDED_WORKER env</span>
+          {:else if fleetEmbeddedOnline}
             <span class="status-dot online"></span>
-          {:else}
+          {:else if fleetEmbeddedEnabled}
             <span class="status-dot offline"></span>
           {/if}
         </div>
-        {#if fleetEmbeddedEnabled}
+        {#if fleetEmbeddedEnabled && !fleetEmbeddedDisabledByEnv}
         <div class="fleet-row">
           <div class="field" style="flex:1;">
             <label for="embedded-encoder">Encoder</label>
@@ -579,11 +584,11 @@
         {#each fleetWorkers as row (row.id)}
           <div class="worker-card">
             <div class="fleet-row">
-              <div class="field" style="flex:1;">
+              <div class="field" style="flex:2;">
                 <label>Name</label>
                 <input type="text" bind:value={row.name} placeholder="e.g. NVIDIA Box" />
               </div>
-              <div class="field" style="flex:1;">
+              <div class="field" style="flex:2;">
                 <label>Encoder</label>
                 <select bind:value={row.encoder}>
                   <option value="">Auto-detect</option>
@@ -593,6 +598,10 @@
                     {/each}
                   {/if}
                 </select>
+              </div>
+              <div class="field" style="flex:1;">
+                <label>Max Sessions</label>
+                <input type="number" bind:value={row.max_sessions} min="0" max="100" placeholder="auto" />
               </div>
               {#if !row.online}
                 <button type="button" class="btn-remove" title="Remove worker"

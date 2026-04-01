@@ -1,0 +1,101 @@
+# Multi-worker overlay — layer on top of docker-compose.yml:
+#
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.workers.yml up -d --build
+#
+# Runs the server with the embedded worker disabled, plus dedicated worker
+# containers: one GPU (NVENC) and one CPU (software). Both share the same
+# Postgres, Valkey, and media volume. Workers auto-register via Valkey and
+# compete for jobs on the shared transcode queue.
+#
+# Prerequisites:
+#   - NVIDIA Container Toolkit installed (for worker-gpu)
+#   - Docker Desktop with WSL2 backend (Windows) or nvidia-docker2 (Linux)
+#
+# Scale workers independently:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.workers.yml up -d --scale worker-cpu=3
+
+services:
+  # Override: disable the embedded worker in the server so it only dispatches.
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      DISABLE_EMBEDDED_WORKER: "true"
+    volumes:
+      - ${MEDIA_DIR:-C:/Movies}:/media:ro
+
+  # Disable the default single worker from docker-compose.yml.
+  worker:
+    profiles: ["disabled"]
+
+  # ── GPU worker (NVENC) ─────────────────────────────────────────────────────
+  worker-gpu:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+    entrypoint: ["/usr/local/bin/worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      WORKER_ADDR: "worker-gpu:7073"
+      TRANSCODE_ENCODERS: "nvenc"
+      TRANSCODE_MAX_SESSIONS: ${GPU_MAX_SESSIONS:-4}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - ${MEDIA_DIR:-C:/Movies}:/media:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+
+  # ── CPU worker (software encoding) ─────────────────────────────────────────
+  worker-cpu:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["/usr/local/bin/worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      WORKER_ADDR: "worker-cpu:7073"
+      TRANSCODE_ENCODERS: "software"
+      TRANSCODE_MAX_SESSIONS: ${CPU_MAX_SESSIONS:-2}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - ${MEDIA_DIR:-C:/Movies}:/media:ro

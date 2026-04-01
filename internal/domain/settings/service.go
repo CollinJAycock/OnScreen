@@ -103,9 +103,10 @@ type WorkerFleetConfig struct {
 // Addr is the stable key (from the worker's WORKER_ADDR env var) and is
 // auto-populated from discovery — the admin never types it.
 type WorkerSlotConfig struct {
-	Addr    string `json:"addr"`              // stable key — from worker's WORKER_ADDR env
-	Name    string `json:"name,omitempty"`    // admin-assigned friendly label
-	Encoder string `json:"encoder,omitempty"` // admin encoder override, "" = auto-detect
+	Addr        string `json:"addr"`                    // stable key — from worker's WORKER_ADDR env
+	Name        string `json:"name,omitempty"`          // admin-assigned friendly label
+	Encoder     string `json:"encoder,omitempty"`       // admin encoder override, "" = auto-detect
+	MaxSessions int    `json:"max_sessions,omitempty"`  // admin override for max concurrent sessions, 0 = use worker default
 }
 
 // WorkerFleet returns the fleet configuration, or a default (embedded enabled, no remotes).

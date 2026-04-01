@@ -333,6 +333,7 @@ export interface WorkerSlotConfig {
   addr: string;
   name: string;
   encoder: string;
+  max_sessions?: number;
 }
 
 export interface FleetConfig {
@@ -354,6 +355,7 @@ export interface FleetWorkerStatus {
 
 export interface FleetStatus {
   embedded_enabled: boolean;
+  embedded_disabled_by_env: boolean;
   embedded_encoder: string;
   embedded_online: boolean;
   embedded_active_sessions: number;

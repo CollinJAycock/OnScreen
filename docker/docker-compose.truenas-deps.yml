@@ -1,0 +1,53 @@
+# OnScreen dependencies for TrueNAS Scale
+# These run as background Docker services. The OnScreen app itself is deployed
+# as a TrueNAS Custom App (for GPU passthrough).
+#
+# Deploy:
+#   cd /mnt/apps/OnScreen/repo
+#   docker compose -f docker/docker-compose.truenas-deps.yml up -d
+#
+# The OnScreen custom app connects to these via the Docker bridge network.
+
+name: onscreen-deps
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: onscreen
+      POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
+      POSTGRES_DB: onscreen
+    volumes:
+      - /mnt/apps/OnScreen/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["/usr/local/bin/goose"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      -dir /migrations postgres
+      "postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable" up
+    restart: "no"

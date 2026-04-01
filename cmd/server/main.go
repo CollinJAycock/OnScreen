@@ -319,6 +319,7 @@ func run() error {
 		allEncoders = []transcode.Encoder{transcode.EncoderSoftware}
 	}
 	settingsHandler.SetDetectedEncoders(transcode.EncoderEntries(ctx, allEncoders))
+	settingsHandler.SetEmbeddedDisabled(cfg.DisableEmbeddedWorker)
 
 	embeddedEnabled := fleetCfg.EmbeddedEnabled && !cfg.DisableEmbeddedWorker
 	var embeddedWorker *transcode.Worker

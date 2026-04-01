@@ -44,6 +44,7 @@ type SettingsHandler struct {
 	audit            *audit.Logger
 	detectedEncoders []transcode.EncoderEntry // populated at startup by DetectEncoders
 	workerLister     WorkerLister             // set at startup to query registered workers
+	embeddedDisabled bool                     // true when DISABLE_EMBEDDED_WORKER env is set
 }
 
 // NewSettingsHandler creates a SettingsHandler.
@@ -67,14 +68,53 @@ func (h *SettingsHandler) SetWorkerLister(wl WorkerLister) {
 	h.workerLister = wl
 }
 
+// SetEmbeddedDisabled marks that the DISABLE_EMBEDDED_WORKER env var is set.
+func (h *SettingsHandler) SetEmbeddedDisabled(disabled bool) {
+	h.embeddedDisabled = disabled
+}
+
 // GetEncoders handles GET /api/v1/settings/encoders — returns available hw encoders.
+// Merges server-detected encoders with capabilities reported by live workers.
 func (h *SettingsHandler) GetEncoders(w http.ResponseWriter, r *http.Request) {
 	current := h.svc.TranscodeEncoders(r.Context())
+
+	// Start with server-detected encoders.
+	seen := make(map[transcode.Encoder]bool, len(h.detectedEncoders))
+	merged := make([]transcode.EncoderEntry, len(h.detectedEncoders))
+	copy(merged, h.detectedEncoders)
+	for _, e := range h.detectedEncoders {
+		seen[e.Encoder] = true
+	}
+
+	// Add encoders reported by live workers that the server doesn't have,
+	// using the worker's own GPU-detected labels (e.g. "NVIDIA GeForce RTX 5080").
+	if h.workerLister != nil {
+		workers, err := h.workerLister.ListWorkers(r.Context())
+		if err == nil {
+			for _, w := range workers {
+				for _, cap := range w.Capabilities {
+					enc := transcode.Encoder(cap)
+					if !seen[enc] {
+						seen[enc] = true
+						label := w.EncoderLabels[cap]
+						if label == "" {
+							label = transcode.EncoderLabel(enc)
+						}
+						merged = append(merged, transcode.EncoderEntry{
+							Encoder: enc,
+							Label:   label,
+						})
+					}
+				}
+			}
+		}
+	}
+
 	respond.Success(w, r, struct {
 		Detected []transcode.EncoderEntry `json:"detected"`
 		Current  string                   `json:"current"`
 	}{
-		Detected: h.detectedEncoders,
+		Detected: merged,
 		Current:  current,
 	})
 }
@@ -156,6 +196,9 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 		if override, ok := overrides[live.Addr]; ok {
 			ws.Name = override.Name
 			ws.Encoder = override.Encoder
+			if override.MaxSessions > 0 {
+				ws.MaxSessions = override.MaxSessions
+			}
 		}
 		workers = append(workers, ws)
 	}
@@ -175,11 +218,12 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 			id = fmt.Sprintf("manual-%d", manualIdx)
 		}
 		workers = append(workers, workerStatus{
-			ID:      id,
-			Addr:    slot.Addr,
-			Name:    slot.Name,
-			Encoder: slot.Encoder,
-			Online:  false,
+			ID:          id,
+			Addr:        slot.Addr,
+			Name:        slot.Name,
+			Encoder:     slot.Encoder,
+			MaxSessions: slot.MaxSessions,
+			Online:      false,
 		})
 	}
 
@@ -187,16 +231,24 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 		workers = []workerStatus{}
 	}
 
+	// If the env var forces embedded off, override the DB value.
+	embeddedEnabled := fleet.EmbeddedEnabled
+	if h.embeddedDisabled {
+		embeddedEnabled = false
+	}
+
 	respond.Success(w, r, struct {
-		EmbeddedEnabled bool           `json:"embedded_enabled"`
-		EmbeddedEncoder string         `json:"embedded_encoder"`
-		EmbeddedOnline  bool           `json:"embedded_online"`
-		EmbeddedActive  int            `json:"embedded_active_sessions"`
-		EmbeddedMax     int            `json:"embedded_max_sessions"`
-		EmbeddedCaps    []string       `json:"embedded_capabilities"`
-		Workers         []workerStatus `json:"workers"`
+		EmbeddedEnabled  bool           `json:"embedded_enabled"`
+		EmbeddedDisabled bool           `json:"embedded_disabled_by_env"`
+		EmbeddedEncoder  string         `json:"embedded_encoder"`
+		EmbeddedOnline   bool           `json:"embedded_online"`
+		EmbeddedActive   int            `json:"embedded_active_sessions"`
+		EmbeddedMax      int            `json:"embedded_max_sessions"`
+		EmbeddedCaps     []string       `json:"embedded_capabilities"`
+		Workers          []workerStatus `json:"workers"`
 	}{
-		EmbeddedEnabled: fleet.EmbeddedEnabled,
+		EmbeddedEnabled:  embeddedEnabled,
+		EmbeddedDisabled: h.embeddedDisabled,
 		EmbeddedEncoder: fleet.EmbeddedEncoder,
 		EmbeddedOnline:  embeddedOnline,
 		EmbeddedActive:  embeddedActive,
