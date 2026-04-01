@@ -50,9 +50,11 @@
   let enrichTimeout = '';
 
   const PAGE = 120;
+  const BATCH = 36;
   let offset = 0;
   let total = 0;
   let hasMore = false;
+  let sentinel: HTMLDivElement;
 
   let query = '';
   let sortField: SortField = 'title';
@@ -67,6 +69,7 @@
 
   let mounted = false;
   let prevId = '';
+  let observer: IntersectionObserver | null = null;
 
   $: id = $page.params.id!;
 
@@ -86,14 +89,31 @@
     return p;
   }
 
+  function setupObserver() {
+    if (!observer) {
+      observer = new IntersectionObserver((entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !loadingItems) {
+          loadItems(true);
+        }
+      }, { rootMargin: '400px' });
+    }
+  }
+
+  // Re-observe whenever the sentinel element binds/re-binds
+  $: if (sentinel && observer) {
+    observer.disconnect();
+    observer.observe(sentinel);
+  }
+
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    setupObserver();
     prevId = id;
     await Promise.all([loadLibrary(), loadItems(), loadGenres()]);
     mounted = true;
   });
 
-  onDestroy(() => { alive = false; });
+  onDestroy(() => { alive = false; observer?.disconnect(); });
 
   $: if (mounted && id && id !== prevId) {
     prevId = id;
@@ -126,7 +146,8 @@
   async function loadItems(append = false) {
     loadingItems = true;
     try {
-      const r = await mediaApi.listItems(id, PAGE, append ? offset : 0, filterParams());
+      const limit = append ? BATCH : PAGE;
+      const r = await mediaApi.listItems(id, limit, append ? offset : 0, filterParams());
       allItems = append ? [...allItems, ...r.items] : r.items;
       total = r.total;
       offset = append ? offset + r.items.length : r.items.length;
@@ -355,12 +376,13 @@
       {/if}
     </div>
 
-    {#if hasMore && !loadingItems}
-      <div class="load-more">
-        <button class="load-btn" on:click={() => loadItems(true)}>
-          Load more — {total - offset} remaining
-        </button>
-      </div>
+    {#if hasMore}
+      <div class="scroll-sentinel" bind:this={sentinel}></div>
+      {#if loadingItems}
+        <div class="loading-more">
+          <span class="spin">&#8635;</span> Loading…
+        </div>
+      {/if}
     {/if}
   {/if}
 </div>
@@ -688,18 +710,13 @@
     text-decoration: underline;
   }
 
-  .load-more { text-align: center; margin-top: 2.5rem; padding-bottom: 1rem; }
-  .load-btn {
-    background: var(--input-bg);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    padding: 0.55rem 1.5rem;
+  .scroll-sentinel { height: 1px; }
+  .loading-more {
+    text-align: center;
+    padding: 1.5rem 0;
     font-size: 0.8rem;
     color: var(--text-muted);
-    cursor: pointer;
-    transition: border-color 0.12s, color 0.12s;
   }
-  .load-btn:hover { border-color: rgba(255,255,255,0.16); color: var(--text-secondary); }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
