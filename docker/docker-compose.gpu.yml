@@ -1,0 +1,65 @@
+# GPU override — layer on top of docker-compose.yml:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up -d --build
+#
+# Passes the NVIDIA GPU to server (embedded worker) and standalone worker.
+# Requires Docker Desktop with WSL2 backend + NVIDIA Container Toolkit.
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+
+  # Local worker running as a separate process/container.
+  # Shares the same Valkey/Postgres/media but uses a different WORKER_ADDR.
+  worker-remote:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+    entrypoint: ["/usr/local/bin/worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      MEDIA_PATH: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      WORKER_ADDR: "worker-remote:7073"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - media_data:/media
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]

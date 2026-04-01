@@ -451,10 +451,9 @@
       await switchToTranscode(0, posMs, true);
     } else {
       // Full transcode needed (non-browser video codec like HEVC/VC-1/MPEG-2).
-      // Find the best quality tier by width (e.g. 1920-wide scope movie → 1080p tier).
-      const w = file.resolution_w ?? 1920;
-      const match = availableQualities.filter(q => q.width > 0 && q.width <= w * 1.05)
-                      .sort((a, b) => b.width - a.width)[0]
+      // Default to 1080p — transcoding 4K→4K is too slow for real-time playback
+      // and wastes GPU/CPU. Users can manually select 4K from the quality picker.
+      const match = availableQualities.find(q => q.height === 1080)
                  ?? availableQualities.find(q => q.height > 0)
                  ?? qualityOptions[2]; // 1080p fallback
       selectedQuality = match;
@@ -483,9 +482,8 @@
         // "Auto" but can't direct-play → remux (video copy + audio transcode).
         await switchToTranscode(0, posMs, true);
       } else {
-        // "Auto" but nothing is browser-compatible → full transcode at source res.
-        const h = file.resolution_h ?? 1080;
-        await switchToTranscode(h, posMs);
+        // "Auto" but nothing is browser-compatible → full transcode at 1080p.
+        await switchToTranscode(1080, posMs);
       }
     } else {
       // Explicit resolution selected — full transcode.

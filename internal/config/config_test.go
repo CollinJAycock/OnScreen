@@ -285,3 +285,34 @@ func TestHotReloadable_RoundTrip(t *testing.T) {
 		t.Errorf("TranscodeMaxHeight: got %d, want 1080", got)
 	}
 }
+
+func TestDisableEmbeddedWorker_DefaultFalse(t *testing.T) {
+	cfg := &Config{
+		DatabaseURL: "postgres://test",
+		ValkeyURL:   "redis://test",
+		SecretKey:   "12345678901234567890123456789012",
+		ListenAddr:  ":7070",
+	}
+	if err := cfg.applyDefaults(); err != nil {
+		t.Fatalf("applyDefaults: %v", err)
+	}
+	if cfg.DisableEmbeddedWorker {
+		t.Error("DisableEmbeddedWorker: want false by default")
+	}
+}
+
+func TestDisableEmbeddedWorker_SetTrue(t *testing.T) {
+	cfg := &Config{
+		DatabaseURL:           "postgres://test",
+		ValkeyURL:             "redis://test",
+		SecretKey:             "12345678901234567890123456789012",
+		ListenAddr:            ":7070",
+		DisableEmbeddedWorker: true,
+	}
+	if err := cfg.applyDefaults(); err != nil {
+		t.Fatalf("applyDefaults: %v", err)
+	}
+	if !cfg.DisableEmbeddedWorker {
+		t.Error("DisableEmbeddedWorker: want true when explicitly set")
+	}
+}

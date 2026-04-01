@@ -10,8 +10,7 @@ type QualityProfile struct {
 
 // Profiles is the quality ladder for transcode output (ADR-017).
 var Profiles = []QualityProfile{
-	{Name: "40 Mbps 4K", Bitrate: 40000, MaxWidth: 3840, MaxHeight: 2160},
-	{Name: "20 Mbps 1080p", Bitrate: 20000, MaxWidth: 1920, MaxHeight: 1080},
+	{Name: "20 Mbps 4K", Bitrate: 20000, MaxWidth: 3840, MaxHeight: 2160},
 	{Name: "8 Mbps 1080p", Bitrate: 8000, MaxWidth: 1920, MaxHeight: 1080},
 	{Name: "4 Mbps 720p", Bitrate: 4000, MaxWidth: 1280, MaxHeight: 720},
 	{Name: "2 Mbps 720p", Bitrate: 2000, MaxWidth: 1280, MaxHeight: 720},

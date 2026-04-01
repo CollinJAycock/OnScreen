@@ -313,6 +313,10 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/settings", h.Settings.Get)
 					r.Patch("/settings", h.Settings.Update)
+					r.Get("/settings/encoders", h.Settings.GetEncoders)
+					r.Get("/settings/workers", h.Settings.GetWorkers)
+					r.Get("/settings/fleet", h.Settings.GetFleet)
+					r.Put("/settings/fleet", h.Settings.UpdateFleet)
 				})
 			}
 

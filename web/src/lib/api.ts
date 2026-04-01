@@ -307,11 +307,68 @@ export interface ServerSettings {
   arr_api_key: string;
   arr_webhook_url: string;
   arr_path_mappings?: Record<string, string>;
+  transcode_encoders: string;
+}
+
+export interface EncoderEntry {
+  encoder: string;
+  label: string;
+}
+
+export interface EncoderInfo {
+  detected: EncoderEntry[];
+  current: string;
+}
+
+export interface WorkerInfo {
+  id: string;
+  addr: string;
+  capabilities: string[];
+  max_sessions: number;
+  active_sessions: number;
+  registered_at: string;
+}
+
+export interface WorkerSlotConfig {
+  addr: string;
+  name: string;
+  encoder: string;
+}
+
+export interface FleetConfig {
+  embedded_enabled: boolean;
+  embedded_encoder: string;
+  workers: WorkerSlotConfig[];
+}
+
+export interface FleetWorkerStatus {
+  id: string;
+  addr: string;
+  name: string;
+  encoder: string;
+  online: boolean;
+  active_sessions: number;
+  max_sessions: number;
+  capabilities: string[];
+}
+
+export interface FleetStatus {
+  embedded_enabled: boolean;
+  embedded_encoder: string;
+  embedded_online: boolean;
+  embedded_active_sessions: number;
+  embedded_max_sessions: number;
+  embedded_capabilities: string[];
+  workers: FleetWorkerStatus[];
 }
 
 export const settingsApi = {
   get: () => api.get<ServerSettings>('/settings'),
-  update: (body: Partial<ServerSettings>) => api.patch<void>('/settings', body)
+  update: (body: Partial<ServerSettings>) => api.patch<void>('/settings', body),
+  getEncoders: () => api.get<EncoderInfo>('/settings/encoders'),
+  getWorkers: () => api.get<WorkerInfo[]>('/settings/workers'),
+  getFleet: () => api.get<FleetStatus>('/settings/fleet'),
+  updateFleet: (body: FleetConfig) => api.put<void>('/settings/fleet', body)
 };
 
 // ── Filesystem browser ────────────────────────────────────────────────────────

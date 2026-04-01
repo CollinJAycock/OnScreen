@@ -20,6 +20,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/valkey"
@@ -98,17 +99,29 @@ func run() error {
 	)
 
 	// ── Transcode worker (Phase 2) ─────────────────────────────────────────────
-	encoders, err := transcode.DetectEncoders(ctx, cfg.TranscodeEncoders)
+	workerAddr := os.Getenv("WORKER_ADDR")
+	if workerAddr == "" {
+		workerAddr = ":7073"
+	}
+
+	// Check fleet config for an encoder assignment matching this worker's address.
+	settingsSvc := settings.New(rwPool, logger)
+	fleetCfg := settingsSvc.WorkerFleet(ctx)
+	encoderOverride := cfg.TranscodeEncoders
+	for _, slot := range fleetCfg.Workers {
+		if slot.Addr == workerAddr && slot.Encoder != "" {
+			encoderOverride = slot.Encoder
+			logger.Info("fleet config encoder override", "addr", workerAddr, "encoder", slot.Encoder)
+			break
+		}
+	}
+
+	encoders, err := transcode.DetectEncoders(ctx, encoderOverride)
 	if err != nil {
 		logger.Warn("encoder detection failed, defaulting to software", "err", err)
 		encoders = []transcode.Encoder{transcode.EncoderSoftware}
 	}
 	logger.Info("encoders available", "encoders", transcode.EncoderNames(encoders))
-
-	workerAddr := os.Getenv("WORKER_ADDR")
-	if workerAddr == "" {
-		workerAddr = ":7073"
-	}
 	sessionStore := transcode.NewSessionStore(valkeyClient)
 	transcodeWorker := transcode.NewWorker(
 		transcode.WorkerID(),

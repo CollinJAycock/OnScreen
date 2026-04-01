@@ -25,7 +25,14 @@ import (
 	"time"
 )
 
-var baseURL string
+var (
+	baseURL string
+
+	// Cached tokens — populated once by TestE2E_SetupAndAuth, reused by all
+	// subsequent tests to avoid hitting the auth rate limiter (10 req/min).
+	cachedAdminToken   string
+	cachedUserToken    string
+)
 
 func TestMain(m *testing.M) {
 	baseURL = os.Getenv("ONSCREEN_BASE_URL")
@@ -146,10 +153,14 @@ func registerAndLogin(t *testing.T, adminToken, username, password string) (acce
 	return accessToken, refreshToken
 }
 
-// bootstrapAdmin logs in as the well-known admin user created by TestE2E_SetupAndAuth.
-// Must run after that test has created the first user.
+// bootstrapAdmin returns the admin token cached from TestE2E_SetupAndAuth.
+// Falls back to a fresh login only if the cache is empty (e.g. running a
+// single test in isolation), but in the normal full run this never fires.
 func bootstrapAdmin(t *testing.T) string {
 	t.Helper()
+	if cachedAdminToken != "" {
+		return cachedAdminToken
+	}
 	resp := doJSON(t, "POST", "/api/v1/auth/login", "", map[string]string{
 		"username": "e2e_bootstrap_admin",
 		"password": "TestPassword123!",
@@ -164,7 +175,22 @@ func bootstrapAdmin(t *testing.T) string {
 	if token == "" {
 		t.Fatal("bootstrap admin: no access_token")
 	}
+	cachedAdminToken = token
 	return token
+}
+
+// bootstrapNonAdmin returns a cached non-admin token. Created once on first
+// call to avoid burning auth rate-limit budget creating per-test users.
+func bootstrapNonAdmin(t *testing.T) string {
+	t.Helper()
+	if cachedUserToken != "" {
+		return cachedUserToken
+	}
+	adminToken := bootstrapAdmin(t)
+	userName := fmt.Sprintf("e2e_user_%d", time.Now().Unix()%100000)
+	userToken, _ := registerAndLogin(t, adminToken, userName, "TestPassword123!")
+	cachedUserToken = userToken
+	return cachedUserToken
 }
 
 // ── health ──────────────────────────────────────────────────────────────────
@@ -271,6 +297,7 @@ func TestE2E_SetupAndAuth(t *testing.T) {
 			t.Fatal("refresh: no access_token")
 		}
 		accessToken = newToken
+		cachedAdminToken = newToken // cache for all subsequent tests
 	})
 
 	// 6. Authenticated endpoints.
@@ -442,10 +469,7 @@ func TestE2E_WebhookCRUD(t *testing.T) {
 
 func TestE2E_NonAdminForbidden(t *testing.T) {
 	adminToken := bootstrapAdmin(t)
-
-	// Create non-admin user via admin and login as them.
-	userName := fmt.Sprintf("e2e_usr_%d", time.Now().UnixNano())
-	userToken, _ := registerAndLogin(t, adminToken, userName, "TestPassword123!")
+	userToken := bootstrapNonAdmin(t)
 
 	t.Run("user_forbidden_admin_endpoints", func(t *testing.T) {
 		for _, ep := range []struct{ method, path string }{
@@ -511,4 +535,248 @@ func TestE2E_EmailEnabled(t *testing.T) {
 	if data["enabled"] != false {
 		t.Errorf("email enabled: got %v, want false", data["enabled"])
 	}
+}
+
+// ── fleet management ───────────────────────────────────────────────────────
+
+func TestE2E_FleetManagement(t *testing.T) {
+	token := bootstrapAdmin(t)
+
+	// 1. Default fleet: embedded enabled, embedded worker online.
+	t.Run("get_default", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/settings/fleet", token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		data := decodeData(t, resp)
+
+		if data["embedded_enabled"] != true {
+			t.Errorf("embedded_enabled: got %v, want true", data["embedded_enabled"])
+		}
+		// Embedded worker should be online in the docker stack.
+		if data["embedded_online"] != true {
+			t.Errorf("embedded_online: got %v, want true", data["embedded_online"])
+		}
+		// Workers array contains auto-discovered local workers (may be 0+).
+		workers, ok := data["workers"].([]any)
+		if !ok {
+			t.Fatalf("workers: expected array, got %T", data["workers"])
+		}
+		// Each discovered worker should have an addr and online status.
+		for i, w := range workers {
+			wm := w.(map[string]any)
+			if wm["addr"] == nil || wm["addr"] == "" {
+				t.Errorf("workers[%d]: missing addr", i)
+			}
+		}
+	})
+
+	// 2. Update fleet: disable embedded, save worker overrides.
+	t.Run("update_disable_embedded", func(t *testing.T) {
+		resp := doJSON(t, "PUT", "/api/v1/settings/fleet", token, map[string]any{
+			"embedded_enabled": false,
+			"embedded_encoder": "",
+			"workers": []map[string]any{
+				{"addr": "10.0.0.5:7073", "name": "NVIDIA Box", "encoder": "h264_nvenc"},
+				{"addr": "10.0.0.6:7073", "name": "AMD Box", "encoder": "h264_amf"},
+			},
+		})
+		assertStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+
+	// 3. Read back — embedded setting persists; saved workers appear offline
+	//    when not discovered via Valkey.
+	t.Run("get_after_update", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/settings/fleet", token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		data := decodeData(t, resp)
+
+		if data["embedded_enabled"] != false {
+			t.Errorf("embedded_enabled: got %v, want false", data["embedded_enabled"])
+		}
+		// Saved workers should appear (offline) even when not discovered.
+		workers := data["workers"].([]any)
+		// At minimum, the 2 we saved should be present. Additional discovered
+		// workers (from Docker containers) may also appear.
+		if len(workers) < 2 {
+			t.Errorf("workers: got %d, want at least 2 saved offline workers", len(workers))
+		}
+		// Verify the saved overrides are returned.
+		for _, w := range workers {
+			wm := w.(map[string]any)
+			addr, _ := wm["addr"].(string)
+			if addr == "10.0.0.5:7073" {
+				if wm["name"] != "NVIDIA Box" {
+					t.Errorf("workers[10.0.0.5:7073].name: got %q", wm["name"])
+				}
+				if wm["encoder"] != "h264_nvenc" {
+					t.Errorf("workers[10.0.0.5:7073].encoder: got %q", wm["encoder"])
+				}
+			}
+		}
+	})
+
+	// 4. Update fleet: set embedded encoder.
+	t.Run("update_embedded_encoder", func(t *testing.T) {
+		resp := doJSON(t, "PUT", "/api/v1/settings/fleet", token, map[string]any{
+			"embedded_enabled": true,
+			"embedded_encoder": "libx264",
+			"workers":          []map[string]any{},
+		})
+		assertStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+
+	// 5. Read back — verify embedded encoder persisted.
+	t.Run("get_embedded_encoder", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/settings/fleet", token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		data := decodeData(t, resp)
+
+		if data["embedded_enabled"] != true {
+			t.Errorf("embedded_enabled: got %v, want true", data["embedded_enabled"])
+		}
+		if data["embedded_encoder"] != "libx264" {
+			t.Errorf("embedded_encoder: got %v, want libx264", data["embedded_encoder"])
+		}
+	})
+
+	// 6. Reset to defaults.
+	t.Run("reset_defaults", func(t *testing.T) {
+		resp := doJSON(t, "PUT", "/api/v1/settings/fleet", token, map[string]any{
+			"embedded_enabled": true,
+			"embedded_encoder": "",
+			"workers":          []map[string]any{},
+		})
+		assertStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+
+	// 7. Non-admin cannot access fleet endpoints.
+	t.Run("non_admin_forbidden", func(t *testing.T) {
+		userToken := bootstrapNonAdmin(t)
+
+		resp := doJSON(t, "GET", "/api/v1/settings/fleet", userToken, nil)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("GET fleet as non-admin: got %d, want 403", resp.StatusCode)
+		}
+		resp.Body.Close()
+
+		resp = doJSON(t, "PUT", "/api/v1/settings/fleet", userToken, map[string]any{
+			"embedded_enabled": false,
+			"workers":          []map[string]any{},
+		})
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("PUT fleet as non-admin: got %d, want 403", resp.StatusCode)
+		}
+		resp.Body.Close()
+	})
+
+	// 8. Unauthenticated access denied.
+	t.Run("unauthenticated_denied", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/settings/fleet", "", nil)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("GET fleet unauthenticated: got %d, want 401", resp.StatusCode)
+		}
+		resp.Body.Close()
+
+		resp = doJSON(t, "PUT", "/api/v1/settings/fleet", "", map[string]any{
+			"embedded_enabled": true,
+			"workers":          []map[string]any{},
+		})
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("PUT fleet unauthenticated: got %d, want 401", resp.StatusCode)
+		}
+		resp.Body.Close()
+	})
+}
+
+// ── workers endpoint ───────────────────────────────────────────────────────
+
+func TestE2E_WorkersEndpoint(t *testing.T) {
+	token := bootstrapAdmin(t)
+
+	t.Run("list_workers", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/settings/workers", token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		workers := decodeDataArray(t, resp)
+		// The embedded worker should be registered in the docker stack.
+		if len(workers) < 1 {
+			t.Fatalf("expected at least 1 worker (embedded), got %d", len(workers))
+		}
+		w := workers[0].(map[string]any)
+		if w["addr"] == nil || w["addr"] == "" {
+			t.Error("worker missing addr")
+		}
+		caps, ok := w["capabilities"].([]any)
+		if !ok || len(caps) == 0 {
+			t.Error("worker missing capabilities")
+		}
+		maxSess, ok := w["max_sessions"].(float64)
+		if !ok || maxSess <= 0 {
+			t.Errorf("worker max_sessions: got %v", w["max_sessions"])
+		}
+	})
+
+	t.Run("non_admin_forbidden", func(t *testing.T) {
+		userToken := bootstrapNonAdmin(t)
+
+		resp := doJSON(t, "GET", "/api/v1/settings/workers", userToken, nil)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("workers as non-admin: got %d, want 403", resp.StatusCode)
+		}
+		resp.Body.Close()
+	})
+}
+
+// ── encoders endpoint ──────────────────────────────────────────────────────
+
+func TestE2E_EncodersEndpoint(t *testing.T) {
+	token := bootstrapAdmin(t)
+
+	t.Run("list_encoders", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/settings/encoders", token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		data := decodeData(t, resp)
+
+		detected, ok := data["detected"].([]any)
+		if !ok {
+			t.Fatalf("detected: expected array, got %T", data["detected"])
+		}
+		// At minimum, software encoder should always be detected.
+		if len(detected) < 1 {
+			t.Fatal("expected at least 1 detected encoder (software)")
+		}
+		// Each entry should have encoder and label fields.
+		for i, d := range detected {
+			entry := d.(map[string]any)
+			if entry["encoder"] == nil || entry["encoder"] == "" {
+				t.Errorf("detected[%d].encoder: empty", i)
+			}
+			if entry["label"] == nil || entry["label"] == "" {
+				t.Errorf("detected[%d].label: empty", i)
+			}
+		}
+		// Check that software is present.
+		hasSoftware := false
+		for _, d := range detected {
+			entry := d.(map[string]any)
+			if entry["encoder"] == "libx264" {
+				hasSoftware = true
+				break
+			}
+		}
+		if !hasSoftware {
+			t.Error("software encoder (libx264) not in detected list")
+		}
+	})
+
+	t.Run("current_field_present", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/settings/encoders", token, nil)
+		assertStatus(t, resp, http.StatusOK)
+		data := decodeData(t, resp)
+		// "current" field should exist (may be empty string for auto-detect).
+		if _, ok := data["current"]; !ok {
+			t.Error("missing 'current' field in encoders response")
+		}
+	})
 }

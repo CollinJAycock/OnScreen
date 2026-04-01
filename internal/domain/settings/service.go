@@ -11,8 +11,10 @@ import (
 
 const keyTMDBAPIKey = "tmdb_api_key"
 const keyTVDBAPIKey = "tvdb_api_key"
-const keyArrAPIKey        = "arr_api_key"
-const keyArrPathMappings  = "arr_path_mappings"
+const keyArrAPIKey           = "arr_api_key"
+const keyArrPathMappings     = "arr_path_mappings"
+const keyTranscodeEncoders   = "transcode_encoders"
+const keyWorkerFleet         = "worker_fleet"
 
 // Service reads and writes server settings to the server_settings table.
 type Service struct {
@@ -77,6 +79,56 @@ func (s *Service) SetArrPathMappings(ctx context.Context, mappings map[string]st
 		return err
 	}
 	return s.set(ctx, keyArrPathMappings, string(b))
+}
+
+// TranscodeEncoders returns the encoder override string (e.g. "nvenc,software"), or "" for auto-detect.
+func (s *Service) TranscodeEncoders(ctx context.Context) string {
+	return s.get(ctx, keyTranscodeEncoders)
+}
+
+// SetTranscodeEncoders persists the encoder override (empty string = auto-detect).
+func (s *Service) SetTranscodeEncoders(ctx context.Context, value string) error {
+	return s.set(ctx, keyTranscodeEncoders, value)
+}
+
+// WorkerFleetConfig is the admin-managed fleet of transcode workers.
+type WorkerFleetConfig struct {
+	EmbeddedEnabled bool               `json:"embedded_enabled"`
+	EmbeddedEncoder string             `json:"embedded_encoder"` // e.g. "h264_nvenc", "" = auto
+	Workers         []WorkerSlotConfig `json:"workers"`
+}
+
+// WorkerSlotConfig stores admin overrides for a discovered worker.
+// Workers self-register via Valkey; the admin only assigns a name and encoder.
+// Addr is the stable key (from the worker's WORKER_ADDR env var) and is
+// auto-populated from discovery — the admin never types it.
+type WorkerSlotConfig struct {
+	Addr    string `json:"addr"`              // stable key — from worker's WORKER_ADDR env
+	Name    string `json:"name,omitempty"`    // admin-assigned friendly label
+	Encoder string `json:"encoder,omitempty"` // admin encoder override, "" = auto-detect
+}
+
+// WorkerFleet returns the fleet configuration, or a default (embedded enabled, no remotes).
+func (s *Service) WorkerFleet(ctx context.Context) WorkerFleetConfig {
+	raw := s.get(ctx, keyWorkerFleet)
+	if raw == "" {
+		return WorkerFleetConfig{EmbeddedEnabled: true}
+	}
+	var cfg WorkerFleetConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse worker_fleet", "err", err)
+		return WorkerFleetConfig{EmbeddedEnabled: true}
+	}
+	return cfg
+}
+
+// SetWorkerFleet persists the fleet configuration.
+func (s *Service) SetWorkerFleet(ctx context.Context, cfg WorkerFleetConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyWorkerFleet, string(b))
 }
 
 func (s *Service) get(ctx context.Context, key string) string {

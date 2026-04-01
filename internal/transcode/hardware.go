@@ -8,28 +8,44 @@ import (
 	"strings"
 )
 
+// EncoderEntry pairs an encoder with a human-friendly device label for the UI.
+type EncoderEntry struct {
+	Encoder Encoder `json:"encoder"`
+	Label   string  `json:"label"`
+}
+
 // DetectEncoders probes available hardware encoders at startup (ADR-028).
 // Returns encoders in priority order: NVENC → QSV → VAAPI → software.
 // override: comma-separated encoder list (e.g. "software"), empty = auto-detect.
 func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 	if override != "" {
-		return parseOverride(override), nil
+		return ParseOverride(override), nil
 	}
 
 	var available []Encoder
 
-	// Phase 1: device file check (Linux-only device paths).
-	hasNVIDIA := runtime.GOOS == "linux" && fileExists("/dev/nvidia0")
-	hasDRI := runtime.GOOS == "linux" && fileExists("/dev/dri/renderD128")
+	// On Linux, check device files first as a fast pre-filter.
+	// On Windows/macOS, skip device checks and probe FFmpeg directly.
+	// WSL2/Docker Desktop exposes GPU via /dev/dxg instead of /dev/nvidia0.
+	skipNVENC := runtime.GOOS == "linux" && !fileExists("/dev/nvidia0") && !fileExists("/dev/dxg")
+	skipDRI := runtime.GOOS == "linux" && !fileExists("/dev/dri/renderD128")
 
-	// Phase 2: FFmpeg null encode to verify the encoder actually works.
-	if hasNVIDIA {
+	// NVENC (NVIDIA GPU — works on Linux and Windows).
+	if !skipNVENC {
 		if probeEncoder(ctx, "h264_nvenc") {
 			available = append(available, EncoderNVENC)
 		}
 	}
 
-	if hasDRI {
+	// AMF (AMD GPU — Windows only).
+	if runtime.GOOS == "windows" {
+		if probeEncoder(ctx, "h264_amf") {
+			available = append(available, EncoderAMF)
+		}
+	}
+
+	// QSV / VAAPI (Intel — Linux only, requires DRI device).
+	if !skipDRI {
 		if probeEncoder(ctx, "h264_qsv") {
 			available = append(available, EncoderQSV)
 		} else if probeEncoder(ctx, "h264_vaapi") {
@@ -83,6 +99,13 @@ func probeEncoder(ctx context.Context, encoder string) bool {
 			"-c:v", "h264_vaapi",
 			"-f", "null", "-",
 		}
+	case "h264_amf":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1", "-c:v", "h264_amf",
+			"-f", "null", "-",
+		}
 	case "h264_qsv":
 		args = []string{
 			"-hide_banner", "-loglevel", "quiet",
@@ -98,15 +121,64 @@ func probeEncoder(ctx context.Context, encoder string) bool {
 	return cmd.Run() == nil
 }
 
-func parseOverride(override string) []Encoder {
+// detectGPUName tries to return a human-readable GPU name (e.g. "NVIDIA GeForce RTX 5080").
+// Falls back to a generic label based on the encoder type.
+func detectGPUName(ctx context.Context, enc Encoder) string {
+	switch enc {
+	case EncoderNVENC:
+		out, err := exec.CommandContext(ctx, "nvidia-smi",
+			"--query-gpu=name", "--format=csv,noheader").Output()
+		if err == nil {
+			name := strings.TrimSpace(strings.Split(string(out), "\n")[0])
+			if name != "" {
+				return name
+			}
+		}
+		return "NVIDIA GPU"
+	case EncoderAMF:
+		out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command",
+			"Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'AMD|Radeon' } | Select-Object -First 1 -ExpandProperty Name").Output()
+		if err == nil {
+			name := strings.TrimSpace(string(out))
+			if name != "" {
+				return name
+			}
+		}
+		return "AMD GPU"
+	case EncoderQSV:
+		return "Intel Quick Sync"
+	case EncoderVAAPI:
+		return "VA-API"
+	case EncoderSoftware:
+		return "Software (CPU)"
+	default:
+		return string(enc)
+	}
+}
+
+// EncoderEntries returns encoder entries with human-readable device labels.
+func EncoderEntries(ctx context.Context, encoders []Encoder) []EncoderEntry {
+	entries := make([]EncoderEntry, len(encoders))
+	for i, e := range encoders {
+		entries[i] = EncoderEntry{
+			Encoder: e,
+			Label:   detectGPUName(ctx, e),
+		}
+	}
+	return entries
+}
+
+func ParseOverride(override string) []Encoder {
 	var encoders []Encoder
 	for _, s := range strings.Split(override, ",") {
 		switch strings.TrimSpace(strings.ToLower(s)) {
-		case "nvenc":
+		case "nvenc", "h264_nvenc":
 			encoders = append(encoders, EncoderNVENC)
-		case "vaapi":
+		case "amf", "h264_amf":
+			encoders = append(encoders, EncoderAMF)
+		case "vaapi", "h264_vaapi":
 			encoders = append(encoders, EncoderVAAPI)
-		case "qsv":
+		case "qsv", "h264_qsv":
 			encoders = append(encoders, EncoderQSV)
 		case "software", "libx264":
 			encoders = append(encoders, EncoderSoftware)

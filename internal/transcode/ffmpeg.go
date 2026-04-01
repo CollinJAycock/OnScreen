@@ -11,6 +11,7 @@ type Encoder string
 
 const (
 	EncoderNVENC    Encoder = "h264_nvenc"
+	EncoderAMF      Encoder = "h264_amf"
 	EncoderVAAPI    Encoder = "h264_vaapi"
 	EncoderQSV      Encoder = "h264_qsv"
 	EncoderSoftware Encoder = "libx264"
@@ -73,11 +74,16 @@ func BuildHLS(a BuildArgs) []string {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		// NVENC: enable CUDA hardware decode (CUVID) when available; falls back to
-		// software decode transparently. hwupload_cuda in the filter chain handles
-		// the CPU→GPU copy when software decode is used.
+		// NVENC: enable CUDA hardware decode (CUVID) and keep decoded frames in
+		// GPU memory. -extra_hw_frames allocates additional decode surfaces to
+		// prevent pipeline stalls (matches Jellyfin's proven configuration).
 		if a.Encoder == EncoderNVENC {
-			args = append(args, "-hwaccel", "cuda")
+			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+				"-extra_hw_frames", "3")
+		}
+		// AMF: use D3D11VA hardware decode to keep the pipeline on the GPU.
+		if a.Encoder == EncoderAMF {
+			args = append(args, "-hwaccel", "d3d11va")
 		}
 	}
 
@@ -101,16 +107,31 @@ func BuildHLS(a BuildArgs) []string {
 			"-bufsize", fmt.Sprintf("%dk", a.BitrateKbps*2),
 		)
 
-		// NVENC-specific flags for streaming quality.
-		if a.Encoder == EncoderNVENC {
-			args = append(args, "-preset", "p4", "-tune", "ll")
+		// Encoder-specific flags.
+		switch a.Encoder {
+		case EncoderNVENC:
+			// Fixed GOP matching segment duration (assume ~30fps max → 120 frames
+			// for 4s segments). More reliable than -force_key_frames with NVENC.
+			gopSize := fmt.Sprint(SegmentDuration * 30)
+			args = append(args,
+				"-preset", "p4", "-tune", "ll",
+				"-g", gopSize, "-keyint_min", gopSize,
+				"-sc_threshold:v:0", "0",
+			)
+		case EncoderAMF:
+			gopSize := fmt.Sprint(SegmentDuration * 30)
+			args = append(args,
+				"-quality", "balanced", "-rc", "cbr",
+				"-g", gopSize, "-keyint_min", gopSize,
+				"-sc_threshold:v:0", "0",
+			)
+		default:
+			// Software / VAAPI / QSV — expression-based keyframes work fine.
+			args = append(args,
+				"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", SegmentDuration),
+				"-sc_threshold", "0",
+			)
 		}
-
-		// Force keyframes at segment boundaries for correct HLS seeking.
-		args = append(args,
-			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", SegmentDuration),
-			"-sc_threshold", "0",
-		)
 	}
 
 	// ── Stream mapping ───────────────────────────────────────────────────────
@@ -165,7 +186,9 @@ func BuildHLS(a BuildArgs) []string {
 		deleteThreshold = 150
 	}
 	args = append(args,
+		"-max_muxing_queue_size", "2048",
 		"-f", "hls",
+		"-max_delay", "5000000",
 		"-hls_time", fmt.Sprint(SegmentDuration),
 		"-hls_list_size", "0", // keep all segments in playlist
 		"-hls_segment_type", "mpegts",
@@ -222,10 +245,10 @@ func buildVideoFilter(a BuildArgs) string {
 	if a.Width > 0 && a.Height > 0 {
 		switch {
 		case a.Encoder == EncoderNVENC:
-			// GPU-side scaling via NPP: upload frames to CUDA memory, then scale.
-			// Caller pre-calculates AR-correct dimensions so no pad is needed.
-			filters = append(filters, "hwupload_cuda",
-				fmt.Sprintf("scale_npp=%d:%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
+			// GPU-side scaling via CUDA. -hwaccel_output_format cuda keeps frames on
+			// the GPU; scale_cuda does resize + 10-bit→NV12 conversion in one step.
+			filters = append(filters,
+				fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
 		case a.Encoder == EncoderVAAPI:
 			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 		default:

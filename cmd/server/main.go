@@ -279,6 +279,7 @@ func run() error {
 	userHandler := v1.NewUserHandler(userSvc).WithDB(gen.New(rwPool)).WithTokenMaker(tokenMaker, logger).WithAudit(auditLogger)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
+	settingsHandler.SetWorkerLister(sessionStore)
 	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
 	streamTracker := streaming.NewValkeyTracker(valkeyClient)
 	analyticsHandler := v1.NewAnalyticsHandler(gen.New(roPool), logger)
@@ -307,23 +308,50 @@ func run() error {
 	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
 	// single-node deployments. Encoder detection is best-effort; falls back to
 	// libx264 software encoding if ffmpeg/hardware is unavailable.
-	encoders, err := transcode.DetectEncoders(ctx, cfg.TranscodeEncoders)
+	//
+	// Priority: fleet config (DB) > DISABLE_EMBEDDED_WORKER env > default enabled.
+	fleetCfg := settingsSvc.WorkerFleet(ctx)
+
+	// Always auto-detect hardware for the settings UI encoder dropdown.
+	allEncoders, err := transcode.DetectEncoders(ctx, "")
 	if err != nil {
 		logger.Warn("encoder detection failed, defaulting to software", "err", err)
-		encoders = []transcode.Encoder{transcode.EncoderSoftware}
+		allEncoders = []transcode.Encoder{transcode.EncoderSoftware}
 	}
-	logger.Info("transcode encoders", "encoders", transcode.EncoderNames(encoders))
-	embeddedWorker := transcode.NewWorker(
-		transcode.WorkerID(),
-		"127.0.0.1:7073",
-		sessionStore,
-		encoders,
-		cfg.TranscodeMaxSessions,
-		logger,
-	)
+	settingsHandler.SetDetectedEncoders(transcode.EncoderEntries(ctx, allEncoders))
 
-	// Wire embedded worker into transcode handler so Stop can kill FFmpeg immediately.
-	nativeTranscodeHandler.SetSessionKiller(embeddedWorker)
+	embeddedEnabled := fleetCfg.EmbeddedEnabled && !cfg.DisableEmbeddedWorker
+	var embeddedWorker *transcode.Worker
+	if embeddedEnabled {
+		// Encoder priority: fleet config > DB transcode_encoders > env > auto-detect.
+		encoderOverride := fleetCfg.EmbeddedEncoder
+		if encoderOverride == "" {
+			encoderOverride = settingsSvc.TranscodeEncoders(ctx)
+		}
+		if encoderOverride == "" {
+			encoderOverride = cfg.TranscodeEncoders
+		}
+		var encoders []transcode.Encoder
+		if encoderOverride != "" {
+			encoders = transcode.ParseOverride(encoderOverride)
+		} else {
+			encoders = allEncoders
+		}
+		logger.Info("transcode encoders", "active", transcode.EncoderNames(encoders), "detected", transcode.EncoderNames(allEncoders))
+		embeddedWorker = transcode.NewWorker(
+			transcode.WorkerID(),
+			"127.0.0.1:7073",
+			sessionStore,
+			encoders,
+			cfg.TranscodeMaxSessions,
+			logger,
+		)
+
+		// Wire embedded worker into transcode handler so Stop can kill FFmpeg immediately.
+		nativeTranscodeHandler.SetSessionKiller(embeddedWorker)
+	} else {
+		logger.Info("embedded transcode worker disabled — using remote workers only")
+	}
 
 	// ── Email / SMTP (optional) ──────────────────────────────────────────────
 	emailSender := email.NewSender(email.Config{
@@ -496,12 +524,14 @@ func run() error {
 		return nil
 	})
 
-	g.Go(func() error {
-		if err := embeddedWorker.Start(gCtx); err != nil {
-			logger.Warn("transcode worker exited", "err", err)
-		}
-		return nil
-	})
+	if embeddedWorker != nil {
+		g.Go(func() error {
+			if err := embeddedWorker.Start(gCtx); err != nil {
+				logger.Warn("transcode worker exited", "err", err)
+			}
+			return nil
+		})
+	}
 
 	// Graceful shutdown on context cancellation (SIGTERM/SIGINT).
 	g.Go(func() error {

@@ -54,7 +54,10 @@ type Config struct {
 	TranscodeMaxSessions int    `env:"TRANSCODE_MAX_SESSIONS"`
 	// TranscodeEncoders overrides auto-detect; e.g. "nvenc,software" or "software".
 	TranscodeEncoders    string `env:"TRANSCODE_ENCODERS"`
-	TranscodeMaxBitrate  int    `env:"TRANSCODE_MAX_BITRATE_KBPS" envDefault:"40000"`
+	// DisableEmbeddedWorker skips the in-process transcode worker. Set to true
+	// when using standalone cmd/worker instances on dedicated GPU machines.
+	DisableEmbeddedWorker bool   `env:"DISABLE_EMBEDDED_WORKER" envDefault:"false"`
+	TranscodeMaxBitrate   int    `env:"TRANSCODE_MAX_BITRATE_KBPS" envDefault:"40000"`
 	TranscodeMaxWidth    int    `env:"TRANSCODE_MAX_WIDTH"        envDefault:"3840"`
 	TranscodeMaxHeight   int    `env:"TRANSCODE_MAX_HEIGHT"       envDefault:"2160"`
 
