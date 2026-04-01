@@ -338,6 +338,8 @@ func run() error {
 		} else {
 			encoders = allEncoders
 		}
+		// Safety: never use an encoder that wasn't actually detected.
+		encoders = transcode.FilterAvailable(encoders, allEncoders)
 		logger.Info("transcode encoders", "active", transcode.EncoderNames(encoders), "detected", transcode.EncoderNames(allEncoders))
 		embeddedWorker = transcode.NewWorker(
 			transcode.WorkerID(),

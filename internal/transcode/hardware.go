@@ -187,6 +187,25 @@ func EncoderEntries(ctx context.Context, encoders []Encoder) []EncoderEntry {
 	return entries
 }
 
+// FilterAvailable removes encoders from wanted that were not actually detected.
+// Always ensures at least EncoderSoftware is returned.
+func FilterAvailable(wanted, detected []Encoder) []Encoder {
+	avail := make(map[Encoder]bool, len(detected))
+	for _, e := range detected {
+		avail[e] = true
+	}
+	var result []Encoder
+	for _, e := range wanted {
+		if avail[e] {
+			result = append(result, e)
+		}
+	}
+	if len(result) == 0 {
+		result = append(result, EncoderSoftware)
+	}
+	return result
+}
+
 func ParseOverride(override string) []Encoder {
 	var encoders []Encoder
 	for _, s := range strings.Split(override, ",") {

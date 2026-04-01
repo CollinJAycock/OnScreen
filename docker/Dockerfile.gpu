@@ -1,6 +1,11 @@
-# GPU-enabled variant — uses Ubuntu for NVENC/VAAPI/QSV ffmpeg support.
-# Usage:
-#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up -d --build
+# GPU-enabled variant — NVIDIA CUDA base with nvenc-capable FFmpeg.
+# Requires: NVIDIA Container Toolkit on the host, GPU passthrough enabled.
+#
+# Build:
+#   docker build -f docker/Dockerfile.gpu -t onscreen:gpu ..
+#
+# Run (standalone):
+#   docker run --gpus all -e ... onscreen:gpu
 
 # ── Stage 1: build frontend ───────────────────────────────────────────────────
 FROM node:24-alpine AS frontend
@@ -31,16 +36,66 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     CGO_ENABLED=0 GOOS=linux go install github.com/pressly/goose/v3/cmd/goose@v3.24.1 && \
     cp $(go env GOPATH)/bin/goose /bin/goose
 
-# ── Stage 3: Ubuntu runtime with GPU-capable ffmpeg ───────────────────────────
-FROM ubuntu:24.04
+# ── Stage 3: build FFmpeg with nvenc support ──────────────────────────────────
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS ffmpeg-builder
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      ffmpeg \
-      ca-certificates \
-      tzdata \
-      wget && \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential nasm yasm pkg-config git wget \
+      libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
+      libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
+      libgnutls28-dev && \
     rm -rf /var/lib/apt/lists/*
+
+# NVIDIA codec headers (required for nvenc/nvdec)
+RUN git clone --depth 1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git /tmp/nv-codec-headers && \
+    cd /tmp/nv-codec-headers && make install
+
+ARG FFMPEG_VERSION=6.1.2
+RUN wget -q https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -O /tmp/ffmpeg.tar.bz2 && \
+    cd /tmp && tar xjf ffmpeg.tar.bz2
+
+RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
+    ./configure \
+      --prefix=/usr/local \
+      --enable-gpl \
+      --enable-nonfree \
+      --enable-cuda-nvcc \
+      --enable-nvenc \
+      --enable-nvdec \
+      --enable-cuvid \
+      --enable-libnpp \
+      --extra-cflags=-I/usr/local/cuda/include \
+      --extra-ldflags=-L/usr/local/cuda/lib64 \
+      --enable-libx264 \
+      --enable-libx265 \
+      --enable-libfdk-aac \
+      --enable-libmp3lame \
+      --enable-libopus \
+      --enable-libvorbis \
+      --enable-libvpx \
+      --enable-libass \
+      --enable-libfreetype \
+      --enable-gnutls \
+      --disable-static \
+      --enable-shared && \
+    make -j$(nproc) && \
+    make install
+
+# ── Stage 4: NVIDIA runtime with custom FFmpeg ───────────────────────────────
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
+
+# FFmpeg runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates tzdata wget \
+      libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
+      libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
+      libgnutls28-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy custom FFmpeg with nvenc support
+COPY --from=ffmpeg-builder /usr/local/bin/ff* /usr/local/bin/
+COPY --from=ffmpeg-builder /usr/local/lib/lib*.so* /usr/local/lib/
+RUN ldconfig
 
 # Non-root user
 RUN groupadd -r onscreen && useradd -r -g onscreen onscreen
@@ -51,6 +106,10 @@ COPY --from=builder /bin/worker  /usr/local/bin/worker
 COPY --from=builder /bin/goose   /usr/local/bin/goose
 
 COPY --chown=onscreen:onscreen internal/db/migrations /migrations
+
+# NVIDIA runtime env — makes nvidia-smi and GPU visible inside the container
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
 EXPOSE 7070 7071
 

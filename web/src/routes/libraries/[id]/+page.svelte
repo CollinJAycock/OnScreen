@@ -49,8 +49,8 @@
   let error = '';
   let enrichTimeout = '';
 
-  const PAGE = 120;
-  const BATCH = 36;
+  const PAGE = 48;
+  const BATCH = 24;
   let offset = 0;
   let total = 0;
   let hasMore = false;
@@ -88,9 +88,18 @@
   }
 
   function infiniteScroll(node: HTMLElement) {
-    const obs = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting && hasMore && !loadingItems) {
-        loadItems(true);
+    let pending = false;
+    const obs = new IntersectionObserver(async (entries) => {
+      if (entries[0]?.isIntersecting && hasMore && !loadingItems && !pending) {
+        pending = true;
+        await loadItems(true);
+        pending = false;
+        // Re-trigger: if sentinel is still visible after new items pushed it down,
+        // unobserve/re-observe so the observer re-evaluates
+        if (hasMore) {
+          obs.unobserve(node);
+          obs.observe(node);
+        }
       }
     }, { rootMargin: '600px' });
     obs.observe(node);
