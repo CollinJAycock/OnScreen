@@ -167,7 +167,10 @@
             {@const pct = s.duration_ms && s.duration_ms > 0 ? Math.min(100, (s.position_ms / s.duration_ms) * 100) : 0}
             <div class="stream-card">
               {#if s.poster_path}
-                <img class="stream-poster" src="/artwork/{s.poster_path}?w=150" alt={s.title} />
+                <img class="stream-poster" src="/artwork/{s.poster_path}?w=150"
+                     srcset="/artwork/{s.poster_path}?w=75 75w, /artwork/{s.poster_path}?w=150 150w, /artwork/{s.poster_path}?w=300 300w"
+                     sizes="80px"
+                     alt={s.title} />
               {:else}
                 <div class="stream-poster placeholder"></div>
               {/if}
@@ -322,7 +325,10 @@
               <div class="top-row">
                 <span class="top-rank">{i + 1}</span>
                 {#if item.poster_path}
-                  <img class="top-thumb" src="/artwork/{item.poster_path}?w=150" alt={item.title} />
+                  <img class="top-thumb" src="/artwork/{item.poster_path}?w=150"
+                       srcset="/artwork/{item.poster_path}?w=75 75w, /artwork/{item.poster_path}?w=150 150w, /artwork/{item.poster_path}?w=300 300w"
+                       sizes="48px"
+                       alt={item.title} loading="lazy" />
                 {:else}
                   <div class="top-thumb placeholder"></div>
                 {/if}

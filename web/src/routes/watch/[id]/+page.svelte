@@ -1487,7 +1487,10 @@
 
     <div class="detail-header">
       {#if item.poster_path}
-        <img class="detail-poster" src="/artwork/{item.poster_path}?v={item.updated_at}&w=300" alt="{item.title}" />
+        <img class="detail-poster" src="/artwork/{item.poster_path}?v={item.updated_at}&w=300"
+             srcset="/artwork/{item.poster_path}?v={item.updated_at}&w=150 150w, /artwork/{item.poster_path}?v={item.updated_at}&w=300 300w, /artwork/{item.poster_path}?v={item.updated_at}&w=600 600w"
+             sizes="(max-width: 768px) 120px, 220px"
+             alt="{item.title}" />
       {/if}
       <div class="detail-meta">
         <h1 class="detail-title">{item.title}</h1>
