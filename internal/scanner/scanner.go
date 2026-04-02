@@ -217,7 +217,19 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 	// Post-scan stale-file detection: any file the DB thinks is active but
 	// wasn't encountered on disk (e.g. after a scan-path change) gets marked
 	// missing so the frontend stops serving broken stream URLs.
-	s.markOrphanedFiles(ctx, libraryID, filePaths)
+	//
+	// Safety: skip orphan detection when the walk found very few files
+	// compared to what the DB expects. This prevents mass-marking files
+	// missing when the media volume is briefly unmounted (e.g. during
+	// container restarts). Threshold: walk must find at least 50% of
+	// known active files, otherwise it's likely a mount failure.
+	activeFiles, _ := s.media.ListActiveFilesForLibrary(ctx, libraryID)
+	if len(activeFiles) == 0 || len(filePaths) >= len(activeFiles)/2 {
+		s.markOrphanedFiles(ctx, libraryID, filePaths)
+	} else {
+		s.logger.WarnContext(ctx, "skipping orphan detection — walk found far fewer files than expected (possible mount issue)",
+			"library_id", libraryID, "walked", len(filePaths), "db_active", len(activeFiles))
+	}
 
 	if s.agent != nil && len(enrichQueue) > 0 {
 		enrichConc := fileConcurrency
