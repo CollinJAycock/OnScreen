@@ -1,8 +1,11 @@
+# syntax=docker/dockerfile:1
+
 # ── Stage 1: build frontend ───────────────────────────────────────────────────
 FROM node:24-alpine AS frontend
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
-RUN npm install --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
@@ -10,24 +13,24 @@ RUN npm run build
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
-# Download deps first (cached unless go.mod/go.sum change)
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy source
 COPY . .
-# Copy built frontend from stage 1 into the embed path
 COPY --from=frontend /app/web/dist ./internal/webui/dist
 
-# Build server, worker, and goose CLI
 ARG VERSION=dev
 ARG BUILD_TIME
-RUN CGO_ENABLED=0 GOOS=linux go build \
-      -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
-      -o /bin/server ./cmd/server && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build \
       -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
-      -o /bin/worker ./cmd/worker && \
+      -o /bin/server ./cmd/server & \
+    CGO_ENABLED=0 GOOS=linux go build \
+      -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+      -o /bin/worker ./cmd/worker & \
+    wait && \
     CGO_ENABLED=0 GOOS=linux go install github.com/pressly/goose/v3/cmd/goose@v3.24.1 && \
     cp $(go env GOPATH)/bin/goose /bin/goose
 

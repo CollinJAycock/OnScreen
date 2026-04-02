@@ -79,8 +79,11 @@ func TestBuildHLS_NVENC_Flags(t *testing.T) {
 	if !strings.Contains(argStr, "-preset p4") {
 		t.Errorf("expected NVENC -preset p4 in args: %s", argStr)
 	}
-	if !strings.Contains(argStr, "-tune ll") {
-		t.Errorf("expected NVENC -tune ll in args: %s", argStr)
+	if !strings.Contains(argStr, "-tune hq") {
+		t.Errorf("expected NVENC -tune hq in args: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-rc vbr") {
+		t.Errorf("expected NVENC -rc vbr in args: %s", argStr)
 	}
 }
 
@@ -422,8 +425,8 @@ func TestBuildHLS_HEVC_NVENC(t *testing.T) {
 	if !strings.Contains(argStr, "-profile:v main") {
 		t.Errorf("expected HEVC main profile: %s", argStr)
 	}
-	if !strings.Contains(argStr, "-level 150") {
-		t.Errorf("expected HEVC level 5.0 (150): %s", argStr)
+	if strings.Contains(argStr, "-level") {
+		t.Errorf("HEVC NVENC should auto-select level, not force one: %s", argStr)
 	}
 	if !strings.Contains(argStr, "-g 120") {
 		t.Errorf("expected fixed GOP for NVENC: %s", argStr)

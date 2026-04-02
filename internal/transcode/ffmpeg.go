@@ -129,27 +129,33 @@ func BuildHLS(a BuildArgs) []string {
 		}
 
 		// Scale filter is embedded in vf; set codec and bitrate.
+		// Allow 50% headroom above target so NVENC doesn't choke on complex
+		// scenes — tight CBR (maxrate==b:v) can cause encoder init failures at 4K.
+		maxrate := a.BitrateKbps + a.BitrateKbps/2
 		args = append(args,
 			"-c:v", string(a.Encoder),
 			"-b:v", fmt.Sprintf("%dk", a.BitrateKbps),
-			"-maxrate", fmt.Sprintf("%dk", a.BitrateKbps),
-			"-bufsize", fmt.Sprintf("%dk", a.BitrateKbps*2),
+			"-maxrate", fmt.Sprintf("%dk", maxrate),
+			"-bufsize", fmt.Sprintf("%dk", maxrate*2),
 		)
 
 		// Encoder-specific flags.
+		// TODO: make preset, tune, rc mode, and maxrate ratio configurable per
+		// deployment so operators can tune for their GPU model and upload bandwidth.
 		switch a.Encoder {
 		case EncoderNVENC, EncoderHEVCNVENC:
 			// Fixed GOP matching segment duration (assume ~30fps max → 120 frames
 			// for 4s segments). More reliable than -force_key_frames with NVENC.
 			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
-				"-preset", "p4", "-tune", "ll",
+				"-preset", "p4", "-tune", "hq",
+				"-rc", "vbr",
 				"-g", gopSize, "-keyint_min", gopSize,
 				"-sc_threshold:v:0", "0",
 			)
-			// HEVC profile + level for 4K compatibility (Level 5.0 = 4K@30fps).
+			// HEVC: main profile, let NVENC auto-select the level from resolution.
 			if a.Encoder == EncoderHEVCNVENC {
-				args = append(args, "-profile:v", "main", "-level", "150")
+				args = append(args, "-profile:v", "main")
 			}
 		case EncoderAMF:
 			gopSize := fmt.Sprint(SegmentDuration * 30)
