@@ -228,6 +228,10 @@ func (m *mockQuerier) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]stri
 func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]File, error) {
 	return nil, nil
 }
+func (m *mockQuerier) DeleteMissingFilesByLibrary(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockQuerier) SoftDeleteItemsWithNoActiveFiles(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
 
 func newService(t *testing.T) (*Service, *mockQuerier) {
 	t.Helper()

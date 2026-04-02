@@ -89,6 +89,10 @@
 
   function infiniteScroll(node: HTMLElement) {
     let pending = false;
+    // Use the actual scroll container (.main) as root so rootMargin works correctly.
+    // With root: null the viewport is used, but .main is the real scroll ancestor
+    // (the shell has overflow: hidden), so the 600px margin never fires early.
+    const scrollRoot = node.closest('main') as HTMLElement | null;
     const obs = new IntersectionObserver(async (entries) => {
       if (entries[0]?.isIntersecting && hasMore && !loadingItems && !pending) {
         pending = true;
@@ -101,7 +105,7 @@
           obs.observe(node);
         }
       }
-    }, { rootMargin: '600px' });
+    }, { root: scrollRoot, rootMargin: '600px' });
     obs.observe(node);
     return { destroy() { obs.disconnect(); } };
   }

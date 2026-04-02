@@ -535,6 +535,14 @@ func (a *mediaAdapter) ListActiveFilesForLibrary(ctx context.Context, libraryID 
 	return out, nil
 }
 
+func (a *mediaAdapter) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
+	return a.q.DeleteMissingFilesByLibrary(ctx, libraryID)
+}
+
+func (a *mediaAdapter) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error {
+	return a.q.SoftDeleteItemsWithNoActiveFiles(ctx, libraryID)
+}
+
 // Stub methods for media.Querier — worker doesn't need filtered listing.
 func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
 	return a.ListMediaItems(ctx, libraryID, itemType, limit, offset)

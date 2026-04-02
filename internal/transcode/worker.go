@@ -28,6 +28,7 @@ type Worker struct {
 	store          *SessionStore
 	encoders       []Encoder
 	encoderLabels  map[string]string // encoder → human label, detected once at startup
+	hasTonemapCuda bool              // tonemap_cuda filter available in FFmpeg
 	logger         *slog.Logger
 	activeSessions atomic.Int32
 	maxSessions    int
@@ -40,21 +41,23 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	if maxSessions <= 0 {
 		maxSessions = 4
 	}
-	// Detect GPU labels now while we have hardware access.
-	labels := make(map[string]string, len(encoders))
+	// Detect GPU labels and filter capabilities while we have hardware access.
 	ctx := context.Background()
+	labels := make(map[string]string, len(encoders))
 	for _, e := range encoders {
 		labels[string(e)] = detectGPUName(ctx, e)
 	}
+	hasTonemap := ProbeFilter(ctx, "tonemap_cuda")
 	return &Worker{
-		id:            id,
-		addr:          addr,
-		store:         store,
-		encoders:      encoders,
-		encoderLabels: labels,
-		maxSessions:   maxSessions,
-		logger:        logger,
-		activeJobs:    make(map[string]*os.Process),
+		id:             id,
+		addr:           addr,
+		store:          store,
+		encoders:       encoders,
+		encoderLabels:  labels,
+		hasTonemapCuda: hasTonemap,
+		maxSessions:    maxSessions,
+		logger:         logger,
+		activeJobs:     make(map[string]*os.Process),
 	}
 }
 
@@ -76,6 +79,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"addr", w.addr,
 		"encoders", EncoderNames(w.encoders),
 		"max_sessions", w.maxSessions,
+		"tonemap_cuda", w.hasTonemapCuda,
 	)
 
 	return w.jobLoop(ctx)
@@ -166,6 +170,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 		if enc == "" {
 			enc = BestEncoder(w.encoders)
 		}
+		// Use HEVC output encoder when requested and available.
+		if job.PreferHEVC && !IsHEVCEncoder(enc) {
+			if hevc := BestHEVCEncoder(w.encoders); hevc != "" {
+				enc = hevc
+			}
+		}
 		ffArgs = BuildHLS(BuildArgs{
 			InputPath:        job.FilePath,
 			StartOffset:      job.StartOffsetSec,
@@ -176,6 +186,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			Height:           job.Height,
 			BitrateKbps:      job.BitrateKbps,
 			NeedsToneMap:     job.NeedsToneMap,
+			HasTonemapCuda:   w.hasTonemapCuda,
 			AudioCodec:       job.AudioCodec,
 			AudioChannels:    job.AudioChannels,
 			AudioStreamIndex: job.AudioStreamIndex,

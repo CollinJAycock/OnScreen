@@ -92,6 +92,14 @@
   ]);
   // Containers browsers handle reliably for direct play (faststart MP4/MOV/WebM).
   const browserContainers = new Set(['mp4', 'webm', 'mov']);
+  // Detect HEVC (H.265) playback support via MediaSource Extensions.
+  // HLS.js transmuxes MPEG-TS → fMP4 before feeding MSE, so check mp4 not mp2t.
+  let clientSupportsHEVC = false;
+  try {
+    clientSupportsHEVC = typeof MediaSource !== 'undefined' &&
+      MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"');
+  } catch { /* MSE unavailable */ }
+
   // Video codecs browsers can decode natively.
   const browserVideoCodecs = new Set(['h264', 'vp8', 'vp9', 'av1']);
   // Video codecs that can be stream-copied (remuxed) into MPEG-TS for HLS.js.
@@ -99,9 +107,25 @@
   // WebM-only — putting them in MPEG-TS produces an unplayable stream.
   const remuxableVideoCodecs = new Set(['h264']);
 
+  // HEVC direct play / remux: if the browser can hardware-decode H.265,
+  // treat it like H.264 — direct play from MP4, remux from MKV.
+  if (clientSupportsHEVC) {
+    browserVideoCodecs.add('hevc');
+    browserVideoCodecs.add('h265');
+    remuxableVideoCodecs.add('hevc');
+    remuxableVideoCodecs.add('h265');
+  }
+
+  // HDR display detection — avoid direct play/remux of HDR content on SDR screens
+  // (video plays but looks washed out without tonemapping).
+  const clientSupportsHDR = typeof window !== 'undefined' &&
+    window.matchMedia('(dynamic-range: high)').matches;
+
   /** True when the browser can play this file directly — compatible container + codecs + faststart. */
   function canDirectPlay(file: ItemFile | undefined): boolean {
     if (!file) return false;
+    // HDR content on an SDR display needs tonemapping — can't direct play.
+    if (file.hdr_type && !clientSupportsHDR) return false;
     const container = (file.container ?? '').toLowerCase();
     const videoCodec = (file.video_codec ?? '').toLowerCase();
     const audioCodec = (file.audio_codec ?? '').toLowerCase();
@@ -118,6 +142,8 @@
   /** True when the video can be stream-copied (remuxed) into MPEG-TS HLS instead of re-encoded. */
   function canRemuxVideo(file: ItemFile | undefined): boolean {
     if (!file) return false;
+    // HDR content on an SDR display needs tonemapping — can't remux.
+    if (file.hdr_type && !clientSupportsHDR) return false;
     const videoCodec = (file.video_codec ?? '').toLowerCase();
     return remuxableVideoCodecs.has(videoCodec);
   }
@@ -451,9 +477,10 @@
       await switchToTranscode(0, posMs, true);
     } else {
       // Full transcode needed (non-browser video codec like HEVC/VC-1/MPEG-2).
-      // Default to 1080p — transcoding 4K→4K is too slow for real-time playback
-      // and wastes GPU/CPU. Users can manually select 4K from the quality picker.
-      const match = availableQualities.find(q => q.height === 1080)
+      // Match source resolution: 4K sources default to 4K, everything else to 1080p.
+      const sourceH = file.resolution_h ?? 0;
+      const defaultHeight = sourceH >= 2160 ? 2160 : 1080;
+      const match = availableQualities.find(q => q.height === defaultHeight)
                  ?? availableQualities.find(q => q.height > 0)
                  ?? qualityOptions[2]; // 1080p fallback
       selectedQuality = match;
@@ -519,7 +546,7 @@
 
     try {
       const audioIdx = selectedAudioIndex >= 0 ? selectedAudioIndex : undefined;
-      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx);
+      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC);
       transcodeSessionId = sess.session_id;
       transcodeToken = sess.token;
       attachHls(sess.playlist_url, posMs / 1000, wasPlaying, videoCopy);

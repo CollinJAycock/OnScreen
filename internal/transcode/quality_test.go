@@ -55,8 +55,8 @@ func TestSelectQuality_NoUpscaleBeyondSource(t *testing.T) {
 func TestSelectQuality_ZeroServerCapsDefaultToMax(t *testing.T) {
 	serverCaps := ServerCaps{} // zero = no limits
 	q := SelectQuality(0, 0, 0, 0, 0, serverCaps)
-	if q.Bitrate != 20000 {
-		t.Errorf("want default bitrate 20000, got %d", q.Bitrate)
+	if q.Bitrate != 40000 {
+		t.Errorf("want default bitrate 40000, got %d", q.Bitrate)
 	}
 	if q.MaxWidth != 3840 {
 		t.Errorf("want default width 3840, got %d", q.MaxWidth)

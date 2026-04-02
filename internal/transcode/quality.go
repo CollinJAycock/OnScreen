@@ -9,12 +9,22 @@ type QualityProfile struct {
 }
 
 // Profiles is the quality ladder for transcode output (ADR-017).
+// Bitrates are H.264 reference values; HEVC output scales by HEVCBitrateRatio.
 var Profiles = []QualityProfile{
-	{Name: "20 Mbps 4K", Bitrate: 20000, MaxWidth: 3840, MaxHeight: 2160},
+	{Name: "40 Mbps 4K", Bitrate: 40000, MaxWidth: 3840, MaxHeight: 2160},
 	{Name: "8 Mbps 1080p", Bitrate: 8000, MaxWidth: 1920, MaxHeight: 1080},
 	{Name: "4 Mbps 720p", Bitrate: 4000, MaxWidth: 1280, MaxHeight: 720},
 	{Name: "2 Mbps 720p", Bitrate: 2000, MaxWidth: 1280, MaxHeight: 720},
 	{Name: "1 Mbps 480p", Bitrate: 1000, MaxWidth: 854, MaxHeight: 480},
+}
+
+// HEVCBitrateRatio is the HEVC-to-H.264 efficiency factor.
+// HEVC achieves equivalent quality at ~60% of the H.264 bitrate.
+const HEVCBitrateRatio = 0.6
+
+// ScaleBitrateForHEVC adjusts a reference H.264 bitrate for HEVC output.
+func ScaleBitrateForHEVC(h264Bitrate int) int {
+	return int(float64(h264Bitrate) * HEVCBitrateRatio)
 }
 
 // SelectQuality picks the effective quality from client request params + server caps (ADR-017).

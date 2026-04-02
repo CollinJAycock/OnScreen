@@ -287,6 +287,20 @@ func (q *Queries) CreateMediaItem(ctx context.Context, arg CreateMediaItemParams
 	return i, err
 }
 
+const deleteMissingFilesByLibrary = `-- name: DeleteMissingFilesByLibrary :exec
+UPDATE media_files
+SET status = 'deleted'
+WHERE status = 'missing'
+  AND media_item_id IN (
+      SELECT id FROM media_items WHERE library_id = $1 AND deleted_at IS NULL
+  )
+`
+
+func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteMissingFilesByLibrary, libraryID)
+	return err
+}
+
 const getMediaFile = `-- name: GetMediaFile :one
 
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
@@ -2419,6 +2433,22 @@ func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaIte
 		return nil, err
 	}
 	return items, nil
+}
+
+const softDeleteItemsWithNoActiveFiles = `-- name: SoftDeleteItemsWithNoActiveFiles :exec
+UPDATE media_items
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE library_id = $1
+  AND deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM media_files
+      WHERE media_files.media_item_id = media_items.id AND media_files.status = 'active'
+  )
+`
+
+func (q *Queries) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteItemsWithNoActiveFiles, libraryID)
+	return err
 }
 
 const softDeleteMediaItem = `-- name: SoftDeleteMediaItem :exec

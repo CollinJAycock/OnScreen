@@ -457,6 +457,24 @@ FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';
 
+-- name: DeleteMissingFilesByLibrary :exec
+UPDATE media_files
+SET status = 'deleted'
+WHERE status = 'missing'
+  AND media_item_id IN (
+      SELECT id FROM media_items WHERE library_id = $1 AND deleted_at IS NULL
+  );
+
+-- name: SoftDeleteItemsWithNoActiveFiles :exec
+UPDATE media_items
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE library_id = $1
+  AND deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM media_files
+      WHERE media_files.media_item_id = media_items.id AND media_files.status = 'active'
+  );
+
 -- name: ListMissingFilesOlderThan :many
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,

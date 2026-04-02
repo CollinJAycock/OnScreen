@@ -103,14 +103,18 @@ func (m *mockMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateI
 	return nil, errors.New("not found")
 }
 
-func (m *mockMediaService) MarkFileActive(_ context.Context, _ uuid.UUID) error { return nil }
-func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error    { return nil }
+func (m *mockMediaService) MarkFileActive(_ context.Context, _ uuid.UUID) error    { return nil }
+func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error       { return nil }
+func (m *mockMediaService) DeleteFile(_ context.Context, _ uuid.UUID) error        { return nil }
+func (m *mockMediaService) SoftDeleteItemIfEmpty(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockMediaService) GetFiles(_ context.Context, _ uuid.UUID) ([]media.File, error) {
 	return nil, nil
 }
 func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]media.File, error) {
 	return nil, nil
 }
+func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) error  { return nil }
+func (m *mockMediaService) CleanupEmptyItems(_ context.Context, _ uuid.UUID) error    { return nil }
 
 func newTestScanner(svc *mockMediaService) *Scanner {
 	return New(svc, nil, nil, slog.Default())

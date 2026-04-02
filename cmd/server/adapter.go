@@ -684,6 +684,14 @@ func (a *mediaAdapter) ListActiveFilesForLibrary(ctx context.Context, libraryID 
 	return out, nil
 }
 
+func (a *mediaAdapter) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
+	return a.q.DeleteMissingFilesByLibrary(ctx, libraryID)
+}
+
+func (a *mediaAdapter) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error {
+	return a.q.SoftDeleteItemsWithNoActiveFiles(ctx, libraryID)
+}
+
 func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]media.File, error) {
 	fs, err := a.q.ListMissingFilesOlderThan(ctx, pgtype.Timestamptz{Time: before, Valid: true})
 	if err != nil {

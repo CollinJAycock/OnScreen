@@ -298,7 +298,7 @@ func TestBuildHLS_AMF_NoNVENCHwaccel(t *testing.T) {
 	}
 }
 
-func TestBuildHLS_NVENC_ScaleCuda(t *testing.T) {
+func TestBuildHLS_NVENC_CudaHwaccel(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath:     "/media/movie.mkv",
 		Encoder:       EncoderNVENC,
@@ -311,22 +311,25 @@ func TestBuildHLS_NVENC_ScaleCuda(t *testing.T) {
 	})
 	argStr := strings.Join(args, " ")
 
-	// NVENC uses CUDA hwaccel pipeline.
+	// NVENC uses full CUDA hardware pipeline (Jellyfin-style flags).
 	if !strings.Contains(argStr, "-hwaccel cuda") {
 		t.Errorf("expected -hwaccel cuda: %s", argStr)
 	}
 	if !strings.Contains(argStr, "-hwaccel_output_format cuda") {
 		t.Errorf("expected -hwaccel_output_format cuda: %s", argStr)
 	}
-	if !strings.Contains(argStr, "-extra_hw_frames 3") {
-		t.Errorf("expected -extra_hw_frames 3: %s", argStr)
+	if !strings.Contains(argStr, "-hwaccel_flags +unsafe_output") {
+		t.Errorf("expected -hwaccel_flags +unsafe_output: %s", argStr)
 	}
-	// GPU-side scaling with format conversion.
+	if !strings.Contains(argStr, "-threads 1") {
+		t.Errorf("expected -threads 1: %s", argStr)
+	}
+	// GPU-side scale_cuda with format=nv12 for 10-bit → 8-bit conversion.
 	if !strings.Contains(argStr, "scale_cuda") {
 		t.Errorf("expected scale_cuda filter: %s", argStr)
 	}
 	if !strings.Contains(argStr, "format=nv12") {
-		t.Errorf("expected format=nv12 in scale_cuda for 10-bit support: %s", argStr)
+		t.Errorf("expected format=nv12 in scale_cuda: %s", argStr)
 	}
 	// Fixed GOP (not expression-based).
 	if strings.Contains(argStr, "-force_key_frames") {
@@ -334,6 +337,99 @@ func TestBuildHLS_NVENC_ScaleCuda(t *testing.T) {
 	}
 	if !strings.Contains(argStr, "-g 120") {
 		t.Errorf("expected fixed GOP -g 120: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_TonemapCuda(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/hdr_movie.mkv",
+		Encoder:        EncoderNVENC,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		NeedsToneMap:   true,
+		HasTonemapCuda: true,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/sessions/x",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	// HDR→SDR: tonemap_cuda + scale_cuda — frames already in CUDA from hwdec.
+	if !strings.Contains(argStr, "tonemap_cuda") {
+		t.Errorf("expected tonemap_cuda for HDR→SDR: %s", argStr)
+	}
+	if !strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("expected scale_cuda in tonemap pipeline: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("expected CUDA hwaccel with tonemap_cuda available: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_TonemapFallback(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/hdr_movie.mkv",
+		Encoder:        EncoderNVENC,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		NeedsToneMap:   true,
+		HasTonemapCuda: false,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/sessions/x",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	// No CUDA hwaccel — software decode + zscale tonemap + NVENC encode.
+	if strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("should NOT use CUDA hwaccel without tonemap_cuda: %s", argStr)
+	}
+	// Software tonemap via zscale.
+	if !strings.Contains(argStr, "zscale") {
+		t.Errorf("expected zscale software tonemap fallback: %s", argStr)
+	}
+	if !strings.Contains(argStr, "tonemap=tonemap=hable") {
+		t.Errorf("expected hable tonemap: %s", argStr)
+	}
+	// Still uses NVENC for encoding.
+	if !strings.Contains(argStr, "-c:v h264_nvenc") {
+		t.Errorf("expected h264_nvenc encoder despite tonemap fallback: %s", argStr)
+	}
+}
+
+func TestBuildHLS_HEVC_NVENC(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k_movie.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		Width:         3840,
+		Height:        2160,
+		BitrateKbps:   24000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	// HEVC NVENC also gets full CUDA hwaccel pipeline.
+	if !strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("expected -hwaccel cuda for HEVC NVENC: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-c:v hevc_nvenc") {
+		t.Errorf("expected -c:v hevc_nvenc: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-profile:v main") {
+		t.Errorf("expected HEVC main profile: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-level 150") {
+		t.Errorf("expected HEVC level 5.0 (150): %s", argStr)
+	}
+	if !strings.Contains(argStr, "-g 120") {
+		t.Errorf("expected fixed GOP for NVENC: %s", argStr)
+	}
+	if !strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("expected scale_cuda for GPU pipeline: %s", argStr)
 	}
 }
 
@@ -416,5 +512,63 @@ func TestBuildVideoFilter_Empty_NoScaleNoTonemap(t *testing.T) {
 	})
 	if vf != "" {
 		t.Errorf("expected empty filter chain, got: %s", vf)
+	}
+}
+
+func TestBuildHLS_HEVC_Software(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k_hdr_movie.mkv",
+		Encoder:       EncoderHEVCSoftware,
+		Width:         3840,
+		Height:        2160,
+		BitrateKbps:   20000,
+		NeedsToneMap:  true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-c:v libx265") {
+		t.Errorf("expected -c:v libx265: %s", argStr)
+	}
+	// Software HEVC should use zscale tonemap when NeedsToneMap is set.
+	if !strings.Contains(argStr, "zscale") {
+		t.Errorf("expected zscale tonemap for software HEVC: %s", argStr)
+	}
+	if !strings.Contains(argStr, "tonemap=") {
+		t.Errorf("expected tonemap filter for HDR→SDR: %s", argStr)
+	}
+	// Should NOT use CUDA hwaccel.
+	if strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("software encoder should not use CUDA hwaccel: %s", argStr)
+	}
+}
+
+func TestBuildHLS_HEVC_NVENC_NoTonemap(t *testing.T) {
+	// 4K HEVC SDR — NVENC encode, no tonemapping needed.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/4k_sdr_movie.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		Width:          3840,
+		Height:         2160,
+		BitrateKbps:    24000,
+		NeedsToneMap:   false,
+		HasTonemapCuda: true,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/sessions/x",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-c:v hevc_nvenc") {
+		t.Errorf("expected -c:v hevc_nvenc: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("expected -hwaccel cuda for HEVC NVENC: %s", argStr)
+	}
+	// No tonemap filters when HDR is not involved.
+	if strings.Contains(argStr, "tonemap") {
+		t.Errorf("should not have tonemap filter without HDR content: %s", argStr)
 	}
 }

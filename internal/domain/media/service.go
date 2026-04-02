@@ -124,6 +124,8 @@ type Querier interface {
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
 	ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error)
+	DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error
+	SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error
 }
 
 // CreateItemParams holds the input for creating a media item.
@@ -380,10 +382,33 @@ func (s *Service) MarkMissing(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// DeleteFile marks a file as deleted immediately (skipping the missing grace period).
+func (s *Service) DeleteFile(ctx context.Context, id uuid.UUID) error {
+	if err := s.rw.MarkMediaFileDeleted(ctx, id); err != nil {
+		return fmt.Errorf("delete file %s: %w", id, err)
+	}
+	return nil
+}
+
+// SoftDeleteItemIfEmpty soft-deletes a media item if all its files are deleted.
+func (s *Service) SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error {
+	return s.rw.SoftDeleteMediaItemIfAllFilesDeleted(ctx, id)
+}
+
 // ListActiveFilesForLibrary returns all active files whose parent item belongs
 // to the given library. Used by the scanner to detect orphaned file records.
 func (s *Service) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error) {
 	return s.rw.ListActiveFilesForLibrary(ctx, libraryID)
+}
+
+// CleanupMissingFiles promotes all missing files to deleted for a library.
+func (s *Service) CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error {
+	return s.rw.DeleteMissingFilesByLibrary(ctx, libraryID)
+}
+
+// CleanupEmptyItems soft-deletes items with no active files for a library.
+func (s *Service) CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error {
+	return s.rw.SoftDeleteItemsWithNoActiveFiles(ctx, libraryID)
 }
 
 // PromoteExpiredMissing finds files that have been missing longer than the

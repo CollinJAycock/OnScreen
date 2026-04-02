@@ -424,7 +424,7 @@ func workerScore(w WorkerRegistration) int {
 
 func isGPUEncoder(enc string) bool {
 	switch Encoder(enc) {
-	case EncoderNVENC, EncoderAMF, EncoderQSV, EncoderVAAPI:
+	case EncoderNVENC, EncoderHEVCNVENC, EncoderAMF, EncoderQSV, EncoderVAAPI:
 		return true
 	}
 	return false
@@ -446,6 +446,7 @@ type TranscodeJob struct {
 	AudioStreamIndex int      `json:"audio_stream_index"` // -1 = default
 	NeedsToneMap     bool     `json:"needs_tone_map"`
 	IsHEVC           bool     `json:"is_hevc"`
+	PreferHEVC       bool     `json:"prefer_hevc"`        // request HEVC output (4K + client supports it)
 	SubtitleStreams  []int    `json:"subtitle_streams,omitempty"`
 	EnqueuedAt      time.Time `json:"enqueued_at"`
 }

@@ -54,8 +54,12 @@ type MediaService interface {
 	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
+	DeleteFile(ctx context.Context, id uuid.UUID) error
+	SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
+	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error
+	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 }
 
 // ConcurrencyProvider lets the scanner read current concurrency limits from
@@ -229,6 +233,16 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 	} else {
 		s.logger.WarnContext(ctx, "skipping orphan detection — walk found far fewer files than expected (possible mount issue)",
 			"library_id", libraryID, "walked", len(filePaths), "db_active", len(activeFiles))
+	}
+
+	// Clean up stale missing files from prior scans and remove items with
+	// no remaining active files. This catches files that were already
+	// status='missing' and invisible to the active-only orphan check above.
+	if err := s.media.CleanupMissingFiles(ctx, libraryID); err != nil {
+		s.logger.WarnContext(ctx, "cleanup missing files failed", "library_id", libraryID, "err", err)
+	}
+	if err := s.media.CleanupEmptyItems(ctx, libraryID); err != nil {
+		s.logger.WarnContext(ctx, "cleanup empty items failed", "library_id", libraryID, "err", err)
 	}
 
 	if s.agent != nil && len(enrichQueue) > 0 {
@@ -691,9 +705,9 @@ func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool 
 	return false
 }
 
-// markOrphanedFiles marks any DB-active files for this library that were not
-// seen during the current scan pass as missing. This handles scan-path changes
-// where old file records would otherwise remain "active" with broken paths.
+// markOrphanedFiles deletes any DB-active files for this library that were not
+// seen during the current scan pass, and soft-deletes parent items that have no
+// remaining files. This handles scan-path changes and removed media.
 func (s *Scanner) markOrphanedFiles(ctx context.Context, libraryID uuid.UUID, seenPaths []string) {
 	seen := make(map[string]struct{}, len(seenPaths))
 	for _, p := range seenPaths {
@@ -706,15 +720,26 @@ func (s *Scanner) markOrphanedFiles(ctx context.Context, libraryID uuid.UUID, se
 			"library_id", libraryID, "err", err)
 		return
 	}
+
+	affected := map[uuid.UUID]struct{}{}
 	for _, f := range active {
 		if _, ok := seen[f.FilePath]; !ok {
-			if err := s.media.MarkMissing(ctx, f.ID); err != nil {
-				s.logger.WarnContext(ctx, "mark orphaned file missing",
+			if err := s.media.DeleteFile(ctx, f.ID); err != nil {
+				s.logger.WarnContext(ctx, "delete orphaned file",
 					"file_id", f.ID, "path", f.FilePath, "err", err)
 			} else {
-				s.logger.InfoContext(ctx, "marked orphaned file missing",
+				s.logger.InfoContext(ctx, "deleted orphaned file",
 					"file_id", f.ID, "path", f.FilePath)
+				affected[f.MediaItemID] = struct{}{}
 			}
+		}
+	}
+
+	// Cascade: soft-delete parent items with no remaining files.
+	for itemID := range affected {
+		if err := s.media.SoftDeleteItemIfEmpty(ctx, itemID); err != nil {
+			s.logger.WarnContext(ctx, "soft-delete empty item after orphan removal",
+				"item_id", itemID, "err", err)
 		}
 	}
 }

@@ -82,10 +82,11 @@ func (h *NativeTranscodeHandler) SetSessionKiller(k SessionKiller) {
 
 type transcodeStartRequest struct {
 	FileID           *string `json:"file_id,omitempty"`
-	Height           int     `json:"height"`             // 0 = no constraint (use source height)
-	PositionMS       int64   `json:"position_ms"`        // start offset in ms
-	VideoCopy        bool    `json:"video_copy"`         // true = copy video stream, only transcode audio
-	AudioStreamIndex *int    `json:"audio_stream_index"` // nil = default (first) audio stream
+	Height           int     `json:"height"`              // 0 = no constraint (use source height)
+	PositionMS       int64   `json:"position_ms"`         // start offset in ms
+	VideoCopy        bool    `json:"video_copy"`          // true = copy video stream, only transcode audio
+	AudioStreamIndex *int    `json:"audio_stream_index"`  // nil = default (first) audio stream
+	SupportsHEVC     bool    `json:"supports_hevc"`       // client can decode HEVC (H.265) output
 }
 
 type transcodeStartResponse struct {
@@ -245,6 +246,18 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		audioStreamIdx = *body.AudioStreamIndex
 	}
 
+	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
+	isSourceHDR := file.HDRType != nil && *file.HDRType != ""
+
+	// Use HEVC output for 4K when client supports it — 40% bitrate savings.
+	preferHEVC := body.SupportsHEVC && height >= 2160 && !body.VideoCopy
+
+	// Scale bitrate down for HEVC efficiency (same visual quality at lower bitrate).
+	jobBitrate := bitrateKbps
+	if preferHEVC {
+		jobBitrate = transcode.ScaleBitrateForHEVC(bitrateKbps)
+	}
+
 	job := transcode.TranscodeJob{
 		SessionID:        sessionID,
 		FilePath:         file.FilePath,
@@ -254,11 +267,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		Encoder:          encoder,
 		Width:            width,
 		Height:           height,
-		BitrateKbps:      bitrateKbps,
+		BitrateKbps:      jobBitrate,
 		AudioCodec:       "aac",
 		AudioChannels:    2,
 		AudioStreamIndex: audioStreamIdx,
-		IsHEVC:          file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265")),
+		IsHEVC:           isSourceHEVC,
+		NeedsToneMap:     isSourceHDR && !body.VideoCopy,
+		PreferHEVC:       preferHEVC,
 		EnqueuedAt:       time.Now(),
 	}
 	workerAddr, err := h.sessions.DispatchJob(ctx, job)

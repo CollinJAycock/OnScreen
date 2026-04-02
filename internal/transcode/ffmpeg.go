@@ -15,6 +15,10 @@ const (
 	EncoderVAAPI    Encoder = "h264_vaapi"
 	EncoderQSV      Encoder = "h264_qsv"
 	EncoderSoftware Encoder = "libx264"
+
+	// HEVC (H.265) output encoders — used for 4K to reduce bitrate ~40%.
+	EncoderHEVCNVENC    Encoder = "hevc_nvenc"
+	EncoderHEVCSoftware Encoder = "libx265"
 )
 
 // BuildArgs holds the inputs needed to construct an FFmpeg HLS transcode command.
@@ -28,9 +32,10 @@ type BuildArgs struct {
 	Width       int
 	Height      int
 	BitrateKbps int
-	NeedsToneMap bool // HDR→SDR tone mapping (ADR-030)
-	IsVAAPI      bool // VAAPI needs hwupload filter
-	IsHEVC       bool // source is HEVC — use explicit cuvid decoder for NVENC
+	NeedsToneMap   bool // HDR→SDR tone mapping (ADR-030)
+	HasTonemapCuda bool // tonemap_cuda filter available in FFmpeg
+	IsVAAPI        bool // VAAPI needs hwupload filter
+	IsHEVC         bool // source is HEVC (informational, NVDEC auto-selects decoder)
 
 	// Audio (ADR-018)
 	AudioCodec       string // "copy" | "aac"
@@ -69,18 +74,37 @@ func BuildHLS(a BuildArgs) []string {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", a.StartOffset))
 	}
 
+	isNVENC := !videoCopy && (a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC)
+
+	// When NVENC is selected for HDR content but tonemap_cuda is not available,
+	// fall back to software decode + zscale tonemap. NVENC can still encode
+	// CPU-side frames, so we only drop the CUDA hwaccel — not the encoder.
+	useCudaHwaccel := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda)
+
 	if !videoCopy {
 		// VAAPI init filter (must come before input for hardware decode).
 		if a.IsVAAPI {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		// NVENC: software decode + GPU encode. CUDA hardware decode
-		// (both -hwaccel cuda and hevc_cuvid) hangs on HEVC files with PGS
-		// bitmap subtitles on certain driver versions (tested: 570.x + Quadro
-		// RTX 5000). Software decode feeds raw frames to NVENC which handles
-		// the encode on GPU. Still achieves ~1.4x realtime on a Ryzen 5900X
-		// with Quadro RTX 5000 — fast enough for live playback.
+		// NVENC: full GPU pipeline — CUDA hardware decode (NVDEC) + GPU filters
+		// + NVENC encode. Frames never leave the GPU.
+		//
+		// Key flags from Jellyfin's proven NVENC pipeline:
+		//   -hwaccel_flags +unsafe_output  — skips internal frame copies that
+		//     can deadlock on HEVC+PGS with certain driver versions
+		//   -threads 1  — prevents multi-threaded decode contention with the GPU
+		//   -hwaccel_output_format cuda  — keeps decoded frames in CUDA memory
+		//     so scale_cuda / tonemap_cuda can process them without CPU roundtrip
+		if useCudaHwaccel {
+			args = append(args,
+				"-hwaccel", "cuda",
+				"-hwaccel_output_format", "cuda",
+				"-hwaccel_flags", "+unsafe_output",
+				"-threads", "1",
+			)
+		}
+
 		// AMF: use D3D11VA hardware decode to keep the pipeline on the GPU.
 		if a.Encoder == EncoderAMF {
 			args = append(args, "-hwaccel", "d3d11va")
@@ -114,7 +138,7 @@ func BuildHLS(a BuildArgs) []string {
 
 		// Encoder-specific flags.
 		switch a.Encoder {
-		case EncoderNVENC:
+		case EncoderNVENC, EncoderHEVCNVENC:
 			// Fixed GOP matching segment duration (assume ~30fps max → 120 frames
 			// for 4s segments). More reliable than -force_key_frames with NVENC.
 			gopSize := fmt.Sprint(SegmentDuration * 30)
@@ -123,6 +147,10 @@ func BuildHLS(a BuildArgs) []string {
 				"-g", gopSize, "-keyint_min", gopSize,
 				"-sc_threshold:v:0", "0",
 			)
+			// HEVC profile + level for 4K compatibility (Level 5.0 = 4K@30fps).
+			if a.Encoder == EncoderHEVCNVENC {
+				args = append(args, "-profile:v", "main", "-level", "150")
+			}
 		case EncoderAMF:
 			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
@@ -136,6 +164,10 @@ func BuildHLS(a BuildArgs) []string {
 				"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", SegmentDuration),
 				"-sc_threshold", "0",
 			)
+			// HEVC software: constrain to Main profile, Level 5.0 for 4K.
+			if a.Encoder == EncoderHEVCSoftware {
+				args = append(args, "-profile:v", "main", "-level-idc", "150")
+			}
 		}
 	}
 
@@ -242,19 +274,39 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 func buildVideoFilter(a BuildArgs) string {
 	var filters []string
 
+	isNVENC := a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC
+
 	if a.IsVAAPI {
 		filters = append(filters, "format=nv12", "hwupload")
 	}
 
+	// ── NVENC: full GPU filter pipeline ─────────────────────────────────────
+	// With -hwaccel cuda -hwaccel_output_format cuda, decoded frames are already
+	// in CUDA memory. All filters operate in VRAM — no CPU roundtrip.
+	//
+	// When tonemap_cuda is unavailable, NVENC runs without CUDA hwaccel.
+	// Frames are software-decoded (CPU) and tonemapped via zscale, then
+	// NVENC encodes the CPU-side frames (no GPU filters needed).
+	useCudaPipeline := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda)
+	if isNVENC && useCudaPipeline {
+		// HDR→SDR tonemapping on GPU (must come before scale).
+		if a.NeedsToneMap {
+			filters = append(filters, "tonemap_cuda=tonemap=hable:desat=0:peak=100:format=nv12")
+		}
+		// GPU-side scaling + 10-bit → 8-bit via format=nv12.
+		if a.Width > 0 && a.Height > 0 {
+			filters = append(filters, fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
+		} else if !a.NeedsToneMap {
+			// No scale + no tonemap: still need format conversion for 10-bit sources.
+			filters = append(filters, "scale_cuda=format=nv12")
+		}
+		return strings.Join(filters, ",")
+	}
+
+	// ── Non-NVENC paths ─────────────────────────────────────────────────────
 	// Scale to target resolution, maintaining aspect ratio.
 	if a.Width > 0 && a.Height > 0 {
 		switch {
-		case a.Encoder == EncoderNVENC:
-			// Software decode means frames are in system memory. Use regular scale
-			// filter — FFmpeg uploads to GPU automatically for h264_nvenc.
-			// Force yuv420p output: NVENC (Turing and older) cannot encode 10-bit
-			// H.264, so 10-bit HEVC sources must be converted to 8-bit first.
-			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,format=yuv420p", a.Width, a.Height))
 		case a.Encoder == EncoderVAAPI:
 			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 		default:
@@ -262,8 +314,9 @@ func buildVideoFilter(a BuildArgs) string {
 		}
 	}
 
-	// HDR→SDR tone mapping (ADR-030). Applied before scale for software, after for VAAPI.
-	if a.NeedsToneMap && a.Encoder == EncoderSoftware {
+	// HDR→SDR tone mapping — CPU-based fallback when tonemap_cuda is unavailable.
+	needsSoftwareTonemap := a.NeedsToneMap && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || (isNVENC && !a.HasTonemapCuda))
+	if needsSoftwareTonemap {
 		// zscale-based tonemapping (libzimg required in FFmpeg build).
 		toneMap := strings.Join([]string{
 			"zscale=t=linear:npl=100",
@@ -277,4 +330,22 @@ func buildVideoFilter(a BuildArgs) string {
 	}
 
 	return strings.Join(filters, ",")
+}
+
+// IsHEVCEncoder returns true if the encoder produces HEVC (H.265) output.
+func IsHEVCEncoder(enc Encoder) bool {
+	return enc == EncoderHEVCNVENC || enc == EncoderHEVCSoftware
+}
+
+// HEVCVariant returns the HEVC counterpart for a given H.264 encoder.
+// Returns the encoder unchanged if no HEVC variant exists.
+func HEVCVariant(enc Encoder) Encoder {
+	switch enc {
+	case EncoderNVENC:
+		return EncoderHEVCNVENC
+	case EncoderSoftware:
+		return EncoderHEVCSoftware
+	default:
+		return enc // AMF/VAAPI/QSV: no HEVC variant implemented yet
+	}
 }

@@ -238,6 +238,98 @@ func TestClientSupportsHDR(t *testing.T) {
 	}
 }
 
+// ── HEVC-capable client decision tests ─────────────────────────────────────
+
+func TestDecide_DirectPlay_HEVC_MP4_SDR(t *testing.T) {
+	file := baseFile()
+	*file.VideoCodec = "hevc"
+	*file.Container = "mp4"
+	*file.AudioCodec = "aac"
+	// Client supports HEVC + container.
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4:ts")
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionDirectPlay {
+		t.Errorf("want DirectPlay for HEVC SDR MP4 on HEVC client, got %s", got)
+	}
+}
+
+func TestDecide_DirectStream_HEVC_MKV_SDR(t *testing.T) {
+	file := baseFile()
+	*file.VideoCodec = "hevc"
+	*file.Container = "mkv"
+	*file.AudioCodec = "aac"
+	// Client supports h265 + aac but not MKV container → remux.
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4:ts")
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionDirectStream {
+		t.Errorf("want DirectStream for HEVC SDR MKV on HEVC client, got %s", got)
+	}
+}
+
+func TestDecide_Transcode_HEVC_MKV_DTS(t *testing.T) {
+	// Real-world case: Alien (1979) — HEVC MKV with DTS audio.
+	// Client supports HEVC but not DTS → must transcode audio.
+	file := baseFile()
+	*file.VideoCodec = "hevc"
+	*file.Container = "mkv"
+	*file.AudioCodec = "dts"
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac:mp3:opus:flac,protocols=mp4:ts")
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionTranscode {
+		t.Errorf("want Transcode for HEVC MKV + DTS (audio unsupported), got %s", got)
+	}
+}
+
+func TestDecide_Transcode_HEVC_HDR10_ClientNoHDR(t *testing.T) {
+	// Real-world case: GoodFellas on SDR display — HEVC HDR10, needs tonemapping.
+	file := baseFile()
+	*file.VideoCodec = "hevc"
+	*file.Container = "mkv"
+	*file.AudioCodec = "dts"
+	*file.ResolutionW = 3840
+	*file.ResolutionH = 2160
+	file.HDRType = strPtr("hdr10")
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac:mp3:opus:flac,protocols=mp4:ts")
+	caps.SupportsHDR = false
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionTranscode {
+		t.Errorf("want Transcode for HEVC HDR10 on SDR display, got %s", got)
+	}
+}
+
+func TestDecide_DirectStream_HEVC_HDR10_ClientHDR(t *testing.T) {
+	// Real-world case: GoodFellas on HDR display — HEVC HDR10, client supports HEVC+HDR.
+	// MKV container not supported → DirectStream (remux).
+	file := baseFile()
+	*file.VideoCodec = "hevc"
+	*file.Container = "mkv"
+	*file.AudioCodec = "aac"
+	*file.ResolutionW = 3840
+	*file.ResolutionH = 2160
+	file.HDRType = strPtr("hdr10")
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4:ts,maxWidth=3840,maxHeight=2160")
+	caps.SupportsHDR = true
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionDirectStream {
+		t.Errorf("want DirectStream for HEVC HDR10 on HDR display, got %s", got)
+	}
+}
+
+func TestDecide_DirectPlay_HEVC_HDR10_MP4_ClientHDR(t *testing.T) {
+	// HEVC HDR10 in MP4 on HDR display with HEVC support → DirectPlay.
+	file := baseFile()
+	*file.VideoCodec = "hevc"
+	*file.Container = "mp4"
+	*file.AudioCodec = "aac"
+	file.HDRType = strPtr("hdr10")
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4:ts")
+	caps.SupportsHDR = true
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionDirectPlay {
+		t.Errorf("want DirectPlay for HEVC HDR10 MP4 on HDR display, got %s", got)
+	}
+}
+
 // TestDecide_CodecMatrix covers every codec/container combination present in the
 // actual media library (derived from SELECT DISTINCT container, video_codec, audio_codec
 // FROM media_files WHERE status='active'). Each case asserts whether the server
@@ -326,6 +418,78 @@ func TestDecide_CodecMatrix(t *testing.T) {
 				ResolutionH: intPtr(1080),
 			}
 			got := Decide(file, webPlayerCaps, defaultServerCaps)
+			if got != tc.want {
+				t.Errorf("%s: want %s, got %s — %s", tc.name, tc.want, got, tc.reason)
+			}
+		})
+	}
+}
+
+// TestDecide_CodecMatrix_HEVCClient covers the same library combinations when
+// the client browser supports HEVC (Chrome 107+, Edge, Safari with MSE).
+func TestDecide_CodecMatrix_HEVCClient(t *testing.T) {
+	hevcCaps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac:mp3:opus:flac,protocols=mp4:ts")
+
+	cases := []struct {
+		name      string
+		container string
+		video     string
+		audio     string
+		want      Decision
+		reason    string
+	}{
+		// ── AVI files — video codec still unsupported ──────────────────────
+		{"avi/msmpeg4v2/mp3", "avi", "msmpeg4v2", "mp3", DecisionTranscode,
+			"msmpeg4v2 not browser-playable even with HEVC support"},
+
+		// ── MOV/MP4 files ──────────────────────────────────────────────────
+		{"mp4/h264/aac", "mp4", "h264", "aac", DecisionDirectPlay,
+			"unchanged — h264/aac/mp4 always direct play"},
+		{"mp4/hevc/aac", "mp4", "hevc", "aac", DecisionDirectPlay,
+			"HEVC client can direct play HEVC MP4"},
+		{"mp4/hevc/eac3", "mp4", "hevc", "eac3", DecisionTranscode,
+			"HEVC OK but E-AC-3 audio not browser-supported → transcode"},
+
+		// ── MKV files ──────────────────────────────────────────────────────
+		{"mkv/h264/aac", "mkv", "h264", "aac", DecisionDirectStream,
+			"h264/aac supported, MKV not → remux"},
+		{"mkv/hevc/aac", "mkv", "hevc", "aac", DecisionDirectStream,
+			"HEVC client: HEVC/aac supported, MKV not → remux"},
+		{"mkv/hevc/eac3", "mkv", "hevc", "eac3", DecisionTranscode,
+			"HEVC OK but E-AC-3 not supported → transcode audio"},
+		{"mkv/hevc/ac3", "mkv", "hevc", "ac3", DecisionTranscode,
+			"HEVC OK but AC-3 not supported → transcode audio"},
+		{"mkv/hevc/dts", "mkv", "hevc", "dts", DecisionTranscode,
+			"HEVC OK but DTS not supported → transcode audio"},
+		{"mkv/hevc/truehd", "mkv", "hevc", "truehd", DecisionTranscode,
+			"HEVC OK but TrueHD not supported → transcode audio"},
+		{"mkv/h264/dts", "mkv", "h264", "dts", DecisionTranscode,
+			"DTS still not supported even with HEVC client"},
+		{"mkv/h264/opus", "mkv", "h264", "opus", DecisionDirectStream,
+			"unchanged — h264/opus remux"},
+		{"mkv/av1/opus", "mkv", "av1", "opus", DecisionTranscode,
+			"AV1 still not declared → transcode"},
+
+		// ── MPEG-TS files ──────────────────────────────────────────────────
+		{"ts/mpeg2video/ac3", "ts", "mpeg2video", "ac3", DecisionTranscode,
+			"MPEG-2 video not browser-playable"},
+		{"ts/h264/dts", "ts", "h264", "dts", DecisionTranscode,
+			"DTS audio not supported"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			file := media.File{
+				ID:          uuid.New(),
+				MediaItemID: uuid.New(),
+				FilePath:    "/media/test." + tc.container,
+				VideoCodec:  strPtr(tc.video),
+				AudioCodec:  strPtr(tc.audio),
+				Container:   strPtr(tc.container),
+				ResolutionW: intPtr(1920),
+				ResolutionH: intPtr(1080),
+			}
+			got := Decide(file, hevcCaps, defaultServerCaps)
 			if got != tc.want {
 				t.Errorf("%s: want %s, got %s — %s", tc.name, tc.want, got, tc.reason)
 			}

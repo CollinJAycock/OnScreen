@@ -35,6 +35,9 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 		if probeEncoder(ctx, "h264_nvenc") {
 			available = append(available, EncoderNVENC)
 		}
+		if probeEncoder(ctx, "hevc_nvenc") {
+			available = append(available, EncoderHEVCNVENC)
+		}
 	}
 
 	// AMF (AMD GPU — Windows only).
@@ -89,6 +92,13 @@ func probeEncoder(ctx context.Context, encoder string) bool {
 			"-t", "1", "-c:v", "h264_nvenc",
 			"-f", "null", "-",
 		}
+	case "hevc_nvenc":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1", "-c:v", "hevc_nvenc",
+			"-f", "null", "-",
+		}
 	case "h264_vaapi":
 		args = []string{
 			"-hide_banner", "-loglevel", "quiet",
@@ -127,6 +137,8 @@ func EncoderLabel(enc Encoder) string {
 	switch enc {
 	case EncoderNVENC:
 		return "NVIDIA GPU"
+	case EncoderHEVCNVENC:
+		return "NVIDIA GPU (HEVC)"
 	case EncoderAMF:
 		return "AMD GPU"
 	case EncoderQSV:
@@ -135,9 +147,32 @@ func EncoderLabel(enc Encoder) string {
 		return "VA-API"
 	case EncoderSoftware:
 		return "Software (CPU)"
+	case EncoderHEVCSoftware:
+		return "Software (CPU, HEVC)"
 	default:
 		return string(enc)
 	}
+}
+
+// HasHEVCEncoder returns true if the encoder list contains a HEVC-capable encoder.
+func HasHEVCEncoder(encoders []Encoder) bool {
+	for _, e := range encoders {
+		if e == EncoderHEVCNVENC || e == EncoderHEVCSoftware {
+			return true
+		}
+	}
+	return false
+}
+
+// BestHEVCEncoder returns the highest-priority HEVC encoder from the list,
+// or empty string if none available.
+func BestHEVCEncoder(encoders []Encoder) Encoder {
+	for _, e := range encoders {
+		if e == EncoderHEVCNVENC || e == EncoderHEVCSoftware {
+			return e
+		}
+	}
+	return ""
 }
 
 // detectGPUName tries to return a human-readable GPU name (e.g. "NVIDIA GeForce RTX 5080").
@@ -204,6 +239,22 @@ func FilterAvailable(wanted, detected []Encoder) []Encoder {
 		result = append(result, EncoderSoftware)
 	}
 	return result
+}
+
+// ProbeFilter returns true if the named FFmpeg filter is available.
+func ProbeFilter(ctx context.Context, name string) bool {
+	out, err := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-filters").Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		// Filter listing format: " T. name  V->V  description"
+		if len(fields) >= 2 && fields[1] == name {
+			return true
+		}
+	}
+	return false
 }
 
 func ParseOverride(override string) []Encoder {
