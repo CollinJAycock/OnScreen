@@ -57,9 +57,15 @@ type Config struct {
 	// DisableEmbeddedWorker skips the in-process transcode worker. Set to true
 	// when using standalone cmd/worker instances on dedicated GPU machines.
 	DisableEmbeddedWorker bool   `env:"DISABLE_EMBEDDED_WORKER" envDefault:"false"`
-	TranscodeMaxBitrate   int    `env:"TRANSCODE_MAX_BITRATE_KBPS" envDefault:"40000"`
-	TranscodeMaxWidth    int    `env:"TRANSCODE_MAX_WIDTH"        envDefault:"3840"`
-	TranscodeMaxHeight   int    `env:"TRANSCODE_MAX_HEIGHT"       envDefault:"2160"`
+	TranscodeMaxBitrate   int     `env:"TRANSCODE_MAX_BITRATE_KBPS" envDefault:"40000"`
+	TranscodeMaxWidth    int     `env:"TRANSCODE_MAX_WIDTH"        envDefault:"3840"`
+	TranscodeMaxHeight   int     `env:"TRANSCODE_MAX_HEIGHT"       envDefault:"2160"`
+	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
+	// for specific GPU models and upload bandwidth without rebuilding.
+	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`
+	TranscodeNVENCTune    string  `env:"TRANSCODE_NVENC_TUNE"       envDefault:"hq"`
+	TranscodeNVENCRC      string  `env:"TRANSCODE_NVENC_RC"         envDefault:"vbr"`
+	TranscodeMaxrateRatio float64 `env:"TRANSCODE_MAXRATE_RATIO"    envDefault:"1.5"`
 
 	// ── Metadata ─────────────────────────────────────────────────────────────
 	TMDBAPIKey    string `env:"TMDB_API_KEY"`
@@ -170,6 +176,18 @@ func (c *Config) applyDefaults() error {
 	if c.TranscodeMaxHeight <= 0 || c.TranscodeMaxHeight > 4320 {
 		c.TranscodeMaxHeight = 2160
 	}
+	if c.TranscodeMaxrateRatio <= 0 {
+		c.TranscodeMaxrateRatio = 1.5
+	}
+	if c.TranscodeNVENCPreset == "" {
+		c.TranscodeNVENCPreset = "p4"
+	}
+	if c.TranscodeNVENCTune == "" {
+		c.TranscodeNVENCTune = "hq"
+	}
+	if c.TranscodeNVENCRC == "" {
+		c.TranscodeNVENCRC = "vbr"
+	}
 	// Validate OAuth pairs — if one half is set, the other must be too.
 	if (c.GoogleClientID == "") != (c.GoogleClientSecret == "") {
 		return fmt.Errorf("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set (or both empty)")
@@ -212,6 +230,10 @@ type HotReloadable struct {
 	transcodeMaxBitrate    int
 	transcodeMaxWidth      int
 	transcodeMaxHeight     int
+	transcodeNVENCPreset   string
+	transcodeNVENCTune     string
+	transcodeNVENCRC       string
+	transcodeMaxrateRatio  float64
 }
 
 // NewHotReloadable creates a HotReloadable from the initial config.
@@ -223,6 +245,10 @@ func NewHotReloadable(cfg *Config) *HotReloadable {
 		transcodeMaxBitrate:    cfg.TranscodeMaxBitrate,
 		transcodeMaxWidth:      cfg.TranscodeMaxWidth,
 		transcodeMaxHeight:     cfg.TranscodeMaxHeight,
+		transcodeNVENCPreset:   cfg.TranscodeNVENCPreset,
+		transcodeNVENCTune:     cfg.TranscodeNVENCTune,
+		transcodeNVENCRC:       cfg.TranscodeNVENCRC,
+		transcodeMaxrateRatio:  cfg.TranscodeMaxrateRatio,
 	}
 }
 
@@ -262,6 +288,30 @@ func (h *HotReloadable) TranscodeMaxHeight() int {
 	return h.transcodeMaxHeight
 }
 
+func (h *HotReloadable) TranscodeNVENCPreset() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.transcodeNVENCPreset
+}
+
+func (h *HotReloadable) TranscodeNVENCTune() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.transcodeNVENCTune
+}
+
+func (h *HotReloadable) TranscodeNVENCRC() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.transcodeNVENCRC
+}
+
+func (h *HotReloadable) TranscodeMaxrateRatio() float64 {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.transcodeMaxrateRatio
+}
+
 // Reload re-parses the environment and updates all hot-reloadable values.
 // Non-reloadable fields that have changed are logged as WARN.
 func (h *HotReloadable) Reload(logger *slog.Logger, current *Config, lv *slog.LevelVar) {
@@ -291,6 +341,10 @@ func (h *HotReloadable) Reload(logger *slog.Logger, current *Config, lv *slog.Le
 	h.transcodeMaxBitrate = next.TranscodeMaxBitrate
 	h.transcodeMaxWidth = next.TranscodeMaxWidth
 	h.transcodeMaxHeight = next.TranscodeMaxHeight
+	h.transcodeNVENCPreset = next.TranscodeNVENCPreset
+	h.transcodeNVENCTune = next.TranscodeNVENCTune
+	h.transcodeNVENCRC = next.TranscodeNVENCRC
+	h.transcodeMaxrateRatio = next.TranscodeMaxrateRatio
 	h.mu.Unlock()
 
 	// Update log level atomically via slog.LevelVar.

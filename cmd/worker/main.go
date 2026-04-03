@@ -136,6 +136,12 @@ func run() error {
 		sessionStore,
 		encoders,
 		maxSessions,
+		transcode.EncoderOpts{
+			NVENCPreset:  cfg.TranscodeNVENCPreset,
+			NVENCTune:    cfg.TranscodeNVENCTune,
+			NVENCRC:      cfg.TranscodeNVENCRC,
+			MaxrateRatio: cfg.TranscodeMaxrateRatio,
+		},
 		logger,
 	)
 

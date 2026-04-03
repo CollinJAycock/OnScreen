@@ -263,6 +263,8 @@ func ParseOverride(override string) []Encoder {
 		switch strings.TrimSpace(strings.ToLower(s)) {
 		case "nvenc", "h264_nvenc":
 			encoders = append(encoders, EncoderNVENC)
+		case "hevc_nvenc":
+			encoders = append(encoders, EncoderHEVCNVENC)
 		case "amf", "h264_amf":
 			encoders = append(encoders, EncoderAMF)
 		case "vaapi", "h264_vaapi":
@@ -271,6 +273,8 @@ func ParseOverride(override string) []Encoder {
 			encoders = append(encoders, EncoderQSV)
 		case "software", "libx264":
 			encoders = append(encoders, EncoderSoftware)
+		case "hevc_software", "libx265":
+			encoders = append(encoders, EncoderHEVCSoftware)
 		}
 	}
 	if len(encoders) == 0 {

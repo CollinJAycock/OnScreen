@@ -548,6 +548,88 @@ func TestBuildHLS_HEVC_Software(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_CustomEncoderOpts(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+		EncoderOpts: EncoderOpts{
+			NVENCPreset:  "p1",
+			NVENCTune:    "ll",
+			NVENCRC:      "cbr",
+			MaxrateRatio: 2.0,
+		},
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-preset p1") {
+		t.Errorf("expected custom preset p1: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tune ll") {
+		t.Errorf("expected custom tune ll: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-rc cbr") {
+		t.Errorf("expected custom rc cbr: %s", argStr)
+	}
+	// maxrate = 8000 * 2.0 = 16000
+	if !strings.Contains(argStr, "-maxrate 16000k") {
+		t.Errorf("expected -maxrate 16000k (bitrate × 2.0): %s", argStr)
+	}
+}
+
+func TestBuildHLS_DefaultEncoderOpts(t *testing.T) {
+	// Zero-value EncoderOpts should produce the same defaults as before.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderNVENC,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-preset p4") {
+		t.Errorf("expected default preset p4: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tune hq") {
+		t.Errorf("expected default tune hq: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-rc vbr") {
+		t.Errorf("expected default rc vbr: %s", argStr)
+	}
+	// maxrate = 8000 * 1.5 = 12000
+	if !strings.Contains(argStr, "-maxrate 12000k") {
+		t.Errorf("expected default -maxrate 12000k (bitrate × 1.5): %s", argStr)
+	}
+}
+
+func TestBuildHLS_MaxrateRatio_Software(t *testing.T) {
+	// MaxrateRatio applies to all encoders, not just NVENC.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+		EncoderOpts: EncoderOpts{
+			MaxrateRatio: 1.2,
+		},
+	})
+	argStr := strings.Join(args, " ")
+
+	// maxrate = 8000 * 1.2 = 9600
+	if !strings.Contains(argStr, "-maxrate 9600k") {
+		t.Errorf("expected -maxrate 9600k for software encoder: %s", argStr)
+	}
+}
+
 func TestBuildHLS_HEVC_NVENC_NoTonemap(t *testing.T) {
 	// 4K HEVC SDR — NVENC encode, no tonemapping needed.
 	args := BuildHLS(BuildArgs{

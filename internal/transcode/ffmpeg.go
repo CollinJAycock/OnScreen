@@ -21,6 +21,26 @@ const (
 	EncoderHEVCSoftware Encoder = "libx265"
 )
 
+// EncoderOpts holds per-deployment encoder tuning knobs. Operators set these
+// via environment variables to match their GPU model and upload bandwidth.
+// All fields have sensible defaults; zero values are replaced at build time.
+type EncoderOpts struct {
+	NVENCPreset   string  // NVENC preset: "p1" (fastest) .. "p7" (best quality), default "p4"
+	NVENCTune     string  // NVENC tune: "hq", "ll", "ull", default "hq"
+	NVENCRC       string  // NVENC rate control: "vbr", "cbr", "constqp", default "vbr"
+	MaxrateRatio  float64 // maxrate = bitrate × ratio, default 1.5 (50% headroom)
+}
+
+// DefaultEncoderOpts returns the default encoder options.
+func DefaultEncoderOpts() EncoderOpts {
+	return EncoderOpts{
+		NVENCPreset:  "p4",
+		NVENCTune:    "hq",
+		NVENCRC:      "vbr",
+		MaxrateRatio: 1.5,
+	}
+}
+
 // BuildArgs holds the inputs needed to construct an FFmpeg HLS transcode command.
 type BuildArgs struct {
 	// Input
@@ -47,6 +67,9 @@ type BuildArgs struct {
 	ExtractSubtitles bool
 	SubtitleStreams   []int // stream indices to extract as WebVTT
 
+	// Encoder tuning
+	EncoderOpts EncoderOpts
+
 	// Output
 	SessionDir    string // abs path, e.g. /tmp/onscreen/sessions/{id}
 	SegmentPrefix string // relative prefix for .ts files, e.g. "seg"
@@ -62,6 +85,21 @@ const SegmentDuration = 4
 // ideal when the source video codec is already browser-compatible (H.264)
 // but the audio or container needs transcoding.
 func BuildHLS(a BuildArgs) []string {
+	// Apply defaults for zero-value encoder opts.
+	opts := a.EncoderOpts
+	if opts.NVENCPreset == "" {
+		opts.NVENCPreset = "p4"
+	}
+	if opts.NVENCTune == "" {
+		opts.NVENCTune = "hq"
+	}
+	if opts.NVENCRC == "" {
+		opts.NVENCRC = "vbr"
+	}
+	if opts.MaxrateRatio <= 0 {
+		opts.MaxrateRatio = 1.5
+	}
+
 	videoCopy := a.Encoder == "copy"
 
 	args := []string{
@@ -129,9 +167,9 @@ func BuildHLS(a BuildArgs) []string {
 		}
 
 		// Scale filter is embedded in vf; set codec and bitrate.
-		// Allow 50% headroom above target so NVENC doesn't choke on complex
-		// scenes — tight CBR (maxrate==b:v) can cause encoder init failures at 4K.
-		maxrate := a.BitrateKbps + a.BitrateKbps/2
+		// Headroom above target prevents NVENC from choking on complex scenes.
+		// Configurable via TRANSCODE_MAXRATE_RATIO (default 1.5 = 50% headroom).
+		maxrate := int(float64(a.BitrateKbps) * opts.MaxrateRatio)
 		args = append(args,
 			"-c:v", string(a.Encoder),
 			"-b:v", fmt.Sprintf("%dk", a.BitrateKbps),
@@ -139,17 +177,16 @@ func BuildHLS(a BuildArgs) []string {
 			"-bufsize", fmt.Sprintf("%dk", maxrate*2),
 		)
 
-		// Encoder-specific flags.
-		// TODO: make preset, tune, rc mode, and maxrate ratio configurable per
-		// deployment so operators can tune for their GPU model and upload bandwidth.
+		// Encoder-specific flags. NVENC preset/tune/rc are configurable via
+		// TRANSCODE_NVENC_PRESET, TRANSCODE_NVENC_TUNE, TRANSCODE_NVENC_RC.
 		switch a.Encoder {
 		case EncoderNVENC, EncoderHEVCNVENC:
 			// Fixed GOP matching segment duration (assume ~30fps max → 120 frames
 			// for 4s segments). More reliable than -force_key_frames with NVENC.
 			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
-				"-preset", "p4", "-tune", "hq",
-				"-rc", "vbr",
+				"-preset", opts.NVENCPreset, "-tune", opts.NVENCTune,
+				"-rc", opts.NVENCRC,
 				"-g", gopSize, "-keyint_min", gopSize,
 				"-sc_threshold:v:0", "0",
 			)

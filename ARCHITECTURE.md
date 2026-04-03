@@ -448,12 +448,16 @@ watch_state (materialized view):
 | `TRANSCODE_MAX_BITRATE_KBPS` | `40000` | Quality cap |
 | `TRANSCODE_MAX_WIDTH` | `3840` | Max output width |
 | `TRANSCODE_MAX_HEIGHT` | `2160` | Max output height |
+| `TRANSCODE_NVENC_PRESET` | `p4` | NVENC speed/quality: `p1`–`p7` |
+| `TRANSCODE_NVENC_TUNE` | `hq` | NVENC tune: `hq`/`ll`/`ull` |
+| `TRANSCODE_NVENC_RC` | `vbr` | NVENC rate control: `vbr`/`cbr`/`constqp` |
+| `TRANSCODE_MAXRATE_RATIO` | `1.5` | Peak bitrate = target × ratio |
 | `TMDB_API_KEY` | — | Seeded to DB on first run; also configurable via `/settings` |
 | `TMDB_RATE_LIMIT` | `20` | TMDB req/s |
 
 ### Hot-Reloadable (SIGHUP)
 
-`LOG_LEVEL`, `SCAN_FILE_CONCURRENCY`, `SCAN_LIBRARY_CONCURRENCY`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_MAX_BITRATE_KBPS`, `TRANSCODE_MAX_WIDTH`, `TRANSCODE_MAX_HEIGHT`
+`LOG_LEVEL`, `SCAN_FILE_CONCURRENCY`, `SCAN_LIBRARY_CONCURRENCY`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_MAX_BITRATE_KBPS`, `TRANSCODE_MAX_WIDTH`, `TRANSCODE_MAX_HEIGHT`, `TRANSCODE_NVENC_PRESET`, `TRANSCODE_NVENC_TUNE`, `TRANSCODE_NVENC_RC`, `TRANSCODE_MAXRATE_RATIO`
 
 > **Windows**: SIGHUP is a no-op (`internal/config/sighup_windows.go`). Restart the process to reload config.
 

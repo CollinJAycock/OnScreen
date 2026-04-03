@@ -68,6 +68,10 @@
 | `TRANSCODE_MAX_BITRATE_KBPS` | `40000` | Max transcode output bitrate in kbps |
 | `TRANSCODE_MAX_WIDTH` | `3840` | Max transcode output width |
 | `TRANSCODE_MAX_HEIGHT` | `2160` | Max transcode output height |
+| `TRANSCODE_NVENC_PRESET` | `p4` | NVENC preset: `p1` (fastest) through `p7` (best quality). Lower presets reduce GPU load at the cost of quality. |
+| `TRANSCODE_NVENC_TUNE` | `hq` | NVENC tuning mode: `hq` (high quality, recommended for VOD), `ll` (low latency), `ull` (ultra-low latency) |
+| `TRANSCODE_NVENC_RC` | `vbr` | NVENC rate control: `vbr` (variable bitrate, best quality per bit), `cbr` (constant bitrate), `constqp` (constant quantizer) |
+| `TRANSCODE_MAXRATE_RATIO` | `1.5` | Peak-to-average bitrate ratio for all encoders. `maxrate = bitrate × ratio`. Use `1.0` to cap bandwidth tightly, `2.0` for high-bandwidth LANs. |
 
 ### Metadata
 
@@ -550,7 +554,7 @@ Several settings can be updated without restarting the server by sending `SIGHUP
 kill -HUP $(pidof server)
 ```
 
-Hot-reloadable values: `LOG_LEVEL`, `SCAN_FILE_CONCURRENCY`, `SCAN_LIBRARY_CONCURRENCY`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_MAX_BITRATE_KBPS`, `TRANSCODE_MAX_WIDTH`, `TRANSCODE_MAX_HEIGHT`.
+Hot-reloadable values: `LOG_LEVEL`, `SCAN_FILE_CONCURRENCY`, `SCAN_LIBRARY_CONCURRENCY`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_MAX_BITRATE_KBPS`, `TRANSCODE_MAX_WIDTH`, `TRANSCODE_MAX_HEIGHT`, `TRANSCODE_NVENC_PRESET`, `TRANSCODE_NVENC_TUNE`, `TRANSCODE_NVENC_RC`, `TRANSCODE_MAXRATE_RATIO`.
 
 Changes to `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, `LISTEN_ADDR`, or `MEDIA_PATH` require a full restart.
 

@@ -623,6 +623,18 @@
       hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
         if (autoPlay) videoEl.play().catch(() => {});
       });
+      hlsInstance.on(Hls.Events.ERROR, (_event: any, data: any) => {
+        console.warn('[HLS] error', data.type, data.details, data.fatal, data);
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          // Media decode error — attempt HLS.js recovery once.
+          console.warn('[HLS] attempting media error recovery');
+          hlsInstance?.recoverMediaError();
+        } else {
+          // Network or other fatal error — surface to user.
+          error = `Playback error: ${data.details ?? 'unknown'}`;
+        }
+      });
     } else if (videoEl.canPlayType('application/vnd.apple.mpegURL')) {
       // Safari native HLS
       videoEl.src = playlistUrl;

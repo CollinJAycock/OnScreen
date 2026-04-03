@@ -21,7 +21,7 @@ func nopLogger() *slog.Logger {
 func TestNewWorker_Defaults(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
-	w := NewWorker("w1", ":7073", store, []Encoder{EncoderSoftware}, 0, nopLogger())
+	w := NewWorker("w1", ":7073", store, []Encoder{EncoderSoftware}, 0, EncoderOpts{}, nopLogger())
 	if w.maxSessions != 4 {
 		t.Errorf("want default maxSessions=4 when 0 given, got %d", w.maxSessions)
 	}
@@ -33,7 +33,7 @@ func TestNewWorker_Defaults(t *testing.T) {
 func TestNewWorker_ExplicitMaxSessions(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
-	w := NewWorker("w2", ":7074", store, []Encoder{EncoderSoftware}, 8, nopLogger())
+	w := NewWorker("w2", ":7074", store, []Encoder{EncoderSoftware}, 8, EncoderOpts{}, nopLogger())
 	if w.maxSessions != 8 {
 		t.Errorf("want maxSessions=8, got %d", w.maxSessions)
 	}
@@ -42,7 +42,7 @@ func TestNewWorker_ExplicitMaxSessions(t *testing.T) {
 func TestKillSession_NoOp_UnknownSession(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
-	w := NewWorker("w3", ":7075", store, nil, 4, nopLogger())
+	w := NewWorker("w3", ":7075", store, nil, 4, EncoderOpts{}, nopLogger())
 	// Should not panic for an unknown session ID.
 	w.KillSession("does-not-exist")
 }
@@ -96,7 +96,7 @@ func TestSweepOrphanedSessions_RemovesDirs(t *testing.T) {
 
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
-	w := NewWorker("sweep-test", ":0", store, nil, 4, nopLogger())
+	w := NewWorker("sweep-test", ":0", store, nil, 4, EncoderOpts{}, nopLogger())
 	w.sweepOrphanedSessions()
 
 	if _, err := os.Stat(dir1); !os.IsNotExist(err) {
@@ -111,7 +111,7 @@ func TestSweepOrphanedSessions_NoBassDir_NoError(t *testing.T) {
 	// Should silently do nothing if segmentBaseDir doesn't exist.
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
-	w := NewWorker("sweep-nobase", ":0", store, nil, 4, nopLogger())
+	w := NewWorker("sweep-nobase", ":0", store, nil, 4, EncoderOpts{}, nopLogger())
 	// segmentBaseDir may or may not exist; either way should not panic.
 	w.sweepOrphanedSessions()
 }
@@ -119,7 +119,7 @@ func TestSweepOrphanedSessions_NoBassDir_NoError(t *testing.T) {
 func TestWorker_Register(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
-	w := NewWorker(WorkerID(), ":7073", store, []Encoder{EncoderSoftware}, 4, nopLogger())
+	w := NewWorker(WorkerID(), ":7073", store, []Encoder{EncoderSoftware}, 4, EncoderOpts{}, nopLogger())
 
 	if err := w.register(context.Background()); err != nil {
 		t.Fatalf("register: %v", err)

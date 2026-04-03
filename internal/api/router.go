@@ -317,6 +317,8 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/settings/workers", h.Settings.GetWorkers)
 					r.Get("/settings/fleet", h.Settings.GetFleet)
 					r.Put("/settings/fleet", h.Settings.UpdateFleet)
+					r.Get("/settings/transcode-config", h.Settings.GetTranscodeConfig)
+					r.Put("/settings/transcode-config", h.Settings.UpdateTranscodeConfig)
 				})
 			}
 

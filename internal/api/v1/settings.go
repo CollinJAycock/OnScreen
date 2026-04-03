@@ -30,6 +30,8 @@ type SettingsServiceIface interface {
 	SetTranscodeEncoders(ctx context.Context, value string) error
 	WorkerFleet(ctx context.Context) settings.WorkerFleetConfig
 	SetWorkerFleet(ctx context.Context, cfg settings.WorkerFleetConfig) error
+	TranscodeConfigGet(ctx context.Context) settings.TranscodeConfig
+	SetTranscodeConfig(ctx context.Context, cfg settings.TranscodeConfig) error
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -409,6 +411,35 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.ClaimsFromContext(r.Context())
 		if claims != nil {
 			h.audit.Log(r.Context(), &claims.UserID, audit.ActionSettingsUpdate, "", detail, audit.ClientIP(r))
+		}
+	}
+	respond.NoContent(w)
+}
+
+// GetTranscodeConfig handles GET /api/v1/settings/transcode-config.
+func (h *SettingsHandler) GetTranscodeConfig(w http.ResponseWriter, r *http.Request) {
+	respond.Success(w, r, h.svc.TranscodeConfigGet(r.Context()))
+}
+
+// UpdateTranscodeConfig handles PUT /api/v1/settings/transcode-config.
+func (h *SettingsHandler) UpdateTranscodeConfig(w http.ResponseWriter, r *http.Request) {
+	var body settings.TranscodeConfig
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	ctx := r.Context()
+	if err := h.svc.SetTranscodeConfig(ctx, body); err != nil {
+		h.logger.ErrorContext(ctx, "update transcode config", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		claims := middleware.ClaimsFromContext(ctx)
+		if claims != nil {
+			h.audit.Log(ctx, &claims.UserID, audit.ActionSettingsUpdate, "", map[string]any{
+				"transcode_config": "changed",
+			}, audit.ClientIP(r))
 		}
 	}
 	respond.NoContent(w)

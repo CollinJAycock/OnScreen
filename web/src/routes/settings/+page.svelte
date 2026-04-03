@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { settingsApi, userApi, emailApi, api } from '$lib/api';
-  import type { UserMeta, UserPreferences, EncoderInfo, EncoderEntry, FleetStatus, FleetWorkerStatus } from '$lib/api';
+  import type { UserMeta, UserPreferences } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
@@ -34,33 +34,7 @@
   let prefSubtitleLang = '';
   let prefSaving = false;
 
-  // Encoder override state
-  let encoderInfo: EncoderInfo | null = null;
-  let selectedEncoder = '';
-  let encoderSaving = false;
 
-  // Fleet management state — single flat array we own and bind to directly.
-  interface FleetWorkerRow {
-    id: string;
-    addr: string;
-    name: string;
-    encoder: string;
-    online: boolean;
-    active_sessions: number;
-    max_sessions: number;
-    capabilities: string[];
-    isNew?: boolean; // manually added, not yet saved
-  }
-  let fleetLoaded = false;
-  let fleetEmbeddedEnabled = true;
-  let fleetEmbeddedDisabledByEnv = false;
-  let fleetEmbeddedEncoder = '';
-  let fleetEmbeddedOnline = false;
-  let fleetEmbeddedActiveSessions = 0;
-  let fleetEmbeddedMaxSessions = 0;
-  let fleetEmbeddedCapabilities: string[] = [];
-  let fleetWorkers: FleetWorkerRow[] = [];
-  let fleetSaving = false;
 
   onMount(async () => {
     try {
@@ -100,26 +74,6 @@
       prefSubtitleLang = prefs.preferred_subtitle_lang ?? '';
     } catch { /* ignore — non-critical */ }
 
-    // Load encoder info (admin only)
-    try {
-      const enc = await settingsApi.getEncoders();
-      encoderInfo = enc;
-      selectedEncoder = enc.current || '';
-    } catch { /* ignore — non-admin or endpoint missing */ }
-
-    // Load fleet config
-    try {
-      const f = await settingsApi.getFleet();
-      fleetEmbeddedEnabled = f.embedded_enabled;
-      fleetEmbeddedDisabledByEnv = f.embedded_disabled_by_env || false;
-      fleetEmbeddedEncoder = f.embedded_encoder || '';
-      fleetEmbeddedOnline = f.embedded_online;
-      fleetEmbeddedActiveSessions = f.embedded_active_sessions;
-      fleetEmbeddedMaxSessions = f.embedded_max_sessions;
-      fleetEmbeddedCapabilities = f.embedded_capabilities || [];
-      fleetWorkers = (f.workers || []).map(w => ({ ...w }));
-      fleetLoaded = true;
-    } catch (e) { console.error('fleet load failed:', e); fleetLoaded = true; }
   });
 
   async function savePreferences() {
@@ -138,65 +92,6 @@
     }
   }
 
-  async function saveEncoder() {
-    encoderSaving = true;
-    try {
-      await settingsApi.update({ transcode_encoders: selectedEncoder });
-      toast.success('Encoder setting saved — restart the server to apply');
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save encoder setting');
-    } finally {
-      encoderSaving = false;
-    }
-  }
-
-  let nextManualId = 1;
-  function addWorker() {
-    fleetWorkers = [...fleetWorkers, {
-      id: `new-${nextManualId++}`,
-      addr: '',
-      name: '',
-      encoder: '',
-      online: false,
-      active_sessions: 0,
-      max_sessions: 0,
-      capabilities: [],
-      isNew: true
-    }];
-  }
-
-  function removeWorker(id: string) {
-    fleetWorkers = fleetWorkers.filter(w => w.id !== id);
-  }
-
-  async function saveFleet() {
-    fleetSaving = true;
-    try {
-      const workers = fleetWorkers
-        .filter(w => w.name.trim())
-        .map(w => ({ addr: w.addr || '', name: w.name.trim(), encoder: w.encoder, max_sessions: w.max_sessions || undefined }));
-      await settingsApi.updateFleet({
-        embedded_enabled: fleetEmbeddedEnabled,
-        embedded_encoder: fleetEmbeddedEncoder,
-        workers
-      });
-      toast.success('Fleet config saved');
-      // Reload to get merged state with live data.
-      const updated = await settingsApi.getFleet();
-      fleetEmbeddedEnabled = updated.embedded_enabled;
-      fleetEmbeddedDisabledByEnv = updated.embedded_disabled_by_env || false;
-      fleetEmbeddedEncoder = updated.embedded_encoder || '';
-      fleetEmbeddedOnline = updated.embedded_online;
-      fleetEmbeddedActiveSessions = updated.embedded_active_sessions;
-      fleetEmbeddedMaxSessions = updated.embedded_max_sessions;
-      fleetEmbeddedCapabilities = updated.embedded_capabilities || [];
-      fleetWorkers = (updated.workers || []).map(w => ({ ...w }));
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save fleet config');
-    } finally {
-      fleetSaving = false;
-    }
-  }
 
   async function save() {
     error = '';
@@ -528,118 +423,6 @@
       {/if}
     </section>
 
-    {#if fleetLoaded}
-    <section>
-      <div class="sec-label">Transcode Fleet</div>
-      <div class="hint" style="margin-top: -0.5rem;">
-        Manage the transcode workers that process HLS jobs. The embedded worker runs inside the server process.
-        Local workers are separate processes on this machine. Workers auto-register when started.
-      </div>
-
-      <!-- Embedded worker -->
-      <div class="fleet-group">
-        <div class="fleet-group-header">
-          <label class="toggle-label">
-            <input type="checkbox" bind:checked={fleetEmbeddedEnabled} disabled={fleetEmbeddedDisabledByEnv} />
-            Embedded Worker
-          </label>
-          {#if fleetEmbeddedDisabledByEnv}
-            <span class="hint" style="margin-left: 0.5rem; font-size: 0.75rem;">Disabled by DISABLE_EMBEDDED_WORKER env</span>
-          {:else if fleetEmbeddedOnline}
-            <span class="status-dot online"></span>
-          {:else if fleetEmbeddedEnabled}
-            <span class="status-dot offline"></span>
-          {/if}
-        </div>
-        {#if fleetEmbeddedEnabled && !fleetEmbeddedDisabledByEnv}
-        <div class="fleet-row">
-          <div class="field" style="flex:1;">
-            <label for="embedded-encoder">Encoder</label>
-            <select id="embedded-encoder" bind:value={fleetEmbeddedEncoder}>
-              <option value="">Auto-detect</option>
-              {#if encoderInfo}
-                {#each encoderInfo.detected as entry}
-                  <option value={entry.encoder}>{entry.label}</option>
-                {/each}
-              {/if}
-            </select>
-          </div>
-          {#if fleetEmbeddedOnline}
-          <div class="fleet-live-info">
-            <span>{fleetEmbeddedActiveSessions}/{fleetEmbeddedMaxSessions} sessions</span>
-            {#each fleetEmbeddedCapabilities as cap}
-              <span class="worker-cap">{cap}</span>
-            {/each}
-          </div>
-          {/if}
-        </div>
-        {/if}
-      </div>
-
-      <!-- Local workers -->
-      <div class="fleet-group" style="margin-top: 1rem;">
-        <div class="fleet-group-header">
-          <span class="fleet-group-title">Local Workers</span>
-        </div>
-        {#each fleetWorkers as row (row.id)}
-          <div class="worker-card">
-            <div class="fleet-row">
-              <div class="field" style="flex:2;">
-                <label>Name</label>
-                <input type="text" bind:value={row.name} placeholder="e.g. NVIDIA Box" />
-              </div>
-              <div class="field" style="flex:2;">
-                <label>Encoder</label>
-                <select bind:value={row.encoder}>
-                  <option value="">Auto-detect</option>
-                  {#if encoderInfo}
-                    {#each encoderInfo.detected as entry}
-                      <option value={entry.encoder}>{entry.label}</option>
-                    {/each}
-                  {/if}
-                </select>
-              </div>
-              <div class="field" style="flex:1;">
-                <label>Max Sessions</label>
-                <input type="number" bind:value={row.max_sessions} min="0" max="100" placeholder="auto" />
-              </div>
-              {#if !row.online}
-                <button type="button" class="btn-remove" title="Remove worker"
-                  on:click={() => removeWorker(row.id)}>&times;</button>
-              {/if}
-            </div>
-            <div class="fleet-live-info">
-              {#if row.online}
-                <span class="status-dot online"></span>
-                <span>{row.active_sessions}/{row.max_sessions} sessions</span>
-                {#each row.capabilities || [] as cap}
-                  <span class="worker-cap">{cap}</span>
-                {/each}
-              {:else}
-                <span class="status-dot offline"></span>
-                <span class="text-muted">{row.isNew ? 'Not yet saved' : 'Offline'}</span>
-              {/if}
-            </div>
-          </div>
-        {/each}
-
-        {#if fleetWorkers.length === 0}
-          <div class="hint">No local workers running. Workers auto-register when started — add one here to pre-configure its name and encoder.</div>
-        {/if}
-
-        <button type="button" class="btn-outline btn-add-mapping" style="margin-top: 0.5rem;" on:click={addWorker}>
-          + Add Worker
-        </button>
-      </div>
-
-      <div class="pref-foot" style="margin-top: 1rem;">
-        <button class="btn-save" disabled={fleetSaving} on:click={saveFleet}>
-          {fleetSaving ? 'Saving...' : 'Save Fleet Config'}
-        </button>
-      </div>
-    </section>
-    {/if}
-
     <section>
       <div class="sec-label">Language Preferences</div>
       <div class="hint" style="margin-top: -0.5rem;">
@@ -903,98 +686,6 @@
     display: flex;
     gap: 0.5rem;
   }
-
-  /* ── Fleet ────────────────────────────────────────────────────────────── */
-  .fleet-group {
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-  }
-  .fleet-group-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-  }
-  .fleet-group-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-primary, #eeeef8);
-  }
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-primary, #eeeef8);
-    cursor: pointer;
-  }
-  .toggle-label input[type="checkbox"] {
-    width: 1rem;
-    height: 1rem;
-    accent-color: #7c6af7;
-  }
-  .fleet-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: flex-end;
-  }
-  .fleet-live-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.375rem;
-    font-size: 0.75rem;
-    color: #8888aa;
-  }
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    flex-shrink: 0;
-  }
-  .status-dot.online { background: #86efac; }
-  .status-dot.offline { background: #555; }
-  .text-muted { color: #55556a; }
-  .worker-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-    margin-bottom: 0.5rem;
-  }
-  .worker-cap {
-    font-size: 0.7rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 999px;
-    background: rgba(124,106,247,0.12);
-    color: #7c6af7;
-  }
-  .worker-addr {
-    font-family: monospace;
-    font-size: 0.72rem;
-    color: #8888aa;
-  }
-  .btn-sm {
-    font-size: 0.72rem;
-    padding: 0.25rem 0.6rem;
-  }
-  .btn-remove {
-    background: transparent;
-    border: 1px solid rgba(248,113,113,0.25);
-    color: #fca5a5;
-    border-radius: 6px;
-    padding: 0.3rem 0.55rem;
-    cursor: pointer;
-    font-size: 0.75rem;
-    font-weight: 600;
-    line-height: 1;
-    margin-bottom: 0.25rem;
-  }
-  .btn-remove:hover { background: rgba(248,113,113,0.08); }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {

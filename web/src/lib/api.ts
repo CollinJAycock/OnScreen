@@ -364,13 +364,22 @@ export interface FleetStatus {
   workers: FleetWorkerStatus[];
 }
 
+export interface TranscodeConfig {
+  nvenc_preset: string;
+  nvenc_tune: string;
+  nvenc_rc: string;
+  maxrate_ratio: number;
+}
+
 export const settingsApi = {
   get: () => api.get<ServerSettings>('/settings'),
   update: (body: Partial<ServerSettings>) => api.patch<void>('/settings', body),
   getEncoders: () => api.get<EncoderInfo>('/settings/encoders'),
   getWorkers: () => api.get<WorkerInfo[]>('/settings/workers'),
   getFleet: () => api.get<FleetStatus>('/settings/fleet'),
-  updateFleet: (body: FleetConfig) => api.put<void>('/settings/fleet', body)
+  updateFleet: (body: FleetConfig) => api.put<void>('/settings/fleet', body),
+  getTranscodeConfig: () => api.get<TranscodeConfig>('/settings/transcode-config'),
+  updateTranscodeConfig: (body: TranscodeConfig) => api.put<void>('/settings/transcode-config', body),
 };
 
 // ── Filesystem browser ────────────────────────────────────────────────────────

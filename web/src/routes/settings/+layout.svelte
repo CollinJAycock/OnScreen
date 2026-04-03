@@ -17,6 +17,7 @@
 
   const tabs = [
     { href: '/settings', label: 'General', exact: true },
+    { href: '/settings/transcode', label: 'Transcode', exact: false },
     { href: '/settings/users', label: 'Users', exact: false },
     { href: '/settings/webhooks', label: 'Webhooks', exact: false },
     { href: '/settings/audit', label: 'Audit Log', exact: false },

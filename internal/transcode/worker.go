@@ -29,6 +29,7 @@ type Worker struct {
 	encoders       []Encoder
 	encoderLabels  map[string]string // encoder → human label, detected once at startup
 	hasTonemapCuda bool              // tonemap_cuda filter available in FFmpeg
+	encoderOpts    EncoderOpts       // per-deployment NVENC/maxrate tuning
 	logger         *slog.Logger
 	activeSessions atomic.Int32
 	maxSessions    int
@@ -37,7 +38,7 @@ type Worker struct {
 }
 
 // NewWorker creates a transcode Worker.
-func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSessions int, logger *slog.Logger) *Worker {
+func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSessions int, encOpts EncoderOpts, logger *slog.Logger) *Worker {
 	if maxSessions <= 0 {
 		maxSessions = 4
 	}
@@ -55,6 +56,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		encoders:       encoders,
 		encoderLabels:  labels,
 		hasTonemapCuda: hasTonemap,
+		encoderOpts:    encOpts,
 		maxSessions:    maxSessions,
 		logger:         logger,
 		activeJobs:     make(map[string]*os.Process),
@@ -171,11 +173,27 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			enc = BestEncoder(w.encoders)
 		}
 		// Use HEVC output encoder when requested and available.
+		// If HEVC was requested but no HEVC encoder exists, restore the
+		// H.264-grade bitrate — the API already scaled it down for HEVC.
 		if job.PreferHEVC && !IsHEVCEncoder(enc) {
 			if hevc := BestHEVCEncoder(w.encoders); hevc != "" {
 				enc = hevc
+			} else if HEVCBitrateRatio > 0 {
+				job.BitrateKbps = int(float64(job.BitrateKbps) / HEVCBitrateRatio)
 			}
 		}
+
+		bitrate := job.BitrateKbps
+		w.logger.Info("starting ffmpeg",
+			"session_id", job.SessionID,
+			"encoder", enc,
+			"width", job.Width, "height", job.Height,
+			"bitrate_kbps", bitrate,
+			"tonemap", job.NeedsToneMap,
+			"prefer_hevc", job.PreferHEVC,
+			"tonemap_cuda", w.hasTonemapCuda,
+		)
+
 		ffArgs = BuildHLS(BuildArgs{
 			InputPath:        job.FilePath,
 			StartOffset:      job.StartOffsetSec,
@@ -184,13 +202,14 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			IsHEVC:           job.IsHEVC,
 			Width:            job.Width,
 			Height:           job.Height,
-			BitrateKbps:      job.BitrateKbps,
+			BitrateKbps:      bitrate,
 			NeedsToneMap:     job.NeedsToneMap,
 			HasTonemapCuda:   w.hasTonemapCuda,
 			AudioCodec:       job.AudioCodec,
 			AudioChannels:    job.AudioChannels,
 			AudioStreamIndex: job.AudioStreamIndex,
 			SubtitleStreams:   job.SubtitleStreams,
+			EncoderOpts:      w.encoderOpts,
 			SessionDir:       job.SessionDir,
 			SegmentPrefix:    "seg",
 		})

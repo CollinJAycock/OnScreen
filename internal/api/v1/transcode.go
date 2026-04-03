@@ -155,6 +155,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// audio codec or container is not.
 	var encoder string
 	var width, height, bitrateKbps int
+	sourceW, sourceH := 0, 0
+	if file.ResolutionW != nil {
+		sourceW = *file.ResolutionW
+	}
+	if file.ResolutionH != nil {
+		sourceH = *file.ResolutionH
+	}
 
 	if body.VideoCopy {
 		encoder = "copy"
@@ -164,13 +171,6 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			MaxBitrateKbps: h.cfg.TranscodeMaxBitrate,
 			MaxWidth:       h.cfg.TranscodeMaxWidth,
 			MaxHeight:      h.cfg.TranscodeMaxHeight,
-		}
-		sourceW, sourceH := 0, 0
-		if file.ResolutionW != nil {
-			sourceW = *file.ResolutionW
-		}
-		if file.ResolutionH != nil {
-			sourceH = *file.ResolutionH
 		}
 		quality := transcode.SelectQuality(0, 0, body.Height, sourceW, sourceH, serverCaps)
 
@@ -276,6 +276,18 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		PreferHEVC:       preferHEVC,
 		EnqueuedAt:       time.Now(),
 	}
+	h.logger.InfoContext(ctx, "transcode job created",
+		"session_id", sessionID,
+		"decision", decision,
+		"requested_height", body.Height,
+		"source_w", sourceW, "source_h", sourceH,
+		"output_w", width, "output_h", height,
+		"bitrate_kbps", jobBitrate,
+		"prefer_hevc", preferHEVC,
+		"needs_tonemap", job.NeedsToneMap,
+		"supports_hevc", body.SupportsHEVC,
+	)
+
 	workerAddr, err := h.sessions.DispatchJob(ctx, job)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "dispatch transcode job failed", "session_id", sessionID, "err", err)

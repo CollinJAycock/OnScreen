@@ -15,6 +15,7 @@ const keyArrAPIKey           = "arr_api_key"
 const keyArrPathMappings     = "arr_path_mappings"
 const keyTranscodeEncoders   = "transcode_encoders"
 const keyWorkerFleet         = "worker_fleet"
+const keyTranscodeConfig     = "transcode_config"
 
 // Service reads and writes server settings to the server_settings table.
 type Service struct {
@@ -130,6 +131,39 @@ func (s *Service) SetWorkerFleet(ctx context.Context, cfg WorkerFleetConfig) err
 		return err
 	}
 	return s.set(ctx, keyWorkerFleet, string(b))
+}
+
+// TranscodeConfig holds per-deployment encoder tuning knobs that are
+// adjustable from the admin UI. Zero values mean "use server default".
+type TranscodeConfig struct {
+	NVENCPreset   string  `json:"nvenc_preset,omitempty"`    // p1–p7
+	NVENCTune     string  `json:"nvenc_tune,omitempty"`      // hq, ll, ull
+	NVENCRC       string  `json:"nvenc_rc,omitempty"`        // vbr, cbr, constqp
+	MaxrateRatio  float64 `json:"maxrate_ratio,omitempty"`   // e.g. 1.5
+}
+
+// TranscodeConfigGet returns the transcode encoder tuning config.
+// Returns zero-value TranscodeConfig if not stored (all defaults).
+func (s *Service) TranscodeConfigGet(ctx context.Context) TranscodeConfig {
+	raw := s.get(ctx, keyTranscodeConfig)
+	if raw == "" {
+		return TranscodeConfig{}
+	}
+	var cfg TranscodeConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse transcode_config", "err", err)
+		return TranscodeConfig{}
+	}
+	return cfg
+}
+
+// SetTranscodeConfig persists the transcode encoder tuning config.
+func (s *Service) SetTranscodeConfig(ctx context.Context, cfg TranscodeConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyTranscodeConfig, string(b))
 }
 
 func (s *Service) get(ctx context.Context, key string) string {
