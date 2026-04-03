@@ -323,6 +323,27 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 			return
 		}
 
+		// Block until the segment exists (up to 10 s). For slow transcodes
+		// (e.g. 4K HDR at ~1x speed) HLS.js may request the next segment
+		// before FFmpeg has produced it. Blocking here keeps the HTTP request
+		// pending while the player continues from its buffer — the same
+		// strategy Jellyfin uses to avoid buffering spinners.
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if _, err := os.Stat(clean); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				http.Error(rw, "segment not ready", http.StatusNotFound)
+				return
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+
 		http.ServeFile(rw, r, clean)
 	})
 

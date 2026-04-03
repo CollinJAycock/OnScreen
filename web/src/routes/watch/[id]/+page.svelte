@@ -17,6 +17,7 @@
   let siblings: ChildItem[] = []; // other episodes in the same season
   let loading = true;
   let error = '';
+  let tonemapWarning = '';
 
   // Video element reference
   let videoEl: HTMLVideoElement;
@@ -544,6 +545,15 @@
     await stopTranscodeSession();
     destroyHls();
 
+    // Warn admin when HDR content on an SDR screen requires tonemapping transcode.
+    const file = item.files?.[0];
+    if (!videoCopy && file?.hdr_type && !clientSupportsHDR) {
+      tonemapWarning = `This ${file.resolution_h}p HDR file requires real-time tonemapping. ` +
+        `Enable HDR on your display for best performance.`;
+    } else {
+      tonemapWarning = '';
+    }
+
     try {
       const audioIdx = selectedAudioIndex >= 0 ? selectedAudioIndex : undefined;
       const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC);
@@ -593,29 +603,22 @@
 
     if (Hls.isSupported()) {
       hlsInstance = new Hls({
-        // Buffer up to 60 s ahead (default 30 s) to reduce mid-playback stalls.
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-        // Start fetching the next segment before the current one finishes.
+        // Cap the forward buffer to 30 s and lock maxMaxBufferLength to match.
+        // If maxMaxBufferLength > maxBufferLength, HLS.js can expand its target
+        // up to that ceiling, race ahead to FFmpeg's live edge, and stall when
+        // there are no more segments to fetch. Jellyfin uses this same pattern.
+        maxBufferLength: 30,
+        maxMaxBufferLength: 30,
         startFragPrefetch: true,
-        // Detect stalls quickly during normal playback.
-        highBufferWatchdogPeriod: 3,
-        // Force playback to start at position 0 in the HLS timeline (not the live edge).
+        lowLatencyMode: false,
+        backBufferLength: Infinity,
+        // Force playback to start at position 0 (not the live edge).
         startPosition: 0,
-        // Disable live sync seeking. For EVENT playlists (remux/transcode), HLS.js
-        // periodically seeks the player forward to stay within liveSyncDurationCount
-        // segments of the live edge. As FFmpeg races ahead, this causes the player to
-        // jump forward and eventually catch the actual live edge and stall. Setting
-        // these very high effectively disables the live-sync seek until ENDLIST appears.
+        // Disable live-edge sync until ENDLIST appears. Without this, HLS.js
+        // seeks the player forward toward the live edge and stalls.
         liveSyncDurationCount: 999,
-        liveMaxLatencyDurationCount: 1002, // must be > liveSyncDurationCount + 1
-        // Some source files have an edit list / chapter track that shifts MPEG-TS
-        // timestamps so the buffer starts at PTS > 0 (e.g. 1.467 s). With
-        // startPosition=0, currentTime=0 but no data exists there, causing a stall.
-        // nudgeMaxRetry=0 tells HLS.js to skip the 3 one-second nudge attempts and
-        // immediately seek to buffered.start(0) on the first watchdog tick (~100 ms).
-        // We do NOT manually set videoEl.currentTime because that triggers a SourceBuffer
-        // flush in HLS.js, evicting the segments we already buffered.
+        liveMaxLatencyDurationCount: 1002,
+        // Skip the 3×1s nudge loop for PTS-offset sources — seek immediately.
         nudgeMaxRetry: 0,
       });
       hlsInstance.loadSource(playlistUrl);
@@ -1170,6 +1173,10 @@
         <track kind="captions" />
       {/if}
     </video>
+
+    {#if tonemapWarning}
+      <div class="tonemap-banner">{tonemapWarning}</div>
+    {/if}
 
     {#if buffering}
       <div class="buffer-overlay">
@@ -2032,6 +2039,25 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  .tonemap-banner {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: #fbbf24;
+    font-size: 0.8rem;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    z-index: 20;
+    max-width: 90%;
+    text-align: center;
+    pointer-events: none;
+    animation: fadeout 0s 10s forwards;
+  }
+  @keyframes fadeout { to { opacity: 0; } }
 
   .buffer-overlay {
     position: absolute;
