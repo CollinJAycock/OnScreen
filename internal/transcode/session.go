@@ -229,7 +229,7 @@ func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uu
 // SetWorkerInfo stamps the session with the worker ID and address that claimed
 // the job. The API uses WorkerAddr to proxy segment requests to the correct
 // worker in multi-instance deployments.
-func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, workerAddr string) error {
+func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, workerAddr string, hevcOutput bool) error {
 	raw, err := s.v.Get(ctx, sessionKey(sessionID))
 	if err != nil {
 		return fmt.Errorf("get session for worker stamp: %w", err)
@@ -240,6 +240,7 @@ func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, w
 	}
 	sess.WorkerID = workerID
 	sess.WorkerAddr = workerAddr
+	sess.HEVCOutput = hevcOutput
 	b, err := json.Marshal(sess)
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)

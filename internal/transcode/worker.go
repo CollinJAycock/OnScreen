@@ -172,6 +172,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 	}
 
 	var ffArgs []string
+	var actualEncoder Encoder
 	switch job.Decision {
 	case "directStream":
 		ffArgs = BuildDirectStream(job.FilePath, job.SessionDir, job.StartOffsetSec)
@@ -225,6 +226,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			SessionDir:       job.SessionDir,
 			SegmentPrefix:    "seg",
 		})
+		actualEncoder = enc
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
@@ -235,9 +237,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 
-	// Stamp the session with this worker's address so the API can proxy
-	// segment and playlist requests to us in multi-instance deployments.
-	if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr); err != nil {
+	// Stamp the session with this worker's address and actual HEVC output status.
+	// The API sets HEVCOutput based on client preference, but the worker may fall
+	// back to H.264 if no HEVC encoder is active. Correct it here so the playlist
+	// handler looks for the right segment extension (.ts vs .m4s).
+	actualHEVC := IsHEVCEncoder(actualEncoder)
+	if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr, actualHEVC); err != nil {
 		w.logger.Warn("set worker info on session", "session_id", job.SessionID, "err", err)
 	}
 

@@ -180,7 +180,7 @@ func TestIntegration_SessionStore_SetWorkerInfo(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := store.SetWorkerInfo(ctx, sess.ID, "worker-1", "10.0.0.5:7073"); err != nil {
+	if err := store.SetWorkerInfo(ctx, sess.ID, "worker-1", "10.0.0.5:7073", false); err != nil {
 		t.Fatalf("SetWorkerInfo: %v", err)
 	}
 
