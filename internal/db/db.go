@@ -18,11 +18,23 @@ func NewPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse db config: %w", err)
 	}
 
+	// Keep the pool small to avoid exhausting PostgreSQL's connection slots
+	// when the container is hard-killed (connections orphan until TCP keepalive
+	// expires). Two pools (rw + ro) × 20 = 40 max — well within the default
+	// PostgreSQL max_connections of 100.
 	cpus := runtime.NumCPU()
-	cfg.MaxConns = int32(cpus * 4)
-	cfg.MinConns = int32(cpus)
-	cfg.MaxConnLifetime = 30 * time.Minute
-	cfg.MaxConnIdleTime = 5 * time.Minute
+	maxConns := int32(cpus * 2)
+	if maxConns < 4 {
+		maxConns = 4
+	}
+	if maxConns > 20 {
+		maxConns = 20
+	}
+	cfg.MaxConns = maxConns
+	cfg.MinConns = min(int32(cpus), maxConns/2)
+	cfg.MaxConnLifetime = 15 * time.Minute
+	cfg.MaxConnIdleTime = 3 * time.Minute
+	cfg.HealthCheckPeriod = 30 * time.Second
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

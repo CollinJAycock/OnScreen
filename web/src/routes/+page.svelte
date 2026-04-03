@@ -107,8 +107,8 @@
             {@const art = item.poster_path ?? item.thumb_path}
             <a class="hub-card" href="/watch/{item.id}">
               {#if art}
-                <img src="/artwork/{art}?v={item.updated_at}&w=300"
-                     srcset="/artwork/{art}?v={item.updated_at}&w=150 150w, /artwork/{art}?v={item.updated_at}&w=300 300w, /artwork/{art}?v={item.updated_at}&w=450 450w"
+                <img src="/artwork/{encodeURI(art)}?v={item.updated_at}&w=300"
+                     srcset="/artwork/{encodeURI(art)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(art)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(art)}?v={item.updated_at}&w=450 450w"
                      sizes="(max-width: 768px) 130px, 220px"
                      alt={item.title} loading="lazy" />
               {:else}
@@ -135,8 +135,8 @@
           {#each recentlyAdded as item (item.id)}
             <a class="hub-card" href="/watch/{item.id}">
               {#if item.poster_path}
-                <img src="/artwork/{item.poster_path}?v={item.updated_at}&w=300"
-                     srcset="/artwork/{item.poster_path}?v={item.updated_at}&w=150 150w, /artwork/{item.poster_path}?v={item.updated_at}&w=300 300w, /artwork/{item.poster_path}?v={item.updated_at}&w=450 450w"
+                <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
+                     srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=450 450w"
                      sizes="(max-width: 768px) 130px, 220px"
                      alt={item.title} loading="lazy" />
               {:else}

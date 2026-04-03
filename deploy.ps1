@@ -27,8 +27,25 @@ goose -dir internal\db\migrations postgres $env:DATABASE_URL up
 if ($LASTEXITCODE -ne 0) { throw "Migration failed" }
 
 Write-Host "==> Stopping old server..." -ForegroundColor Cyan
-Get-Process -Name server -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*OnScreen*" } | Stop-Process -Force
-Start-Sleep -Seconds 1
+$oldProcs = Get-Process -Name server -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*OnScreen*" }
+if ($oldProcs) {
+    # Graceful: send Ctrl+C so the Go signal handler runs pool.Close() / server.Shutdown().
+    # GenerateConsoleCtrlEvent only works within the same console group, so we use
+    # taskkill without /F which sends WM_CLOSE — Go maps this to os.Interrupt on Windows.
+    foreach ($p in $oldProcs) {
+        taskkill /PID $p.Id 2>$null
+    }
+    # Wait up to 10 s for the process to exit gracefully.
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        $still = Get-Process -Name server -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*OnScreen*" }
+        if (-not $still) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    # Force-kill if it didn't exit in time.
+    Get-Process -Name server -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*OnScreen*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+}
 
 Write-Host "==> Starting server..." -ForegroundColor Cyan
 $proc = Start-Process -FilePath .\bin\server.exe -PassThru -WindowStyle Hidden

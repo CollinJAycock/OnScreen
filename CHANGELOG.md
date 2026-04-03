@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- JavaScript-based subtitle renderer replacing native `<track>` elements for reliable HLS/MSE playback
+- Subtitle sync/delay adjustment (±0.5s) in both desktop and mobile player menus
+- PTS offset detection for accurate subtitle timing on container-shifted sources
+- Touch-interactive seek bar with swipe-to-seek, double-tap skip, and swipe-down dismiss
+- Mobile-optimized bottom sheet menus for subtitles, quality, and audio track selection
+- Orientation lock to landscape on fullscreen for mobile devices
+- Safe area insets for notched/dynamic island phones
+- Subtitle font size control (small/medium/large) with localStorage persistence
+- HDR tonemapping notice: "Enable HDR on your display for best performance"
+
+### Fixed
+
+- HLS seek sending video back to the beginning — `videoEl.duration` is `Infinity` for live HLS streams; now falls back to `seekable`/`buffered` ranges
+- Seek within remux sessions now preserves remux mode instead of restarting as full transcode
+- Artwork `srcset` parsing errors for titles with spaces (e.g., "GoodFellas") — URL-encode all artwork paths with `encodeURI()`
+- PostgreSQL connection pool exhaustion (97 stale connections) — cap pool at 20, add health checks, 3-min idle timeout
+- Graceful shutdown on Windows (`deploy.ps1`) and Docker (`STOPSIGNAL SIGTERM`, 35s grace period)
+
+### Changed
+
+- HLS.js buffer strategy: cap `maxMaxBufferLength` = `maxBufferLength` = 30s (Jellyfin pattern) to prevent live-edge stalls
+- Connection pool sizing: `cpus * 2` capped at 20, with 15-min max lifetime and 30s health checks
+
+---
+
+## [1.1.0] - 2026-03-31
+
+### Added
+
+- Theme toggle (light/dark mode) with system preference detection and FOUC prevention
+- Subtitle and audio language preference settings per user
+- Audio track picker in the video player
+- Parental content filtering with configurable max rating per user
+- In-app notification system with SSE real-time delivery
+- Notification bell with unread badge and mark-read support
+- Image proxy/thumbnailer with `?w=` resize, responsive `srcset`, and CDN-friendly cache headers
+- Mobile player gestures: horizontal swipe to seek, vertical swipe for volume/brightness
+- Double-tap left/right to skip ±10s with ripple animation
+- Transcode fleet management UI with worker status, encoder info, and session monitoring
+- Configurable encoder tuning (NVENC options, max bitrate) via Transcode settings tab
+- GPU-preferred worker dispatch for multi-worker deployments
+- Multi-worker Docker Compose deployment support
+- HEVC (H.265) direct play support for Safari and other HEVC-capable browsers
+- 4K transcoding defaults: 4K sources default to 4K output quality
+- HDR tonemapping: CUDA, OpenCL, and software (zscale) fallback chain
+- OpenCL HDR tonemapping support with comprehensive test coverage
+- Infinite scroll in library grid (replaces load-more button)
+- Responsive `srcset` on all content images for bandwidth-efficient loading
+- GPU Docker image (`Dockerfile.gpu`) with CUDA/NVENC FFmpeg
+- `libzimg` in FFmpeg Docker image for software tonemapping via zscale filter
+- API and transcode load test tooling
+
+### Fixed
+
+- HLS playback stalls: buffer before play, disable live sync, HEVC fMP4 segments
+- HEVC/TS segment format mismatch: worker now stamps actual encoder output format
+- NVENC 4K transcode failures
+- NVENC 10-bit encode failure: force `yuv420p` for H.264 output
+- NVENC HEVC hang: use explicit cuvid decoder (Jellyfin pattern)
+- NVENC software decode + GPU encode path (CUDA hwdec hangs on HEVC)
+- Transcode timeout for Blu-ray rips with many PGS subtitle tracks
+- Mass-missing files during container restarts
+- Infinite scroll binding issue: use Svelte action instead of `bind:this`
+- Docker Compose file fix
+
+### Changed
+
+- HDR transcode startup speed: reduced probe time, increased playlist deadline
+- Docker build speed improvements for GPU images
+
+---
+
 ## [1.0.0] - 2026-03-30
 
 ### Added

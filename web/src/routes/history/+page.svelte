@@ -107,7 +107,7 @@
         <a class="history-row" href="/watch/{item.media_id}">
           <div class="thumb-cell">
             {#if item.thumb_path}
-              <img src="/artwork/{item.thumb_path}?w=150" alt={item.title} loading="lazy" />
+              <img src="/artwork/{encodeURI(item.thumb_path)}?w=150" alt={item.title} loading="lazy" />
             {:else}
               <div class="thumb-blank">
                 <span>{item.title[0]?.toUpperCase() ?? '?'}</span>

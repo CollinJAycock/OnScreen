@@ -104,8 +104,8 @@
         <button class="result-card" on:click={() => navigate(item)}>
           <div class="poster-wrap">
             {#if item.poster_path || item.thumb_path}
-              <img src="/artwork/{item.poster_path ?? item.thumb_path}?w=300"
-                   srcset="/artwork/{item.poster_path ?? item.thumb_path}?w=150 150w, /artwork/{item.poster_path ?? item.thumb_path}?w=300 300w, /artwork/{item.poster_path ?? item.thumb_path}?w=450 450w"
+              <img src="/artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=300"
+                   srcset="/artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=150 150w, /artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=300 300w, /artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=450 450w"
                    sizes="(max-width: 768px) 100px, 180px"
                    alt={item.title} loading="lazy" />
             {:else}

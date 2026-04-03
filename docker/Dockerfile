@@ -54,4 +54,7 @@ EXPOSE 7070 7071
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s \
   CMD wget -qO- http://localhost:7070/health/live || exit 1
 
+STOPSIGNAL SIGTERM
+LABEL com.docker.compose.stop-grace-period="35s"
+
 ENTRYPOINT ["/usr/local/bin/server"]

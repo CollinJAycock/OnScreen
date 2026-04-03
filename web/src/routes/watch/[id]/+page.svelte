@@ -61,6 +61,12 @@
   // Subtitle picker
   let showSubtitleMenu = false;
   let selectedSubtitle: import('$lib/api').SubtitleStream | null = null;
+  // Subtitle font size: 'small' | 'medium' | 'large'
+  const subtitleSizes = ['small', 'medium', 'large'] as const;
+  type SubtitleSize = typeof subtitleSizes[number];
+  let subtitleSize: SubtitleSize = (typeof localStorage !== 'undefined' && localStorage.getItem('subtitle_size') as SubtitleSize) || 'medium';
+  // Subtitle delay in seconds (positive = subs appear later, negative = earlier).
+  let subtitleDelay = 0;
 
   // Audio track picker
   let showAudioMenu = false;
@@ -69,10 +75,66 @@
   // Text-based subtitle codecs that ffmpeg can convert to WebVTT.
   const textSubCodecs = new Set(['srt', 'subrip', 'ass', 'ssa', 'mov_text', 'webvtt', 'text']);
 
-  // Activate/deactivate subtitle tracks when selection changes.
+  // ── JavaScript subtitle renderer ─────────────────────────────────────────
+  // Native <track> elements are unreliable with HLS.js/MSE. Instead, we fetch
+  // the WebVTT, parse cues, and render them in a <div> overlay synced to
+  // currentTime via onTimeUpdate.
+  interface SubCue { start: number; end: number; text: string; }
+  let activeCues: SubCue[] = [];
+  let allCues: SubCue[] = [];
+  let subtitleFetchId = 0; // dedup concurrent fetches
+
+  // Load cues when subtitle selection changes.
+  $: if (selectedSubtitle && item?.files?.[0]) {
+    loadSubtitleCues(item.files[0].id, selectedSubtitle.index);
+  } else {
+    allCues = [];
+    activeCues = [];
+  }
+
+  async function loadSubtitleCues(fileId: string, streamIndex: number) {
+    const fetchId = ++subtitleFetchId;
+    try {
+      const resp = await fetch(`/media/subtitles/${fileId}/${streamIndex}`);
+      if (!resp.ok || fetchId !== subtitleFetchId) return;
+      const vtt = await resp.text();
+      allCues = parseWebVTT(vtt);
+    } catch {
+      allCues = [];
+    }
+  }
+
+  function parseWebVTT(vtt: string): SubCue[] {
+    const cues: SubCue[] = [];
+    const blocks = vtt.split(/\n\n+/);
+    for (const block of blocks) {
+      const lines = block.trim().split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const match = lines[i].match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
+        if (!match) {
+          // Try MM:SS.mmm format (no hours)
+          const m2 = lines[i].match(/^(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2})\.(\d{3})/);
+          if (m2) {
+            const start = parseInt(m2[1]) * 60 + parseInt(m2[2]) + parseInt(m2[3]) / 1000;
+            const end = parseInt(m2[4]) * 60 + parseInt(m2[5]) + parseInt(m2[6]) / 1000;
+            const text = lines.slice(i + 1).join('\n').trim();
+            if (text) cues.push({ start, end, text });
+          }
+          continue;
+        }
+        const start = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3]) + parseInt(match[4]) / 1000;
+        const end = parseInt(match[5]) * 3600 + parseInt(match[6]) * 60 + parseInt(match[7]) + parseInt(match[8]) / 1000;
+        const text = lines.slice(i + 1).join('\n').trim();
+        if (text) cues.push({ start, end, text });
+      }
+    }
+    return cues;
+  }
+
+  // Disable native text tracks to avoid double rendering.
   $: if (videoEl?.textTracks?.length) {
     for (let i = 0; i < videoEl.textTracks.length; i++) {
-      videoEl.textTracks[i].mode = selectedSubtitle ? 'showing' : 'hidden';
+      videoEl.textTracks[i].mode = 'hidden';
     }
   }
 
@@ -159,6 +221,10 @@
   // True while an HLS session is active. Needed to distinguish HLS-at-offset-0
   // from direct play (both have hlsOffsetSec === 0).
   let hlsActive = false;
+  // PTS offset: some source files shift MPEG-TS timestamps (edit lists, chapter
+  // tracks). videoEl.currentTime includes this offset, but subtitle timestamps
+  // from the source file don't. Captured on first play to correct subtitle sync.
+  let hlsPtsOffset = 0;
   // True when the current HLS session is a remux (video copy). Used to detect
   // when the browser can't decode the remuxed video and escalate to full transcode.
   let hlsIsRemux = false;
@@ -659,6 +725,7 @@
     }
     hlsActive = false;
     hlsOffsetSec = 0;
+    hlsPtsOffset = 0;
     hlsIsRemux = false;
   }
 
@@ -714,7 +781,15 @@
   }
 
   function onWaiting()  { buffering = true; }
-  function onPlaying()  { buffering = false; }
+  function onPlaying()  {
+    buffering = false;
+    // Capture PTS offset on first play of an HLS session. If videoEl.currentTime
+    // is well above 0 but hlsOffsetSec is 0 (started from beginning), the source
+    // file has shifted MPEG-TS timestamps. Subtract this from subtitle matching.
+    if (hlsActive && hlsPtsOffset === 0 && hlsOffsetSec === 0 && videoEl.currentTime > 0.5) {
+      hlsPtsOffset = videoEl.currentTime;
+    }
+  }
 
   function onTimeUpdate() {
     if (!seeking) currentTime = videoEl.currentTime + hlsOffsetSec;
@@ -725,6 +800,14 @@
     // In HLS mode, duration is fixed from item.duration_ms (set in attachHls).
     if (!hlsActive && isFinite(videoEl.duration) && videoEl.duration > 0) {
       duration = videoEl.duration;
+    }
+    // Update active subtitle cues. Subtract PTS offset (container timestamp shift)
+    // and add subtitle delay (user adjustment for poorly synced source subs).
+    if (allCues.length > 0) {
+      const t = currentTime - hlsPtsOffset - subtitleDelay;
+      activeCues = allCues.filter(c => t >= c.start && t <= c.end);
+    } else if (activeCues.length > 0) {
+      activeCues = [];
     }
   }
 
@@ -830,6 +913,30 @@
     saveProgress(videoEl.paused ? 'paused' : 'playing');
   }
 
+  // Touch-specific seek bar handlers — prevent the overlay's swipe-gesture
+  // system from hijacking drags that start on the seek bar.
+  function onSeekTouchStart(e: TouchEvent) {
+    e.stopPropagation();
+    seeking = true;
+    currentTime = getSeekFraction(e) * duration;
+  }
+  function onSeekTouchMove(e: TouchEvent) {
+    if (!seeking) return;
+    e.stopPropagation();
+    e.preventDefault();
+    currentTime = getSeekFraction(e) * duration;
+  }
+  function onSeekTouchEnd(e: TouchEvent) {
+    if (!seeking) return;
+    e.stopPropagation();
+    seeking = false;
+    const rect = seekBarEl.getBoundingClientRect();
+    const clientX = e.changedTouches[0].clientX;
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    seekToContentTime(frac * duration);
+    saveProgress(videoEl.paused ? 'paused' : 'playing');
+  }
+
   // Seek to an absolute content position (seconds).
   // In HLS mode, restarts the transcode session if the target is outside
   // the current stream window; otherwise seeks within the stream directly.
@@ -839,12 +946,25 @@
       videoEl.currentTime = targetSec;
       return;
     }
-    const streamEnd = hlsOffsetSec + (isFinite(videoEl.duration) ? videoEl.duration : 0);
-    if (targetSec >= hlsOffsetSec && targetSec <= streamEnd) {
-      videoEl.currentTime = targetSec - hlsOffsetSec;
+    // Determine the seekable range within the current HLS stream.
+    // videoEl.duration can be Infinity for live-ish streams (before ENDLIST),
+    // so fall back to the seekable/buffered end reported by the browser.
+    let streamDur = 0;
+    if (isFinite(videoEl.duration) && videoEl.duration > 0) {
+      streamDur = videoEl.duration;
+    } else if (videoEl.seekable?.length) {
+      streamDur = videoEl.seekable.end(videoEl.seekable.length - 1);
+    } else if (videoEl.buffered?.length) {
+      streamDur = videoEl.buffered.end(videoEl.buffered.length - 1);
+    }
+    const streamEnd = hlsOffsetSec + streamDur;
+    const streamTime = targetSec - hlsOffsetSec;
+    if (targetSec >= hlsOffsetSec && targetSec <= streamEnd && streamTime >= 0) {
+      videoEl.currentTime = streamTime;
     } else {
-      // Outside the buffered HLS window — restart transcode at new position.
-      switchToTranscode(selectedQuality.height, Math.floor(targetSec * 1000));
+      // Outside the current HLS window — restart transcode at new position.
+      // Preserve remux mode if we were in it (videoCopy).
+      switchToTranscode(selectedQuality.height, Math.floor(targetSec * 1000), hlsIsRemux);
     }
   }
 
@@ -1091,7 +1211,7 @@
   {:else}
     <img
       class="photo-image"
-      src="/artwork/{item.poster_path}?v={item.updated_at}"
+      src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}"
       alt={item.title}
       draggable="false"
       style="transform: scale({photoZoom}) translate({photoPanX / photoZoom}px, {photoPanY / photoZoom}px);"
@@ -1161,18 +1281,17 @@
       on:playing={onPlaying}
       preload="auto"
     >
-      {#if selectedSubtitle && item?.files?.[0]}
-        <track
-          kind="subtitles"
-          src="/media/subtitles/{item.files[0].id}/{selectedSubtitle.index}"
-          srclang={selectedSubtitle.language || 'en'}
-          label={selectedSubtitle.title || selectedSubtitle.language || 'Unknown'}
-          default
-        />
-      {:else}
-        <track kind="captions" />
-      {/if}
+      <track kind="captions" />
     </video>
+
+    <!-- JS-rendered subtitle overlay (native <track> is unreliable with HLS.js/MSE) -->
+    {#if activeCues.length > 0}
+      <div class="subtitle-overlay subs-{subtitleSize}">
+        {#each activeCues as cue}
+          <span class="subtitle-cue">{@html cue.text.replace(/\n/g, '<br>')}</span>
+        {/each}
+      </div>
+    {/if}
 
     {#if tonemapWarning}
       <div class="tonemap-banner">{tonemapWarning}</div>
@@ -1216,6 +1335,9 @@
           class="seek-bar"
           bind:this={seekBarEl}
           on:mousedown={onSeekMouseDown}
+          on:touchstart={onSeekTouchStart}
+          on:touchmove={onSeekTouchMove}
+          on:touchend={onSeekTouchEnd}
           role="slider"
           aria-label="Seek"
           aria-valuemin={0}
@@ -1336,6 +1458,27 @@
                         {#if sub.language && sub.title} — {sub.language}{/if}
                       </button>
                     {/each}
+                    {#if selectedSubtitle}
+                      <div class="subtitle-size-row">
+                        <span class="subtitle-size-label">Size</span>
+                        {#each subtitleSizes as sz}
+                          <button
+                            class="subtitle-size-btn"
+                            class:active={subtitleSize === sz}
+                            on:click|stopPropagation={() => { subtitleSize = sz; localStorage.setItem('subtitle_size', sz); }}
+                          >{sz[0].toUpperCase() + sz.slice(1)}</button>
+                        {/each}
+                      </div>
+                      <div class="subtitle-size-row">
+                        <span class="subtitle-size-label">Sync</span>
+                        <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay -= 0.5}>-0.5s</button>
+                        <span class="subtitle-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
+                        <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay += 0.5}>+0.5s</button>
+                        {#if subtitleDelay !== 0}
+                          <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>Reset</button>
+                        {/if}
+                      </div>
+                    {/if}
                   </div>
                 {/if}
               </div>
@@ -1488,6 +1631,27 @@
                 {#if sub.language && sub.title} — {sub.language}{/if}
               </button>
             {/each}
+            {#if selectedSubtitle}
+              <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
+                <span class="subtitle-size-label">Size</span>
+                {#each subtitleSizes as sz}
+                  <button
+                    class="subtitle-size-btn"
+                    class:active={subtitleSize === sz}
+                    on:click|stopPropagation={() => { subtitleSize = sz; localStorage.setItem('subtitle_size', sz); }}
+                  >{sz[0].toUpperCase() + sz.slice(1)}</button>
+                {/each}
+              </div>
+              <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
+                <span class="subtitle-size-label">Sync</span>
+                <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay -= 0.5}>-0.5s</button>
+                <span class="subtitle-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
+                <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay += 0.5}>+0.5s</button>
+                {#if subtitleDelay !== 0}
+                  <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>Reset</button>
+                {/if}
+              </div>
+            {/if}
           {:else if showBottomSheet === 'audio'}
             <div class="bottom-sheet-title">Audio Track</div>
             {#each audioStreams as stream, i}
@@ -1533,8 +1697,8 @@
 
     <div class="detail-header">
       {#if item.poster_path}
-        <img class="detail-poster" src="/artwork/{item.poster_path}?v={item.updated_at}&w=300"
-             srcset="/artwork/{item.poster_path}?v={item.updated_at}&w=150 150w, /artwork/{item.poster_path}?v={item.updated_at}&w=300 300w, /artwork/{item.poster_path}?v={item.updated_at}&w=600 600w"
+        <img class="detail-poster" src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
+             srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=600 600w"
              sizes="(max-width: 768px) 120px, 220px"
              alt="{item.title}" />
       {/if}
@@ -1631,7 +1795,7 @@
         {#each musicChildren as album}
           <a class="music-album-card" href="/watch/{album.id}">
             {#if album.poster_path}
-              <img src="/artwork/{album.poster_path}?v={album.updated_at}&w=300" alt={album.title} loading="lazy" />
+              <img src="/artwork/{encodeURI(album.poster_path)}?v={album.updated_at}&w=300" alt={album.title} loading="lazy" />
             {:else}
               <div class="music-album-blank">♪</div>
             {/if}
@@ -1755,6 +1919,31 @@
     position: relative;
     z-index: 1;
   }
+  /* ── JS subtitle overlay ────────────────────────────── */
+  .subtitle-overlay {
+    position: absolute;
+    bottom: 10%;
+    left: 5%;
+    right: 5%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2em;
+    z-index: 4;
+    pointer-events: none;
+    text-align: center;
+  }
+  .subtitle-cue {
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    padding: 0.15em 0.5em;
+    border-radius: 3px;
+    line-height: 1.4;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+  }
+  .subtitle-overlay.subs-small .subtitle-cue { font-size: 1rem; }
+  .subtitle-overlay.subs-medium .subtitle-cue { font-size: 1.4rem; }
+  .subtitle-overlay.subs-large .subtitle-cue { font-size: 2rem; }
 
   .fanart-bg {
     position: absolute;
@@ -1785,6 +1974,9 @@
     align-items: center;
     gap: 0.75rem;
     padding: 1.25rem 1.5rem;
+    padding-top: max(1.25rem, env(safe-area-inset-top, 0px));
+    padding-left: max(1.5rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1.5rem, env(safe-area-inset-right, 0px));
     background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
   }
 
@@ -1805,6 +1997,9 @@
 
   .bottom-bar {
     padding: 0 1.5rem 1.25rem;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+    padding-left: max(1.5rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1.5rem, env(safe-area-inset-right, 0px));
     background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%);
     display: flex;
     flex-direction: column;
@@ -2067,6 +2262,41 @@
     justify-content: center;
     pointer-events: none;
     z-index: 5;
+  }
+
+  /* ── Subtitle size control ─────────────────────────── */
+  .subtitle-size-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.75rem;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin-top: 0.25rem;
+  }
+  .subtitle-size-label {
+    font-size: 0.72rem;
+    color: rgba(255,255,255,0.5);
+    margin-right: 0.25rem;
+  }
+  .subtitle-size-btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.7);
+    border-radius: 4px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+  .subtitle-size-btn.active {
+    background: #7c6af7;
+    border-color: #7c6af7;
+    color: #fff;
+  }
+  .subtitle-delay-value {
+    font-size: 0.72rem;
+    color: rgba(255,255,255,0.7);
+    min-width: 2.5rem;
+    text-align: center;
   }
 
   /* ── Detail view (shows / seasons) ───────────────── */

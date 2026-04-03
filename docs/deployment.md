@@ -255,6 +255,71 @@ Open `http://your-server:7070` in a browser and create your admin account.
 
 ---
 
+## GPU-Accelerated Deployment (NVIDIA)
+
+For hardware-accelerated transcoding with NVENC, use the GPU Docker images. This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host.
+
+### 1. Build the FFmpeg base image (one-time)
+
+```bash
+docker build -f docker/Dockerfile.ffmpeg -t onscreen-ffmpeg:latest .
+```
+
+This builds a custom FFmpeg with NVENC, CUDA hwaccel, and tonemapping filters. It rarely changes, so the layer cache makes subsequent rebuilds fast.
+
+### 2. Build the GPU application image
+
+```bash
+docker build -f docker/Dockerfile.gpu -t onscreen:gpu .
+```
+
+### 3. Run with GPU access
+
+```yaml
+# docker-compose.gpu.yml (worker service override)
+worker:
+  image: onscreen:gpu
+  entrypoint: ["/usr/local/bin/worker"]
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu, video]
+  environment:
+    NVIDIA_VISIBLE_DEVICES: all
+    NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    TRANSCODE_ENCODERS: nvenc,software
+```
+
+Or run directly:
+
+```bash
+docker run --gpus all -e TRANSCODE_ENCODERS=nvenc,software onscreen:gpu
+```
+
+### NVENC tuning
+
+Configure NVENC quality/performance via environment variables (all hot-reloadable):
+
+- `TRANSCODE_NVENC_PRESET`: `p1` (fastest) to `p7` (best quality), default `p4`
+- `TRANSCODE_NVENC_TUNE`: `hq` (recommended), `ll`, or `ull`
+- `TRANSCODE_NVENC_RC`: `vbr` (default), `cbr`, or `constqp`
+- `TRANSCODE_MAXRATE_RATIO`: Peak-to-average bitrate ratio, default `1.5`
+
+### HDR tonemapping
+
+HDR content is automatically tonemapped to SDR for clients that don't support HDR. The tonemapping filter is selected by priority:
+
+1. **tonemap_cuda** — all-GPU, fastest (requires jellyfin-ffmpeg fork)
+2. **tonemap_opencl** — CUDA decode → OpenCL tonemap → NVENC encode
+3. **zscale + tonemap** — CPU software fallback (requires libzimg)
+
+The player displays a notice when tonemapping is active, recommending users enable HDR on their display.
+
+---
+
 ## Bare Metal Deployment
 
 ### 1. Install dependencies
@@ -408,6 +473,21 @@ Current migrations:
 | `00008_dedup_hierarchy_items.sql` | Deduplicate hierarchy items |
 | `00009_google_oauth.sql` | Google OAuth support |
 | `00010_github_discord_oauth.sql` | GitHub and Discord OAuth support |
+| `00011_password_reset_tokens.sql` | Password reset token table |
+| `00012_invite_tokens.sql` | Invite code system |
+| `00013_audit_log.sql` | Admin audit logging |
+| `00014_add_missing_indexes.sql` | Performance indexes |
+| `00015_dedup_top_level_items.sql` | Deduplicate top-level items |
+| `00016_clear_artwork_for_relocation.sql` | Clear artwork for path relocation |
+| `00017_file_duration.sql` | Per-file duration from ffprobe |
+| `00018_library_filter_indexes.sql` | Library filtering indexes |
+| `00019_collections.sql` | Collections (playlists) |
+| `00020_managed_profiles.sql` | Managed user profiles |
+| `00021_photo_type.sql` | Photo library support |
+| `00022_user_language_preferences.sql` | Preferred audio/subtitle language |
+| `00023_content_rating_filter.sql` | Parental content rating filter |
+| `00024_notifications.sql` | In-app notification system |
+| `00025_fix_content_rating_null.sql` | Fix NULL content rating handling |
 
 ---
 
@@ -612,6 +692,21 @@ All four required environment variables must be set: `DATABASE_URL`, `VALKEY_URL
 ### WebSocket connections failing behind reverse proxy
 
 Make sure your reverse proxy forwards the `Upgrade` and `Connection` headers. See the nginx config example above.
+
+### PostgreSQL connection exhaustion
+
+If you see "remaining connection slots are reserved for non-replication superuser connections", the server has leaked connections. This was fixed in v1.1.1 — the connection pool is now capped at 20 with health checks and idle timeouts. To recover:
+
+```sql
+-- Check active connections
+SELECT count(*) FROM pg_stat_activity WHERE datname = 'onscreen';
+
+-- Terminate stale connections (safe — the pool will reconnect)
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE datname = 'onscreen' AND state = 'idle' AND query_start < now() - interval '5 minutes';
+```
+
+Ensure Docker containers use `STOPSIGNAL SIGTERM` and a stop grace period of at least 35s so the server can drain connections on shutdown.
 
 ### High memory usage during scans
 

@@ -68,4 +68,9 @@ EXPOSE 7070 7071
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s \
   CMD wget -qO- http://localhost:7070/health/live || exit 1
 
+# Give the Go server enough time to drain connections and close DB pools.
+# The server's internal shutdown timeout is 30 s; Docker's default is only 10 s.
+STOPSIGNAL SIGTERM
+LABEL com.docker.compose.stop-grace-period="35s"
+
 ENTRYPOINT ["/usr/local/bin/server"]
