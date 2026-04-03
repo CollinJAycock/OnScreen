@@ -28,8 +28,9 @@ type Worker struct {
 	store          *SessionStore
 	encoders       []Encoder
 	encoderLabels  map[string]string // encoder → human label, detected once at startup
-	hasTonemapCuda bool              // tonemap_cuda filter available in FFmpeg
-	hasZscale      bool              // zscale filter available (libzimg) for software tonemap
+	hasTonemapCuda   bool // tonemap_cuda filter available in FFmpeg
+	hasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
+	hasZscale        bool // zscale filter available (libzimg) for software tonemap
 	encoderOpts    EncoderOpts       // per-deployment NVENC/maxrate tuning
 	logger         *slog.Logger
 	activeSessions atomic.Int32
@@ -50,15 +51,17 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		labels[string(e)] = detectGPUName(ctx, e)
 	}
 	hasTonemap := ProbeFilter(ctx, "tonemap_cuda")
+	hasTonemapOCL := ProbeFilter(ctx, "tonemap_opencl")
 	hasZscale := ProbeFilter(ctx, "zscale")
 	return &Worker{
-		id:             id,
-		addr:           addr,
-		store:          store,
-		encoders:       encoders,
-		encoderLabels:  labels,
-		hasTonemapCuda: hasTonemap,
-		hasZscale:      hasZscale,
+		id:               id,
+		addr:             addr,
+		store:            store,
+		encoders:         encoders,
+		encoderLabels:    labels,
+		hasTonemapCuda:   hasTonemap,
+		hasTonemapOpenCL: hasTonemapOCL,
+		hasZscale:        hasZscale,
 		encoderOpts:    encOpts,
 		maxSessions:    maxSessions,
 		logger:         logger,
@@ -85,6 +88,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"encoders", EncoderNames(w.encoders),
 		"max_sessions", w.maxSessions,
 		"tonemap_cuda", w.hasTonemapCuda,
+		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
 	)
 
@@ -209,6 +213,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			BitrateKbps:      bitrate,
 			NeedsToneMap:     job.NeedsToneMap,
 			HasTonemapCuda:   w.hasTonemapCuda,
+			HasTonemapOpenCL: w.hasTonemapOpenCL,
 			HasZscale:        w.hasZscale,
 			AudioCodec:       job.AudioCodec,
 			AudioChannels:    job.AudioChannels,

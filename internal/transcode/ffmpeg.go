@@ -53,8 +53,9 @@ type BuildArgs struct {
 	Height      int
 	BitrateKbps int
 	NeedsToneMap   bool // HDR→SDR tone mapping (ADR-030)
-	HasTonemapCuda bool // tonemap_cuda filter available in FFmpeg
-	HasZscale      bool // zscale filter available (libzimg) for software tonemap
+	HasTonemapCuda   bool // tonemap_cuda filter available in FFmpeg
+	HasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
+	HasZscale        bool // zscale filter available (libzimg) for software tonemap
 	IsVAAPI        bool // VAAPI needs hwupload filter
 	IsHEVC         bool // source is HEVC (informational, NVDEC auto-selects decoder)
 
@@ -115,10 +116,18 @@ func BuildHLS(a BuildArgs) []string {
 
 	isNVENC := !videoCopy && (a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC)
 
-	// When NVENC is selected for HDR content but tonemap_cuda is not available,
-	// fall back to software decode + zscale tonemap. NVENC can still encode
-	// CPU-side frames, so we only drop the CUDA hwaccel — not the encoder.
-	useCudaHwaccel := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda)
+	// Tonemap strategy for NVENC with HDR content:
+	//   1. tonemap_cuda  — all-GPU pipeline, fastest (not in mainline FFmpeg)
+	//   2. tonemap_opencl — CUDA decode → OpenCL tonemap → NVENC, 2 PCIe round-trips
+	//   3. zscale         — full software decode + CPU tonemap, slowest
+	//   4. skip           — no tonemapping, washed-out output but plays
+	useOpenCLTonemap := isNVENC && a.NeedsToneMap && !a.HasTonemapCuda && a.HasTonemapOpenCL
+
+	// Use CUDA hwaccel when:
+	//   - NVENC is selected AND
+	//   - either no tonemapping is needed, or we have tonemap_cuda, or we have tonemap_opencl
+	// Without any GPU-capable tonemap, fall back to software decode + zscale.
+	useCudaHwaccel := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda && !a.HasTonemapOpenCL)
 
 	if !videoCopy {
 		// VAAPI init filter (must come before input for hardware decode).
@@ -141,6 +150,15 @@ func BuildHLS(a BuildArgs) []string {
 				"-hwaccel_output_format", "cuda",
 				"-hwaccel_flags", "+unsafe_output",
 				"-threads", "1",
+			)
+		}
+
+		// OpenCL tonemap: initialize the OpenCL device so hwupload/tonemap_opencl
+		// can use it. Must come before -i.
+		if useOpenCLTonemap {
+			args = append(args,
+				"-init_hw_device", "opencl=ocl",
+				"-filter_hw_device", "ocl",
 			)
 		}
 
@@ -346,15 +364,38 @@ func buildVideoFilter(a BuildArgs) string {
 	// With -hwaccel cuda -hwaccel_output_format cuda, decoded frames are already
 	// in CUDA memory. All filters operate in VRAM — no CPU roundtrip.
 	//
-	// When tonemap_cuda is unavailable, NVENC runs without CUDA hwaccel.
-	// Frames are software-decoded (CPU) and tonemapped via zscale, then
-	// NVENC encodes the CPU-side frames (no GPU filters needed).
-	useCudaPipeline := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda)
+	// Priority for HDR tonemapping on NVENC:
+	//   1. tonemap_cuda  — all-CUDA, fastest (jellyfin-ffmpeg fork only)
+	//   2. tonemap_opencl — CUDA decode, OpenCL tonemap, NVENC encode
+	//   3. zscale         — software decode + CPU tonemap (handled below)
+	useCudaPipeline := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda && !a.HasTonemapOpenCL)
+	useOpenCLTonemap := isNVENC && a.NeedsToneMap && !a.HasTonemapCuda && a.HasTonemapOpenCL
+
 	if isNVENC && useCudaPipeline {
-		// HDR→SDR tonemapping on GPU (must come before scale).
-		if a.NeedsToneMap {
+		if a.NeedsToneMap && !useOpenCLTonemap {
+			// tonemap_cuda: all-CUDA pipeline, frames never leave VRAM.
 			filters = append(filters, "tonemap_cuda=tonemap=hable:desat=0:peak=100:format=nv12")
 		}
+
+		if useOpenCLTonemap {
+			// tonemap_opencl: CUDA decode → scale in CUDA → download → OpenCL tonemap → download.
+			// NVENC accepts CPU-side NV12 frames (implicit upload).
+			scaleFilter := "scale_cuda=format=p010"
+			if a.Width > 0 && a.Height > 0 {
+				scaleFilter = fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=p010", a.Width, a.Height)
+			}
+			filters = append(filters,
+				scaleFilter,
+				"hwdownload",
+				"format=p010",
+				"hwupload",
+				"tonemap_opencl=tonemap=hable:desat=0:peak=100:format=nv12:primaries=bt709:transfer=bt709:matrix=bt709",
+				"hwdownload",
+				"format=nv12",
+			)
+			return strings.Join(filters, ",")
+		}
+
 		// GPU-side scaling + 10-bit → 8-bit via format=nv12.
 		if a.Width > 0 && a.Height > 0 {
 			filters = append(filters, fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
@@ -379,7 +420,7 @@ func buildVideoFilter(a BuildArgs) string {
 	// HDR→SDR tone mapping — CPU-based fallback when tonemap_cuda is unavailable.
 	// Requires zscale (libzimg). If neither tonemap_cuda nor zscale is available,
 	// tonemapping is skipped entirely (HDR content will look washed out but will play).
-	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || (isNVENC && !a.HasTonemapCuda))
+	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || (isNVENC && !a.HasTonemapCuda && !a.HasTonemapOpenCL))
 	if needsSoftwareTonemap {
 		// zscale-based tonemapping (libzimg required in FFmpeg build).
 		toneMap := strings.Join([]string{

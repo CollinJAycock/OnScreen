@@ -116,6 +116,7 @@ func TestBuildHLS_ToneMap_Software(t *testing.T) {
 		InputPath:    "/media/hdr.mkv",
 		Encoder:      EncoderSoftware,
 		NeedsToneMap: true,
+		HasZscale:    true,
 		BitrateKbps:  8000,
 		AudioCodec:   "aac",
 		SessionDir:   "/tmp/sessions/x",
@@ -379,6 +380,7 @@ func TestBuildHLS_NVENC_TonemapFallback(t *testing.T) {
 		BitrateKbps:    8000,
 		NeedsToneMap:   true,
 		HasTonemapCuda: false,
+		HasZscale:      true,
 		AudioCodec:     "aac",
 		SessionDir:     "/tmp/sessions/x",
 		SegmentPrefix:  "seg",
@@ -399,6 +401,227 @@ func TestBuildHLS_NVENC_TonemapFallback(t *testing.T) {
 	// Still uses NVENC for encoding.
 	if !strings.Contains(argStr, "-c:v h264_nvenc") {
 		t.Errorf("expected h264_nvenc encoder despite tonemap fallback: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_TonemapOpenCL(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:        "/media/hdr_movie.mkv",
+		Encoder:          EncoderNVENC,
+		Width:            3840,
+		Height:           2160,
+		BitrateKbps:      40000,
+		NeedsToneMap:     true,
+		HasTonemapCuda:   false,
+		HasTonemapOpenCL: true,
+		AudioCodec:       "aac",
+		SessionDir:       "/tmp/sessions/x",
+		SegmentPrefix:    "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	// Should use CUDA hwaccel (NVDEC decode).
+	if !strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("expected CUDA hwaccel with tonemap_opencl: %s", argStr)
+	}
+	// Should init OpenCL device.
+	if !strings.Contains(argStr, "-init_hw_device opencl=ocl") {
+		t.Errorf("expected OpenCL device init: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-filter_hw_device ocl") {
+		t.Errorf("expected OpenCL filter device: %s", argStr)
+	}
+	// Filter chain: scale_cuda → hwdownload → tonemap_opencl → hwdownload.
+	if !strings.Contains(argStr, "tonemap_opencl") {
+		t.Errorf("expected tonemap_opencl filter: %s", argStr)
+	}
+	if !strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("expected scale_cuda before OpenCL tonemap: %s", argStr)
+	}
+	if !strings.Contains(argStr, "hwdownload") {
+		t.Errorf("expected hwdownload for CUDA→OpenCL transfer: %s", argStr)
+	}
+	// Should NOT use zscale (that's the CPU fallback).
+	if strings.Contains(argStr, "zscale") {
+		t.Errorf("should NOT use zscale when tonemap_opencl is available: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_TonemapOpenCL_NoScale(t *testing.T) {
+	// OpenCL tonemap without explicit resolution — should still scale to p010.
+	args := BuildHLS(BuildArgs{
+		InputPath:        "/media/hdr_movie.mkv",
+		Encoder:          EncoderNVENC,
+		BitrateKbps:      8000,
+		NeedsToneMap:     true,
+		HasTonemapCuda:   false,
+		HasTonemapOpenCL: true,
+		AudioCodec:       "aac",
+		SessionDir:       "/tmp/sessions/x",
+		SegmentPrefix:    "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "scale_cuda=format=p010") {
+		t.Errorf("expected scale_cuda=format=p010 even without explicit resolution: %s", argStr)
+	}
+	if !strings.Contains(argStr, "tonemap_opencl") {
+		t.Errorf("expected tonemap_opencl: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_TonemapOpenCL_PriorityOverZscale(t *testing.T) {
+	// When both OpenCL and zscale are available, OpenCL should be used (GPU path).
+	args := BuildHLS(BuildArgs{
+		InputPath:        "/media/hdr_movie.mkv",
+		Encoder:          EncoderNVENC,
+		Width:            1920,
+		Height:           1080,
+		BitrateKbps:      8000,
+		NeedsToneMap:     true,
+		HasTonemapCuda:   false,
+		HasTonemapOpenCL: true,
+		HasZscale:        true,
+		AudioCodec:       "aac",
+		SessionDir:       "/tmp/sessions/x",
+		SegmentPrefix:    "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "tonemap_opencl") {
+		t.Errorf("expected tonemap_opencl over zscale: %s", argStr)
+	}
+	if strings.Contains(argStr, "zscale") {
+		t.Errorf("should prefer OpenCL over zscale: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("OpenCL path should keep CUDA hwaccel: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_TonemapCuda_PriorityOverOpenCL(t *testing.T) {
+	// When both tonemap_cuda and tonemap_opencl are available, cuda should win.
+	args := BuildHLS(BuildArgs{
+		InputPath:        "/media/hdr_movie.mkv",
+		Encoder:          EncoderNVENC,
+		Width:            1920,
+		Height:           1080,
+		BitrateKbps:      8000,
+		NeedsToneMap:     true,
+		HasTonemapCuda:   true,
+		HasTonemapOpenCL: true,
+		HasZscale:        true,
+		AudioCodec:       "aac",
+		SessionDir:       "/tmp/sessions/x",
+		SegmentPrefix:    "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "tonemap_cuda") {
+		t.Errorf("expected tonemap_cuda when available: %s", argStr)
+	}
+	if strings.Contains(argStr, "tonemap_opencl") {
+		t.Errorf("should prefer tonemap_cuda over opencl: %s", argStr)
+	}
+	if strings.Contains(argStr, "zscale") {
+		t.Errorf("should prefer tonemap_cuda over zscale: %s", argStr)
+	}
+	// All-CUDA pipeline — no hwdownload needed.
+	if strings.Contains(argStr, "hwdownload") {
+		t.Errorf("tonemap_cuda should not need hwdownload: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_NoTonemapAvailable(t *testing.T) {
+	// No tonemap_cuda, no tonemap_opencl, no zscale — should skip tonemapping entirely.
+	args := BuildHLS(BuildArgs{
+		InputPath:        "/media/hdr_movie.mkv",
+		Encoder:          EncoderNVENC,
+		Width:            1920,
+		Height:           1080,
+		BitrateKbps:      8000,
+		NeedsToneMap:     true,
+		HasTonemapCuda:   false,
+		HasTonemapOpenCL: false,
+		HasZscale:        false,
+		AudioCodec:       "aac",
+		SessionDir:       "/tmp/sessions/x",
+		SegmentPrefix:    "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	// Should not have any tonemap filter.
+	if strings.Contains(argStr, "tonemap") {
+		t.Errorf("should skip tonemapping when no tonemap filter available: %s", argStr)
+	}
+	// Should still produce output (not crash).
+	if !strings.Contains(argStr, "-c:v h264_nvenc") {
+		t.Errorf("should still encode with NVENC: %s", argStr)
+	}
+	// Without any GPU tonemap, falls back to software decode (no CUDA hwaccel).
+	if strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("should not use CUDA hwaccel without any GPU tonemap: %s", argStr)
+	}
+}
+
+func TestBuildHLS_NVENC_TonemapOpenCL_InitBeforeInput(t *testing.T) {
+	// OpenCL device init args must come before -i in the FFmpeg command.
+	args := BuildHLS(BuildArgs{
+		InputPath:        "/media/hdr_movie.mkv",
+		Encoder:          EncoderNVENC,
+		Width:            1920,
+		Height:           1080,
+		BitrateKbps:      8000,
+		NeedsToneMap:     true,
+		HasTonemapCuda:   false,
+		HasTonemapOpenCL: true,
+		AudioCodec:       "aac",
+		SessionDir:       "/tmp/sessions/x",
+		SegmentPrefix:    "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	oclIdx := strings.Index(argStr, "-init_hw_device opencl=ocl")
+	inputIdx := strings.Index(argStr, "-i /media/hdr_movie.mkv")
+	if oclIdx < 0 || inputIdx < 0 {
+		t.Fatalf("missing expected args in: %s", argStr)
+	}
+	if oclIdx > inputIdx {
+		t.Errorf("-init_hw_device must come before -i, got opencl at %d, input at %d: %s", oclIdx, inputIdx, argStr)
+	}
+}
+
+func TestBuildHLS_HEVC_NVENC_TonemapOpenCL(t *testing.T) {
+	// HEVC NVENC + OpenCL tonemap — should produce fMP4 segments AND use OpenCL pipeline.
+	args := BuildHLS(BuildArgs{
+		InputPath:        "/media/4k_hdr_movie.mkv",
+		Encoder:          EncoderHEVCNVENC,
+		Width:            3840,
+		Height:           2160,
+		BitrateKbps:      24000,
+		NeedsToneMap:     true,
+		HasTonemapCuda:   false,
+		HasTonemapOpenCL: true,
+		AudioCodec:       "aac",
+		SessionDir:       "/tmp/sessions/x",
+		SegmentPrefix:    "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-c:v hevc_nvenc") {
+		t.Errorf("expected -c:v hevc_nvenc: %s", argStr)
+	}
+	if !strings.Contains(argStr, "tonemap_opencl") {
+		t.Errorf("expected tonemap_opencl: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("HEVC output must use fMP4 segments: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tag:v hvc1") {
+		t.Errorf("HEVC output must have hvc1 tag: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-init_hw_device opencl=ocl") {
+		t.Errorf("expected OpenCL device init: %s", argStr)
 	}
 }
 
@@ -539,6 +762,7 @@ func TestBuildHLS_HEVC_Software(t *testing.T) {
 		Height:        2160,
 		BitrateKbps:   20000,
 		NeedsToneMap:  true,
+		HasZscale:     true,
 		AudioCodec:    "aac",
 		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
