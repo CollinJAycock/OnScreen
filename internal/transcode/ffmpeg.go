@@ -54,6 +54,7 @@ type BuildArgs struct {
 	BitrateKbps int
 	NeedsToneMap   bool // HDR→SDR tone mapping (ADR-030)
 	HasTonemapCuda bool // tonemap_cuda filter available in FFmpeg
+	HasZscale      bool // zscale filter available (libzimg) for software tonemap
 	IsVAAPI        bool // VAAPI needs hwupload filter
 	IsHEVC         bool // source is HEVC (informational, NVDEC auto-selects decoder)
 
@@ -376,7 +377,9 @@ func buildVideoFilter(a BuildArgs) string {
 	}
 
 	// HDR→SDR tone mapping — CPU-based fallback when tonemap_cuda is unavailable.
-	needsSoftwareTonemap := a.NeedsToneMap && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || (isNVENC && !a.HasTonemapCuda))
+	// Requires zscale (libzimg). If neither tonemap_cuda nor zscale is available,
+	// tonemapping is skipped entirely (HDR content will look washed out but will play).
+	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || (isNVENC && !a.HasTonemapCuda))
 	if needsSoftwareTonemap {
 		// zscale-based tonemapping (libzimg required in FFmpeg build).
 		toneMap := strings.Join([]string{

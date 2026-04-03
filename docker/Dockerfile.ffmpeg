@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential nasm yasm pkg-config git wget \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
-      libgnutls28-dev && \
+      libgnutls28-dev libzimg-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # NVIDIA codec headers (required for nvenc/nvdec)
@@ -41,6 +41,7 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
       --enable-libvpx \
       --enable-libass \
       --enable-libfreetype \
+      --enable-libzimg \
       --enable-gnutls \
       --disable-static \
       --enable-shared && \
@@ -54,7 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates tzdata wget \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
-      libgnutls28-dev && \
+      libgnutls28-dev libzimg-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/

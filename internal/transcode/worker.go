@@ -29,6 +29,7 @@ type Worker struct {
 	encoders       []Encoder
 	encoderLabels  map[string]string // encoder → human label, detected once at startup
 	hasTonemapCuda bool              // tonemap_cuda filter available in FFmpeg
+	hasZscale      bool              // zscale filter available (libzimg) for software tonemap
 	encoderOpts    EncoderOpts       // per-deployment NVENC/maxrate tuning
 	logger         *slog.Logger
 	activeSessions atomic.Int32
@@ -49,6 +50,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		labels[string(e)] = detectGPUName(ctx, e)
 	}
 	hasTonemap := ProbeFilter(ctx, "tonemap_cuda")
+	hasZscale := ProbeFilter(ctx, "zscale")
 	return &Worker{
 		id:             id,
 		addr:           addr,
@@ -56,6 +58,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		encoders:       encoders,
 		encoderLabels:  labels,
 		hasTonemapCuda: hasTonemap,
+		hasZscale:      hasZscale,
 		encoderOpts:    encOpts,
 		maxSessions:    maxSessions,
 		logger:         logger,
@@ -82,6 +85,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"encoders", EncoderNames(w.encoders),
 		"max_sessions", w.maxSessions,
 		"tonemap_cuda", w.hasTonemapCuda,
+		"zscale", w.hasZscale,
 	)
 
 	return w.jobLoop(ctx)
@@ -205,6 +209,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			BitrateKbps:      bitrate,
 			NeedsToneMap:     job.NeedsToneMap,
 			HasTonemapCuda:   w.hasTonemapCuda,
+			HasZscale:        w.hasZscale,
 			AudioCodec:       job.AudioCodec,
 			AudioChannels:    job.AudioChannels,
 			AudioStreamIndex: job.AudioStreamIndex,
