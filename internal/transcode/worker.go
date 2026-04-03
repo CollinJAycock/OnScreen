@@ -200,6 +200,8 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			"tonemap", job.NeedsToneMap,
 			"prefer_hevc", job.PreferHEVC,
 			"tonemap_cuda", w.hasTonemapCuda,
+			"tonemap_opencl", w.hasTonemapOpenCL,
+			"zscale", w.hasZscale,
 		)
 
 		ffArgs = BuildHLS(BuildArgs{

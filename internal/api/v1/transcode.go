@@ -372,7 +372,7 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	// set (to the embedded worker's loopback address), so proxying is used
 	// universally and local-disk fallback is only a last resort.
 	var workerAddr string
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.WorkerAddr != "" {
 			workerAddr = sess.WorkerAddr
