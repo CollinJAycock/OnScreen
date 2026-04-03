@@ -40,6 +40,7 @@ type Session struct {
 	ClientID       string    `json:"client_id,omitempty"`
 	SegToken       string    `json:"seg_token,omitempty"`
 	BitrateKbps    int       `json:"bitrate_kbps,omitempty"`
+	HEVCOutput     bool      `json:"hevc_output,omitempty"` // true = fMP4 segments (.m4s), false = MPEG-TS (.ts)
 }
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.

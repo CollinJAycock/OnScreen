@@ -215,6 +215,17 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		decision = "remux"
 	}
 
+	audioStreamIdx := -1 // -1 = default (let FFmpeg pick)
+	if body.AudioStreamIndex != nil && *body.AudioStreamIndex >= 0 {
+		audioStreamIdx = *body.AudioStreamIndex
+	}
+
+	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
+	isSourceHDR := file.HDRType != nil && *file.HDRType != ""
+
+	// Use HEVC output for 4K when client supports it — 40% bitrate savings.
+	preferHEVC := body.SupportsHEVC && height >= 2160 && !body.VideoCopy
+
 	// For remux, use the source file bitrate (video is copied unchanged).
 	// For full transcode, use the target bitrate from quality selection.
 	sessionBitrate := bitrateKbps
@@ -234,23 +245,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		ClientName:  "OnScreenWeb",
 		SegToken:    segTok,
 		BitrateKbps: sessionBitrate,
+		HEVCOutput:  preferHEVC,
 	}
 	if err := h.sessions.Create(ctx, sess); err != nil {
 		h.logger.WarnContext(ctx, "create transcode session", "err", err)
 		respond.InternalError(w, r)
 		return
 	}
-
-	audioStreamIdx := -1 // -1 = default (let FFmpeg pick)
-	if body.AudioStreamIndex != nil && *body.AudioStreamIndex >= 0 {
-		audioStreamIdx = *body.AudioStreamIndex
-	}
-
-	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
-	isSourceHDR := file.HDRType != nil && *file.HDRType != ""
-
-	// Use HEVC output for 4K when client supports it — 40% bitrate savings.
-	preferHEVC := body.SupportsHEVC && height >= 2160 && !body.VideoCopy
 
 	// Scale bitrate down for HEVC efficiency (same visual quality at lower bitrate).
 	jobBitrate := bitrateKbps
@@ -385,9 +386,16 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Determine segment extension from session metadata. HEVC output uses
+	// fMP4 (.m4s) segments; everything else uses MPEG-TS (.ts).
+	segExt := ".ts"
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.HEVCOutput {
+		segExt = ".m4s"
+	}
+
 	// Wait for at least 2 segments before serving the initial playlist so
 	// HLS.js has enough buffer to survive its first playlist-poll interval (4 s).
-	const seg1Name = "seg00001.ts"
+	seg1Name := "seg00001" + segExt
 	for time.Now().Before(deadline) {
 		if workerReady(ctx, workerAddr, sessID, seg1Name, filepath.Join(sessDir, seg1Name)) {
 			break
@@ -507,7 +515,12 @@ func proxyWorkerFile(w http.ResponseWriter, r *http.Request, workerAddr, sessID,
 		http.Error(w, "segment not found", resp.StatusCode)
 		return
 	}
-	w.Header().Set("Content-Type", "video/MP2T")
+	// Set Content-Type based on segment format.
+	ct := "video/MP2T"
+	if strings.HasSuffix(name, ".m4s") || strings.HasSuffix(name, ".mp4") {
+		ct = "video/mp4"
+	}
+	w.Header().Set("Content-Type", ct)
 	_, _ = io.Copy(w, resp.Body)
 }
 
@@ -519,14 +532,26 @@ func sanitizePathComponent(s string) string {
 
 // rewritePlaylist rewrites segment URIs in an HLS playlist to absolute API paths
 // with the auth token embedded, so HLS.js can request them without extra config.
+// Handles both MPEG-TS (.ts) and fMP4 (.m4s / init.mp4) segment references.
 func rewritePlaylist(data []byte, sessionID, token string) []byte {
 	var buf bytes.Buffer
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasSuffix(line, ".ts") && !strings.HasPrefix(line, "#") {
+		// Rewrite segment file references: .ts (MPEG-TS) and .m4s/.mp4 (fMP4).
+		if !strings.HasPrefix(line, "#") &&
+			(strings.HasSuffix(line, ".ts") || strings.HasSuffix(line, ".m4s") || strings.HasSuffix(line, ".mp4")) {
 			name := filepath.Base(line)
 			line = fmt.Sprintf("/api/v1/transcode/sessions/%s/seg/%s?token=%s",
+				sessionID, name, token)
+		}
+		// Rewrite #EXT-X-MAP URI (fMP4 init segment).
+		if strings.HasPrefix(line, "#EXT-X-MAP:URI=") {
+			// Format: #EXT-X-MAP:URI="init.mp4"
+			name := strings.TrimPrefix(line, "#EXT-X-MAP:URI=")
+			name = strings.Trim(name, "\"")
+			name = filepath.Base(name)
+			line = fmt.Sprintf("#EXT-X-MAP:URI=\"/api/v1/transcode/sessions/%s/seg/%s?token=%s\"",
 				sessionID, name, token)
 		}
 		buf.WriteString(line + "\n")

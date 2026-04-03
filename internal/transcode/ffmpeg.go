@@ -253,8 +253,23 @@ func BuildHLS(a BuildArgs) []string {
 	}
 
 	// ── HLS output ───────────────────────────────────────────────────────────
-	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d.ts")
+	// HEVC output requires fMP4 segments — HLS.js's MPEG-TS transmuxer doesn't
+	// support HEVC. fMP4 segments are passed directly to MSE without transmuxing.
+	isHEVCOutput := IsHEVCEncoder(a.Encoder) && !videoCopy
+	segExt := ".ts"
+	segType := "mpegts"
+	if isHEVCOutput {
+		segExt = ".m4s"
+		segType = "fmp4"
+	}
+
+	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d"+segExt)
 	playlistPath := filepath.Join(a.SessionDir, "index.m3u8")
+
+	// Tag HEVC output as hvc1 (required for browser MSE HEVC playback).
+	if isHEVCOutput {
+		args = append(args, "-tag:v", "hvc1")
+	}
 
 	hlsFlags := "independent_segments+delete_segments"
 	// For video-copy (remux), FFmpeg runs 10-100× real-time producing segments
@@ -271,11 +286,14 @@ func BuildHLS(a BuildArgs) []string {
 		"-max_delay", "5000000",
 		"-hls_time", fmt.Sprint(SegmentDuration),
 		"-hls_list_size", "0", // keep all segments in playlist
-		"-hls_segment_type", "mpegts",
+		"-hls_segment_type", segType,
 		"-hls_flags", hlsFlags,
 		"-hls_segment_filename", segPattern,
 		"-hls_delete_threshold", fmt.Sprint(deleteThreshold),
 	)
+	if isHEVCOutput {
+		args = append(args, "-hls_fmp4_init_filename", "init.mp4")
+	}
 	// Mark remux sessions as EVENT so HLS.js starts from segment 0 rather than
 	// jumping to the live edge. For video-copy, FFmpeg runs 10-100x real-time,
 	// so by the time HLS.js loads the playlist it sees many segments and would

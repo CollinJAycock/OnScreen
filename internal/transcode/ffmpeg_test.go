@@ -434,6 +434,19 @@ func TestBuildHLS_HEVC_NVENC(t *testing.T) {
 	if !strings.Contains(argStr, "scale_cuda") {
 		t.Errorf("expected scale_cuda for GPU pipeline: %s", argStr)
 	}
+	// HEVC output must use fMP4 segments for HLS.js compatibility.
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("expected fMP4 segment type for HEVC: %s", argStr)
+	}
+	if !strings.Contains(argStr, ".m4s") {
+		t.Errorf("expected .m4s segment extension for HEVC: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tag:v hvc1") {
+		t.Errorf("expected -tag:v hvc1 for browser HEVC playback: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hls_fmp4_init_filename init.mp4") {
+		t.Errorf("expected fMP4 init segment filename: %s", argStr)
+	}
 }
 
 func TestBuildHLS_VideoCopy_EventPlaylist(t *testing.T) {
@@ -546,6 +559,13 @@ func TestBuildHLS_HEVC_Software(t *testing.T) {
 	if strings.Contains(argStr, "-hwaccel cuda") {
 		t.Errorf("software encoder should not use CUDA hwaccel: %s", argStr)
 	}
+	// HEVC software output also needs fMP4 segments.
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("expected fMP4 segment type for HEVC software: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tag:v hvc1") {
+		t.Errorf("expected -tag:v hvc1 for HEVC software: %s", argStr)
+	}
 }
 
 func TestBuildHLS_CustomEncoderOpts(t *testing.T) {
@@ -655,5 +675,9 @@ func TestBuildHLS_HEVC_NVENC_NoTonemap(t *testing.T) {
 	// No tonemap filters when HDR is not involved.
 	if strings.Contains(argStr, "tonemap") {
 		t.Errorf("should not have tonemap filter without HDR content: %s", argStr)
+	}
+	// HEVC output always uses fMP4 regardless of tonemap.
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("expected fMP4 for HEVC output: %s", argStr)
 	}
 }
