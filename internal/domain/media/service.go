@@ -109,6 +109,7 @@ type Querier interface {
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
+	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
 
 	GetMediaFile(ctx context.Context, id uuid.UUID) (File, error)
 	GetMediaFileByPath(ctx context.Context, path string) (File, error)
@@ -517,6 +518,12 @@ func (s *Service) FindOrCreateItem(ctx context.Context, p CreateItemParams) (*It
 func (s *Service) findItemByTitle(ctx context.Context, p CreateItemParams) *Item {
 	if p.Title == "" {
 		return nil
+	}
+	// Exact-match lookup aligned with the unique partial index. This avoids
+	// the LIMIT 10 full-text search missing a show whose title is also present
+	// in its episodes' filenames (which would otherwise crowd out the show row).
+	if found, err := s.rw.FindTopLevelItemByTitleYear(ctx, p.LibraryID, p.Type, p.Title, p.Year); err == nil && found != nil {
+		return found
 	}
 	results, err := s.rw.SearchMediaItems(ctx, p.LibraryID, p.Title, 10)
 	if err != nil {

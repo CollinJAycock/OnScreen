@@ -5,9 +5,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
@@ -420,6 +422,28 @@ func (a *mediaAdapter) SearchMediaItems(ctx context.Context, libraryID uuid.UUID
 		out[i] = genSearchRowToItem(r)
 	}
 	return out, nil
+}
+
+func (a *mediaAdapter) FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*media.Item, error) {
+	row, err := a.q.FindTopLevelItemByTitleYear(ctx, gen.FindTopLevelItemByTitleYearParams{
+		LibraryID: libraryID,
+		Type:      itemType,
+		Title:     title,
+		Year:      intPtrToInt32Ptr(year),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	item := itemFromGenFields(row.ID, row.LibraryID, row.Type, row.Title, row.SortTitle,
+		row.OriginalTitle, row.Year, row.Summary, row.Tagline,
+		row.Rating, row.AudienceRating, row.ContentRating, row.DurationMs,
+		row.Genres, row.Tags, row.TmdbID, row.TvdbID, row.ImdbID,
+		row.ParentID, row.Index, row.PosterPath, row.FanartPath, row.ThumbPath,
+		row.OriginallyAvailableAt, row.CreatedAt, row.UpdatedAt, row.DeletedAt)
+	return &item, nil
 }
 
 func (a *mediaAdapter) GetMediaFile(ctx context.Context, id uuid.UUID) (media.File, error) {

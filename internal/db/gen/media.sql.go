@@ -301,6 +301,106 @@ func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uui
 	return err
 }
 
+const findTopLevelItemByTitleYear = `-- name: FindTopLevelItemByTitleYear :one
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND title = $3
+  AND COALESCE(year, 0) = COALESCE($4::int, 0)
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+LIMIT 1
+`
+
+type FindTopLevelItemByTitleYearParams struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	Type      string    `json:"type"`
+	Title     string    `json:"title"`
+	Year      *int32    `json:"year"`
+}
+
+type FindTopLevelItemByTitleYearRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Direct equality lookup matching the unique partial index
+// idx_media_items_library_type_title_year. Used by the scanner's hierarchy
+// find-or-create path so fuzzy full-text search can't miss a show whose
+// title is also present in episode filenames (which would otherwise crowd
+// the LIMITed SearchMediaItems result set).
+func (q *Queries) FindTopLevelItemByTitleYear(ctx context.Context, arg FindTopLevelItemByTitleYearParams) (FindTopLevelItemByTitleYearRow, error) {
+	row := q.db.QueryRow(ctx, findTopLevelItemByTitleYear,
+		arg.LibraryID,
+		arg.Type,
+		arg.Title,
+		arg.Year,
+	)
+	var i FindTopLevelItemByTitleYearRow
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Type,
+		&i.Title,
+		&i.SortTitle,
+		&i.OriginalTitle,
+		&i.Year,
+		&i.Summary,
+		&i.Tagline,
+		&i.Rating,
+		&i.AudienceRating,
+		&i.ContentRating,
+		&i.DurationMs,
+		&i.Genres,
+		&i.Tags,
+		&i.TmdbID,
+		&i.TvdbID,
+		&i.ImdbID,
+		&i.MusicbrainzID,
+		&i.ParentID,
+		&i.Index,
+		&i.PosterPath,
+		&i.FanartPath,
+		&i.ThumbPath,
+		&i.OriginallyAvailableAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getMediaFile = `-- name: GetMediaFile :one
 
 SELECT id, media_item_id, file_path, file_size, container, video_codec,

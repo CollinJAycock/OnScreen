@@ -119,6 +119,30 @@ func (m *mockQuerier) SearchMediaItems(_ context.Context, libID uuid.UUID, query
 	}
 	return nil, nil
 }
+func (m *mockQuerier) FindTopLevelItemByTitleYear(_ context.Context, libID uuid.UUID, itemType, title string, year *int) (*Item, error) {
+	for _, it := range m.items {
+		if it.LibraryID != libID || it.Type != itemType || it.Title != title {
+			continue
+		}
+		if it.ParentID != nil {
+			continue
+		}
+		iy := 0
+		if it.Year != nil {
+			iy = *it.Year
+		}
+		py := 0
+		if year != nil {
+			py = *year
+		}
+		if iy != py {
+			continue
+		}
+		copy := it
+		return &copy, nil
+	}
+	return nil, nil
+}
 func (m *mockQuerier) GetMediaFile(_ context.Context, id uuid.UUID) (File, error) {
 	for _, files := range m.files {
 		for _, f := range files {
@@ -880,6 +904,44 @@ func TestFindOrCreateHierarchyItem_FindsExistingTopLevel(t *testing.T) {
 	}
 	if item.ID != existing.ID {
 		t.Errorf("should return existing item: got %s, want %s", item.ID, existing.ID)
+	}
+}
+
+// Regression: a show whose title matches many flat-episode rows via full-text
+// search used to get pushed past SearchMediaItems' LIMIT 10, causing
+// findItemByTitle to return nil and the caller to hit the unique index.
+// FindTopLevelItemByTitleYear is a direct lookup that bypasses the LIMIT.
+func TestFindOrCreateHierarchyItem_FindsShowWhenEpisodesCrowdSearch(t *testing.T) {
+	svc, q := newService(t)
+	libID := uuid.New()
+	show := Item{ID: uuid.New(), LibraryID: libID, Type: "show", Title: "DuckTales"}
+	q.items[show.ID] = show
+
+	// SearchMediaItems is dominated by flat-episode rows that match the
+	// full-text query but aren't the show. The direct lookup must still find
+	// the show and avoid attempting to create a duplicate.
+	var crowding []Item
+	for i := 0; i < 10; i++ {
+		crowding = append(crowding, Item{
+			ID:        uuid.New(),
+			LibraryID: libID,
+			Type:      "episode",
+			Title:     "Ducktales-S01 E0" + string(rune('0'+i)) + "-Legacy Flat Episode",
+		})
+	}
+	q.searchResults = crowding
+
+	item, err := svc.FindOrCreateHierarchyItem(context.Background(), CreateItemParams{
+		LibraryID: libID,
+		Type:      "show",
+		Title:     "DuckTales",
+		SortTitle: "DuckTales",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if item.ID != show.ID {
+		t.Errorf("should return existing show via direct lookup: got %s, want %s", item.ID, show.ID)
 	}
 }
 

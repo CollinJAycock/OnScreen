@@ -17,6 +17,26 @@ FROM media_items
 WHERE library_id = $1 AND tmdb_id = $2 AND deleted_at IS NULL
 LIMIT 1;
 
+-- name: FindTopLevelItemByTitleYear :one
+-- Direct equality lookup matching the unique partial index
+-- idx_media_items_library_type_title_year. Used by the scanner's hierarchy
+-- find-or-create path so fuzzy full-text search can't miss a show whose
+-- title is also present in episode filenames (which would otherwise crowd
+-- the LIMITed SearchMediaItems result set).
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND title = $3
+  AND COALESCE(year, 0) = COALESCE(sqlc.narg('year')::int, 0)
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+LIMIT 1;
+
 -- name: ListMediaItems :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
