@@ -197,6 +197,12 @@ type User struct {
 	MaxContentRating      *string            `json:"max_content_rating"`
 }
 
+type UserFavorite struct {
+	UserID    uuid.UUID          `json:"user_id"`
+	MediaID   uuid.UUID          `json:"media_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type WatchEvent struct {
 	ID         uuid.UUID          `json:"id"`
 	UserID     uuid.UUID          `json:"user_id"`

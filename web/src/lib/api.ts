@@ -434,6 +434,12 @@ export interface SubtitleStream {
   forced: boolean;
 }
 
+export interface Chapter {
+  title: string;
+  start_ms: number;
+  end_ms: number;
+}
+
 export interface ItemFile {
   id: string;
   stream_url: string;
@@ -448,6 +454,7 @@ export interface ItemFile {
   faststart: boolean;
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
+  chapters: Chapter[];
 }
 
 export interface ItemDetail {
@@ -467,7 +474,18 @@ export interface ItemDetail {
   index?: number;
   view_offset_ms: number;
   updated_at: number;
+  is_favorite: boolean;
   files: ItemFile[];
+}
+
+export interface FavoriteItem {
+  id: string;
+  title: string;
+  type: string;
+  year?: number;
+  poster_path?: string;
+  duration_ms?: number;
+  favorited_at: string;
 }
 
 export interface ChildItem {
@@ -564,7 +582,14 @@ export const itemApi = {
   searchMatch: (id: string, query: string) =>
     api.get<MatchCandidate[]>(`/items/${id}/match/search?query=${encodeURIComponent(query)}`),
   applyMatch: (id: string, tmdbId: number) =>
-    api.post<void>(`/items/${id}/match`, { tmdb_id: tmdbId })
+    api.post<void>(`/items/${id}/match`, { tmdb_id: tmdbId }),
+  addFavorite: (id: string) => api.post<void>(`/items/${id}/favorite`, {}),
+  removeFavorite: (id: string) => api.delete(`/items/${id}/favorite`)
+};
+
+export const favoritesApi = {
+  list: (limit = 100, offset = 0) =>
+    api.requestList<FavoriteItem>(`/favorites?limit=${limit}&offset=${offset}`)
 };
 
 // ── Analytics ─────────────────────────────────────────────────────────────────

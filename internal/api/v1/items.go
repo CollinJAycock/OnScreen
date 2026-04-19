@@ -72,21 +72,27 @@ type ItemSessionCleaner interface {
 	DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID) error
 }
 
+// ItemFavoriteChecker reports whether a media item is favorited by a given user.
+type ItemFavoriteChecker interface {
+	IsFavorite(ctx context.Context, userID, mediaID uuid.UUID) (bool, error)
+}
+
 // ItemHandler handles /api/v1/items.
 type ItemHandler struct {
-	media    ItemMediaService
-	watch    ItemWatchService
-	sessions ItemSessionCleaner
-	enricher ItemEnricher
-	matcher  ItemMatchSearcher
-	webhooks ItemWebhookDispatcher
-	tracker  *streaming.Tracker
-	logger   *slog.Logger
+	media     ItemMediaService
+	watch     ItemWatchService
+	sessions  ItemSessionCleaner
+	enricher  ItemEnricher
+	matcher   ItemMatchSearcher
+	webhooks  ItemWebhookDispatcher
+	favorites ItemFavoriteChecker
+	tracker   *streaming.Tracker
+	logger    *slog.Logger
 }
 
 // NewItemHandler creates an ItemHandler.
-func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions ItemSessionCleaner, enricher ItemEnricher, matcher ItemMatchSearcher, webhooks ItemWebhookDispatcher, tracker *streaming.Tracker, logger *slog.Logger) *ItemHandler {
-	return &ItemHandler{media: media, watch: watch, sessions: sessions, enricher: enricher, matcher: matcher, webhooks: webhooks, tracker: tracker, logger: logger}
+func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions ItemSessionCleaner, enricher ItemEnricher, matcher ItemMatchSearcher, webhooks ItemWebhookDispatcher, favorites ItemFavoriteChecker, tracker *streaming.Tracker, logger *slog.Logger) *ItemHandler {
+	return &ItemHandler{media: media, watch: watch, sessions: sessions, enricher: enricher, matcher: matcher, webhooks: webhooks, favorites: favorites, tracker: tracker, logger: logger}
 }
 
 // AudioStreamJSON is the API representation of an audio stream.
@@ -122,6 +128,14 @@ type ItemFileResponse struct {
 	Faststart       bool                 `json:"faststart"`
 	AudioStreams    []AudioStreamJSON    `json:"audio_streams"`
 	SubtitleStreams []SubtitleStreamJSON `json:"subtitle_streams"`
+	Chapters        []ChapterJSON        `json:"chapters"`
+}
+
+// ChapterJSON is the API representation of a chapter marker.
+type ChapterJSON struct {
+	Title   string `json:"title"`
+	StartMS int64  `json:"start_ms"`
+	EndMS   int64  `json:"end_ms"`
 }
 
 // ItemDetailResponse is the full JSON response for a media item.
@@ -141,24 +155,27 @@ type ItemDetailResponse struct {
 	ParentID      *string            `json:"parent_id,omitempty"`
 	Index         *int               `json:"index,omitempty"`
 	ViewOffsetMS  int64              `json:"view_offset_ms"`
+	IsFavorite    bool               `json:"is_favorite"`
 	UpdatedAt     int64              `json:"updated_at"`
 	Files         []ItemFileResponse `json:"files"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
 type ChildItemResponse struct {
-	ID         string    `json:"id"`
-	Title      string    `json:"title"`
-	Type       string    `json:"type"`
-	Year       *int      `json:"year,omitempty"`
-	Summary    *string   `json:"summary,omitempty"`
-	Rating     *float64  `json:"rating,omitempty"`
-	DurationMS *int64    `json:"duration_ms,omitempty"`
-	PosterPath *string   `json:"poster_path,omitempty"`
-	ThumbPath  *string   `json:"thumb_path,omitempty"`
-	Index      *int      `json:"index,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  int64     `json:"updated_at"`
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Type         string    `json:"type"`
+	Year         *int      `json:"year,omitempty"`
+	Summary      *string   `json:"summary,omitempty"`
+	Rating       *float64  `json:"rating,omitempty"`
+	DurationMS   *int64    `json:"duration_ms,omitempty"`
+	PosterPath   *string   `json:"poster_path,omitempty"`
+	ThumbPath    *string   `json:"thumb_path,omitempty"`
+	Index        *int      `json:"index,omitempty"`
+	ViewOffsetMS int64     `json:"view_offset_ms"`
+	Watched      bool      `json:"watched"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    int64     `json:"updated_at"`
 }
 
 // Get handles GET /api/v1/items/{id}.
@@ -200,10 +217,16 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var viewOffsetMS int64
+	var isFavorite bool
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		state, _ := h.watch.GetState(r.Context(), claims.UserID, id)
 		if state.Status == "in_progress" {
 			viewOffsetMS = state.PositionMS
+		}
+		if h.favorites != nil {
+			if fav, err := h.favorites.IsFavorite(r.Context(), claims.UserID, id); err == nil {
+				isFavorite = fav
+			}
 		}
 	}
 
@@ -227,6 +250,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Genres:        genres,
 		Index:         item.Index,
 		ViewOffsetMS:  viewOffsetMS,
+		IsFavorite:    isFavorite,
 		UpdatedAt:     item.UpdatedAt.UnixMilli(),
 		Files:         make([]ItemFileResponse, 0, len(files)),
 	}
@@ -253,6 +277,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Faststart:       scanner.IsFaststart(f.FilePath),
 			AudioStreams:    parseJSONBAudioStreams(f.AudioStreams),
 			SubtitleStreams: parseJSONBSubtitleStreams(f.SubtitleStreams),
+			Chapters:        parseJSONBChapters(f.Chapters),
 		})
 	}
 
@@ -274,21 +299,39 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var userID uuid.UUID
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		userID = claims.UserID
+	}
+
 	out := make([]ChildItemResponse, len(children))
 	for i, c := range children {
+		var viewOffsetMS int64
+		var watched bool
+		if userID != uuid.Nil {
+			state, _ := h.watch.GetState(r.Context(), userID, c.ID)
+			switch state.Status {
+			case "in_progress":
+				viewOffsetMS = state.PositionMS
+			case "watched":
+				watched = true
+			}
+		}
 		out[i] = ChildItemResponse{
-			ID:         c.ID.String(),
-			Title:      c.Title,
-			Type:       c.Type,
-			Year:       c.Year,
-			Summary:    c.Summary,
-			Rating:     c.Rating,
-			DurationMS: c.DurationMS,
-			PosterPath: c.PosterPath,
-			ThumbPath:  c.ThumbPath,
-			Index:      c.Index,
-			CreatedAt:  c.CreatedAt,
-			UpdatedAt:  c.UpdatedAt.UnixMilli(),
+			ID:           c.ID.String(),
+			Title:        c.Title,
+			Type:         c.Type,
+			Year:         c.Year,
+			Summary:      c.Summary,
+			Rating:       c.Rating,
+			DurationMS:   c.DurationMS,
+			PosterPath:   c.PosterPath,
+			ThumbPath:    c.ThumbPath,
+			Index:        c.Index,
+			ViewOffsetMS: viewOffsetMS,
+			Watched:      watched,
+			CreatedAt:    c.CreatedAt,
+			UpdatedAt:    c.UpdatedAt.UnixMilli(),
 		}
 	}
 	respond.List(w, r, out, int64(len(out)), "")
@@ -555,6 +598,25 @@ func parseJSONBAudioStreams(data []byte) []AudioStreamJSON {
 			Channels: int(asFloat64(s["channels"])),
 			Language: asString(s["language"]),
 			Title:    asString(s["title"]),
+		})
+	}
+	return out
+}
+
+func parseJSONBChapters(data []byte) []ChapterJSON {
+	if len(data) == 0 {
+		return []ChapterJSON{}
+	}
+	var raw []map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return []ChapterJSON{}
+	}
+	out := make([]ChapterJSON, 0, len(raw))
+	for _, c := range raw {
+		out = append(out, ChapterJSON{
+			Title:   asString(c["title"]),
+			StartMS: int64(asFloat64(c["start_ms"])),
+			EndMS:   int64(asFloat64(c["end_ms"])),
 		})
 	}
 	return out

@@ -112,7 +112,7 @@ func withChiParam(r *http.Request, key, value string) *http.Request {
 }
 
 func newItemHandler(ms *mockItemMedia) *ItemHandler {
-	return NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	return NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
 }
 
 // ── Get item ─────────────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ func TestItemGet_WithViewOffset(t *testing.T) {
 	ws := &mockItemWatch{
 		state: watchevent.WatchState{Status: "in_progress", PositionMS: 45000},
 	}
-	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, slog.Default())
+	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default())
 
 	rec := httptest.NewRecorder()
 	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
@@ -257,12 +257,104 @@ func TestItemChildren_InvalidID(t *testing.T) {
 	}
 }
 
+// perChildWatch returns a canned WatchState per media ID for verifying the
+// Children handler's watch-state lookup branches.
+type perChildWatch struct {
+	states map[uuid.UUID]watchevent.WatchState
+}
+
+func (p *perChildWatch) GetState(_ context.Context, _, mediaID uuid.UUID) (watchevent.WatchState, error) {
+	if s, ok := p.states[mediaID]; ok {
+		return s, nil
+	}
+	return watchevent.WatchState{Status: "unwatched"}, nil
+}
+
+func (p *perChildWatch) Record(_ context.Context, _ watchevent.RecordParams) error { return nil }
+
+func TestItemChildren_WatchStatePopulated(t *testing.T) {
+	inProgressID := uuid.New()
+	watchedID := uuid.New()
+	unwatchedID := uuid.New()
+
+	ms := &mockItemMedia{
+		children: []media.Item{
+			{ID: inProgressID, Title: "E1", Type: "episode"},
+			{ID: watchedID, Title: "E2", Type: "episode"},
+			{ID: unwatchedID, Title: "E3", Type: "episode"},
+		},
+	}
+	ws := &perChildWatch{states: map[uuid.UUID]watchevent.WatchState{
+		inProgressID: {Status: "in_progress", PositionMS: 12345},
+		watchedID:    {Status: "watched"},
+	}}
+	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+
+	rec := httptest.NewRecorder()
+	req := withClaims(withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
+	h.Children(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp struct {
+		Data []ChildItemResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 3 {
+		t.Fatalf("len(data): got %d, want 3", len(resp.Data))
+	}
+	byID := map[string]ChildItemResponse{}
+	for _, c := range resp.Data {
+		byID[c.ID] = c
+	}
+	if got := byID[inProgressID.String()]; got.ViewOffsetMS != 12345 || got.Watched {
+		t.Errorf("in_progress: got offset=%d watched=%v, want offset=12345 watched=false", got.ViewOffsetMS, got.Watched)
+	}
+	if got := byID[watchedID.String()]; !got.Watched || got.ViewOffsetMS != 0 {
+		t.Errorf("watched: got offset=%d watched=%v, want offset=0 watched=true", got.ViewOffsetMS, got.Watched)
+	}
+	if got := byID[unwatchedID.String()]; got.Watched || got.ViewOffsetMS != 0 {
+		t.Errorf("unwatched: got offset=%d watched=%v, want offset=0 watched=false", got.ViewOffsetMS, got.Watched)
+	}
+}
+
+func TestItemChildren_WatchStateSkippedWithoutClaims(t *testing.T) {
+	childID := uuid.New()
+	ms := &mockItemMedia{
+		children: []media.Item{{ID: childID, Title: "E1", Type: "episode"}},
+	}
+	ws := &perChildWatch{states: map[uuid.UUID]watchevent.WatchState{
+		childID: {Status: "watched"},
+	}}
+	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	h.Children(rec, req)
+
+	var resp struct {
+		Data []ChildItemResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("len(data): got %d, want 1", len(resp.Data))
+	}
+	if resp.Data[0].Watched {
+		t.Errorf("anonymous request: watched should be false, got true")
+	}
+}
+
 // ── Progress ─────────────────────────────────────────────────────────────────
 
 func TestProgress_Success(t *testing.T) {
 	id := uuid.New()
 	ws := &mockItemWatch{}
-	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
@@ -296,7 +388,7 @@ func TestProgress_Unauthorized(t *testing.T) {
 func TestProgress_WebhookDispatchOnPause(t *testing.T) {
 	id := uuid.New()
 	wh := &mockWebhooks{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default())
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"paused"}`
@@ -313,7 +405,7 @@ func TestProgress_WebhookDispatchOnPause(t *testing.T) {
 func TestProgress_WebhookDispatchOnStop(t *testing.T) {
 	id := uuid.New()
 	wh := &mockWebhooks{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default())
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":120000,"duration_ms":120000,"state":"stopped"}`
@@ -330,7 +422,7 @@ func TestProgress_WebhookDispatchOnStop(t *testing.T) {
 func TestProgress_NoWebhookOnPlaying(t *testing.T) {
 	id := uuid.New()
 	wh := &mockWebhooks{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default())
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
@@ -347,7 +439,7 @@ func TestProgress_NoWebhookOnPlaying(t *testing.T) {
 // ── Enrich ───────────────────────────────────────────────────────────────────
 
 func TestEnrich_NoEnricher(t *testing.T) {
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default())
 
 	rec := httptest.NewRecorder()
 	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
@@ -360,7 +452,7 @@ func TestEnrich_NoEnricher(t *testing.T) {
 
 func TestEnrich_Success(t *testing.T) {
 	enricher := &mockEnricher{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, enricher, nil, nil, nil, slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, enricher, nil, nil, nil, nil, slog.Default())
 
 	rec := httptest.NewRecorder()
 	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())

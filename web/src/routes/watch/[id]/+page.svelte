@@ -72,6 +72,9 @@
   let showAudioMenu = false;
   let selectedAudioIndex = -1; // -1 = default (first track)
 
+  // Chapter menu
+  let showChapterMenu = false;
+
   // Text-based subtitle codecs that ffmpeg can convert to WebVTT.
   const textSubCodecs = new Set(['srt', 'subrip', 'ass', 'ssa', 'mov_text', 'webvtt', 'text']);
 
@@ -249,6 +252,60 @@
     return siblings.find(s => s.index != null && s.index === (item!.index! + 1)) ?? null;
   })();
 
+  // Chapters from the source file (already parsed by ffprobe at scan time).
+  $: chapters = item?.files?.[0]?.chapters ?? [];
+  // The current chapter — based on content position (currentTime + hlsOffsetSec).
+  $: contentTimeSec = currentTime + hlsOffsetSec;
+  $: currentChapter = (() => {
+    if (chapters.length === 0) return null;
+    const tMs = contentTimeSec * 1000;
+    return chapters.find(c => tMs >= c.start_ms && tMs < c.end_ms) ?? null;
+  })();
+
+  // Favorites: optimistically toggle, server is source of truth on next load.
+  let favoriteBusy = false;
+  async function toggleFavorite() {
+    if (!item || favoriteBusy) return;
+    favoriteBusy = true;
+    const wasFavorite = item.is_favorite;
+    item = { ...item, is_favorite: !wasFavorite };
+    try {
+      if (wasFavorite) await itemApi.removeFavorite(item.id);
+      else await itemApi.addFavorite(item.id);
+    } catch {
+      if (item) item = { ...item, is_favorite: wasFavorite };
+    } finally {
+      favoriteBusy = false;
+    }
+  }
+
+  function jumpToChapter(startMs: number) {
+    seekToContentTime(startMs / 1000);
+  }
+
+  // Next-episode autoplay countdown.
+  let autoplayCountdown = 0;
+  let autoplayTimer: ReturnType<typeof setInterval> | null = null;
+  let autoplayCancelled = false;
+
+  function cancelAutoplay(permanent = false) {
+    if (permanent) autoplayCancelled = true;
+    if (autoplayTimer) { clearInterval(autoplayTimer); autoplayTimer = null; }
+    autoplayCountdown = 0;
+  }
+
+  function startAutoplayCountdown() {
+    if (autoplayTimer || autoplayCancelled || !nextEpisode) return;
+    autoplayCountdown = 10;
+    autoplayTimer = setInterval(() => {
+      autoplayCountdown -= 1;
+      if (autoplayCountdown <= 0) {
+        if (autoplayTimer) { clearInterval(autoplayTimer); autoplayTimer = null; }
+        if (nextEpisode && !autoplayCancelled) goto(`/watch/${nextEpisode.id}`);
+      }
+    }, 1000);
+  }
+
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     // Safari uses the prefixed event name for fullscreen changes.
@@ -276,6 +333,8 @@
     loading = true;
     transcodeSessionId = null;
     transcodeToken = null;
+    autoplayCancelled = false;
+    cancelAutoplay();
     load();
   }
 
@@ -1189,13 +1248,15 @@
 
   $: progress = duration > 0 ? currentTime / duration : 0;
   $: showNextEpisodePrompt = nextEpisode != null && duration > 0 && (ended || duration - currentTime < 60);
+  $: if (showNextEpisodePrompt && !autoplayTimer && !autoplayCancelled) startAutoplayCountdown();
+  $: if (!showNextEpisodePrompt) cancelAutoplay();
   $: streamURL = item?.files?.[0]?.stream_url ?? '';
 </script>
 
 <svelte:head><title>{item?.title ?? 'Watch'} — OnScreen</title></svelte:head>
 
 <!-- svelte-ignore avoid-is -->
-<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }} />
+<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; }} />
 
 {#if isPhoto && item}
 <!-- Photo viewer -->
@@ -1325,7 +1386,24 @@
           {#if item.type === 'episode' && item.index != null}
             <span class="top-title-sub">Episode {item.index}</span>
           {/if}
+          {#if currentChapter}
+            <span class="top-title-sub">· {currentChapter.title}</span>
+          {/if}
         </div>
+        <button
+          class="icon-btn small favorite-btn"
+          class:is-favorite={item.is_favorite}
+          on:click={toggleFavorite}
+          disabled={favoriteBusy}
+          title={item.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+          aria-label={item.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          {#if item.is_favorite}
+            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          {/if}
+        </button>
       </div>
 
       <!-- Bottom bar -->
@@ -1348,6 +1426,11 @@
           <div class="seek-track">
             <div class="seek-buffered" style="width:{buffered * 100}%"></div>
             <div class="seek-progress" style="width:{progress * 100}%"></div>
+            {#if duration > 0 && chapters.length > 0}
+              {#each chapters.slice(1) as ch}
+                <div class="seek-chapter" style="left:{Math.min(100, (ch.start_ms / 1000 / duration) * 100)}%"></div>
+              {/each}
+            {/if}
             <div class="seek-thumb" style="left:{progress * 100}%"></div>
           </div>
         </div>
@@ -1415,6 +1498,39 @@
           </div>
 
           <div class="controls-right">
+            <!-- Chapter picker -->
+            {#if chapters.length > 0}
+              <div class="quality-picker" on:click|stopPropagation>
+                <button
+                  class="icon-btn small quality-btn"
+                  on:click|stopPropagation={() => { showChapterMenu = !showChapterMenu; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
+                  title="Chapters"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M4 6h16M4 12h16M4 18h10"/>
+                  </svg>
+                  <span class="quality-label">Ch {chapters.findIndex(c => c === currentChapter) + 1 || 1}/{chapters.length}</span>
+                </button>
+                {#if showChapterMenu}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div class="quality-menu chapter-menu" on:click|stopPropagation role="menu" aria-label="Chapters">
+                    {#each chapters as ch, i}
+                      <button
+                        class="quality-option"
+                        class:active={ch === currentChapter}
+                        on:click={() => { jumpToChapter(ch.start_ms); showChapterMenu = false; }}
+                        role="menuitem"
+                      >
+                        <span class="chapter-num">{i + 1}.</span>
+                        <span class="chapter-title">{ch.title || `Chapter ${i + 1}`}</span>
+                        <span class="chapter-time">{fmtTime(ch.start_ms / 1000)}</span>
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
             <!-- Add to playlist -->
             <button class="icon-btn small" on:click|stopPropagation={() => showPlaylistPicker = true} title="Add to playlist">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
@@ -1574,11 +1690,14 @@
     <!-- Next episode prompt -->
     {#if showNextEpisodePrompt && nextEpisode}
       <div class="next-episode">
-        <span class="next-label">Up Next</span>
+        <span class="next-label">Up Next{autoplayCountdown > 0 ? ` · ${autoplayCountdown}s` : ''}</span>
         <span class="next-title">{nextEpisode.title}</span>
         <a href="/watch/{nextEpisode.id}" class="next-btn">
           Play →
         </a>
+        {#if autoplayCountdown > 0}
+          <button class="next-cancel" on:click={() => cancelAutoplay(true)}>Cancel</button>
+        {/if}
       </div>
     {/if}
 
@@ -1983,7 +2102,12 @@
   .top-title {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-width: 0;
   }
+  .favorite-btn { color: rgba(255,255,255,0.85); }
+  .favorite-btn.is-favorite { color: #f87171; }
+  .favorite-btn:disabled { opacity: 0.6; cursor: progress; }
   .top-title-main {
     font-size: 0.95rem;
     font-weight: 600;
@@ -2039,6 +2163,16 @@
     background: #7c6af7;
     border-radius: 2px;
     pointer-events: none;
+  }
+  .seek-chapter {
+    position: absolute;
+    top: -1px;
+    width: 2px;
+    height: calc(100% + 2px);
+    background: rgba(255,255,255,0.85);
+    transform: translateX(-1px);
+    pointer-events: none;
+    border-radius: 1px;
   }
   .seek-thumb {
     position: absolute;
@@ -2171,6 +2305,17 @@
   .quality-option:hover { background: rgba(255,255,255,0.1); color: #fff; }
   .quality-option.active { color: #7c6af7; font-weight: 600; }
 
+  .chapter-menu { min-width: 240px; max-height: 280px; overflow-y: auto; }
+  .chapter-menu .quality-option {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 0.5rem;
+    align-items: baseline;
+  }
+  .chapter-num { color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
+  .chapter-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chapter-time { color: rgba(255,255,255,0.45); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+
   /* ── Next episode ─────────────────────────────────────── */
   .next-episode {
     position: absolute;
@@ -2214,6 +2359,18 @@
     transition: background 0.12s;
   }
   .next-btn:hover { background: #8f7ef9; }
+  .next-cancel {
+    align-self: flex-end;
+    padding: 0.25rem 0.6rem;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px;
+    color: rgba(255,255,255,0.7);
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .next-cancel:hover { background: rgba(255,255,255,0.08); color: #fff; }
 
   /* ── Loading / error ─────────────────────────────────── */
   .center-msg {
