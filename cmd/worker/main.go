@@ -149,6 +149,7 @@ func run() error {
 	liveH, readyH := observability.HealthHandler(
 		&db.PingablePool{Pool: rwPool},
 		valkeyClient,
+		nil, // worker doesn't serve API; migration gate runs on the server
 		logger,
 	)
 	healthMux := http.NewServeMux()

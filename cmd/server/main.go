@@ -25,6 +25,7 @@ import (
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	dbmigrations "github.com/onscreen/onscreen/internal/db/migrations"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/settings"
@@ -461,9 +462,33 @@ func run() error {
 	router := api.NewRouter(h)
 
 	// ── Health endpoints ──────────────────────────────────────────────────────
+	// Migration status fn: checks at startup AND on every /health/ready call,
+	// so an operator who runs `docker exec ... goose up` sees the gate clear
+	// without a container restart. Failures (e.g. goose_db_version missing on
+	// a fresh DB) are reported as "unknown" rather than blocking readiness.
+	versionQuerier := &db.PingablePool{Pool: rwPool}
+	migrationStatusFn := func() (expected, applied, pending int64, ok bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		defer cancel()
+		st, err := observability.CheckMigrations(ctx, versionQuerier, dbmigrations.FS)
+		if err != nil {
+			return 0, 0, 0, false
+		}
+		return st.Expected, st.Applied, st.Pending, true
+	}
+	if st, err := observability.CheckMigrations(context.Background(), versionQuerier, dbmigrations.FS); err != nil {
+		logger.Warn("could not check migration status at startup", "err", err)
+	} else if st.Pending > 0 {
+		logger.Error("schema is behind code — run `goose up` against the DB before serving traffic",
+			"applied", st.Applied, "expected", st.Expected, "pending", st.Pending)
+	} else {
+		logger.Info("migration status", "applied", st.Applied, "expected", st.Expected)
+	}
+
 	liveH, readyH := observability.HealthHandler(
-		&db.PingablePool{Pool: rwPool},
+		versionQuerier,
 		valkeyClient,
+		migrationStatusFn,
 		logger,
 	)
 

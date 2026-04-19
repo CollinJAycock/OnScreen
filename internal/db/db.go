@@ -3,10 +3,12 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -60,4 +62,23 @@ type PingablePool struct {
 // Ping pings the database.
 func (p *PingablePool) Ping(ctx context.Context) error {
 	return p.Pool.Ping(ctx)
+}
+
+// MaxAppliedVersion returns the highest goose-applied migration version, or
+// 0 if the goose_db_version table does not exist (fresh DB before any
+// migration has been recorded). Anything else is a real error.
+func (p *PingablePool) MaxAppliedVersion(ctx context.Context) (int64, error) {
+	var v int64
+	err := p.Pool.QueryRow(ctx,
+		`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version`).Scan(&v)
+	if err != nil {
+		// goose hasn't initialised the table yet — treat as 0 applied so the
+		// readiness check reports pending instead of erroring.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" { // undefined_table
+			return 0, nil
+		}
+		return 0, err
+	}
+	return v, nil
 }

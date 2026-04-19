@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -13,13 +14,19 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// MigrationStatusFn returns the current migration gap (expected vs applied).
+// Health handler treats Pending > 0 as a degraded state so the container
+// shows up unhealthy in Docker / TrueNAS until goose has been run.
+type MigrationStatusFn func() (expected, applied, pending int64, ok bool)
+
 // HealthHandler returns handlers for /health/live and /health/ready.
 //
 //   - /health/live  → 200 if the process is alive (Docker healthcheck)
-//   - /health/ready → 200 if DB + Valkey connections are healthy (load balancer)
+//   - /health/ready → 200 if DB + Valkey are reachable AND no migrations are pending
 //
-// /health/ready uses a 1s timeout and never blocks.
-func HealthHandler(db Pinger, valkey Pinger, logger *slog.Logger) (live, ready http.HandlerFunc) {
+// /health/ready uses a 1s timeout and never blocks. Pass a nil migrationStatus
+// to skip the migration gate (used by tests / standalone tools).
+func HealthHandler(db Pinger, valkey Pinger, migrationStatus MigrationStatusFn, logger *slog.Logger) (live, ready http.HandlerFunc) {
 	live = func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -31,7 +38,7 @@ func HealthHandler(db Pinger, valkey Pinger, logger *slog.Logger) (live, ready h
 		defer cancel()
 
 		type check struct {
-			name  string
+			name   string
 			pinger Pinger
 		}
 		checks := []check{
@@ -45,7 +52,7 @@ func HealthHandler(db Pinger, valkey Pinger, logger *slog.Logger) (live, ready h
 		}
 		res := result{
 			Status: "ok",
-			Checks: make(map[string]string, len(checks)),
+			Checks: make(map[string]string, len(checks)+1),
 		}
 		httpStatus := http.StatusOK
 
@@ -57,6 +64,20 @@ func HealthHandler(db Pinger, valkey Pinger, logger *slog.Logger) (live, ready h
 				logger.Warn("health check failed", "component", c.name, "err", err)
 			} else {
 				res.Checks[c.name] = "ok"
+			}
+		}
+
+		if migrationStatus != nil {
+			expected, applied, pending, ok := migrationStatus()
+			switch {
+			case !ok:
+				res.Checks["migrations"] = "unknown"
+			case pending > 0:
+				res.Checks["migrations"] = fmt.Sprintf("pending: applied=%d expected=%d", applied, expected)
+				res.Status = "degraded"
+				httpStatus = http.StatusServiceUnavailable
+			default:
+				res.Checks["migrations"] = "ok"
 			}
 		}
 
