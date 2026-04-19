@@ -7,8 +7,8 @@ Thanks for your interest in contributing to OnScreen. This guide covers everythi
 | Tool | Version | Notes |
 |------|---------|-------|
 | Go | 1.25+ | |
-| Node.js | 22+ | For the SvelteKit frontend |
-| PostgreSQL | 16+ | With `pgvector` extension |
+| Node.js | 24+ | For the SvelteKit frontend |
+| PostgreSQL | 16+ | `pgvector` is optional — used for Phase 5 embedding work; migration skips it cleanly if unavailable |
 | Valkey (or Redis) | 7+ | Sessions, job queue, rate limiting |
 | FFmpeg | Latest stable | Required for transcoding and `ffprobe` |
 | sqlc | Latest | SQL-to-Go code generation |
