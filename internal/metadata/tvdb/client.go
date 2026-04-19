@@ -1,7 +1,7 @@
 // Package tvdb implements a TheTVDB v4 API client used as a fallback when TMDB
-// episode lookups fail (e.g. anime with absolute numbering, differently grouped
-// seasons). Only episode-level metadata is fetched from TVDB — show search and
-// artwork remain on TMDB.
+// lookups fail — both for per-episode metadata (anime with absolute numbering,
+// differently grouped seasons) and for show-level metadata/artwork when a show
+// isn't in TMDB or TMDB returned no poster.
 package tvdb
 
 import (
@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +35,131 @@ func New(apiKey string) *Client {
 	return &Client{
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+// SearchSeries looks up a show by title (optionally filtered by first-air year)
+// and returns the top match with poster+fanart URLs resolved from the series'
+// extended record. Intended as a fallback when the TMDB agent finds no show.
+func (c *Client) SearchSeries(ctx context.Context, title string, year int) (*metadata.TVShowResult, error) {
+	token, err := c.ensureToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	q := url.Values{}
+	q.Set("query", title)
+	q.Set("type", "series")
+	if year > 0 {
+		q.Set("year", fmt.Sprintf("%d", year))
+	}
+	searchURL := fmt.Sprintf("%s/search?%s", baseURL, q.Encode())
+
+	var searchResp struct {
+		Data []tvdbSearchHit `json:"data"`
+	}
+	if err := c.getJSON(ctx, token, searchURL, &searchResp); err != nil {
+		return nil, fmt.Errorf("tvdb search series %q: %w", title, err)
+	}
+	if len(searchResp.Data) == 0 {
+		return nil, fmt.Errorf("tvdb: no series match for %q", title)
+	}
+
+	// Pick the first hit whose TVDB id parses — the search API returns the
+	// id as a string, not an int.
+	var hit *tvdbSearchHit
+	var seriesID int
+	for i := range searchResp.Data {
+		if id, convErr := parseTVDBID(searchResp.Data[i].TVDBID); convErr == nil {
+			hit = &searchResp.Data[i]
+			seriesID = id
+			break
+		}
+	}
+	if hit == nil {
+		return nil, fmt.Errorf("tvdb: no usable series id in search results for %q", title)
+	}
+
+	poster, fanart := c.fetchSeriesArtwork(ctx, token, seriesID)
+	// Fall back to the search hit's image_url if the extended fetch failed to
+	// turn up a typed poster.
+	if poster == "" {
+		poster = hit.ImageURL
+	}
+
+	firstAirYear := 0
+	if hit.Year != "" {
+		fmt.Sscanf(hit.Year, "%d", &firstAirYear)
+	}
+
+	return &metadata.TVShowResult{
+		TVDBID:       seriesID,
+		Title:        hit.Name,
+		FirstAirYear: firstAirYear,
+		Summary:      hit.Overview,
+		PosterURL:    poster,
+		FanartURL:    fanart,
+	}, nil
+}
+
+// fetchSeriesArtwork pulls the series' extended record and picks the highest
+// scored poster + fanart. Returns empty strings on any error — the caller
+// falls back to the search hit's image_url.
+func (c *Client) fetchSeriesArtwork(ctx context.Context, token string, seriesID int) (poster, fanart string) {
+	extURL := fmt.Sprintf("%s/series/%d/extended", baseURL, seriesID)
+	var extResp struct {
+		Data struct {
+			Image    string        `json:"image"`
+			Artworks []tvdbArtwork `json:"artworks"`
+		} `json:"data"`
+	}
+	if err := c.getJSON(ctx, token, extURL, &extResp); err != nil {
+		return "", ""
+	}
+
+	// TVDB artwork types: 2 = poster, 3 = background/fanart.
+	posters := filterArtworks(extResp.Data.Artworks, 2)
+	fanarts := filterArtworks(extResp.Data.Artworks, 3)
+	sort.SliceStable(posters, func(i, j int) bool { return posters[i].Score > posters[j].Score })
+	sort.SliceStable(fanarts, func(i, j int) bool { return fanarts[i].Score > fanarts[j].Score })
+
+	if len(posters) > 0 {
+		poster = posters[0].Image
+	} else {
+		poster = extResp.Data.Image
+	}
+	if len(fanarts) > 0 {
+		fanart = fanarts[0].Image
+	}
+	return poster, fanart
+}
+
+func filterArtworks(all []tvdbArtwork, kind int) []tvdbArtwork {
+	out := make([]tvdbArtwork, 0, len(all))
+	for _, a := range all {
+		if a.Type == kind && a.Image != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func parseTVDBID(raw any) (int, error) {
+	switch v := raw.(type) {
+	case float64:
+		return int(v), nil
+	case int:
+		return v, nil
+	case string:
+		// TVDB search returns ids prefixed with "series-" sometimes.
+		s := strings.TrimPrefix(v, "series-")
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+			return 0, fmt.Errorf("parse tvdb id %q: %w", v, err)
+		}
+		return n, nil
+	default:
+		return 0, fmt.Errorf("unexpected tvdb id type %T", raw)
 	}
 }
 
@@ -161,5 +288,24 @@ type tvdbEpisode struct {
 	SeasonNumber int    `json:"seasonNumber"`
 	Number       int    `json:"number"`
 	Image        string `json:"image"`
+}
+
+// tvdbSearchHit matches the /search endpoint schema. The TVDB id comes back
+// as a string here (unlike the extended endpoint where it's numeric), so we
+// decode it through any and parse it in parseTVDBID.
+type tvdbSearchHit struct {
+	TVDBID   any    `json:"tvdb_id"`
+	Name     string `json:"name"`
+	Overview string `json:"overview"`
+	ImageURL string `json:"image_url"`
+	Year     string `json:"year"`
+}
+
+// tvdbArtwork matches an entry in the /series/{id}/extended artworks list.
+// Type 2 = poster, 3 = background/fanart. Score is TVDB's community rating.
+type tvdbArtwork struct {
+	Image string  `json:"image"`
+	Type  int     `json:"type"`
+	Score float64 `json:"score"`
 }
 

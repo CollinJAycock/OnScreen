@@ -62,6 +62,21 @@ func (m *mockQuerier) ListMediaItems(_ context.Context, libID uuid.UUID, _ strin
 	}
 	return out, nil
 }
+func (m *mockQuerier) ListMediaItemsMissingArt(_ context.Context, _ int32) ([]Item, error) {
+	return nil, nil
+}
+func (m *mockQuerier) FindTopLevelItemsByTitleFlexible(_ context.Context, _ uuid.UUID, _, _ string) ([]Item, error) {
+	return nil, nil
+}
+func (m *mockQuerier) ListDuplicateTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) ([]DuplicatePair, error) {
+	return nil, nil
+}
+func (m *mockQuerier) ReparentMediaItem(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
+	return nil
+}
+func (m *mockQuerier) ReparentMediaFilesByItem(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
 func (m *mockQuerier) ListMediaItemChildren(_ context.Context, parentID uuid.UUID) ([]Item, error) {
 	if m.listChildrenErr != nil {
 		return nil, m.listChildrenErr

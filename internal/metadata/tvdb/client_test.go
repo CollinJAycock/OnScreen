@@ -199,6 +199,123 @@ func TestTokenClearedOn401(t *testing.T) {
 	}
 }
 
+// ── SearchSeries ────────────────────────────────────────────────────────────
+
+func TestSearchSeries_MergesSearchHitAndExtendedArtwork(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/login"):
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"token": "tok"},
+			})
+		case strings.Contains(r.URL.Path, "/search"):
+			// TVDB returns the id as a string here.
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"tvdb_id":   "81189",
+					"name":      "Breaking Bad",
+					"overview":  "A chemistry teacher cooks.",
+					"image_url": "https://thetvdb.com/search-poster.jpg",
+					"year":      "2008",
+				}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/extended"):
+			// Type 2 = poster, type 3 = fanart; prefer higher score.
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"image": "https://thetvdb.com/fallback.jpg",
+					"artworks": []map[string]any{
+						{"image": "https://thetvdb.com/poster-low.jpg", "type": 2, "score": 100},
+						{"image": "https://thetvdb.com/poster-hi.jpg", "type": 2, "score": 500},
+						{"image": "https://thetvdb.com/fanart.jpg", "type": 3, "score": 10},
+					},
+				},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	res, err := c.SearchSeries(context.Background(), "Breaking Bad", 2008)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.TVDBID != 81189 {
+		t.Errorf("TVDBID: got %d, want 81189", res.TVDBID)
+	}
+	if res.Title != "Breaking Bad" {
+		t.Errorf("Title: got %q", res.Title)
+	}
+	if res.FirstAirYear != 2008 {
+		t.Errorf("FirstAirYear: got %d", res.FirstAirYear)
+	}
+	if res.PosterURL != "https://thetvdb.com/poster-hi.jpg" {
+		t.Errorf("PosterURL: got %q, want the highest-scored poster", res.PosterURL)
+	}
+	if res.FanartURL != "https://thetvdb.com/fanart.jpg" {
+		t.Errorf("FanartURL: got %q", res.FanartURL)
+	}
+}
+
+func TestSearchSeries_FallsBackToSearchImageWhenExtendedFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"token": "tok"},
+			})
+		case strings.Contains(r.URL.Path, "/search"):
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"tvdb_id":   "999",
+					"name":      "Obscure Show",
+					"image_url": "https://thetvdb.com/obscure.jpg",
+				}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/extended"):
+			// Extended endpoint broken — client should still return a result
+			// using the search hit's image_url.
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	res, err := c.SearchSeries(context.Background(), "Obscure Show", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.PosterURL != "https://thetvdb.com/obscure.jpg" {
+		t.Errorf("PosterURL: got %q, want search image fallback", res.PosterURL)
+	}
+	if res.FanartURL != "" {
+		t.Errorf("FanartURL: got %q, want empty when extended fails", res.FanartURL)
+	}
+}
+
+func TestSearchSeries_NoResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"token": "tok"},
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": []any{}})
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	_, err := c.SearchSeries(context.Background(), "Nothing Matches", 0)
+	if err == nil {
+		t.Fatal("expected error when search returns no results")
+	}
+}
+
 func TestGetEpisode_CancelledContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{

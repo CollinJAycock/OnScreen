@@ -31,10 +31,12 @@ type ArtworkFetcher interface {
 	DownloadThumb(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 }
 
-// TVDBFallback provides episode metadata from TheTVDB as a fallback when TMDB
-// episode lookups fail (different season/episode numbering, anime, etc.).
+// TVDBFallback provides episode + show metadata from TheTVDB as a fallback when
+// TMDB lookups fail or return no art (anime, niche shows absent from TMDB, or
+// TMDB matches that have no poster).
 type TVDBFallback interface {
 	GetEpisode(ctx context.Context, tvdbSeriesID, seasonNum, episodeNum int) (*metadata.EpisodeResult, error)
+	SearchSeries(ctx context.Context, title string, year int) (*metadata.TVShowResult, error)
 }
 
 // ScanPathsProvider returns all active library scan paths so the enricher
@@ -220,15 +222,27 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	if err != nil || result == nil {
 		e.logger.InfoContext(ctx, "tmdb tv search found no result",
 			"title", item.Title, "err", err)
-		return nil
+		// No TMDB match — try TVDB outright.
+		result = e.tvdbShowFallback(ctx, searchTitle, year, nil)
+		if result == nil {
+			return nil
+		}
+	} else if result.PosterURL == "" {
+		// TMDB matched but has no poster — ask TVDB for art while keeping
+		// TMDB's other fields.
+		if merged := e.tvdbShowFallback(ctx, searchTitle, year, result); merged != nil {
+			result = merged
+		}
 	}
 
-	tmdbID := result.TMDBID
 	p := media.UpdateItemMetadataParams{
 		ID:        item.ID,
 		Title:     result.Title,
 		SortTitle: result.Title,
-		TMDBID:    &tmdbID,
+	}
+	if result.TMDBID != 0 {
+		tmdbID := result.TMDBID
+		p.TMDBID = &tmdbID
 	}
 	if result.TVDBID != 0 {
 		tvdbID := result.TVDBID
@@ -976,6 +990,44 @@ func (e *Enricher) relPath(absPath string) string {
 	}
 	// Fallback: return the basename (poster.jpg / fanart.jpg).
 	return filepath.Base(absPath)
+}
+
+// tvdbShowFallback asks TVDB for a show when TMDB couldn't help. When base is
+// non-nil the TMDB fields (title/id/rating/etc.) are preserved and only the
+// missing artwork + tvdb id are merged from TVDB. Returns nil when TVDB isn't
+// configured or has no match, so callers can decide how to proceed.
+func (e *Enricher) tvdbShowFallback(ctx context.Context, title string, year int, base *metadata.TVShowResult) *metadata.TVShowResult {
+	if e.tvdbFn == nil {
+		return nil
+	}
+	client := e.tvdbFn()
+	if client == nil {
+		return nil
+	}
+	tv, err := client.SearchSeries(ctx, title, year)
+	if err != nil || tv == nil {
+		e.logger.InfoContext(ctx, "tvdb show fallback found no match",
+			"title", title, "year", year, "err", err)
+		return nil
+	}
+	if base == nil {
+		return tv
+	}
+	// Merge: keep TMDB-sourced fields; fill in poster/fanart/tvdb id from TVDB.
+	merged := *base
+	if merged.TVDBID == 0 {
+		merged.TVDBID = tv.TVDBID
+	}
+	if merged.PosterURL == "" {
+		merged.PosterURL = tv.PosterURL
+	}
+	if merged.FanartURL == "" {
+		merged.FanartURL = tv.FanartURL
+	}
+	if merged.Summary == "" {
+		merged.Summary = tv.Summary
+	}
+	return &merged
 }
 
 // showDirFromFile returns the show root directory given an episode file path.

@@ -94,11 +94,19 @@ type FilterParams struct {
 	SortAsc       bool
 }
 
+// DuplicatePair identifies a duplicate top-level item that should be merged
+// into a survivor. Both IDs are media_item ids.
+type DuplicatePair struct {
+	LoserID    uuid.UUID
+	SurvivorID uuid.UUID
+}
+
 // Querier defines the DB operations this service needs.
 type Querier interface {
 	GetMediaItem(ctx context.Context, id uuid.UUID) (Item, error)
 	GetMediaItemByTMDBID(ctx context.Context, libraryID uuid.UUID, tmdbID int) (Item, error)
 	ListMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]Item, error)
+	ListMediaItemsMissingArt(ctx context.Context, limit int32) ([]Item, error)
 	ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f FilterParams) ([]Item, error)
 	ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]Item, error)
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
@@ -110,6 +118,10 @@ type Querier interface {
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
 	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
+	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
+	ListDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
+	ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error
+	ReparentMediaFilesByItem(ctx context.Context, fromItemID, toItemID uuid.UUID) error
 
 	GetMediaFile(ctx context.Context, id uuid.UUID) (File, error)
 	GetMediaFileByPath(ctx context.Context, path string) (File, error)
@@ -231,6 +243,17 @@ func (s *Service) ListItems(ctx context.Context, libraryID uuid.UUID, itemType s
 	items, err := s.ro.ListMediaItems(ctx, libraryID, itemType, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list media items: %w", err)
+	}
+	return items, nil
+}
+
+// ListItemsMissingArt returns top-level items (movies + shows) with no poster.
+// Used by the maintenance backfill to re-enrich items that failed TMDB matching
+// before a TVDB key was configured.
+func (s *Service) ListItemsMissingArt(ctx context.Context, limit int32) ([]Item, error) {
+	items, err := s.ro.ListMediaItemsMissingArt(ctx, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list media items missing art: %w", err)
 	}
 	return items, nil
 }
@@ -525,6 +548,14 @@ func (s *Service) findItemByTitle(ctx context.Context, p CreateItemParams) *Item
 	if found, err := s.rw.FindTopLevelItemByTitleYear(ctx, p.LibraryID, p.Type, p.Title, p.Year); err == nil && found != nil {
 		return found
 	}
+	// Flexible lookup: matches title or original_title case-insensitively, ignores year.
+	// Catches the post-enrichment duplicate case where TMDB renamed the row or
+	// added a year that wasn't present in the raw filename.
+	if flex, err := s.rw.FindTopLevelItemsByTitleFlexible(ctx, p.LibraryID, p.Type, p.Title); err == nil && len(flex) > 0 {
+		if found := pickFlexibleMatch(flex, p.Year); found != nil {
+			return found
+		}
+	}
 	results, err := s.rw.SearchMediaItems(ctx, p.LibraryID, p.Title, 10)
 	if err != nil {
 		return nil
@@ -544,6 +575,35 @@ func (s *Service) findItemByTitle(ctx context.Context, p CreateItemParams) *Item
 		return r
 	}
 	return nil
+}
+
+// pickFlexibleMatch chooses the best candidate from FindTopLevelItemsByTitleFlexible
+// given the scanner-side year (which may be nil). Rules:
+//   - If scanner has no year, return the first candidate (already ordered by
+//     enrichment richness in SQL).
+//   - If scanner has a year, prefer a candidate with the same year. If none
+//     match and a candidate has no year, return that one (un-enriched row
+//     waiting to be enriched). Otherwise return nil — different years means
+//     different shows that happen to share a title.
+func pickFlexibleMatch(candidates []Item, year *int) *Item {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if year == nil {
+		c := candidates[0]
+		return &c
+	}
+	var noYear *Item
+	for i := range candidates {
+		c := &candidates[i]
+		if c.Year != nil && *c.Year == *year {
+			return c
+		}
+		if c.Year == nil && noYear == nil {
+			noYear = c
+		}
+	}
+	return noYear
 }
 
 // FindOrCreateHierarchyItem finds an existing media item matching
@@ -616,4 +676,119 @@ func mapNotFound(err error) error {
 		return ErrNotFound
 	}
 	return err
+}
+
+// DedupeResult summarizes the outcome of DedupeTopLevelItems.
+type DedupeResult struct {
+	MergedItems    int `json:"merged_items"`    // top-level shows/movies soft-deleted
+	MergedSeasons  int `json:"merged_seasons"`  // duplicate seasons collapsed
+	MergedEpisodes int `json:"merged_episodes"` // duplicate episodes collapsed
+	ReparentedRows int `json:"reparented_rows"` // children moved to a survivor
+}
+
+// DedupeTopLevelItems finds duplicate top-level items (movies, shows) in the
+// given library — or every library if libraryID is nil — and merges each
+// duplicate into the most-enriched survivor. For shows it walks seasons and
+// episodes, merging by index (collisions cause file reparenting; new
+// children are simply moved). After children are moved, losers are
+// soft-deleted. Safe to run repeatedly.
+func (s *Service) DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (DedupeResult, error) {
+	var res DedupeResult
+	pairs, err := s.rw.ListDuplicateTopLevelItems(ctx, itemType, libraryID)
+	if err != nil {
+		return res, fmt.Errorf("list duplicate top-level items: %w", err)
+	}
+	for _, pair := range pairs {
+		mergedSeasons, mergedEps, reparented, err := s.mergeChildren(ctx, pair.LoserID, pair.SurvivorID, itemType)
+		if err != nil {
+			return res, fmt.Errorf("merge %s into %s: %w", pair.LoserID, pair.SurvivorID, err)
+		}
+		res.MergedSeasons += mergedSeasons
+		res.MergedEpisodes += mergedEps
+		res.ReparentedRows += reparented
+		// Reparent any direct media_files (e.g. a movie's file or a stray
+		// episode hung off the show row) onto the survivor.
+		if err := s.rw.ReparentMediaFilesByItem(ctx, pair.LoserID, pair.SurvivorID); err != nil {
+			return res, fmt.Errorf("reparent files for %s: %w", pair.LoserID, err)
+		}
+		if err := s.rw.SoftDeleteMediaItem(ctx, pair.LoserID); err != nil {
+			return res, fmt.Errorf("soft-delete loser %s: %w", pair.LoserID, err)
+		}
+		res.MergedItems++
+	}
+	return res, nil
+}
+
+// mergeChildren merges loser's direct children into survivor. For each loser
+// child it picks a matching survivor child by index (seasons) or by index
+// (episodes); on collision it recursively merges and soft-deletes the loser
+// child. Otherwise it reparents the loser child to survivor. Returns counts
+// of merged seasons, merged episodes, and rows reparented (not merged).
+func (s *Service) mergeChildren(ctx context.Context, loserID, survivorID uuid.UUID, parentType string) (mergedSeasons, mergedEps, reparented int, err error) {
+	loserKids, err := s.rw.ListMediaItemChildren(ctx, loserID)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("list loser children: %w", err)
+	}
+	if len(loserKids) == 0 {
+		return 0, 0, 0, nil
+	}
+	survivorKids, err := s.rw.ListMediaItemChildren(ctx, survivorID)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("list survivor children: %w", err)
+	}
+	// Index survivor children by (type, index) for O(1) collision lookup.
+	type key struct {
+		t   string
+		idx int
+	}
+	byKey := make(map[key]*Item, len(survivorKids))
+	for i := range survivorKids {
+		c := &survivorKids[i]
+		if c.Index == nil {
+			continue
+		}
+		byKey[key{c.Type, *c.Index}] = c
+	}
+	for i := range loserKids {
+		lk := &loserKids[i]
+		if lk.Index == nil {
+			// No index — reparent unconditionally.
+			if err := s.rw.ReparentMediaItem(ctx, lk.ID, &survivorID); err != nil {
+				return 0, 0, 0, fmt.Errorf("reparent %s: %w", lk.ID, err)
+			}
+			reparented++
+			continue
+		}
+		match, collide := byKey[key{lk.Type, *lk.Index}]
+		if !collide {
+			if err := s.rw.ReparentMediaItem(ctx, lk.ID, &survivorID); err != nil {
+				return 0, 0, 0, fmt.Errorf("reparent %s: %w", lk.ID, err)
+			}
+			reparented++
+			continue
+		}
+		// Collision: recurse so episodes under a duplicate season get merged
+		// into the survivor season's episodes (by episode index).
+		ms, me, rp, err := s.mergeChildren(ctx, lk.ID, match.ID, lk.Type)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		mergedSeasons += ms
+		mergedEps += me
+		reparented += rp
+		if err := s.rw.ReparentMediaFilesByItem(ctx, lk.ID, match.ID); err != nil {
+			return 0, 0, 0, fmt.Errorf("reparent files for %s: %w", lk.ID, err)
+		}
+		if err := s.rw.SoftDeleteMediaItem(ctx, lk.ID); err != nil {
+			return 0, 0, 0, fmt.Errorf("soft-delete %s: %w", lk.ID, err)
+		}
+		switch lk.Type {
+		case "season":
+			mergedSeasons++
+		case "episode":
+			mergedEps++
+		}
+	}
+	_ = parentType
+	return mergedSeasons, mergedEps, reparented, nil
 }

@@ -189,6 +189,15 @@ func genListItemsRowToItem(r gen.ListMediaItemsRow) media.Item {
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
 }
 
+func genListMissingArtRowToItem(r gen.ListMediaItemsMissingArtRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+
 func genListChildrenRowToItem(r gen.ListMediaItemChildrenRow) media.Item {
 	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
@@ -365,6 +374,18 @@ func (a *mediaAdapter) ListMediaItems(ctx context.Context, libraryID uuid.UUID, 
 	return out, nil
 }
 
+func (a *mediaAdapter) ListMediaItemsMissingArt(ctx context.Context, limit int32) ([]media.Item, error) {
+	rows, err := a.q.ListMediaItemsMissingArt(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.Item, len(rows))
+	for i, r := range rows {
+		out[i] = genListMissingArtRowToItem(r)
+	}
+	return out, nil
+}
+
 func (a *mediaAdapter) ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error) {
 	rows, err := a.q.ListMediaItemChildren(ctx, pgtype.UUID{Bytes: [16]byte(parentID), Valid: true})
 	if err != nil {
@@ -444,6 +465,61 @@ func (a *mediaAdapter) FindTopLevelItemByTitleYear(ctx context.Context, libraryI
 		row.ParentID, row.Index, row.PosterPath, row.FanartPath, row.ThumbPath,
 		row.OriginallyAvailableAt, row.CreatedAt, row.UpdatedAt, row.DeletedAt)
 	return &item, nil
+}
+
+func (a *mediaAdapter) FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]media.Item, error) {
+	rows, err := a.q.FindTopLevelItemsByTitleFlexible(ctx, gen.FindTopLevelItemsByTitleFlexibleParams{
+		LibraryID: libraryID,
+		Type:      itemType,
+		Lower:     title,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.Item, len(rows))
+	for i, r := range rows {
+		out[i] = itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+			r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+			r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+			r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+			r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+			r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ListDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]media.DuplicatePair, error) {
+	var libParam pgtype.UUID
+	if libraryID != nil {
+		libParam = pgtype.UUID{Bytes: [16]byte(*libraryID), Valid: true}
+	}
+	rows, err := a.q.ListDuplicateTopLevelItems(ctx, gen.ListDuplicateTopLevelItemsParams{
+		Type:      itemType,
+		LibraryID: libParam,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.DuplicatePair, len(rows))
+	for i, r := range rows {
+		out[i] = media.DuplicatePair{LoserID: r.LoserID, SurvivorID: r.SurvivorID}
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error {
+	var p pgtype.UUID
+	if newParent != nil {
+		p = pgtype.UUID{Bytes: [16]byte(*newParent), Valid: true}
+	}
+	return a.q.ReparentMediaItem(ctx, gen.ReparentMediaItemParams{ID: id, ParentID: p})
+}
+
+func (a *mediaAdapter) ReparentMediaFilesByItem(ctx context.Context, fromItemID, toItemID uuid.UUID) error {
+	return a.q.ReparentMediaFilesByItem(ctx, gen.ReparentMediaFilesByItemParams{
+		MediaItemID:   fromItemID,
+		MediaItemID_2: toItemID,
+	})
 }
 
 func (a *mediaAdapter) GetMediaFile(ctx context.Context, id uuid.UUID) (media.File, error) {

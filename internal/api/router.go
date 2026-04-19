@@ -48,6 +48,8 @@ type Handlers struct {
 	PasswordReset   *v1.PasswordResetHandler
 	Invite          *v1.InviteHandler
 	Notifications   *v1.NotificationHandler
+	Favorites       *v1.FavoritesHandler
+	Maintenance   *v1.MaintenanceHandler
 	StreamTracker   *streaming.Tracker
 	Artwork       *artwork.Manager
 	ArtworkRoots  func() []string // returns all library scan_paths for artwork serving
@@ -322,6 +324,16 @@ func NewRouter(h *Handlers) http.Handler {
 				})
 			}
 
+			// Maintenance — admin only one-shot operations (artwork backfill, etc.).
+			if h.Maintenance != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Post("/maintenance/refresh-missing-art", h.Maintenance.RefreshMissingArt)
+					r.Post("/maintenance/dedupe-shows", h.Maintenance.DedupeShows)
+					r.Post("/maintenance/dedupe-movies", h.Maintenance.DedupeMovies)
+				})
+			}
+
 			// Email test — admin only.
 			if h.Email != nil {
 				r.Group(func(r chi.Router) {
@@ -404,6 +416,13 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/items/{id}/enrich", h.Items.Enrich)
 				r.Get("/items/{id}/match/search", h.Items.SearchMatch)
 				r.Post("/items/{id}/match", h.Items.ApplyMatch)
+			}
+
+			// Favorites — per-user.
+			if h.Favorites != nil {
+				r.Get("/favorites", h.Favorites.List)
+				r.Post("/items/{id}/favorite", h.Favorites.Add)
+				r.Delete("/items/{id}/favorite", h.Favorites.Remove)
 			}
 
 			// Native HLS transcode.

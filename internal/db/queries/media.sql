@@ -37,6 +37,75 @@ WHERE library_id = $1
   AND deleted_at IS NULL
 LIMIT 1;
 
+-- name: FindTopLevelItemsByTitleFlexible :many
+-- Scanner fallback for FindTopLevelItemByTitleYear: matches on title OR
+-- original_title (case-insensitive) and ignores year. Used when the scanner
+-- has no year (raw filename) but enrichment may have set a year on the
+-- existing row, or when enrichment renamed the row to a canonical TMDB
+-- title. Caller filters by year as a tiebreaker.
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+  AND (lower(title) = lower($3) OR lower(coalesce(original_title, '')) = lower($3))
+ORDER BY (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL) DESC,
+         (poster_path IS NOT NULL) DESC,
+         created_at ASC
+LIMIT 5;
+
+-- name: ListDuplicateTopLevelItems :many
+-- Lists groups of top-level media items (movies, shows) in the same library
+-- that share a normalized title (lowercased, trailing "(YYYY)" stripped).
+-- Returns one row per loser with the survivor_id. Survivor is the most
+-- enriched row (has external IDs > has poster > has year > oldest).
+WITH normalized AS (
+    SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
+           lower(regexp_replace(coalesce(NULLIF(original_title, ''), title),
+                                '\s*\(\d{4}\)\s*$', '')) AS norm
+    FROM media_items
+    WHERE type = $1
+      AND parent_id IS NULL
+      AND deleted_at IS NULL
+      AND (sqlc.narg('library_id')::uuid IS NULL OR library_id = sqlc.narg('library_id'))
+),
+ranked AS (
+    SELECT id, library_id, norm,
+           FIRST_VALUE(id) OVER w AS survivor_id,
+           ROW_NUMBER() OVER w AS rn
+    FROM normalized
+    WINDOW w AS (
+        PARTITION BY library_id, norm
+        ORDER BY (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL) DESC,
+                 (poster_path IS NOT NULL) DESC,
+                 (year IS NOT NULL) DESC,
+                 created_at ASC,
+                 id ASC
+    )
+)
+SELECT id AS loser_id, survivor_id::uuid AS survivor_id
+FROM ranked
+WHERE rn > 1;
+
+-- name: ReparentMediaItem :exec
+UPDATE media_items
+SET parent_id  = $2,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: ReparentMediaFilesByItem :exec
+-- Reassigns every media_file pointing at $1 to point at $2 instead.
+-- Used when merging two duplicate episode rows.
+UPDATE media_files
+SET media_item_id = $2,
+    scanned_at    = NOW()
+WHERE media_item_id = $1;
+
 -- name: ListMediaItems :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -49,6 +118,22 @@ WHERE library_id = $1
   AND deleted_at IS NULL
 ORDER BY sort_title
 LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsMissingArt :many
+-- Returns top-level items (movies + shows) that have no poster so the
+-- maintenance backfill can re-run metadata enrichment on them. Seasons and
+-- episodes are excluded — enriching a show cascades down to them.
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE type IN ('movie', 'show')
+  AND poster_path IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT $1;
 
 -- name: ListMediaItemChildren :many
 SELECT id, library_id, type, title, sort_title, original_title, year,

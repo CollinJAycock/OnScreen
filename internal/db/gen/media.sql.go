@@ -401,6 +401,115 @@ func (q *Queries) FindTopLevelItemByTitleYear(ctx context.Context, arg FindTopLe
 	return i, err
 }
 
+const findTopLevelItemsByTitleFlexible = `-- name: FindTopLevelItemsByTitleFlexible :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+  AND (lower(title) = lower($3) OR lower(coalesce(original_title, '')) = lower($3))
+ORDER BY (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL) DESC,
+         (poster_path IS NOT NULL) DESC,
+         created_at ASC
+LIMIT 5
+`
+
+type FindTopLevelItemsByTitleFlexibleParams struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	Type      string    `json:"type"`
+	Lower     string    `json:"lower"`
+}
+
+type FindTopLevelItemsByTitleFlexibleRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Scanner fallback for FindTopLevelItemByTitleYear: matches on title OR
+// original_title (case-insensitive) and ignores year. Used when the scanner
+// has no year (raw filename) but enrichment may have set a year on the
+// existing row, or when enrichment renamed the row to a canonical TMDB
+// title. Caller filters by year as a tiebreaker.
+func (q *Queries) FindTopLevelItemsByTitleFlexible(ctx context.Context, arg FindTopLevelItemsByTitleFlexibleParams) ([]FindTopLevelItemsByTitleFlexibleRow, error) {
+	rows, err := q.db.Query(ctx, findTopLevelItemsByTitleFlexible, arg.LibraryID, arg.Type, arg.Lower)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindTopLevelItemsByTitleFlexibleRow{}
+	for rows.Next() {
+		var i FindTopLevelItemsByTitleFlexibleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMediaFile = `-- name: GetMediaFile :one
 
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
@@ -863,6 +972,70 @@ func (q *Queries) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 			return nil, err
 		}
 		items = append(items, genre)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDuplicateTopLevelItems = `-- name: ListDuplicateTopLevelItems :many
+WITH normalized AS (
+    SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
+           lower(regexp_replace(coalesce(NULLIF(original_title, ''), title),
+                                '\s*\(\d{4}\)\s*$', '')) AS norm
+    FROM media_items
+    WHERE type = $1
+      AND parent_id IS NULL
+      AND deleted_at IS NULL
+      AND ($2::uuid IS NULL OR library_id = $2)
+),
+ranked AS (
+    SELECT id, library_id, norm,
+           FIRST_VALUE(id) OVER w AS survivor_id,
+           ROW_NUMBER() OVER w AS rn
+    FROM normalized
+    WINDOW w AS (
+        PARTITION BY library_id, norm
+        ORDER BY (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL) DESC,
+                 (poster_path IS NOT NULL) DESC,
+                 (year IS NOT NULL) DESC,
+                 created_at ASC,
+                 id ASC
+    )
+)
+SELECT id AS loser_id, survivor_id::uuid AS survivor_id
+FROM ranked
+WHERE rn > 1
+`
+
+type ListDuplicateTopLevelItemsParams struct {
+	Type      string      `json:"type"`
+	LibraryID pgtype.UUID `json:"library_id"`
+}
+
+type ListDuplicateTopLevelItemsRow struct {
+	LoserID    uuid.UUID `json:"loser_id"`
+	SurvivorID uuid.UUID `json:"survivor_id"`
+}
+
+// Lists groups of top-level media items (movies, shows) in the same library
+// that share a normalized title (lowercased, trailing "(YYYY)" stripped).
+// Returns one row per loser with the survivor_id. Survivor is the most
+// enriched row (has external IDs > has poster > has year > oldest).
+func (q *Queries) ListDuplicateTopLevelItems(ctx context.Context, arg ListDuplicateTopLevelItemsParams) ([]ListDuplicateTopLevelItemsRow, error) {
+	rows, err := q.db.Query(ctx, listDuplicateTopLevelItems, arg.Type, arg.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDuplicateTopLevelItemsRow{}
+	for rows.Next() {
+		var i ListDuplicateTopLevelItemsRow
+		if err := rows.Scan(&i.LoserID, &i.SurvivorID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2130,6 +2303,103 @@ func (q *Queries) ListMediaItemsByYearDesc(ctx context.Context, arg ListMediaIte
 	return items, nil
 }
 
+const listMediaItemsMissingArt = `-- name: ListMediaItemsMissingArt :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE type IN ('movie', 'show')
+  AND poster_path IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT $1
+`
+
+type ListMediaItemsMissingArtRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Returns top-level items (movies + shows) that have no poster so the
+// maintenance backfill can re-run metadata enrichment on them. Seasons and
+// episodes are excluded — enriching a show cascades down to them.
+func (q *Queries) ListMediaItemsMissingArt(ctx context.Context, limit int32) ([]ListMediaItemsMissingArtRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemsMissingArt, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemsMissingArtRow{}
+	for rows.Next() {
+		var i ListMediaItemsMissingArtRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMissingFilesOlderThan = `-- name: ListMissingFilesOlderThan :many
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -2325,6 +2595,42 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY hub_recently_added
 
 func (q *Queries) RefreshHubRecentlyAdded(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, refreshHubRecentlyAdded)
+	return err
+}
+
+const reparentMediaFilesByItem = `-- name: ReparentMediaFilesByItem :exec
+UPDATE media_files
+SET media_item_id = $2,
+    scanned_at    = NOW()
+WHERE media_item_id = $1
+`
+
+type ReparentMediaFilesByItemParams struct {
+	MediaItemID   uuid.UUID `json:"media_item_id"`
+	MediaItemID_2 uuid.UUID `json:"media_item_id_2"`
+}
+
+// Reassigns every media_file pointing at $1 to point at $2 instead.
+// Used when merging two duplicate episode rows.
+func (q *Queries) ReparentMediaFilesByItem(ctx context.Context, arg ReparentMediaFilesByItemParams) error {
+	_, err := q.db.Exec(ctx, reparentMediaFilesByItem, arg.MediaItemID, arg.MediaItemID_2)
+	return err
+}
+
+const reparentMediaItem = `-- name: ReparentMediaItem :exec
+UPDATE media_items
+SET parent_id  = $2,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type ReparentMediaItemParams struct {
+	ID       uuid.UUID   `json:"id"`
+	ParentID pgtype.UUID `json:"parent_id"`
+}
+
+func (q *Queries) ReparentMediaItem(ctx context.Context, arg ReparentMediaItemParams) error {
+	_, err := q.db.Exec(ctx, reparentMediaItem, arg.ID, arg.ParentID)
 	return err
 }
 

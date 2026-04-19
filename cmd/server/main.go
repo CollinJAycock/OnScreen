@@ -301,7 +301,9 @@ func run() error {
 	matchAdapter := &matchSearchAdapter{enricher: metaAgent}
 	arrAdapter := &arrLibraryAdapter{libSvc: libSvc, scanner: libEnqueuer}
 	arrHandler := v1.NewArrHandler(settingsSvc, arrAdapter, logger)
-	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, streamTracker, logger)
+	favoritesHandler := v1.NewFavoritesHandler(gen.New(rwPool), logger)
+	favoritesChecker := &favoritesChecker{q: gen.New(roPool)}
+	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger)
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger)
 
 	// ── Embedded transcode worker ─────────────────────────────────────────────
@@ -417,6 +419,9 @@ func run() error {
 	_ = notifServiceEarly // used by scanEnqueuer above
 	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger)
 
+	// ── Maintenance (admin one-shot operations) ──────────────────────────────
+	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
+
 	// ── Router ────────────────────────────────────────────────────────────────
 	h := &api.Handlers{
 		Library:     libHandler,
@@ -442,6 +447,8 @@ func run() error {
 		PasswordReset:   passwordResetHandler,
 		Invite:          inviteHandler,
 		Notifications:   notifHandler,
+		Maintenance:     maintenanceHandler,
+		Favorites:       favoritesHandler,
 		StreamTracker:  streamTracker,
 		Artwork:      artworkMgr,
 		ArtworkRoots: scanPathsFn,
