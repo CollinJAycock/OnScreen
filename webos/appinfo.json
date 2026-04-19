@@ -1,0 +1,19 @@
+{
+  "id": "com.onscreen.tv",
+  "version": "0.1.0",
+  "vendor": "OnScreen",
+  "type": "web",
+  "main": "index.html",
+  "title": "OnScreen",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgColor": "#07070d",
+  "iconColor": "#7c6af7",
+  "appDescription": "OnScreen media player for webOS TV",
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": false,
+  "handlesRelaunch": false,
+  "accessibility": {
+    "supportsAudioGuidance": false
+  }
+}
