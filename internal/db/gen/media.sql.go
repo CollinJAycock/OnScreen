@@ -982,8 +982,21 @@ func (q *Queries) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 const listDuplicateTopLevelItems = `-- name: ListDuplicateTopLevelItems :many
 WITH normalized AS (
     SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
-           lower(regexp_replace(coalesce(NULLIF(original_title, ''), title),
-                                '\s*\(\d{4}\)\s*$', '')) AS norm
+           lower(trim(
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(
+                     regexp_replace(
+                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                     ),
+                     '\s+(and|&)\s+', ' ', 'gi'
+                   ),
+                   '[^a-zA-Z0-9]+', ' ', 'g'
+                 ),
+                 '\s+', ' ', 'g'
+               )
+           )) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NULL
@@ -991,10 +1004,12 @@ WITH normalized AS (
       AND ($2::uuid IS NULL OR library_id = $2)
 ),
 ranked AS (
-    SELECT id, library_id, norm,
-           FIRST_VALUE(id) OVER w AS survivor_id,
-           ROW_NUMBER() OVER w AS rn
+    SELECT id, library_id, norm, year,
+           FIRST_VALUE(id)   OVER w AS survivor_id,
+           FIRST_VALUE(year) OVER w AS survivor_year,
+           ROW_NUMBER()      OVER w AS rn
     FROM normalized
+    WHERE norm <> ''
     WINDOW w AS (
         PARTITION BY library_id, norm
         ORDER BY (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL) DESC,
@@ -1007,6 +1022,7 @@ ranked AS (
 SELECT id AS loser_id, survivor_id::uuid AS survivor_id
 FROM ranked
 WHERE rn > 1
+  AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year)
 `
 
 type ListDuplicateTopLevelItemsParams struct {
@@ -1020,9 +1036,16 @@ type ListDuplicateTopLevelItemsRow struct {
 }
 
 // Lists groups of top-level media items (movies, shows) in the same library
-// that share a normalized title (lowercased, trailing "(YYYY)" stripped).
+// that share a normalized title. Normalization handles the common duplicate
+// causes observed in real libraries: trailing year ("Family Guy 1999"),
+// apostrophes ("Bob's" vs "Bobs"), colons/hyphens ("Dune: Prophecy" vs
+// "Dune Prophecy"), & vs "and" ("Law & Order" vs "Law and Order"), and
+// HTML-escaped ampersands ("Love &amp; Death" vs "Love & Death").
 // Returns one row per loser with the survivor_id. Survivor is the most
-// enriched row (has external IDs > has poster > has year > oldest).
+// enriched row (has external IDs > has poster > has year > oldest). Rows
+// whose year conflicts with the survivor's year are NOT merged, so
+// two distinct shows that happen to share a title (e.g. "Heroes" 2006 and
+// "Heroes" 2024) stay separate.
 func (q *Queries) ListDuplicateTopLevelItems(ctx context.Context, arg ListDuplicateTopLevelItemsParams) ([]ListDuplicateTopLevelItemsRow, error) {
 	rows, err := q.db.Query(ctx, listDuplicateTopLevelItems, arg.Type, arg.LibraryID)
 	if err != nil {
