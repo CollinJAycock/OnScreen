@@ -26,6 +26,16 @@ type mockMediaService struct {
 	hierarchyCalls []media.CreateItemParams
 	// Track calls to FindOrCreateItem.
 	flatCalls []media.CreateItemParams
+
+	// Dedupe stub: records calls and returns dedupeResult/dedupeErr.
+	dedupeCalls  []dedupeCall
+	dedupeResult media.DedupeResult
+	dedupeErr    error
+}
+
+type dedupeCall struct {
+	itemType  string
+	libraryID uuid.UUID
 }
 
 func newMockMediaService() *mockMediaService {
@@ -115,8 +125,13 @@ func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.U
 }
 func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) error  { return nil }
 func (m *mockMediaService) CleanupEmptyItems(_ context.Context, _ uuid.UUID) error    { return nil }
-func (m *mockMediaService) DedupeTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) (media.DedupeResult, error) {
-	return media.DedupeResult{}, nil
+func (m *mockMediaService) DedupeTopLevelItems(_ context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error) {
+	call := dedupeCall{itemType: itemType}
+	if libraryID != nil {
+		call.libraryID = *libraryID
+	}
+	m.dedupeCalls = append(m.dedupeCalls, call)
+	return m.dedupeResult, m.dedupeErr
 }
 
 func newTestScanner(svc *mockMediaService) *Scanner {

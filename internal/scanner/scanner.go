@@ -269,19 +269,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 		enrichWg.Wait()
 	}
 
-	if libraryType == "show" || libraryType == "movie" {
-		if dedup, err := s.media.DedupeTopLevelItems(ctx, libraryType, &libraryID); err != nil {
-			s.logger.WarnContext(ctx, "post-scan dedupe failed", "library_id", libraryID, "err", err)
-		} else if dedup.MergedItems > 0 || dedup.ReparentedRows > 0 {
-			s.logger.InfoContext(ctx, "post-scan dedupe merged duplicates",
-				"library_id", libraryID,
-				"merged_items", dedup.MergedItems,
-				"merged_seasons", dedup.MergedSeasons,
-				"merged_episodes", dedup.MergedEpisodes,
-				"reparented_rows", dedup.ReparentedRows,
-			)
-		}
-	}
+	s.dedupeLibrary(ctx, libraryID, libraryType)
 
 	result.Found = int(found.Load())
 	result.New = int(newCount.Load())
@@ -293,6 +281,30 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 		"duration_ms", result.Duration.Milliseconds(),
 	)
 	return result, nil
+}
+
+// dedupeLibrary collapses top-level duplicates for the scanned library. Only
+// show and movie libraries have top-level dedupe (music is hierarchical,
+// photos are flat). Errors are logged and swallowed so a dedupe failure
+// never fails the scan.
+func (s *Scanner) dedupeLibrary(ctx context.Context, libraryID uuid.UUID, libraryType string) {
+	if libraryType != "show" && libraryType != "movie" {
+		return
+	}
+	dedup, err := s.media.DedupeTopLevelItems(ctx, libraryType, &libraryID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "post-scan dedupe failed", "library_id", libraryID, "err", err)
+		return
+	}
+	if dedup.MergedItems > 0 || dedup.ReparentedRows > 0 {
+		s.logger.InfoContext(ctx, "post-scan dedupe merged duplicates",
+			"library_id", libraryID,
+			"merged_items", dedup.MergedItems,
+			"merged_seasons", dedup.MergedSeasons,
+			"merged_episodes", dedup.MergedEpisodes,
+			"reparented_rows", dedup.ReparentedRows,
+		)
+	}
 }
 
 // processFile probes a single file and upserts its media_files record.
