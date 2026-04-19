@@ -58,6 +58,9 @@ type Handlers struct {
 	Metrics     *observability.Metrics
 	Auth_mw     *middleware.Authenticator
 	RateLimiter *valkey.RateLimiter
+	// CORSAllowedOrigins enables cross-origin API access (TV app, third-party
+	// native clients). Empty disables CORS — same-origin only.
+	CORSAllowedOrigins []string
 }
 
 // NewRouter builds the full Chi router.
@@ -68,6 +71,7 @@ func NewRouter(h *Handlers) http.Handler {
 	r.Use(chimiddleware.RealIP)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.SecurityHeaders)
+	r.Use(middleware.CORS(h.CORSAllowedOrigins))
 	r.Use(middleware.Recover(h.Logger))
 	r.Use(middleware.Logger(h.Logger))
 

@@ -458,6 +458,7 @@ func run() error {
 		Metrics:     metrics,
 		Auth_mw:     authMiddleware,
 		RateLimiter: rateLimiter,
+		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 	}
 	router := api.NewRouter(h)
 

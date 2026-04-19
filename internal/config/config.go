@@ -97,6 +97,13 @@ type Config struct {
 	SMTPPassword string `env:"SMTP_PASSWORD"`
 	SMTPFrom     string `env:"SMTP_FROM"`
 
+	// ── Cross-origin clients ────────────────────────────────────────────
+	// CORSAllowedOrigins enables cross-origin XHR from listed origins.
+	// Use "*" to allow any origin — safe here because the API authenticates
+	// via Authorization: Bearer headers, not cookies. Empty disables CORS
+	// entirely (same-origin only), which is the default for web-only deploys.
+	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:","`
+
 	// ── Development ──────────────────────────────────────────────────────────
 	// DevFrontendURL: when set (build tag dev), Go server proxies non-API requests
 	// to this URL (Vite dev server on :5173). Ignored in production builds.
