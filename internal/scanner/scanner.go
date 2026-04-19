@@ -60,6 +60,7 @@ type MediaService interface {
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
 	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
+	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
 }
 
 // ConcurrencyProvider lets the scanner read current concurrency limits from
@@ -266,6 +267,20 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 			}()
 		}
 		enrichWg.Wait()
+	}
+
+	if libraryType == "show" || libraryType == "movie" {
+		if dedup, err := s.media.DedupeTopLevelItems(ctx, libraryType, &libraryID); err != nil {
+			s.logger.WarnContext(ctx, "post-scan dedupe failed", "library_id", libraryID, "err", err)
+		} else if dedup.MergedItems > 0 || dedup.ReparentedRows > 0 {
+			s.logger.InfoContext(ctx, "post-scan dedupe merged duplicates",
+				"library_id", libraryID,
+				"merged_items", dedup.MergedItems,
+				"merged_seasons", dedup.MergedSeasons,
+				"merged_episodes", dedup.MergedEpisodes,
+				"reparented_rows", dedup.ReparentedRows,
+			)
+		}
 	}
 
 	result.Found = int(found.Load())

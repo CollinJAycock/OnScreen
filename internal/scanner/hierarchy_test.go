@@ -115,6 +115,9 @@ func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.U
 }
 func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) error  { return nil }
 func (m *mockMediaService) CleanupEmptyItems(_ context.Context, _ uuid.UUID) error    { return nil }
+func (m *mockMediaService) DedupeTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) (media.DedupeResult, error) {
+	return media.DedupeResult{}, nil
+}
 
 func newTestScanner(svc *mockMediaService) *Scanner {
 	return New(svc, nil, nil, slog.Default())
