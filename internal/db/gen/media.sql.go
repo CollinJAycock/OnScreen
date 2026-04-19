@@ -2475,6 +2475,93 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 	return items, nil
 }
 
+const listPrefixDuplicateTopLevelItems = `-- name: ListPrefixDuplicateTopLevelItems :many
+WITH normalized AS (
+    SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
+           lower(trim(
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(
+                     regexp_replace(
+                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                     ),
+                     '\s+(and|&)\s+', ' ', 'gi'
+                   ),
+                   '[^a-zA-Z0-9]+', ' ', 'g'
+                 ),
+                 '\s+', ' ', 'g'
+               )
+           )) AS norm
+    FROM media_items
+    WHERE type = $1
+      AND parent_id IS NULL
+      AND deleted_at IS NULL
+      AND ($2::uuid IS NULL OR library_id = $2)
+),
+losers AS (
+    SELECT id, library_id, norm
+    FROM normalized
+    WHERE tmdb_id IS NULL AND tvdb_id IS NULL AND year IS NULL
+      AND norm <> ''
+),
+survivors AS (
+    SELECT id, library_id, norm, poster_path, created_at
+    FROM normalized
+    WHERE (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL)
+      AND norm <> ''
+)
+SELECT DISTINCT ON (l.id)
+       l.id  AS loser_id,
+       s.id::uuid AS survivor_id
+FROM losers l
+JOIN survivors s
+  ON s.library_id = l.library_id
+ AND l.norm LIKE s.norm || ' %'
+ORDER BY l.id,
+         length(s.norm) DESC,
+         (s.poster_path IS NOT NULL) DESC,
+         s.created_at ASC,
+         s.id ASC
+`
+
+type ListPrefixDuplicateTopLevelItemsParams struct {
+	Type      string      `json:"type"`
+	LibraryID pgtype.UUID `json:"library_id"`
+}
+
+type ListPrefixDuplicateTopLevelItemsRow struct {
+	LoserID    uuid.UUID `json:"loser_id"`
+	SurvivorID uuid.UUID `json:"survivor_id"`
+}
+
+// Second-pass dedupe for the "folder name kept the official subtitle" case
+// where the unenriched row's normalized title starts with the enriched row's
+// normalized title at a word boundary (e.g. "adventure time with finn and
+// jake" → "adventure time" 2010). Conservative on purpose: the loser must
+// have NO external IDs and NO year, so a real spin-off that has been
+// enriched (e.g. "Naruto Shippuden" with its own tmdb_id) won't be folded
+// into the parent show.
+func (q *Queries) ListPrefixDuplicateTopLevelItems(ctx context.Context, arg ListPrefixDuplicateTopLevelItemsParams) ([]ListPrefixDuplicateTopLevelItemsRow, error) {
+	rows, err := q.db.Query(ctx, listPrefixDuplicateTopLevelItems, arg.Type, arg.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPrefixDuplicateTopLevelItemsRow{}
+	for rows.Next() {
+		var i ListPrefixDuplicateTopLevelItemsRow
+		if err := rows.Scan(&i.LoserID, &i.SurvivorID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentlyAdded = `-- name: ListRecentlyAdded :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,

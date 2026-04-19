@@ -71,6 +71,9 @@ func (m *mockQuerier) FindTopLevelItemsByTitleFlexible(_ context.Context, _ uuid
 func (m *mockQuerier) ListDuplicateTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) ([]DuplicatePair, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListPrefixDuplicateTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) ([]DuplicatePair, error) {
+	return nil, nil
+}
 func (m *mockQuerier) ReparentMediaItem(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
 	return nil
 }

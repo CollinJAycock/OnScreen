@@ -120,6 +120,7 @@ type Querier interface {
 	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
 	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
 	ListDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
+	ListPrefixDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error
 	ReparentMediaFilesByItem(ctx context.Context, fromItemID, toItemID uuid.UUID) error
 
@@ -694,29 +695,44 @@ type DedupeResult struct {
 // soft-deleted. Safe to run repeatedly.
 func (s *Service) DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (DedupeResult, error) {
 	var res DedupeResult
-	pairs, err := s.rw.ListDuplicateTopLevelItems(ctx, itemType, libraryID)
+	exactPairs, err := s.rw.ListDuplicateTopLevelItems(ctx, itemType, libraryID)
 	if err != nil {
 		return res, fmt.Errorf("list duplicate top-level items: %w", err)
 	}
+	if err := s.applyDedupePairs(ctx, exactPairs, itemType, &res); err != nil {
+		return res, err
+	}
+	// Second pass: collapse unenriched rows whose normalized title is a
+	// word-boundary prefix-extension of an enriched survivor (e.g. folder
+	// "Adventure Time With Finn And Jake" → enriched "Adventure Time" 2010).
+	prefixPairs, err := s.rw.ListPrefixDuplicateTopLevelItems(ctx, itemType, libraryID)
+	if err != nil {
+		return res, fmt.Errorf("list prefix duplicate top-level items: %w", err)
+	}
+	if err := s.applyDedupePairs(ctx, prefixPairs, itemType, &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+func (s *Service) applyDedupePairs(ctx context.Context, pairs []DuplicatePair, itemType string, res *DedupeResult) error {
 	for _, pair := range pairs {
 		mergedSeasons, mergedEps, reparented, err := s.mergeChildren(ctx, pair.LoserID, pair.SurvivorID, itemType)
 		if err != nil {
-			return res, fmt.Errorf("merge %s into %s: %w", pair.LoserID, pair.SurvivorID, err)
+			return fmt.Errorf("merge %s into %s: %w", pair.LoserID, pair.SurvivorID, err)
 		}
 		res.MergedSeasons += mergedSeasons
 		res.MergedEpisodes += mergedEps
 		res.ReparentedRows += reparented
-		// Reparent any direct media_files (e.g. a movie's file or a stray
-		// episode hung off the show row) onto the survivor.
 		if err := s.rw.ReparentMediaFilesByItem(ctx, pair.LoserID, pair.SurvivorID); err != nil {
-			return res, fmt.Errorf("reparent files for %s: %w", pair.LoserID, err)
+			return fmt.Errorf("reparent files for %s: %w", pair.LoserID, err)
 		}
 		if err := s.rw.SoftDeleteMediaItem(ctx, pair.LoserID); err != nil {
-			return res, fmt.Errorf("soft-delete loser %s: %w", pair.LoserID, err)
+			return fmt.Errorf("soft-delete loser %s: %w", pair.LoserID, err)
 		}
 		res.MergedItems++
 	}
-	return res, nil
+	return nil
 }
 
 // mergeChildren merges loser's direct children into survivor. For each loser
