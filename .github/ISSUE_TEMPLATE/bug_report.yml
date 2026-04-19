@@ -1,0 +1,84 @@
+name: Bug report
+description: Something in OnScreen doesn't work the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. The more specific you can be, the faster this gets fixed.
+        Check existing issues first — if a matching one is open, please add a comment there instead of opening a new one.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, and what did OnScreen do that was wrong?
+      placeholder: "I clicked play on a 4K HDR file and got a black screen instead of tonemapped video."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      placeholder: "Video should play with HDR → SDR tonemapping."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps, ideally from a fresh session.
+      placeholder: |
+        1. Open /watch/<id> for an HDR10 file
+        2. Click play
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: OnScreen version
+      description: Output of `docker exec <container> /usr/local/bin/server --version` or the tag you built from.
+      placeholder: "v1.1.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker (CPU-only)
+        - Docker (GPU / onscreen-ffmpeg)
+        - Built from source
+        - TrueNAS iX app
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser / client
+      description: Only needed if the bug is in the web or Android TV client.
+      placeholder: "Firefox 124 on Windows / Android TV 14 on Shield Pro"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Server logs, ffmpeg output, browser console — whatever's relevant. Wrap in a code block.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a match.
+          required: true
+        - label: I'm on a recent release (check [CHANGELOG.md](../blob/main/CHANGELOG.md)).
+          required: true

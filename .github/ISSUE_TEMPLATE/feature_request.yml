@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest a new feature or a change to existing behavior.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: please search existing issues and discussions. If someone's already asked for this, upvote or comment there.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the use case, not the implementation. "I want X so I can Y."
+      placeholder: "I have a shared library with my kids and need to hide R-rated titles from their profile."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the feature look like from a user's point of view?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Other media servers, workarounds, or partial solutions.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Library / scanning
+        - Playback / transcoding
+        - Web player
+        - Android TV client
+        - Admin / operations
+        - API
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions for a similar request.
+          required: true
