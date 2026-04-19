@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Solid dark background -->
+    <item>
+        <color android:color="@color/bg_primary" />
+    </item>
+    <!-- Centered logo -->
+    <item android:gravity="center">
+        <bitmap
+            android:src="@drawable/bg_logo"
+            android:gravity="center" />
+    </item>
+    <!-- Dark overlay to dim the logo -->
+    <item>
+        <color android:color="#D907070d" />
+    </item>
+</layer-list>

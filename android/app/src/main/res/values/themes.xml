@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.OnScreen" parent="Theme.Leanback">
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorPrimaryDark">@color/accent_dark</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@drawable/bg_app</item>
+        <item name="defaultBrandColor">@color/accent</item>
+        <item name="defaultBrandColorDark">@color/accent_dark</item>
+        <item name="defaultSearchColor">@color/accent</item>
+        <item name="defaultSearchBrightColor">@color/accent</item>
+        <item name="overlayDimMaskColor">@android:color/transparent</item>
+        <item name="overlayDimActiveLevel">0%</item>
+        <item name="overlayDimDimmedLevel">0%</item>
+    </style>
+
+    <style name="PlayerDialog" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+    </style>
+</resources>

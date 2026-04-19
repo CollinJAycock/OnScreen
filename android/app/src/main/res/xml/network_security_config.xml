@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Trust system CAs everywhere (default) -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Also trust user-installed CAs (disabled by default since Android 7) -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

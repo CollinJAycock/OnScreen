@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_primary"
+    android:fillViewport="true"
+    android:padding="64dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/settings"
+            android:textColor="@color/text_primary"
+            android:textSize="32sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/settings_account"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <!-- Preferences section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="40dp"
+            android:text="@string/language_preferences"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/preferred_audio_language"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_audio_lang"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="240dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="20dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:focusable="true"
+            android:gravity="start|center_vertical" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/preferred_subtitle_language"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_subtitle_lang"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="240dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="20dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:focusable="true"
+            android:gravity="start|center_vertical" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/max_content_rating"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_max_rating"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="240dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="20dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:focusable="true"
+            android:gravity="start|center_vertical" />
+
+        <!-- Account section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="48dp"
+            android:text="@string/account"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_change_server"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:paddingHorizontal="20dp"
+                android:background="@drawable/btn_secondary"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textAllCaps="false"
+                android:focusable="true"
+                android:text="@string/change_server" />
+
+            <Button
+                android:id="@+id/btn_logout"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:layout_marginStart="12dp"
+                android:paddingHorizontal="20dp"
+                android:background="@drawable/btn_primary"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textAllCaps="false"
+                android:focusable="true"
+                android:text="@string/log_out" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/settings_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</ScrollView>

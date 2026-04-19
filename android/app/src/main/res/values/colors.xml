@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_primary">#07070d</color>
+    <color name="bg_secondary">#0a0a10</color>
+    <color name="bg_elevated">#111118</color>
+    <color name="text_primary">#eeeef8</color>
+    <color name="text_secondary">#8888aa</color>
+    <color name="accent">#7c6af7</color>
+    <color name="accent_dark">#5a4bd6</color>
+    <color name="error">#fca5a5</color>
+    <color name="search_bar_bg">#1a1a24</color>
+</resources>

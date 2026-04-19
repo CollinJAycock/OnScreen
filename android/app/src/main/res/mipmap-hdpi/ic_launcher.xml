@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pre-API-26 launcher icon. Standard hdpi launcher size is 72x72 dp.
+    Wrapped in a layer-list so android:width/android:height on the item
+    actually constrains the underlying bitmap (the <bitmap> element does
+    not accept width/height directly).
+    On API 26+ the adaptive icon in mipmap-anydpi-v26 takes precedence.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:gravity="fill"
+        android:width="72dp"
+        android:height="72dp"
+        android:drawable="@drawable/ic_logo" />
+</layer-list>

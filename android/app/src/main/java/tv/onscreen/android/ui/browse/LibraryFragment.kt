@@ -1,0 +1,196 @@
+package tv.onscreen.android.ui.browse
+
+import android.app.AlertDialog
+import android.os.Bundle
+import android.view.KeyEvent
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.leanback.app.VerticalGridSupportFragment
+import androidx.leanback.widget.ArrayObjectAdapter
+import androidx.leanback.widget.FocusHighlight
+import androidx.leanback.widget.VerticalGridPresenter
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import tv.onscreen.android.R
+import tv.onscreen.android.data.model.MediaItem
+import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.ui.common.CardPresenter
+import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.detail.DetailFragment
+import tv.onscreen.android.ui.playback.PlaybackFragment
+import javax.inject.Inject
+
+@AndroidEntryPoint
+class LibraryFragment : VerticalGridSupportFragment() {
+
+    @Inject lateinit var prefs: ServerPrefs
+
+    private lateinit var viewModel: LibraryViewModel
+    private lateinit var gridAdapter: ArrayObjectAdapter
+    private var baseTitle: String = ""
+    private var errorOverlay: ErrorOverlay? = null
+
+    companion object {
+        private const val ARG_LIBRARY_ID = "library_id"
+        private const val ARG_LIBRARY_NAME = "library_name"
+        private const val NUM_COLUMNS = 5
+
+        // (sort key, sort_dir, label)
+        private val SORT_OPTIONS = listOf(
+            Triple("title", "asc", "Title (A–Z)"),
+            Triple("title", "desc", "Title (Z–A)"),
+            Triple("created_at", "desc", "Recently added"),
+            Triple("year", "desc", "Newest year"),
+            Triple("year", "asc", "Oldest year"),
+            Triple("rating", "desc", "Highest rated"),
+        )
+
+        fun newInstance(libraryId: String, libraryName: String): LibraryFragment {
+            return LibraryFragment().apply {
+                arguments = Bundle().apply {
+                    putString(ARG_LIBRARY_ID, libraryId)
+                    putString(ARG_LIBRARY_NAME, libraryName)
+                }
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        baseTitle = arguments?.getString(ARG_LIBRARY_NAME) ?: ""
+        title = baseTitle
+
+        val presenter = VerticalGridPresenter(FocusHighlight.ZOOM_FACTOR_NONE).apply {
+            shadowEnabled = false
+        }
+        presenter.numberOfColumns = NUM_COLUMNS
+        gridPresenter = presenter
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val inner = super.onCreateView(inflater, container, savedInstanceState)
+            ?: return super.onCreateView(inflater, container, savedInstanceState)!!
+        val overlay = ErrorOverlay.wrap(inner)
+        errorOverlay = overlay
+        return overlay.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewModel = ViewModelProvider(this)[LibraryViewModel::class.java]
+
+        val libraryId = arguments?.getString(ARG_LIBRARY_ID) ?: return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            val serverUrl = prefs.serverUrl.first() ?: ""
+            gridAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
+            adapter = gridAdapter
+
+            viewModel.load(libraryId)
+
+            launch {
+                viewModel.items.collectLatest { items ->
+                    gridAdapter.clear()
+                    items.forEach { gridAdapter.add(it) }
+                }
+            }
+            launch {
+                // Combined title updates whenever either sort or genre changes.
+                viewModel.sort.collectLatest { updateTitle() }
+            }
+            launch {
+                viewModel.genre.collectLatest { updateTitle() }
+            }
+            launch {
+                viewModel.error.collectLatest { err ->
+                    if (err != null) {
+                        errorOverlay?.show(err) { viewModel.load(libraryId) }
+                    } else {
+                        errorOverlay?.hide()
+                    }
+                }
+            }
+        }
+
+        setOnItemViewClickedListener { _, item, _, _ ->
+            if (item is MediaItem) {
+                val fragment = if (item.type == "show") {
+                    DetailFragment.newInstance(item.id)
+                } else {
+                    PlaybackFragment.newInstance(item.id, 0)
+                }
+                parentFragmentManager.beginTransaction()
+                    .replace(R.id.main_container, fragment)
+                    .addToBackStack(null)
+                    .commit()
+            }
+        }
+
+        setOnItemViewSelectedListener { _, _, _, row ->
+            // Load more when near the end.
+            val pos = gridAdapter.indexOf(row)
+            if (pos >= gridAdapter.size() - 10) {
+                viewModel.loadMore()
+            }
+        }
+
+        view.isFocusableInTouchMode = true
+        view.setOnKeyListener { _, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            when (keyCode) {
+                KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_BUTTON_Y -> {
+                    showSortMenu(); true
+                }
+                KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_F2 -> {
+                    showGenreMenu(); true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun updateTitle() {
+        val s = viewModel.sort.value
+        val label = SORT_OPTIONS.firstOrNull {
+            it.first == s.sort && it.second == s.sortDir
+        }?.third ?: "Sort"
+        val genre = viewModel.genre.value
+        val genrePart = if (genre != null) "  ·  $genre" else ""
+        title = "$baseTitle  ·  $label$genrePart  (MENU sort / X filter)"
+    }
+
+    private fun showGenreMenu() {
+        val genres = viewModel.genres.value
+        if (genres.isEmpty()) return
+        val labels = listOf("All genres").plus(genres).toTypedArray()
+        val current = viewModel.genre.value
+        val checked = if (current == null) 0 else genres.indexOf(current) + 1
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle("Filter by genre")
+            .setSingleChoiceItems(labels, checked.coerceAtLeast(0)) { d, idx ->
+                viewModel.setGenre(if (idx == 0) null else genres[idx - 1])
+                d.dismiss()
+            }
+            .show()
+    }
+
+    private fun showSortMenu() {
+        val current = viewModel.sort.value
+        val labels = SORT_OPTIONS.map { it.third }.toTypedArray()
+        val checked = SORT_OPTIONS.indexOfFirst { it.first == current.sort && it.second == current.sortDir }
+            .coerceAtLeast(0)
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle("Sort by")
+            .setSingleChoiceItems(labels, checked) { d, idx ->
+                val opt = SORT_OPTIONS[idx]
+                viewModel.setSort(opt.first, opt.second)
+                d.dismiss()
+            }
+            .show()
+    }
+}

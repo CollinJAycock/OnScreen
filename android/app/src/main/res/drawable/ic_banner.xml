@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android TV Leanback launcher banner. Standard size is 320x180 dp.
+    Uses the 16:9-cropped artwork (drawable-nodpi/ic_banner_art.png) so
+    the logo fills the full banner width and height with no distortion.
+-->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_banner_art"
+    android:gravity="fill" />

@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_primary">
+
+    <!-- Fanart background (blurred behind poster) -->
+    <ImageView
+        android:id="@+id/fanart"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:alpha="0.3" />
+
+    <!-- Gradient scrim over fanart -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/detail_scrim" />
+
+    <!-- Left arrow -->
+    <ImageView
+        android:id="@+id/btn_left"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="start|center_vertical"
+        android:layout_marginStart="32dp"
+        android:src="@drawable/ic_chevron_left"
+        android:scaleType="centerInside"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:contentDescription="Previous"
+        android:visibility="gone" />
+
+    <!-- Right arrow -->
+    <ImageView
+        android:id="@+id/btn_right"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="end|center_vertical"
+        android:layout_marginEnd="32dp"
+        android:src="@drawable/ic_chevron_right"
+        android:scaleType="centerInside"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:contentDescription="Next"
+        android:visibility="gone" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:paddingTop="48dp"
+        android:paddingBottom="48dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="top"
+            android:paddingHorizontal="64dp"
+            android:clipChildren="false"
+            android:clipToPadding="false">
+
+            <!-- Poster -->
+            <ImageView
+                android:id="@+id/poster"
+                android:layout_width="280dp"
+                android:layout_height="420dp"
+                android:scaleType="centerCrop"
+                android:background="@color/bg_elevated" />
+
+            <!-- Right column -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="32dp"
+                android:orientation="vertical"
+                android:clipChildren="false"
+                android:clipToPadding="false">
+
+                <TextView
+                    android:id="@+id/title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
+                    android:textSize="28sp"
+                    android:textStyle="bold"
+                    android:maxLines="2" />
+
+                <TextView
+                    android:id="@+id/subtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp"
+                    android:layout_marginTop="6dp"
+                    android:maxLines="1" />
+
+                <!-- Action row -->
+                <LinearLayout
+                    android:id="@+id/action_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="20dp"
+                    android:clipChildren="false"
+                    android:clipToPadding="false">
+
+                    <Button
+                        android:id="@+id/btn_play"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:minWidth="160dp"
+                        android:paddingHorizontal="24dp"
+                        android:background="@drawable/btn_primary"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textAllCaps="false"
+                        android:focusable="true"
+                        android:focusableInTouchMode="true"
+                        android:text="@string/play" />
+
+                    <Button
+                        android:id="@+id/btn_play_from_start"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="12dp"
+                        android:paddingHorizontal="20dp"
+                        android:background="@drawable/btn_secondary"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textAllCaps="false"
+                        android:focusable="true"
+                        android:visibility="gone"
+                        android:text="@string/play_from_beginning" />
+
+                    <ImageView
+                        android:id="@+id/btn_favorite"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="12dp"
+                        android:padding="12dp"
+                        android:background="@drawable/btn_secondary"
+                        android:src="@drawable/ic_heart"
+                        android:scaleType="centerInside"
+                        android:focusable="true"
+                        android:focusableInTouchMode="true"
+                        android:contentDescription="@string/favorite" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/summary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp"
+                    android:layout_marginTop="20dp"
+                    android:maxLines="6"
+                    android:lineSpacingExtra="3dp" />
+
+                <!-- Seasons / episodes section (shows only) -->
+                <TextView
+                    android:id="@+id/episodes_header"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="32dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    android:text="Episodes" />
+
+                <HorizontalScrollView
+                    android:id="@+id/season_tabs_scroll"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:scrollbars="none"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:visibility="gone">
+                    <LinearLayout
+                        android:id="@+id/season_tabs"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:clipChildren="false"
+                        android:clipToPadding="false" />
+                </HorizontalScrollView>
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/episode_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="280dp"
+                    android:layout_marginTop="12dp"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:paddingEnd="64dp"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+</FrameLayout>

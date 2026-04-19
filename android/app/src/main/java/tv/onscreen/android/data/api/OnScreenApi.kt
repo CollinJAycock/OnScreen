@@ -1,0 +1,147 @@
+package tv.onscreen.android.data.api
+
+import retrofit2.Response
+import retrofit2.http.*
+import tv.onscreen.android.data.model.*
+
+interface OnScreenApi {
+
+    // ── Auth ────────────────────────────────────────────────────────────────
+
+    @POST("api/v1/auth/login")
+    suspend fun login(@Body body: LoginRequest): ApiResponse<TokenPair>
+
+    @POST("api/v1/auth/refresh")
+    suspend fun refresh(@Body body: RefreshRequest): ApiResponse<TokenPair>
+
+    @POST("api/v1/auth/logout")
+    suspend fun logout(@Body body: LogoutRequest)
+
+    // ── Hub ─────────────────────────────────────────────────────────────────
+
+    @GET("api/v1/hub")
+    suspend fun getHub(): ApiResponse<HubData>
+
+    // ── Libraries ───────────────────────────────────────────────────────────
+
+    @GET("api/v1/libraries")
+    suspend fun getLibraries(): ApiResponse<List<Library>>
+
+    @GET("api/v1/libraries/{id}/genres")
+    suspend fun getLibraryGenres(@Path("id") libraryId: String): ApiResponse<List<String>>
+
+    @GET("api/v1/libraries/{id}/items")
+    suspend fun getLibraryItems(
+        @Path("id") libraryId: String,
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+        @Query("sort") sort: String? = null,
+        @Query("sort_dir") sortDir: String? = null,
+        @Query("genre") genre: String? = null,
+    ): ApiListResponse<MediaItem>
+
+    // ── Items ───────────────────────────────────────────────────────────────
+
+    @GET("api/v1/items/{id}")
+    suspend fun getItem(@Path("id") id: String): ApiResponse<ItemDetail>
+
+    @GET("api/v1/items/{id}/children")
+    suspend fun getChildren(
+        @Path("id") id: String,
+        @Query("limit") limit: Int = 200,
+        @Query("offset") offset: Int = 0,
+    ): ApiListResponse<ChildItem>
+
+    @PUT("api/v1/items/{id}/progress")
+    suspend fun updateProgress(
+        @Path("id") id: String,
+        @Body body: ProgressRequest,
+    )
+
+    // ── Transcode ───────────────────────────────────────────────────────────
+
+    @POST("api/v1/items/{id}/transcode")
+    suspend fun startTranscode(
+        @Path("id") itemId: String,
+        @Body body: TranscodeRequest,
+    ): ApiResponse<TranscodeSession>
+
+    @DELETE("api/v1/transcode/sessions/{sid}")
+    suspend fun stopTranscode(
+        @Path("sid") sessionId: String,
+        @Query("token") token: String,
+    )
+
+    // ── Search ──────────────────────────────────────────────────────────────
+
+    @GET("api/v1/search")
+    suspend fun search(
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 30,
+        @Query("library_id") libraryId: String? = null,
+    ): ApiResponse<List<SearchResult>>
+
+    // ── Favorites ───────────────────────────────────────────────────────────
+
+    @GET("api/v1/favorites")
+    suspend fun getFavorites(
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+    ): ApiListResponse<FavoriteItem>
+
+    @POST("api/v1/items/{id}/favorite")
+    suspend fun addFavorite(@Path("id") id: String)
+
+    @DELETE("api/v1/items/{id}/favorite")
+    suspend fun removeFavorite(@Path("id") id: String)
+
+    // ── Collections ─────────────────────────────────────────────────────────
+
+    @GET("api/v1/collections")
+    suspend fun getCollections(): ApiResponse<List<MediaCollection>>
+
+    @GET("api/v1/collections/{id}/items")
+    suspend fun getCollectionItems(
+        @Path("id") id: String,
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+    ): ApiListResponse<CollectionItem>
+
+    // ── Preferences ─────────────────────────────────────────────────────────
+
+    @GET("api/v1/users/me/preferences")
+    suspend fun getPreferences(): ApiResponse<UserPreferences>
+
+    @PUT("api/v1/users/me/preferences")
+    suspend fun setPreferences(@Body body: UserPreferences): ApiResponse<UserPreferences>
+
+    // ── Notifications ───────────────────────────────────────────────────────
+
+    @GET("api/v1/notifications")
+    suspend fun getNotifications(
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+    ): ApiListResponse<NotificationItem>
+
+    @GET("api/v1/notifications/unread-count")
+    suspend fun getUnreadCount(): ApiResponse<UnreadCount>
+
+    @POST("api/v1/notifications/{id}/read")
+    suspend fun markNotificationRead(@Path("id") id: String)
+
+    @POST("api/v1/notifications/read-all")
+    suspend fun markAllNotificationsRead()
+
+    // ── History ─────────────────────────────────────────────────────────────
+
+    @GET("api/v1/history")
+    suspend fun getHistory(
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+    ): ApiListResponse<HistoryItem>
+
+    // ── Health ──────────────────────────────────────────────────────────────
+
+    @GET("health/live")
+    suspend fun healthCheck(): Response<Unit>
+}
