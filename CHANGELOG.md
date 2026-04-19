@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-04-19
+
+### Added
+
+- Android TV (Leanback) client with library browse, episode picker, and direct-play streaming
+- User favorites with hub-page surfacing
+- Chapter navigation in the video player (jump-to-chapter, next/prev chapter buttons)
+- TVDB show-level metadata fallback when TMDB has no match
+- Admin maintenance endpoints: `POST /api/v1/maintenance/dedupe-shows`, `POST /api/v1/maintenance/dedupe-movies`, art backfill
+- Two-pass dedupe: identical-normalized-title pass plus prefix-extension pass for unenriched folder-name dupes (e.g. "Adventure Time With Finn And Jake" → enriched "Adventure Time")
+
+### Fixed
+
+- Scanner creating duplicate shows when episode rows crowded the title-search result set
+- Scanner soft-deleting all shows and seasons on every scan (cascade walk treated parents as orphans)
+- Docker build silently swallowing `go build` failures via background-job `wait` masking exit codes; serialized builds with explicit `test -x` gate
+- Dedupe normalization now handles bare trailing year, apostrophes, colons/hyphens, `&` vs `and`, and HTML-escaped `&amp;`
+- Year-conflict guard prevents remakes (e.g. "Heroes" 2006 vs "Heroes" 2024) from merging
+
+---
+
+## [1.1.1] - 2026-04-03
+
 ### Added
 
 - JavaScript-based subtitle renderer replacing native `<track>` elements for reliable HLS/MSE playback
