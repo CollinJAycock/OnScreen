@@ -20,14 +20,16 @@ type mockQuerier struct {
 	fileByPath map[string]File
 	fileByHash map[string]File
 
-	searchResults   []Item
-	createItemErr   error
-	listItemsErr    error
-	listChildrenErr error
-	countErr        error
-	createFileErr   error
-	missingOlderErr error
-	missingFiles    []File
+	searchResults         []Item
+	createItemErr         error
+	listItemsErr          error
+	listChildrenErr       error
+	countErr              error
+	createFileErr         error
+	missingOlderErr       error
+	missingFiles          []File
+	cleanupLeavesErr      error
+	cleanupContainersErr  error
 }
 
 func newMockQuerier() *mockQuerier {
@@ -229,7 +231,60 @@ func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) 
 	return nil, nil
 }
 func (m *mockQuerier) DeleteMissingFilesByLibrary(_ context.Context, _ uuid.UUID) error { return nil }
-func (m *mockQuerier) SoftDeleteItemsWithNoActiveFiles(_ context.Context, _ uuid.UUID) error {
+func (m *mockQuerier) SoftDeleteItemsWithNoActiveFiles(_ context.Context, libID uuid.UUID) error {
+	if m.cleanupLeavesErr != nil {
+		return m.cleanupLeavesErr
+	}
+	var toDelete []uuid.UUID
+	for id, it := range m.items {
+		if it.LibraryID != libID {
+			continue
+		}
+		switch it.Type {
+		case "movie", "episode", "track", "photo":
+			hasActive := false
+			for _, f := range m.files[id] {
+				if f.Status == "active" {
+					hasActive = true
+					break
+				}
+			}
+			if !hasActive {
+				toDelete = append(toDelete, id)
+			}
+		}
+	}
+	for _, id := range toDelete {
+		delete(m.items, id)
+	}
+	return nil
+}
+func (m *mockQuerier) SoftDeleteEmptyContainerItems(_ context.Context, libID uuid.UUID) error {
+	if m.cleanupContainersErr != nil {
+		return m.cleanupContainersErr
+	}
+	var toDelete []uuid.UUID
+	for id, it := range m.items {
+		if it.LibraryID != libID {
+			continue
+		}
+		switch it.Type {
+		case "show", "season", "artist", "album":
+			hasChild := false
+			for _, child := range m.items {
+				if child.ParentID != nil && *child.ParentID == id {
+					hasChild = true
+					break
+				}
+			}
+			if !hasChild {
+				toDelete = append(toDelete, id)
+			}
+		}
+	}
+	for _, id := range toDelete {
+		delete(m.items, id)
+	}
 	return nil
 }
 
@@ -1063,5 +1118,184 @@ func TestFindOrCreateItem_ConcurrentSameKey(t *testing.T) {
 	cq.mu.Unlock()
 	if created != 1 {
 		t.Errorf("want 1 created item, got %d — per-key mutex should prevent duplicate creates", created)
+	}
+}
+
+// ── CleanupEmptyItems ─────────────────────────────────────────────────────────
+// These tests guard against regression of the bug where every scan soft-deleted
+// all shows + seasons because the cleanup query only checked for directly
+// attached media_files. TV containers never own files, so they were always
+// considered empty.
+
+func addItem(q *mockQuerier, libID uuid.UUID, itemType string, parent *uuid.UUID) uuid.UUID {
+	id := uuid.New()
+	q.items[id] = Item{ID: id, LibraryID: libID, Type: itemType, ParentID: parent}
+	return id
+}
+
+func addActiveFile(q *mockQuerier, itemID uuid.UUID) {
+	q.files[itemID] = append(q.files[itemID], File{ID: uuid.New(), MediaItemID: itemID, Status: "active"})
+}
+
+func TestCleanupEmptyItems_KeepsShowsAndSeasonsWithLiveEpisodes(t *testing.T) {
+	svc, q := newService(t)
+	libID := uuid.New()
+	showID := addItem(q, libID, "show", nil)
+	seasonID := addItem(q, libID, "season", &showID)
+	epID := addItem(q, libID, "episode", &seasonID)
+	addActiveFile(q, epID)
+
+	if err := svc.CleanupEmptyItems(context.Background(), libID); err != nil {
+		t.Fatalf("CleanupEmptyItems: %v", err)
+	}
+	for name, id := range map[string]uuid.UUID{"show": showID, "season": seasonID, "episode": epID} {
+		if _, ok := q.items[id]; !ok {
+			t.Errorf("%s was soft-deleted despite having live episode (the original bug)", name)
+		}
+	}
+}
+
+func TestCleanupEmptyItems_KeepsMoviesWithActiveFiles(t *testing.T) {
+	svc, q := newService(t)
+	libID := uuid.New()
+	movieID := addItem(q, libID, "movie", nil)
+	addActiveFile(q, movieID)
+
+	if err := svc.CleanupEmptyItems(context.Background(), libID); err != nil {
+		t.Fatalf("CleanupEmptyItems: %v", err)
+	}
+	if _, ok := q.items[movieID]; !ok {
+		t.Error("movie with active file was soft-deleted")
+	}
+}
+
+func TestCleanupEmptyItems_DeletesLeafWithNoActiveFiles(t *testing.T) {
+	svc, q := newService(t)
+	libID := uuid.New()
+	movieID := addItem(q, libID, "movie", nil) // no files at all
+	epID := addItem(q, libID, "episode", nil)
+	q.files[epID] = []File{{ID: uuid.New(), MediaItemID: epID, Status: "missing"}}
+
+	if err := svc.CleanupEmptyItems(context.Background(), libID); err != nil {
+		t.Fatalf("CleanupEmptyItems: %v", err)
+	}
+	if _, ok := q.items[movieID]; ok {
+		t.Error("movie without active file should have been soft-deleted")
+	}
+	if _, ok := q.items[epID]; ok {
+		t.Error("episode with only missing file should have been soft-deleted")
+	}
+}
+
+func TestCleanupEmptyItems_CascadesEpisodeToSeasonToShow(t *testing.T) {
+	svc, q := newService(t)
+	libID := uuid.New()
+	showID := addItem(q, libID, "show", nil)
+	seasonID := addItem(q, libID, "season", &showID)
+	epID := addItem(q, libID, "episode", &seasonID)
+	// Only a missing file — leaf cleanup will delete the episode, which
+	// should then cascade up through two container passes.
+	q.files[epID] = []File{{ID: uuid.New(), MediaItemID: epID, Status: "missing"}}
+
+	if err := svc.CleanupEmptyItems(context.Background(), libID); err != nil {
+		t.Fatalf("CleanupEmptyItems: %v", err)
+	}
+	if _, ok := q.items[epID]; ok {
+		t.Error("episode should have been soft-deleted (no active files)")
+	}
+	if _, ok := q.items[seasonID]; ok {
+		t.Error("season should cascade-delete after its only episode died")
+	}
+	if _, ok := q.items[showID]; ok {
+		t.Error("show should cascade-delete after its only season died (two container passes)")
+	}
+}
+
+func TestCleanupEmptyItems_KeepsContainerWithAtLeastOneLiveChild(t *testing.T) {
+	svc, q := newService(t)
+	libID := uuid.New()
+	showID := addItem(q, libID, "show", nil)
+	seasonID := addItem(q, libID, "season", &showID)
+	liveEpID := addItem(q, libID, "episode", &seasonID)
+	deadEpID := addItem(q, libID, "episode", &seasonID)
+	addActiveFile(q, liveEpID)
+	// deadEpID has no active file
+
+	if err := svc.CleanupEmptyItems(context.Background(), libID); err != nil {
+		t.Fatalf("CleanupEmptyItems: %v", err)
+	}
+	if _, ok := q.items[deadEpID]; ok {
+		t.Error("orphan episode should have been soft-deleted")
+	}
+	if _, ok := q.items[liveEpID]; !ok {
+		t.Error("live episode was deleted")
+	}
+	if _, ok := q.items[seasonID]; !ok {
+		t.Error("season must survive because one episode is still live")
+	}
+	if _, ok := q.items[showID]; !ok {
+		t.Error("show must survive because its season is still live")
+	}
+}
+
+func TestCleanupEmptyItems_MusicHierarchyCascades(t *testing.T) {
+	svc, q := newService(t)
+	libID := uuid.New()
+	artistID := addItem(q, libID, "artist", nil)
+	albumID := addItem(q, libID, "album", &artistID)
+	trackID := addItem(q, libID, "track", &albumID)
+	// No files — track will die, then album, then artist.
+
+	if err := svc.CleanupEmptyItems(context.Background(), libID); err != nil {
+		t.Fatalf("CleanupEmptyItems: %v", err)
+	}
+	if _, ok := q.items[trackID]; ok {
+		t.Error("track without active file should have been deleted")
+	}
+	if _, ok := q.items[albumID]; ok {
+		t.Error("album should cascade-delete")
+	}
+	if _, ok := q.items[artistID]; ok {
+		t.Error("artist should cascade-delete")
+	}
+}
+
+func TestCleanupEmptyItems_IsScopedByLibrary(t *testing.T) {
+	svc, q := newService(t)
+	libA := uuid.New()
+	libB := uuid.New()
+	// Lib A: empty episode
+	deadEpA := addItem(q, libA, "episode", nil)
+	// Lib B: empty episode (must NOT be touched when cleaning A)
+	deadEpB := addItem(q, libB, "episode", nil)
+
+	if err := svc.CleanupEmptyItems(context.Background(), libA); err != nil {
+		t.Fatalf("CleanupEmptyItems: %v", err)
+	}
+	if _, ok := q.items[deadEpA]; ok {
+		t.Error("lib-A episode should have been deleted")
+	}
+	if _, ok := q.items[deadEpB]; !ok {
+		t.Error("lib-B episode must not be touched when cleaning lib A")
+	}
+}
+
+func TestCleanupEmptyItems_PropagatesLeafQueryError(t *testing.T) {
+	svc, q := newService(t)
+	want := errors.New("db blew up")
+	q.cleanupLeavesErr = want
+
+	if err := svc.CleanupEmptyItems(context.Background(), uuid.New()); !errors.Is(err, want) {
+		t.Errorf("want %v, got %v", want, err)
+	}
+}
+
+func TestCleanupEmptyItems_PropagatesContainerQueryError(t *testing.T) {
+	svc, q := newService(t)
+	want := errors.New("container sweep failed")
+	q.cleanupContainersErr = want
+
+	if err := svc.CleanupEmptyItems(context.Background(), uuid.New()); !errors.Is(err, want) {
+		t.Errorf("want %v, got %v", want, err)
 	}
 }

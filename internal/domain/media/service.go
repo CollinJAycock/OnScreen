@@ -126,6 +126,7 @@ type Querier interface {
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error)
 	DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error
 	SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error
+	SoftDeleteEmptyContainerItems(ctx context.Context, libraryID uuid.UUID) error
 }
 
 // CreateItemParams holds the input for creating a media item.
@@ -406,9 +407,18 @@ func (s *Service) CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) 
 	return s.rw.DeleteMissingFilesByLibrary(ctx, libraryID)
 }
 
-// CleanupEmptyItems soft-deletes items with no active files for a library.
+// CleanupEmptyItems soft-deletes leaf items with no active files, then
+// cascades soft-delete up through container items (season → show, album →
+// artist) whose children just died. Two container passes are needed because
+// each pass observes the previous pass's commits via separate snapshots.
 func (s *Service) CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error {
-	return s.rw.SoftDeleteItemsWithNoActiveFiles(ctx, libraryID)
+	if err := s.rw.SoftDeleteItemsWithNoActiveFiles(ctx, libraryID); err != nil {
+		return err
+	}
+	if err := s.rw.SoftDeleteEmptyContainerItems(ctx, libraryID); err != nil {
+		return err
+	}
+	return s.rw.SoftDeleteEmptyContainerItems(ctx, libraryID)
 }
 
 // PromoteExpiredMissing finds files that have been missing longer than the

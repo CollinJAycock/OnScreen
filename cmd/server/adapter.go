@@ -692,6 +692,10 @@ func (a *mediaAdapter) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, lib
 	return a.q.SoftDeleteItemsWithNoActiveFiles(ctx, libraryID)
 }
 
+func (a *mediaAdapter) SoftDeleteEmptyContainerItems(ctx context.Context, libraryID uuid.UUID) error {
+	return a.q.SoftDeleteEmptyContainerItems(ctx, libraryID)
+}
+
 func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]media.File, error) {
 	fs, err := a.q.ListMissingFilesOlderThan(ctx, pgtype.Timestamptz{Time: before, Valid: true})
 	if err != nil {
