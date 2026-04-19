@@ -1,6 +1,14 @@
 <script lang="ts">
   import '../app.css';
+  import { onMount } from 'svelte';
+  import { focusManager } from '$lib/focus/manager';
+
   let { children } = $props();
+
+  onMount(() => {
+    focusManager.init();
+    return () => focusManager.destroy();
+  });
 </script>
 
 <main class="tv-root">
