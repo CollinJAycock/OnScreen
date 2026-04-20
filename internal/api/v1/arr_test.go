@@ -15,7 +15,7 @@ import (
 
 type mockArrSettings struct{ key string }
 
-func (m *mockArrSettings) ArrAPIKey(_ context.Context) string            { return m.key }
+func (m *mockArrSettings) ArrAPIKey(_ context.Context) string                  { return m.key }
 func (m *mockArrSettings) ArrPathMappings(_ context.Context) map[string]string { return nil }
 
 type mockArrLibs struct {

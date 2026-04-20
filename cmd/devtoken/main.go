@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+
 	"github.com/onscreen/onscreen/internal/auth"
 )
 

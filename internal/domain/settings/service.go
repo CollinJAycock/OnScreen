@@ -11,11 +11,11 @@ import (
 
 const keyTMDBAPIKey = "tmdb_api_key"
 const keyTVDBAPIKey = "tvdb_api_key"
-const keyArrAPIKey           = "arr_api_key"
-const keyArrPathMappings     = "arr_path_mappings"
-const keyTranscodeEncoders   = "transcode_encoders"
-const keyWorkerFleet         = "worker_fleet"
-const keyTranscodeConfig     = "transcode_config"
+const keyArrAPIKey = "arr_api_key"
+const keyArrPathMappings = "arr_path_mappings"
+const keyTranscodeEncoders = "transcode_encoders"
+const keyWorkerFleet = "worker_fleet"
+const keyTranscodeConfig = "transcode_config"
 
 // Service reads and writes server settings to the server_settings table.
 type Service struct {
@@ -104,10 +104,10 @@ type WorkerFleetConfig struct {
 // Addr is the stable key (from the worker's WORKER_ADDR env var) and is
 // auto-populated from discovery — the admin never types it.
 type WorkerSlotConfig struct {
-	Addr        string `json:"addr"`                    // stable key — from worker's WORKER_ADDR env
-	Name        string `json:"name,omitempty"`          // admin-assigned friendly label
-	Encoder     string `json:"encoder,omitempty"`       // admin encoder override, "" = auto-detect
-	MaxSessions int    `json:"max_sessions,omitempty"`  // admin override for max concurrent sessions, 0 = use worker default
+	Addr        string `json:"addr"`                   // stable key — from worker's WORKER_ADDR env
+	Name        string `json:"name,omitempty"`         // admin-assigned friendly label
+	Encoder     string `json:"encoder,omitempty"`      // admin encoder override, "" = auto-detect
+	MaxSessions int    `json:"max_sessions,omitempty"` // admin override for max concurrent sessions, 0 = use worker default
 }
 
 // WorkerFleet returns the fleet configuration, or a default (embedded enabled, no remotes).
@@ -136,10 +136,10 @@ func (s *Service) SetWorkerFleet(ctx context.Context, cfg WorkerFleetConfig) err
 // TranscodeConfig holds per-deployment encoder tuning knobs that are
 // adjustable from the admin UI. Zero values mean "use server default".
 type TranscodeConfig struct {
-	NVENCPreset   string  `json:"nvenc_preset,omitempty"`    // p1–p7
-	NVENCTune     string  `json:"nvenc_tune,omitempty"`      // hq, ll, ull
-	NVENCRC       string  `json:"nvenc_rc,omitempty"`        // vbr, cbr, constqp
-	MaxrateRatio  float64 `json:"maxrate_ratio,omitempty"`   // e.g. 1.5
+	NVENCPreset  string  `json:"nvenc_preset,omitempty"`  // p1–p7
+	NVENCTune    string  `json:"nvenc_tune,omitempty"`    // hq, ll, ull
+	NVENCRC      string  `json:"nvenc_rc,omitempty"`      // vbr, cbr, constqp
+	MaxrateRatio float64 `json:"maxrate_ratio,omitempty"` // e.g. 1.5
 }
 
 // TranscodeConfigGet returns the transcode encoder tuning config.

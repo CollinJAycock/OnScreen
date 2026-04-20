@@ -219,9 +219,9 @@ func TestSecurityHeaders(t *testing.T) {
 
 	want := map[string]string{
 		"X-Content-Type-Options": "nosniff",
-		"X-Frame-Options":       "DENY",
-		"Referrer-Policy":       "strict-origin-when-cross-origin",
-		"Permissions-Policy":    "camera=(), microphone=(), geolocation=()",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
+		"Permissions-Policy":     "camera=(), microphone=(), geolocation=()",
 	}
 	for header, expected := range want {
 		got := rec.Header().Get(header)

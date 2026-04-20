@@ -82,11 +82,11 @@ func (h *NativeTranscodeHandler) SetSessionKiller(k SessionKiller) {
 
 type transcodeStartRequest struct {
 	FileID           *string `json:"file_id,omitempty"`
-	Height           int     `json:"height"`              // 0 = no constraint (use source height)
-	PositionMS       int64   `json:"position_ms"`         // start offset in ms
-	VideoCopy        bool    `json:"video_copy"`          // true = copy video stream, only transcode audio
-	AudioStreamIndex *int    `json:"audio_stream_index"`  // nil = default (first) audio stream
-	SupportsHEVC     bool    `json:"supports_hevc"`       // client can decode HEVC (H.265) output
+	Height           int     `json:"height"`             // 0 = no constraint (use source height)
+	PositionMS       int64   `json:"position_ms"`        // start offset in ms
+	VideoCopy        bool    `json:"video_copy"`         // true = copy video stream, only transcode audio
+	AudioStreamIndex *int    `json:"audio_stream_index"` // nil = default (first) audio stream
+	SupportsHEVC     bool    `json:"supports_hevc"`      // client can decode HEVC (H.265) output
 }
 
 type transcodeStartResponse struct {

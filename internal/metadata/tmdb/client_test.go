@@ -39,16 +39,16 @@ func TestSearchMovie_Success(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"results": []map[string]any{{
-				"id":            603,
-				"title":         "The Matrix",
+				"id":             603,
+				"title":          "The Matrix",
 				"original_title": "The Matrix",
-				"overview":      "A computer hacker learns about the true nature of reality.",
-				"release_date":  "1999-03-31",
-				"runtime":       136,
-				"vote_average":  8.7,
-				"poster_path":   "/poster.jpg",
-				"backdrop_path": "/backdrop.jpg",
-				"genres":        []map[string]any{{"id": 28, "name": "Action"}},
+				"overview":       "A computer hacker learns about the true nature of reality.",
+				"release_date":   "1999-03-31",
+				"runtime":        136,
+				"vote_average":   8.7,
+				"poster_path":    "/poster.jpg",
+				"backdrop_path":  "/backdrop.jpg",
+				"genres":         []map[string]any{{"id": 28, "name": "Action"}},
 			}},
 		})
 	}))

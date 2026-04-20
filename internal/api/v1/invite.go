@@ -104,7 +104,7 @@ func (h *InviteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Send email if SMTP is configured and an email address was provided.
 	if h.sender != nil && body.Email != nil && *body.Email != "" {
 		subject, htmlBody := email.InviteEmail(claims.Username, inviteURL)
-		if err := h.sender.Send([]string{*body.Email}, subject, htmlBody); err != nil {
+		if err := h.sender.Send(r.Context(), []string{*body.Email}, subject, htmlBody); err != nil {
 			h.logger.ErrorContext(r.Context(), "invite: send email", "to", *body.Email, "err", err)
 			// Non-fatal — the admin can still share the URL manually.
 		}

@@ -14,15 +14,15 @@ import (
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
 type mockQuerier struct {
-	libs       map[uuid.UUID]Library
-	listErr    error
-	createErr  error
-	updateErr  error
-	deleteErr  error
-	count      int64
-	countErr   error
-	due        []Library
-	dueMeta    []Library
+	libs      map[uuid.UUID]Library
+	listErr   error
+	createErr error
+	updateErr error
+	deleteErr error
+	count     int64
+	countErr  error
+	due       []Library
+	dueMeta   []Library
 }
 
 func newMockQuerier() *mockQuerier {
@@ -85,7 +85,7 @@ func (m *mockQuerier) SoftDeleteLibrary(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 func (m *mockQuerier) SoftDeleteMediaItemsByLibrary(_ context.Context, _ uuid.UUID) error { return nil }
-func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                   { return nil }
+func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                    { return nil }
 func (m *mockQuerier) MarkLibraryScanCompleted(_ context.Context, _ uuid.UUID) error      { return nil }
 func (m *mockQuerier) MarkLibraryMetadataRefreshed(_ context.Context, _ uuid.UUID) error  { return nil }
 func (m *mockQuerier) ListLibrariesDueForScan(_ context.Context) ([]Library, error) {

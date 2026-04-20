@@ -36,15 +36,15 @@ type transcodeSession struct {
 }
 
 type viewerStats struct {
-	viewer       int
-	movieTitle   string
-	startLatency time.Duration // time until first playlist ready
-	segCount     int
-	segBytes     int64
-	segLatencies []time.Duration
+	viewer        int
+	movieTitle    string
+	startLatency  time.Duration // time until first playlist ready
+	segCount      int
+	segBytes      int64
+	segLatencies  []time.Duration
 	playlistPolls int
-	errors       int
-	watchTime    time.Duration // actual wall-clock watch time
+	errors        int
+	watchTime     time.Duration // actual wall-clock watch time
 }
 
 func (s *viewerStats) segAvg() time.Duration {

@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	AccessTokenTTL  = time.Hour             // Paseto access token TTL (ADR-013)
-	RefreshTokenTTL = 30 * 24 * time.Hour   // Refresh token TTL
+	AccessTokenTTL  = time.Hour           // Paseto access token TTL (ADR-013)
+	RefreshTokenTTL = 30 * 24 * time.Hour // Refresh token TTL
 )
 
 // Claims are the standard fields embedded in every Paseto access token.

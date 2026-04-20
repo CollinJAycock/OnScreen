@@ -428,29 +428,30 @@ func isGPUEncoder(enc string) bool {
 	switch Encoder(enc) {
 	case EncoderNVENC, EncoderHEVCNVENC, EncoderAMF, EncoderQSV, EncoderVAAPI:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // TranscodeJob holds the parameters for an FFmpeg transcode job.
 type TranscodeJob struct {
-	SessionID       string    `json:"session_id"`
-	FilePath        string    `json:"file_path"`
-	SessionDir      string    `json:"session_dir"`
-	StartOffsetSec  float64   `json:"start_offset_sec"`
-	Decision        string    `json:"decision"`
-	Encoder         string    `json:"encoder"`
-	Width           int       `json:"width"`
-	Height          int       `json:"height"`
-	BitrateKbps     int       `json:"bitrate_kbps"`
+	SessionID        string    `json:"session_id"`
+	FilePath         string    `json:"file_path"`
+	SessionDir       string    `json:"session_dir"`
+	StartOffsetSec   float64   `json:"start_offset_sec"`
+	Decision         string    `json:"decision"`
+	Encoder          string    `json:"encoder"`
+	Width            int       `json:"width"`
+	Height           int       `json:"height"`
+	BitrateKbps      int       `json:"bitrate_kbps"`
 	AudioCodec       string    `json:"audio_codec"`
 	AudioChannels    int       `json:"audio_channels"`
-	AudioStreamIndex int      `json:"audio_stream_index"` // -1 = default
-	NeedsToneMap     bool     `json:"needs_tone_map"`
-	IsHEVC           bool     `json:"is_hevc"`
-	PreferHEVC       bool     `json:"prefer_hevc"`        // request HEVC output (4K + client supports it)
-	SubtitleStreams  []int    `json:"subtitle_streams,omitempty"`
-	EnqueuedAt      time.Time `json:"enqueued_at"`
+	AudioStreamIndex int       `json:"audio_stream_index"` // -1 = default
+	NeedsToneMap     bool      `json:"needs_tone_map"`
+	IsHEVC           bool      `json:"is_hevc"`
+	PreferHEVC       bool      `json:"prefer_hevc"` // request HEVC output (4K + client supports it)
+	SubtitleStreams  []int     `json:"subtitle_streams,omitempty"`
+	EnqueuedAt       time.Time `json:"enqueued_at"`
 }
 
 // NewSessionID generates a new transcode session ID.

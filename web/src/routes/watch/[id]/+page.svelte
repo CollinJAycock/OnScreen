@@ -1272,7 +1272,7 @@
   {:else}
     <img
       class="photo-image"
-      src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}"
+      src="/artwork/{encodeURI(item.poster_path ?? '')}?v={item.updated_at}"
       alt={item.title}
       draggable="false"
       style="transform: scale({photoZoom}) translate({photoPanX / photoZoom}px, {photoPanY / photoZoom}px);"

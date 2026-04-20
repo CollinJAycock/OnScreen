@@ -22,17 +22,17 @@ var (
 
 // Library is the domain model for a media library.
 type Library struct {
-	ID     uuid.UUID
-	Name   string
-	Type   string // "movie" | "show" | "music" | "photo"
-	Paths  []string
-	Agent  string
-	Lang   string
+	ID    uuid.UUID
+	Name  string
+	Type  string // "movie" | "show" | "music" | "photo"
+	Paths []string
+	Agent string
+	Lang  string
 
-	ScanInterval               *time.Duration
-	ScanLastCompletedAt        *time.Time
-	MetadataRefreshInterval    *time.Duration
-	MetadataLastRefreshedAt    *time.Time
+	ScanInterval            *time.Duration
+	ScanLastCompletedAt     *time.Time
+	MetadataRefreshInterval *time.Duration
+	MetadataLastRefreshedAt *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

@@ -28,8 +28,8 @@ type fileInfo struct {
 const maxHashCacheEntries = 50000
 
 var (
-	hashCacheMu sync.Mutex
-	hashCache   = map[string]fileInfo{} // current generation
+	hashCacheMu  sync.Mutex
+	hashCache    = map[string]fileInfo{} // current generation
 	hashCacheOld = map[string]fileInfo{} // previous generation (read-only, evicted next overflow)
 )
 

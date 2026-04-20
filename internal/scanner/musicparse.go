@@ -17,9 +17,9 @@ type MusicTags struct {
 	Artist   string
 	Album    string
 	Title    string
-	Track    int  // track number (0 if not set)
-	Disc     int  // disc number (0 if not set)
-	Year     int  // 0 if not set
+	Track    int // track number (0 if not set)
+	Disc     int // disc number (0 if not set)
+	Year     int // 0 if not set
 	Genre    string
 	AlbumArt bool // true if embedded artwork exists
 }

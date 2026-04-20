@@ -65,7 +65,7 @@ func (m *mockSettingsService) ArrPathMappings(_ context.Context) map[string]stri
 func (m *mockSettingsService) SetArrPathMappings(_ context.Context, _ map[string]string) error {
 	return nil
 }
-func (m *mockSettingsService) TranscodeEncoders(_ context.Context) string            { return "" }
+func (m *mockSettingsService) TranscodeEncoders(_ context.Context) string             { return "" }
 func (m *mockSettingsService) SetTranscodeEncoders(_ context.Context, _ string) error { return nil }
 func (m *mockSettingsService) TranscodeConfigGet(_ context.Context) settings.TranscodeConfig {
 	return settings.TranscodeConfig{}

@@ -38,16 +38,16 @@ func NewFavoritesHandler(db FavoritesDB, logger *slog.Logger) *FavoritesHandler 
 
 // FavoriteItemResponse is the JSON shape for a single favorited item.
 type FavoriteItemResponse struct {
-	ID          string   `json:"id"`
-	LibraryID   string   `json:"library_id"`
-	Type        string   `json:"type"`
-	Title       string   `json:"title"`
-	Year        *int32   `json:"year,omitempty"`
-	Summary     *string  `json:"summary,omitempty"`
-	PosterPath  *string  `json:"poster_path,omitempty"`
-	ThumbPath   *string  `json:"thumb_path,omitempty"`
-	DurationMS  *int64   `json:"duration_ms,omitempty"`
-	FavoritedAt int64    `json:"favorited_at"`
+	ID          string  `json:"id"`
+	LibraryID   string  `json:"library_id"`
+	Type        string  `json:"type"`
+	Title       string  `json:"title"`
+	Year        *int32  `json:"year,omitempty"`
+	Summary     *string `json:"summary,omitempty"`
+	PosterPath  *string `json:"poster_path,omitempty"`
+	ThumbPath   *string `json:"thumb_path,omitempty"`
+	DurationMS  *int64  `json:"duration_ms,omitempty"`
+	FavoritedAt int64   `json:"favorited_at"`
 }
 
 // List handles GET /api/v1/favorites.
@@ -158,4 +158,3 @@ func (h *FavoritesHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	}
 	respond.NoContent(w)
 }
-

@@ -144,11 +144,11 @@ func DiscordDisabledHandler() http.HandlerFunc {
 // ── Discord user info ────────────────────────────────────────────────────────
 
 type discordUserInfo struct {
-	ID            string `json:"id"`
-	Username      string `json:"username"`
-	GlobalName    string `json:"global_name"`
-	Email         string `json:"email"`
-	Verified      bool   `json:"verified"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	GlobalName string `json:"global_name"`
+	Email      string `json:"email"`
+	Verified   bool   `json:"verified"`
 }
 
 func fetchDiscordUser(ctx context.Context, accessToken string) (*discordUserInfo, error) {

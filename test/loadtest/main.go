@@ -46,14 +46,14 @@ type result struct {
 
 // stats aggregates results for one endpoint.
 type stats struct {
-	name       string
-	total      int
-	success    int
-	throttled  int // 429 rate-limited
-	fail       int
-	latencies  []time.Duration
+	name        string
+	total       int
+	success     int
+	throttled   int // 429 rate-limited
+	fail        int
+	latencies   []time.Duration
 	okLatencies []time.Duration // only non-429 successes
-	totalBytes int64
+	totalBytes  int64
 }
 
 func (s *stats) add(r result) {

@@ -23,20 +23,20 @@ const heartbeatInterval = 2 * time.Second
 // Worker is a transcode worker that picks up jobs from the Valkey queue,
 // runs FFmpeg, and serves HLS segments via a local HTTP server (ADR-008).
 type Worker struct {
-	id             string
-	addr           string // "host:port" — advertised to the API for segment proxying
-	store          *SessionStore
-	encoders       []Encoder
-	encoderLabels  map[string]string // encoder → human label, detected once at startup
-	hasTonemapCuda   bool // tonemap_cuda filter available in FFmpeg
-	hasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
-	hasZscale        bool // zscale filter available (libzimg) for software tonemap
-	encoderOpts    EncoderOpts       // per-deployment NVENC/maxrate tuning
-	logger         *slog.Logger
-	activeSessions atomic.Int32
-	maxSessions    int
-	mu             sync.Mutex
-	activeJobs     map[string]*os.Process // session_id → ffmpeg PID
+	id               string
+	addr             string // "host:port" — advertised to the API for segment proxying
+	store            *SessionStore
+	encoders         []Encoder
+	encoderLabels    map[string]string // encoder → human label, detected once at startup
+	hasTonemapCuda   bool              // tonemap_cuda filter available in FFmpeg
+	hasTonemapOpenCL bool              // tonemap_opencl filter available in FFmpeg
+	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
+	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
+	logger           *slog.Logger
+	activeSessions   atomic.Int32
+	maxSessions      int
+	mu               sync.Mutex
+	activeJobs       map[string]*os.Process // session_id → ffmpeg PID
 }
 
 // NewWorker creates a transcode Worker.
@@ -62,10 +62,10 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasTonemapCuda:   hasTonemap,
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
-		encoderOpts:    encOpts,
-		maxSessions:    maxSessions,
-		logger:         logger,
-		activeJobs:     make(map[string]*os.Process),
+		encoderOpts:      encOpts,
+		maxSessions:      maxSessions,
+		logger:           logger,
+		activeJobs:       make(map[string]*os.Process),
 	}
 }
 
@@ -221,7 +221,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
 			AudioCodec:       job.AudioCodec,
 			AudioChannels:    job.AudioChannels,
 			AudioStreamIndex: job.AudioStreamIndex,
-			SubtitleStreams:   job.SubtitleStreams,
+			SubtitleStreams:  job.SubtitleStreams,
 			EncoderOpts:      w.encoderOpts,
 			SessionDir:       job.SessionDir,
 			SegmentPrefix:    "seg",

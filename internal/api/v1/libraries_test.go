@@ -20,15 +20,15 @@ import (
 // ── mock library service ─────────────────────────────────────────────────────
 
 type mockLibraryService struct {
-	libs       []library.Library
-	lib        *library.Library
-	listErr    error
-	getErr     error
-	createErr  error
-	updateErr  error
-	deleteErr  error
-	scanErr    error
-	created    *library.Library
+	libs      []library.Library
+	lib       *library.Library
+	listErr   error
+	getErr    error
+	createErr error
+	updateErr error
+	deleteErr error
+	scanErr   error
+	created   *library.Library
 }
 
 func (m *mockLibraryService) List(_ context.Context) ([]library.Library, error) {

@@ -7,13 +7,13 @@ import (
 
 func TestBuildHLS_ContainsRequiredArgs(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:   "/media/movie.mkv",
-		Encoder:     EncoderSoftware,
-		Width:       1920,
-		Height:      1080,
-		BitrateKbps: 8000,
-		AudioCodec:  "aac",
-		SessionDir:  "/tmp/onscreen/sessions/abc",
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/onscreen/sessions/abc",
 		SegmentPrefix: "seg",
 	})
 
@@ -39,11 +39,11 @@ func TestBuildHLS_ContainsRequiredArgs(t *testing.T) {
 
 func TestBuildHLS_StartOffset(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:   "/media/movie.mkv",
-		StartOffset: 30.5,
-		Encoder:     EncoderSoftware,
-		AudioCodec:  "aac",
-		SessionDir:  "/tmp/sessions/x",
+		InputPath:     "/media/movie.mkv",
+		StartOffset:   30.5,
+		Encoder:       EncoderSoftware,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
@@ -54,10 +54,10 @@ func TestBuildHLS_StartOffset(t *testing.T) {
 
 func TestBuildHLS_NoStartOffset(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:   "/media/movie.mkv",
-		Encoder:     EncoderSoftware,
-		AudioCodec:  "aac",
-		SessionDir:  "/tmp/sessions/x",
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
@@ -68,11 +68,11 @@ func TestBuildHLS_NoStartOffset(t *testing.T) {
 
 func TestBuildHLS_NVENC_Flags(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:   "/media/movie.mkv",
-		Encoder:     EncoderNVENC,
-		BitrateKbps: 8000,
-		AudioCodec:  "aac",
-		SessionDir:  "/tmp/sessions/x",
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderNVENC,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
@@ -89,14 +89,14 @@ func TestBuildHLS_NVENC_Flags(t *testing.T) {
 
 func TestBuildHLS_VAAPI_Filter(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:   "/media/movie.mkv",
-		Encoder:     EncoderVAAPI,
-		IsVAAPI:     true,
-		Width:       1920,
-		Height:      1080,
-		BitrateKbps: 8000,
-		AudioCodec:  "aac",
-		SessionDir:  "/tmp/sessions/x",
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderVAAPI,
+		IsVAAPI:       true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
@@ -113,13 +113,13 @@ func TestBuildHLS_VAAPI_Filter(t *testing.T) {
 
 func TestBuildHLS_ToneMap_Software(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:    "/media/hdr.mkv",
-		Encoder:      EncoderSoftware,
-		NeedsToneMap: true,
-		HasZscale:    true,
-		BitrateKbps:  8000,
-		AudioCodec:   "aac",
-		SessionDir:   "/tmp/sessions/x",
+		InputPath:     "/media/hdr.mkv",
+		Encoder:       EncoderSoftware,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
@@ -133,10 +133,10 @@ func TestBuildHLS_ToneMap_Software(t *testing.T) {
 
 func TestBuildHLS_AudioCopy_NoChannelArgs(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:   "/media/movie.mkv",
-		Encoder:     EncoderSoftware,
-		AudioCodec:  "copy",
-		SessionDir:  "/tmp/sessions/x",
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		AudioCodec:    "copy",
+		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
@@ -153,7 +153,7 @@ func TestBuildHLS_Subtitles(t *testing.T) {
 		InputPath:       "/media/movie.mkv",
 		Encoder:         EncoderSoftware,
 		AudioCodec:      "aac",
-		SubtitleStreams:  []int{0, 2},
+		SubtitleStreams: []int{0, 2},
 		SessionDir:      "/tmp/sessions/x",
 		SegmentPrefix:   "seg",
 	})
@@ -171,10 +171,10 @@ func TestBuildHLS_Subtitles(t *testing.T) {
 
 func TestBuildHLS_KeyframeForcing(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:   "/media/movie.mkv",
-		Encoder:     EncoderSoftware,
-		AudioCodec:  "aac",
-		SessionDir:  "/tmp/sessions/x",
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
 		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")

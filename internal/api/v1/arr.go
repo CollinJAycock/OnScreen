@@ -57,8 +57,8 @@ type arrPayload struct {
 }
 
 type arrMovie struct {
-	Title    string `json:"title"`
-	Year     int    `json:"year"`
+	Title      string `json:"title"`
+	Year       int    `json:"year"`
 	FolderPath string `json:"folderPath"`
 }
 

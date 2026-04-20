@@ -25,10 +25,10 @@ const (
 // via environment variables to match their GPU model and upload bandwidth.
 // All fields have sensible defaults; zero values are replaced at build time.
 type EncoderOpts struct {
-	NVENCPreset   string  // NVENC preset: "p1" (fastest) .. "p7" (best quality), default "p4"
-	NVENCTune     string  // NVENC tune: "hq", "ll", "ull", default "hq"
-	NVENCRC       string  // NVENC rate control: "vbr", "cbr", "constqp", default "vbr"
-	MaxrateRatio  float64 // maxrate = bitrate × ratio, default 1.5 (50% headroom)
+	NVENCPreset  string  // NVENC preset: "p1" (fastest) .. "p7" (best quality), default "p4"
+	NVENCTune    string  // NVENC tune: "hq", "ll", "ull", default "hq"
+	NVENCRC      string  // NVENC rate control: "vbr", "cbr", "constqp", default "vbr"
+	MaxrateRatio float64 // maxrate = bitrate × ratio, default 1.5 (50% headroom)
 }
 
 // DefaultEncoderOpts returns the default encoder options.
@@ -48,16 +48,16 @@ type BuildArgs struct {
 	StartOffset float64 // seconds (seek to this position)
 
 	// Video
-	Encoder     Encoder
-	Width       int
-	Height      int
-	BitrateKbps int
-	NeedsToneMap   bool // HDR→SDR tone mapping (ADR-030)
+	Encoder          Encoder
+	Width            int
+	Height           int
+	BitrateKbps      int
+	NeedsToneMap     bool // HDR→SDR tone mapping (ADR-030)
 	HasTonemapCuda   bool // tonemap_cuda filter available in FFmpeg
 	HasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
 	HasZscale        bool // zscale filter available (libzimg) for software tonemap
-	IsVAAPI        bool // VAAPI needs hwupload filter
-	IsHEVC         bool // source is HEVC (informational, NVDEC auto-selects decoder)
+	IsVAAPI          bool // VAAPI needs hwupload filter
+	IsHEVC           bool // source is HEVC (informational, NVDEC auto-selects decoder)
 
 	// Audio (ADR-018)
 	AudioCodec       string // "copy" | "aac"
@@ -67,7 +67,7 @@ type BuildArgs struct {
 
 	// Subtitles
 	ExtractSubtitles bool
-	SubtitleStreams   []int // stream indices to extract as WebVTT
+	SubtitleStreams  []int // stream indices to extract as WebVTT
 
 	// Encoder tuning
 	EncoderOpts EncoderOpts

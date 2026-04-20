@@ -41,7 +41,7 @@ func (h *EmailHandler) SendTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	subject, htmlBody := email.TestEmail()
-	if err := h.sender.Send([]string{body.To}, subject, htmlBody); err != nil {
+	if err := h.sender.Send(r.Context(), []string{body.To}, subject, htmlBody); err != nil {
 		h.logger.ErrorContext(r.Context(), "test email failed", "to", body.To, "err", err)
 		respond.BadRequest(w, r, "Failed to send: "+err.Error())
 		return

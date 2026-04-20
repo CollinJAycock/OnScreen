@@ -60,27 +60,27 @@ type Item struct {
 // File represents one physical media file attached to an Item.
 // An Item may have multiple Files (multi-version, ADR-031).
 type File struct {
-	ID          uuid.UUID
-	MediaItemID uuid.UUID
-	FilePath    string
-	FileSize    int64
-	Container   *string
-	VideoCodec  *string
-	AudioCodec  *string
-	ResolutionW *int
-	ResolutionH *int
-	Bitrate     *int64
-	HDRType     *string
-	FrameRate   *float64
+	ID              uuid.UUID
+	MediaItemID     uuid.UUID
+	FilePath        string
+	FileSize        int64
+	Container       *string
+	VideoCodec      *string
+	AudioCodec      *string
+	ResolutionW     *int
+	ResolutionH     *int
+	Bitrate         *int64
+	HDRType         *string
+	FrameRate       *float64
 	AudioStreams    []byte // JSONB
 	SubtitleStreams []byte // JSONB
-	Chapters       []byte // JSONB
-	FileHash    *string
-	DurationMS  *int64
-	Status      string // "active" | "missing" | "deleted"
-	MissingSince *time.Time
-	ScannedAt   time.Time
-	CreatedAt   time.Time
+	Chapters        []byte // JSONB
+	FileHash        *string
+	DurationMS      *int64
+	Status          string // "active" | "missing" | "deleted"
+	MissingSince    *time.Time
+	ScannedAt       time.Time
+	CreatedAt       time.Time
 }
 
 // FilterParams holds optional filter/sort parameters for listing items.
@@ -89,7 +89,7 @@ type FilterParams struct {
 	YearMin       *int
 	YearMax       *int
 	RatingMin     *float64
-	MaxRatingRank *int // content_rating_rank() ceiling for parental filtering
+	MaxRatingRank *int   // content_rating_rank() ceiling for parental filtering
 	Sort          string // title, year, rating, created_at
 	SortAsc       bool
 }
@@ -145,72 +145,72 @@ type Querier interface {
 
 // CreateItemParams holds the input for creating a media item.
 type CreateItemParams struct {
-	LibraryID     uuid.UUID
-	Type          string
-	Title         string
-	SortTitle     string
-	OriginalTitle *string
-	Year          *int
-	Summary       *string
-	Tagline       *string
-	Rating        *float64
-	AudienceRating *float64
-	ContentRating *string
-	DurationMS    *int64
-	Genres        []string
-	Tags          []string
-	TMDBID        *int
-	TVDBID        *int
-	IMDBID        *string
-	ParentID      *uuid.UUID
-	Index         *int
-	PosterPath    *string
-	FanartPath    *string
-	ThumbPath     *string
+	LibraryID             uuid.UUID
+	Type                  string
+	Title                 string
+	SortTitle             string
+	OriginalTitle         *string
+	Year                  *int
+	Summary               *string
+	Tagline               *string
+	Rating                *float64
+	AudienceRating        *float64
+	ContentRating         *string
+	DurationMS            *int64
+	Genres                []string
+	Tags                  []string
+	TMDBID                *int
+	TVDBID                *int
+	IMDBID                *string
+	ParentID              *uuid.UUID
+	Index                 *int
+	PosterPath            *string
+	FanartPath            *string
+	ThumbPath             *string
 	OriginallyAvailableAt *time.Time
 }
 
 // UpdateItemMetadataParams holds the fields updated by the metadata agent.
 type UpdateItemMetadataParams struct {
-	ID             uuid.UUID
-	Title          string
-	SortTitle      string
-	OriginalTitle  *string
-	Year           *int
-	Summary        *string
-	Tagline        *string
-	Rating         *float64
-	AudienceRating *float64
-	ContentRating  *string
-	DurationMS     *int64
-	Genres         []string
-	Tags           []string
-	PosterPath     *string
-	FanartPath     *string
-	ThumbPath      *string
+	ID                    uuid.UUID
+	Title                 string
+	SortTitle             string
+	OriginalTitle         *string
+	Year                  *int
+	Summary               *string
+	Tagline               *string
+	Rating                *float64
+	AudienceRating        *float64
+	ContentRating         *string
+	DurationMS            *int64
+	Genres                []string
+	Tags                  []string
+	PosterPath            *string
+	FanartPath            *string
+	ThumbPath             *string
 	OriginallyAvailableAt *time.Time
-	TMDBID         *int // optional; when non-nil, updates tmdb_id on the item
-	TVDBID         *int // optional; when non-nil, updates tvdb_id on the item
+	TMDBID                *int // optional; when non-nil, updates tmdb_id on the item
+	TVDBID                *int // optional; when non-nil, updates tvdb_id on the item
 }
 
 // CreateFileParams holds the input for creating a media file record.
 type CreateFileParams struct {
-	MediaItemID    uuid.UUID
-	FilePath       string
-	FileSize       int64
-	Container      *string
-	VideoCodec     *string
-	AudioCodec     *string
-	ResolutionW    *int
-	ResolutionH    *int
-	Bitrate        *int64
-	HDRType        *string
-	FrameRate      *float64
+	MediaItemID     uuid.UUID
+	FilePath        string
+	FileSize        int64
+	Container       *string
+	VideoCodec      *string
+	AudioCodec      *string
+	ResolutionW     *int
+	ResolutionH     *int
+	Bitrate         *int64
+	HDRType         *string
+	FrameRate       *float64
 	AudioStreams    []byte
 	SubtitleStreams []byte
-	Chapters       []byte
-	FileHash       *string
-	DurationMS     *int64
+	Chapters        []byte
+	FileHash        *string
+	DurationMS      *int64
 }
 
 // Service implements media business logic with rw/ro querier split (ADR-021).

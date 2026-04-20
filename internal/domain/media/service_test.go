@@ -15,21 +15,21 @@ import (
 // ── mock ──────────────────────────────────────────────────────────────────────
 
 type mockQuerier struct {
-	items    map[uuid.UUID]Item
-	files    map[uuid.UUID][]File // keyed by MediaItemID
+	items      map[uuid.UUID]Item
+	files      map[uuid.UUID][]File // keyed by MediaItemID
 	fileByPath map[string]File
 	fileByHash map[string]File
 
-	searchResults         []Item
-	createItemErr         error
-	listItemsErr          error
-	listChildrenErr       error
-	countErr              error
-	createFileErr         error
-	missingOlderErr       error
-	missingFiles          []File
-	cleanupLeavesErr      error
-	cleanupContainersErr  error
+	searchResults        []Item
+	createItemErr        error
+	listItemsErr         error
+	listChildrenErr      error
+	countErr             error
+	createFileErr        error
+	missingOlderErr      error
+	missingFiles         []File
+	cleanupLeavesErr     error
+	cleanupContainersErr error
 }
 
 func newMockQuerier() *mockQuerier {
@@ -250,7 +250,9 @@ func (m *mockQuerier) MarkMediaFileDeleted(_ context.Context, id uuid.UUID) erro
 	return nil
 }
 func (m *mockQuerier) UpdateMediaFileHash(_ context.Context, _ uuid.UUID, _ string) error { return nil }
-func (m *mockQuerier) UpdateMediaFileItemID(_ context.Context, _ uuid.UUID, _ uuid.UUID) error { return nil }
+func (m *mockQuerier) UpdateMediaFileItemID(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+	return nil
+}
 func (m *mockQuerier) UpdateMediaFileTechnicalMetadata(_ context.Context, _ uuid.UUID, _ CreateFileParams) error {
 	return nil
 }
@@ -1056,12 +1058,12 @@ func TestFindOrCreateHierarchyItem_TypeMismatchCreatesNew(t *testing.T) {
 	parentID := uuid.New()
 	idx := 1
 	existingEp := Item{
-		ID:       uuid.New(),
+		ID:        uuid.New(),
 		LibraryID: libID,
-		Type:     "episode",
-		Title:    "Episode 1",
-		ParentID: &parentID,
-		Index:    &idx,
+		Type:      "episode",
+		Title:     "Episode 1",
+		ParentID:  &parentID,
+		Index:     &idx,
 	}
 	q.items[existingEp.ID] = existingEp
 
@@ -1104,8 +1106,8 @@ func TestFindOrCreateHierarchyItem_RetryOnCreateRace(t *testing.T) {
 // items, allowing concurrent FindOrCreateItem calls to observe each other's
 // creates (which the static mockQuerier cannot do).
 type concurrentQuerier struct {
-	mu    sync.Mutex
-	items []Item
+	mu          sync.Mutex
+	items       []Item
 	mockQuerier // embedded for all other Querier methods
 }
 

@@ -38,10 +38,10 @@ type mockPasswordResetDB struct {
 	markUsedCalled bool
 
 	// UpdatePassword
-	updatePwErr       error
-	updatePwCalled    bool
-	updatePwHash      string
-	updatePwUserID    uuid.UUID
+	updatePwErr    error
+	updatePwCalled bool
+	updatePwHash   string
+	updatePwUserID uuid.UUID
 }
 
 func (m *mockPasswordResetDB) GetUserByEmail(_ context.Context, _ *string) (PRUser, error) {

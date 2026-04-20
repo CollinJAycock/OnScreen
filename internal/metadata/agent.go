@@ -11,20 +11,20 @@ import (
 
 // MovieResult holds movie metadata returned by an agent.
 type MovieResult struct {
-	TMDBID         int
-	IMDBID         string
-	Title          string
-	OriginalTitle  string
-	Year           int
-	Summary        string
-	Tagline        string
-	Rating         float64
-	ContentRating  string
-	DurationMS     int64
-	Genres         []string
-	ReleaseDate    time.Time
-	PosterURL      string
-	FanartURL      string
+	TMDBID        int
+	IMDBID        string
+	Title         string
+	OriginalTitle string
+	Year          int
+	Summary       string
+	Tagline       string
+	Rating        float64
+	ContentRating string
+	DurationMS    int64
+	Genres        []string
+	ReleaseDate   time.Time
+	PosterURL     string
+	FanartURL     string
 }
 
 // TVShowResult holds TV show metadata returned by an agent.
@@ -54,15 +54,15 @@ type SeasonResult struct {
 
 // EpisodeResult holds episode metadata.
 type EpisodeResult struct {
-	ShowTMDBID  int
-	SeasonNum   int
-	EpisodeNum  int
-	Title       string
-	Summary     string
-	AirDate     time.Time
-	DurationMS  int64
-	Rating      float64
-	ThumbURL    string
+	ShowTMDBID int
+	SeasonNum  int
+	EpisodeNum int
+	Title      string
+	Summary    string
+	AirDate    time.Time
+	DurationMS int64
+	Rating     float64
+	ThumbURL   string
 }
 
 // Agent is the interface implemented by all metadata providers.

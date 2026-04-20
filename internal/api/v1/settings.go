@@ -251,12 +251,12 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 	}{
 		EmbeddedEnabled:  embeddedEnabled,
 		EmbeddedDisabled: h.embeddedDisabled,
-		EmbeddedEncoder: fleet.EmbeddedEncoder,
-		EmbeddedOnline:  embeddedOnline,
-		EmbeddedActive:  embeddedActive,
-		EmbeddedMax:     embeddedMax,
-		EmbeddedCaps:    embeddedCaps,
-		Workers:         workers,
+		EmbeddedEncoder:  fleet.EmbeddedEncoder,
+		EmbeddedOnline:   embeddedOnline,
+		EmbeddedActive:   embeddedActive,
+		EmbeddedMax:      embeddedMax,
+		EmbeddedCaps:     embeddedCaps,
+		Workers:          workers,
 	})
 }
 

@@ -153,10 +153,10 @@ func (s *Scanner) updateAlbumPoster(ctx context.Context, album *media.Item, relP
 	// Normalize to forward slashes for cross-platform consistency.
 	relPath = filepath.ToSlash(relPath)
 	if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-		ID:        album.ID,
-		Title:     album.Title,
-		SortTitle: album.SortTitle,
-		Year:      album.Year,
+		ID:         album.ID,
+		Title:      album.Title,
+		SortTitle:  album.SortTitle,
+		Year:       album.Year,
 		PosterPath: &relPath,
 	}); err != nil {
 		s.logger.WarnContext(ctx, "failed to update album poster_path",

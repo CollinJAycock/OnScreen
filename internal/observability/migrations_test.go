@@ -16,11 +16,11 @@ func (s stubVQ) MaxAppliedVersion(_ context.Context) (int64, error) { return s.v
 
 func TestCheckMigrations_caughtUp(t *testing.T) {
 	fs := fstest.MapFS{
-		"00001_init.sql":      {Data: []byte("-- +goose Up")},
-		"00002_things.sql":    {Data: []byte("-- +goose Up")},
-		"00003_more.sql":      {Data: []byte("-- +goose Up")},
-		"README.md":           {Data: []byte("not a migration")},
-		"99_unparseable.sql":  {Data: []byte("missing leading zeros, no underscore version-prefix issue")},
+		"00001_init.sql":     {Data: []byte("-- +goose Up")},
+		"00002_things.sql":   {Data: []byte("-- +goose Up")},
+		"00003_more.sql":     {Data: []byte("-- +goose Up")},
+		"README.md":          {Data: []byte("not a migration")},
+		"99_unparseable.sql": {Data: []byte("missing leading zeros, no underscore version-prefix issue")},
 	}
 	st, err := CheckMigrations(context.Background(), stubVQ{v: 3}, fs)
 	if err != nil {

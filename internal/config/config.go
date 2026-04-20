@@ -25,7 +25,7 @@ type Config struct {
 	// ── Required ─────────────────────────────────────────────────────────────
 	DatabaseURL string `env:"DATABASE_URL,required"`
 	ValkeyURL   string `env:"VALKEY_URL,required"`
-	MediaPath   string `env:"MEDIA_PATH"` // deprecated — artwork now stored next to media files
+	MediaPath   string `env:"MEDIA_PATH"`          // deprecated — artwork now stored next to media files
 	SecretKey   string `env:"SECRET_KEY,required"` // AES-256-GCM key (32 bytes, base64 or hex)
 
 	// ── Database (optional) ───────────────────────────────────────────────────
@@ -51,15 +51,15 @@ type Config struct {
 	// ── Transcoding (hot-reloadable via SIGHUP) ───────────────────────────────
 	// TranscodeMaxSessions defaults to max(1, runtime.NumCPU()/2) for software;
 	// 4 for hardware — derived at worker startup (ADR-025).
-	TranscodeMaxSessions int    `env:"TRANSCODE_MAX_SESSIONS"`
+	TranscodeMaxSessions int `env:"TRANSCODE_MAX_SESSIONS"`
 	// TranscodeEncoders overrides auto-detect; e.g. "nvenc,software" or "software".
-	TranscodeEncoders    string `env:"TRANSCODE_ENCODERS"`
+	TranscodeEncoders string `env:"TRANSCODE_ENCODERS"`
 	// DisableEmbeddedWorker skips the in-process transcode worker. Set to true
 	// when using standalone cmd/worker instances on dedicated GPU machines.
-	DisableEmbeddedWorker bool   `env:"DISABLE_EMBEDDED_WORKER" envDefault:"false"`
-	TranscodeMaxBitrate   int     `env:"TRANSCODE_MAX_BITRATE_KBPS" envDefault:"40000"`
-	TranscodeMaxWidth    int     `env:"TRANSCODE_MAX_WIDTH"        envDefault:"3840"`
-	TranscodeMaxHeight   int     `env:"TRANSCODE_MAX_HEIGHT"       envDefault:"2160"`
+	DisableEmbeddedWorker bool `env:"DISABLE_EMBEDDED_WORKER" envDefault:"false"`
+	TranscodeMaxBitrate   int  `env:"TRANSCODE_MAX_BITRATE_KBPS" envDefault:"40000"`
+	TranscodeMaxWidth     int  `env:"TRANSCODE_MAX_WIDTH"        envDefault:"3840"`
+	TranscodeMaxHeight    int  `env:"TRANSCODE_MAX_HEIGHT"       envDefault:"2160"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`
@@ -70,7 +70,7 @@ type Config struct {
 	// ── Metadata ─────────────────────────────────────────────────────────────
 	TMDBAPIKey    string `env:"TMDB_API_KEY"`
 	TMDBRateLimit int    `env:"TMDB_RATE_LIMIT" envDefault:"20"` // req/s
-	TVDBAPIKey    string `env:"TVDB_API_KEY"`                     // TheTVDB v4 project key; enables episode fallback
+	TVDBAPIKey    string `env:"TVDB_API_KEY"`                    // TheTVDB v4 project key; enables episode fallback
 
 	// ── Worker ───────────────────────────────────────────────────────────────
 	WorkerHealthAddr string `env:"WORKER_HEALTH_ADDR" envDefault:":7074"`
@@ -82,12 +82,12 @@ type Config struct {
 	// ── OAuth / SSO (optional) ──────────────────────────────────────────
 	// BaseURL: public URL of the server (e.g. https://media.example.com).
 	// Required for OAuth redirect URIs. Falls back to http://localhost:$LISTEN_ADDR.
-	BaseURL            string `env:"BASE_URL"`
-	GoogleClientID     string `env:"GOOGLE_CLIENT_ID"`
-	GoogleClientSecret string `env:"GOOGLE_CLIENT_SECRET"`
-	GitHubClientID     string `env:"GITHUB_CLIENT_ID"`
-	GitHubClientSecret string `env:"GITHUB_CLIENT_SECRET"`
-	DiscordClientID    string `env:"DISCORD_CLIENT_ID"`
+	BaseURL             string `env:"BASE_URL"`
+	GoogleClientID      string `env:"GOOGLE_CLIENT_ID"`
+	GoogleClientSecret  string `env:"GOOGLE_CLIENT_SECRET"`
+	GitHubClientID      string `env:"GITHUB_CLIENT_ID"`
+	GitHubClientSecret  string `env:"GITHUB_CLIENT_SECRET"`
+	DiscordClientID     string `env:"DISCORD_CLIENT_ID"`
 	DiscordClientSecret string `env:"DISCORD_CLIENT_SECRET"`
 
 	// ── Email / SMTP (optional) ─────────────────────────────────────────
@@ -230,7 +230,6 @@ func (c *Config) LogLevelVar() (*slog.LevelVar, error) {
 type HotReloadable struct {
 	mu sync.RWMutex
 
-	logLevel               slog.Level
 	scanFileConcurrency    int
 	scanLibraryConcurrency int
 	transcodeMaxSessions   int
@@ -368,7 +367,6 @@ func (h *HotReloadable) Reload(logger *slog.Logger, current *Config, lv *slog.Le
 	logger.Info("config reloaded")
 }
 
-
 // validateSecretKey checks that the SECRET_KEY yields at least 32 bytes.
 // Tries hex (64-char string), then base64 (>=43 chars), then raw byte length.
 // DeriveKey32 in auth/crypto.go uses the same decode order and truncates to 32.
@@ -406,4 +404,3 @@ func warnIfChanged(logger *slog.Logger, key, old, new string) {
 		logger.Warn("non-reloadable config value changed — restart required", "key", key)
 	}
 }
-

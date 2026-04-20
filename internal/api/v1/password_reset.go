@@ -102,7 +102,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	// Send the email with the raw token (user clicks link, we hash and look up).
 	resetURL := h.baseURL + "/reset-password?token=" + rawToken
 	subject, htmlBody := email.PasswordResetEmail(user.Username, resetURL)
-	if err := h.sender.Send([]string{body.Email}, subject, htmlBody); err != nil {
+	if err := h.sender.Send(r.Context(), []string{body.Email}, subject, htmlBody); err != nil {
 		h.logger.ErrorContext(r.Context(), "password reset: send email", "to", body.Email, "err", err)
 	}
 }
@@ -157,4 +157,3 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 
 	respond.Success(w, r, map[string]string{"message": "Password has been reset. You can now sign in."})
 }
-

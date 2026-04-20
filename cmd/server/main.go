@@ -19,8 +19,8 @@ import (
 	"github.com/onscreen/onscreen/internal/api"
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
-	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/artwork"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db"
@@ -30,16 +30,16 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
+	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
-	"github.com/onscreen/onscreen/internal/email"
-	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
 
@@ -425,39 +425,39 @@ func run() error {
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	h := &api.Handlers{
-		Library:     libHandler,
-		Webhook:     webhookHandler,
-		Auth:        authHandler,
-		User:        userHandler,
-		FS:          fsHandler,
-		Settings:    settingsHandler,
-		Analytics:       analyticsHandler,
-		NativeSessions:  nativeSessionsHandler,
-		Hub:             hubHandler,
-		Search:          searchHandler,
-		History:         historyHandler,
-		Items:           itemHandler,
-		NativeTranscode: nativeTranscodeHandler,
-		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger),
-		Arr:             arrHandler,
-		GoogleAuth:      googleAuthHandler,
-		GitHubAuth:      githubAuthHandler,
-		DiscordAuth:     discordAuthHandler,
-		Audit:           auditHandler,
-		Email:           emailHandler,
-		PasswordReset:   passwordResetHandler,
-		Invite:          inviteHandler,
-		Notifications:   notifHandler,
-		Maintenance:     maintenanceHandler,
-		Favorites:       favoritesHandler,
-		StreamTracker:  streamTracker,
-		Artwork:      artworkMgr,
-		ArtworkRoots: scanPathsFn,
-		MediaPath:    cfg.MediaPath,
-		Logger:      logger,
-		Metrics:     metrics,
-		Auth_mw:     authMiddleware,
-		RateLimiter: rateLimiter,
+		Library:            libHandler,
+		Webhook:            webhookHandler,
+		Auth:               authHandler,
+		User:               userHandler,
+		FS:                 fsHandler,
+		Settings:           settingsHandler,
+		Analytics:          analyticsHandler,
+		NativeSessions:     nativeSessionsHandler,
+		Hub:                hubHandler,
+		Search:             searchHandler,
+		History:            historyHandler,
+		Items:              itemHandler,
+		NativeTranscode:    nativeTranscodeHandler,
+		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger),
+		Arr:                arrHandler,
+		GoogleAuth:         googleAuthHandler,
+		GitHubAuth:         githubAuthHandler,
+		DiscordAuth:        discordAuthHandler,
+		Audit:              auditHandler,
+		Email:              emailHandler,
+		PasswordReset:      passwordResetHandler,
+		Invite:             inviteHandler,
+		Notifications:      notifHandler,
+		Maintenance:        maintenanceHandler,
+		Favorites:          favoritesHandler,
+		StreamTracker:      streamTracker,
+		Artwork:            artworkMgr,
+		ArtworkRoots:       scanPathsFn,
+		MediaPath:          cfg.MediaPath,
+		Logger:             logger,
+		Metrics:            metrics,
+		Auth_mw:            authMiddleware,
+		RateLimiter:        rateLimiter,
 		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 	}
 	router := api.NewRouter(h)
@@ -521,9 +521,9 @@ func run() error {
 		IdleTimeout:  120 * time.Second,
 	}
 	metricsServer := &http.Server{
-		Addr:        cfg.MetricsAddr,
-		Handler:     metricsMux,
-		ReadTimeout: 10 * time.Second,
+		Addr:         cfg.MetricsAddr,
+		Handler:      metricsMux,
+		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 
@@ -612,7 +612,7 @@ type scanEnqueuer struct {
 
 	watchMu      sync.Mutex
 	watchers     map[uuid.UUID]*scanner.Watcher // one watcher per library
-	scanInFlight sync.Map // uuid.UUID → struct{} — libraries currently scanning
+	scanInFlight sync.Map                       // uuid.UUID → struct{} — libraries currently scanning
 }
 
 func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) error {
@@ -724,9 +724,9 @@ func (e *scanEnqueuer) watchLibrary(libraryID uuid.UUID, paths []string) {
 // (e.g. WSL watching a Windows-side drive) where fsnotify events are not
 // delivered for changes made outside the Linux filesystem.
 type periodicScanWorker struct {
-	libSvc  *library.Service
-	enq     *scanEnqueuer
-	logger  *slog.Logger
+	libSvc *library.Service
+	enq    *scanEnqueuer
+	logger *slog.Logger
 }
 
 func newPeriodicScanWorker(libSvc *library.Service, enq *scanEnqueuer, logger *slog.Logger) *periodicScanWorker {
@@ -760,4 +760,3 @@ func (w *periodicScanWorker) tick(ctx context.Context) {
 		}
 	}
 }
-

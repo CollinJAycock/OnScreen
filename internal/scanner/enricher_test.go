@@ -17,14 +17,14 @@ import (
 // ── mocks ────────────────────────────────────────────────────────────────────
 
 type mockAgent struct {
-	searchMovieResult  *metadata.MovieResult
-	searchMovieErr     error
-	searchTVResult     *metadata.TVShowResult
-	searchTVErr        error
-	getSeasonResult    *metadata.SeasonResult
-	getSeasonErr       error
-	getEpisodeResult   *metadata.EpisodeResult
-	getEpisodeErr      error
+	searchMovieResult *metadata.MovieResult
+	searchMovieErr    error
+	searchTVResult    *metadata.TVShowResult
+	searchTVErr       error
+	getSeasonResult   *metadata.SeasonResult
+	getSeasonErr      error
+	getEpisodeResult  *metadata.EpisodeResult
+	getEpisodeErr     error
 }
 
 func (m *mockAgent) SearchMovie(_ context.Context, _ string, _ int) (*metadata.MovieResult, error) {
@@ -62,9 +62,9 @@ func (m *mockAgent) RefreshTV(_ context.Context, _ int) (*metadata.TVShowResult,
 }
 
 type mockUpdater struct {
-	items    map[uuid.UUID]*media.Item
-	children map[uuid.UUID][]media.Item // parentID -> children
-	files    map[uuid.UUID][]media.File
+	items       map[uuid.UUID]*media.Item
+	children    map[uuid.UUID][]media.Item // parentID -> children
+	files       map[uuid.UUID][]media.File
 	updateCalls []media.UpdateItemMetadataParams
 }
 

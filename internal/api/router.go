@@ -25,12 +25,12 @@ import (
 
 // Handlers groups all handler dependencies.
 type Handlers struct {
-	Library     *v1.LibraryHandler
-	Webhook     *v1.WebhookHandler
-	Auth        *v1.AuthHandler
-	User        *v1.UserHandler
-	FS          *v1.FSHandler
-	Settings    *v1.SettingsHandler
+	Library         *v1.LibraryHandler
+	Webhook         *v1.WebhookHandler
+	Auth            *v1.AuthHandler
+	User            *v1.UserHandler
+	FS              *v1.FSHandler
+	Settings        *v1.SettingsHandler
 	Analytics       *v1.AnalyticsHandler
 	NativeSessions  *v1.NativeSessionsHandler
 	Hub             *v1.HubHandler
@@ -39,7 +39,7 @@ type Handlers struct {
 	Items           *v1.ItemHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
-	Arr             *v1.ArrHandler           // incoming arr app notifications
+	Arr             *v1.ArrHandler          // incoming arr app notifications
 	GoogleAuth      *v1.GoogleOAuthHandler  // nil when SSO not configured
 	GitHubAuth      *v1.GitHubOAuthHandler  // nil when SSO not configured
 	DiscordAuth     *v1.DiscordOAuthHandler // nil when SSO not configured
@@ -49,15 +49,15 @@ type Handlers struct {
 	Invite          *v1.InviteHandler
 	Notifications   *v1.NotificationHandler
 	Favorites       *v1.FavoritesHandler
-	Maintenance   *v1.MaintenanceHandler
+	Maintenance     *v1.MaintenanceHandler
 	StreamTracker   *streaming.Tracker
-	Artwork       *artwork.Manager
-	ArtworkRoots  func() []string // returns all library scan_paths for artwork serving
-	MediaPath     string          // deprecated — only used for /media/files/* fallback
-	Logger        *slog.Logger
-	Metrics     *observability.Metrics
-	Auth_mw     *middleware.Authenticator
-	RateLimiter *valkey.RateLimiter
+	Artwork         *artwork.Manager
+	ArtworkRoots    func() []string // returns all library scan_paths for artwork serving
+	MediaPath       string          // deprecated — only used for /media/files/* fallback
+	Logger          *slog.Logger
+	Metrics         *observability.Metrics
+	Auth_mw         *middleware.Authenticator
+	RateLimiter     *valkey.RateLimiter
 	// CORSAllowedOrigins enables cross-origin API access (TV app, third-party
 	// native clients). Empty disables CORS — same-origin only.
 	CORSAllowedOrigins []string

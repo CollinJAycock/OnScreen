@@ -248,7 +248,7 @@ func (s *stubSessionCleaner) DeleteByMedia(_ context.Context, _ uuid.UUID) error
 // stubItemEnricher implements v1.ItemEnricher.
 type stubItemEnricher struct{}
 
-func (s *stubItemEnricher) EnrichItem(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubItemEnricher) EnrichItem(_ context.Context, _ uuid.UUID) error       { return nil }
 func (s *stubItemEnricher) MatchItem(_ context.Context, _ uuid.UUID, _ int) error { return nil }
 
 // stubMatchSearcher implements v1.ItemMatchSearcher.
@@ -850,9 +850,9 @@ func TestItems_Progress(t *testing.T) {
 	itemID := uuid.New()
 
 	resp := ts.do("PUT", "/api/v1/items/"+itemID.String()+"/progress", tok, map[string]any{
-		"position_ms":  45000,
-		"duration_ms":  7200000,
-		"client_name":  "OnScreenWeb",
+		"position_ms": 45000,
+		"duration_ms": 7200000,
+		"client_name": "OnScreenWeb",
 	})
 	// Item not found → 404 (the watch service is only reached after GetItem).
 	// This verifies the route is authenticated and reachable.
@@ -1090,18 +1090,18 @@ func TestHubDB_WithContent(t *testing.T) {
 
 	log := slog.Default()
 	handlers := &api.Handlers{
-		Auth:        v1.NewAuthHandler(newStubAuthService(), log),
-		Library:     v1.NewLibraryHandler(newStubLibraryService(), log),
-		Webhook:     v1.NewWebhookHandler(&stubWebhookService{}, log),
-		Hub:         v1.NewHubHandler(hub, log),
-		Search:      v1.NewSearchHandler(&stubSearchDB{}, log),
-		History:     v1.NewHistoryHandler(&stubHistoryDB{}, log),
-		Items:       v1.NewItemHandler(&stubItemMediaService{}, &stubItemWatchService{}, &stubSessionCleaner{}, &stubItemEnricher{}, &stubMatchSearcher{}, &stubWebhookDispatcher{}, nil, nil, log),
+		Auth:           v1.NewAuthHandler(newStubAuthService(), log),
+		Library:        v1.NewLibraryHandler(newStubLibraryService(), log),
+		Webhook:        v1.NewWebhookHandler(&stubWebhookService{}, log),
+		Hub:            v1.NewHubHandler(hub, log),
+		Search:         v1.NewSearchHandler(&stubSearchDB{}, log),
+		History:        v1.NewHistoryHandler(&stubHistoryDB{}, log),
+		Items:          v1.NewItemHandler(&stubItemMediaService{}, &stubItemWatchService{}, &stubSessionCleaner{}, &stubItemEnricher{}, &stubMatchSearcher{}, &stubWebhookDispatcher{}, nil, nil, log),
 		NativeSessions: v1.NewNativeSessionsHandler(transcode.NewSessionStore(v), nil, &stubSessionItemQuerier{}, log),
-		Auth_mw:     authMW,
-		RateLimiter: rl,
-		Metrics:     metrics,
-		Logger:      log,
+		Auth_mw:        authMW,
+		RateLimiter:    rl,
+		Metrics:        metrics,
+		Logger:         log,
 	}
 
 	srv := httptest.NewServer(api.NewRouter(handlers))

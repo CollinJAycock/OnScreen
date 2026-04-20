@@ -109,9 +109,9 @@ func runHLS(t *testing.T, a BuildArgs) string {
 func runRemux(t *testing.T, inputPath string) string {
 	t.Helper()
 	return runHLS(t, BuildArgs{
-		InputPath:  inputPath,
-		Encoder:    "copy",
-		AudioCodec: "aac",
+		InputPath:     inputPath,
+		Encoder:       "copy",
+		AudioCodec:    "aac",
 		AudioChannels: 2,
 	})
 }
@@ -124,12 +124,12 @@ func TestPlayback_Transcode_AVI_MPEG4(t *testing.T) {
 	skipIfMissing(t, path)
 
 	sessDir := runHLS(t, BuildArgs{
-		InputPath:   path,
-		Encoder:     EncoderSoftware,
-		Width:       320,
-		Height:      240,
-		BitrateKbps: 800,
-		AudioCodec:  "aac",
+		InputPath:     path,
+		Encoder:       EncoderSoftware,
+		Width:         320,
+		Height:        240,
+		BitrateKbps:   800,
+		AudioCodec:    "aac",
 		AudioChannels: 2,
 	})
 
@@ -199,12 +199,12 @@ func TestPlayback_Transcode_AV1_MKV(t *testing.T) {
 	// The web player auto-escalates to full transcode after detecting videoWidth=0.
 	// On the server side that means height>0, videoCopy=false.
 	sessDir := runHLS(t, BuildArgs{
-		InputPath:   path,
-		Encoder:     EncoderSoftware,
-		Width:       1920,
-		Height:      1080,
-		BitrateKbps: 8000,
-		AudioCodec:  "aac",
+		InputPath:     path,
+		Encoder:       EncoderSoftware,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
 		AudioChannels: 2,
 	})
 
@@ -221,9 +221,9 @@ func TestPlayback_Transcode_AV1_MKV(t *testing.T) {
 // files we know the answer for from the database.
 func TestPlayback_IsFaststart_KnownFiles(t *testing.T) {
 	cases := []struct {
-		name      string
-		path      string
-		wantFast  bool
+		name     string
+		path     string
+		wantFast bool
 	}{
 		{
 			name:     "non-faststart mp4 (mdat before moov)",

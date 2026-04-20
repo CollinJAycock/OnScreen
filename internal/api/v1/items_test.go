@@ -60,9 +60,9 @@ func (m *mockItemMedia) ListChildren(_ context.Context, _ uuid.UUID) ([]media.It
 // ── mock watch service ───────────────────────────────────────────────────────
 
 type mockItemWatch struct {
-	state    watchevent.WatchState
-	stateErr error
-	recorded bool
+	state     watchevent.WatchState
+	stateErr  error
+	recorded  bool
 	recordErr error
 }
 
@@ -121,7 +121,7 @@ func TestItemGet_Success(t *testing.T) {
 	id := uuid.New()
 	fileID := uuid.New()
 	ms := &mockItemMedia{
-		item: &media.Item{ID: id, Title: "Test Movie", Type: "movie", Genres: []string{"Action"}},
+		item:  &media.Item{ID: id, Title: "Test Movie", Type: "movie", Genres: []string{"Action"}},
 		files: []media.File{{ID: fileID, Status: "active", FilePath: "/test.mkv"}},
 	}
 	h := newItemHandler(ms)

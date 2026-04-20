@@ -24,15 +24,15 @@ import (
 
 // LibraryResponse is the JSON shape for a library in the v1 API.
 type LibraryResponse struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
-	Type                string `json:"type"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Type                string   `json:"type"`
 	ScanPaths           []string `json:"scan_paths"`
-	Agent               string `json:"agent"`
-	Language            string `json:"language"`
-	ScanIntervalMinutes *int   `json:"scan_interval_minutes,omitempty"`
-	CreatedAt           string `json:"created_at"`
-	UpdatedAt           string `json:"updated_at"`
+	Agent               string   `json:"agent"`
+	Language            string   `json:"language"`
+	ScanIntervalMinutes *int     `json:"scan_interval_minutes,omitempty"`
+	CreatedAt           string   `json:"created_at"`
+	UpdatedAt           string   `json:"updated_at"`
 }
 
 func toLibraryResponse(lib *library.Library) LibraryResponse {
@@ -68,15 +68,15 @@ type MediaItemLister interface {
 
 // MediaItemResponse is the JSON shape for a media item in the v1 API.
 type MediaItemResponse struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	Type       string   `json:"type"`
-	Year       *int     `json:"year,omitempty"`
-	Summary    *string  `json:"summary,omitempty"`
-	Rating     *float64 `json:"rating,omitempty"`
-	DurationMS *int64   `json:"duration_ms,omitempty"`
-	Genres     []string `json:"genres,omitempty"`
-	PosterPath *string  `json:"poster_path,omitempty"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	Type       string    `json:"type"`
+	Year       *int      `json:"year,omitempty"`
+	Summary    *string   `json:"summary,omitempty"`
+	Rating     *float64  `json:"rating,omitempty"`
+	DurationMS *int64    `json:"duration_ms,omitempty"`
+	Genres     []string  `json:"genres,omitempty"`
+	PosterPath *string   `json:"poster_path,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  int64     `json:"updated_at"`
 }

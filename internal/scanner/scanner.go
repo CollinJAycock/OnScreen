@@ -414,22 +414,22 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	}
 
 	p := media.CreateFileParams{
-		MediaItemID:    item.ID,
-		FilePath:       path,
-		FileSize:       info.Size(),
-		Container:      probe.Container,
-		VideoCodec:     probe.VideoCodec,
-		AudioCodec:     probe.AudioCodec,
-		ResolutionW:    probe.ResolutionW,
-		ResolutionH:    probe.ResolutionH,
-		Bitrate:        probe.Bitrate,
-		HDRType:        probe.HDRType,
-		FrameRate:      probe.FrameRate,
+		MediaItemID:     item.ID,
+		FilePath:        path,
+		FileSize:        info.Size(),
+		Container:       probe.Container,
+		VideoCodec:      probe.VideoCodec,
+		AudioCodec:      probe.AudioCodec,
+		ResolutionW:     probe.ResolutionW,
+		ResolutionH:     probe.ResolutionH,
+		Bitrate:         probe.Bitrate,
+		HDRType:         probe.HDRType,
+		FrameRate:       probe.FrameRate,
 		AudioStreams:    probe.AudioStreams,
 		SubtitleStreams: probe.SubtitleStreams,
-		Chapters:       probe.Chapters,
-		FileHash:       hash,
-		DurationMS:     probe.DurationMs,
+		Chapters:        probe.Chapters,
+		FileHash:        hash,
+		DurationMS:      probe.DurationMs,
 	}
 
 	file, isNew, err := s.media.CreateOrUpdateFile(ctx, p)

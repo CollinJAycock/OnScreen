@@ -9,16 +9,16 @@ import (
 // ClientCapabilities holds parsed client playback capabilities.
 // Derived from the X-Client-Capabilities request header.
 type ClientCapabilities struct {
-	VideoCodecs     []string
-	AudioCodecs     []string
-	Containers      []string
-	MaxWidth        int
-	MaxHeight       int
+	VideoCodecs      []string
+	AudioCodecs      []string
+	Containers       []string
+	MaxWidth         int
+	MaxHeight        int
 	MaxAudioChannels int
-	SupportsHDR     bool // HDR10
-	SupportsDV      bool // Dolby Vision
-	SupportsHEVC    bool // H.265
-	SupportsAV1     bool
+	SupportsHDR      bool // HDR10
+	SupportsDV       bool // Dolby Vision
+	SupportsHEVC     bool // H.265
+	SupportsAV1      bool
 }
 
 // ParseCapabilities parses the X-Client-Capabilities header value.

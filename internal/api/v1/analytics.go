@@ -65,12 +65,12 @@ type containerCount struct {
 }
 
 type dayCount struct {
-	Date  string `json:"date"`  // "2006-01-02"
+	Date  string `json:"date"` // "2006-01-02"
 	Count int64  `json:"count"`
 }
 
 type dayBytes struct {
-	Date  string `json:"date"`  // "2006-01-02"
+	Date  string `json:"date"` // "2006-01-02"
 	Bytes int64  `json:"bytes"`
 }
 
@@ -246,12 +246,12 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			TotalPlays:       overview.TotalPlays,
 			TotalWatchTimeMS: overview.TotalWatchTimeMS,
 		},
-		Libraries:   respLibs,
-		VideoCodecs: respCodecs,
-		Containers:  respContainers,
+		Libraries:      respLibs,
+		VideoCodecs:    respCodecs,
+		Containers:     respContainers,
 		PlaysByDay:     respDays,
 		BandwidthByDay: respBandwidth,
 		TopPlayed:      respTop,
-		RecentPlays: respRecent,
+		RecentPlays:    respRecent,
 	})
 }

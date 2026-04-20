@@ -76,9 +76,12 @@ func (m *MasterLock) Run(ctx context.Context) {
 // RunIfMaster runs fn only while this instance is master. fn receives a
 // context that is cancelled when master status is lost. If this instance later
 // regains master status fn is restarted. Blocks until ctx is cancelled.
+//
+//nolint:govet // lostcancel false positive: cancel is stored in closure and invoked via defer or on state transition
 func (m *MasterLock) RunIfMaster(ctx context.Context, fn func(context.Context)) {
+	cancel := func() {}
+	defer func() { cancel() }()
 	var (
-		cancel  context.CancelFunc
 		done    chan struct{}
 		running bool
 	)
@@ -90,7 +93,6 @@ func (m *MasterLock) RunIfMaster(ctx context.Context, fn func(context.Context)) 
 		select {
 		case <-ctx.Done():
 			if running {
-				cancel()
 				<-done
 			}
 			return
@@ -108,6 +110,7 @@ func (m *MasterLock) RunIfMaster(ctx context.Context, fn func(context.Context)) 
 				}()
 			case !isMaster && running:
 				cancel()
+				cancel = func() {}
 				<-done
 				running = false
 			}

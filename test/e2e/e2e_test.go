@@ -30,8 +30,8 @@ var (
 
 	// Cached tokens — populated once by TestE2E_SetupAndAuth, reused by all
 	// subsequent tests to avoid hitting the auth rate limiter (10 req/min).
-	cachedAdminToken   string
-	cachedUserToken    string
+	cachedAdminToken string
+	cachedUserToken  string
 )
 
 func TestMain(m *testing.M) {

@@ -308,4 +308,3 @@ type tvdbArtwork struct {
 	Type  int     `json:"type"`
 	Score float64 `json:"score"`
 }
-

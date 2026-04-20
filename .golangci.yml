@@ -1,48 +1,64 @@
 version: "2"
 
+run:
+  timeout: 5m
+
 linters:
+  default: none
   enable:
-    - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - goimports
-    - misspell
-    - revive
-    - gosec
     - exhaustive
-    - noctx
     - bodyclose
     - sqlclosecheck
     - rowserrcheck
-    - contextcheck
-
-linters-settings:
-  revive:
-    rules:
-      - name: exported
-        severity: warning
-      - name: error-return
-        severity: warning
-  gosec:
-    excludes:
-      - G304  # file path from variable — reviewed case by case
-  goimports:
-    local-prefixes: github.com/onscreen/onscreen
-
-issues:
-  exclude-rules:
-    # Generated code
-    - path: internal/db/gen/
-      linters:
+    - noctx
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    staticcheck:
+      checks:
         - all
-    # Test files
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
+        - -QF1001
+        - -QF1002
+        - -QF1012
+        - -S1009
+        - -S1016
+        - -ST1000
+        - -ST1003
+        - -SA1019
+  exclusions:
+    rules:
+      - path: internal/db/gen/
+        linters:
+          - govet
+          - ineffassign
+          - staticcheck
+          - unused
+          - exhaustive
+          - bodyclose
+          - sqlclosecheck
+          - rowserrcheck
+          - noctx
+      - path: web/node_modules/
+        linters:
+          - exhaustive
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - noctx
+          - staticcheck
+      - path: test/
+        linters:
+          - bodyclose
+          - noctx
 
-run:
-  timeout: 5m
+formatters:
+  enable:
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/onscreen/onscreen

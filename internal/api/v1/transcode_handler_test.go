@@ -83,10 +83,10 @@ func strPtr(s string) *string { return &s }
 
 func withClaims(r *http.Request) *http.Request {
 	claims := &auth.Claims{
-		UserID:   uuid.New(),
-		Username: "admin",
-		IsAdmin:  true,
-		IssuedAt: time.Now(),
+		UserID:    uuid.New(),
+		Username:  "admin",
+		IsAdmin:   true,
+		IssuedAt:  time.Now(),
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	return r.WithContext(middleware.WithClaims(r.Context(), claims))

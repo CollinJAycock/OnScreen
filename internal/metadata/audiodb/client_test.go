@@ -32,10 +32,10 @@ func TestSearchArtist_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"artists": []map[string]any{{
-				"strArtist":      "Pink Floyd",
-				"strArtistThumb": "https://theaudiodb.com/images/pinkfloyd.jpg",
+				"strArtist":       "Pink Floyd",
+				"strArtistThumb":  "https://theaudiodb.com/images/pinkfloyd.jpg",
 				"strArtistFanart": "https://theaudiodb.com/images/pinkfloyd_fanart.jpg",
-				"strBiographyEN": "English rock band formed in London in 1965.",
+				"strBiographyEN":  "English rock band formed in London in 1965.",
 			}},
 		})
 	}))
@@ -110,11 +110,11 @@ func TestSearchAlbum_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"album": []map[string]any{{
-				"strAlbum":          "The Dark Side of the Moon",
-				"strAlbumThumb":     "https://theaudiodb.com/images/dsotm.jpg",
-				"strDescriptionEN":  "Iconic concept album.",
-				"intYearReleased":   "1973",
-				"strGenre":          "Progressive Rock",
+				"strAlbum":         "The Dark Side of the Moon",
+				"strAlbumThumb":    "https://theaudiodb.com/images/dsotm.jpg",
+				"strDescriptionEN": "Iconic concept album.",
+				"intYearReleased":  "1973",
+				"strGenre":         "Progressive Rock",
 			}},
 		})
 	}))

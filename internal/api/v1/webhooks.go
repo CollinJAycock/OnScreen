@@ -25,7 +25,7 @@ import (
 // hardening step would be to use a custom http.Transport with a DialContext hook
 // that re-validates resolved IPs at connection time, rejecting private/loopback
 // addresses before the TCP handshake completes.
-func validateWebhookURL(rawURL string) error {
+func validateWebhookURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return errors.New("invalid URL")
@@ -40,7 +40,7 @@ func validateWebhookURL(rawURL string) error {
 	}
 
 	// Resolve the hostname to IP addresses.
-	ips, err := net.LookupHost(host)
+	ips, err := net.DefaultResolver.LookupHost(ctx, host)
 	if err != nil {
 		return errors.New("cannot resolve hostname")
 	}
@@ -113,7 +113,7 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.ValidationError(w, r, "url is required")
 		return
 	}
-	if err := validateWebhookURL(body.URL); err != nil {
+	if err := validateWebhookURL(r.Context(), body.URL); err != nil {
 		respond.ValidationError(w, r, err.Error())
 		return
 	}
@@ -151,7 +151,7 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.URL != "" {
-		if err := validateWebhookURL(body.URL); err != nil {
+		if err := validateWebhookURL(r.Context(), body.URL); err != nil {
 			respond.ValidationError(w, r, err.Error())
 			return
 		}

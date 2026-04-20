@@ -13,8 +13,8 @@ import (
 // RateLimiter implements a sliding window rate limiter backed by Valkey.
 // Fails open (allows the request) if Valkey is unavailable (ADR-015).
 type RateLimiter struct {
-	client  *Client
-	logger  *slog.Logger
+	client          *Client
+	logger          *slog.Logger
 	failOpenCounter func() // increments onscreen_ratelimit_failopen_total
 }
 
@@ -66,9 +66,9 @@ return {1, limit - count - 1}
 
 // Allow checks whether the given identifier is within the rate limit.
 //
-//   key      e.g. "ratelimit:auth:192.0.2.1" or "ratelimit:session:<hash>"
-//   limit    max requests per window
-//   window   sliding window duration
+//	key      e.g. "ratelimit:auth:192.0.2.1" or "ratelimit:session:<hash>"
+//	limit    max requests per window
+//	window   sliding window duration
 //
 // Returns (allowed=true, remaining, resetAt, nil) on success.
 // Returns (allowed=true, 0, zero, nil) when Valkey is unavailable (fail-open).

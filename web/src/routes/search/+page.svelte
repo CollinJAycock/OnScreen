@@ -101,11 +101,12 @@
     <div class="results-grid">
       {#each results as item (item.id)}
         {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
+        {@const art = item.poster_path ?? item.thumb_path ?? ''}
         <button class="result-card" on:click={() => navigate(item)}>
           <div class="poster-wrap">
-            {#if item.poster_path || item.thumb_path}
-              <img src="/artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=300"
-                   srcset="/artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=150 150w, /artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=300 300w, /artwork/{encodeURI(item.poster_path ?? item.thumb_path)}?w=450 450w"
+            {#if art}
+              <img src="/artwork/{encodeURI(art)}?w=300"
+                   srcset="/artwork/{encodeURI(art)}?w=150 150w, /artwork/{encodeURI(art)}?w=300 300w, /artwork/{encodeURI(art)}?w=450 450w"
                    sizes="(max-width: 768px) 100px, 180px"
                    alt={item.title} loading="lazy" />
             {:else}

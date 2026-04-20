@@ -50,7 +50,7 @@ type WebhookDispatcher struct {
 	logger *slog.Logger
 	sem    chan struct{} // concurrency limiter for delivery goroutines
 	wg     sync.WaitGroup
-	ctx    context.Context    // cancelled on Close to interrupt retries
+	ctx    context.Context // cancelled on Close to interrupt retries
 	cancel context.CancelFunc
 }
 

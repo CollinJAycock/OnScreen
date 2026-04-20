@@ -307,7 +307,7 @@ func TestValidateWebhookURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateWebhookURL(tt.url)
+			err := validateWebhookURL(context.Background(), tt.url)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateWebhookURL(%q) err=%v, wantErr=%v", tt.url, err, tt.wantErr)
 			}
@@ -511,7 +511,7 @@ func TestValidateWebhookURL_EdgeCases(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateWebhookURL(tt.url)
+			err := validateWebhookURL(context.Background(), tt.url)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateWebhookURL(%q) err=%v, wantErr=%v", tt.url, err, tt.wantErr)
 			}

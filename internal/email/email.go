@@ -4,11 +4,13 @@
 package email
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
 	"net/smtp"
 	"strings"
+	"time"
 )
 
 // Config holds SMTP connection parameters.
@@ -34,13 +36,14 @@ func NewSender(cfg Config) *Sender {
 }
 
 // Send sends an email with the given subject and HTML body to the recipients.
-func (s *Sender) Send(to []string, subject, htmlBody string) error {
+func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string) error {
 	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
 
 	msg := buildMessage(s.cfg.From, to, subject, htmlBody)
 
-	// Connect to the SMTP server.
-	conn, err := net.Dial("tcp", addr)
+	// Connect to the SMTP server with a bounded deadline.
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("email: dial %s: %w", addr, err)
 	}

@@ -33,13 +33,6 @@ func mustTimeTZ(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-func timePtrToPGTZ(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
-}
-
 func pgtypeDate(d pgtype.Date) *time.Time {
 	if !d.Valid {
 		return nil
@@ -105,10 +98,6 @@ func intPtrToInt32Ptr(i *int) *int32 {
 	}
 	v := int32(*i)
 	return &v
-}
-
-func durationToPtr(d time.Duration) *time.Duration {
-	return &d
 }
 
 // ── Media item conversions ────────────────────────────────────────────────────

@@ -187,8 +187,8 @@ func TestParseInt(t *testing.T) {
 		{"1920", 1920},
 		{"0", 0},
 		{"", 0},
-		{"abc", 0},         // non-digit start → 0
-		{"12abc", 12},      // stops at first non-digit
+		{"abc", 0},    // non-digit start → 0
+		{"12abc", 12}, // stops at first non-digit
 	}
 	for _, tc := range cases {
 		if got := parseInt(tc.in); got != tc.want {

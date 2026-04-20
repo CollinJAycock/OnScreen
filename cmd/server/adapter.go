@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/onscreen/onscreen/internal/api/v1"
+	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -36,13 +36,6 @@ func mustTimeTZ(ts pgtype.Timestamptz) time.Time {
 		return time.Time{}
 	}
 	return ts.Time.UTC()
-}
-
-func timePtrToPGTZ(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
 }
 
 func uuidPtrToPgtype(u *uuid.UUID) pgtype.UUID {
@@ -250,15 +243,6 @@ func genListItemsRowToItem(r gen.ListMediaItemsRow) media.Item {
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
 }
 
-func genRecentlyAddedRowToItem(r gen.ListRecentlyAddedRow) media.Item {
-	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
-		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
-		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
-		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
-		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
-		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
-}
-
 func genListMissingArtRowToItem(r gen.ListMediaItemsMissingArtRow) media.Item {
 	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
@@ -356,27 +340,27 @@ func genMediaFileToFile(f gen.MediaFile) media.File {
 		frameRate = &fr
 	}
 	return media.File{
-		ID:             f.ID,
-		MediaItemID:    f.MediaItemID,
-		FilePath:       f.FilePath,
-		FileSize:       f.FileSize,
-		Container:      f.Container,
-		VideoCodec:     f.VideoCodec,
-		AudioCodec:     f.AudioCodec,
-		ResolutionW:    int32PtrToIntPtr(f.ResolutionW),
-		ResolutionH:    int32PtrToIntPtr(f.ResolutionH),
-		Bitrate:        f.Bitrate,
-		HDRType:        f.HdrType,
-		FrameRate:      frameRate,
-		AudioStreams:   f.AudioStreams,
+		ID:              f.ID,
+		MediaItemID:     f.MediaItemID,
+		FilePath:        f.FilePath,
+		FileSize:        f.FileSize,
+		Container:       f.Container,
+		VideoCodec:      f.VideoCodec,
+		AudioCodec:      f.AudioCodec,
+		ResolutionW:     int32PtrToIntPtr(f.ResolutionW),
+		ResolutionH:     int32PtrToIntPtr(f.ResolutionH),
+		Bitrate:         f.Bitrate,
+		HDRType:         f.HdrType,
+		FrameRate:       frameRate,
+		AudioStreams:    f.AudioStreams,
 		SubtitleStreams: f.SubtitleStreams,
-		Chapters:       f.Chapters,
-		FileHash:       f.FileHash,
-		DurationMS:     f.DurationMs,
-		Status:         f.Status,
-		MissingSince:   pgtimeTZ(f.MissingSince),
-		ScannedAt:      mustTimeTZ(f.ScannedAt),
-		CreatedAt:      mustTimeTZ(f.CreatedAt),
+		Chapters:        f.Chapters,
+		FileHash:        f.FileHash,
+		DurationMS:      f.DurationMs,
+		Status:          f.Status,
+		MissingSince:    pgtimeTZ(f.MissingSince),
+		ScannedAt:       mustTimeTZ(f.ScannedAt),
+		CreatedAt:       mustTimeTZ(f.CreatedAt),
 	}
 }
 
@@ -386,22 +370,22 @@ func createFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 		_ = frameRate.Scan(*p.FrameRate)
 	}
 	return gen.CreateMediaFileParams{
-		MediaItemID:    p.MediaItemID,
-		FilePath:       p.FilePath,
-		FileSize:       p.FileSize,
-		Container:      p.Container,
-		VideoCodec:     p.VideoCodec,
-		AudioCodec:     p.AudioCodec,
-		ResolutionW:    intPtrToInt32Ptr(p.ResolutionW),
-		ResolutionH:    intPtrToInt32Ptr(p.ResolutionH),
-		Bitrate:        p.Bitrate,
-		HdrType:        p.HDRType,
-		FrameRate:      frameRate,
-		AudioStreams:   p.AudioStreams,
+		MediaItemID:     p.MediaItemID,
+		FilePath:        p.FilePath,
+		FileSize:        p.FileSize,
+		Container:       p.Container,
+		VideoCodec:      p.VideoCodec,
+		AudioCodec:      p.AudioCodec,
+		ResolutionW:     intPtrToInt32Ptr(p.ResolutionW),
+		ResolutionH:     intPtrToInt32Ptr(p.ResolutionH),
+		Bitrate:         p.Bitrate,
+		HdrType:         p.HDRType,
+		FrameRate:       frameRate,
+		AudioStreams:    p.AudioStreams,
 		SubtitleStreams: p.SubtitleStreams,
-		Chapters:       p.Chapters,
-		FileHash:       p.FileHash,
-		DurationMs:     p.DurationMS,
+		Chapters:        p.Chapters,
+		FileHash:        p.FileHash,
+		DurationMs:      p.DurationMS,
 	}
 }
 
@@ -755,19 +739,19 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		_ = frameRate.Scan(*p.FrameRate)
 	}
 	return a.q.UpdateMediaFileTechnicalMetadata(ctx, gen.UpdateMediaFileTechnicalMetadataParams{
-		ID:             id,
-		Container:      p.Container,
-		VideoCodec:     p.VideoCodec,
-		AudioCodec:     p.AudioCodec,
-		ResolutionW:    intPtrToInt32Ptr(p.ResolutionW),
-		ResolutionH:    intPtrToInt32Ptr(p.ResolutionH),
-		Bitrate:        p.Bitrate,
-		HdrType:        p.HDRType,
-		FrameRate:      frameRate,
-		AudioStreams:   p.AudioStreams,
+		ID:              id,
+		Container:       p.Container,
+		VideoCodec:      p.VideoCodec,
+		AudioCodec:      p.AudioCodec,
+		ResolutionW:     intPtrToInt32Ptr(p.ResolutionW),
+		ResolutionH:     intPtrToInt32Ptr(p.ResolutionH),
+		Bitrate:         p.Bitrate,
+		HdrType:         p.HDRType,
+		FrameRate:       frameRate,
+		AudioStreams:    p.AudioStreams,
 		SubtitleStreams: p.SubtitleStreams,
-		Chapters:       p.Chapters,
-		DurationMs:     p.DurationMS,
+		Chapters:        p.Chapters,
+		DurationMs:      p.DurationMS,
 	})
 }
 
@@ -1016,29 +1000,6 @@ func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UU
 	return a.q.ListDistinctGenres(ctx, libraryID)
 }
 
-// ── hubAdapter ───────────────────────────────────────────────────────────────
-
-type hubAdapter struct{ q *gen.Queries }
-
-func (a *hubAdapter) ListRecentlyAdded(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]media.Item, error) {
-	libPG := pgtype.UUID{}
-	if libraryID != nil {
-		libPG = pgtype.UUID{Bytes: [16]byte(*libraryID), Valid: true}
-	}
-	rows, err := a.q.ListRecentlyAdded(ctx, gen.ListRecentlyAddedParams{
-		LibraryID: libPG,
-		Limit:     limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]media.Item, len(rows))
-	for i, r := range rows {
-		out[i] = genRecentlyAddedRowToItem(r)
-	}
-	return out, nil
-}
-
 // ── watchEventAdapter ─────────────────────────────────────────────────────────
 
 type watchEventAdapter struct{ q *gen.Queries }
@@ -1151,7 +1112,6 @@ func (a *matchSearchAdapter) SearchMovieCandidates(ctx context.Context, query st
 	}
 	return out, nil
 }
-
 
 // favoritesChecker adapts gen.Queries.IsFavorite to the v1.ItemFavoriteChecker interface.
 type favoritesChecker struct{ q *gen.Queries }

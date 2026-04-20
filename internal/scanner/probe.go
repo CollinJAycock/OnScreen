@@ -19,41 +19,41 @@ import (
 
 // ProbeResult holds the technical metadata extracted from a media file by ffprobe.
 type ProbeResult struct {
-	Container      *string
-	VideoCodec     *string
-	AudioCodec     *string
-	ResolutionW    *int
-	ResolutionH    *int
-	Bitrate        *int64
-	DurationMs     *int64
-	HDRType        *string
-	FrameRate      *float64
+	Container       *string
+	VideoCodec      *string
+	AudioCodec      *string
+	ResolutionW     *int
+	ResolutionH     *int
+	Bitrate         *int64
+	DurationMs      *int64
+	HDRType         *string
+	FrameRate       *float64
 	AudioStreams    []byte
 	SubtitleStreams []byte
-	Chapters       []byte
+	Chapters        []byte
 }
 
 // ffprobeOutput is the top-level ffprobe JSON output structure.
 type ffprobeOutput struct {
-	Streams []ffprobeStream `json:"streams"`
-	Format  ffprobeFormat   `json:"format"`
+	Streams  []ffprobeStream  `json:"streams"`
+	Format   ffprobeFormat    `json:"format"`
 	Chapters []ffprobeChapter `json:"chapters"`
 }
 
 type ffprobeStream struct {
-	Index         int               `json:"index"`
-	CodecName     string            `json:"codec_name"`
-	CodecType     string            `json:"codec_type"`
-	Width         int               `json:"width"`
-	Height        int               `json:"height"`
-	RFrameRate    string            `json:"r_frame_rate"`
-	BitRate       string            `json:"bit_rate"`
-	Channels      int               `json:"channels"`
-	Tags          map[string]string `json:"tags"`
-	Disposition   map[string]int    `json:"disposition"`
-	ColorTransfer string            `json:"color_transfer"`
-	ColorPrimaries string           `json:"color_primaries"`
-	SideDataList  []ffprobeSideData `json:"side_data_list"`
+	Index          int               `json:"index"`
+	CodecName      string            `json:"codec_name"`
+	CodecType      string            `json:"codec_type"`
+	Width          int               `json:"width"`
+	Height         int               `json:"height"`
+	RFrameRate     string            `json:"r_frame_rate"`
+	BitRate        string            `json:"bit_rate"`
+	Channels       int               `json:"channels"`
+	Tags           map[string]string `json:"tags"`
+	Disposition    map[string]int    `json:"disposition"`
+	ColorTransfer  string            `json:"color_transfer"`
+	ColorPrimaries string            `json:"color_primaries"`
+	SideDataList   []ffprobeSideData `json:"side_data_list"`
 }
 
 type ffprobeSideData struct {
@@ -85,7 +85,7 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 
 	args := []string{
 		"-v", "quiet",
-		"-probesize", "50000000",      // read at most 50 MB to detect streams
+		"-probesize", "50000000", // read at most 50 MB to detect streams
 		"-analyzeduration", "5000000", // analyze at most 5 s of stream data
 		"-print_format", "json",
 		"-show_streams",
