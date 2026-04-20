@@ -9,6 +9,13 @@ import (
 	"github.com/onscreen/onscreen/internal/observability"
 )
 
+// Auth is Bearer-token only; we do not issue session cookies. Because every
+// authenticated request must carry an explicit `Authorization: Bearer <paseto>`
+// header (which browsers do not attach automatically on cross-origin requests),
+// cross-site request forgery is not applicable and no CSRF middleware is
+// required. If cookie-based auth is ever added, a CSRF token layer must be
+// added alongside it.
+
 type claimsKey struct{}
 
 // Authenticator validates Paseto access tokens.

@@ -77,6 +77,13 @@ func (m *MasterLock) Run(ctx context.Context) {
 // context that is cancelled when master status is lost. If this instance later
 // regains master status fn is restarted. Blocks until ctx is cancelled.
 //
+// Race note: this polls m.held.Load() on its own ticker rather than sharing a
+// state-change channel with Run. A window exists where Run loses then quickly
+// reacquires the lock between two RunIfMaster ticks, so fn may miss that
+// transition. Acceptable today because singleton workers are idempotent — if
+// we later add a worker that needs a strict lifecycle, replace the polling
+// with a notification channel fed by Run.
+//
 //nolint:govet // lostcancel false positive: cancel is stored in closure and invoked via defer or on state transition
 func (m *MasterLock) RunIfMaster(ctx context.Context, fn func(context.Context)) {
 	cancel := func() {}

@@ -196,7 +196,11 @@ func (d *WebhookDispatcher) deliverWithRetry(ctx context.Context, ep gen.Webhook
 			"url", ep.Url, "attempt", attempt+1, "err", err)
 	}
 
-	// All attempts exhausted — record failure.
+	// All attempts exhausted — record failure using context.Background on
+	// purpose: the caller's ctx may already be cancelled (shutdown), but we
+	// still want the failure audit row persisted so ops can see which webhooks
+	// dropped. A short detached context would be better if the DB is slow; if
+	// that becomes an issue, wrap with a 5s WithTimeout on context.Background.
 	if _, err := d.db.CreateWebhookFailure(context.Background(), gen.CreateWebhookFailureParams{
 		EndpointID:   ep.ID,
 		Url:          ep.Url,

@@ -477,6 +477,11 @@ func workerReady(ctx context.Context, workerAddr, sessID, name, localPath string
 	return err == nil
 }
 
+// maxPlaylistBytes caps the playlist/metadata body read from the worker. Real
+// HLS playlists are well under 100 KB; this prevents a compromised or buggy
+// worker from exhausting memory on the API process.
+const maxPlaylistBytes = 5 << 20 // 5 MiB
+
 // fetchFromWorker retrieves file content from the worker's segment server or
 // falls back to reading from the local filesystem.
 func fetchFromWorker(ctx context.Context, workerAddr, sessID, name, localPath string) ([]byte, error) {
@@ -491,7 +496,7 @@ func fetchFromWorker(ctx context.Context, workerAddr, sessID, name, localPath st
 			return nil, err
 		}
 		defer resp.Body.Close()
-		return io.ReadAll(resp.Body)
+		return io.ReadAll(io.LimitReader(resp.Body, maxPlaylistBytes))
 	}
 	return os.ReadFile(localPath)
 }

@@ -57,7 +57,7 @@ test-unit:
 
 ## test-int: run integration tests (testcontainers-go, requires Docker, <2min)
 test-int:
-	$(GO) test -tags dev -count=1 -run Integration ./...
+	$(GO) test -tags dev -count=1 -run Integration ./cmd/... ./internal/... ./test/...
 
 ## test-e2e: run full stack tests via docker-compose (<5min)
 test-e2e:
@@ -66,7 +66,7 @@ test-e2e:
 
 ## lint: run golangci-lint
 lint:
-	golangci-lint run ./...
+	golangci-lint run ./cmd/... ./internal/...
 
 ## dev: start Vite dev server + Go server in dev mode side-by-side
 ## Override any var on the command line: make dev MEDIA_PATH=/your/media

@@ -107,6 +107,20 @@
     }
   }
 
+  // escapeCueText escapes HTML special characters in a raw WebVTT cue and then
+  // converts newlines to <br>. Cue text originates from third-party subtitle
+  // files — it is not trusted, so we escape before any {@html} rendering to
+  // prevent subtitle-driven XSS.
+  function escapeCueText(raw: string): string {
+    const escaped = raw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    return escaped.replace(/\n/g, '<br>');
+  }
+
   function parseWebVTT(vtt: string): SubCue[] {
     const cues: SubCue[] = [];
     const blocks = vtt.split(/\n\n+/);
@@ -1349,7 +1363,7 @@
     {#if activeCues.length > 0}
       <div class="subtitle-overlay subs-{subtitleSize}">
         {#each activeCues as cue}
-          <span class="subtitle-cue">{@html cue.text.replace(/\n/g, '<br>')}</span>
+          <span class="subtitle-cue">{@html escapeCueText(cue.text)}</span>
         {/each}
       </div>
     {/if}
