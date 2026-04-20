@@ -27,6 +27,18 @@ type MusicTags struct {
 // trackNumberRE matches a leading track number like "01 - ", "01. ", "01 ", "1-".
 var trackNumberRE = regexp.MustCompile(`^(\d{1,3})\s*[-.\s]\s*`)
 
+// cleanTag sanitizes a tag string for safe DB storage. ID3 tags can return
+// Latin-1 or other non-UTF8 byte sequences that Postgres rejects; we scrub
+// invalid UTF-8 and also drop NUL bytes, which Postgres disallows in text.
+func cleanTag(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.ToValidUTF8(s, "")
+	s = strings.ReplaceAll(s, "\x00", "")
+	return strings.TrimSpace(s)
+}
+
 // ReadMusicTags reads audio metadata from filePath.
 // It first tries to read embedded tags. If that fails or returns empty
 // artist/title, it falls back to parsing the folder structure.
@@ -72,19 +84,19 @@ func readEmbeddedTags(filePath string) (*MusicTags, error) {
 	discNum, _ := m.Disc()
 
 	mt := &MusicTags{
-		Artist:   strings.TrimSpace(m.Artist()),
-		Album:    strings.TrimSpace(m.Album()),
-		Title:    strings.TrimSpace(m.Title()),
+		Artist:   cleanTag(m.Artist()),
+		Album:    cleanTag(m.Album()),
+		Title:    cleanTag(m.Title()),
 		Track:    trackNum,
 		Disc:     discNum,
 		Year:     m.Year(),
-		Genre:    strings.TrimSpace(m.Genre()),
+		Genre:    cleanTag(m.Genre()),
 		AlbumArt: m.Picture() != nil,
 	}
 
 	// Use AlbumArtist if Artist is empty (common in compilations).
 	if mt.Artist == "" {
-		mt.Artist = strings.TrimSpace(m.AlbumArtist())
+		mt.Artist = cleanTag(m.AlbumArtist())
 	}
 
 	return mt, nil
