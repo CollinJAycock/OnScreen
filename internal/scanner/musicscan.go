@@ -22,13 +22,14 @@ import (
 )
 
 // collabArtistRE matches the tail portion of a collaboration-style artist tag
-// like "Elton John & Bonnie Raitt" or "Jay-Z feat. Rihanna". The regex
-// intentionally accepts "&", "and", "feat[.]?", "ft[.]?", "featuring", and
-// "with" as collab markers. Stripping is applied only when the primary name
-// (the text before the first marker) already exists as a standalone artist
-// in the library — otherwise legitimate band names like "Simon & Garfunkel"
-// or "Nick Cave and the Bad Seeds" would be damaged.
-var collabArtistRE = regexp.MustCompile(`(?i)\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+.+$`)
+// like "Elton John & Bonnie Raitt", "Jay-Z feat. Rihanna", or
+// "The Black Eyed Peas, CL". The regex accepts a comma, "&", "and",
+// "feat[.]?", "ft[.]?", "featuring", and "with" as collab markers.
+// Stripping is applied only when the primary name (the text before the first
+// marker) already exists as a standalone artist in the library — otherwise
+// legitimate band names like "Simon & Garfunkel" or
+// "Nick Cave and the Bad Seeds" would be damaged.
+var collabArtistRE = regexp.MustCompile(`(?i)(\s*,\s*|\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+).+$`)
 
 // primaryArtistName strips a trailing collaborator from an artist string.
 // Returns "" if no collab marker is found. Callers should verify the result
