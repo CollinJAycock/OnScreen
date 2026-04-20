@@ -17,10 +17,10 @@ import (
 )
 
 type mockAuditDB struct {
-	rows    []gen.ListAuditLogRow
-	err     error
-	gotArg  gen.ListAuditLogParams
-	called  bool
+	rows   []gen.ListAuditLogRow
+	err    error
+	gotArg gen.ListAuditLogParams
+	called bool
 }
 
 func (m *mockAuditDB) ListAuditLog(_ context.Context, arg gen.ListAuditLogParams) ([]gen.ListAuditLogRow, error) {

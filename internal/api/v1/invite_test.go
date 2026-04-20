@@ -228,7 +228,7 @@ func TestInvite_Accept_RejectsMissingFields(t *testing.T) {
 		`{"username":"u","password":"hunter22secure"}`, // no token
 		`{"token":"t","password":"hunter22secure"}`,    // no username
 		`{"token":"t","username":"u"}`,                 // no password
-		``, // empty body
+		``,                                             // empty body
 	}
 	for _, body := range cases {
 		db := &mockInviteDB{}
