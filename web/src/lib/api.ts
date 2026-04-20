@@ -240,8 +240,19 @@ export const userApi = {
   setPreferences: (prefs: UserPreferences) =>
     api.put<void>('/users/me/preferences', prefs),
   setContentRating: (userId: string, maxContentRating: string | null) =>
-    api.put<void>(`/users/${userId}/content-rating`, { max_content_rating: maxContentRating })
+    api.put<void>(`/users/${userId}/content-rating`, { max_content_rating: maxContentRating }),
+  getLibraries: (userId: string) =>
+    api.get<UserLibraryAccess[]>(`/users/${userId}/libraries`),
+  setLibraries: (userId: string, libraryIds: string[]) =>
+    api.put<void>(`/users/${userId}/libraries`, { library_ids: libraryIds })
 };
+
+export interface UserLibraryAccess {
+  library_id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+}
 
 export interface UserPreferences {
   preferred_audio_lang: string | null;

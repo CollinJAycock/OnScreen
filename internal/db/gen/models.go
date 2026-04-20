@@ -81,6 +81,12 @@ type Library struct {
 	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
 }
 
+type LibraryAccess struct {
+	UserID    uuid.UUID          `json:"user_id"`
+	LibraryID uuid.UUID          `json:"library_id"`
+	GrantedAt pgtype.Timestamptz `json:"granted_at"`
+}
+
 type MediaFile struct {
 	ID              uuid.UUID          `json:"id"`
 	MediaItemID     uuid.UUID          `json:"media_item_id"`

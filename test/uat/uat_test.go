@@ -178,6 +178,14 @@ func (s *stubLibraryService) Delete(_ context.Context, id uuid.UUID) error {
 
 func (s *stubLibraryService) EnqueueScan(_ context.Context, _ uuid.UUID) error { return nil }
 
+func (s *stubLibraryService) ListForUser(ctx context.Context, _ uuid.UUID, _ bool) ([]library.Library, error) {
+	return s.List(ctx)
+}
+
+func (s *stubLibraryService) CanAccessLibrary(_ context.Context, _, _ uuid.UUID, _ bool) (bool, error) {
+	return true, nil
+}
+
 // stubMediaItemLister implements v1.MediaItemLister.
 type stubMediaItemLister struct {
 	items []media.Item

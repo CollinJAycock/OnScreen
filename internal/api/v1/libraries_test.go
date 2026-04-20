@@ -83,6 +83,12 @@ func (m *mockLibraryService) Delete(_ context.Context, _ uuid.UUID) error {
 func (m *mockLibraryService) EnqueueScan(_ context.Context, _ uuid.UUID) error {
 	return m.scanErr
 }
+func (m *mockLibraryService) ListForUser(ctx context.Context, _ uuid.UUID, _ bool) ([]library.Library, error) {
+	return m.List(ctx)
+}
+func (m *mockLibraryService) CanAccessLibrary(_ context.Context, _, _ uuid.UUID, _ bool) (bool, error) {
+	return true, nil
+}
 
 // ── mock media item lister ───────────────────────────────────────────────────
 
@@ -130,7 +136,7 @@ func TestLibrary_List_Success(t *testing.T) {
 	h := newLibHandler(svc)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/libraries", nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/libraries", nil))
 	h.List(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -143,7 +149,7 @@ func TestLibrary_List_Error(t *testing.T) {
 	h := newLibHandler(svc)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
+	req := withClaims(httptest.NewRequest("GET", "/", nil))
 	h.List(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -161,7 +167,7 @@ func TestLibrary_Get_Success(t *testing.T) {
 	h := newLibHandler(svc)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	req := withClaims(withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String()))
 	h.Get(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -174,7 +180,7 @@ func TestLibrary_Get_NotFound(t *testing.T) {
 	h := newLibHandler(svc)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withClaims(withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
 	h.Get(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -361,7 +367,7 @@ func TestLibrary_Items_NoMediaService(t *testing.T) {
 	h := newLibHandler(svc) // no WithMedia
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withClaims(withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
 	h.Items(rec, req)
 
 	if rec.Code != http.StatusNotImplemented {
@@ -382,7 +388,7 @@ func TestLibrary_Items_Success(t *testing.T) {
 	h.WithMedia(ml)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/?limit=10&offset=0", nil), "id", libID.String())
+	req := withClaims(withChiParam(httptest.NewRequest("GET", "/?limit=10&offset=0", nil), "id", libID.String()))
 	h.Items(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -405,7 +411,7 @@ func TestLibrary_Items_LibraryNotFound(t *testing.T) {
 	h.WithMedia(ml)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withClaims(withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
 	h.Items(rec, req)
 
 	if rec.Code != http.StatusNotFound {

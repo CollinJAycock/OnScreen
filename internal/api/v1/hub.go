@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
@@ -22,12 +23,19 @@ type HubDB interface {
 // HubHandler serves the home page hub data.
 type HubHandler struct {
 	db     HubDB
+	access LibraryAccessChecker
 	logger *slog.Logger
 }
 
 // NewHubHandler creates a HubHandler.
 func NewHubHandler(db HubDB, logger *slog.Logger) *HubHandler {
 	return &HubHandler{db: db, logger: logger}
+}
+
+// WithLibraryAccess enables per-user library filtering on hub rows.
+func (h *HubHandler) WithLibraryAccess(a LibraryAccessChecker) *HubHandler {
+	h.access = a
+	return h
 }
 
 // HubResponse is the combined home page data.
@@ -66,6 +74,25 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Convert max content rating from claims to a rank for SQL filtering.
 	maxRank := maxRatingRankFromClaims(claims.MaxContentRating)
 
+	// Pre-compute allowed library set. Nil means admin → no filtering.
+	var allowed map[uuid.UUID]struct{}
+	if h.access != nil {
+		var err error
+		allowed, err = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "hub: allowed libraries", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	libAllowed := func(id uuid.UUID) bool {
+		if allowed == nil {
+			return true
+		}
+		_, ok := allowed[id]
+		return ok
+	}
+
 	// Continue watching — items the user has in progress.
 	cwRows, err := h.db.ListContinueWatching(r.Context(), gen.ListContinueWatchingParams{
 		UserID:        claims.UserID,
@@ -76,6 +103,9 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "hub: continue watching", "err", err)
 	} else {
 		for _, row := range cwRows {
+			if !libAllowed(row.LibraryID) {
+				continue
+			}
 			year := intPtrFrom32(row.Year)
 			offset := row.ViewOffset
 			out.ContinueWatching = append(out.ContinueWatching, HubItem{
@@ -104,6 +134,9 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	} else {
 		seen := make(map[string]bool)
 		for _, row := range raRows {
+			if !libAllowed(row.LibraryID) {
+				continue
+			}
 			// Deduplicate by title+type (handles duplicate media_items rows).
 			key := row.Type + "|" + row.Title
 			if seen[key] {

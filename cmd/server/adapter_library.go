@@ -5,9 +5,63 @@ import (
 
 	"github.com/google/uuid"
 
+	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/library"
 )
+
+// userLibraryAccessAdapter bridges the library service to v1.UserLibraryAccessService.
+// It looks up the target user's is_admin flag so admins always report every
+// library as enabled.
+type userLibraryAccessAdapter struct {
+	lib *library.Service
+	q   *gen.Queries
+}
+
+func (a *userLibraryAccessAdapter) ListAccessForUser(ctx context.Context, userID uuid.UUID) ([]v1.UserLibraryAccessEntry, error) {
+	u, err := a.q.GetUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	accesses, err := a.lib.ListAccessForUser(ctx, userID, u.IsAdmin)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1.UserLibraryAccessEntry, len(accesses))
+	for i, acc := range accesses {
+		out[i] = v1.UserLibraryAccessEntry{
+			LibraryID: acc.Library.ID,
+			Name:      acc.Library.Name,
+			Type:      acc.Library.Type,
+			Enabled:   acc.Enabled,
+		}
+	}
+	return out, nil
+}
+
+func (a *userLibraryAccessAdapter) ReplaceAccessForUser(ctx context.Context, userID uuid.UUID, libraryIDs []uuid.UUID) error {
+	return a.lib.ReplaceAccessForUser(ctx, userID, libraryIDs)
+}
+
+func (a *libraryAdapter) ListLibraryAccessByUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListLibraryAccessByUser(ctx, userID)
+}
+
+func (a *libraryAdapter) ListAllowedLibraryIDsForUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListAllowedLibraryIDsForUser(ctx, userID)
+}
+
+func (a *libraryAdapter) HasLibraryAccess(ctx context.Context, userID, libraryID uuid.UUID) (bool, error) {
+	return a.q.HasLibraryAccess(ctx, gen.HasLibraryAccessParams{UserID: userID, LibraryID: libraryID})
+}
+
+func (a *libraryAdapter) GrantLibraryAccess(ctx context.Context, userID, libraryID uuid.UUID) error {
+	return a.q.GrantLibraryAccess(ctx, gen.GrantLibraryAccessParams{UserID: userID, LibraryID: libraryID})
+}
+
+func (a *libraryAdapter) RevokeAllLibraryAccessForUser(ctx context.Context, userID uuid.UUID) error {
+	return a.q.RevokeAllLibraryAccessForUser(ctx, userID)
+}
 
 type libraryAdapter struct{ q *gen.Queries }
 

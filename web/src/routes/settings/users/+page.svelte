@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, userApi, inviteApi, type User, type UserMeta } from '$lib/api';
+  import { api, userApi, inviteApi, type User, type UserMeta, type UserLibraryAccess } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
@@ -23,6 +23,12 @@
   let resetTarget: User | null = null;
   let resetPassword = '';
   let resetting = false;
+
+  // Library access
+  let librariesTarget: User | null = null;
+  let libraryAccess: UserLibraryAccess[] = [];
+  let librariesLoading = false;
+  let librariesSaving = false;
 
   // Invite flow
   let showInvite = false;
@@ -170,6 +176,42 @@
     return currentUser?.user_id === user.id;
   }
 
+  async function openLibraries(user: User) {
+    librariesTarget = user;
+    librariesLoading = true;
+    libraryAccess = [];
+    try {
+      libraryAccess = await userApi.getLibraries(user.id) ?? [];
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load library access');
+      librariesTarget = null;
+    } finally {
+      librariesLoading = false;
+    }
+  }
+
+  async function saveLibraries() {
+    if (!librariesTarget) return;
+    librariesSaving = true;
+    try {
+      const ids = libraryAccess.filter(l => l.enabled).map(l => l.library_id);
+      await userApi.setLibraries(librariesTarget.id, ids);
+      toast.success(`Library access updated for "${librariesTarget.username}"`);
+      librariesTarget = null;
+      libraryAccess = [];
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update library access');
+    } finally {
+      librariesSaving = false;
+    }
+  }
+
+  function toggleLibrary(libraryId: string) {
+    libraryAccess = libraryAccess.map(l =>
+      l.library_id === libraryId ? { ...l, enabled: !l.enabled } : l
+    );
+  }
+
   function formatDate(dateStr: string): string {
     try {
       return new Date(dateStr).toLocaleDateString(undefined, {
@@ -313,6 +355,13 @@
               </td>
               <td class="date-cell">{formatDate(user.created_at)}</td>
               <td class="actions-cell">
+                {#if !user.is_admin}
+                  <button
+                    class="btn-libraries"
+                    on:click={() => openLibraries(user)}
+                    title="Manage library access"
+                  >Libraries</button>
+                {/if}
                 <button
                   class="btn-reset"
                   on:click={() => { resetTarget = user; resetPassword = ''; }}
@@ -386,6 +435,45 @@
           <button class="btn-cancel" on:click={() => deleteTarget = null}>Cancel</button>
           <button class="btn-confirm-delete" disabled={deleting} on:click={deleteUser}>
             {deleting ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Library access dialog -->
+  {#if librariesTarget}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="overlay" on:click={() => librariesTarget = null}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="dialog" on:click|stopPropagation>
+        <h2>Library access</h2>
+        <p>Choose which libraries <strong>{librariesTarget.username}</strong> can see.</p>
+        {#if librariesLoading}
+          <div class="skeleton-block" style="height:120px;margin-bottom:1rem;"></div>
+        {:else if libraryAccess.length === 0}
+          <div class="empty" style="padding:1rem 0;">No libraries configured.</div>
+        {:else}
+          <ul class="library-list">
+            {#each libraryAccess as lib (lib.library_id)}
+              <li>
+                <label class="library-row">
+                  <input
+                    type="checkbox"
+                    checked={lib.enabled}
+                    on:change={() => toggleLibrary(lib.library_id)}
+                  />
+                  <span class="library-name">{lib.name}</span>
+                  <span class="library-type">{lib.type}</span>
+                </label>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <div class="dialog-actions">
+          <button class="btn-cancel" on:click={() => librariesTarget = null}>Cancel</button>
+          <button class="btn-save" disabled={librariesLoading || librariesSaving} on:click={saveLibraries}>
+            {librariesSaving ? 'Saving...' : 'Save'}
           </button>
         </div>
       </div>
@@ -558,6 +646,34 @@
     cursor: pointer; transition: all 0.15s;
   }
   .btn-reset:hover { background: rgba(167,139,250,0.1); border-color: rgba(167,139,250,0.4); }
+  .btn-libraries {
+    padding: 0.3rem 0.6rem; background: none;
+    border: 1px solid rgba(94,189,255,0.25); border-radius: 6px;
+    color: #60a5fa; font-size: 0.72rem; font-weight: 500;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn-libraries:hover { background: rgba(94,189,255,0.1); border-color: rgba(94,189,255,0.4); }
+
+  .library-list {
+    list-style: none; margin: 0 0 1rem; padding: 0;
+    max-height: 280px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .library-list li + li { border-top: 1px solid var(--input-bg); }
+  .library-row {
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.55rem 0.75rem; cursor: pointer;
+    font-size: 0.85rem; color: var(--text-primary);
+  }
+  .library-row:hover { background: rgba(255,255,255,0.03); }
+  .library-row input[type="checkbox"] { margin: 0; width: 16px; height: 16px; accent-color: var(--accent); }
+  .library-name { flex: 1; }
+  .library-type {
+    font-size: 0.68rem; text-transform: uppercase;
+    color: var(--text-muted); letter-spacing: 0.05em;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px; padding: 0.1rem 0.4rem;
+  }
   .btn-delete {
     padding: 0.3rem 0.6rem; background: none;
     border: 1px solid rgba(248,113,113,0.25); border-radius: 6px;

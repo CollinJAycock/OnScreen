@@ -22,12 +22,19 @@ type SearchDB interface {
 // SearchHandler serves media search results.
 type SearchHandler struct {
 	db     SearchDB
+	access LibraryAccessChecker
 	logger *slog.Logger
 }
 
 // NewSearchHandler creates a SearchHandler.
 func NewSearchHandler(db SearchDB, logger *slog.Logger) *SearchHandler {
 	return &SearchHandler{db: db, logger: logger}
+}
+
+// WithLibraryAccess enables per-user library filtering on search results.
+func (h *SearchHandler) WithLibraryAccess(a LibraryAccessChecker) *SearchHandler {
+	h.access = a
+	return h
 }
 
 // SearchResult is a compact result for search display.
@@ -60,15 +67,39 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	// Extract content rating filter from auth claims.
-	var maxRank *int32
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-		maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	maxRank := maxRatingRankFromClaims(claims.MaxContentRating)
+
+	// Pre-compute allowed library set. Nil means admin → no filtering.
+	var allowed map[uuid.UUID]struct{}
+	if h.access != nil {
+		allowed, err = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "search: allowed libraries", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	libAllowed := func(id uuid.UUID) bool {
+		if allowed == nil {
+			return true
+		}
+		_, ok := allowed[id]
+		return ok
 	}
 
 	if libID := r.URL.Query().Get("library_id"); libID != "" {
 		uid, parseErr := uuid.Parse(libID)
 		if parseErr != nil {
 			respond.BadRequest(w, r, "invalid library_id")
+			return
+		}
+		if !libAllowed(uid) {
+			respond.Success(w, r, []SearchResult{})
 			return
 		}
 		rows, qErr := h.db.SearchMediaItems(r.Context(), gen.SearchMediaItemsParams{
@@ -95,6 +126,9 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))
 		for _, row := range rows {
+			if !libAllowed(row.LibraryID) {
+				continue
+			}
 			results = append(results, SearchResult{
 				ID: row.ID.String(), LibraryID: row.LibraryID.String(),
 				Title: row.Title, Type: row.Type,

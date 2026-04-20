@@ -76,6 +76,14 @@ type Querier interface {
 	ListLibrariesDueForScan(ctx context.Context) ([]Library, error)
 	ListLibrariesDueForMetadataRefresh(ctx context.Context) ([]Library, error)
 	CountLibraries(ctx context.Context) (int64, error)
+
+	// Per-user library access (ACL). Default-deny: absence of a row means the
+	// user has no access. Admins bypass this table at the service layer.
+	ListLibraryAccessByUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	ListAllowedLibraryIDsForUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	HasLibraryAccess(ctx context.Context, userID, libraryID uuid.UUID) (bool, error)
+	GrantLibraryAccess(ctx context.Context, userID, libraryID uuid.UUID) error
+	RevokeAllLibraryAccessForUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // ScanEnqueuer is called when a library needs a scan job dispatched.
@@ -113,6 +121,122 @@ func (s *Service) List(ctx context.Context) ([]Library, error) {
 		return nil, fmt.Errorf("list libraries: %w", err)
 	}
 	return libs, nil
+}
+
+// ListForUser returns libraries the user has access to. Admins get the full
+// list unchanged; non-admins are filtered against the library_access table.
+// Default-deny: a user with no rows in library_access sees nothing.
+func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, isAdmin bool) ([]Library, error) {
+	if isAdmin {
+		return s.List(ctx)
+	}
+	allowed, err := s.ro.ListAllowedLibraryIDsForUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list allowed library ids: %w", err)
+	}
+	if len(allowed) == 0 {
+		return []Library{}, nil
+	}
+	set := make(map[uuid.UUID]struct{}, len(allowed))
+	for _, id := range allowed {
+		set[id] = struct{}{}
+	}
+	libs, err := s.ro.ListLibraries(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list libraries: %w", err)
+	}
+	filtered := libs[:0]
+	for _, lib := range libs {
+		if _, ok := set[lib.ID]; ok {
+			filtered = append(filtered, lib)
+		}
+	}
+	return filtered, nil
+}
+
+// AllowedLibraryIDs returns a set of library IDs the user can access, or nil
+// for admins (meaning "all libraries, no filtering needed"). Callers can use
+// the nil return as a fast-path to skip filtering entirely.
+func (s *Service) AllowedLibraryIDs(ctx context.Context, userID uuid.UUID, isAdmin bool) (map[uuid.UUID]struct{}, error) {
+	if isAdmin {
+		return nil, nil
+	}
+	ids, err := s.ro.ListAllowedLibraryIDsForUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list allowed library ids: %w", err)
+	}
+	set := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set, nil
+}
+
+// CanAccessLibrary returns true if the user is allowed to see the given
+// library. Admins always return true. Non-admins are checked against the
+// library_access table.
+func (s *Service) CanAccessLibrary(ctx context.Context, userID, libraryID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin {
+		return true, nil
+	}
+	ok, err := s.ro.HasLibraryAccess(ctx, userID, libraryID)
+	if err != nil {
+		return false, fmt.Errorf("check library access: %w", err)
+	}
+	return ok, nil
+}
+
+// ListAccessForUser returns every library paired with whether the user has
+// been granted access — the shape the Users-tab toggle UI needs. Admins are
+// reported as having access to everything.
+type LibraryAccess struct {
+	Library Library
+	Enabled bool
+}
+
+func (s *Service) ListAccessForUser(ctx context.Context, userID uuid.UUID, isAdmin bool) ([]LibraryAccess, error) {
+	libs, err := s.ro.ListLibraries(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list libraries: %w", err)
+	}
+	if isAdmin {
+		out := make([]LibraryAccess, len(libs))
+		for i := range libs {
+			out[i] = LibraryAccess{Library: libs[i], Enabled: true}
+		}
+		return out, nil
+	}
+	granted, err := s.ro.ListLibraryAccessByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list library access: %w", err)
+	}
+	set := make(map[uuid.UUID]struct{}, len(granted))
+	for _, id := range granted {
+		set[id] = struct{}{}
+	}
+	out := make([]LibraryAccess, len(libs))
+	for i := range libs {
+		_, ok := set[libs[i].ID]
+		out[i] = LibraryAccess{Library: libs[i], Enabled: ok}
+	}
+	return out, nil
+}
+
+// ReplaceAccessForUser sets the user's library grants to exactly the given
+// list. No-op for admins (they bypass the table; saving grants would be
+// misleading). Library IDs that don't exist are silently skipped by the DB's
+// FK constraint — callers should validate upstream if strict semantics are
+// required.
+func (s *Service) ReplaceAccessForUser(ctx context.Context, userID uuid.UUID, libraryIDs []uuid.UUID) error {
+	if err := s.rw.RevokeAllLibraryAccessForUser(ctx, userID); err != nil {
+		return fmt.Errorf("revoke all access for user %s: %w", userID, err)
+	}
+	for _, libID := range libraryIDs {
+		if err := s.rw.GrantLibraryAccess(ctx, userID, libID); err != nil {
+			return fmt.Errorf("grant library %s to user %s: %w", libID, userID, err)
+		}
+	}
+	return nil
 }
 
 // Create creates a new library and enqueues an initial scan.

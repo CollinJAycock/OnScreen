@@ -30,6 +30,7 @@ LIMIT 10000;
 SELECT we.id, we.user_id, we.media_id, we.event_type,
        we.position_ms, we.duration_ms, we.client_name, we.client_id,
        we.occurred_at,
+       m.library_id AS library_id,
        m.type AS media_type, m.title AS media_title, m.year AS media_year,
        m.thumb_path AS media_thumb
 FROM watch_events we

@@ -85,6 +85,8 @@ type MediaItemResponse struct {
 type LibraryServiceIface interface {
 	Get(ctx context.Context, id uuid.UUID) (*library.Library, error)
 	List(ctx context.Context) ([]library.Library, error)
+	ListForUser(ctx context.Context, userID uuid.UUID, isAdmin bool) ([]library.Library, error)
+	CanAccessLibrary(ctx context.Context, userID, libraryID uuid.UUID, isAdmin bool) (bool, error)
 	Create(ctx context.Context, p library.CreateLibraryParams) (*library.Library, error)
 	Update(ctx context.Context, p library.UpdateLibraryParams) (*library.Library, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -111,7 +113,12 @@ func (h *LibraryHandler) WithMedia(m MediaItemLister) *LibraryHandler {
 
 // List handles GET /api/v1/libraries.
 func (h *LibraryHandler) List(w http.ResponseWriter, r *http.Request) {
-	libs, err := h.svc.List(r.Context())
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	libs, err := h.svc.ListForUser(r.Context(), claims.UserID, claims.IsAdmin)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list libraries", "err", err)
 		respond.InternalError(w, r)
@@ -129,6 +136,21 @@ func (h *LibraryHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid library id")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !ok {
+		respond.NotFound(w, r)
 		return
 	}
 
@@ -311,6 +333,21 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid library id")
 		return
 	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !ok {
+		respond.NotFound(w, r)
+		return
+	}
 
 	lib, err := h.svc.Get(r.Context(), id)
 	if err != nil {
@@ -419,6 +456,21 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid library id")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !ok {
+		respond.NotFound(w, r)
 		return
 	}
 	genres, err := h.media.ListDistinctGenres(r.Context(), id)

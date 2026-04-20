@@ -229,6 +229,7 @@ func TestItemGet_WithViewOffset(t *testing.T) {
 func TestItemChildren_Success(t *testing.T) {
 	parentID := uuid.New()
 	ms := &mockItemMedia{
+		item: &media.Item{ID: parentID, Title: "Show", Type: "show"},
 		children: []media.Item{
 			{ID: uuid.New(), Title: "S01E01", Type: "episode"},
 			{ID: uuid.New(), Title: "S01E02", Type: "episode"},
@@ -273,11 +274,13 @@ func (p *perChildWatch) GetState(_ context.Context, _, mediaID uuid.UUID) (watch
 func (p *perChildWatch) Record(_ context.Context, _ watchevent.RecordParams) error { return nil }
 
 func TestItemChildren_WatchStatePopulated(t *testing.T) {
+	parentID := uuid.New()
 	inProgressID := uuid.New()
 	watchedID := uuid.New()
 	unwatchedID := uuid.New()
 
 	ms := &mockItemMedia{
+		item: &media.Item{ID: parentID, Title: "Show", Type: "show"},
 		children: []media.Item{
 			{ID: inProgressID, Title: "E1", Type: "episode"},
 			{ID: watchedID, Title: "E2", Type: "episode"},
@@ -322,8 +325,10 @@ func TestItemChildren_WatchStatePopulated(t *testing.T) {
 }
 
 func TestItemChildren_WatchStateSkippedWithoutClaims(t *testing.T) {
+	parentID := uuid.New()
 	childID := uuid.New()
 	ms := &mockItemMedia{
+		item:     &media.Item{ID: parentID, Title: "Show", Type: "show"},
 		children: []media.Item{{ID: childID, Title: "E1", Type: "episode"}},
 	}
 	ws := &perChildWatch{states: map[uuid.UUID]watchevent.WatchState{

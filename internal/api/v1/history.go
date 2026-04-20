@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
+
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
@@ -19,12 +21,19 @@ type HistoryDB interface {
 // HistoryHandler serves watch history data.
 type HistoryHandler struct {
 	db     HistoryDB
+	access LibraryAccessChecker
 	logger *slog.Logger
 }
 
 // NewHistoryHandler creates a HistoryHandler.
 func NewHistoryHandler(db HistoryDB, logger *slog.Logger) *HistoryHandler {
 	return &HistoryHandler{db: db, logger: logger}
+}
+
+// WithLibraryAccess enables per-user library filtering on history rows.
+func (h *HistoryHandler) WithLibraryAccess(a LibraryAccessChecker) *HistoryHandler {
+	h.access = a
+	return h
 }
 
 // WatchHistoryItem is the JSON response type for a single watch history entry.
@@ -58,6 +67,24 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		offset = int32(v)
 	}
 
+	var allowed map[uuid.UUID]struct{}
+	if h.access != nil {
+		var aerr error
+		allowed, aerr = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+		if aerr != nil {
+			h.logger.ErrorContext(r.Context(), "history: allowed libraries", "err", aerr)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	libAllowed := func(id uuid.UUID) bool {
+		if allowed == nil {
+			return true
+		}
+		_, ok := allowed[id]
+		return ok
+	}
+
 	rows, err := h.db.ListWatchHistory(r.Context(), gen.ListWatchHistoryParams{
 		UserID: claims.UserID,
 		Limit:  limit,
@@ -69,8 +96,11 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]WatchHistoryItem, len(rows))
-	for i, row := range rows {
+	items := make([]WatchHistoryItem, 0, len(rows))
+	for _, row := range rows {
+		if !libAllowed(row.LibraryID) {
+			continue
+		}
 		item := WatchHistoryItem{
 			ID:      row.ID.String(),
 			MediaID: row.MediaID.String(),
@@ -90,7 +120,7 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 			item.OccurredAt = row.OccurredAt.Time.Format("2006-01-02T15:04:05Z")
 		}
 
-		items[i] = item
+		items = append(items, item)
 	}
 
 	// The ListWatchHistory query does not return a total count.

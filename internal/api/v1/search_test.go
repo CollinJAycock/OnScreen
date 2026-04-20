@@ -56,7 +56,7 @@ func TestSearch_GlobalSuccess(t *testing.T) {
 	h := newSearchHandler(db)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/search?q=inception", nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/search?q=inception", nil))
 	h.Search(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -89,7 +89,7 @@ func TestSearch_LibraryScoped(t *testing.T) {
 	h := newSearchHandler(db)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/search?q=friends&library_id="+libID.String(), nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/search?q=friends&library_id="+libID.String(), nil))
 	h.Search(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -111,7 +111,7 @@ func TestSearch_EmptyQuery_Returns400(t *testing.T) {
 	h := newSearchHandler(&mockSearchDB{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/search?q=", nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/search?q=", nil))
 	h.Search(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -126,7 +126,7 @@ func TestSearch_NoResults_ReturnsEmptyArray(t *testing.T) {
 	h := newSearchHandler(db)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/search?q=nonexistent", nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/search?q=nonexistent", nil))
 	h.Search(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -145,7 +145,7 @@ func TestSearch_InvalidLibraryID(t *testing.T) {
 	h := newSearchHandler(&mockSearchDB{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&library_id=not-a-uuid", nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/search?q=test&library_id=not-a-uuid", nil))
 	h.Search(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -160,7 +160,7 @@ func TestSearch_DBError_Returns500(t *testing.T) {
 	h := newSearchHandler(db)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test", nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/search?q=test", nil))
 	h.Search(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -175,7 +175,7 @@ func TestSearch_CustomLimit(t *testing.T) {
 	h := newSearchHandler(db)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&limit=5", nil)
+	req := withClaims(httptest.NewRequest("GET", "/api/v1/search?q=test&limit=5", nil))
 	h.Search(rec, req)
 
 	if rec.Code != http.StatusOK {

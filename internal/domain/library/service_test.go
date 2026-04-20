@@ -15,6 +15,7 @@ import (
 
 type mockQuerier struct {
 	libs      map[uuid.UUID]Library
+	access    map[uuid.UUID][]uuid.UUID
 	listErr   error
 	createErr error
 	updateErr error
@@ -26,7 +27,10 @@ type mockQuerier struct {
 }
 
 func newMockQuerier() *mockQuerier {
-	return &mockQuerier{libs: make(map[uuid.UUID]Library)}
+	return &mockQuerier{
+		libs:   make(map[uuid.UUID]Library),
+		access: make(map[uuid.UUID][]uuid.UUID),
+	}
 }
 
 func (m *mockQuerier) GetLibrary(_ context.Context, id uuid.UUID) (Library, error) {
@@ -96,6 +100,43 @@ func (m *mockQuerier) ListLibrariesDueForMetadataRefresh(_ context.Context) ([]L
 }
 func (m *mockQuerier) CountLibraries(_ context.Context) (int64, error) {
 	return m.count, m.countErr
+}
+func (m *mockQuerier) ListLibraryAccessByUser(_ context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	return m.access[userID], nil
+}
+func (m *mockQuerier) ListAllowedLibraryIDsForUser(_ context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	ids := m.access[userID]
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := m.libs[id]; ok && m.libs[id].DeletedAt == nil {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+func (m *mockQuerier) HasLibraryAccess(_ context.Context, userID, libraryID uuid.UUID) (bool, error) {
+	for _, id := range m.access[userID] {
+		if id == libraryID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *mockQuerier) GrantLibraryAccess(_ context.Context, userID, libraryID uuid.UUID) error {
+	if m.access == nil {
+		m.access = make(map[uuid.UUID][]uuid.UUID)
+	}
+	for _, id := range m.access[userID] {
+		if id == libraryID {
+			return nil
+		}
+	}
+	m.access[userID] = append(m.access[userID], libraryID)
+	return nil
+}
+func (m *mockQuerier) RevokeAllLibraryAccessForUser(_ context.Context, userID uuid.UUID) error {
+	delete(m.access, userID)
+	return nil
 }
 
 type mockEnqueuer struct {

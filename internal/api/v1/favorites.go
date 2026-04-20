@@ -28,12 +28,19 @@ type FavoritesDB interface {
 // FavoritesHandler serves favorites endpoints.
 type FavoritesHandler struct {
 	db     FavoritesDB
+	access LibraryAccessChecker
 	logger *slog.Logger
 }
 
 // NewFavoritesHandler creates a FavoritesHandler.
 func NewFavoritesHandler(db FavoritesDB, logger *slog.Logger) *FavoritesHandler {
 	return &FavoritesHandler{db: db, logger: logger}
+}
+
+// WithLibraryAccess enables per-user library filtering on favorites.
+func (h *FavoritesHandler) WithLibraryAccess(a LibraryAccessChecker) *FavoritesHandler {
+	h.access = a
+	return h
 }
 
 // FavoriteItemResponse is the JSON shape for a single favorited item.
@@ -77,6 +84,24 @@ func (h *FavoritesHandler) List(w http.ResponseWriter, r *http.Request) {
 		maxRank = &rank
 	}
 
+	var allowed map[uuid.UUID]struct{}
+	if h.access != nil {
+		var aerr error
+		allowed, aerr = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+		if aerr != nil {
+			h.logger.ErrorContext(r.Context(), "favorites: allowed libraries", "err", aerr)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	libAllowed := func(id uuid.UUID) bool {
+		if allowed == nil {
+			return true
+		}
+		_, ok := allowed[id]
+		return ok
+	}
+
 	rows, err := h.db.ListFavorites(r.Context(), gen.ListFavoritesParams{
 		UserID:        claims.UserID,
 		Limit:         limit,
@@ -91,6 +116,9 @@ func (h *FavoritesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]FavoriteItemResponse, 0, len(rows))
 	for _, row := range rows {
+		if !libAllowed(row.LibraryID) {
+			continue
+		}
 		var favAt int64
 		if row.FavoritedAt.Valid {
 			favAt = row.FavoritedAt.Time.UnixMilli()

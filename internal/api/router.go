@@ -302,6 +302,8 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Patch("/users/{id}", h.User.SetAdmin)
 					r.Put("/users/{id}/password", h.User.ResetPassword)
 					r.Put("/users/{id}/content-rating", h.User.SetContentRating)
+					r.Get("/users/{id}/libraries", h.User.GetUserLibraries)
+					r.Put("/users/{id}/libraries", h.User.SetUserLibraries)
 				})
 			}
 

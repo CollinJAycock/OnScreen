@@ -36,12 +36,19 @@ type CollectionDB interface {
 // CollectionHandler handles /api/v1/collections.
 type CollectionHandler struct {
 	db     CollectionDB
+	access LibraryAccessChecker
 	logger *slog.Logger
 }
 
 // NewCollectionHandler creates a CollectionHandler.
 func NewCollectionHandler(db CollectionDB, logger *slog.Logger) *CollectionHandler {
 	return &CollectionHandler{db: db, logger: logger}
+}
+
+// WithLibraryAccess enables per-user library filtering on collection items.
+func (h *CollectionHandler) WithLibraryAccess(a LibraryAccessChecker) *CollectionHandler {
+	h.access = a
+	return h
 }
 
 type collectionResponse struct {
@@ -192,6 +199,30 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pre-compute allowed library set. Nil means admin → no filtering.
+	var allowed map[uuid.UUID]struct{}
+	if h.access != nil {
+		claims := middleware.ClaimsFromContext(r.Context())
+		if claims == nil {
+			respond.Unauthorized(w, r)
+			return
+		}
+		var aerr error
+		allowed, aerr = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+		if aerr != nil {
+			h.logger.ErrorContext(r.Context(), "collections: allowed libraries", "err", aerr)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	libAllowed := func(lid uuid.UUID) bool {
+		if allowed == nil {
+			return true
+		}
+		_, ok := allowed[lid]
+		return ok
+	}
+
 	// Auto-genre collections query media_items directly.
 	if col.Type == "auto_genre" && col.Genre != nil {
 		limit := int32(50)
@@ -211,13 +242,16 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		total, _ := h.db.CountItemsByGenre(r.Context(), []string{*col.Genre})
-		out := make([]collectionItemResponse, len(rows))
-		for i, row := range rows {
+		out := make([]collectionItemResponse, 0, len(rows))
+		for _, row := range rows {
+			if !libAllowed(row.LibraryID) {
+				continue
+			}
 			var rating *float64
 			if f8, err := row.Rating.Float64Value(); err == nil && f8.Valid {
 				rating = &f8.Float64
 			}
-			out[i] = collectionItemResponse{
+			out = append(out, collectionItemResponse{
 				ID:         row.ID.String(),
 				Title:      row.Title,
 				Type:       row.Type,
@@ -225,7 +259,7 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 				Rating:     rating,
 				PosterPath: row.PosterPath,
 				DurationMS: row.DurationMs,
-			}
+			})
 		}
 		respond.List(w, r, out, total, "")
 		return
@@ -238,13 +272,16 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	out := make([]collectionItemResponse, len(rows))
-	for i, row := range rows {
+	out := make([]collectionItemResponse, 0, len(rows))
+	for _, row := range rows {
+		if !libAllowed(row.LibraryID) {
+			continue
+		}
 		var rating *float64
 		if f8, err := row.Rating.Float64Value(); err == nil && f8.Valid {
 			rating = &f8.Float64
 		}
-		out[i] = collectionItemResponse{
+		out = append(out, collectionItemResponse{
 			ID:         row.ID.String(),
 			Title:      row.Title,
 			Type:       row.Type,
@@ -253,7 +290,7 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 			PosterPath: row.PosterPath,
 			DurationMS: row.DurationMs,
 			Position:   row.Position,
-		}
+		})
 	}
 	respond.List(w, r, out, int64(len(out)), "")
 }

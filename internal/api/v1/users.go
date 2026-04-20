@@ -69,13 +69,33 @@ type UserDB interface {
 	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
 }
 
+// UserLibraryAccessService is the subset of the library service needed to
+// read/write per-user library grants. Kept small so the user handler doesn't
+// depend on the whole library service API surface. The adapter is responsible
+// for looking up the target user's is_admin flag to decide whether to report
+// every library as enabled.
+type UserLibraryAccessService interface {
+	ListAccessForUser(ctx context.Context, userID uuid.UUID) ([]UserLibraryAccessEntry, error)
+	ReplaceAccessForUser(ctx context.Context, userID uuid.UUID, libraryIDs []uuid.UUID) error
+}
+
+// UserLibraryAccessEntry is a flat shape suitable for returning over JSON
+// without pulling the full library domain type into this package.
+type UserLibraryAccessEntry struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Enabled   bool      `json:"enabled"`
+}
+
 // UserHandler handles /api/v1/users endpoints.
 type UserHandler struct {
-	users  UserService
-	db     UserDB
-	tokens *auth.TokenMaker
-	logger *slog.Logger
-	audit  *audit.Logger
+	users    UserService
+	db       UserDB
+	tokens   *auth.TokenMaker
+	logger   *slog.Logger
+	audit    *audit.Logger
+	libAccess UserLibraryAccessService
 }
 
 // WithAudit attaches an audit logger. Returns the handler for chaining.
@@ -99,6 +119,13 @@ func (h *UserHandler) WithDB(db UserDB) *UserHandler {
 func (h *UserHandler) WithTokenMaker(tokens *auth.TokenMaker, logger *slog.Logger) *UserHandler {
 	h.tokens = tokens
 	h.logger = logger
+	return h
+}
+
+// WithLibraryAccess attaches the library-access service used by the per-user
+// library grant endpoints.
+func (h *UserHandler) WithLibraryAccess(svc UserLibraryAccessService) *UserHandler {
+	h.libAccess = svc
 	return h
 }
 
@@ -728,6 +755,72 @@ func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		respond.InternalError(w, r)
 		return
+	}
+	respond.NoContent(w)
+}
+
+// GetUserLibraries handles GET /api/v1/users/{id}/libraries — returns every
+// library paired with whether the target user currently has access. Admins
+// are reported as having access to everything.
+func (h *UserHandler) GetUserLibraries(w http.ResponseWriter, r *http.Request) {
+	if h.libAccess == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	entries, err := h.libAccess.ListAccessForUser(r.Context(), targetID)
+	if err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, entries)
+}
+
+// SetUserLibraries handles PUT /api/v1/users/{id}/libraries.
+// Body: {"library_ids":["uuid","uuid",...]}
+// Replaces the user's grants with exactly the given set.
+func (h *UserHandler) SetUserLibraries(w http.ResponseWriter, r *http.Request) {
+	if h.libAccess == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	var body struct {
+		LibraryIDs []string `json:"library_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(body.LibraryIDs))
+	for _, s := range body.LibraryIDs {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			respond.BadRequest(w, r, "invalid library id: "+s)
+			return
+		}
+		ids = append(ids, id)
+	}
+	if err := h.libAccess.ReplaceAccessForUser(r.Context(), targetID, ids); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRoleChange, targetID.String(),
+			map[string]any{"library_ids": body.LibraryIDs}, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }

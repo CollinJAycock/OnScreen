@@ -94,6 +94,7 @@ const listWatchHistory = `-- name: ListWatchHistory :many
 SELECT we.id, we.user_id, we.media_id, we.event_type,
        we.position_ms, we.duration_ms, we.client_name, we.client_id,
        we.occurred_at,
+       m.library_id AS library_id,
        m.type AS media_type, m.title AS media_title, m.year AS media_year,
        m.thumb_path AS media_thumb
 FROM watch_events we
@@ -120,6 +121,7 @@ type ListWatchHistoryRow struct {
 	ClientName *string            `json:"client_name"`
 	ClientID   *string            `json:"client_id"`
 	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
+	LibraryID  uuid.UUID          `json:"library_id"`
 	MediaType  string             `json:"media_type"`
 	MediaTitle string             `json:"media_title"`
 	MediaYear  *int32             `json:"media_year"`
@@ -145,6 +147,7 @@ func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryPara
 			&i.ClientName,
 			&i.ClientID,
 			&i.OccurredAt,
+			&i.LibraryID,
 			&i.MediaType,
 			&i.MediaTitle,
 			&i.MediaYear,

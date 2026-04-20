@@ -77,6 +77,13 @@ type ItemFavoriteChecker interface {
 	IsFavorite(ctx context.Context, userID, mediaID uuid.UUID) (bool, error)
 }
 
+// LibraryAccessChecker reports whether a user can access a given library.
+// Kept as a small interface so handlers don't depend on the full library service.
+type LibraryAccessChecker interface {
+	CanAccessLibrary(ctx context.Context, userID, libraryID uuid.UUID, isAdmin bool) (bool, error)
+	AllowedLibraryIDs(ctx context.Context, userID uuid.UUID, isAdmin bool) (map[uuid.UUID]struct{}, error)
+}
+
 // ItemHandler handles /api/v1/items.
 type ItemHandler struct {
 	media     ItemMediaService
@@ -86,6 +93,7 @@ type ItemHandler struct {
 	matcher   ItemMatchSearcher
 	webhooks  ItemWebhookDispatcher
 	favorites ItemFavoriteChecker
+	access    LibraryAccessChecker
 	tracker   *streaming.Tracker
 	logger    *slog.Logger
 }
@@ -93,6 +101,40 @@ type ItemHandler struct {
 // NewItemHandler creates an ItemHandler.
 func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions ItemSessionCleaner, enricher ItemEnricher, matcher ItemMatchSearcher, webhooks ItemWebhookDispatcher, favorites ItemFavoriteChecker, tracker *streaming.Tracker, logger *slog.Logger) *ItemHandler {
 	return &ItemHandler{media: media, watch: watch, sessions: sessions, enricher: enricher, matcher: matcher, webhooks: webhooks, favorites: favorites, tracker: tracker, logger: logger}
+}
+
+// WithLibraryAccess attaches the library-access checker. When nil, all items
+// pass — this matches the pre-ACL behavior. Wire it in to enforce per-library
+// grants on item endpoints.
+func (h *ItemHandler) WithLibraryAccess(a LibraryAccessChecker) *ItemHandler {
+	h.access = a
+	return h
+}
+
+// checkLibraryAccess returns true if the caller is allowed to see items in the
+// given library. Returns false + writes NotFound when denied. Returns false +
+// writes InternalError on lookup failure. When the handler has no access
+// checker wired (dev setups pre-migration), returns true to avoid lockouts.
+func (h *ItemHandler) checkLibraryAccess(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID) bool {
+	if h.access == nil {
+		return true
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return false
+	}
+	ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, libraryID, claims.IsAdmin)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "check library access", "library_id", libraryID, "err", err)
+		respond.InternalError(w, r)
+		return false
+	}
+	if !ok {
+		respond.NotFound(w, r)
+		return false
+	}
+	return true
 }
 
 // AudioStreamJSON is the API representation of an audio stream.
@@ -197,6 +239,10 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
+
 	// Enforce content rating restriction from claims.
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		cr := ""
@@ -292,6 +338,20 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	parent, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for children", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkLibraryAccess(w, r, parent.LibraryID) {
+		return
+	}
+
 	children, err := h.media.ListChildren(r.Context(), id)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list item children", "id", id, "err", err)
@@ -349,6 +409,22 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	if claims == nil {
 		respond.Unauthorized(w, r)
 		return
+	}
+
+	if h.access != nil {
+		item, err := h.media.GetItem(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, media.ErrNotFound) {
+				respond.NotFound(w, r)
+				return
+			}
+			h.logger.ErrorContext(r.Context(), "get item for progress", "id", id, "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		if !h.checkLibraryAccess(w, r, item.LibraryID) {
+			return
+		}
 	}
 
 	var body struct {

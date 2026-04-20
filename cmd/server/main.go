@@ -277,16 +277,20 @@ func run() error {
 
 	userSvc := newUserService(gen.New(rwPool))
 
-	userHandler := v1.NewUserHandler(userSvc).WithDB(gen.New(rwPool)).WithTokenMaker(tokenMaker, logger).WithAudit(auditLogger)
+	userHandler := v1.NewUserHandler(userSvc).
+		WithDB(gen.New(rwPool)).
+		WithTokenMaker(tokenMaker, logger).
+		WithAudit(auditLogger).
+		WithLibraryAccess(&userLibraryAccessAdapter{lib: libSvc, q: gen.New(roPool)})
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
 	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
 	streamTracker := streaming.NewValkeyTracker(valkeyClient)
 	analyticsHandler := v1.NewAnalyticsHandler(gen.New(roPool), logger)
-	hubHandler := v1.NewHubHandler(gen.New(roPool), logger)
-	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger)
-	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger)
+	hubHandler := v1.NewHubHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
+	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
+	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
 	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
 	// Derive a stable machine ID from the secret key so webhook payloads
 	// identify this server consistently across restarts without a dedicated config field.
@@ -302,9 +306,10 @@ func run() error {
 	matchAdapter := &matchSearchAdapter{enricher: metaAgent}
 	arrAdapter := &arrLibraryAdapter{libSvc: libSvc, scanner: libEnqueuer}
 	arrHandler := v1.NewArrHandler(settingsSvc, arrAdapter, logger)
-	favoritesHandler := v1.NewFavoritesHandler(gen.New(rwPool), logger)
+	favoritesHandler := v1.NewFavoritesHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc)
 	favoritesChecker := &favoritesChecker{q: gen.New(roPool)}
-	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger)
+	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
+		WithLibraryAccess(libSvc)
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger)
 
 	// ── Embedded transcode worker ─────────────────────────────────────────────
@@ -438,7 +443,7 @@ func run() error {
 		History:            historyHandler,
 		Items:              itemHandler,
 		NativeTranscode:    nativeTranscodeHandler,
-		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger),
+		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Arr:                arrHandler,
 		GoogleAuth:         googleAuthHandler,
 		GitHubAuth:         githubAuthHandler,
