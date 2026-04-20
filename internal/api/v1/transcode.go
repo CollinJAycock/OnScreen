@@ -526,8 +526,10 @@ func proxyWorkerFile(w http.ResponseWriter, r *http.Request, workerAddr, sessID,
 
 // sanitizePathComponent strips directory traversal from a path component.
 // Used on session IDs and segment names before joining into filesystem paths.
+// Normalizes backslashes to forward slashes so Windows-style traversal
+// attempts are caught on non-Windows hosts.
 func sanitizePathComponent(s string) string {
-	return filepath.Base(s)
+	return filepath.Base(strings.ReplaceAll(s, `\`, `/`))
 }
 
 // rewritePlaylist rewrites segment URIs in an HLS playlist to absolute API paths

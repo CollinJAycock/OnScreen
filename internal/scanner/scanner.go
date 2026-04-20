@@ -559,6 +559,8 @@ var numericNameRE = regexp.MustCompile(`^\d+$`)
 // For Blu-ray rips where the filename is purely numeric (e.g. "00000.m2ts"),
 // it falls back to the parent directory name (e.g. "War Machine (2026)").
 func parseFilename(path string) (string, *int) {
+	// Normalize backslashes so Windows-style paths parse correctly on any host.
+	path = strings.ReplaceAll(filepath.ToSlash(path), `\`, `/`)
 	base := filepath.Base(path)
 	ext := filepath.Ext(base)
 	stem := base[:len(base)-len(ext)]
@@ -641,6 +643,11 @@ func isMusicFile(path string) bool {
 // or uses the legacy .artwork/ directory prefix.
 func badPosterPath(p string) bool {
 	slashed := filepath.ToSlash(p)
+	// Windows drive-letter absolute (e.g. C:\...) — caught explicitly because
+	// filepath.IsAbs on Linux won't flag it.
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '/' || p[2] == '\\') {
+		return true
+	}
 	if filepath.IsAbs(p) || strings.HasPrefix(slashed, "/") || strings.HasPrefix(slashed, "../") {
 		return true
 	}

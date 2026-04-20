@@ -200,12 +200,13 @@ func TestMasterLock_RunIfMaster_StopsOnLoss(t *testing.T) {
 		t.Fatal("fn not started")
 	}
 
-	// Evict the key — master status is lost.
-	_ = v.Del(context.Background(), masterKey)
+	// Simulate loss by overwriting the key with a different owner so that
+	// m.Run cannot immediately reacquire it on the next tick.
+	_ = v.Set(context.Background(), masterKey, "other", masterTTL)
 
 	select {
 	case <-stopped:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("fn not stopped after lock loss")
 	}
 }

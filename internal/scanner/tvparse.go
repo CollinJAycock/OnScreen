@@ -28,8 +28,9 @@ var seasonFolderRE = regexp.MustCompile(`(?i)^(?:Season\s*(\d{1,2})|S(\d{1,2}))$
 //
 // Returns (showTitle, season, episode, ok). If parsing fails, ok is false.
 func ParseTVFilename(path string) (showTitle string, season int, episode int, ok bool) {
-	// Normalise path separators so we can split on "/" uniformly.
-	path = filepath.ToSlash(path)
+	// Normalise path separators so we can split on "/" uniformly, including
+	// backslashes in Windows-style paths received on non-Windows hosts.
+	path = strings.ReplaceAll(filepath.ToSlash(path), `\`, `/`)
 
 	base := filepath.Base(path)
 	ext := filepath.Ext(base)
