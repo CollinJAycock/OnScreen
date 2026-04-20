@@ -35,6 +35,12 @@ type ArtworkFetcher interface {
 	// already exists. Used by the music enricher to override embedded album
 	// art with AudioDB's authoritative cover.
 	ReplacePoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
+	// DownloadArtistPoster/Fanart write to ID-qualified filenames to avoid
+	// collisions in flat music layouts where multiple artists share a parent
+	// directory (e.g., /Music/Artist/track.flac yields the library root as
+	// the artist dir for every artist, clobbering poster.jpg).
+	DownloadArtistPoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
+	DownloadArtistFanart(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 }
 
 // TVDBFallback provides episode + show metadata from TheTVDB as a fallback when
@@ -664,13 +670,13 @@ func (e *Enricher) enrichArtist(ctx context.Context, agent metadata.MusicAgent, 
 		p.Summary = &result.Biography
 	}
 	if result.ThumbURL != "" && artDir != "" && e.artwork != nil {
-		if abs, err := e.artwork.DownloadPoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
+		if abs, err := e.artwork.DownloadArtistPoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
 			rel := e.relPath(abs)
 			p.PosterPath = &rel
 		}
 	}
 	if result.FanartURL != "" && artDir != "" && e.artwork != nil {
-		if abs, err := e.artwork.DownloadFanart(ctx, item.ID, result.FanartURL, artDir); err == nil {
+		if abs, err := e.artwork.DownloadArtistFanart(ctx, item.ID, result.FanartURL, artDir); err == nil {
 			rel := e.relPath(abs)
 			p.FanartPath = &rel
 		}

@@ -51,6 +51,19 @@ func (m *Manager) DownloadFanart(ctx context.Context, _ uuid.UUID, url string, a
 	return m.download(ctx, url, filepath.Join(absDir, "fanart.jpg"), false)
 }
 
+// DownloadArtistPoster downloads an artist poster into absDir/{itemID}-poster.jpg.
+// The ID-qualified filename prevents collisions in flat music layouts where
+// multiple artists share the same parent directory (e.g., /Music/Artist/track.flac
+// causes artDir to resolve to /Music for every artist).
+func (m *Manager) DownloadArtistPoster(ctx context.Context, itemID uuid.UUID, url string, absDir string) (string, error) {
+	return m.download(ctx, url, filepath.Join(absDir, itemID.String()+"-poster.jpg"), false)
+}
+
+// DownloadArtistFanart is the fanart counterpart to DownloadArtistPoster.
+func (m *Manager) DownloadArtistFanart(ctx context.Context, itemID uuid.UUID, url string, absDir string) (string, error) {
+	return m.download(ctx, url, filepath.Join(absDir, itemID.String()+"-fanart.jpg"), false)
+}
+
 // DownloadThumb downloads an episode/track thumbnail into absDir/{uuid}.jpg.
 func (m *Manager) DownloadThumb(ctx context.Context, itemID uuid.UUID, url string, absDir string) (string, error) {
 	filename := itemID.String() + ".jpg"

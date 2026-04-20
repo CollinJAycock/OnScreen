@@ -142,6 +142,20 @@ func (m *mockArtwork) ReplacePoster(_ context.Context, _ uuid.UUID, _, _ string)
 	return m.posterPath, nil
 }
 
+func (m *mockArtwork) DownloadArtistPoster(_ context.Context, _ uuid.UUID, _, _ string) (string, error) {
+	if m.posterErr != nil {
+		return "", m.posterErr
+	}
+	return m.posterPath, nil
+}
+
+func (m *mockArtwork) DownloadArtistFanart(_ context.Context, _ uuid.UUID, _, _ string) (string, error) {
+	if m.fanartErr != nil {
+		return "", m.fanartErr
+	}
+	return m.fanartPath, nil
+}
+
 func newTestEnricher(agent metadata.Agent, updater *mockUpdater, artwork *mockArtwork) *Enricher {
 	agentFn := func() metadata.Agent { return agent }
 	if artwork == nil {
