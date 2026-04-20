@@ -841,16 +841,23 @@ func TestNormalizeTitle(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"Battle: Los Angeles", "battle los angeles"},
-		// Leading article "The " is stripped; year is kept as a token.
-		{"The Matrix (1999)", "matrix 1999"},
-		{"A Simple Plan", "simple plan"},
+		{"Battle: Los Angeles", "battlelosangeles"},
+		// Leading article "The " is stripped; year digits survive.
+		{"The Matrix (1999)", "matrix1999"},
+		{"A Simple Plan", "simpleplan"},
 		{"An Education", "education"},
-		// Non-leading articles stay put.
-		{"Day of the Dead", "day of the dead"},
-		{"HELLO WORLD", "hello world"},
-		{"  spaces  everywhere  ", "spaces everywhere"},
-		{"colons:and;semi", "colons and semi"},
+		// Non-leading articles stay put (but spaces around them are removed).
+		{"Day of the Dead", "dayofthedead"},
+		// AC/DC vs ACDC: slash is removed, both collapse to the same key.
+		{"AC/DC", "acdc"},
+		{"ACDC", "acdc"},
+		// "&" and "and" both fold to "and".
+		{"Rock & Roll", "rockandroll"},
+		{"Rock and Roll", "rockandroll"},
+		{"HELLO WORLD", "helloworld"},
+		{"  spaces  everywhere  ", "spaceseverywhere"},
+		{"colons:and;semi", "colonsandsemi"},
+		{"Bob's Burgers", "bobsburgers"},
 		{"", ""},
 	}
 	for _, tt := range tests {

@@ -983,24 +983,21 @@ const listDuplicateChildItems = `-- name: ListDuplicateChildItems :many
 WITH normalized AS (
     SELECT id, parent_id, type, year, tmdb_id, tvdb_id, musicbrainz_id,
            poster_path, created_at,
-           lower(trim(
+           lower(
                regexp_replace(
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       regexp_replace(
-                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
-                         '^\s*(the|a|an)\s+', '', 'i'
-                       ),
-                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       '^\s*(the|a|an)\s+', '', 'i'
                      ),
-                     '\s+(and|&)\s+', ' ', 'gi'
+                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                    ),
-                   '[^a-zA-Z0-9]+', ' ', 'g'
+                   '\s+(and|&)\s+', 'and', 'gi'
                  ),
-                 '\s+', ' ', 'g'
+                 '[^a-zA-Z0-9]+', '', 'g'
                )
-           )) AS norm
+           ) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NOT NULL
@@ -1070,24 +1067,21 @@ func (q *Queries) ListDuplicateChildItems(ctx context.Context, arg ListDuplicate
 const listDuplicateTopLevelItems = `-- name: ListDuplicateTopLevelItems :many
 WITH normalized AS (
     SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
-           lower(trim(
+           lower(
                regexp_replace(
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       regexp_replace(
-                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
-                         '^\s*(the|a|an)\s+', '', 'i'
-                       ),
-                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       '^\s*(the|a|an)\s+', '', 'i'
                      ),
-                     '\s+(and|&)\s+', ' ', 'gi'
+                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                    ),
-                   '[^a-zA-Z0-9]+', ' ', 'g'
+                   '\s+(and|&)\s+', 'and', 'gi'
                  ),
-                 '\s+', ' ', 'g'
+                 '[^a-zA-Z0-9]+', '', 'g'
                )
-           )) AS norm
+           ) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NULL
@@ -2569,24 +2563,21 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 const listPrefixDuplicateTopLevelItems = `-- name: ListPrefixDuplicateTopLevelItems :many
 WITH normalized AS (
     SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
-           lower(trim(
+           lower(
                regexp_replace(
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       regexp_replace(
-                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
-                         '^\s*(the|a|an)\s+', '', 'i'
-                       ),
-                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       '^\s*(the|a|an)\s+', '', 'i'
                      ),
-                     '\s+(and|&)\s+', ' ', 'gi'
+                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                    ),
-                   '[^a-zA-Z0-9]+', ' ', 'g'
+                   '\s+(and|&)\s+', 'and', 'gi'
                  ),
-                 '\s+', ' ', 'g'
+                 '[^a-zA-Z0-9]+', '', 'g'
                )
-           )) AS norm
+           ) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NULL

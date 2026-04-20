@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -490,28 +491,37 @@ func (s *Service) UpdateItemMetadata(ctx context.Context, p UpdateItemMetadataPa
 	return &item, nil
 }
 
-// normalizeTitle folds a title to a canonical form for deduplication: lowercase,
-// leading article stripped ("the"/"a"/"an"), non-alphanumeric characters
-// replaced by spaces, repeated spaces collapsed. "The Beatles" and "beatles"
-// both become "beatles"; "Battle: Los Angeles" and "battle los angeles" both
-// become "battle los angeles". Year in a trailing parenthetical is kept
-// because find-or-create treats the SQL-stored year as authoritative.
+// normalizeTitle folds a title to a canonical form for deduplication:
+// lowercase, leading article stripped ("the"/"a"/"an"), "&" folded to "and",
+// every non-alphanumeric character removed entirely. "The Beatles" and
+// "beatles" both become "beatles"; "AC/DC" and "ACDC" both become "acdc";
+// "Rock & Roll" and "Rock and Roll" both become "rockandroll"; "Battle: Los
+// Angeles" and "battle los angeles" both become "battlelosangeles".
+// Punctuation and whitespace differences never block a match. Year tokens
+// survive because digits are preserved. Kept in sync with the SQL used by
+// ListDuplicateTopLevelItems / ListDuplicateChildItems so that runtime
+// find-or-create matches the post-scan dedupe pass.
 func normalizeTitle(s string) string {
 	s = strings.ToLower(s)
-	s = strings.Map(func(r rune) rune {
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "'", "")
+	for _, article := range []string{"the ", "a ", "an "} {
+		if strings.HasPrefix(s, article) {
+			s = s[len(article):]
+			break
+		}
+	}
+	// Fold " & " / " and " to a single "and" token so either spelling matches.
+	s = andWordRE.ReplaceAllString(s, "and")
+	return strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			return r
 		}
-		return ' '
+		return -1
 	}, s)
-	s = strings.Join(strings.Fields(s), " ")
-	for _, article := range []string{"the ", "a ", "an "} {
-		if strings.HasPrefix(s, article) {
-			return s[len(article):]
-		}
-	}
-	return s
 }
+
+var andWordRE = regexp.MustCompile(`\s+(and|&)\s+`)
 
 // createMuFor returns a per-key mutex that serializes FindOrCreate* calls for
 // the same (library, type, title, year) tuple, preventing duplicate inserts.
