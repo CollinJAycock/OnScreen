@@ -62,6 +62,7 @@ type MediaService interface {
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
 	DedupeChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) (media.DedupeResult, error)
+	MergeCollabArtists(ctx context.Context, libraryID *uuid.UUID) (media.DedupeResult, error)
 	ListItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]media.Item, error)
 	FindTopLevelItem(ctx context.Context, libraryID uuid.UUID, itemType, title string) (*media.Item, error)
 }
@@ -316,10 +317,23 @@ func (s *Scanner) dedupeLibrary(ctx context.Context, libraryID uuid.UUID, librar
 }
 
 // dedupeMusicLibrary merges duplicate artists at the top level, then merges
-// duplicate albums under each surviving artist. Album dedupe runs after
-// artist dedupe so album rows that reparent during artist merge are seen
-// under the correct artist before their own dedupe pass.
+// duplicate albums under each surviving artist. Collab merge runs first so
+// scan-order doesn't matter: "Elton John & Bonnie Raitt" scanned before
+// "Elton John" still collapses into the canonical artist once both exist.
+// Album dedupe runs last so album rows that reparent during artist merges
+// are seen under the correct artist before their own dedupe pass.
 func (s *Scanner) dedupeMusicLibrary(ctx context.Context, libraryID uuid.UUID) {
+	collabDedup, err := s.media.MergeCollabArtists(ctx, &libraryID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "collab artist merge failed", "library_id", libraryID, "err", err)
+	} else if collabDedup.MergedItems > 0 || collabDedup.ReparentedRows > 0 {
+		s.logger.InfoContext(ctx, "collab artist merge collapsed rows",
+			"library_id", libraryID,
+			"merged_items", collabDedup.MergedItems,
+			"reparented_rows", collabDedup.ReparentedRows,
+		)
+	}
+
 	artistDedup, err := s.media.DedupeTopLevelItems(ctx, "artist", &libraryID)
 	if err != nil {
 		s.logger.WarnContext(ctx, "artist dedupe failed", "library_id", libraryID, "err", err)

@@ -10,10 +10,27 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
+
+// newDiacriticStripper returns a transformer that folds characters to their
+// NFD form and removes the combining marks, so "Beyoncé" and "Beyonce"
+// normalize to the same key. A new transformer is returned per call because
+// transform.Chain keeps internal buffers that aren't safe for concurrent
+// use. Kept in sync with the SQL unaccent() extension used by dedupe queries.
+func newDiacriticStripper() transform.Transformer {
+	return transform.Chain(
+		norm.NFD,
+		runes.Remove(runes.In(unicode.Mn)),
+		norm.NFC,
+	)
+}
 
 var (
 	ErrNotFound = errors.New("media not found")
@@ -123,6 +140,7 @@ type Querier interface {
 	ListDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ListPrefixDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ListDuplicateChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) ([]DuplicatePair, error)
+	ListCollabArtistMerges(ctx context.Context, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error
 	ReparentMediaFilesByItem(ctx context.Context, fromItemID, toItemID uuid.UUID) error
 
@@ -492,16 +510,19 @@ func (s *Service) UpdateItemMetadata(ctx context.Context, p UpdateItemMetadataPa
 }
 
 // normalizeTitle folds a title to a canonical form for deduplication:
-// lowercase, leading article stripped ("the"/"a"/"an"), "&" folded to "and",
-// every non-alphanumeric character removed entirely. "The Beatles" and
-// "beatles" both become "beatles"; "AC/DC" and "ACDC" both become "acdc";
-// "Rock & Roll" and "Rock and Roll" both become "rockandroll"; "Battle: Los
-// Angeles" and "battle los angeles" both become "battlelosangeles".
-// Punctuation and whitespace differences never block a match. Year tokens
-// survive because digits are preserved. Kept in sync with the SQL used by
-// ListDuplicateTopLevelItems / ListDuplicateChildItems so that runtime
-// find-or-create matches the post-scan dedupe pass.
+// lowercase, diacritics stripped, leading article stripped ("the"/"a"/"an"),
+// "&" folded to "and", every non-alphanumeric character removed entirely.
+// "The Beatles" and "beatles" both become "beatles"; "AC/DC" and "ACDC" both
+// become "acdc"; "Rock & Roll" and "Rock and Roll" both become "rockandroll";
+// "Beyoncé" and "Beyonce" both become "beyonce". Punctuation and whitespace
+// differences never block a match. Year tokens survive because digits are
+// preserved. Kept in sync with the SQL used by ListDuplicateTopLevelItems /
+// ListDuplicateChildItems so that runtime find-or-create matches the
+// post-scan dedupe pass.
 func normalizeTitle(s string) string {
+	if folded, _, err := transform.String(newDiacriticStripper(), s); err == nil {
+		s = folded
+	}
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, "&amp;", "&")
 	s = strings.ReplaceAll(s, "'", "")
@@ -745,6 +766,23 @@ func (s *Service) DedupeTopLevelItems(ctx context.Context, itemType string, libr
 		return res, fmt.Errorf("list prefix duplicate top-level items: %w", err)
 	}
 	if err := s.applyDedupePairs(ctx, prefixPairs, itemType, &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// MergeCollabArtists finds collaboration-style artist rows ("Elton John &
+// Bonnie Raitt", "The Black Eyed Peas, CL") whose primary name already exists
+// as a standalone artist in the same library, and merges the collab row into
+// the primary. This catches collab tags scanned before the primary artist
+// existed (scan-order dependent). Safe to run repeatedly.
+func (s *Service) MergeCollabArtists(ctx context.Context, libraryID *uuid.UUID) (DedupeResult, error) {
+	var res DedupeResult
+	pairs, err := s.rw.ListCollabArtistMerges(ctx, libraryID)
+	if err != nil {
+		return res, fmt.Errorf("list collab artist merges: %w", err)
+	}
+	if err := s.applyDedupePairs(ctx, pairs, "artist", &res); err != nil {
 		return res, err
 	}
 	return res, nil

@@ -534,6 +534,22 @@ func (a *mediaAdapter) ListDuplicateChildItems(ctx context.Context, itemType str
 	return out, nil
 }
 
+func (a *mediaAdapter) ListCollabArtistMerges(ctx context.Context, libraryID *uuid.UUID) ([]media.DuplicatePair, error) {
+	var libParam pgtype.UUID
+	if libraryID != nil {
+		libParam = pgtype.UUID{Bytes: [16]byte(*libraryID), Valid: true}
+	}
+	rows, err := a.q.ListCollabArtistMerges(ctx, libParam)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.DuplicatePair, len(rows))
+	for i, r := range rows {
+		out[i] = media.DuplicatePair{LoserID: r.LoserID, SurvivorID: r.SurvivorID}
+	}
+	return out, nil
+}
+
 func (a *mediaAdapter) ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error {
 	var p pgtype.UUID
 	if newParent != nil {

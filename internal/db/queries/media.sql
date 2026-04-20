@@ -78,7 +78,7 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
@@ -130,7 +130,7 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
@@ -188,7 +188,7 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
@@ -224,6 +224,41 @@ SELECT id AS loser_id, survivor_id::uuid AS survivor_id
 FROM ranked
 WHERE rn > 1
   AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year);
+
+-- name: ListCollabArtistMerges :many
+-- Finds artists whose title matches a collaboration pattern (A & B, A feat B,
+-- A / B, A, B) where the primary name before the first marker exists as a
+-- separate standalone artist in the same library. Returns (loser_id,
+-- survivor_id) pairs so the caller can reparent children and soft-delete
+-- losers via the existing merge plumbing. Conservative: only merges when
+-- the primary is an actual row, so "Simon & Garfunkel" (no "Simon" row)
+-- is left alone.
+WITH collabs AS (
+    SELECT c.id AS collab_id,
+           c.library_id,
+           unaccent(regexp_replace(
+               c.title,
+               '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+).+$',
+               '',
+               'i'
+           )) AS primary_norm
+    FROM media_items c
+    WHERE c.type = 'artist'
+      AND c.parent_id IS NULL
+      AND c.deleted_at IS NULL
+      AND c.title ~* '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+)'
+      AND (sqlc.narg('library_id')::uuid IS NULL OR c.library_id = sqlc.narg('library_id'))
+)
+SELECT c.collab_id AS loser_id,
+       p.id::uuid  AS survivor_id
+FROM collabs c
+JOIN media_items p
+  ON p.type = 'artist'
+ AND p.parent_id IS NULL
+ AND p.deleted_at IS NULL
+ AND p.library_id = c.library_id
+ AND lower(unaccent(p.title)) = lower(c.primary_norm)
+ AND p.id <> c.collab_id;
 
 -- name: ReparentMediaItem :exec
 UPDATE media_items

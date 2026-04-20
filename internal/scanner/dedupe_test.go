@@ -12,19 +12,19 @@ import (
 
 func TestDedupeLibrary_LibraryTypeGating(t *testing.T) {
 	tests := []struct {
-		libraryType  string
-		wantCalled   bool
-		wantItemType string
+		libraryType   string
+		wantItemTypes []string
 	}{
-		{"show", true, "show"},
-		{"movie", true, "movie"},
-		// Music triggers artist dedupe (and album dedupe via per-artist walk).
-		// Album dedupe fires only when artists exist; the mock has none so we
-		// only expect the one artist-level call here.
-		{"music", true, "artist"},
-		{"photo", false, ""},
-		{"", false, ""},
-		{"unknown", false, ""},
+		{"show", []string{"show"}},
+		{"movie", []string{"movie"}},
+		// Music triggers a collab-artist merge, then artist dedupe (and album
+		// dedupe via per-artist walk). Album dedupe fires only when artists
+		// exist; the mock has none so we only expect the two artist-level
+		// calls here.
+		{"music", []string{"collab-artist", "artist"}},
+		{"photo", nil},
+		{"", nil},
+		{"unknown", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.libraryType, func(t *testing.T) {
@@ -34,19 +34,17 @@ func TestDedupeLibrary_LibraryTypeGating(t *testing.T) {
 
 			s.dedupeLibrary(context.Background(), libID, tt.libraryType)
 
-			if tt.wantCalled {
-				if len(svc.dedupeCalls) != 1 {
-					t.Fatalf("want 1 dedupe call, got %d", len(svc.dedupeCalls))
-				}
-				c := svc.dedupeCalls[0]
-				if c.itemType != tt.wantItemType {
-					t.Errorf("itemType: got %q, want %q", c.itemType, tt.wantItemType)
+			if len(svc.dedupeCalls) != len(tt.wantItemTypes) {
+				t.Fatalf("want %d dedupe calls, got %d", len(tt.wantItemTypes), len(svc.dedupeCalls))
+			}
+			for i, want := range tt.wantItemTypes {
+				c := svc.dedupeCalls[i]
+				if c.itemType != want {
+					t.Errorf("call[%d] itemType: got %q, want %q", i, c.itemType, want)
 				}
 				if c.libraryID != libID {
-					t.Errorf("libraryID: got %s, want %s", c.libraryID, libID)
+					t.Errorf("call[%d] libraryID: got %s, want %s", i, c.libraryID, libID)
 				}
-			} else if len(svc.dedupeCalls) != 0 {
-				t.Fatalf("want 0 dedupe calls for %q, got %d", tt.libraryType, len(svc.dedupeCalls))
 			}
 		})
 	}

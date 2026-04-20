@@ -22,14 +22,20 @@ import (
 )
 
 // collabArtistRE matches the tail portion of a collaboration-style artist tag
-// like "Elton John & Bonnie Raitt", "Jay-Z feat. Rihanna", or
-// "The Black Eyed Peas, CL". The regex accepts a comma, "&", "and",
-// "feat[.]?", "ft[.]?", "featuring", and "with" as collab markers.
-// Stripping is applied only when the primary name (the text before the first
-// marker) already exists as a standalone artist in the library — otherwise
-// legitimate band names like "Simon & Garfunkel" or
+// like "Elton John & Bonnie Raitt", "Jay-Z feat. Rihanna",
+// "The Black Eyed Peas, CL", or "Beyonce / Jay-Z". The regex accepts a comma,
+// slash, "&", "and", "feat[.]?", "ft[.]?", "featuring", and "with" as collab
+// markers. Stripping is applied only when the primary name (the text before
+// the first marker) already exists as a standalone artist in the library —
+// otherwise legitimate band names like "Simon & Garfunkel" or
 // "Nick Cave and the Bad Seeds" would be damaged.
-var collabArtistRE = regexp.MustCompile(`(?i)(\s*,\s*|\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+).+$`)
+var collabArtistRE = regexp.MustCompile(`(?i)(\s*,\s*|\s*/\s*|\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+).+$`)
+
+// lastFirstRE matches "Last, First" pairs commonly produced by classical/jazz
+// taggers (e.g. "Dylan, Bob", "Mitchell, Joni"). Both halves must be a single
+// token so genuine collab tags like "Beyonce, Jay-Z" aren't miscategorized —
+// those still fall through to collabArtistRE via the comma branch.
+var lastFirstRE = regexp.MustCompile(`^([^,\s]+),\s+([^,\s]+)$`)
 
 // primaryArtistName strips a trailing collaborator from an artist string.
 // Returns "" if no collab marker is found. Callers should verify the result
@@ -42,13 +48,29 @@ func primaryArtistName(s string) string {
 	return strings.TrimSpace(trimmed)
 }
 
+// flipLastFirst rewrites "Last, First" to "First Last". Returns "" if the
+// input doesn't match the pattern so callers can detect no-op cases.
+func flipLastFirst(s string) string {
+	m := lastFirstRE.FindStringSubmatch(s)
+	if m == nil {
+		return ""
+	}
+	return m[2] + " " + m[1]
+}
+
 // resolveArtistTitle returns the artist title to use for a track's hierarchy.
-// If the tag is a collaboration (e.g. "Elton John & Bonnie Raitt") and the
-// primary name ("Elton John") already exists as a standalone artist in the
-// library, the primary name is returned so the track is parented under the
-// canonical artist. Otherwise the tag is returned unchanged so legitimate
-// multi-name bands are preserved.
+// Two corrections are applied in order:
+//  1. "Last, First" → "First Last" (e.g. "Dylan, Bob" → "Bob Dylan"), so
+//     taggers that write surname-first don't shard the catalog.
+//  2. Collab tag → primary name, if the primary already exists as a
+//     standalone artist ("Elton John & Bonnie Raitt" → "Elton John").
+//
+// If neither applies, the tag is returned unchanged so legitimate multi-name
+// bands like "Simon & Garfunkel" are preserved.
 func (s *Scanner) resolveArtistTitle(ctx context.Context, libraryID uuid.UUID, tagArtist string) string {
+	if flipped := flipLastFirst(tagArtist); flipped != "" {
+		tagArtist = flipped
+	}
 	primary := primaryArtistName(tagArtist)
 	if primary == "" {
 		return tagArtist

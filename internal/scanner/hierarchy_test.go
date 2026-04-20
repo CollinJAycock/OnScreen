@@ -141,6 +141,14 @@ func (m *mockMediaService) DedupeChildItems(_ context.Context, itemType string, 
 	m.dedupeCalls = append(m.dedupeCalls, call)
 	return m.dedupeResult, m.dedupeErr
 }
+func (m *mockMediaService) MergeCollabArtists(_ context.Context, libraryID *uuid.UUID) (media.DedupeResult, error) {
+	call := dedupeCall{itemType: "collab-artist"}
+	if libraryID != nil {
+		call.libraryID = *libraryID
+	}
+	m.dedupeCalls = append(m.dedupeCalls, call)
+	return m.dedupeResult, m.dedupeErr
+}
 func (m *mockMediaService) ListItems(_ context.Context, libraryID uuid.UUID, itemType string, _, _ int32) ([]media.Item, error) {
 	var out []media.Item
 	for _, it := range m.items {

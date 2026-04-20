@@ -840,6 +840,67 @@ func (q *Queries) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 	return items, nil
 }
 
+const listCollabArtistMerges = `-- name: ListCollabArtistMerges :many
+WITH collabs AS (
+    SELECT c.id AS collab_id,
+           c.library_id,
+           unaccent(regexp_replace(
+               c.title,
+               '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+).+$',
+               '',
+               'i'
+           )) AS primary_norm
+    FROM media_items c
+    WHERE c.type = 'artist'
+      AND c.parent_id IS NULL
+      AND c.deleted_at IS NULL
+      AND c.title ~* '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+)'
+      AND ($1::uuid IS NULL OR c.library_id = $1)
+)
+SELECT c.collab_id AS loser_id,
+       p.id::uuid  AS survivor_id
+FROM collabs c
+JOIN media_items p
+  ON p.type = 'artist'
+ AND p.parent_id IS NULL
+ AND p.deleted_at IS NULL
+ AND p.library_id = c.library_id
+ AND lower(unaccent(p.title)) = lower(c.primary_norm)
+ AND p.id <> c.collab_id
+`
+
+type ListCollabArtistMergesRow struct {
+	LoserID    uuid.UUID `json:"loser_id"`
+	SurvivorID uuid.UUID `json:"survivor_id"`
+}
+
+// Finds artists whose title matches a collaboration pattern (A & B, A feat B,
+// A / B, A, B) where the primary name before the first marker exists as a
+// separate standalone artist in the same library. Returns (loser_id,
+// survivor_id) pairs so the caller can reparent children and soft-delete
+// losers via the existing merge plumbing. Conservative: only merges when
+// the primary is an actual row, so "Simon & Garfunkel" (no "Simon" row)
+// is left alone.
+func (q *Queries) ListCollabArtistMerges(ctx context.Context, libraryID pgtype.UUID) ([]ListCollabArtistMergesRow, error) {
+	rows, err := q.db.Query(ctx, listCollabArtistMerges, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCollabArtistMergesRow{}
+	for rows.Next() {
+		var i ListCollabArtistMergesRow
+		if err := rows.Scan(&i.LoserID, &i.SurvivorID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listContinueWatching = `-- name: ListContinueWatching :many
 SELECT m.id, m.library_id, m.type, m.title, m.sort_title,
        m.original_title, m.year, m.summary, m.tagline, m.rating, m.audience_rating,
@@ -988,7 +1049,7 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
@@ -1072,7 +1133,7 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
@@ -2568,7 +2629,7 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''

@@ -77,6 +77,9 @@ func (m *mockQuerier) ListPrefixDuplicateTopLevelItems(_ context.Context, _ stri
 func (m *mockQuerier) ListDuplicateChildItems(_ context.Context, _ string, _ *uuid.UUID) ([]DuplicatePair, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListCollabArtistMerges(_ context.Context, _ *uuid.UUID) ([]DuplicatePair, error) {
+	return nil, nil
+}
 func (m *mockQuerier) ReparentMediaItem(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
 	return nil
 }
