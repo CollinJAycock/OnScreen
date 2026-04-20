@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/dhowden/tag"
@@ -19,6 +20,44 @@ import (
 
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
+
+// collabArtistRE matches the tail portion of a collaboration-style artist tag
+// like "Elton John & Bonnie Raitt" or "Jay-Z feat. Rihanna". The regex
+// intentionally accepts "&", "and", "feat[.]?", "ft[.]?", "featuring", and
+// "with" as collab markers. Stripping is applied only when the primary name
+// (the text before the first marker) already exists as a standalone artist
+// in the library — otherwise legitimate band names like "Simon & Garfunkel"
+// or "Nick Cave and the Bad Seeds" would be damaged.
+var collabArtistRE = regexp.MustCompile(`(?i)\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+.+$`)
+
+// primaryArtistName strips a trailing collaborator from an artist string.
+// Returns "" if no collab marker is found. Callers should verify the result
+// exists as an artist before using it; see Scanner.resolveArtistTitle.
+func primaryArtistName(s string) string {
+	trimmed := collabArtistRE.ReplaceAllString(s, "")
+	if trimmed == s {
+		return ""
+	}
+	return strings.TrimSpace(trimmed)
+}
+
+// resolveArtistTitle returns the artist title to use for a track's hierarchy.
+// If the tag is a collaboration (e.g. "Elton John & Bonnie Raitt") and the
+// primary name ("Elton John") already exists as a standalone artist in the
+// library, the primary name is returned so the track is parented under the
+// canonical artist. Otherwise the tag is returned unchanged so legitimate
+// multi-name bands are preserved.
+func (s *Scanner) resolveArtistTitle(ctx context.Context, libraryID uuid.UUID, tagArtist string) string {
+	primary := primaryArtistName(tagArtist)
+	if primary == "" {
+		return tagArtist
+	}
+	existing, err := s.media.FindTopLevelItem(ctx, libraryID, "artist", primary)
+	if err != nil || existing == nil {
+		return tagArtist
+	}
+	return existing.Title
+}
 
 // processMusicHierarchy reads tags from a music file and ensures the
 // artist -> album -> track hierarchy exists. Returns the track item.
@@ -29,11 +68,12 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	}
 
 	// 1. Find or create the artist (top-level, parent_id=null).
+	artistTitle := s.resolveArtistTitle(ctx, libraryID, tags.Artist)
 	artist, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "artist",
-		Title:     tags.Artist,
-		SortTitle: sortTitle(tags.Artist),
+		Title:     artistTitle,
+		SortTitle: sortTitle(artistTitle),
 	})
 	if err != nil {
 		return nil, err

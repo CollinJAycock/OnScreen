@@ -63,6 +63,7 @@ type MediaService interface {
 	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
 	DedupeChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) (media.DedupeResult, error)
 	ListItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]media.Item, error)
+	FindTopLevelItem(ctx context.Context, libraryID uuid.UUID, itemType, title string) (*media.Item, error)
 }
 
 // ConcurrencyProvider lets the scanner read current concurrency limits from

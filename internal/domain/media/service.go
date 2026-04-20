@@ -627,6 +627,21 @@ func pickFlexibleMatch(candidates []Item, year *int) *Item {
 	return noYear
 }
 
+// FindTopLevelItem looks up a top-level item (parent_id IS NULL) by
+// library+type+title without creating one. Returns (nil, nil) if not found.
+// Used by the music scanner to decide whether a collab tag like
+// "Elton John & Bonnie Raitt" should be folded into an existing "Elton John".
+func (s *Service) FindTopLevelItem(ctx context.Context, libraryID uuid.UUID, itemType, title string) (*Item, error) {
+	if title == "" {
+		return nil, nil
+	}
+	p := CreateItemParams{LibraryID: libraryID, Type: itemType, Title: title}
+	if found := s.findItemByTitle(ctx, p); found != nil {
+		return found, nil
+	}
+	return nil, nil
+}
+
 // FindOrCreateHierarchyItem finds an existing media item matching
 // (library_id, type, title, parent_id) or creates one. This supports the
 // artist->album->track hierarchy used by music libraries and the

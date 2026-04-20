@@ -150,6 +150,14 @@ func (m *mockMediaService) ListItems(_ context.Context, libraryID uuid.UUID, ite
 	}
 	return out, nil
 }
+func (m *mockMediaService) FindTopLevelItem(_ context.Context, libraryID uuid.UUID, itemType, title string) (*media.Item, error) {
+	for _, it := range m.items {
+		if it.LibraryID == libraryID && it.Type == itemType && it.ParentID == nil && it.Title == title {
+			return it, nil
+		}
+	}
+	return nil, nil
+}
 
 func newTestScanner(svc *mockMediaService) *Scanner {
 	return New(svc, nil, nil, slog.Default())
