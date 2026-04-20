@@ -29,6 +29,10 @@ type ArtworkFetcher interface {
 	DownloadPoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 	DownloadFanart(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 	DownloadThumb(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
+	// ReplacePoster writes url to mediaDir/poster.jpg even if the file
+	// already exists. Used by the music enricher to override embedded album
+	// art with AudioDB's authoritative cover.
+	ReplacePoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 }
 
 // TVDBFallback provides episode + show metadata from TheTVDB as a fallback when
@@ -568,7 +572,11 @@ func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgen
 		if file != nil {
 			albumDir = filepath.Dir(file.FilePath)
 		}
-		if album.PosterPath == nil {
+		// Run album enrichment whenever AudioDB hasn't successfully returned
+		// metadata yet (Summary is set only by enrichAlbum). This lets
+		// AudioDB override wrong embedded album art, which the scanner wrote
+		// as poster.jpg before enrichment could provide a better cover.
+		if album.Summary == nil {
 			if err := e.enrichAlbum(ctx, agent, album, albumDir); err != nil {
 				e.logger.WarnContext(ctx, "album enrich failed", "album_id", album.ID, "err", err)
 			}
@@ -666,7 +674,8 @@ func (e *Enricher) enrichAlbum(ctx context.Context, agent metadata.MusicAgent, i
 		p.Genres = result.Genres
 	}
 	if result.ThumbURL != "" && artDir != "" && e.artwork != nil {
-		if abs, err := e.artwork.DownloadPoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
+		// Overwrite poster.jpg — it may be wrong embedded art from the scan.
+		if abs, err := e.artwork.ReplacePoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
 			rel := e.relPath(abs)
 			p.PosterPath = &rel
 		}

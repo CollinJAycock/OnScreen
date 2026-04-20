@@ -40,28 +40,39 @@ func New(cachePath string) *Manager {
 
 // DownloadPoster downloads a poster image into absDir/poster.jpg.
 // absDir is the absolute directory path (e.g. the folder containing the media file).
-// Returns the absolute path of the saved file.
+// Returns the absolute path of the saved file. Skips re-download if a file
+// already exists at the target path.
 func (m *Manager) DownloadPoster(ctx context.Context, _ uuid.UUID, url string, absDir string) (string, error) {
-	return m.download(ctx, url, filepath.Join(absDir, "poster.jpg"))
+	return m.download(ctx, url, filepath.Join(absDir, "poster.jpg"), false)
 }
 
 // DownloadFanart downloads a fanart/background image into absDir/fanart.jpg.
 func (m *Manager) DownloadFanart(ctx context.Context, _ uuid.UUID, url string, absDir string) (string, error) {
-	return m.download(ctx, url, filepath.Join(absDir, "fanart.jpg"))
+	return m.download(ctx, url, filepath.Join(absDir, "fanart.jpg"), false)
 }
 
 // DownloadThumb downloads an episode/track thumbnail into absDir/{uuid}.jpg.
 func (m *Manager) DownloadThumb(ctx context.Context, itemID uuid.UUID, url string, absDir string) (string, error) {
 	filename := itemID.String() + ".jpg"
-	return m.download(ctx, url, filepath.Join(absDir, filename))
+	return m.download(ctx, url, filepath.Join(absDir, filename), false)
+}
+
+// ReplacePoster overwrites absDir/poster.jpg atomically. Used when the
+// metadata enricher finds a confident match and should replace an existing
+// poster (e.g. wrong embedded album art written during the initial scan).
+func (m *Manager) ReplacePoster(ctx context.Context, _ uuid.UUID, url string, absDir string) (string, error) {
+	return m.download(ctx, url, filepath.Join(absDir, "poster.jpg"), true)
 }
 
 // download fetches url and writes to absPath (absolute file path).
-// Returns the absolute path. Skips re-download if file already exists.
-func (m *Manager) download(ctx context.Context, url, absPath string) (string, error) {
-	// Skip if already present.
-	if _, err := os.Stat(absPath); err == nil {
-		return strings.ReplaceAll(absPath, `\`, "/"), nil
+// Returns the absolute path. When force is false, skips re-download if a
+// file already exists at absPath (the common cache-miss case). When force
+// is true, writes the fresh bytes atomically over any existing file.
+func (m *Manager) download(ctx context.Context, url, absPath string, force bool) (string, error) {
+	if !force {
+		if _, err := os.Stat(absPath); err == nil {
+			return strings.ReplaceAll(absPath, `\`, "/"), nil
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

@@ -204,6 +204,25 @@ func (a *mediaAdapter) ListPrefixDuplicateTopLevelItems(ctx context.Context, ite
 	return out, nil
 }
 
+func (a *mediaAdapter) ListDuplicateChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) ([]media.DuplicatePair, error) {
+	var parentParam pgtype.UUID
+	if parentID != nil {
+		parentParam = pgtype.UUID{Bytes: [16]byte(*parentID), Valid: true}
+	}
+	rows, err := a.q.ListDuplicateChildItems(ctx, gen.ListDuplicateChildItemsParams{
+		Type:     itemType,
+		ParentID: parentParam,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.DuplicatePair, len(rows))
+	for i, r := range rows {
+		out[i] = media.DuplicatePair{LoserID: r.LoserID, SurvivorID: r.SurvivorID}
+	}
+	return out, nil
+}
+
 func (a *mediaAdapter) ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error {
 	var p pgtype.UUID
 	if newParent != nil {

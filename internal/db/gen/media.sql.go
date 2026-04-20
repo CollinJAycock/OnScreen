@@ -979,6 +979,94 @@ func (q *Queries) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 	return items, nil
 }
 
+const listDuplicateChildItems = `-- name: ListDuplicateChildItems :many
+WITH normalized AS (
+    SELECT id, parent_id, type, year, tmdb_id, tvdb_id, musicbrainz_id,
+           poster_path, created_at,
+           lower(trim(
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(
+                     regexp_replace(
+                       regexp_replace(
+                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                         '^\s*(the|a|an)\s+', '', 'i'
+                       ),
+                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                     ),
+                     '\s+(and|&)\s+', ' ', 'gi'
+                   ),
+                   '[^a-zA-Z0-9]+', ' ', 'g'
+                 ),
+                 '\s+', ' ', 'g'
+               )
+           )) AS norm
+    FROM media_items
+    WHERE type = $1
+      AND parent_id IS NOT NULL
+      AND deleted_at IS NULL
+      AND ($2::uuid IS NULL OR parent_id = $2)
+),
+ranked AS (
+    SELECT id, parent_id, norm, year,
+           FIRST_VALUE(id)   OVER w AS survivor_id,
+           FIRST_VALUE(year) OVER w AS survivor_year,
+           ROW_NUMBER()      OVER w AS rn
+    FROM normalized
+    WHERE norm <> ''
+    WINDOW w AS (
+        PARTITION BY parent_id, norm
+        ORDER BY (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL OR musicbrainz_id IS NOT NULL) DESC,
+                 (poster_path IS NOT NULL) DESC,
+                 (year IS NOT NULL) DESC,
+                 created_at ASC,
+                 id ASC
+    )
+)
+SELECT id AS loser_id, survivor_id::uuid AS survivor_id
+FROM ranked
+WHERE rn > 1
+  AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year)
+`
+
+type ListDuplicateChildItemsParams struct {
+	Type     string      `json:"type"`
+	ParentID pgtype.UUID `json:"parent_id"`
+}
+
+type ListDuplicateChildItemsRow struct {
+	LoserID    uuid.UUID `json:"loser_id"`
+	SurvivorID uuid.UUID `json:"survivor_id"`
+}
+
+// Lists duplicate parented media items (e.g. albums under an artist) that
+// share a normalized title within the same parent. Used by music dedupe to
+// collapse variant album rows caused by inconsistent tag spellings across
+// tracks (e.g. "Abbey Road" vs "Abbey Road (Remastered)"). Normalization
+// matches ListDuplicateTopLevelItems: strips articles, trailing years,
+// ampersand/and, and non-alphanumeric characters. Survivor is the most
+// enriched row (external ids > poster > year > oldest). Year mismatches
+// block the merge so a re-release with a different year stays distinct.
+func (q *Queries) ListDuplicateChildItems(ctx context.Context, arg ListDuplicateChildItemsParams) ([]ListDuplicateChildItemsRow, error) {
+	rows, err := q.db.Query(ctx, listDuplicateChildItems, arg.Type, arg.ParentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDuplicateChildItemsRow{}
+	for rows.Next() {
+		var i ListDuplicateChildItemsRow
+		if err := rows.Scan(&i.LoserID, &i.SurvivorID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDuplicateTopLevelItems = `-- name: ListDuplicateTopLevelItems :many
 WITH normalized AS (
     SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
@@ -987,7 +1075,10 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       regexp_replace(
+                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                         '^\s*(the|a|an)\s+', '', 'i'
+                       ),
                        '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                      ),
                      '\s+(and|&)\s+', ' ', 'gi'
@@ -2483,7 +2574,10 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       regexp_replace(
+                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                         '^\s*(the|a|an)\s+', '', 'i'
+                       ),
                        '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                      ),
                      '\s+(and|&)\s+', ' ', 'gi'

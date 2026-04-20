@@ -74,6 +74,9 @@ func (m *mockQuerier) ListDuplicateTopLevelItems(_ context.Context, _ string, _ 
 func (m *mockQuerier) ListPrefixDuplicateTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) ([]DuplicatePair, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListDuplicateChildItems(_ context.Context, _ string, _ *uuid.UUID) ([]DuplicatePair, error) {
+	return nil, nil
+}
 func (m *mockQuerier) ReparentMediaItem(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
 	return nil
 }
@@ -839,7 +842,12 @@ func TestNormalizeTitle(t *testing.T) {
 		want  string
 	}{
 		{"Battle: Los Angeles", "battle los angeles"},
-		{"The Matrix (1999)", "the matrix 1999"},
+		// Leading article "The " is stripped; year is kept as a token.
+		{"The Matrix (1999)", "matrix 1999"},
+		{"A Simple Plan", "simple plan"},
+		{"An Education", "education"},
+		// Non-leading articles stay put.
+		{"Day of the Dead", "day of the dead"},
 		{"HELLO WORLD", "hello world"},
 		{"  spaces  everywhere  ", "spaces everywhere"},
 		{"colons:and;semi", "colons and semi"},

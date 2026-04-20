@@ -121,6 +121,7 @@ type Querier interface {
 	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
 	ListDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ListPrefixDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
+	ListDuplicateChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) ([]DuplicatePair, error)
 	ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error
 	ReparentMediaFilesByItem(ctx context.Context, fromItemID, toItemID uuid.UUID) error
 
@@ -490,8 +491,11 @@ func (s *Service) UpdateItemMetadata(ctx context.Context, p UpdateItemMetadataPa
 }
 
 // normalizeTitle folds a title to a canonical form for deduplication: lowercase,
-// non-alphanumeric characters replaced by spaces, repeated spaces collapsed.
-// "Battle: Los Angeles" and "battle los angeles" both become "battle los angeles".
+// leading article stripped ("the"/"a"/"an"), non-alphanumeric characters
+// replaced by spaces, repeated spaces collapsed. "The Beatles" and "beatles"
+// both become "beatles"; "Battle: Los Angeles" and "battle los angeles" both
+// become "battle los angeles". Year in a trailing parenthetical is kept
+// because find-or-create treats the SQL-stored year as authoritative.
 func normalizeTitle(s string) string {
 	s = strings.ToLower(s)
 	s = strings.Map(func(r rune) rune {
@@ -500,7 +504,13 @@ func normalizeTitle(s string) string {
 		}
 		return ' '
 	}, s)
-	return strings.Join(strings.Fields(s), " ")
+	s = strings.Join(strings.Fields(s), " ")
+	for _, article := range []string{"the ", "a ", "an "} {
+		if strings.HasPrefix(s, article) {
+			return s[len(article):]
+		}
+	}
+	return s
 }
 
 // createMuFor returns a per-key mutex that serializes FindOrCreate* calls for
@@ -710,6 +720,23 @@ func (s *Service) DedupeTopLevelItems(ctx context.Context, itemType string, libr
 		return res, fmt.Errorf("list prefix duplicate top-level items: %w", err)
 	}
 	if err := s.applyDedupePairs(ctx, prefixPairs, itemType, &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// DedupeChildItems finds duplicate parented items of the given type under a
+// specific parent — or every parent if parentID is nil — and merges each into
+// the most-enriched survivor. Use case: collapse duplicate album rows under
+// one artist caused by inconsistent tag spellings across a release's tracks.
+// Safe to run repeatedly.
+func (s *Service) DedupeChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) (DedupeResult, error) {
+	var res DedupeResult
+	pairs, err := s.rw.ListDuplicateChildItems(ctx, itemType, parentID)
+	if err != nil {
+		return res, fmt.Errorf("list duplicate child items: %w", err)
+	}
+	if err := s.applyDedupePairs(ctx, pairs, itemType, &res); err != nil {
 		return res, err
 	}
 	return res, nil

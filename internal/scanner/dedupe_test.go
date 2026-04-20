@@ -18,7 +18,10 @@ func TestDedupeLibrary_LibraryTypeGating(t *testing.T) {
 	}{
 		{"show", true, "show"},
 		{"movie", true, "movie"},
-		{"music", false, ""},
+		// Music triggers artist dedupe (and album dedupe via per-artist walk).
+		// Album dedupe fires only when artists exist; the mock has none so we
+		// only expect the one artist-level call here.
+		{"music", true, "artist"},
 		{"photo", false, ""},
 		{"", false, ""},
 		{"unknown", false, ""},

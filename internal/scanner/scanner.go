@@ -61,6 +61,8 @@ type MediaService interface {
 	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
+	DedupeChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) (media.DedupeResult, error)
+	ListItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]media.Item, error)
 }
 
 // ConcurrencyProvider lets the scanner read current concurrency limits from
@@ -283,26 +285,83 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 	return result, nil
 }
 
-// dedupeLibrary collapses top-level duplicates for the scanned library. Only
-// show and movie libraries have top-level dedupe (music is hierarchical,
-// photos are flat). Errors are logged and swallowed so a dedupe failure
-// never fails the scan.
+// dedupeLibrary collapses duplicates for the scanned library. For show and
+// movie libraries it merges top-level items. For music it merges artists,
+// then walks each artist and merges duplicate albums within it (music tags
+// are often inconsistent across a single release's tracks, producing variant
+// album rows with names like "Abbey Road" vs "Abbey Road (Remastered)").
+// Photos are flat so there's nothing to dedupe. Errors are logged and
+// swallowed so a dedupe failure never fails the scan.
 func (s *Scanner) dedupeLibrary(ctx context.Context, libraryID uuid.UUID, libraryType string) {
-	if libraryType != "show" && libraryType != "movie" {
-		return
+	switch libraryType {
+	case "show", "movie":
+		dedup, err := s.media.DedupeTopLevelItems(ctx, libraryType, &libraryID)
+		if err != nil {
+			s.logger.WarnContext(ctx, "post-scan dedupe failed", "library_id", libraryID, "err", err)
+			return
+		}
+		if dedup.MergedItems > 0 || dedup.ReparentedRows > 0 {
+			s.logger.InfoContext(ctx, "post-scan dedupe merged duplicates",
+				"library_id", libraryID,
+				"merged_items", dedup.MergedItems,
+				"merged_seasons", dedup.MergedSeasons,
+				"merged_episodes", dedup.MergedEpisodes,
+				"reparented_rows", dedup.ReparentedRows,
+			)
+		}
+	case "music":
+		s.dedupeMusicLibrary(ctx, libraryID)
 	}
-	dedup, err := s.media.DedupeTopLevelItems(ctx, libraryType, &libraryID)
+}
+
+// dedupeMusicLibrary merges duplicate artists at the top level, then merges
+// duplicate albums under each surviving artist. Album dedupe runs after
+// artist dedupe so album rows that reparent during artist merge are seen
+// under the correct artist before their own dedupe pass.
+func (s *Scanner) dedupeMusicLibrary(ctx context.Context, libraryID uuid.UUID) {
+	artistDedup, err := s.media.DedupeTopLevelItems(ctx, "artist", &libraryID)
 	if err != nil {
-		s.logger.WarnContext(ctx, "post-scan dedupe failed", "library_id", libraryID, "err", err)
-		return
-	}
-	if dedup.MergedItems > 0 || dedup.ReparentedRows > 0 {
-		s.logger.InfoContext(ctx, "post-scan dedupe merged duplicates",
+		s.logger.WarnContext(ctx, "artist dedupe failed", "library_id", libraryID, "err", err)
+	} else if artistDedup.MergedItems > 0 || artistDedup.ReparentedRows > 0 {
+		s.logger.InfoContext(ctx, "artist dedupe merged duplicates",
 			"library_id", libraryID,
-			"merged_items", dedup.MergedItems,
-			"merged_seasons", dedup.MergedSeasons,
-			"merged_episodes", dedup.MergedEpisodes,
-			"reparented_rows", dedup.ReparentedRows,
+			"merged_items", artistDedup.MergedItems,
+			"reparented_rows", artistDedup.ReparentedRows,
+		)
+	}
+
+	var totalAlbumMerged, totalAlbumReparented int
+	const pageSize int32 = 500
+	for offset := int32(0); ; offset += pageSize {
+		artists, err := s.media.ListItems(ctx, libraryID, "artist", pageSize, offset)
+		if err != nil {
+			s.logger.WarnContext(ctx, "list artists for album dedupe failed",
+				"library_id", libraryID, "err", err)
+			break
+		}
+		if len(artists) == 0 {
+			break
+		}
+		for i := range artists {
+			artistID := artists[i].ID
+			albumDedup, err := s.media.DedupeChildItems(ctx, "album", &artistID)
+			if err != nil {
+				s.logger.WarnContext(ctx, "album dedupe failed",
+					"artist_id", artistID, "err", err)
+				continue
+			}
+			totalAlbumMerged += albumDedup.MergedItems
+			totalAlbumReparented += albumDedup.ReparentedRows
+		}
+		if len(artists) < int(pageSize) {
+			break
+		}
+	}
+	if totalAlbumMerged > 0 || totalAlbumReparented > 0 {
+		s.logger.InfoContext(ctx, "album dedupe merged duplicates",
+			"library_id", libraryID,
+			"merged_items", totalAlbumMerged,
+			"reparented_rows", totalAlbumReparented,
 		)
 	}
 }

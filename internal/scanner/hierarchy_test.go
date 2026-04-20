@@ -133,6 +133,23 @@ func (m *mockMediaService) DedupeTopLevelItems(_ context.Context, itemType strin
 	m.dedupeCalls = append(m.dedupeCalls, call)
 	return m.dedupeResult, m.dedupeErr
 }
+func (m *mockMediaService) DedupeChildItems(_ context.Context, itemType string, parentID *uuid.UUID) (media.DedupeResult, error) {
+	call := dedupeCall{itemType: itemType}
+	if parentID != nil {
+		call.libraryID = *parentID
+	}
+	m.dedupeCalls = append(m.dedupeCalls, call)
+	return m.dedupeResult, m.dedupeErr
+}
+func (m *mockMediaService) ListItems(_ context.Context, libraryID uuid.UUID, itemType string, _, _ int32) ([]media.Item, error) {
+	var out []media.Item
+	for _, it := range m.items {
+		if it.LibraryID == libraryID && it.Type == itemType && it.ParentID == nil {
+			out = append(out, *it)
+		}
+	}
+	return out, nil
+}
 
 func newTestScanner(svc *mockMediaService) *Scanner {
 	return New(svc, nil, nil, slog.Default())

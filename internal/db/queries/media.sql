@@ -78,7 +78,10 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       regexp_replace(
+                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                         '^\s*(the|a|an)\s+', '', 'i'
+                       ),
                        '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                      ),
                      '\s+(and|&)\s+', ' ', 'gi'
@@ -130,7 +133,10 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                       regexp_replace(
+                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                         '^\s*(the|a|an)\s+', '', 'i'
+                       ),
                        '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                      ),
                      '\s+(and|&)\s+', ' ', 'gi'
@@ -170,6 +176,63 @@ ORDER BY l.id,
          (s.poster_path IS NOT NULL) DESC,
          s.created_at ASC,
          s.id ASC;
+
+-- name: ListDuplicateChildItems :many
+-- Lists duplicate parented media items (e.g. albums under an artist) that
+-- share a normalized title within the same parent. Used by music dedupe to
+-- collapse variant album rows caused by inconsistent tag spellings across
+-- tracks (e.g. "Abbey Road" vs "Abbey Road (Remastered)"). Normalization
+-- matches ListDuplicateTopLevelItems: strips articles, trailing years,
+-- ampersand/and, and non-alphanumeric characters. Survivor is the most
+-- enriched row (external ids > poster > year > oldest). Year mismatches
+-- block the merge so a re-release with a different year stays distinct.
+WITH normalized AS (
+    SELECT id, parent_id, type, year, tmdb_id, tvdb_id, musicbrainz_id,
+           poster_path, created_at,
+           lower(trim(
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(
+                     regexp_replace(
+                       regexp_replace(
+                         replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', ''),
+                         '^\s*(the|a|an)\s+', '', 'i'
+                       ),
+                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                     ),
+                     '\s+(and|&)\s+', ' ', 'gi'
+                   ),
+                   '[^a-zA-Z0-9]+', ' ', 'g'
+                 ),
+                 '\s+', ' ', 'g'
+               )
+           )) AS norm
+    FROM media_items
+    WHERE type = $1
+      AND parent_id IS NOT NULL
+      AND deleted_at IS NULL
+      AND (sqlc.narg('parent_id')::uuid IS NULL OR parent_id = sqlc.narg('parent_id'))
+),
+ranked AS (
+    SELECT id, parent_id, norm, year,
+           FIRST_VALUE(id)   OVER w AS survivor_id,
+           FIRST_VALUE(year) OVER w AS survivor_year,
+           ROW_NUMBER()      OVER w AS rn
+    FROM normalized
+    WHERE norm <> ''
+    WINDOW w AS (
+        PARTITION BY parent_id, norm
+        ORDER BY (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL OR musicbrainz_id IS NOT NULL) DESC,
+                 (poster_path IS NOT NULL) DESC,
+                 (year IS NOT NULL) DESC,
+                 created_at ASC,
+                 id ASC
+    )
+)
+SELECT id AS loser_id, survivor_id::uuid AS survivor_id
+FROM ranked
+WHERE rn > 1
+  AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year);
 
 -- name: ReparentMediaItem :exec
 UPDATE media_items
