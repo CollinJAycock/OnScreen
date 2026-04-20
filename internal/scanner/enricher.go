@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -58,6 +60,18 @@ type Enricher struct {
 	updater      ItemUpdater
 	scanPaths    ScanPathsProvider
 	logger       *slog.Logger
+
+	// musicSF collapses concurrent enrichment calls for the same music item:
+	// a 10-track album produces 10 tracks' worth of enrichMusicItem calls that
+	// each walk up to the same album. Without singleflight they all fire
+	// SearchAlbum in parallel and blow the AudioDB rate limit.
+	musicSF singleflight.Group
+	// musicAttempted records music item IDs that have already been attempted
+	// for enrichment in this process (success or failure). Prevents hammering
+	// AudioDB with repeat calls for the same album/artist across the thousands
+	// of tracks that walk up to them. Cleared only on process restart — a
+	// rescan after a restart will retry previously failed items.
+	musicAttempted sync.Map
 }
 
 // NewEnricher creates an Enricher.
@@ -577,9 +591,7 @@ func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgen
 		// AudioDB override wrong embedded album art, which the scanner wrote
 		// as poster.jpg before enrichment could provide a better cover.
 		if album.Summary == nil {
-			if err := e.enrichAlbum(ctx, agent, album, albumDir); err != nil {
-				e.logger.WarnContext(ctx, "album enrich failed", "album_id", album.ID, "err", err)
-			}
+			e.enrichMusicOnce(ctx, agent, album, albumDir)
 		}
 		if album.ParentID == nil {
 			return nil
@@ -593,9 +605,7 @@ func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgen
 			artistDir = filepath.Dir(filepath.Dir(file.FilePath))
 		}
 		if artist.PosterPath == nil {
-			if err := e.enrichArtist(ctx, agent, artist, artistDir); err != nil {
-				e.logger.WarnContext(ctx, "artist enrich failed", "artist_id", artist.ID, "err", err)
-			}
+			e.enrichMusicOnce(ctx, agent, artist, artistDir)
 		}
 		return nil
 
@@ -606,6 +616,35 @@ func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgen
 		return e.enrichAlbum(ctx, agent, item, artDir)
 	}
 	return nil
+}
+
+// enrichMusicOnce enriches an album or artist, coalescing concurrent callers
+// via singleflight and skipping items already attempted in this process.
+// Errors are logged but not propagated — a per-track enrichment pass must
+// never fail the scan.
+func (e *Enricher) enrichMusicOnce(ctx context.Context, agent metadata.MusicAgent, item *media.Item, artDir string) {
+	key := item.Type + ":" + item.ID.String()
+	if _, ok := e.musicAttempted.Load(key); ok {
+		return
+	}
+	_, err, _ := e.musicSF.Do(key, func() (any, error) {
+		if _, ok := e.musicAttempted.Load(key); ok {
+			return nil, nil
+		}
+		var innerErr error
+		switch item.Type {
+		case "album":
+			innerErr = e.enrichAlbum(ctx, agent, item, artDir)
+		case "artist":
+			innerErr = e.enrichArtist(ctx, agent, item, artDir)
+		}
+		e.musicAttempted.Store(key, struct{}{})
+		return nil, innerErr
+	})
+	if err != nil {
+		e.logger.WarnContext(ctx, item.Type+" enrich failed",
+			item.Type+"_id", item.ID, "err", err)
+	}
 }
 
 func (e *Enricher) enrichArtist(ctx context.Context, agent metadata.MusicAgent, item *media.Item, artDir string) error {
