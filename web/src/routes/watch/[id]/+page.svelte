@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, transcodeApi, userApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, transcodeApi, userApi, subtitleApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult } from '$lib/api';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -41,6 +41,25 @@
   let seeking = false;
   let seekBarEl: HTMLDivElement;
 
+  // Trickplay (seekbar thumbnail previews). Cues come from a WebVTT index
+  // served at /trickplay/{id}/index.vtt; each cue points at a region of a
+  // sprite sheet via #xywh=x,y,w,h. When unavailable, hover preview falls
+  // back to a time label only.
+  type TrickplayCue = {
+    start: number; // seconds
+    end: number;
+    url: string; // resolved sprite URL
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
+  let trickplayCues: TrickplayCue[] = [];
+  let trickplayBaseURL = ''; // e.g. /trickplay/<itemID>/
+  let hoverVisible = false;
+  let hoverX = 0; // px from left of seek bar
+  let hoverTime = 0; // seconds in content time
+
   // Progress save timer
   let progressTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -60,13 +79,37 @@
 
   // Subtitle picker
   let showSubtitleMenu = false;
-  let selectedSubtitle: import('$lib/api').SubtitleStream | null = null;
+  // A picked subtitle is either an embedded stream (served via
+  // /media/subtitles/{fileId}/{streamIndex}) or an external one (served via
+  // /media/external-subtitles/{subId}). The unified shape lets the renderer
+  // load cues from one URL without caring where it came from.
+  type PickedSubtitle = {
+    key: string;        // stable id for active highlight
+    label: string;
+    language: string;
+    forced: boolean;
+    url: string;
+    origin: 'embedded' | 'external';
+  };
+  let selectedSubtitle: PickedSubtitle | null = null;
   // Subtitle font size: 'small' | 'medium' | 'large'
   const subtitleSizes = ['small', 'medium', 'large'] as const;
   type SubtitleSize = typeof subtitleSizes[number];
   let subtitleSize: SubtitleSize = (typeof localStorage !== 'undefined' && localStorage.getItem('subtitle_size') as SubtitleSize) || 'medium';
   // Subtitle delay in seconds (positive = subs appear later, negative = earlier).
   let subtitleDelay = 0;
+
+  // Online subtitle search modal state. openSubtitleSearch triggers a search
+  // using the item title (and S/E for episodes). Users can refine the query,
+  // pick a result, and download — the result is appended to external_subtitles
+  // on the file and auto-selected.
+  let showSubtitleSearch = false;
+  let subtitleSearchQuery = '';
+  let subtitleSearchLang = 'en';
+  let subtitleSearchResults: SubtitleSearchResult[] = [];
+  let subtitleSearchLoading = false;
+  let subtitleSearchError = '';
+  let subtitleDownloadingId: number | null = null;
 
   // Audio track picker
   let showAudioMenu = false;
@@ -88,22 +131,79 @@
   let subtitleFetchId = 0; // dedup concurrent fetches
 
   // Load cues when subtitle selection changes.
-  $: if (selectedSubtitle && item?.files?.[0]) {
-    loadSubtitleCues(item.files[0].id, selectedSubtitle.index);
+  $: if (selectedSubtitle) {
+    loadSubtitleCues(selectedSubtitle.url);
   } else {
     allCues = [];
     activeCues = [];
   }
 
-  async function loadSubtitleCues(fileId: string, streamIndex: number) {
+  async function loadSubtitleCues(url: string) {
     const fetchId = ++subtitleFetchId;
     try {
-      const resp = await fetch(`/media/subtitles/${fileId}/${streamIndex}`);
+      const resp = await fetch(url);
       if (!resp.ok || fetchId !== subtitleFetchId) return;
       const vtt = await resp.text();
       allCues = parseWebVTT(vtt);
     } catch {
       allCues = [];
+    }
+  }
+
+  function openSubtitleSearch() {
+    if (!item) return;
+    subtitleSearchQuery = item.title;
+    subtitleSearchResults = [];
+    subtitleSearchError = '';
+    showSubtitleSearch = true;
+    runSubtitleSearch();
+  }
+
+  async function runSubtitleSearch() {
+    if (!item) return;
+    subtitleSearchLoading = true;
+    subtitleSearchError = '';
+    try {
+      const { items } = await subtitleApi.search(item.id, {
+        lang: subtitleSearchLang || undefined,
+        query: subtitleSearchQuery || undefined,
+      });
+      subtitleSearchResults = items;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Search failed';
+      subtitleSearchError = msg.toLowerCase().includes('not configured')
+        ? 'OpenSubtitles is not configured. Ask an admin to set the API key.'
+        : msg;
+    } finally {
+      subtitleSearchLoading = false;
+    }
+  }
+
+  async function downloadSubtitle(res: SubtitleSearchResult) {
+    if (!item?.files?.[0]) return;
+    subtitleDownloadingId = res.provider_file_id;
+    try {
+      const ext = await subtitleApi.download(item.id, {
+        file_id: item.files[0].id,
+        provider_file_id: res.provider_file_id,
+        language: res.language || subtitleSearchLang,
+        title: res.release || res.file_name,
+        hearing_impaired: res.hearing_impaired,
+        rating: res.rating,
+        download_count: res.download_count,
+      });
+      // Refresh the item so the new external sub appears in the picker.
+      const fresh = await itemApi.get(item.id);
+      item = fresh;
+      // Auto-select the newly downloaded subtitle.
+      const picked = (fresh.files?.[0]?.external_subtitles ?? [])
+        .find(e => e.id === ext.id);
+      if (picked) selectedSubtitle = externalToPicked(picked);
+      showSubtitleSearch = false;
+    } catch (e: unknown) {
+      subtitleSearchError = e instanceof Error ? e.message : 'Download failed';
+    } finally {
+      subtitleDownloadingId = null;
     }
   }
 
@@ -155,8 +255,36 @@
     }
   }
 
-  $: textSubtitles = (item?.files?.[0]?.subtitle_streams ?? [])
-    .filter(s => textSubCodecs.has(s.codec.toLowerCase()));
+  function embeddedToPicked(file: ItemFile, s: SubtitleStream): PickedSubtitle {
+    return {
+      key: `e:${s.index}`,
+      label: s.title || s.language || `Track ${s.index}`,
+      language: s.language || '',
+      forced: s.forced,
+      url: `/media/subtitles/${file.id}/${s.index}`,
+      origin: 'embedded',
+    };
+  }
+  function externalToPicked(ext: ExternalSubtitle): PickedSubtitle {
+    return {
+      key: `x:${ext.id}`,
+      label: ext.title || ext.language || 'External',
+      language: ext.language || '',
+      forced: ext.forced,
+      url: ext.url,
+      origin: 'external',
+    };
+  }
+
+  $: textSubtitles = (() => {
+    const file = item?.files?.[0];
+    if (!file) return [] as PickedSubtitle[];
+    const embedded = (file.subtitle_streams ?? [])
+      .filter(s => textSubCodecs.has(s.codec.toLowerCase()))
+      .map(s => embeddedToPicked(file, s));
+    const external = (file.external_subtitles ?? []).map(externalToPicked);
+    return [...embedded, ...external];
+  })();
 
   $: audioStreams = item?.files?.[0]?.audio_streams ?? [];
 
@@ -675,6 +803,11 @@
         const r = await itemApi.children(item.parent_id);
         siblings = r.items.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       }
+
+      // Seekbar thumbnail previews (best-effort — silent when not generated).
+      if (item.type === 'movie' || item.type === 'episode') {
+        loadTrickplay(item.id);
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to load';
       error = msg.toLowerCase().includes('forbidden') || msg.toLowerCase().includes('insufficient permissions')
@@ -687,7 +820,7 @@
     try {
       const prefs = await userApi.getPreferences();
       if (prefs.preferred_subtitle_lang && !selectedSubtitle) {
-        const match = textSubtitles.find(s => s.language === prefs.preferred_subtitle_lang);
+        const match = textSubtitles.find((s: PickedSubtitle) => s.language === prefs.preferred_subtitle_lang);
         if (match) selectedSubtitle = match;
       }
       if (prefs.preferred_audio_lang && item?.files?.[0]?.audio_streams?.length) {
@@ -1072,6 +1205,94 @@
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   }
+
+  // ── Trickplay hover preview ───────────────────────────────────────────────
+  // parseTrickplayVTT turns a WebVTT trickplay index into cue objects. Payload
+  // lines look like "sprite_000.jpg#xywh=0,0,320,180". We resolve filenames
+  // against baseURL so the <img> tag can load them directly.
+  function parseTrickplayVTT(text: string, baseURL: string): TrickplayCue[] {
+    const cues: TrickplayCue[] = [];
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const arrow = lines[i].indexOf('-->');
+      if (arrow < 0) continue;
+      const start = parseVTTTime(lines[i].slice(0, arrow).trim());
+      const end = parseVTTTime(lines[i].slice(arrow + 3).trim());
+      const payload = (lines[i + 1] ?? '').trim();
+      const hash = payload.indexOf('#xywh=');
+      if (start < 0 || end < 0 || hash < 0) continue;
+      const file = payload.slice(0, hash);
+      const coords = payload.slice(hash + 6).split(',').map(n => parseInt(n, 10));
+      if (coords.length < 4 || coords.some(Number.isNaN)) continue;
+      cues.push({
+        start,
+        end,
+        url: baseURL + file,
+        x: coords[0],
+        y: coords[1],
+        w: coords[2],
+        h: coords[3],
+      });
+    }
+    return cues;
+  }
+
+  // parseVTTTime accepts HH:MM:SS.mmm or MM:SS.mmm. Returns -1 on bad input.
+  function parseVTTTime(s: string): number {
+    const m = s.match(/^(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?$/);
+    if (!m) return -1;
+    const h = m[1] ? parseInt(m[1], 10) : 0;
+    const mi = parseInt(m[2], 10);
+    const se = parseInt(m[3], 10);
+    const ms = m[4] ? parseInt(m[4].padEnd(3, '0').slice(0, 3), 10) : 0;
+    return h * 3600 + mi * 60 + se + ms / 1000;
+  }
+
+  async function loadTrickplay(itemId: string) {
+    trickplayCues = [];
+    trickplayBaseURL = `/trickplay/${itemId}/`;
+    try {
+      const r = await fetch(trickplayBaseURL + 'index.vtt');
+      if (!r.ok) return;
+      const text = await r.text();
+      trickplayCues = parseTrickplayVTT(text, trickplayBaseURL);
+    } catch {
+      // Trickplay is optional — silent failure keeps the player working.
+    }
+  }
+
+  // findTrickplayCue does a linear scan. Cue lists are short (100s of entries
+  // for a 2h movie at 10s intervals); a binary search isn't worth the code.
+  function findTrickplayCue(t: number): TrickplayCue | null {
+    for (const c of trickplayCues) {
+      if (t >= c.start && t < c.end) return c;
+    }
+    return null;
+  }
+
+  function onSeekHoverMove(e: MouseEvent) {
+    if (!seekBarEl || !duration) return;
+    const rect = seekBarEl.getBoundingClientRect();
+    hoverX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    hoverTime = (hoverX / rect.width) * duration;
+    hoverVisible = true;
+  }
+
+  function onSeekHoverLeave() {
+    hoverVisible = false;
+  }
+
+  function formatHoverTime(t: number): string {
+    if (!isFinite(t) || t < 0) return '0:00';
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    const s = Math.floor(t % 60);
+    return h > 0
+      ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+      : `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  $: hoverCue = hoverVisible ? findTrickplayCue(hoverTime) : null;
 
   function onSeekMouseDown(e: MouseEvent) {
     seeking = true;
@@ -1534,6 +1755,8 @@
           class="seek-bar"
           bind:this={seekBarEl}
           on:mousedown={onSeekMouseDown}
+          on:mousemove={onSeekHoverMove}
+          on:mouseleave={onSeekHoverLeave}
           on:touchstart={onSeekTouchStart}
           on:touchmove={onSeekTouchMove}
           on:touchend={onSeekTouchEnd}
@@ -1554,6 +1777,17 @@
             {/if}
             <div class="seek-thumb" style="left:{progress * 100}%"></div>
           </div>
+          {#if hoverVisible && duration > 0}
+            <div class="seek-preview" style="left:{hoverX}px">
+              {#if hoverCue}
+                <div
+                  class="seek-preview-thumb"
+                  style="width:{hoverCue.w}px;height:{hoverCue.h}px;background-image:url('{hoverCue.url}');background-position:-{hoverCue.x}px -{hoverCue.y}px"
+                ></div>
+              {/if}
+              <div class="seek-preview-time">{formatHoverTime(hoverTime)}</div>
+            </div>
+          {/if}
         </div>
 
         <!-- Controls row -->
@@ -1719,8 +1953,7 @@
             </button>
 
             <!-- Subtitle picker -->
-            {#if textSubtitles.length > 0}
-              <div class="quality-picker" on:click|stopPropagation>
+            <div class="quality-picker" on:click|stopPropagation>
                 <button
                   class="icon-btn small quality-btn"
                   on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('subtitle'); } else { showSubtitleMenu = !showSubtitleMenu; showQualityMenu = false; showAudioMenu = false; } }}
@@ -1742,18 +1975,23 @@
                       on:click={() => { selectedSubtitle = null; showSubtitleMenu = false; }}
                       role="menuitem"
                     >Off</button>
-                    {#each textSubtitles as sub}
+                    {#each textSubtitles as sub (sub.key)}
                       <button
                         class="quality-option"
-                        class:active={selectedSubtitle?.index === sub.index}
+                        class:active={selectedSubtitle?.key === sub.key}
                         on:click={() => { selectedSubtitle = sub; showSubtitleMenu = false; }}
                         role="menuitem"
                       >
-                        {sub.title || sub.language || `Track ${sub.index}`}
+                        {sub.label}
                         {#if sub.forced} (forced){/if}
-                        {#if sub.language && sub.title} — {sub.language}{/if}
+                        {#if sub.origin === 'external'} · online{/if}
                       </button>
                     {/each}
+                    <button
+                      class="quality-option search-online-option"
+                      on:click={() => { showSubtitleMenu = false; openSubtitleSearch(); }}
+                      role="menuitem"
+                    >Search online…</button>
                     {#if selectedSubtitle}
                       <div class="subtitle-size-row">
                         <span class="subtitle-size-label">Size</span>
@@ -1778,7 +2016,6 @@
                   </div>
                 {/if}
               </div>
-            {/if}
 
             <!-- Audio track picker -->
             {#if audioStreams.length > 1}
@@ -1926,17 +2163,21 @@
               class:active={selectedSubtitle === null}
               on:click={() => { selectedSubtitle = null; showBottomSheet = ''; }}
             >Off</button>
-            {#each textSubtitles as sub}
+            {#each textSubtitles as sub (sub.key)}
               <button
                 class="bottom-sheet-option"
-                class:active={selectedSubtitle?.index === sub.index}
+                class:active={selectedSubtitle?.key === sub.key}
                 on:click={() => { selectedSubtitle = sub; showBottomSheet = ''; }}
               >
-                {sub.title || sub.language || `Track ${sub.index}`}
+                {sub.label}
                 {#if sub.forced} (forced){/if}
-                {#if sub.language && sub.title} — {sub.language}{/if}
+                {#if sub.origin === 'external'} · online{/if}
               </button>
             {/each}
+            <button
+              class="bottom-sheet-option search-online-option"
+              on:click={() => { showBottomSheet = ''; openSubtitleSearch(); }}
+            >Search online…</button>
             {#if selectedSubtitle}
               <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
                 <span class="subtitle-size-label">Size</span>
@@ -2217,6 +2458,81 @@
   />
 {/if}
 
+{#if showSubtitleSearch}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="subsearch-backdrop" on:click={() => { showSubtitleSearch = false; }}>
+    <div class="subsearch-modal" on:click|stopPropagation>
+      <div class="subsearch-header">
+        <h2>Search subtitles</h2>
+        <button class="subsearch-close" on:click={() => { showSubtitleSearch = false; }} aria-label="Close">×</button>
+      </div>
+      <form class="subsearch-form" on:submit|preventDefault={runSubtitleSearch}>
+        <input
+          class="subsearch-input"
+          type="text"
+          placeholder="Title"
+          bind:value={subtitleSearchQuery}
+        />
+        <select class="subsearch-lang" bind:value={subtitleSearchLang}>
+          <option value="en">English</option>
+          <option value="es">Spanish</option>
+          <option value="fr">French</option>
+          <option value="de">German</option>
+          <option value="it">Italian</option>
+          <option value="pt">Portuguese</option>
+          <option value="ja">Japanese</option>
+          <option value="ko">Korean</option>
+          <option value="zh">Chinese</option>
+          <option value="ru">Russian</option>
+          <option value="ar">Arabic</option>
+          <option value="hi">Hindi</option>
+          <option value="nl">Dutch</option>
+          <option value="sv">Swedish</option>
+          <option value="pl">Polish</option>
+        </select>
+        <button type="submit" class="subsearch-submit" disabled={subtitleSearchLoading}>
+          {subtitleSearchLoading ? 'Searching…' : 'Search'}
+        </button>
+      </form>
+      {#if subtitleSearchError}
+        <div class="subsearch-error">{subtitleSearchError}</div>
+      {/if}
+      <div class="subsearch-results">
+        {#if subtitleSearchLoading && subtitleSearchResults.length === 0}
+          <div class="subsearch-empty">Loading…</div>
+        {:else if subtitleSearchResults.length === 0 && !subtitleSearchError}
+          <div class="subsearch-empty">No results yet.</div>
+        {:else}
+          {#each subtitleSearchResults as res (res.provider_file_id)}
+            <button
+              class="subsearch-result"
+              on:click={() => downloadSubtitle(res)}
+              disabled={subtitleDownloadingId !== null}
+            >
+              <div class="subsearch-result-top">
+                <span class="subsearch-result-title">{res.release || res.file_name}</span>
+                <span class="subsearch-result-lang">{res.language}</span>
+              </div>
+              <div class="subsearch-result-meta">
+                {#if res.hd}<span>HD</span>{/if}
+                {#if res.from_trusted}<span>Trusted</span>{/if}
+                {#if res.hearing_impaired}<span>SDH</span>{/if}
+                {#if res.download_count > 0}<span>↓ {res.download_count.toLocaleString()}</span>{/if}
+                {#if res.rating > 0}<span>★ {res.rating.toFixed(1)}</span>{/if}
+                {#if res.uploader_name}<span>@{res.uploader_name}</span>{/if}
+              </div>
+              {#if subtitleDownloadingId === res.provider_file_id}
+                <div class="subsearch-result-downloading">Downloading…</div>
+              {/if}
+            </button>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .player-container {
     position: fixed;
@@ -2338,6 +2654,34 @@
     align-items: center;
     padding: 6px 0;
     box-sizing: border-box;
+    position: relative;
+  }
+
+  /* Hover preview: sprite crop + time label, anchored above the cursor. */
+  .seek-preview {
+    position: absolute;
+    bottom: 22px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .seek-preview-thumb {
+    background-repeat: no-repeat;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+  }
+  .seek-preview-time {
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 6px;
+    border-radius: 3px;
   }
   .seek-track {
     position: relative;
@@ -3236,6 +3580,162 @@
     pointer-events: none;
     z-index: 16;
     backdrop-filter: blur(4px);
+  }
+
+  /* ── Online subtitle search modal ─────────────────────── */
+  .search-online-option {
+    border-top: 1px solid rgba(255,255,255,0.08);
+    font-weight: 500;
+    color: #8ab4ff;
+  }
+  .subsearch-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.72);
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    backdrop-filter: blur(4px);
+  }
+  .subsearch-modal {
+    background: rgba(18,18,28,0.98);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 640px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    color: #fff;
+    overflow: hidden;
+  }
+  .subsearch-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem 0.5rem;
+  }
+  .subsearch-header h2 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+  .subsearch-close {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.6);
+    font-size: 1.6rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.25rem;
+  }
+  .subsearch-close:hover { color: #fff; }
+  .subsearch-form {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem 1.25rem 0.75rem;
+  }
+  .subsearch-input {
+    flex: 1;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #fff;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+  }
+  .subsearch-lang {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #fff;
+    padding: 0.5rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+  }
+  .subsearch-submit {
+    background: #3b82f6;
+    border: none;
+    color: #fff;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+  .subsearch-submit:disabled { opacity: 0.5; cursor: default; }
+  .subsearch-error {
+    margin: 0 1.25rem 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 6px;
+    color: #fca5a5;
+    font-size: 0.85rem;
+  }
+  .subsearch-results {
+    overflow-y: auto;
+    flex: 1;
+    padding: 0 0.5rem 0.75rem;
+  }
+  .subsearch-empty {
+    text-align: center;
+    color: rgba(255,255,255,0.5);
+    padding: 2rem 0;
+    font-size: 0.9rem;
+  }
+  .subsearch-result {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #fff;
+    padding: 0.65rem 0.75rem;
+    cursor: pointer;
+    margin-bottom: 0.25rem;
+  }
+  .subsearch-result:hover {
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,255,255,0.1);
+  }
+  .subsearch-result:disabled { opacity: 0.6; cursor: default; }
+  .subsearch-result-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    align-items: baseline;
+    margin-bottom: 0.25rem;
+  }
+  .subsearch-result-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+  .subsearch-result-lang {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.6);
+    letter-spacing: 0.05em;
+    flex: none;
+  }
+  .subsearch-result-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.55);
+  }
+  .subsearch-result-downloading {
+    font-size: 0.75rem;
+    color: #8ab4ff;
+    margin-top: 0.25rem;
   }
 
   /* ── Bottom sheet (mobile menus) ─────────────────────── */

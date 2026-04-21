@@ -14,6 +14,16 @@
   let arrWebhookUrl = '';
   let arrPathMappings: Array<{ remote: string; local: string }> = [];
 
+  // OpenSubtitles state. `osPasswordMasked` tracks whether the currently
+  // displayed password is the masked sentinel from the server — editing it
+  // flips the flag so save() knows to send the plaintext up.
+  let osApiKey = '';
+  let osUsername = '';
+  let osPassword = '';
+  let osPasswordMasked = false;
+  let osLanguages = '';
+  let osEnabled = false;
+
   // Email test state
   let emailEnabled = false;
   let testEmail = '';
@@ -46,6 +56,15 @@
       const pm = s.arr_path_mappings ?? {};
       arrPathMappings = Object.entries(pm).map(([remote, local]) => ({ remote, local }));
       if (arrPathMappings.length === 0) arrPathMappings = [{ remote: '', local: '' }];
+      const os = s.opensubtitles;
+      if (os) {
+        osApiKey = os.api_key ?? '';
+        osUsername = os.username ?? '';
+        osPassword = os.password ?? '';
+        osPasswordMasked = osPassword === '****';
+        osLanguages = os.languages ?? '';
+        osEnabled = !!os.enabled;
+      }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load settings';
     } finally {
@@ -109,6 +128,15 @@
         tvdb_api_key: tvdbApiKey.trim(),
         arr_api_key: arrApiKey.trim(),
         arr_path_mappings: pm,
+        opensubtitles: {
+          api_key: osApiKey.trim(),
+          username: osUsername.trim(),
+          // If the password is still the masked sentinel, send "****" so the
+          // backend knows to keep the stored one unchanged.
+          password: osPasswordMasked ? '****' : osPassword,
+          languages: osLanguages.trim(),
+          enabled: osEnabled,
+        },
       });
       // Reload to get updated webhook URL
       const s = await settingsApi.get();
@@ -319,6 +347,73 @@
         </div>
       </section>
 
+      <section>
+        <div class="sec-label">OpenSubtitles</div>
+        <div class="field">
+          <label class="toggle-row">
+            <input type="checkbox" bind:checked={osEnabled} />
+            <span>Enable online subtitle search</span>
+          </label>
+          <div class="hint">
+            Lets viewers search OpenSubtitles.com from the player subtitle picker. Requires an API key below.
+          </div>
+        </div>
+        <div class="field">
+          <label for="os-key">API Key</label>
+          <input
+            id="os-key"
+            type="text"
+            bind:value={osApiKey}
+            placeholder="Enter your OpenSubtitles API key"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="hint">
+            Get one at
+            <a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener">opensubtitles.com/consumers</a>.
+          </div>
+        </div>
+        <div class="field">
+          <label for="os-user">Username (optional)</label>
+          <input
+            id="os-user"
+            type="text"
+            bind:value={osUsername}
+            placeholder="Your OpenSubtitles username"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="field">
+          <label for="os-pass">Password (optional)</label>
+          <input
+            id="os-pass"
+            type="password"
+            bind:value={osPassword}
+            on:input={() => { osPasswordMasked = false; }}
+            placeholder="Your OpenSubtitles password"
+            autocomplete="new-password"
+          />
+          <div class="hint">
+            Logging in bumps the daily download quota from 5 to 20+. Credentials are stored server-side only.
+          </div>
+        </div>
+        <div class="field">
+          <label for="os-langs">Default languages</label>
+          <input
+            id="os-langs"
+            type="text"
+            bind:value={osLanguages}
+            placeholder="en,es"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="hint">
+            Comma-separated ISO-639-1 codes used as the default search filter. Leave blank to let viewers pick per-search.
+          </div>
+        </div>
+      </section>
+
       <div class="form-foot">
         <button type="submit" class="btn-save" disabled={saving}>
           {saving ? 'Saving…' : 'Save Changes'}
@@ -525,6 +620,21 @@
   }
 
   .field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .toggle-row input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    accent-color: var(--accent);
+  }
 
   label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
 

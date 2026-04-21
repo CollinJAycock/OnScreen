@@ -32,6 +32,8 @@ type SettingsServiceIface interface {
 	SetWorkerFleet(ctx context.Context, cfg settings.WorkerFleetConfig) error
 	TranscodeConfigGet(ctx context.Context) settings.TranscodeConfig
 	SetTranscodeConfig(ctx context.Context, cfg settings.TranscodeConfig) error
+	OpenSubtitles(ctx context.Context) settings.OpenSubtitlesConfig
+	SetOpenSubtitles(ctx context.Context, cfg settings.OpenSubtitlesConfig) error
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -285,12 +287,37 @@ func (h *SettingsHandler) UpdateFleet(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsResponse struct {
-	TMDBAPIKey        string            `json:"tmdb_api_key"`
-	TVDBAPIKey        string            `json:"tvdb_api_key"`
-	ArrAPIKey         string            `json:"arr_api_key"`
-	ArrWebhookURL     string            `json:"arr_webhook_url"`
-	ArrPathMappings   map[string]string `json:"arr_path_mappings,omitempty"`
-	TranscodeEncoders string            `json:"transcode_encoders"`
+	TMDBAPIKey        string                  `json:"tmdb_api_key"`
+	TVDBAPIKey        string                  `json:"tvdb_api_key"`
+	ArrAPIKey         string                  `json:"arr_api_key"`
+	ArrWebhookURL     string                  `json:"arr_webhook_url"`
+	ArrPathMappings   map[string]string       `json:"arr_path_mappings,omitempty"`
+	TranscodeEncoders string                  `json:"transcode_encoders"`
+	OpenSubtitles     openSubtitlesSettingDTO `json:"opensubtitles"`
+}
+
+// openSubtitlesSettingDTO masks the API key and password before returning the
+// config to the client — secrets should never leave the server in plaintext.
+type openSubtitlesSettingDTO struct {
+	APIKey    string `json:"api_key"`
+	Username  string `json:"username"`
+	Password  string `json:"password"` // "****" if set, "" if empty
+	Languages string `json:"languages"`
+	Enabled   bool   `json:"enabled"`
+}
+
+func toOpenSubtitlesDTO(cfg settings.OpenSubtitlesConfig) openSubtitlesSettingDTO {
+	pw := ""
+	if cfg.Password != "" {
+		pw = "****"
+	}
+	return openSubtitlesSettingDTO{
+		APIKey:    maskAPIKey(cfg.APIKey),
+		Username:  cfg.Username,
+		Password:  pw,
+		Languages: cfg.Languages,
+		Enabled:   cfg.Enabled,
+	}
 }
 
 // maskAPIKey returns the first 4 chars + "****" if the key is longer than 4,
@@ -339,6 +366,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ArrWebhookURL:     webhookURL,
 		ArrPathMappings:   h.svc.ArrPathMappings(ctx),
 		TranscodeEncoders: h.svc.TranscodeEncoders(ctx),
+		OpenSubtitles:     toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
 	})
 }
 
@@ -350,6 +378,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ArrAPIKey         *string            `json:"arr_api_key"`
 		ArrPathMappings   *map[string]string `json:"arr_path_mappings"`
 		TranscodeEncoders *string            `json:"transcode_encoders"`
+		OpenSubtitles     *struct {
+			APIKey    *string `json:"api_key"`
+			Username  *string `json:"username"`
+			Password  *string `json:"password"`
+			Languages *string `json:"languages"`
+			Enabled   *bool   `json:"enabled"`
+		} `json:"opensubtitles"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -391,6 +426,31 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.OpenSubtitles != nil {
+		// Read-modify-write so partial updates (e.g. toggling Enabled without
+		// re-sending the API key) don't clobber the stored credentials.
+		cur := h.svc.OpenSubtitles(ctx)
+		if body.OpenSubtitles.APIKey != nil {
+			cur.APIKey = *body.OpenSubtitles.APIKey
+		}
+		if body.OpenSubtitles.Username != nil {
+			cur.Username = *body.OpenSubtitles.Username
+		}
+		if body.OpenSubtitles.Password != nil && *body.OpenSubtitles.Password != "****" {
+			cur.Password = *body.OpenSubtitles.Password
+		}
+		if body.OpenSubtitles.Languages != nil {
+			cur.Languages = *body.OpenSubtitles.Languages
+		}
+		if body.OpenSubtitles.Enabled != nil {
+			cur.Enabled = *body.OpenSubtitles.Enabled
+		}
+		if err := h.svc.SetOpenSubtitles(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "opensubtitles", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
 	if h.audit != nil {
 		detail := map[string]any{}
 		if body.TMDBAPIKey != nil {
@@ -407,6 +467,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.TranscodeEncoders != nil {
 			detail["transcode_encoders"] = *body.TranscodeEncoders
+		}
+		if body.OpenSubtitles != nil {
+			detail["opensubtitles"] = "changed"
 		}
 		claims := middleware.ClaimsFromContext(r.Context())
 		if claims != nil {

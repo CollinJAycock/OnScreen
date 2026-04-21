@@ -43,6 +43,21 @@ type CollectionItem struct {
 	AddedAt      pgtype.Timestamptz `json:"added_at"`
 }
 
+type ExternalSubtitle struct {
+	ID            uuid.UUID          `json:"id"`
+	FileID        uuid.UUID          `json:"file_id"`
+	Language      string             `json:"language"`
+	Title         *string            `json:"title"`
+	Forced        bool               `json:"forced"`
+	Sdh           bool               `json:"sdh"`
+	Source        string             `json:"source"`
+	SourceID      *string            `json:"source_id"`
+	StoragePath   string             `json:"storage_path"`
+	Rating        *float32           `json:"rating"`
+	DownloadCount *int32             `json:"download_count"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type HubRecentlyAdded struct {
 	LibraryID  uuid.UUID          `json:"library_id"`
 	MediaID    uuid.UUID          `json:"media_id"`

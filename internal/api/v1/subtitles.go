@@ -1,0 +1,384 @@
+package v1
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/subtitles"
+	"github.com/onscreen/onscreen/internal/subtitles/opensubtitles"
+)
+
+// SubtitleService is the contract the handler needs from the subtitle service.
+// Defined here so tests can mock without pulling in the real opensubtitles client.
+type SubtitleService interface {
+	Search(ctx context.Context, opts subtitles.SearchOpts) ([]opensubtitles.SearchResult, error)
+	Download(ctx context.Context, opts subtitles.DownloadOpts) (gen.ExternalSubtitle, error)
+	List(ctx context.Context, fileID uuid.UUID) ([]gen.ExternalSubtitle, error)
+	Get(ctx context.Context, id uuid.UUID) (gen.ExternalSubtitle, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+// SubtitleHandler exposes search/download/list endpoints for external subtitles.
+// Library access is enforced via the items the subtitles attach to.
+type SubtitleHandler struct {
+	svc    SubtitleService
+	media  ItemMediaService
+	access LibraryAccessChecker
+	logger *slog.Logger
+}
+
+// NewSubtitleHandler constructs a SubtitleHandler.
+func NewSubtitleHandler(svc SubtitleService, media ItemMediaService, logger *slog.Logger) *SubtitleHandler {
+	return &SubtitleHandler{svc: svc, media: media, logger: logger}
+}
+
+// WithLibraryAccess wires per-user library filtering.
+func (h *SubtitleHandler) WithLibraryAccess(a LibraryAccessChecker) *SubtitleHandler {
+	h.access = a
+	return h
+}
+
+// SearchResultJSON is the API representation of a single search result.
+type SearchResultJSON struct {
+	ProviderFileID  int     `json:"provider_file_id"`
+	FileName        string  `json:"file_name"`
+	Language        string  `json:"language"`
+	Release         string  `json:"release"`
+	HearingImpaired bool    `json:"hearing_impaired"`
+	HD              bool    `json:"hd"`
+	FromTrusted     bool    `json:"from_trusted"`
+	Rating          float32 `json:"rating"`
+	DownloadCount   int32   `json:"download_count"`
+	UploaderName    string  `json:"uploader_name"`
+}
+
+// ExternalSubtitleJSON is the API representation of a stored external subtitle.
+type ExternalSubtitleJSON struct {
+	ID              string  `json:"id"`
+	FileID          string  `json:"file_id"`
+	Language        string  `json:"language"`
+	Title           *string `json:"title,omitempty"`
+	Forced          bool    `json:"forced"`
+	SDH             bool    `json:"sdh"`
+	Source          string  `json:"source"`
+	URL             string  `json:"url"`
+}
+
+// Search handles GET /api/v1/items/{id}/subtitles/search?lang=en&query=...
+// The item is used to derive the title/year/episode metadata sent upstream.
+func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
+	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+
+	item, err := h.media.GetItem(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "subtitles: get item", "id", itemID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkAccess(w, r, item.LibraryID) {
+		return
+	}
+
+	opts := subtitles.SearchOpts{
+		Languages: r.URL.Query().Get("lang"),
+	}
+	if q := r.URL.Query().Get("query"); q != "" {
+		opts.Query = q
+	} else {
+		opts.Query = item.Title
+	}
+	if item.Year != nil {
+		opts.Year = *item.Year
+	}
+	if item.IMDBID != nil {
+		opts.IMDBID = *item.IMDBID
+	}
+	if item.TMDBID != nil {
+		opts.TMDBID = *item.TMDBID
+	}
+	// For episodes, use the show title and season/episode numbers if we can resolve them.
+	if item.Type == "episode" {
+		if season, episode, ok := h.deriveEpisodeNumbers(r, item); ok {
+			opts.Season = season
+			opts.Episode = episode
+			if showTitle := h.deriveShowTitle(r, item); showTitle != "" {
+				opts.Query = showTitle
+			}
+		}
+	}
+
+	results, err := h.svc.Search(r.Context(), opts)
+	if err != nil {
+		if errors.Is(err, subtitles.ErrNoProvider) {
+			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{
+				"error": "subtitle provider not configured",
+			})
+			return
+		}
+		h.logger.WarnContext(r.Context(), "subtitles: search", "id", itemID, "err", err)
+		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+
+	out := make([]SearchResultJSON, 0, len(results))
+	for _, x := range results {
+		out = append(out, SearchResultJSON{
+			ProviderFileID:  x.FileID,
+			FileName:        x.FileName,
+			Language:        x.Language,
+			Release:         x.Release,
+			HearingImpaired: x.HearingImpaired,
+			HD:              x.HD,
+			FromTrusted:     x.FromTrusted,
+			Rating:          x.Rating,
+			DownloadCount:   x.DownloadCount,
+			UploaderName:    x.UploaderName,
+		})
+	}
+	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// Download handles POST /api/v1/items/{id}/subtitles/download
+// Body: { file_id, provider_file_id, language, title?, hearing_impaired?, rating?, download_count? }
+// Persists the subtitle to disk + DB and returns the resulting row.
+func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
+	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+
+	item, err := h.media.GetItem(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "subtitles: get item", "id", itemID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkAccess(w, r, item.LibraryID) {
+		return
+	}
+
+	var body struct {
+		FileID          string  `json:"file_id"`
+		ProviderFileID  int     `json:"provider_file_id"`
+		Language        string  `json:"language"`
+		Title           string  `json:"title"`
+		HearingImpaired bool    `json:"hearing_impaired"`
+		Rating          float32 `json:"rating"`
+		DownloadCount   int32   `json:"download_count"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid body")
+		return
+	}
+	fileID, err := uuid.Parse(body.FileID)
+	if err != nil || body.ProviderFileID == 0 || body.Language == "" {
+		respond.BadRequest(w, r, "file_id, provider_file_id, and language are required")
+		return
+	}
+
+	// Verify the file belongs to the item to prevent attaching subtitles
+	// from one item to another item's files.
+	files, err := h.media.GetFiles(r.Context(), itemID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "subtitles: list files", "id", itemID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !fileBelongsToItem(fileID, files) {
+		respond.NotFound(w, r)
+		return
+	}
+
+	row, err := h.svc.Download(r.Context(), subtitles.DownloadOpts{
+		FileID:          fileID,
+		ProviderFileID:  body.ProviderFileID,
+		Language:        body.Language,
+		Title:           body.Title,
+		HearingImpaired: body.HearingImpaired,
+		Rating:          body.Rating,
+		DownloadCount:   body.DownloadCount,
+	})
+	if err != nil {
+		if errors.Is(err, subtitles.ErrNoProvider) {
+			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{
+				"error": "subtitle provider not configured",
+			})
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "subtitles: download", "id", itemID, "err", err)
+		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	respond.Created(w, r, toExternalSubtitleJSON(row))
+}
+
+// Delete handles DELETE /api/v1/items/{id}/subtitles/{subId}.
+func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	subID, err := uuid.Parse(chi.URLParam(r, "subId"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid subtitle id")
+		return
+	}
+
+	item, err := h.media.GetItem(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkAccess(w, r, item.LibraryID) {
+		return
+	}
+
+	row, err := h.svc.Get(r.Context(), subID)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	files, err := h.media.GetFiles(r.Context(), itemID)
+	if err != nil || !fileBelongsToItem(row.FileID, files) {
+		respond.NotFound(w, r)
+		return
+	}
+	if err := h.svc.Delete(r.Context(), subID); err != nil {
+		h.logger.ErrorContext(r.Context(), "subtitles: delete", "id", subID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
+}
+
+// Serve handles GET /media/external-subtitles/{subId}. Returns the on-disk VTT.
+func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
+	subID, err := uuid.Parse(chi.URLParam(r, "subId"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid subtitle id")
+		return
+	}
+	row, err := h.svc.Get(r.Context(), subID)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	data, err := os.ReadFile(row.StoragePath)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "subtitles: read file", "id", subID, "err", err)
+		respond.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+func (h *SubtitleHandler) checkAccess(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID) bool {
+	if h.access == nil {
+		return true
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return false
+	}
+	allowed, err := h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+	if err != nil {
+		respond.InternalError(w, r)
+		return false
+	}
+	if allowed != nil {
+		if _, ok := allowed[libraryID]; !ok {
+			respond.NotFound(w, r)
+			return false
+		}
+	}
+	return true
+}
+
+// deriveEpisodeNumbers walks up to the parent season/show to surface the
+// canonical (season, episode) numbers for the upstream search.
+func (h *SubtitleHandler) deriveEpisodeNumbers(r *http.Request, ep *media.Item) (int, int, bool) {
+	if ep.Index == nil || ep.ParentID == nil {
+		return 0, 0, false
+	}
+	season, err := h.media.GetItem(r.Context(), *ep.ParentID)
+	if err != nil || season.Index == nil {
+		return 0, 0, false
+	}
+	return *season.Index, *ep.Index, true
+}
+
+// deriveShowTitle walks episode → season → show to find the show title.
+// Returns "" if any step fails.
+func (h *SubtitleHandler) deriveShowTitle(r *http.Request, ep *media.Item) string {
+	if ep.ParentID == nil {
+		return ""
+	}
+	season, err := h.media.GetItem(r.Context(), *ep.ParentID)
+	if err != nil || season.ParentID == nil {
+		return ""
+	}
+	show, err := h.media.GetItem(r.Context(), *season.ParentID)
+	if err != nil {
+		return ""
+	}
+	return show.Title
+}
+
+func fileBelongsToItem(fileID uuid.UUID, files []media.File) bool {
+	for _, f := range files {
+		if f.ID == fileID {
+			return true
+		}
+	}
+	return false
+}
+
+func toExternalSubtitleJSON(row gen.ExternalSubtitle) ExternalSubtitleJSON {
+	return ExternalSubtitleJSON{
+		ID:       row.ID.String(),
+		FileID:   row.FileID.String(),
+		Language: row.Language,
+		Title:    row.Title,
+		Forced:   row.Forced,
+		SDH:      row.Sdh,
+		Source:   row.Source,
+		URL:      "/media/external-subtitles/" + row.ID.String(),
+	}
+}

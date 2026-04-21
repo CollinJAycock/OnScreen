@@ -22,6 +22,7 @@ const keyTranscodeEncoders = "transcode_encoders"
 const keyWorkerFleet = "worker_fleet"
 const keyTranscodeConfig = "transcode_config"
 const keyIntroDetectionMode = "intro_detection_mode"
+const keyOpenSubtitlesConfig = "opensubtitles_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -202,6 +203,42 @@ func (s *Service) SetIntroDetectionMode(ctx context.Context, mode IntroDetection
 	default:
 		return ErrInvalidSetting
 	}
+}
+
+// OpenSubtitlesConfig stores credentials and defaults for the OpenSubtitles
+// integration. APIKey is required; Username/Password are optional but bump the
+// per-day download quota. Languages is a comma-separated ISO-639-1 list used
+// as the default when callers don't override it.
+type OpenSubtitlesConfig struct {
+	APIKey    string `json:"api_key"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
+	Languages string `json:"languages,omitempty"` // e.g. "en,es"
+	Enabled   bool   `json:"enabled"`
+}
+
+// OpenSubtitles returns the stored OpenSubtitles configuration. Returns the
+// zero value if nothing is persisted yet.
+func (s *Service) OpenSubtitles(ctx context.Context) OpenSubtitlesConfig {
+	raw := s.get(ctx, keyOpenSubtitlesConfig)
+	if raw == "" {
+		return OpenSubtitlesConfig{}
+	}
+	var cfg OpenSubtitlesConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse opensubtitles_config", "err", err)
+		return OpenSubtitlesConfig{}
+	}
+	return cfg
+}
+
+// SetOpenSubtitles persists the OpenSubtitles configuration as JSON.
+func (s *Service) SetOpenSubtitles(ctx context.Context, cfg OpenSubtitlesConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyOpenSubtitlesConfig, string(b))
 }
 
 func (s *Service) get(ctx context.Context, key string) string {

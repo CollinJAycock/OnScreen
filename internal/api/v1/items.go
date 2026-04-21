@@ -19,6 +19,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/contentrating"
+	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/intromarker"
@@ -104,8 +105,15 @@ type ItemHandler struct {
 	favorites ItemFavoriteChecker
 	markers   ItemMarkerService
 	access    LibraryAccessChecker
+	subs      ExternalSubLister
 	tracker   *streaming.Tracker
 	logger    *slog.Logger
+}
+
+// ExternalSubLister returns the saved external subtitle rows for a media file.
+// When nil on the handler, the Get response omits the field.
+type ExternalSubLister interface {
+	List(ctx context.Context, fileID uuid.UUID) ([]gen.ExternalSubtitle, error)
 }
 
 // NewItemHandler creates an ItemHandler.
@@ -125,6 +133,14 @@ func (h *ItemHandler) WithMarkers(m ItemMarkerService) *ItemHandler {
 // grants on item endpoints.
 func (h *ItemHandler) WithLibraryAccess(a LibraryAccessChecker) *ItemHandler {
 	h.access = a
+	return h
+}
+
+// WithExternalSubtitles attaches the external subtitle lister so the Get
+// response includes user-fetched subtitles (e.g. from OpenSubtitles)
+// alongside the embedded streams.
+func (h *ItemHandler) WithExternalSubtitles(s ExternalSubLister) *ItemHandler {
+	h.subs = s
 	return h
 }
 
@@ -185,9 +201,10 @@ type ItemFileResponse struct {
 	HDRType         *string              `json:"hdr_type,omitempty"`
 	DurationMS      *int64               `json:"duration_ms,omitempty"`
 	Faststart       bool                 `json:"faststart"`
-	AudioStreams    []AudioStreamJSON    `json:"audio_streams"`
-	SubtitleStreams []SubtitleStreamJSON `json:"subtitle_streams"`
-	Chapters        []ChapterJSON        `json:"chapters"`
+	AudioStreams       []AudioStreamJSON       `json:"audio_streams"`
+	SubtitleStreams    []SubtitleStreamJSON    `json:"subtitle_streams"`
+	ExternalSubtitles  []ExternalSubtitleJSON  `json:"external_subtitles,omitempty"`
+	Chapters           []ChapterJSON           `json:"chapters"`
 }
 
 // ChapterJSON is the API representation of a chapter marker.
@@ -336,7 +353,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		if f.Status != "active" {
 			continue
 		}
-		out.Files = append(out.Files, ItemFileResponse{
+		fr := ItemFileResponse{
 			ID:              f.ID.String(),
 			StreamURL:       "/media/stream/" + f.ID.String(),
 			Container:       f.Container,
@@ -351,7 +368,18 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			AudioStreams:    parseJSONBAudioStreams(f.AudioStreams),
 			SubtitleStreams: parseJSONBSubtitleStreams(f.SubtitleStreams),
 			Chapters:        parseJSONBChapters(f.Chapters),
-		})
+		}
+		if h.subs != nil {
+			if rows, err := h.subs.List(r.Context(), f.ID); err == nil && len(rows) > 0 {
+				fr.ExternalSubtitles = make([]ExternalSubtitleJSON, 0, len(rows))
+				for _, row := range rows {
+					fr.ExternalSubtitles = append(fr.ExternalSubtitles, toExternalSubtitleJSON(row))
+				}
+			} else if err != nil {
+				h.logger.WarnContext(r.Context(), "list external subs", "file_id", f.ID, "err", err)
+			}
+		}
+		out.Files = append(out.Files, fr)
 	}
 
 	// Markers are only meaningful for episodes; movies are excluded by policy.

@@ -313,6 +313,14 @@ export interface ListItemsParams {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
+export interface OpenSubtitlesSettings {
+  api_key: string;
+  username: string;
+  password: string; // "****" if set, "" if empty
+  languages: string;
+  enabled: boolean;
+}
+
 export interface ServerSettings {
   tmdb_api_key: string;
   tvdb_api_key: string;
@@ -320,6 +328,15 @@ export interface ServerSettings {
   arr_webhook_url: string;
   arr_path_mappings?: Record<string, string>;
   transcode_encoders: string;
+  opensubtitles: OpenSubtitlesSettings;
+}
+
+export interface OpenSubtitlesUpdate {
+  api_key?: string;
+  username?: string;
+  password?: string;
+  languages?: string;
+  enabled?: boolean;
 }
 
 export interface EncoderEntry {
@@ -446,6 +463,30 @@ export interface SubtitleStream {
   forced: boolean;
 }
 
+export interface ExternalSubtitle {
+  id: string;
+  file_id: string;
+  language: string;
+  title?: string;
+  forced: boolean;
+  sdh: boolean;
+  source: string;
+  url: string;
+}
+
+export interface SubtitleSearchResult {
+  provider_file_id: number;
+  file_name: string;
+  language: string;
+  release: string;
+  hearing_impaired: boolean;
+  hd: boolean;
+  from_trusted: boolean;
+  rating: number;
+  download_count: number;
+  uploader_name: string;
+}
+
 export interface Chapter {
   title: string;
   start_ms: number;
@@ -466,6 +507,7 @@ export interface ItemFile {
   faststart: boolean;
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
+  external_subtitles?: ExternalSubtitle[];
   chapters: Chapter[];
 }
 
@@ -610,6 +652,27 @@ export const itemApi = {
     api.put<Marker>(`/items/${id}/markers/${kind}`, { start_ms: startMs, end_ms: endMs }),
   deleteMarker: (id: string, kind: 'intro' | 'credits') =>
     api.delete(`/items/${id}/markers/${kind}`)
+};
+
+export const subtitleApi = {
+  search: (itemId: string, params: { lang?: string; query?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.lang) qs.set('lang', params.lang);
+    if (params.query) qs.set('query', params.query);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return api.requestList<SubtitleSearchResult>(`/items/${itemId}/subtitles/search${suffix}`);
+  },
+  download: (itemId: string, body: {
+    file_id: string;
+    provider_file_id: number;
+    language: string;
+    title?: string;
+    hearing_impaired?: boolean;
+    rating?: number;
+    download_count?: number;
+  }) => api.post<ExternalSubtitle>(`/items/${itemId}/subtitles/download`, body),
+  remove: (itemId: string, subId: string) =>
+    api.delete(`/items/${itemId}/subtitles/${subId}`),
 };
 
 export const favoritesApi = {

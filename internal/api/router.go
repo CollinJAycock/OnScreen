@@ -40,6 +40,7 @@ type Handlers struct {
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
+	Subtitles       *v1.SubtitleHandler
 	Arr             *v1.ArrHandler          // incoming arr app notifications
 	GoogleAuth      *v1.GoogleOAuthHandler  // nil when SSO not configured
 	GitHubAuth      *v1.GitHubOAuthHandler  // nil when SSO not configured
@@ -94,6 +95,9 @@ func NewRouter(h *Handlers) http.Handler {
 	if h.Items != nil {
 		r.Get("/media/stream/{id}", h.Items.StreamFile)
 		r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
+	}
+	if h.Subtitles != nil {
+		r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
 	}
 
 	// Native HLS playlist + segment endpoints — auth via segment token in query param,
@@ -444,6 +448,13 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Trickplay != nil {
 				r.Get("/items/{id}/trickplay", h.Trickplay.Status)
 				r.Post("/items/{id}/trickplay", h.Trickplay.Generate)
+			}
+
+			// External subtitle search and download (OpenSubtitles, etc.).
+			if h.Subtitles != nil {
+				r.Get("/items/{id}/subtitles/search", h.Subtitles.Search)
+				r.Post("/items/{id}/subtitles/download", h.Subtitles.Download)
+				r.Delete("/items/{id}/subtitles/{subId}", h.Subtitles.Delete)
 			}
 
 			// Favorites — per-user.

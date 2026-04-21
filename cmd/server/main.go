@@ -42,6 +42,7 @@ import (
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
+	"github.com/onscreen/onscreen/internal/subtitles"
 	"github.com/onscreen/onscreen/internal/trickplay"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
@@ -315,9 +316,6 @@ func run() error {
 	arrHandler := v1.NewArrHandler(settingsSvc, arrAdapter, logger)
 	favoritesHandler := v1.NewFavoritesHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc)
 	favoritesChecker := &favoritesChecker{q: gen.New(roPool)}
-	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
-		WithLibraryAccess(libSvc).
-		WithMarkers(intromarker.NewStore(rwPool))
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger)
 
 	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
@@ -334,6 +332,35 @@ func run() error {
 	trickplaySvc := trickplay.NewService(trickplayGen, trickplayStore)
 	trickplayHandler := v1.NewTrickplayHandler(trickplaySvc, mediaSvc, logger).
 		WithLibraryAccess(libSvc)
+
+	// ── External subtitles (OpenSubtitles, etc.) ─────────────────────────────
+	// Lives next to the trickplay cache; on-disk *.vtt files keyed by file id.
+	subtitleCacheRoot := cfg.CachePath
+	if subtitleCacheRoot == "" {
+		subtitleCacheRoot = filepath.Join(os.TempDir(), "onscreen-subtitles")
+	} else {
+		subtitleCacheRoot = filepath.Join(filepath.Dir(subtitleCacheRoot), "subtitles")
+	}
+	// Provider is dynamic: it re-reads settings on each call and rebuilds the
+	// underlying client when credentials change, so users don't need to restart
+	// the server after adding or updating an OpenSubtitles key.
+	subtitleProvider := subtitles.NewDynamicProvider(func(ctx context.Context) subtitles.OpenSubtitlesCreds {
+		cfg := settingsSvc.OpenSubtitles(ctx)
+		return subtitles.OpenSubtitlesCreds{
+			Enabled:  cfg.Enabled,
+			APIKey:   cfg.APIKey,
+			Username: cfg.Username,
+			Password: cfg.Password,
+		}
+	}, "")
+	subtitleSvc := subtitles.New(subtitleProvider, gen.New(rwPool), subtitleCacheRoot, logger)
+	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
+		WithLibraryAccess(libSvc)
+
+	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
+		WithLibraryAccess(libSvc).
+		WithMarkers(intromarker.NewStore(rwPool)).
+		WithExternalSubtitles(subtitleSvc)
 
 	// ── Embedded transcode worker ─────────────────────────────────────────────
 	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
@@ -466,6 +493,7 @@ func run() error {
 		History:            historyHandler,
 		Items:              itemHandler,
 		Trickplay:          trickplayHandler,
+		Subtitles:          subtitleHandler,
 		NativeTranscode:    nativeTranscodeHandler,
 		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Arr:                arrHandler,

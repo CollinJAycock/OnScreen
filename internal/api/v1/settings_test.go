@@ -84,6 +84,12 @@ func (m *mockSettingsService) SetWorkerFleet(_ context.Context, cfg settings.Wor
 	m.setFleetCall = &cfg
 	return nil
 }
+func (m *mockSettingsService) OpenSubtitles(_ context.Context) settings.OpenSubtitlesConfig {
+	return settings.OpenSubtitlesConfig{}
+}
+func (m *mockSettingsService) SetOpenSubtitles(_ context.Context, _ settings.OpenSubtitlesConfig) error {
+	return nil
+}
 
 func newSettingsHandler(svc *mockSettingsService) *SettingsHandler {
 	return NewSettingsHandler(svc, slog.Default())
