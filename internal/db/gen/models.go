@@ -195,6 +195,21 @@ type Session struct {
 	LastSeen   pgtype.Timestamptz `json:"last_seen"`
 }
 
+type TrickplayStatus struct {
+	ItemID          uuid.UUID          `json:"item_id"`
+	FileID          pgtype.UUID        `json:"file_id"`
+	Status          string             `json:"status"`
+	SpriteCount     int32              `json:"sprite_count"`
+	IntervalSec     int32              `json:"interval_sec"`
+	ThumbWidth      int32              `json:"thumb_width"`
+	ThumbHeight     int32              `json:"thumb_height"`
+	GridCols        int32              `json:"grid_cols"`
+	GridRows        int32              `json:"grid_rows"`
+	LastAttemptedAt pgtype.Timestamptz `json:"last_attempted_at"`
+	LastError       *string            `json:"last_error"`
+	GeneratedAt     pgtype.Timestamptz `json:"generated_at"`
+}
+
 type User struct {
 	ID                    uuid.UUID          `json:"id"`
 	Username              string             `json:"username"`
