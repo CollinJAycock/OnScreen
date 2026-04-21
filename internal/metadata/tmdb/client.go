@@ -1,15 +1,20 @@
 // Package tmdb implements the metadata.Agent interface using The Movie Database API.
-// Rate limiting: token bucket at configurable req/s (default 20) per ADR.
+// Rate limiting: token bucket at configurable req/s (default 5) plus a circuit
+// breaker that halts all requests for one hour after TMDB returns 401 or 429 —
+// both signal the key is banned or throttled and further calls only deepen the hole.
 package tmdb
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -20,19 +25,33 @@ import (
 const baseURL = "https://api.themoviedb.org/3"
 const imageBaseURL = "https://image.tmdb.org/t/p/original"
 
+// circuitCooldown is how long the client refuses to call TMDB after a 401/429.
+// One hour is long enough to outlast a typical scan cycle without forcing the
+// operator to restart the server if the key is later fixed.
+const circuitCooldown = time.Hour
+
+// ErrCircuitOpen is returned by every TMDB method while the breaker is open.
+// Callers log-and-skip on this like they do on any other enrichment failure,
+// so a banned key no longer generates tens of thousands of duplicate log lines.
+var ErrCircuitOpen = errors.New("tmdb circuit open (key banned or throttled)")
+
 // Client is the TMDB metadata agent.
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	limiter    *rate.Limiter
 	language   string
+
+	mu          sync.Mutex
+	circuitOpen time.Time // zero = closed; otherwise the time the breaker opened
 }
 
 // New creates a TMDB client.
-// rateLimit is requests per second (default 20; TMDB allows ~50/s).
+// rateLimit is requests per second (default 5; TMDB tolerates ~40/s in
+// practice but aggressive bursts can get the key auto-throttled).
 func New(apiKey string, rateLimit int, language string) *Client {
 	if rateLimit <= 0 {
-		rateLimit = 20
+		rateLimit = 5
 	}
 	if language == "" {
 		language = "en-US"
@@ -42,6 +61,36 @@ func New(apiKey string, rateLimit int, language string) *Client {
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		limiter:    rate.NewLimiter(rate.Limit(rateLimit), rateLimit),
 		language:   language,
+	}
+}
+
+// circuitAllows returns true if the breaker is closed or its cooldown has
+// elapsed. On expiry the breaker auto-closes so callers don't need to retry.
+func (c *Client) circuitAllows() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.circuitOpen.IsZero() {
+		return true
+	}
+	if time.Since(c.circuitOpen) >= circuitCooldown {
+		c.circuitOpen = time.Time{}
+		return true
+	}
+	return false
+}
+
+// tripCircuit opens the breaker. Logged once at WARN — repeats inside the
+// cooldown window short-circuit before this is reached.
+func (c *Client) tripCircuit(status int) {
+	c.mu.Lock()
+	first := c.circuitOpen.IsZero()
+	if first {
+		c.circuitOpen = time.Now()
+	}
+	c.mu.Unlock()
+	if first {
+		slog.Warn("tmdb circuit opened — pausing requests",
+			"status", status, "cooldown", circuitCooldown.String())
 	}
 }
 
@@ -264,6 +313,9 @@ func (c *Client) GetTVExternalIDs(ctx context.Context, tmdbID int) (tvdbID int, 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 func (c *Client) get(ctx context.Context, path string, params url.Values, dest any) error {
+	if !c.circuitAllows() {
+		return ErrCircuitOpen
+	}
 	if err := c.limiter.Wait(ctx); err != nil {
 		return fmt.Errorf("rate limiter: %w", err)
 	}
@@ -287,6 +339,11 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("not found")
+	}
+	// 401 = key banned/invalid, 429 = rate-limited. Both mean "stop calling us".
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusTooManyRequests {
+		c.tripCircuit(resp.StatusCode)
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)

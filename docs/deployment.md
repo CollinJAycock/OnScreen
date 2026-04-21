@@ -78,7 +78,7 @@
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TMDB_API_KEY` | (none) | TMDB API key for cover art, ratings, and genre metadata |
-| `TMDB_RATE_LIMIT` | `20` | TMDB API requests per second |
+| `TMDB_RATE_LIMIT` | `5` | TMDB API requests per second |
 | `TVDB_API_KEY` | (none) | TheTVDB v4 project key; enables episode metadata fallback |
 
 ### Worker

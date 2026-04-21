@@ -453,7 +453,7 @@ watch_state (materialized view):
 | `TRANSCODE_NVENC_RC` | `vbr` | NVENC rate control: `vbr`/`cbr`/`constqp` |
 | `TRANSCODE_MAXRATE_RATIO` | `1.5` | Peak bitrate = target × ratio |
 | `TMDB_API_KEY` | — | Seeded to DB on first run; also configurable via `/settings` |
-| `TMDB_RATE_LIMIT` | `20` | TMDB req/s |
+| `TMDB_RATE_LIMIT` | `5` | TMDB req/s |
 
 ### Hot-Reloadable (SIGHUP)
 

@@ -69,7 +69,7 @@ type Config struct {
 
 	// ── Metadata ─────────────────────────────────────────────────────────────
 	TMDBAPIKey    string `env:"TMDB_API_KEY"`
-	TMDBRateLimit int    `env:"TMDB_RATE_LIMIT" envDefault:"20"` // req/s
+	TMDBRateLimit int    `env:"TMDB_RATE_LIMIT" envDefault:"5"` // req/s — conservative; TMDB auto-throttles abusive keys
 	TVDBAPIKey    string `env:"TVDB_API_KEY"`                    // TheTVDB v4 project key; enables episode fallback
 
 	// ── Worker ───────────────────────────────────────────────────────────────
