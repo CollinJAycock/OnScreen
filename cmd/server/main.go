@@ -496,6 +496,7 @@ func run() error {
 		Subtitles:          subtitleHandler,
 		NativeTranscode:    nativeTranscodeHandler,
 		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		Playlists:          v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Arr:                arrHandler,
 		GoogleAuth:         googleAuthHandler,
 		GitHubAuth:         githubAuthHandler,

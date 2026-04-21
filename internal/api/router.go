@@ -40,6 +40,7 @@ type Handlers struct {
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
+	Playlists       *v1.PlaylistHandler
 	Subtitles       *v1.SubtitleHandler
 	Arr             *v1.ArrHandler          // incoming arr app notifications
 	GoogleAuth      *v1.GoogleOAuthHandler  // nil when SSO not configured
@@ -429,6 +430,18 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/collections/{id}/items", h.Collections.Items)
 				r.Post("/collections/{id}/items", h.Collections.AddItem)
 				r.Delete("/collections/{id}/items/{itemId}", h.Collections.RemoveItem)
+			}
+
+			// User playlists — ownership-checked, per-user.
+			if h.Playlists != nil {
+				r.Get("/playlists", h.Playlists.List)
+				r.Post("/playlists", h.Playlists.Create)
+				r.Patch("/playlists/{id}", h.Playlists.Update)
+				r.Delete("/playlists/{id}", h.Playlists.Delete)
+				r.Get("/playlists/{id}/items", h.Playlists.Items)
+				r.Post("/playlists/{id}/items", h.Playlists.AddItem)
+				r.Delete("/playlists/{id}/items/{itemId}", h.Playlists.RemoveItem)
+				r.Put("/playlists/{id}/items/order", h.Playlists.Reorder)
 			}
 
 			// Individual media items — player, children, progress, on-demand enrich.

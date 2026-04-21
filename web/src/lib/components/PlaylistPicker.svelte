@@ -1,19 +1,18 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte';
-  import { collectionApi, type Collection } from '$lib/api';
+  import { createEventDispatcher } from 'svelte';
+  import { playlistApi, type Playlist } from '$lib/api';
 
   export let mediaItemId: string;
   export let open = false;
 
-  const dispatch = createEventDispatcher<{ close: void; added: { collectionId: string; name: string } }>();
+  const dispatch = createEventDispatcher<{ close: void; added: { playlistId: string; name: string } }>();
 
-  let playlists: Collection[] = [];
+  let playlists: Playlist[] = [];
   let loading = true;
   let adding: string | null = null;
   let error = '';
   let success = '';
 
-  // Inline create
   let showCreate = false;
   let newName = '';
   let creating = false;
@@ -25,20 +24,19 @@
     error = '';
     success = '';
     try {
-      const all = await collectionApi.list();
-      playlists = all.filter(c => c.type === 'playlist');
+      playlists = await playlistApi.list();
     } catch { playlists = []; }
     finally { loading = false; }
   }
 
-  async function addTo(col: Collection) {
-    adding = col.id;
+  async function addTo(pl: Playlist) {
+    adding = pl.id;
     error = '';
     success = '';
     try {
-      await collectionApi.addItem(col.id, mediaItemId);
-      success = `Added to "${col.name}"`;
-      dispatch('added', { collectionId: col.id, name: col.name });
+      await playlistApi.addItem(pl.id, mediaItemId);
+      success = `Added to "${pl.name}"`;
+      dispatch('added', { playlistId: pl.id, name: pl.name });
       setTimeout(() => { dispatch('close'); }, 800);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to add';
@@ -50,10 +48,10 @@
     creating = true;
     error = '';
     try {
-      const col = await collectionApi.create(newName.trim());
-      await collectionApi.addItem(col.id, mediaItemId);
-      success = `Created "${col.name}" and added item`;
-      dispatch('added', { collectionId: col.id, name: col.name });
+      const pl = await playlistApi.create(newName.trim());
+      await playlistApi.addItem(pl.id, mediaItemId);
+      success = `Created "${pl.name}" and added item`;
+      dispatch('added', { playlistId: pl.id, name: pl.name });
       newName = '';
       showCreate = false;
       setTimeout(() => { dispatch('close'); }, 800);
@@ -90,15 +88,15 @@
         <div class="loading">Loading playlists...</div>
       {:else}
         <div class="list">
-          {#each playlists as col (col.id)}
+          {#each playlists as pl (pl.id)}
             <button
               class="playlist-row"
-              disabled={adding === col.id}
-              on:click={() => addTo(col)}
+              disabled={adding === pl.id}
+              on:click={() => addTo(pl)}
             >
               <span class="playlist-icon">&#9835;</span>
-              <span class="playlist-name">{col.name}</span>
-              {#if adding === col.id}
+              <span class="playlist-name">{pl.name}</span>
+              {#if adding === pl.id}
                 <span class="adding">...</span>
               {/if}
             </button>

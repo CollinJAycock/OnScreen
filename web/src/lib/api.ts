@@ -613,6 +613,42 @@ export const collectionApi = {
     api.delete(`/collections/${collectionId}/items/${itemId}`),
 };
 
+export interface Playlist {
+  id: string;
+  name: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlaylistItem {
+  id: string;
+  title: string;
+  type: string;
+  year?: number;
+  rating?: number;
+  poster_path?: string;
+  duration_ms?: number;
+  position: number;
+}
+
+export const playlistApi = {
+  list: () => api.get<Playlist[]>('/playlists'),
+  create: (name: string, description?: string) =>
+    api.post<Playlist>('/playlists', { name, description }),
+  update: (id: string, name: string, description?: string) =>
+    api.patch<Playlist>(`/playlists/${id}`, { name, description }),
+  delete: (id: string) => api.delete(`/playlists/${id}`),
+  items: (id: string) =>
+    api.requestList<PlaylistItem>(`/playlists/${id}/items`),
+  addItem: (playlistId: string, mediaItemId: string) =>
+    api.post<void>(`/playlists/${playlistId}/items`, { media_item_id: mediaItemId }),
+  removeItem: (playlistId: string, itemId: string) =>
+    api.delete(`/playlists/${playlistId}/items/${itemId}`),
+  reorder: (playlistId: string, itemIds: string[]) =>
+    api.put<void>(`/playlists/${playlistId}/items/order`, { item_ids: itemIds })
+};
+
 export interface ManagedProfile {
   id: string;
   username: string;
