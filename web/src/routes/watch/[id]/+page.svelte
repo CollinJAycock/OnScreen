@@ -776,12 +776,15 @@
     cast = [];
     playRequested = false;
     try {
-      const [itemRes, castRes] = await Promise.all([
-        itemApi.get(id),
-        peopleApi.credits(id).catch(() => [] as Credit[])
-      ]);
-      item = itemRes;
-      cast = castRes;
+      item = await itemApi.get(id);
+
+      // Credits are fetched lazily on the server (TMDB round-trip on the
+      // first view of an item), which can take several seconds. Don't
+      // block the detail page on it — render now, populate the strip
+      // when it arrives.
+      peopleApi.credits(id)
+        .then(c => { if (item?.id === id) cast = c; })
+        .catch(() => { /* strip stays empty */ });
 
       // Shows and seasons: load detail view instead of trying to play.
       if (item.type === 'show' || item.type === 'season') {

@@ -478,6 +478,7 @@ func run() error {
 
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
+	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, logger)
 
 	// ── People (cast/crew) — lazy TMDB fetch on first item-detail view ───────
 	peopleQ := &peopleAdapter{q: gen.New(rwPool)}
@@ -529,6 +530,7 @@ func run() error {
 		Invite:             inviteHandler,
 		Notifications:      notifHandler,
 		Maintenance:        maintenanceHandler,
+		Backup:             backupHandler,
 		People:             peopleHandler,
 		Favorites:          favoritesHandler,
 		StreamTracker:      streamTracker,

@@ -53,6 +53,7 @@ type Handlers struct {
 	Notifications   *v1.NotificationHandler
 	Favorites       *v1.FavoritesHandler
 	Maintenance     *v1.MaintenanceHandler
+	Backup          *v1.BackupHandler
 	People          *v1.PeopleHandler
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
@@ -357,6 +358,15 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/maintenance/refresh-missing-art", h.Maintenance.RefreshMissingArt)
 					r.Post("/maintenance/dedupe-shows", h.Maintenance.DedupeShows)
 					r.Post("/maintenance/dedupe-movies", h.Maintenance.DedupeMovies)
+				})
+			}
+
+			// Backup / restore — admin only.
+			if h.Backup != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/backup", h.Backup.Download)
+					r.Post("/admin/restore", h.Backup.Restore)
 				})
 			}
 
