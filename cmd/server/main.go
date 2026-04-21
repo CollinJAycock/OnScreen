@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -41,6 +42,7 @@ import (
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
+	"github.com/onscreen/onscreen/internal/trickplay"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
 
@@ -318,6 +320,21 @@ func run() error {
 		WithMarkers(intromarker.NewStore(rwPool))
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger)
 
+	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
+	// rootDir holds sprite_NNN.jpg + index.vtt per item. Lives alongside the
+	// artwork resize cache; both are regenerable and safe to nuke.
+	trickplayRoot := cfg.CachePath
+	if trickplayRoot == "" {
+		trickplayRoot = filepath.Join(os.TempDir(), "onscreen-trickplay")
+	} else {
+		trickplayRoot = filepath.Join(filepath.Dir(trickplayRoot), "trickplay")
+	}
+	trickplayStore := trickplay.NewStore(rwPool)
+	trickplayGen := trickplay.NewWithService(trickplayRoot, trickplayStore, mediaSvc, logger)
+	trickplaySvc := trickplay.NewService(trickplayGen, trickplayStore)
+	trickplayHandler := v1.NewTrickplayHandler(trickplaySvc, mediaSvc, logger).
+		WithLibraryAccess(libSvc)
+
 	// ── Embedded transcode worker ─────────────────────────────────────────────
 	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
 	// single-node deployments. Encoder detection is best-effort; falls back to
@@ -448,6 +465,7 @@ func run() error {
 		Search:             searchHandler,
 		History:            historyHandler,
 		Items:              itemHandler,
+		Trickplay:          trickplayHandler,
 		NativeTranscode:    nativeTranscodeHandler,
 		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Arr:                arrHandler,

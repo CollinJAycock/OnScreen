@@ -37,6 +37,7 @@ type Handlers struct {
 	Search          *v1.SearchHandler
 	History         *v1.HistoryHandler
 	Items           *v1.ItemHandler
+	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
 	Arr             *v1.ArrHandler          // incoming arr app notifications
@@ -144,6 +145,17 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 			http.NotFound(w, req)
 		})
+	}
+
+	// ── Trickplay file server ────────────────────────────────────────────────
+	// Serves sprite_NNN.jpg + index.vtt from the trickplay cache dir. No auth
+	// so <video><track> loads without credentials, matching /artwork/*. The
+	// handler whitelists filenames to block path traversal.
+	if h.Trickplay != nil {
+		r.Get("/trickplay/{id}/{file}", h.Trickplay.ServeFile)
+	}
+
+	if h.ArtworkRoots != nil {
 
 		// ── Direct-play file server ───────────────────────────────────────────
 		// Serves raw media files for direct play. Tries each library root.
@@ -426,6 +438,12 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/markers", h.Items.ListMarkers)
 				r.Put("/items/{id}/markers/{kind}", h.Items.UpsertMarker)
 				r.Delete("/items/{id}/markers/{kind}", h.Items.DeleteMarker)
+			}
+
+			// Trickplay (seekbar thumbnail previews).
+			if h.Trickplay != nil {
+				r.Get("/items/{id}/trickplay", h.Trickplay.Status)
+				r.Post("/items/{id}/trickplay", h.Trickplay.Generate)
 			}
 
 			// Favorites — per-user.
