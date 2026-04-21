@@ -117,6 +117,7 @@ func (m *mockMediaService) MarkFileActive(_ context.Context, _ uuid.UUID) error 
 func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error           { return nil }
 func (m *mockMediaService) DeleteFile(_ context.Context, _ uuid.UUID) error            { return nil }
 func (m *mockMediaService) SoftDeleteItemIfEmpty(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockMediaService) RestoreItemAncestry(_ context.Context, _ uuid.UUID) error   { return nil }
 func (m *mockMediaService) GetFiles(_ context.Context, _ uuid.UUID) ([]media.File, error) {
 	return nil, nil
 }

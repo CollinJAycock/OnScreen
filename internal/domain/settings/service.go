@@ -4,10 +4,15 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrInvalidSetting is returned when a caller tries to persist a value that
+// isn't in the allowed set (e.g. a bogus IntroDetectionMode).
+var ErrInvalidSetting = errors.New("invalid setting value")
 
 const keyTMDBAPIKey = "tmdb_api_key"
 const keyTVDBAPIKey = "tvdb_api_key"
@@ -16,6 +21,17 @@ const keyArrPathMappings = "arr_path_mappings"
 const keyTranscodeEncoders = "transcode_encoders"
 const keyWorkerFleet = "worker_fleet"
 const keyTranscodeConfig = "transcode_config"
+const keyIntroDetectionMode = "intro_detection_mode"
+
+// IntroDetectionMode controls whether the worker auto-detects intro and
+// credits markers on each scan.
+type IntroDetectionMode string
+
+const (
+	IntroDetectionOff    IntroDetectionMode = "off"
+	IntroDetectionOnScan IntroDetectionMode = "on_scan"
+	IntroDetectionManual IntroDetectionMode = "manual"
+)
 
 // Service reads and writes server settings to the server_settings table.
 type Service struct {
@@ -164,6 +180,28 @@ func (s *Service) SetTranscodeConfig(ctx context.Context, cfg TranscodeConfig) e
 		return err
 	}
 	return s.set(ctx, keyTranscodeConfig, string(b))
+}
+
+// IntroDetectionMode returns the current detection mode. Defaults to on_scan
+// if nothing is persisted (matches the migration seed).
+func (s *Service) IntroDetectionMode(ctx context.Context) IntroDetectionMode {
+	v := s.get(ctx, keyIntroDetectionMode)
+	switch IntroDetectionMode(v) {
+	case IntroDetectionOff, IntroDetectionManual:
+		return IntroDetectionMode(v)
+	default:
+		return IntroDetectionOnScan
+	}
+}
+
+// SetIntroDetectionMode persists the detection mode. Invalid values are rejected.
+func (s *Service) SetIntroDetectionMode(ctx context.Context, mode IntroDetectionMode) error {
+	switch mode {
+	case IntroDetectionOff, IntroDetectionOnScan, IntroDetectionManual:
+		return s.set(ctx, keyIntroDetectionMode, string(mode))
+	default:
+		return ErrInvalidSetting
+	}
 }
 
 func (s *Service) get(ctx context.Context, key string) string {

@@ -131,6 +131,7 @@ type Querier interface {
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
+	RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
@@ -373,6 +374,7 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 	// Check if path already known.
 	existing, err := s.rw.GetMediaFileByPath(ctx, p.FilePath)
 	if err == nil {
+		wasInactive := existing.Status != "active"
 		// Path known — mark active, update hash, and refresh probe metadata.
 		if err := s.rw.MarkMediaFileActive(ctx, existing.ID); err != nil {
 			return nil, false, fmt.Errorf("mark file active %s: %w", existing.ID, err)
@@ -393,6 +395,11 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 		if err := s.rw.UpdateMediaFileTechnicalMetadata(ctx, existing.ID, p); err != nil {
 			return nil, false, fmt.Errorf("update file metadata %s: %w", existing.ID, err)
 		}
+		if wasInactive {
+			if err := s.rw.RestoreMediaItemAncestry(ctx, existing.MediaItemID); err != nil {
+				return nil, false, fmt.Errorf("restore ancestry for %s: %w", existing.MediaItemID, err)
+			}
+		}
 		existing.Status = "active"
 		return &existing, false, nil
 	}
@@ -403,6 +410,9 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 			// Hash match in missing/deleted — this is a moved file (ADR-011).
 			if err := s.rw.UpdateMediaFilePath(ctx, moved.ID, p.FilePath); err != nil {
 				return nil, false, fmt.Errorf("update file path (move): %w", err)
+			}
+			if err := s.rw.RestoreMediaItemAncestry(ctx, moved.MediaItemID); err != nil {
+				return nil, false, fmt.Errorf("restore ancestry for %s: %w", moved.MediaItemID, err)
 			}
 			s.logger.InfoContext(ctx, "file move detected",
 				"old_path", moved.FilePath, "new_path", p.FilePath)
@@ -416,6 +426,9 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 	file, err := s.rw.CreateMediaFile(ctx, p)
 	if err != nil {
 		return nil, false, fmt.Errorf("create media file: %w", err)
+	}
+	if err := s.rw.RestoreMediaItemAncestry(ctx, file.MediaItemID); err != nil {
+		return nil, false, fmt.Errorf("restore ancestry for %s: %w", file.MediaItemID, err)
 	}
 	return &file, true, nil
 }
@@ -439,6 +452,14 @@ func (s *Service) DeleteFile(ctx context.Context, id uuid.UUID) error {
 // SoftDeleteItemIfEmpty soft-deletes a media item if all its files are deleted.
 func (s *Service) SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error {
 	return s.rw.SoftDeleteMediaItemIfAllFilesDeleted(ctx, id)
+}
+
+// RestoreItemAncestry clears deleted_at on the item and all its soft-deleted
+// ancestors. Called when a file re-appears so that a previously orphaned
+// show/season/album is visible again instead of stuck in the soft-deleted
+// graveyard.
+func (s *Service) RestoreItemAncestry(ctx context.Context, id uuid.UUID) error {
+	return s.rw.RestoreMediaItemAncestry(ctx, id)
 }
 
 // ListActiveFilesForLibrary returns all active files whose parent item belongs

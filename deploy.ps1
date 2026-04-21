@@ -7,6 +7,12 @@ Get-Content .env.dev | ForEach-Object {
     }
 }
 
+# Prepend TOOLS_PATH (from .env.dev, semicolon-separated) so the server can
+# find fpcalc, ffmpeg, etc. Inherited by Start-Process below.
+if ($env:TOOLS_PATH) {
+    $env:Path = "$env:TOOLS_PATH;$env:Path"
+}
+
 Write-Host "==> Building frontend..." -ForegroundColor Cyan
 Push-Location web
 npm install
@@ -48,12 +54,17 @@ if ($oldProcs) {
 }
 
 Write-Host "==> Starting server..." -ForegroundColor Cyan
-$proc = Start-Process -FilePath .\bin\server.exe -PassThru -WindowStyle Hidden
+$logPath = Join-Path $PSScriptRoot "bin\server.log"
+$proc = Start-Process -FilePath .\bin\server.exe -PassThru -WindowStyle Hidden `
+    -RedirectStandardOutput $logPath -RedirectStandardError "$logPath.err"
 Start-Sleep -Seconds 3
 
 if (-not $proc.HasExited) {
     Write-Host "==> Server running (PID $($proc.Id)) on :7070" -ForegroundColor Green
+    Write-Host "==> Logs: Get-Content $logPath -Wait" -ForegroundColor DarkGray
 } else {
     Write-Host "==> Server failed to start!" -ForegroundColor Red
+    if (Test-Path $logPath)      { Write-Host "--- stdout ---"; Get-Content $logPath -Tail 40 }
+    if (Test-Path "$logPath.err"){ Write-Host "--- stderr ---"; Get-Content "$logPath.err" -Tail 40 }
     exit 1
 }

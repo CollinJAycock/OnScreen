@@ -93,11 +93,18 @@ type LibraryServiceIface interface {
 	EnqueueScan(ctx context.Context, id uuid.UUID) error
 }
 
+// IntroDetectorRunner runs intro/credits detection for a show library. Called
+// from the admin "Detect intros now" endpoint.
+type IntroDetectorRunner interface {
+	DetectLibrary(ctx context.Context, libraryID uuid.UUID) error
+}
+
 // LibraryHandler handles /api/v1/libraries.
 type LibraryHandler struct {
-	svc    LibraryServiceIface
-	media  MediaItemLister // optional; enables GET /libraries/:id/items
-	logger *slog.Logger
+	svc      LibraryServiceIface
+	media    MediaItemLister // optional; enables GET /libraries/:id/items
+	detector IntroDetectorRunner
+	logger   *slog.Logger
 }
 
 // NewLibraryHandler creates a LibraryHandler.
@@ -108,6 +115,13 @@ func NewLibraryHandler(svc LibraryServiceIface, logger *slog.Logger) *LibraryHan
 // WithMedia wires the optional media item lister.
 func (h *LibraryHandler) WithMedia(m MediaItemLister) *LibraryHandler {
 	h.media = m
+	return h
+}
+
+// WithDetector wires the optional intro detector for the admin detect-now
+// endpoint. When nil, the endpoint returns 501.
+func (h *LibraryHandler) WithDetector(d IntroDetectorRunner) *LibraryHandler {
+	h.detector = d
 	return h
 }
 
@@ -319,6 +333,50 @@ func (h *LibraryHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.NoContent(w)
+}
+
+// DetectIntros handles POST /api/v1/libraries/:id/detect-intros. Admin only.
+// Fires the detector over every season in the library on a background
+// goroutine and returns 202 Accepted — detection can take many minutes.
+func (h *LibraryHandler) DetectIntros(w http.ResponseWriter, r *http.Request) {
+	if h.detector == nil {
+		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "intro detector not available")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid library id")
+		return
+	}
+	lib, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get library for detect-intros", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if lib.Type != "show" {
+		respond.BadRequest(w, r, "intro detection only applies to show libraries")
+		return
+	}
+	detectCtx := context.WithoutCancel(r.Context())
+	go func() {
+		if err := h.detector.DetectLibrary(detectCtx, id); err != nil {
+			h.logger.Warn("admin detect-intros",
+				"library_id", id, "err", err)
+		}
+	}()
+	respond.JSON(w, r, http.StatusAccepted, map[string]any{
+		"data": map[string]string{"status": "detection_started"},
+	})
 }
 
 // Items handles GET /api/v1/libraries/:id/items.

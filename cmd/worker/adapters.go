@@ -411,6 +411,10 @@ func (a *mediaAdapter) SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context,
 	return a.q.SoftDeleteMediaItemIfAllFilesDeleted(ctx, id)
 }
 
+func (a *mediaAdapter) RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error {
+	return a.q.RestoreMediaItemAncestry(ctx, id)
+}
+
 func (a *mediaAdapter) CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error) {
 	return a.q.CountMediaItems(ctx, gen.CountMediaItemsParams{
 		LibraryID: libraryID,

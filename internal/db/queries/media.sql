@@ -381,6 +381,27 @@ WHERE media_items.id = $1
       WHERE media_files.media_item_id = $1 AND media_files.status != 'deleted'
   );
 
+-- name: RestoreMediaItemAncestry :exec
+-- Clears deleted_at on $1 and every ancestor reachable via parent_id,
+-- resurrecting a previously soft-deleted item and the containers above it.
+-- Called by the scanner when a file for this item transitions from
+-- missing/deleted back to active, so a transient missing window (e.g. a
+-- disconnected NAS) doesn't permanently hide a show that still has files
+-- on disk. A no-op when the chain is already alive.
+WITH RECURSIVE ancestry AS (
+    SELECT mi.id AS ancestor_id, mi.parent_id
+    FROM media_items mi
+    WHERE mi.id = $1
+    UNION ALL
+    SELECT mi.id AS ancestor_id, mi.parent_id
+    FROM media_items mi
+    JOIN ancestry a ON mi.id = a.parent_id
+)
+UPDATE media_items
+SET deleted_at = NULL, updated_at = NOW()
+WHERE media_items.id IN (SELECT ancestor_id FROM ancestry)
+  AND media_items.deleted_at IS NOT NULL;
+
 -- name: CountMediaItems :one
 SELECT COUNT(*) FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL;

@@ -31,6 +31,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
@@ -216,13 +217,15 @@ func run() error {
 	notifBrokerEarly := notification.NewBroker()
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
-		scanner:      libScanner,
-		libSvc:       nil,
-		db:           gen.New(rwPool),
-		logger:       logger,
-		serverCtx:    ctx,
-		watchers:     make(map[uuid.UUID]*scanner.Watcher),
-		notifService: notifServiceEarly,
+		scanner:       libScanner,
+		libSvc:        nil,
+		db:            gen.New(rwPool),
+		logger:        logger,
+		serverCtx:     ctx,
+		watchers:      make(map[uuid.UUID]*scanner.Watcher),
+		notifService:  notifServiceEarly,
+		settingsSvc:   settingsSvc,
+		introDetector: intromarker.New(rwPool, mediaSvc, logger),
 	}
 	libSvc := library.NewService(rwQ, roQ, libEnqueuer, logger)
 	libEnqueuer.libSvc = libSvc
@@ -268,7 +271,9 @@ func run() error {
 
 	authMiddleware := middleware.NewAuthenticator(tokenMaker)
 
-	libHandler := v1.NewLibraryHandler(libSvc, logger).WithMedia(mediaSvc)
+	libHandler := v1.NewLibraryHandler(libSvc, logger).
+		WithMedia(mediaSvc).
+		WithDetector(libEnqueuer.introDetector)
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger)
 	auditLogger := audit.New(gen.New(rwPool), logger)
@@ -309,7 +314,8 @@ func run() error {
 	favoritesHandler := v1.NewFavoritesHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc)
 	favoritesChecker := &favoritesChecker{q: gen.New(roPool)}
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
-		WithLibraryAccess(libSvc)
+		WithLibraryAccess(libSvc).
+		WithMarkers(intromarker.NewStore(rwPool))
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger)
 
 	// ── Embedded transcode worker ─────────────────────────────────────────────
@@ -614,6 +620,8 @@ type scanEnqueuer struct {
 	serverCtx         context.Context // outlives individual HTTP requests
 	webhookDispatcher *worker.WebhookDispatcher
 	notifService      *notification.Service
+	settingsSvc       *settings.Service
+	introDetector     *intromarker.Detector
 
 	watchMu      sync.Mutex
 	watchers     map[uuid.UUID]*scanner.Watcher // one watcher per library
@@ -664,8 +672,28 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		if e.notifService != nil && result.New > 0 {
 			e.notifService.NotifyScanComplete(context.WithoutCancel(e.serverCtx), lib.Name, result.New)
 		}
+		// Intro/credits detection runs only on show libraries, and only when
+		// the admin has left detection on auto. Movies are excluded — users
+		// typically mark them manually if at all.
+		if lib.Type == "show" && e.introDetector != nil && e.settingsSvc != nil {
+			mode := e.settingsSvc.IntroDetectionMode(context.WithoutCancel(e.serverCtx))
+			if mode == settings.IntroDetectionOnScan {
+				go e.runIntroDetection(libraryID)
+			}
+		}
 	}()
 	return nil
+}
+
+// runIntroDetection walks every season in a show library and kicks off
+// intro + credits detection. Fire-and-forget: errors are logged per-season
+// and never block or retry. Called only after a successful scan.
+func (e *scanEnqueuer) runIntroDetection(libraryID uuid.UUID) {
+	detectCtx := context.WithoutCancel(e.serverCtx)
+	if err := e.introDetector.DetectLibrary(detectCtx, libraryID); err != nil {
+		e.logger.Warn("intro detection library",
+			"library_id", libraryID, "err", err)
+	}
 }
 
 // TriggerDirectoryScan implements scanner.WatchTrigger.

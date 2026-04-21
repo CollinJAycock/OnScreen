@@ -276,6 +276,113 @@
     return chapters.find(c => tMs >= c.start_ms && tMs < c.end_ms) ?? null;
   })();
 
+  // Admin gate for the manual marker editor. Non-admin users see only the
+  // Skip Intro/Skip Credits buttons; the editor panel is hidden entirely.
+  let isAdmin = false;
+  onMount(() => {
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('onscreen_user') : null;
+      if (raw) isAdmin = !!JSON.parse(raw)?.is_admin;
+    } catch {}
+  });
+
+  // Intro/credits markers — episodes only; movies omit this field.
+  $: markers = item?.markers ?? [];
+  // The marker we're currently inside, if any. Intro wins over credits when
+  // they overlap (shouldn't happen, but be deterministic).
+  $: currentMarker = (() => {
+    if (markers.length === 0) return null;
+    const tMs = contentTimeSec * 1000;
+    return (
+      markers.find(m => m.kind === 'intro' && tMs >= m.start_ms && tMs < m.end_ms) ??
+      markers.find(m => m.kind === 'credits' && tMs >= m.start_ms && tMs < m.end_ms) ??
+      null
+    );
+  })();
+  function skipMarker() {
+    if (!currentMarker) return;
+    seekToContentTime(currentMarker.end_ms / 1000);
+  }
+
+  // ── Admin manual marker editor ─────────────────────────────────────────────
+  // Popover UI that lets an admin set/clear intro and credits markers on the
+  // current episode. Partial edits (start set, end not yet set) are kept in
+  // local state and only PUT to the API once both ends are valid.
+  let showMarkerEditor = false;
+  let markerError = '';
+  let markerBusy = false;
+  // Pending edits keyed by kind, keeping start and end in ms. Both must be set
+  // (and end > start) before we hit the server.
+  type PendingMarker = { startMs?: number; endMs?: number };
+  let pending: { intro: PendingMarker; credits: PendingMarker } = { intro: {}, credits: {} };
+
+  function findMarker(kind: 'intro' | 'credits') {
+    return markers.find(m => m.kind === kind) ?? null;
+  }
+
+  function fmtMs(ms?: number): string {
+    if (ms == null || !isFinite(ms)) return '—';
+    const s = Math.max(0, Math.round(ms / 1000));
+    const m = Math.floor(s / 60);
+    return `${m.toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+  }
+
+  function captureNow(kind: 'intro' | 'credits', edge: 'start' | 'end') {
+    const ms = Math.max(0, Math.round(contentTimeSec * 1000));
+    pending = {
+      ...pending,
+      [kind]: { ...pending[kind], [edge === 'start' ? 'startMs' : 'endMs']: ms },
+    };
+  }
+
+  function currentStart(kind: 'intro' | 'credits'): number | undefined {
+    return pending[kind].startMs ?? findMarker(kind)?.start_ms;
+  }
+  function currentEnd(kind: 'intro' | 'credits'): number | undefined {
+    return pending[kind].endMs ?? findMarker(kind)?.end_ms;
+  }
+
+  async function saveMarker(kind: 'intro' | 'credits') {
+    if (!item) return;
+    const start = currentStart(kind);
+    const end = currentEnd(kind);
+    markerError = '';
+    if (start == null || end == null) {
+      markerError = 'Set both start and end before saving.';
+      return;
+    }
+    if (end <= start) {
+      markerError = 'End must be after start.';
+      return;
+    }
+    markerBusy = true;
+    try {
+      const saved = await itemApi.upsertMarker(item.id, kind, start, end);
+      const rest = (item.markers ?? []).filter(m => m.kind !== kind);
+      item = { ...item, markers: [...rest, saved].sort((a, b) => a.start_ms - b.start_ms) };
+      pending = { ...pending, [kind]: {} };
+    } catch (e: unknown) {
+      markerError = e instanceof Error ? e.message : 'Save failed';
+    } finally {
+      markerBusy = false;
+    }
+  }
+
+  async function clearMarker(kind: 'intro' | 'credits') {
+    if (!item) return;
+    markerError = '';
+    markerBusy = true;
+    try {
+      await itemApi.deleteMarker(item.id, kind);
+      item = { ...item, markers: (item.markers ?? []).filter(m => m.kind !== kind) };
+      pending = { ...pending, [kind]: {} };
+    } catch (e: unknown) {
+      markerError = e instanceof Error ? e.message : 'Delete failed';
+    } finally {
+      markerBusy = false;
+    }
+  }
+
   // Favorites: optimistically toggle, server is source of truth on next load.
   let favoriteBusy = false;
   async function toggleFavorite() {
@@ -1512,6 +1619,65 @@
           </div>
 
           <div class="controls-right">
+            <!-- Admin: manual intro/credits markers (episodes only) -->
+            {#if isAdmin && item?.type === 'episode'}
+              <div class="quality-picker" on:click|stopPropagation>
+                <button
+                  class="icon-btn small quality-btn"
+                  on:click|stopPropagation={() => { showMarkerEditor = !showMarkerEditor; showChapterMenu = false; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
+                  title="Edit intro/credits markers"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M12 20l9-9-5-5L3 14v6h6z"/>
+                    <path d="M14 7l3 3"/>
+                  </svg>
+                  <span class="quality-label">Markers</span>
+                </button>
+                {#if showMarkerEditor}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div class="quality-menu marker-menu" on:click|stopPropagation role="menu" aria-label="Edit markers">
+                    {#each ['intro', 'credits'] as kind}
+                      {@const existing = findMarker(kind as 'intro' | 'credits')}
+                      {@const startMs = currentStart(kind as 'intro' | 'credits')}
+                      {@const endMs = currentEnd(kind as 'intro' | 'credits')}
+                      <div class="marker-row">
+                        <div class="marker-head">
+                          <span class="marker-kind">{kind === 'intro' ? 'Intro' : 'Credits'}</span>
+                          {#if existing}
+                            <span class="marker-src">{existing.source}</span>
+                          {:else}
+                            <span class="marker-src none">none</span>
+                          {/if}
+                        </div>
+                        <div class="marker-times">
+                          <button type="button" class="marker-set" on:click={() => captureNow(kind as 'intro' | 'credits', 'start')}>
+                            Start: {fmtMs(startMs)}
+                          </button>
+                          <button type="button" class="marker-set" on:click={() => captureNow(kind as 'intro' | 'credits', 'end')}>
+                            End: {fmtMs(endMs)}
+                          </button>
+                        </div>
+                        <div class="marker-actions">
+                          <button type="button" class="marker-save" disabled={markerBusy} on:click={() => saveMarker(kind as 'intro' | 'credits')}>
+                            Save
+                          </button>
+                          {#if existing}
+                            <button type="button" class="marker-clear" disabled={markerBusy} on:click={() => clearMarker(kind as 'intro' | 'credits')}>
+                              Clear
+                            </button>
+                          {/if}
+                        </div>
+                      </div>
+                    {/each}
+                    {#if markerError}
+                      <div class="marker-error">{markerError}</div>
+                    {/if}
+                    <div class="marker-hint">Tip: pause at the right frame, then click Start or End to capture the current time.</div>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
             <!-- Chapter picker -->
             {#if chapters.length > 0}
               <div class="quality-picker" on:click|stopPropagation>
@@ -1701,6 +1867,13 @@
       </div>
     </div>
 
+    <!-- Skip Intro / Skip Credits -->
+    {#if currentMarker}
+      <button class="skip-marker" on:click={skipMarker}>
+        {currentMarker.kind === 'intro' ? 'Skip Intro' : 'Skip Credits'} →
+      </button>
+    {/if}
+
     <!-- Next episode prompt -->
     {#if showNextEpisodePrompt && nextEpisode}
       <div class="next-episode">
@@ -1857,6 +2030,18 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         Fix Match
       </button>
+    {/if}
+
+    {#if item.files?.length}
+      <a
+        class="download-btn"
+        href="/media/stream/{item.files[0].id}"
+        download={`${item.title}.${item.files[0].container ?? 'mkv'}`}
+        title="Download the original file"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </a>
     {/if}
 
     <!-- Season selector (shows only) -->
@@ -2330,7 +2515,106 @@
   .chapter-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chapter-time { color: rgba(255,255,255,0.45); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
 
+  /* ── Marker editor (admin) ───────────────────────────── */
+  .marker-menu { min-width: 280px; padding: 0.5rem; gap: 0.4rem; }
+  .marker-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .marker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .marker-kind {
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .marker-src {
+    color: rgba(255,255,255,0.55);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .marker-src.none { color: rgba(255,255,255,0.3); }
+  .marker-times { display: flex; gap: 0.35rem; }
+  .marker-set {
+    flex: 1;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.85);
+    cursor: pointer;
+    padding: 0.35rem 0.5rem;
+    border-radius: 5px;
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .marker-set:hover { background: rgba(124,106,247,0.25); border-color: rgba(124,106,247,0.5); }
+  .marker-actions { display: flex; gap: 0.35rem; }
+  .marker-save,
+  .marker-clear {
+    flex: 1;
+    border: none;
+    padding: 0.4rem 0.5rem;
+    border-radius: 5px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.1s, opacity 0.1s;
+  }
+  .marker-save { background: #7c6af7; color: #fff; }
+  .marker-save:hover:not(:disabled) { background: #8c7bff; }
+  .marker-clear {
+    background: rgba(255,90,90,0.15);
+    color: #ff8a8a;
+    border: 1px solid rgba(255,90,90,0.25);
+  }
+  .marker-clear:hover:not(:disabled) { background: rgba(255,90,90,0.25); }
+  .marker-save:disabled,
+  .marker-clear:disabled { opacity: 0.5; cursor: not-allowed; }
+  .marker-error {
+    color: #ff8a8a;
+    font-size: 0.72rem;
+    padding: 0.25rem 0.35rem;
+  }
+  .marker-hint {
+    color: rgba(255,255,255,0.45);
+    font-size: 0.68rem;
+    line-height: 1.35;
+    padding: 0.25rem 0.35rem;
+  }
+
   /* ── Next episode ─────────────────────────────────────── */
+  .skip-marker {
+    position: absolute;
+    bottom: 5rem;
+    right: 1.5rem;
+    padding: 0.6rem 1.1rem;
+    background: rgba(15,15,25,0.85);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    z-index: 21;
+    backdrop-filter: blur(8px);
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .skip-marker:hover {
+    background: rgba(124,106,247,0.9);
+    border-color: rgba(124,106,247,0.9);
+  }
+
   .next-episode {
     position: absolute;
     bottom: 5rem;
@@ -2640,6 +2924,19 @@
     transition: all 0.12s;
   }
   .fix-match-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-hover); }
+
+  .download-btn {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text-muted); font-size: 0.75rem; font-weight: 500;
+    cursor: pointer; padding: 0.35rem 0.7rem;
+    margin-bottom: 1.5rem; margin-left: 0.5rem;
+    text-decoration: none;
+    transition: all 0.12s;
+  }
+  .download-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-hover); }
 
   /* Match modal overlay */
   .match-overlay {

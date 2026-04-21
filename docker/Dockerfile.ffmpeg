@@ -56,7 +56,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates tzdata wget \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
-      libgnutls28-dev libzimg-dev ocl-icd-libopencl1 && \
+      libgnutls28-dev libzimg-dev ocl-icd-libopencl1 \
+      libchromaprint-tools && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /etc/OpenCL/vendors && \
     echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd

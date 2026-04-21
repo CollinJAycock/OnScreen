@@ -56,6 +56,7 @@ type MediaService interface {
 	MarkMissing(ctx context.Context, id uuid.UUID) error
 	DeleteFile(ctx context.Context, id uuid.UUID) error
 	SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error
+	RestoreItemAncestry(ctx context.Context, id uuid.UUID) error
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
 	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error
@@ -408,8 +409,14 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 			existing.FileHash != nil && *existing.FileHash == *hash &&
 			(existing.DurationMS != nil || isImageFile(path)) &&
 			existing.Status != "deleted" {
+			wasInactive := existing.Status != "active"
 			if err := s.media.MarkFileActive(ctx, existing.ID); err != nil {
 				s.logger.WarnContext(ctx, "mark file active failed", "path", path, "err", err)
+			}
+			if wasInactive {
+				if err := s.media.RestoreItemAncestry(ctx, existing.MediaItemID); err != nil {
+					s.logger.WarnContext(ctx, "restore ancestry failed", "path", path, "err", err)
+				}
 			}
 			if item, err := s.media.GetItem(ctx, existing.MediaItemID); err == nil {
 				if itemNeedsEnrich(item) || s.parentNeedsEnrich(ctx, item) {

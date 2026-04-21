@@ -131,6 +131,9 @@ func (m *mockQuerier) SoftDeleteMediaItem(_ context.Context, id uuid.UUID) error
 func (m *mockQuerier) SoftDeleteMediaItemIfAllFilesDeleted(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
+func (m *mockQuerier) RestoreMediaItemAncestry(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
 func (m *mockQuerier) CountMediaItems(_ context.Context, _ uuid.UUID, _ string) (int64, error) {
 	if m.countErr != nil {
 		return 0, m.countErr

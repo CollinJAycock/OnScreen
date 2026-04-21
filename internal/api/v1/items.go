@@ -21,6 +21,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 )
@@ -77,6 +78,14 @@ type ItemFavoriteChecker interface {
 	IsFavorite(ctx context.Context, userID, mediaID uuid.UUID) (bool, error)
 }
 
+// ItemMarkerService reads and writes intro/credits markers for an item.
+// Only episodes carry markers; movies and containers return an empty list.
+type ItemMarkerService interface {
+	List(ctx context.Context, mediaItemID uuid.UUID) ([]intromarker.Marker, error)
+	Upsert(ctx context.Context, mediaItemID uuid.UUID, kind string, startMS, endMS int64) (intromarker.Marker, error)
+	Delete(ctx context.Context, mediaItemID uuid.UUID, kind string) error
+}
+
 // LibraryAccessChecker reports whether a user can access a given library.
 // Kept as a small interface so handlers don't depend on the full library service.
 type LibraryAccessChecker interface {
@@ -93,6 +102,7 @@ type ItemHandler struct {
 	matcher   ItemMatchSearcher
 	webhooks  ItemWebhookDispatcher
 	favorites ItemFavoriteChecker
+	markers   ItemMarkerService
 	access    LibraryAccessChecker
 	tracker   *streaming.Tracker
 	logger    *slog.Logger
@@ -101,6 +111,13 @@ type ItemHandler struct {
 // NewItemHandler creates an ItemHandler.
 func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions ItemSessionCleaner, enricher ItemEnricher, matcher ItemMatchSearcher, webhooks ItemWebhookDispatcher, favorites ItemFavoriteChecker, tracker *streaming.Tracker, logger *slog.Logger) *ItemHandler {
 	return &ItemHandler{media: media, watch: watch, sessions: sessions, enricher: enricher, matcher: matcher, webhooks: webhooks, favorites: favorites, tracker: tracker, logger: logger}
+}
+
+// WithMarkers attaches the intro/credits marker service. When nil, the Get
+// response omits markers and the Markers endpoints are not served.
+func (h *ItemHandler) WithMarkers(m ItemMarkerService) *ItemHandler {
+	h.markers = m
+	return h
 }
 
 // WithLibraryAccess attaches the library-access checker. When nil, all items
@@ -180,6 +197,15 @@ type ChapterJSON struct {
 	EndMS   int64  `json:"end_ms"`
 }
 
+// MarkerJSON is the API representation of an intro/credits marker.
+// kind is one of: "intro", "credits". source is one of: "auto", "manual", "chapter".
+type MarkerJSON struct {
+	Kind    string `json:"kind"`
+	StartMS int64  `json:"start_ms"`
+	EndMS   int64  `json:"end_ms"`
+	Source  string `json:"source"`
+}
+
 // ItemDetailResponse is the full JSON response for a media item.
 type ItemDetailResponse struct {
 	ID            string             `json:"id"`
@@ -200,6 +226,7 @@ type ItemDetailResponse struct {
 	IsFavorite    bool               `json:"is_favorite"`
 	UpdatedAt     int64              `json:"updated_at"`
 	Files         []ItemFileResponse `json:"files"`
+	Markers       []MarkerJSON       `json:"markers,omitempty"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
@@ -327,6 +354,23 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Markers are only meaningful for episodes; movies are excluded by policy.
+	if h.markers != nil && item.Type == "episode" {
+		if ms, err := h.markers.List(r.Context(), id); err == nil {
+			out.Markers = make([]MarkerJSON, 0, len(ms))
+			for _, m := range ms {
+				out.Markers = append(out.Markers, MarkerJSON{
+					Kind:    m.Kind,
+					StartMS: m.StartMS,
+					EndMS:   m.EndMS,
+					Source:  m.Source,
+				})
+			}
+		} else {
+			h.logger.WarnContext(r.Context(), "list markers", "item_id", id, "err", err)
+		}
+	}
+
 	respond.Success(w, r, out)
 }
 
@@ -395,6 +439,153 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// ListMarkers handles GET /api/v1/items/{id}/markers. Returns an empty list
+// for movies and containers so clients can call unconditionally.
+func (h *ItemHandler) ListMarkers(w http.ResponseWriter, r *http.Request) {
+	if h.markers == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
+	if item.Type != "episode" {
+		respond.List(w, r, []MarkerJSON{}, 0, "")
+		return
+	}
+	ms, err := h.markers.List(r.Context(), id)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list markers", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]MarkerJSON, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, MarkerJSON{
+			Kind:    m.Kind,
+			StartMS: m.StartMS,
+			EndMS:   m.EndMS,
+			Source:  m.Source,
+		})
+	}
+	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// UpsertMarker handles PUT /api/v1/items/{id}/markers/{kind}. Admin only.
+// Body: { "start_ms": int, "end_ms": int }. Overwrites auto markers.
+func (h *ItemHandler) UpsertMarker(w http.ResponseWriter, r *http.Request) {
+	if h.markers == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	kind := chi.URLParam(r, "kind")
+	if kind != "intro" && kind != "credits" {
+		respond.BadRequest(w, r, "kind must be intro or credits")
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if item.Type != "episode" {
+		respond.BadRequest(w, r, "markers are only supported on episodes")
+		return
+	}
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
+	var body struct {
+		StartMS int64 `json:"start_ms"`
+		EndMS   int64 `json:"end_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid body")
+		return
+	}
+	m, err := h.markers.Upsert(r.Context(), id, kind, body.StartMS, body.EndMS)
+	if err != nil {
+		respond.BadRequest(w, r, err.Error())
+		return
+	}
+	respond.Success(w, r, MarkerJSON{
+		Kind:    m.Kind,
+		StartMS: m.StartMS,
+		EndMS:   m.EndMS,
+		Source:  m.Source,
+	})
+}
+
+// DeleteMarker handles DELETE /api/v1/items/{id}/markers/{kind}. Admin only.
+func (h *ItemHandler) DeleteMarker(w http.ResponseWriter, r *http.Request) {
+	if h.markers == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	kind := chi.URLParam(r, "kind")
+	if kind != "intro" && kind != "credits" {
+		respond.BadRequest(w, r, "kind must be intro or credits")
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
+	if err := h.markers.Delete(r.Context(), id, kind); err != nil {
+		h.logger.ErrorContext(r.Context(), "delete marker", "id", id, "kind", kind, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
 }
 
 // Progress handles PUT /api/v1/items/{id}/progress.

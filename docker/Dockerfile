@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
 FROM alpine:3.21
-RUN apk add --no-cache ffmpeg ca-certificates tzdata
+RUN apk add --no-cache ffmpeg ca-certificates tzdata chromaprint
 
 # Non-root user
 RUN addgroup -S onscreen && adduser -S onscreen -G onscreen

@@ -93,6 +93,22 @@
       deleting = false; showDelete = false;
     }
   }
+
+  let detecting = false;
+  let detectSaved = '';
+  async function runDetectIntros() {
+    detecting = true;
+    detectSaved = '';
+    try {
+      await libraryApi.detectIntros(id);
+      detectSaved = 'Detection started. Markers will appear on episodes as they finish.';
+      setTimeout(() => detectSaved = '', 6000);
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : 'Detection failed to start';
+    } finally {
+      detecting = false;
+    }
+  }
 </script>
 
 <svelte:head><title>{library?.name ?? 'Library'} Settings — OnScreen</title></svelte:head>
@@ -205,6 +221,19 @@
         </button>
       </div>
     </form>
+
+    {#if library?.type === 'show'}
+      <section class="maint">
+        <div class="sec-label">Intro &amp; Credits Detection</div>
+        <p class="maint-sub">Runs audio fingerprinting + black-frame analysis across every episode to find intros and credits. Safe to re-run — manual markers are preserved.</p>
+        {#if detectSaved}
+          <div class="banner ok" style="margin-bottom: 0.6rem">{detectSaved}</div>
+        {/if}
+        <button type="button" class="btn-secondary" disabled={detecting} on:click={runDetectIntros}>
+          {detecting ? 'Starting…' : 'Detect Intros Now'}
+        </button>
+      </section>
+    {/if}
 
     <!-- Danger -->
     <div class="danger-zone">
@@ -368,6 +397,28 @@
   }
   .btn-save:hover { background: var(--accent-hover); }
   .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .maint { margin-top: 1.5rem; }
+  .maint-sub {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0 0 0.75rem 0;
+    max-width: 420px;
+    line-height: 1.5;
+  }
+  .btn-secondary {
+    padding: 0.55rem 0.95rem;
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 7px;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-secondary:hover { background: rgba(124,106,247,0.1); border-color: rgba(124,106,247,0.3); }
+  .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* Danger zone */
   .danger-zone {

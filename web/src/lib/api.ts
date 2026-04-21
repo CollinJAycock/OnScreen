@@ -280,7 +280,8 @@ export const libraryApi = {
   create: (body: Partial<Library>) => api.post<Library>('/libraries', body),
   update: (id: string, body: Partial<Library>) => api.patch<Library>(`/libraries/${id}`, body),
   del: (id: string) => api.del(`/libraries/${id}`),
-  scan: (id: string) => api.post(`/libraries/${id}/scan`)
+  scan: (id: string) => api.post(`/libraries/${id}/scan`),
+  detectIntros: (id: string) => api.post(`/libraries/${id}/detect-intros`)
 };
 
 // ── Media Items ───────────────────────────────────────────────────────────────
@@ -468,6 +469,13 @@ export interface ItemFile {
   chapters: Chapter[];
 }
 
+export interface Marker {
+  kind: 'intro' | 'credits';
+  start_ms: number;
+  end_ms: number;
+  source: 'auto' | 'manual' | 'chapter';
+}
+
 export interface ItemDetail {
   id: string;
   library_id: string;
@@ -487,6 +495,7 @@ export interface ItemDetail {
   updated_at: number;
   is_favorite: boolean;
   files: ItemFile[];
+  markers?: Marker[];
 }
 
 export interface FavoriteItem {
@@ -595,7 +604,12 @@ export const itemApi = {
   applyMatch: (id: string, tmdbId: number) =>
     api.post<void>(`/items/${id}/match`, { tmdb_id: tmdbId }),
   addFavorite: (id: string) => api.post<void>(`/items/${id}/favorite`, {}),
-  removeFavorite: (id: string) => api.delete(`/items/${id}/favorite`)
+  removeFavorite: (id: string) => api.delete(`/items/${id}/favorite`),
+  listMarkers: (id: string) => api.requestList<Marker>(`/items/${id}/markers`),
+  upsertMarker: (id: string, kind: 'intro' | 'credits', startMs: number, endMs: number) =>
+    api.put<Marker>(`/items/${id}/markers/${kind}`, { start_ms: startMs, end_ms: endMs }),
+  deleteMarker: (id: string, kind: 'intro' | 'credits') =>
+    api.delete(`/items/${id}/markers/${kind}`)
 };
 
 export const favoritesApi = {

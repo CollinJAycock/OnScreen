@@ -54,6 +54,17 @@ type HubRecentlyAdded struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type IntroMarker struct {
+	ID          uuid.UUID          `json:"id"`
+	MediaItemID uuid.UUID          `json:"media_item_id"`
+	Kind        string             `json:"kind"`
+	StartMs     int64              `json:"start_ms"`
+	EndMs       int64              `json:"end_ms"`
+	Source      string             `json:"source"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type InviteToken struct {
 	ID        uuid.UUID          `json:"id"`
 	CreatedBy uuid.UUID          `json:"created_by"`

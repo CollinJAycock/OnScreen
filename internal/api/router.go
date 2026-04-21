@@ -262,6 +262,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Patch("/libraries/{id}", h.Library.Update)
 				r.Delete("/libraries/{id}", h.Library.Delete)
 				r.Post("/libraries/{id}/scan", h.Library.Refresh)
+				r.Post("/libraries/{id}/detect-intros", h.Library.DetectIntros)
 			})
 
 			// Webhooks — admin only.
@@ -422,6 +423,9 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/items/{id}/enrich", h.Items.Enrich)
 				r.Get("/items/{id}/match/search", h.Items.SearchMatch)
 				r.Post("/items/{id}/match", h.Items.ApplyMatch)
+				r.Get("/items/{id}/markers", h.Items.ListMarkers)
+				r.Put("/items/{id}/markers/{kind}", h.Items.UpsertMarker)
+				r.Delete("/items/{id}/markers/{kind}", h.Items.DeleteMarker)
 			}
 
 			// Favorites — per-user.
