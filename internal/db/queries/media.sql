@@ -592,6 +592,24 @@ FROM media_items, unnest(genres) AS g
 WHERE library_id = $1 AND deleted_at IS NULL
 ORDER BY genre;
 
+-- name: ListGenresWithCounts :many
+-- Returns each distinct genre and the number of root-type items that carry it.
+-- Filtering by type avoids inflating counts when episodes inherit show genres.
+SELECT g::text AS genre, COUNT(*)::bigint AS count
+FROM media_items, unnest(genres) AS g
+WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
+GROUP BY g
+ORDER BY g;
+
+-- name: ListYearsWithCounts :many
+-- Returns distinct release years and item counts for the given library/type.
+-- NULL years are excluded so the browse UI doesn't show an empty bucket.
+SELECT year::int AS year, COUNT(*)::bigint AS count
+FROM media_items
+WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
+GROUP BY year
+ORDER BY year DESC;
+
 -- name: ListHubRecentlyAdded :many
 SELECT library_id, media_id, type, title, year, rating, poster_path, created_at
 FROM hub_recently_added

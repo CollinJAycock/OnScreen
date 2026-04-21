@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, transcodeApi, userApi, subtitleApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -15,6 +15,8 @@
 
   let item: ItemDetail | null = null;
   let siblings: ChildItem[] = []; // other episodes in the same season
+  let cast: Credit[] = [];
+  let playRequested = false; // movies: detail page until user hits Play
   let loading = true;
   let error = '';
   let tonemapWarning = '';
@@ -614,7 +616,7 @@
   let seasons: ChildItem[] = [];
   let seasonEpisodes: Map<string, ChildItem[]> = new Map();
   let selectedSeasonId: string | null = null;
-  $: isDetailView = item != null && (item.type === 'show' || item.type === 'season' || item.type === 'artist' || item.type === 'album');
+  $: isDetailView = item != null && (item.type === 'show' || item.type === 'season' || item.type === 'artist' || item.type === 'album' || (item.type === 'movie' && !playRequested));
 
   // Music detail state
   let musicChildren: ChildItem[] = []; // albums (for artist) or tracks (for album)
@@ -771,8 +773,15 @@
   async function load() {
     loading = true;
     error = '';
+    cast = [];
+    playRequested = false;
     try {
-      item = await itemApi.get(id);
+      const [itemRes, castRes] = await Promise.all([
+        itemApi.get(id),
+        peopleApi.credits(id).catch(() => [] as Credit[])
+      ]);
+      item = itemRes;
+      cast = castRes;
 
       // Shows and seasons: load detail view instead of trying to play.
       if (item.type === 'show' || item.type === 'season') {
@@ -804,10 +813,6 @@
         siblings = r.items.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       }
 
-      // Seekbar thumbnail previews (best-effort — silent when not generated).
-      if (item.type === 'movie' || item.type === 'episode') {
-        loadTrickplay(item.id);
-      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to load';
       error = msg.toLowerCase().includes('forbidden') || msg.toLowerCase().includes('insufficient permissions')
@@ -815,6 +820,17 @@
         : msg;
     } finally {
       loading = false;
+    }
+    // Movies wait for the user to hit Play; everything else auto-starts.
+    if (item?.type !== 'movie') {
+      await startPlayback();
+    }
+  }
+
+  async function startPlayback() {
+    // Seekbar thumbnail previews (best-effort — silent when not generated).
+    if (item && (item.type === 'movie' || item.type === 'episode')) {
+      loadTrickplay(item.id);
     }
     // Auto-select preferred audio/subtitle tracks based on user preferences.
     try {
@@ -867,6 +883,11 @@
       const posMs = item.view_offset_ms > 0 ? item.view_offset_ms : 0;
       await switchToTranscode(match.height, posMs);
     }
+  }
+
+  async function startMoviePlayback() {
+    playRequested = true;
+    await startPlayback();
   }
 
   // ── Quality switching ────────────────────────────────────────────────────────
@@ -2262,8 +2283,39 @@
         {#if item.summary}
           <p class="detail-summary">{item.summary}</p>
         {/if}
+        {#if item.type === 'movie' && item.files?.length}
+          <button class="play-btn" on:click={startMoviePlayback}>
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+            {item.view_offset_ms > 0 ? `Resume · ${fmtTime(item.view_offset_ms / 1000)}` : 'Play'}
+          </button>
+        {/if}
       </div>
     </div>
+
+    {#if cast.length}
+      <div class="cast-strip">
+        <h3 class="cast-heading">Cast & Crew</h3>
+        <div class="cast-row">
+          {#each cast.slice(0, 12) as c (c.person.id + c.role + (c.character ?? '') + (c.job ?? ''))}
+            <a class="cast-card" href="/people/{c.person.id}" title={c.person.name}>
+              {#if c.person.profile_path}
+                <img class="cast-photo" src="https://image.tmdb.org/t/p/w185{c.person.profile_path}" alt={c.person.name} loading="lazy" referrerpolicy="no-referrer" />
+              {:else}
+                <div class="cast-photo cast-photo-placeholder">{c.person.name.charAt(0)}</div>
+              {/if}
+              <div class="cast-name">{c.person.name}</div>
+              {#if c.character}
+                <div class="cast-role">as {c.character}</div>
+              {:else if c.job}
+                <div class="cast-role">{c.job}</div>
+              {:else}
+                <div class="cast-role">{c.role}</div>
+              {/if}
+            </a>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     <!-- Fix Match button (shows and movies) -->
     {#if item.type === 'show' || item.type === 'movie'}
@@ -3166,6 +3218,50 @@
     overflow: hidden;
   }
 
+  .cast-strip { margin-bottom: 2rem; }
+  .cast-heading {
+    font-size: 0.85rem; font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0 0 0.75rem; letter-spacing: 0.02em;
+  }
+  .cast-row {
+    display: flex; gap: 0.75rem;
+    overflow-x: auto; padding-bottom: 0.5rem;
+    scrollbar-width: thin;
+  }
+  .cast-card {
+    flex: 0 0 110px;
+    text-decoration: none; color: inherit;
+    display: flex; flex-direction: column;
+    transition: transform 0.15s ease;
+  }
+  .cast-card:hover { transform: translateY(-2px); }
+  .cast-photo {
+    width: 110px; height: 165px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: var(--bg-secondary);
+    margin-bottom: 0.4rem;
+  }
+  .cast-photo-placeholder {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2rem; font-weight: 600;
+    color: var(--text-muted);
+  }
+  .cast-name {
+    font-size: 0.78rem; font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .cast-role {
+    font-size: 0.72rem; color: var(--text-muted);
+    line-height: 1.25; margin-top: 0.15rem;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+
   /* Season tabs */
   .season-tabs {
     display: flex; gap: 0.25rem;
@@ -3257,6 +3353,19 @@
   }
 
   /* Fix Match button */
+  .play-btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: white; font-size: 0.95rem; font-weight: 600;
+    cursor: pointer; padding: 0.6rem 1.4rem;
+    margin-top: 1rem;
+    transition: filter 0.12s, transform 0.12s;
+  }
+  .play-btn:hover { filter: brightness(1.1); }
+  .play-btn:active { transform: scale(0.98); }
+
   .fix-match-btn {
     display: inline-flex; align-items: center; gap: 0.35rem;
     background: var(--input-bg);

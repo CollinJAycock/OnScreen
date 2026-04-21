@@ -119,6 +119,19 @@ type DuplicatePair struct {
 	SurvivorID uuid.UUID
 }
 
+// GenreCount is one row of a genre-browse aggregation: a genre name plus the
+// number of root-type items (movies, shows, artists) that carry it.
+type GenreCount struct {
+	Genre string
+	Count int64
+}
+
+// YearCount is one row of a year-browse aggregation.
+type YearCount struct {
+	Year  int32
+	Count int64
+}
+
 // Querier defines the DB operations this service needs.
 type Querier interface {
 	GetMediaItem(ctx context.Context, id uuid.UUID) (Item, error)
@@ -135,6 +148,8 @@ type Querier interface {
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
+	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]GenreCount, error)
+	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]YearCount, error)
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
 	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
 	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
@@ -326,6 +341,25 @@ func (s *Service) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 		return nil, fmt.Errorf("list genres: %w", err)
 	}
 	return genres, nil
+}
+
+// ListGenresWithCounts returns each genre and the number of root-type items
+// carrying it, suitable for a browse page.
+func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]GenreCount, error) {
+	rows, err := s.ro.ListGenresWithCounts(ctx, libraryID, itemType)
+	if err != nil {
+		return nil, fmt.Errorf("list genres with counts: %w", err)
+	}
+	return rows, nil
+}
+
+// ListYearsWithCounts returns each release year and item count for a library.
+func (s *Service) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]YearCount, error) {
+	rows, err := s.ro.ListYearsWithCounts(ctx, libraryID, itemType)
+	if err != nil {
+		return nil, fmt.Errorf("list years with counts: %w", err)
+	}
+	return rows, nil
 }
 
 // SearchItems performs full-text search within a library.

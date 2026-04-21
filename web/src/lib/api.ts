@@ -440,9 +440,69 @@ export const mediaApi = {
     return api.requestList<MediaItem>(`/libraries/${libraryId}/items?${qs.toString()}`);
   },
   genres: (libraryId: string) =>
-    api.get<string[]>(`/libraries/${libraryId}/genres`),
+    api.get<GenreCount[]>(`/libraries/${libraryId}/genres`),
+  years: (libraryId: string) =>
+    api.get<YearCount[]>(`/libraries/${libraryId}/years`),
   enrichItem: (id: string) =>
     api.post<void>(`/items/${id}/enrich`)
+};
+
+export interface GenreCount {
+  name: string;
+  count: number;
+}
+
+export interface YearCount {
+  year: number;
+  count: number;
+}
+
+// ── People (cast/crew) ────────────────────────────────────────────────────────
+
+export interface PersonSummary {
+  id: string;
+  tmdb_id?: number;
+  name: string;
+  profile_path?: string;
+}
+
+export interface Credit {
+  person: PersonSummary;
+  role: string; // 'cast' | 'director' | 'writer' | 'producer' | 'creator'
+  character?: string;
+  job?: string;
+  order: number;
+}
+
+export interface Person {
+  id: string;
+  tmdb_id?: number;
+  name: string;
+  profile_path?: string;
+  bio?: string;
+  birthday?: string;
+  deathday?: string;
+  place_of_birth?: string;
+}
+
+export interface FilmographyEntry {
+  item_id: string;
+  library_id: string;
+  title: string;
+  type: string;
+  year?: number;
+  poster_path?: string;
+  rating?: number;
+  role: string;
+  character?: string;
+  job?: string;
+}
+
+export const peopleApi = {
+  credits: (itemId: string) => api.get<Credit[]>(`/items/${itemId}/credits`),
+  get: (id: string) => api.get<Person>(`/people/${id}`),
+  filmography: (id: string) => api.get<FilmographyEntry[]>(`/people/${id}/filmography`),
+  search: (q: string) => api.get<PersonSummary[]>(`/people?q=${encodeURIComponent(q)}`)
 };
 
 // ── Item detail (player) ──────────────────────────────────────────────────────

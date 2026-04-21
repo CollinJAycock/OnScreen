@@ -280,6 +280,12 @@ func (m *mockQuerier) CountMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ 
 func (m *mockQuerier) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]GenreCount, error) {
+	return nil, nil
+}
+func (m *mockQuerier) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]YearCount, error) {
+	return nil, nil
+}
 func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]File, error) {
 	return nil, nil
 }

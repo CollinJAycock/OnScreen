@@ -586,3 +586,27 @@ func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uu
 func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
 	return a.q.ListDistinctGenres(ctx, libraryID)
 }
+
+func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.GenreCount, error) {
+	rows, err := a.q.ListGenresWithCounts(ctx, gen.ListGenresWithCountsParams{LibraryID: libraryID, Type: itemType})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.GenreCount, len(rows))
+	for i, r := range rows {
+		out[i] = media.GenreCount{Genre: r.Genre, Count: r.Count}
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error) {
+	rows, err := a.q.ListYearsWithCounts(ctx, gen.ListYearsWithCountsParams{LibraryID: libraryID, Type: itemType})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.YearCount, len(rows))
+	for i, r := range rows {
+		out[i] = media.YearCount{Year: r.Year, Count: r.Count}
+	}
+	return out, nil
+}

@@ -206,6 +206,12 @@ func (s *stubMediaItemLister) CountItemsFiltered(_ context.Context, _ uuid.UUID,
 func (s *stubMediaItemLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return []string{"Action", "Drama"}, nil
 }
+func (s *stubMediaItemLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]media.GenreCount, error) {
+	return []media.GenreCount{{Genre: "Action", Count: 1}, {Genre: "Drama", Count: 1}}, nil
+}
+func (s *stubMediaItemLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]media.YearCount, error) {
+	return nil, nil
+}
 
 // stubItemMediaService implements v1.ItemMediaService.
 type stubItemMediaService struct {

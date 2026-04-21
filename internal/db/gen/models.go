@@ -190,6 +190,27 @@ type PasswordResetToken struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Person struct {
+	ID           uuid.UUID          `json:"id"`
+	TmdbID       *int32             `json:"tmdb_id"`
+	Name         string             `json:"name"`
+	ProfilePath  *string            `json:"profile_path"`
+	Bio          *string            `json:"bio"`
+	Birthday     pgtype.Date        `json:"birthday"`
+	Deathday     pgtype.Date        `json:"deathday"`
+	PlaceOfBirth *string            `json:"place_of_birth"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MediaCredit struct {
+	MediaItemID uuid.UUID `json:"media_item_id"`
+	PersonID    uuid.UUID `json:"person_id"`
+	Role        string    `json:"role"`
+	Character   *string   `json:"character"`
+	Job         string    `json:"job"`
+	Ord         int32     `json:"ord"`
+}
+
 type ServerSetting struct {
 	Key       string             `json:"key"`
 	Value     string             `json:"value"`

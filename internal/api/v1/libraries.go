@@ -64,6 +64,8 @@ type MediaItemLister interface {
 	CountItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
+	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.GenreCount, error)
+	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error)
 }
 
 // MediaItemResponse is the JSON shape for a media item in the v1 API.
@@ -531,13 +533,86 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	genres, err := h.media.ListDistinctGenres(r.Context(), id)
+	lib, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	rows, err := h.media.ListGenresWithCounts(r.Context(), id, rootItemType(lib.Type))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list genres", "library_id", id, "err", err)
 		respond.InternalError(w, r)
 		return
 	}
-	respond.Success(w, r, genres)
+	out := make([]GenreCountResponse, len(rows))
+	for i, g := range rows {
+		out[i] = GenreCountResponse{Name: g.Genre, Count: g.Count}
+	}
+	respond.Success(w, r, out)
+}
+
+// GenreCountResponse is one row of /libraries/{id}/genres.
+type GenreCountResponse struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+}
+
+// YearCountResponse is one row of /libraries/{id}/years.
+type YearCountResponse struct {
+	Year  int32 `json:"year"`
+	Count int64 `json:"count"`
+}
+
+// Years handles GET /api/v1/libraries/:id/years.
+func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
+	if h.media == nil {
+		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid library id")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !ok {
+		respond.NotFound(w, r)
+		return
+	}
+	lib, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	rows, err := h.media.ListYearsWithCounts(r.Context(), id, rootItemType(lib.Type))
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list years", "library_id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]YearCountResponse, len(rows))
+	for i, y := range rows {
+		out[i] = YearCountResponse{Year: y.Year, Count: y.Count}
+	}
+	respond.Success(w, r, out)
 }
 
 func parseUUID(r *http.Request, param string) (uuid.UUID, error) {

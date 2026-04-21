@@ -1076,6 +1076,82 @@ func (q *Queries) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 	return items, nil
 }
 
+const listGenresWithCounts = `-- name: ListGenresWithCounts :many
+SELECT g::text AS genre, COUNT(*)::bigint AS count
+FROM media_items, unnest(genres) AS g
+WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
+GROUP BY g
+ORDER BY g
+`
+
+type ListGenresWithCountsParams struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	Type      string    `json:"type"`
+}
+
+type ListGenresWithCountsRow struct {
+	Genre string `json:"genre"`
+	Count int64  `json:"count"`
+}
+
+func (q *Queries) ListGenresWithCounts(ctx context.Context, arg ListGenresWithCountsParams) ([]ListGenresWithCountsRow, error) {
+	rows, err := q.db.Query(ctx, listGenresWithCounts, arg.LibraryID, arg.Type)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGenresWithCountsRow{}
+	for rows.Next() {
+		var i ListGenresWithCountsRow
+		if err := rows.Scan(&i.Genre, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listYearsWithCounts = `-- name: ListYearsWithCounts :many
+SELECT year::int AS year, COUNT(*)::bigint AS count
+FROM media_items
+WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
+GROUP BY year
+ORDER BY year DESC
+`
+
+type ListYearsWithCountsParams struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	Type      string    `json:"type"`
+}
+
+type ListYearsWithCountsRow struct {
+	Year  int32 `json:"year"`
+	Count int64 `json:"count"`
+}
+
+func (q *Queries) ListYearsWithCounts(ctx context.Context, arg ListYearsWithCountsParams) ([]ListYearsWithCountsRow, error) {
+	rows, err := q.db.Query(ctx, listYearsWithCounts, arg.LibraryID, arg.Type)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListYearsWithCountsRow{}
+	for rows.Next() {
+		var i ListYearsWithCountsRow
+		if err := rows.Scan(&i.Year, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDuplicateChildItems = `-- name: ListDuplicateChildItems :many
 WITH normalized AS (
     SELECT id, parent_id, type, year, tmdb_id, tvdb_id, musicbrainz_id,

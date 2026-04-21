@@ -53,6 +53,7 @@ type Handlers struct {
 	Notifications   *v1.NotificationHandler
 	Favorites       *v1.FavoritesHandler
 	Maintenance     *v1.MaintenanceHandler
+	People          *v1.PeopleHandler
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []string // returns all library scan_paths for artwork serving
@@ -271,6 +272,7 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/libraries/{id}", h.Library.Get)
 			r.Get("/libraries/{id}/items", h.Library.Items)
 			r.Get("/libraries/{id}/genres", h.Library.Genres)
+			r.Get("/libraries/{id}/years", h.Library.Years)
 
 			// Library mutations — admin only.
 			r.Group(func(r chi.Router) {
@@ -442,6 +444,14 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/playlists/{id}/items", h.Playlists.AddItem)
 				r.Delete("/playlists/{id}/items/{itemId}", h.Playlists.RemoveItem)
 				r.Put("/playlists/{id}/items/order", h.Playlists.Reorder)
+			}
+
+			// People (cast/crew) — lazy TMDB fetch on first /credits view.
+			if h.People != nil {
+				r.Get("/items/{id}/credits", h.People.Credits)
+				r.Get("/people/{id}", h.People.GetPerson)
+				r.Get("/people/{id}/filmography", h.People.Filmography)
+				r.Get("/people", h.People.Search)
 			}
 
 			// Individual media items — player, children, progress, on-demand enrich.

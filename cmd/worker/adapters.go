@@ -721,6 +721,14 @@ func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UU
 	return nil, nil
 }
 
+func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.GenreCount, error) {
+	return nil, nil
+}
+
+func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error) {
+	return nil, nil
+}
+
 // ── sessionCleanupAdapter ─────────────────────────────────────────────────────
 
 // sessionCleanupAdapter wraps gen.Queries to implement worker.SessionCleanupService.

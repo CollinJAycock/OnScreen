@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, mediaApi, type Library, type MediaItem, type SortField, type ListItemsParams } from '$lib/api';
+  import { libraryApi, mediaApi, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount } from '$lib/api';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
   let playlistPickerItemId = '';
@@ -60,11 +60,20 @@
   let sortAsc = true;
 
   // Filters
-  let genres: string[] = [];
+  let genres: GenreCount[] = [];
   let selectedGenre = '';
   let yearMin = '';
   let yearMax = '';
   let ratingMin = '';
+
+  // Hydrate filters from URL on first load (?genre=Drama, ?year_min=, ?year_max=)
+  // so deep-links from the genre/year browse pages preselect the correct filter.
+  function readFiltersFromURL() {
+    const sp = $page.url.searchParams;
+    selectedGenre = sp.get('genre') ?? '';
+    yearMin = sp.get('year_min') ?? '';
+    yearMax = sp.get('year_max') ?? '';
+  }
 
   let mounted = false;
   let prevId = '';
@@ -113,6 +122,7 @@
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     prevId = id;
+    readFiltersFromURL();
     await Promise.all([loadLibrary(), loadItems(), loadGenres()]);
     mounted = true;
   });
@@ -299,10 +309,15 @@
       <select class="filter-select" bind:value={selectedGenre} on:change={applyFilters}>
         <option value="">All Genres</option>
         {#each genres as g}
-          <option value={g}>{g}</option>
+          <option value={g.name}>{g.name} ({g.count})</option>
         {/each}
       </select>
     {/if}
+
+    <div class="browse-links">
+      <a href="/libraries/{id}/genres">Browse genres</a>
+      <a href="/libraries/{id}/years">Browse years</a>
+    </div>
 
     <div class="count">
       {#if query}{filtered.length} / {allItems.length}{:else}{total} items{/if}
@@ -548,6 +563,14 @@
   }
   .filter-select:focus { outline: none; border-color: var(--accent); }
   .filter-select option { background: var(--bg-elevated); color: var(--text-primary); }
+
+  .browse-links { display: flex; gap: 0.75rem; align-items: center; }
+  .browse-links a {
+    font-size: 0.78rem; color: var(--text-secondary); text-decoration: none;
+    padding: 0.3rem 0.55rem; border-radius: 6px; border: 1px solid var(--border);
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .browse-links a:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
 
   .count { margin-left: auto; font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
 

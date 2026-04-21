@@ -29,6 +29,7 @@ import (
 	dbmigrations "github.com/onscreen/onscreen/internal/db/migrations"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/domain/people"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/email"
@@ -478,6 +479,27 @@ func run() error {
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
 
+	// ── People (cast/crew) — lazy TMDB fetch on first item-detail view ───────
+	peopleQ := &peopleAdapter{q: gen.New(rwPool)}
+	peopleAgentFn := func() people.Agent {
+		a := agentFn()
+		if a == nil {
+			return nil
+		}
+		// *tmdb.Client implements both metadata.Agent and people.Agent.
+		if pa, ok := a.(people.Agent); ok {
+			return pa
+		}
+		return nil
+	}
+	peopleSvc := people.New(peopleQ, peopleAgentFn)
+	peopleHandler := v1.NewPeopleHandler(peopleSvc, &peopleItemLookup{
+		svc:      mediaSvc,
+		agentFn:  agentFn,
+		enricher: metaAgent,
+		logger:   logger,
+	}, logger)
+
 	// ── Router ────────────────────────────────────────────────────────────────
 	h := &api.Handlers{
 		Library:            libHandler,
@@ -507,6 +529,7 @@ func run() error {
 		Invite:             inviteHandler,
 		Notifications:      notifHandler,
 		Maintenance:        maintenanceHandler,
+		People:             peopleHandler,
 		Favorites:          favoritesHandler,
 		StreamTracker:      streamTracker,
 		Artwork:            artworkMgr,

@@ -65,6 +65,35 @@ type EpisodeResult struct {
 	ThumbURL   string
 }
 
+// CreditMember is one cast or crew entry on a media item.
+// Cast entries set Character and Order; crew entries set Role and Job.
+type CreditMember struct {
+	TMDBID      int
+	Name        string
+	ProfilePath string // TMDB-relative; empty if unknown
+	Character   string // cast only
+	Order       int    // cast only; lower = more prominent
+	Role        string // crew only: "director" | "writer" | "producer" | "creator"
+	Job         string // crew only: original TMDB job title
+}
+
+// CreditsResult bundles cast and crew for a single movie or show.
+type CreditsResult struct {
+	Cast []CreditMember
+	Crew []CreditMember
+}
+
+// PersonResult holds biographical metadata for a single person.
+type PersonResult struct {
+	TMDBID       int
+	Name         string
+	Bio          string
+	ProfilePath  string
+	Birthday     time.Time
+	Deathday     time.Time
+	PlaceOfBirth string
+}
+
 // Agent is the interface implemented by all metadata providers.
 // Agents are called by the scanner and the metadata refresh worker.
 type Agent interface {
