@@ -91,17 +91,28 @@ func (q *Queries) InsertWatchEvent(ctx context.Context, arg InsertWatchEventPara
 }
 
 const listWatchHistory = `-- name: ListWatchHistory :many
-SELECT we.id, we.user_id, we.media_id, we.event_type,
-       we.position_ms, we.duration_ms, we.client_name, we.client_id,
-       we.occurred_at,
+WITH events AS (
+    SELECT we.id, we.user_id, we.media_id, we.event_type,
+           we.position_ms, we.duration_ms, we.client_name, we.client_id,
+           we.occurred_at,
+           LEAD(we.occurred_at) OVER (
+               PARTITION BY we.user_id, we.media_id
+               ORDER BY we.occurred_at
+           ) AS next_at
+    FROM watch_events we
+    WHERE we.user_id = $1
+      AND we.event_type IN ('stop', 'scrobble')
+)
+SELECT e.id, e.user_id, e.media_id, e.event_type,
+       e.position_ms, e.duration_ms, e.client_name, e.client_id,
+       e.occurred_at,
        m.library_id AS library_id,
        m.type AS media_type, m.title AS media_title, m.year AS media_year,
        m.thumb_path AS media_thumb
-FROM watch_events we
-JOIN media_items m ON m.id = we.media_id
-WHERE we.user_id = $1
-  AND we.event_type IN ('stop', 'scrobble')
-ORDER BY we.occurred_at DESC
+FROM events e
+JOIN media_items m ON m.id = e.media_id
+WHERE e.next_at IS NULL OR (e.next_at - e.occurred_at) > INTERVAL '30 minutes'
+ORDER BY e.occurred_at DESC
 LIMIT $2 OFFSET $3
 `
 
@@ -128,6 +139,11 @@ type ListWatchHistoryRow struct {
 	MediaThumb *string            `json:"media_thumb"`
 }
 
+// Collapse consecutive 'stop'/'scrobble' events for the same media that occur
+// within a 30-minute window into a single row, keeping the LATEST event in the
+// group. This prevents the same playback session from showing multiple times
+// in the user's history when both an explicit stop and an onDestroy stop fire,
+// or when external clients emit redundant scrobble events.
 func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryParams) ([]ListWatchHistoryRow, error) {
 	rows, err := q.db.Query(ctx, listWatchHistory, arg.UserID, arg.Limit, arg.Offset)
 	if err != nil {

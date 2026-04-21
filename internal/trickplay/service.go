@@ -4,14 +4,22 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
-// Service bundles the Generator and PgStore into a single facade suitable
-// for HTTP handlers. It hides the gen.TrickplayStatus DB row type so API
-// layers don't pull in internal/db/gen.
+// statusReader is the read surface Service needs from the persistence layer.
+// PgStore satisfies it; tests can substitute a fake.
+type statusReader interface {
+	Status(ctx context.Context, itemID uuid.UUID) (gen.TrickplayStatus, bool, error)
+}
+
+// Service bundles the Generator and a status reader into a single facade
+// suitable for HTTP handlers. It hides the gen.TrickplayStatus DB row type
+// so API layers don't pull in internal/db/gen.
 type Service struct {
 	gen   *Generator
-	store *PgStore
+	store statusReader
 }
 
 // NewService wires a Service around an existing generator and store. Both

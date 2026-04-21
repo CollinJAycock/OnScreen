@@ -2,6 +2,7 @@ package trickplay
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -114,6 +115,33 @@ func TestItemDirUsesItemID(t *testing.T) {
 	want := filepath.Join("/var/cache/tp", id.String())
 	if got != want {
 		t.Errorf("ItemDir = %q, want %q", got, want)
+	}
+}
+
+func TestWithSpecOverridesGeneratorSpec(t *testing.T) {
+	g := New("/var/cache/tp", &fakeStore{}, fakeLookup{}, silentLogger())
+	custom := Spec{IntervalSec: 5, ThumbWidth: 160, ThumbHeight: 90, GridCols: 8, GridRows: 8}
+	g2 := g.WithSpec(custom)
+	if g2 == g {
+		t.Fatal("WithSpec should return a clone, not mutate the receiver")
+	}
+	if g.spec != Default {
+		t.Errorf("original spec mutated: got %+v", g.spec)
+	}
+	if g2.spec != custom {
+		t.Errorf("clone spec wrong: got %+v want %+v", g2.spec, custom)
+	}
+}
+
+func TestGeneratePropagatesLookupError(t *testing.T) {
+	store := &fakeStore{}
+	g := New(t.TempDir(), store, fakeLookup{err: errors.New("db down")}, silentLogger())
+	err := g.Generate(context.Background(), uuid.New())
+	if err == nil {
+		t.Fatal("expected error from lookup failure")
+	}
+	if store.pending != 0 || store.failed != 0 {
+		t.Errorf("lookup error must not touch the status row: %+v", store)
 	}
 }
 
