@@ -284,6 +284,15 @@ func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) 
 	return nil, nil
 }
 func (m *mockQuerier) DeleteMissingFilesByLibrary(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockQuerier) HardDeleteSoftDeletedFilesByLibrary(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
+func (m *mockQuerier) GetMediaItemEnrichAttemptedAt(_ context.Context, _ uuid.UUID) (*time.Time, error) {
+	return nil, nil
+}
+func (m *mockQuerier) TouchMediaItemEnrichAttempt(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
 func (m *mockQuerier) SoftDeleteItemsWithNoActiveFiles(_ context.Context, libID uuid.UUID) error {
 	if m.cleanupLeavesErr != nil {
 		return m.cleanupLeavesErr

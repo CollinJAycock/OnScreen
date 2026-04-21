@@ -31,6 +31,12 @@ func TestCleanTitle(t *testing.T) {
 			wantYear:  intPtr(2010),
 		},
 		{
+			name:      "square-bracketed year",
+			input:     "Hoppers [2026] 720p WEBRip-LAMA",
+			wantTitle: "Hoppers",
+			wantYear:  intPtr(2026),
+		},
+		{
 			name:      "no year",
 			input:     "Some.Movie.Title",
 			wantTitle: "Some Movie Title",
@@ -83,6 +89,18 @@ func TestCleanTitle(t *testing.T) {
 			input:     "Future.Film.2100.SciFi",
 			wantTitle: "Future Film",
 			wantYear:  intPtr(2100),
+		},
+		{
+			name:      "html-escaped ampersand",
+			input:     "Mike.&amp;.Nick.&amp;.Nick.&amp;.Alice.2026.1080p.WEB-DL",
+			wantTitle: "Mike & Nick & Nick & Alice",
+			wantYear:  intPtr(2026),
+		},
+		{
+			name:      "html-escaped apostrophe",
+			input:     "It&#39;s.A.Wonderful.Life.1946",
+			wantTitle: "It's A Wonderful Life",
+			wantYear:  intPtr(1946),
 		},
 	}
 

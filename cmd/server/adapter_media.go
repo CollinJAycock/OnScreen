@@ -364,6 +364,22 @@ func (a *mediaAdapter) DeleteMissingFilesByLibrary(ctx context.Context, libraryI
 	return a.q.DeleteMissingFilesByLibrary(ctx, libraryID)
 }
 
+func (a *mediaAdapter) HardDeleteSoftDeletedFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	return a.q.HardDeleteSoftDeletedFilesByLibrary(ctx, libraryID)
+}
+
+func (a *mediaAdapter) GetMediaItemEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error) {
+	ts, err := a.q.GetMediaItemEnrichAttemptedAt(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return pgtimeTZ(ts), nil
+}
+
+func (a *mediaAdapter) TouchMediaItemEnrichAttempt(ctx context.Context, id uuid.UUID) error {
+	return a.q.TouchMediaItemEnrichAttempt(ctx, id)
+}
+
 func (a *mediaAdapter) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error {
 	return a.q.SoftDeleteItemsWithNoActiveFiles(ctx, libraryID)
 }

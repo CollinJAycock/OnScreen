@@ -788,6 +788,42 @@ func (q *Queries) GetMediaItemByTMDBID(ctx context.Context, arg GetMediaItemByTM
 	return i, err
 }
 
+const getMediaItemEnrichAttemptedAt = `-- name: GetMediaItemEnrichAttemptedAt :one
+SELECT last_enrich_attempted_at
+FROM media_items
+WHERE id = $1
+`
+
+// Returns the timestamp of the last metadata-enrichment attempt (TMDB/TVDB
+// lookup + artwork fetch), or NULL if never attempted. Used by the scanner
+// to suppress retries for items whose lookup failed recently.
+func (q *Queries) GetMediaItemEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getMediaItemEnrichAttemptedAt, id)
+	var last_enrich_attempted_at pgtype.Timestamptz
+	err := row.Scan(&last_enrich_attempted_at)
+	return last_enrich_attempted_at, err
+}
+
+const hardDeleteSoftDeletedFilesByLibrary = `-- name: HardDeleteSoftDeletedFilesByLibrary :execrows
+DELETE FROM media_files
+WHERE status = 'deleted'
+  AND media_item_id IN (
+      SELECT id FROM media_items WHERE library_id = $1
+  )
+`
+
+// Permanently removes media_files rows with status='deleted' for a library.
+// Runs after CleanupMissingFiles so all no-longer-present files (missing grace
+// period expired) get promoted to deleted and then hard-purged in one scan.
+// watch_events.file_id uses ON DELETE SET NULL, so history is preserved.
+func (q *Queries) HardDeleteSoftDeletedFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, hardDeleteSoftDeletedFilesByLibrary, libraryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listActiveFilesForLibrary = `-- name: ListActiveFilesForLibrary :many
 SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
        mf.audio_codec, mf.resolution_w, mf.resolution_h, mf.bitrate, mf.hdr_type, mf.frame_rate,
@@ -1260,7 +1296,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_streams, subtitle_streams, chapters, file_hash,
        status, missing_since, scanned_at, created_at, duration_ms
 FROM media_files
-WHERE media_item_id = $1
+WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC
 `
 
@@ -3197,6 +3233,20 @@ WHERE library_id = $1 AND deleted_at IS NULL
 
 func (q *Queries) SoftDeleteMediaItemsByLibrary(ctx context.Context, libraryID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteMediaItemsByLibrary, libraryID)
+	return err
+}
+
+const touchMediaItemEnrichAttempt = `-- name: TouchMediaItemEnrichAttempt :exec
+UPDATE media_items
+SET last_enrich_attempted_at = NOW()
+WHERE id = $1
+`
+
+// Marks the item as having been through an enrichment pass, whether or not
+// anything was found. Call this after every Enrich() attempt so the negative
+// cache ticks forward and we don't hammer TMDB for titles it doesn't have.
+func (q *Queries) TouchMediaItemEnrichAttempt(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, touchMediaItemEnrichAttempt, id)
 	return err
 }
 

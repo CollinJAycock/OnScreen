@@ -6,6 +6,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -36,8 +37,9 @@ var imageExtensions = map[string]bool{
 	".heic": true, ".avif": true,
 }
 
-// yearRE matches a 4-digit year, optionally surrounded by parentheses or dots.
-var yearRE = regexp.MustCompile(`[\.\s]\(?(\d{4})\)?`)
+// yearRE matches a 4-digit year, optionally surrounded by parentheses, square
+// brackets, or dots.
+var yearRE = regexp.MustCompile(`[\.\s][\(\[]?(\d{4})[\)\]]?`)
 
 // MetadataAgent is called for newly discovered files to fetch external metadata.
 type MetadataAgent interface {
@@ -60,7 +62,10 @@ type MediaService interface {
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
 	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error
+	PurgeDeletedFiles(ctx context.Context, libraryID uuid.UUID) (int64, error)
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
+	GetEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
+	TouchEnrichAttempt(ctx context.Context, id uuid.UUID) error
 	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
 	DedupeChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) (media.DedupeResult, error)
 	MergeCollabArtists(ctx context.Context, libraryID *uuid.UUID) (media.DedupeResult, error)
@@ -209,7 +214,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 				newCount.Add(1)
 			}
 			if item != nil && file != nil {
-				if s.agent != nil && (isNew || itemNeedsEnrich(item) || s.parentNeedsEnrich(ctx, item)) {
+				if s.agent != nil && s.shouldEnrich(ctx, item, isNew) {
 					enrichMu.Lock()
 					enrichQueue = append(enrichQueue, enrichWork{item, file})
 					enrichMu.Unlock()
@@ -247,6 +252,11 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 	if err := s.media.CleanupMissingFiles(ctx, libraryID); err != nil {
 		s.logger.WarnContext(ctx, "cleanup missing files failed", "library_id", libraryID, "err", err)
 	}
+	if purged, err := s.media.PurgeDeletedFiles(ctx, libraryID); err != nil {
+		s.logger.WarnContext(ctx, "purge deleted files failed", "library_id", libraryID, "err", err)
+	} else if purged > 0 {
+		s.logger.InfoContext(ctx, "purged soft-deleted file rows", "library_id", libraryID, "count", purged)
+	}
 	if err := s.media.CleanupEmptyItems(ctx, libraryID); err != nil {
 		s.logger.WarnContext(ctx, "cleanup empty items failed", "library_id", libraryID, "err", err)
 	}
@@ -267,6 +277,10 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 				defer func() { <-enrichSem }()
 				if err := s.agent.Enrich(ctx, work.item, work.file); err != nil {
 					s.logger.WarnContext(ctx, "metadata enrich failed",
+						"item_id", work.item.ID, "err", err)
+				}
+				if err := s.media.TouchEnrichAttempt(ctx, work.item.ID); err != nil {
+					s.logger.WarnContext(ctx, "touch enrich attempt failed",
 						"item_id", work.item.ID, "err", err)
 				}
 			}()
@@ -419,7 +433,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 				}
 			}
 			if item, err := s.media.GetItem(ctx, existing.MediaItemID); err == nil {
-				if itemNeedsEnrich(item) || s.parentNeedsEnrich(ctx, item) {
+				if s.shouldEnrich(ctx, item, false) {
 					return item, existing, false, nil
 				}
 			}
@@ -677,6 +691,9 @@ func cleanTitle(name string) (title string, year *int) {
 	}
 
 	title = strings.ReplaceAll(name, ".", " ")
+	// Some release tools HTML-escape the title in the filename (e.g. "Mike.&amp;.Nick…"),
+	// which breaks TMDB matching. Unescape once so the search term looks natural.
+	title = html.UnescapeString(title)
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "Unknown"
@@ -739,6 +756,31 @@ func badPosterPath(p string) bool {
 	return false
 }
 
+// enrichCooldown gates TMDB retries for items whose previous lookup came up
+// empty. Items with a recent attempt (less than this ago) are skipped so a
+// junk release title or a truly obscure item can't burn API quota on every
+// scan. 7 days is long enough to meaningfully reduce traffic and short enough
+// that a title fix or TMDB data addition is picked up within a week.
+const enrichCooldown = 7 * 24 * time.Hour
+
+// shouldEnrich decides whether to queue an item for metadata enrichment.
+// New items always go through. Existing items are only re-queued when a field
+// the enricher should fill is still missing (itemNeedsEnrich) AND the last
+// attempt was either never made or happened more than enrichCooldown ago.
+func (s *Scanner) shouldEnrich(ctx context.Context, item *media.Item, isNew bool) bool {
+	if isNew {
+		return true
+	}
+	if !itemNeedsEnrich(item) && !s.parentNeedsEnrich(ctx, item) {
+		return false
+	}
+	attempted, err := s.media.GetEnrichAttemptedAt(ctx, item.ID)
+	if err != nil || attempted == nil {
+		return true
+	}
+	return time.Since(*attempted) >= enrichCooldown
+}
+
 // itemNeedsEnrich reports whether a media item still needs metadata enrichment.
 // Episodes use ThumbPath (not PosterPath), so checking only PosterPath would
 // cause episodes to be re-enriched on every scan.
@@ -760,10 +802,11 @@ func itemNeedsEnrich(item *media.Item) bool {
 		if badPosterPath(*item.PosterPath) {
 			return true
 		}
-		// Movies and shows need a content rating for parental filters.
-		if (item.Type == "movie" || item.Type == "show") && item.ContentRating == nil {
-			return true
-		}
+		// Once the item has a poster, consider it enriched. Content rating is
+		// nice-to-have for parental filters, but TMDB legitimately has no rating
+		// for some titles; retriggering enrichment every scan just to hunt for
+		// a rating burns quota and can trip rate limits. A separate backfill
+		// pass can be added later if content ratings become mandatory.
 		return false
 	}
 }

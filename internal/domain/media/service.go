@@ -160,6 +160,9 @@ type Querier interface {
 	ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error)
 	DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error
+	HardDeleteSoftDeletedFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	GetMediaItemEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
+	TouchMediaItemEnrichAttempt(ctx context.Context, id uuid.UUID) error
 	SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error
 	SoftDeleteEmptyContainerItems(ctx context.Context, libraryID uuid.UUID) error
 }
@@ -471,6 +474,27 @@ func (s *Service) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 // CleanupMissingFiles promotes all missing files to deleted for a library.
 func (s *Service) CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error {
 	return s.rw.DeleteMissingFilesByLibrary(ctx, libraryID)
+}
+
+// PurgeDeletedFiles permanently removes file rows with status='deleted' for a
+// library. Called after CleanupMissingFiles so the missing-grace-period has
+// already elapsed for any file that gets purged here. watch_events.file_id
+// uses ON DELETE SET NULL so playback history is preserved.
+func (s *Service) PurgeDeletedFiles(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	return s.rw.HardDeleteSoftDeletedFilesByLibrary(ctx, libraryID)
+}
+
+// GetEnrichAttemptedAt returns the timestamp of the last enrichment attempt
+// for an item (TMDB/TVDB lookup + artwork fetch), or nil if never attempted.
+func (s *Service) GetEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error) {
+	return s.ro.GetMediaItemEnrichAttemptedAt(ctx, id)
+}
+
+// TouchEnrichAttempt records that an enrichment pass ran for this item,
+// whether or not any data was found. Acts as a negative cache so the scanner
+// doesn't re-query TMDB for titles it can't match on every subsequent scan.
+func (s *Service) TouchEnrichAttempt(ctx context.Context, id uuid.UUID) error {
+	return s.rw.TouchMediaItemEnrichAttempt(ctx, id)
 }
 
 // CleanupEmptyItems soft-deletes leaf items with no active files, then

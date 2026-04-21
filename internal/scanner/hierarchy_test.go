@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dhowden/tag"
 	"github.com/google/uuid"
@@ -31,6 +32,10 @@ type mockMediaService struct {
 	dedupeCalls  []dedupeCall
 	dedupeResult media.DedupeResult
 	dedupeErr    error
+
+	// Enrichment-attempt tracking for shouldEnrich tests.
+	enrichAttempts        map[uuid.UUID]time.Time
+	touchedEnrichAttempts []uuid.UUID
 }
 
 type dedupeCall struct {
@@ -125,7 +130,24 @@ func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.U
 	return nil, nil
 }
 func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) error { return nil }
-func (m *mockMediaService) CleanupEmptyItems(_ context.Context, _ uuid.UUID) error   { return nil }
+func (m *mockMediaService) PurgeDeletedFiles(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
+func (m *mockMediaService) CleanupEmptyItems(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockMediaService) GetEnrichAttemptedAt(_ context.Context, id uuid.UUID) (*time.Time, error) {
+	if ts, ok := m.enrichAttempts[id]; ok {
+		return &ts, nil
+	}
+	return nil, nil
+}
+func (m *mockMediaService) TouchEnrichAttempt(_ context.Context, id uuid.UUID) error {
+	if m.enrichAttempts == nil {
+		m.enrichAttempts = make(map[uuid.UUID]time.Time)
+	}
+	m.enrichAttempts[id] = time.Now()
+	m.touchedEnrichAttempts = append(m.touchedEnrichAttempts, id)
+	return nil
+}
 func (m *mockMediaService) DedupeTopLevelItems(_ context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error) {
 	call := dedupeCall{itemType: itemType}
 	if libraryID != nil {

@@ -669,7 +669,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_streams, subtitle_streams, chapters, file_hash,
        status, missing_since, scanned_at, created_at, duration_ms
 FROM media_files
-WHERE media_item_id = $1
+WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best quality first (ADR-031)
 
 -- name: CreateMediaFile :one
@@ -757,6 +757,33 @@ SET status = 'deleted'
 WHERE status = 'missing'
   AND media_item_id IN (
       SELECT id FROM media_items WHERE library_id = $1 AND deleted_at IS NULL
+  );
+
+-- name: GetMediaItemEnrichAttemptedAt :one
+-- Returns the timestamp of the last metadata-enrichment attempt (TMDB/TVDB
+-- lookup + artwork fetch), or NULL if never attempted. Used by the scanner
+-- to suppress retries for items whose lookup failed recently.
+SELECT last_enrich_attempted_at
+FROM media_items
+WHERE id = $1;
+
+-- name: TouchMediaItemEnrichAttempt :exec
+-- Marks the item as having been through an enrichment pass, whether or not
+-- anything was found. Call this after every Enrich() attempt so the negative
+-- cache ticks forward and we don't hammer TMDB for titles it doesn't have.
+UPDATE media_items
+SET last_enrich_attempted_at = NOW()
+WHERE id = $1;
+
+-- name: HardDeleteSoftDeletedFilesByLibrary :execrows
+-- Permanently removes media_files rows with status='deleted' for a library.
+-- Runs after CleanupMissingFiles so all no-longer-present files (missing grace
+-- period expired) get promoted to deleted and then hard-purged in one scan.
+-- watch_events.file_id uses ON DELETE SET NULL, so history is preserved.
+DELETE FROM media_files
+WHERE status = 'deleted'
+  AND media_item_id IN (
+      SELECT id FROM media_items WHERE library_id = $1
   );
 
 -- name: SoftDeleteItemsWithNoActiveFiles :exec
