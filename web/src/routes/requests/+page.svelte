@@ -263,6 +263,13 @@
                 <div class="poster-blank">{it.title[0]?.toUpperCase() ?? '?'}</div>
               {/if}
               <span class="type-pill type-{it.type}">{it.type === 'show' ? 'Show' : 'Movie'}</span>
+              {#if it.in_library}
+                <span class="library-check" title="In your library" aria-label="In your library">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                </span>
+              {/if}
             </div>
             <div class="tile-title" title={it.title}>{it.title}</div>
             {#if it.year}<div class="tile-year">{it.year}</div>{/if}
@@ -492,6 +499,17 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
+  .library-check {
+    position: absolute;
+    top: 0.4rem; right: 0.4rem;
+    width: 1.4rem; height: 1.4rem;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: #16a34a;
+    color: #fff;
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.55);
+  }
+  .library-check svg { width: 0.85rem; height: 0.85rem; }
   .tile-title {
     font-size: 0.85rem; font-weight: 500; color: var(--text-primary);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
