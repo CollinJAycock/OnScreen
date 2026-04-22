@@ -123,7 +123,7 @@ func (a *peopleAdapter) UpsertPersonByTMDB(ctx context.Context, p people.Person)
 }
 
 func (a *peopleAdapter) SearchPeople(ctx context.Context, prefix string, limit int32) ([]people.Summary, error) {
-	rows, err := a.q.SearchPeople(ctx, gen.SearchPeopleParams{Prefix: prefix, Limit: limit})
+	rows, err := a.q.SearchPeople(ctx, gen.SearchPeopleParams{Prefix: prefix, LimitN: limit})
 	if err != nil {
 		return nil, err
 	}

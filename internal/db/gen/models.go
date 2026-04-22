@@ -113,6 +113,15 @@ type LibraryAccess struct {
 	GrantedAt pgtype.Timestamptz `json:"granted_at"`
 }
 
+type MediaCredit struct {
+	MediaItemID uuid.UUID `json:"media_item_id"`
+	PersonID    uuid.UUID `json:"person_id"`
+	Role        string    `json:"role"`
+	Character   *string   `json:"character"`
+	Job         string    `json:"job"`
+	Ord         int32     `json:"ord"`
+}
+
 type MediaFile struct {
 	ID              uuid.UUID          `json:"id"`
 	MediaItemID     uuid.UUID          `json:"media_item_id"`
@@ -202,13 +211,19 @@ type Person struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
-type MediaCredit struct {
-	MediaItemID uuid.UUID `json:"media_item_id"`
-	PersonID    uuid.UUID `json:"person_id"`
-	Role        string    `json:"role"`
-	Character   *string   `json:"character"`
-	Job         string    `json:"job"`
-	Ord         int32     `json:"ord"`
+type ScheduledTask struct {
+	ID         uuid.UUID          `json:"id"`
+	Name       string             `json:"name"`
+	TaskType   string             `json:"task_type"`
+	Config     []byte             `json:"config"`
+	CronExpr   string             `json:"cron_expr"`
+	Enabled    bool               `json:"enabled"`
+	LastRunAt  pgtype.Timestamptz `json:"last_run_at"`
+	NextRunAt  pgtype.Timestamptz `json:"next_run_at"`
+	LastStatus string             `json:"last_status"`
+	LastError  string             `json:"last_error"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ServerSetting struct {
@@ -229,6 +244,16 @@ type Session struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
 	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+}
+
+type TaskRun struct {
+	ID        uuid.UUID          `json:"id"`
+	TaskID    uuid.UUID          `json:"task_id"`
+	StartedAt pgtype.Timestamptz `json:"started_at"`
+	EndedAt   pgtype.Timestamptz `json:"ended_at"`
+	Status    string             `json:"status"`
+	Output    string             `json:"output"`
+	Error     string             `json:"error"`
 }
 
 type TrickplayStatus struct {

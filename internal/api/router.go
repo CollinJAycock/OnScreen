@@ -54,6 +54,7 @@ type Handlers struct {
 	Favorites       *v1.FavoritesHandler
 	Maintenance     *v1.MaintenanceHandler
 	Backup          *v1.BackupHandler
+	Tasks           *v1.TasksHandler
 	People          *v1.PeopleHandler
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
@@ -367,6 +368,20 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/backup", h.Backup.Download)
 					r.Post("/admin/restore", h.Backup.Restore)
+				})
+			}
+
+			// Scheduled tasks — admin only.
+			if h.Tasks != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/tasks", h.Tasks.List)
+					r.Post("/admin/tasks", h.Tasks.Create)
+					r.Get("/admin/tasks/types", h.Tasks.ListTypes)
+					r.Patch("/admin/tasks/{id}", h.Tasks.Update)
+					r.Delete("/admin/tasks/{id}", h.Tasks.Delete)
+					r.Post("/admin/tasks/{id}/run", h.Tasks.RunNow)
+					r.Get("/admin/tasks/{id}/runs", h.Tasks.Runs)
 				})
 			}
 

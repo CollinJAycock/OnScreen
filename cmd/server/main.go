@@ -41,6 +41,7 @@ import (
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/scanner"
+	"github.com/onscreen/onscreen/internal/scheduler"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/subtitles"
@@ -480,6 +481,29 @@ func run() error {
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
 	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, logger)
 
+	// ── Scheduler (cron-driven admin tasks) ──────────────────────────────────
+	// Registry holds handler implementations keyed by task_type. Built-ins
+	// are registered here; future plugin-provided handlers register against
+	// the same registry.
+	schedRegistry := scheduler.NewRegistry()
+	schedRegistry.Register("backup_database", scheduler.NewBackupHandler(cfg.DatabaseURL))
+	schedRegistry.Register("scan_library", scheduler.NewScanHandler(
+		libEnqueuer,
+		scheduler.LibraryListerFunc(func(ctx context.Context) ([]uuid.UUID, error) {
+			libs, err := libSvc.List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ids := make([]uuid.UUID, len(libs))
+			for i, l := range libs {
+				ids[i] = l.ID
+			}
+			return ids, nil
+		}),
+	))
+	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger)
+	tasksHandler := v1.NewTasksHandler(gen.New(rwPool), schedRegistry, logger)
+
 	// ── People (cast/crew) — lazy TMDB fetch on first item-detail view ───────
 	peopleQ := &peopleAdapter{q: gen.New(rwPool)}
 	peopleAgentFn := func() people.Agent {
@@ -531,6 +555,7 @@ func run() error {
 		Notifications:      notifHandler,
 		Maintenance:        maintenanceHandler,
 		Backup:             backupHandler,
+		Tasks:              tasksHandler,
 		People:             peopleHandler,
 		Favorites:          favoritesHandler,
 		StreamTracker:      streamTracker,
@@ -646,6 +671,11 @@ func run() error {
 
 	g.Go(func() error {
 		masterLock.RunIfMaster(gCtx, periodicScanWorker.Run)
+		return nil
+	})
+
+	g.Go(func() error {
+		masterLock.RunIfMaster(gCtx, sched.Run)
 		return nil
 	})
 

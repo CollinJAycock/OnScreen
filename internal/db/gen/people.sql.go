@@ -12,6 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteCreditsForItem = `-- name: DeleteCreditsForItem :exec
+DELETE FROM media_credits WHERE media_item_id = $1
+`
+
+func (q *Queries) DeleteCreditsForItem(ctx context.Context, mediaItemID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteCreditsForItem, mediaItemID)
+	return err
+}
+
 const getPersonByID = `-- name: GetPersonByID :one
 SELECT id, tmdb_id, name, profile_path, bio, birthday, deathday, place_of_birth, updated_at
 FROM people
@@ -58,94 +67,33 @@ func (q *Queries) GetPersonByTMDBID(ctx context.Context, tmdbID *int32) (Person,
 	return i, err
 }
 
-const searchPeople = `-- name: SearchPeople :many
-SELECT id, tmdb_id, name, profile_path
-FROM people
-WHERE LOWER(name) LIKE LOWER($1) || '%'
-ORDER BY name
-LIMIT $2
+const insertCredit = `-- name: InsertCredit :exec
+INSERT INTO media_credits (media_item_id, person_id, role, character, job, ord)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (media_item_id, person_id, role, job) DO UPDATE SET
+    character = EXCLUDED.character,
+    ord       = EXCLUDED.ord
 `
 
-type SearchPeopleParams struct {
-	Prefix string `json:"prefix"`
-	Limit  int32  `json:"limit"`
+type InsertCreditParams struct {
+	MediaItemID uuid.UUID `json:"media_item_id"`
+	PersonID    uuid.UUID `json:"person_id"`
+	Role        string    `json:"role"`
+	Character   *string   `json:"character"`
+	Job         string    `json:"job"`
+	Ord         int32     `json:"ord"`
 }
 
-type SearchPeopleRow struct {
-	ID          uuid.UUID `json:"id"`
-	TmdbID      *int32    `json:"tmdb_id"`
-	Name        string    `json:"name"`
-	ProfilePath *string   `json:"profile_path"`
-}
-
-func (q *Queries) SearchPeople(ctx context.Context, arg SearchPeopleParams) ([]SearchPeopleRow, error) {
-	rows, err := q.db.Query(ctx, searchPeople, arg.Prefix, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []SearchPeopleRow{}
-	for rows.Next() {
-		var i SearchPeopleRow
-		if err := rows.Scan(&i.ID, &i.TmdbID, &i.Name, &i.ProfilePath); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const upsertPersonByTMDB = `-- name: UpsertPersonByTMDB :one
-INSERT INTO people (tmdb_id, name, profile_path, bio, birthday, deathday, place_of_birth, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-ON CONFLICT (tmdb_id)
-DO UPDATE SET
-    name           = EXCLUDED.name,
-    profile_path   = COALESCE(NULLIF(EXCLUDED.profile_path, ''), people.profile_path),
-    bio            = COALESCE(NULLIF(EXCLUDED.bio, ''),          people.bio),
-    birthday       = COALESCE(EXCLUDED.birthday,                 people.birthday),
-    deathday       = COALESCE(EXCLUDED.deathday,                 people.deathday),
-    place_of_birth = COALESCE(NULLIF(EXCLUDED.place_of_birth, ''), people.place_of_birth),
-    updated_at     = NOW()
-RETURNING id, tmdb_id, name, profile_path, bio, birthday, deathday, place_of_birth, updated_at
-`
-
-type UpsertPersonByTMDBParams struct {
-	TmdbID       *int32      `json:"tmdb_id"`
-	Name         string      `json:"name"`
-	ProfilePath  *string     `json:"profile_path"`
-	Bio          *string     `json:"bio"`
-	Birthday     pgtype.Date `json:"birthday"`
-	Deathday     pgtype.Date `json:"deathday"`
-	PlaceOfBirth *string     `json:"place_of_birth"`
-}
-
-func (q *Queries) UpsertPersonByTMDB(ctx context.Context, arg UpsertPersonByTMDBParams) (Person, error) {
-	row := q.db.QueryRow(ctx, upsertPersonByTMDB,
-		arg.TmdbID,
-		arg.Name,
-		arg.ProfilePath,
-		arg.Bio,
-		arg.Birthday,
-		arg.Deathday,
-		arg.PlaceOfBirth,
+func (q *Queries) InsertCredit(ctx context.Context, arg InsertCreditParams) error {
+	_, err := q.db.Exec(ctx, insertCredit,
+		arg.MediaItemID,
+		arg.PersonID,
+		arg.Role,
+		arg.Character,
+		arg.Job,
+		arg.Ord,
 	)
-	var i Person
-	err := row.Scan(
-		&i.ID,
-		&i.TmdbID,
-		&i.Name,
-		&i.ProfilePath,
-		&i.Bio,
-		&i.Birthday,
-		&i.Deathday,
-		&i.PlaceOfBirth,
-		&i.UpdatedAt,
-	)
-	return i, err
+	return err
 }
 
 const listCreditsForItem = `-- name: ListCreditsForItem :many
@@ -260,40 +208,97 @@ func (q *Queries) ListFilmographyForPerson(ctx context.Context, personID uuid.UU
 	return items, nil
 }
 
-const deleteCreditsForItem = `-- name: DeleteCreditsForItem :exec
-DELETE FROM media_credits WHERE media_item_id = $1
+const searchPeople = `-- name: SearchPeople :many
+SELECT id, tmdb_id, name, profile_path
+FROM people
+WHERE LOWER(name) LIKE LOWER($1::text) || '%'
+ORDER BY name
+LIMIT $2::int
 `
 
-func (q *Queries) DeleteCreditsForItem(ctx context.Context, mediaItemID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteCreditsForItem, mediaItemID)
-	return err
+type SearchPeopleParams struct {
+	Prefix string `json:"prefix"`
+	LimitN int32  `json:"limit_n"`
 }
 
-const insertCredit = `-- name: InsertCredit :exec
-INSERT INTO media_credits (media_item_id, person_id, role, character, job, ord)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (media_item_id, person_id, role, job) DO UPDATE SET
-    character = EXCLUDED.character,
-    ord       = EXCLUDED.ord
+type SearchPeopleRow struct {
+	ID          uuid.UUID `json:"id"`
+	TmdbID      *int32    `json:"tmdb_id"`
+	Name        string    `json:"name"`
+	ProfilePath *string   `json:"profile_path"`
+}
+
+func (q *Queries) SearchPeople(ctx context.Context, arg SearchPeopleParams) ([]SearchPeopleRow, error) {
+	rows, err := q.db.Query(ctx, searchPeople, arg.Prefix, arg.LimitN)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchPeopleRow{}
+	for rows.Next() {
+		var i SearchPeopleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TmdbID,
+			&i.Name,
+			&i.ProfilePath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const upsertPersonByTMDB = `-- name: UpsertPersonByTMDB :one
+INSERT INTO people (tmdb_id, name, profile_path, bio, birthday, deathday, place_of_birth, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+ON CONFLICT (tmdb_id)
+DO UPDATE SET
+    name           = EXCLUDED.name,
+    profile_path   = COALESCE(NULLIF(EXCLUDED.profile_path, ''), people.profile_path),
+    bio            = COALESCE(NULLIF(EXCLUDED.bio, ''),          people.bio),
+    birthday       = COALESCE(EXCLUDED.birthday,                 people.birthday),
+    deathday       = COALESCE(EXCLUDED.deathday,                 people.deathday),
+    place_of_birth = COALESCE(NULLIF(EXCLUDED.place_of_birth, ''), people.place_of_birth),
+    updated_at     = NOW()
+RETURNING id, tmdb_id, name, profile_path, bio, birthday, deathday, place_of_birth, updated_at
 `
 
-type InsertCreditParams struct {
-	MediaItemID uuid.UUID `json:"media_item_id"`
-	PersonID    uuid.UUID `json:"person_id"`
-	Role        string    `json:"role"`
-	Character   *string   `json:"character"`
-	Job         string    `json:"job"`
-	Ord         int32     `json:"ord"`
+type UpsertPersonByTMDBParams struct {
+	TmdbID       *int32      `json:"tmdb_id"`
+	Name         string      `json:"name"`
+	ProfilePath  *string     `json:"profile_path"`
+	Bio          *string     `json:"bio"`
+	Birthday     pgtype.Date `json:"birthday"`
+	Deathday     pgtype.Date `json:"deathday"`
+	PlaceOfBirth *string     `json:"place_of_birth"`
 }
 
-func (q *Queries) InsertCredit(ctx context.Context, arg InsertCreditParams) error {
-	_, err := q.db.Exec(ctx, insertCredit,
-		arg.MediaItemID,
-		arg.PersonID,
-		arg.Role,
-		arg.Character,
-		arg.Job,
-		arg.Ord,
+func (q *Queries) UpsertPersonByTMDB(ctx context.Context, arg UpsertPersonByTMDBParams) (Person, error) {
+	row := q.db.QueryRow(ctx, upsertPersonByTMDB,
+		arg.TmdbID,
+		arg.Name,
+		arg.ProfilePath,
+		arg.Bio,
+		arg.Birthday,
+		arg.Deathday,
+		arg.PlaceOfBirth,
 	)
-	return err
+	var i Person
+	err := row.Scan(
+		&i.ID,
+		&i.TmdbID,
+		&i.Name,
+		&i.ProfilePath,
+		&i.Bio,
+		&i.Birthday,
+		&i.Deathday,
+		&i.PlaceOfBirth,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

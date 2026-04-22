@@ -11,9 +11,9 @@ WHERE tmdb_id = $1;
 -- name: SearchPeople :many
 SELECT id, tmdb_id, name, profile_path
 FROM people
-WHERE LOWER(name) LIKE LOWER($1) || '%'
+WHERE LOWER(name) LIKE LOWER(@prefix::text) || '%'
 ORDER BY name
-LIMIT $2;
+LIMIT @limit_n::int;
 
 -- name: UpsertPersonByTMDB :one
 INSERT INTO people (tmdb_id, name, profile_path, bio, birthday, deathday, place_of_birth, updated_at)
