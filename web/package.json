@@ -20,7 +20,7 @@
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
-    "@vitest/ui": "^4.1.2",
+    "@vitest/ui": "^4.1.5",
     "happy-dom": "^20.8.8",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
