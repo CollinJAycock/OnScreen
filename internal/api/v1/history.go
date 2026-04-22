@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/google/uuid"
 
@@ -57,15 +56,8 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const defaultLimit = 50
-	limit := int32(defaultLimit)
-	offset := int32(0)
-	if v, err := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 32); err == nil && v > 0 {
-		limit = int32(v)
-	}
-	if v, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 32); err == nil && v >= 0 {
-		offset = int32(v)
-	}
+	page := respond.ParsePagination(r, 50, 200)
+	limit, offset := page.Limit, page.Offset
 
 	var allowed map[uuid.UUID]struct{}
 	if h.access != nil {

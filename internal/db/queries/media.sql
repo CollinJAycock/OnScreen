@@ -287,6 +287,19 @@ WHERE library_id = $1
 ORDER BY sort_title
 LIMIT $3 OFFSET $4;
 
+-- name: ListMediaItemsByTMDBIDs :many
+-- Returns the (id, library_id, tmdb_id) for every top-level media item that
+-- matches one of the supplied TMDB IDs for the given type. Used by Discover
+-- to mark search results as already-in-library in a single round-trip rather
+-- than per-result. Library scope is library-agnostic — Discover surfaces
+-- "available somewhere" regardless of which specific library the title is in.
+SELECT id, library_id, tmdb_id
+FROM media_items
+WHERE type = $1
+  AND tmdb_id = ANY(sqlc.arg('tmdb_ids')::int[])
+  AND parent_id IS NULL
+  AND deleted_at IS NULL;
+
 -- name: ListMediaItemsMissingArt :many
 -- Returns top-level items (movies + shows) that have no poster so the
 -- maintenance backfill can re-run metadata enrichment on them. Seasons and
@@ -577,6 +590,44 @@ WHERE library_id = $1
 ORDER BY created_at ASC
 LIMIT $3 OFFSET $4;
 
+-- name: ListMediaItemsByTakenAt :many
+-- Sort by originally_available_at DESC. Photos mirror EXIF DateTimeOriginal
+-- onto this column at scan time, so this is the natural "Date taken" sort.
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+ORDER BY originally_available_at DESC NULLS LAST, created_at DESC
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByTakenAtAsc :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+ORDER BY originally_available_at ASC NULLS LAST, created_at ASC
+LIMIT $3 OFFSET $4;
+
 -- name: CountMediaItemsFiltered :one
 SELECT COUNT(*) FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
@@ -628,7 +679,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE deleted_at IS NULL
-  AND type IN ('movie', 'show')
+  AND type IN ('movie', 'show', 'album', 'photo')
   AND (sqlc.narg('library_id')::uuid IS NULL OR library_id = sqlc.narg('library_id'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY created_at DESC
@@ -649,6 +700,7 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ws.user_id = $1
   AND ws.status = 'in_progress'
   AND m.deleted_at IS NULL
+  AND m.type IN ('movie', 'episode')
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY ws.last_watched_at DESC
 LIMIT $2;

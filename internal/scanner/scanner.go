@@ -5,6 +5,7 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"log/slog"
@@ -66,6 +67,7 @@ type MediaService interface {
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 	GetEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
 	TouchEnrichAttempt(ctx context.Context, id uuid.UUID) error
+	UpsertPhotoMetadata(ctx context.Context, p media.PhotoMetadataParams) error
 	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
 	DedupeChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) (media.DedupeResult, error)
 	MergeCollabArtists(ctx context.Context, libraryID *uuid.UUID) (media.DedupeResult, error)
@@ -565,7 +567,71 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		}
 	}
 
+	// Persist EXIF for photos. Done after the item exists so the row keys onto
+	// item.ID. Failures are non-fatal — a missing EXIF block is normal for
+	// PNG/screenshots and shouldn't fail the scan.
+	if libraryType == "photo" && isImageFile(path) {
+		s.persistPhotoEXIF(ctx, item, path)
+	}
+
 	return item, file, isNew, nil
+}
+
+// persistPhotoEXIF extracts EXIF tags from an image and writes them to
+// photo_metadata. Also bumps the parent item's originally_available_at when
+// EXIF carries a DateTimeOriginal — that field already drives date sorting on
+// other media types, so photos slot in for free.
+func (s *Scanner) persistPhotoEXIF(ctx context.Context, item *media.Item, path string) {
+	ex, err := ExtractEXIF(path)
+	if err != nil {
+		s.logger.WarnContext(ctx, "exif extract failed", "path", path, "err", err)
+		return
+	}
+	if ex == nil {
+		return // no EXIF block — common for PNG/GIF
+	}
+
+	var rawJSON []byte
+	if ex.Raw != nil {
+		if b, mErr := json.Marshal(ex.Raw); mErr == nil {
+			rawJSON = b
+		}
+	}
+
+	if err := s.media.UpsertPhotoMetadata(ctx, media.PhotoMetadataParams{
+		ItemID:        item.ID,
+		TakenAt:       ex.TakenAt,
+		CameraMake:    ex.CameraMake,
+		CameraModel:   ex.CameraModel,
+		LensModel:     ex.LensModel,
+		FocalLengthMM: ex.FocalLengthMM,
+		Aperture:      ex.Aperture,
+		ShutterSpeed:  ex.ShutterSpeed,
+		ISO:           ex.ISO,
+		Flash:         ex.Flash,
+		Orientation:   ex.Orientation,
+		Width:         ex.Width,
+		Height:        ex.Height,
+		GPSLat:        ex.GPSLat,
+		GPSLon:        ex.GPSLon,
+		GPSAlt:        ex.GPSAlt,
+		RawEXIF:       rawJSON,
+	}); err != nil {
+		s.logger.WarnContext(ctx, "exif upsert failed", "path", path, "err", err)
+		return
+	}
+
+	// Mirror DateTimeOriginal onto the item so the existing date-sort path
+	// works for photos.
+	if ex.TakenAt != nil && (item.OriginallyAvailableAt == nil || !item.OriginallyAvailableAt.Equal(*ex.TakenAt)) {
+		taken := *ex.TakenAt
+		s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+			ID:                    item.ID,
+			Title:                 item.Title,
+			SortTitle:             item.SortTitle,
+			OriginallyAvailableAt: &taken,
+		})
+	}
 }
 
 // processShowHierarchy builds the show->season->episode hierarchy for a TV file.

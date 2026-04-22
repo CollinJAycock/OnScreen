@@ -109,16 +109,16 @@ func TestFavorites_List_ClampsLimitAndOffset(t *testing.T) {
 	db := &mockFavoritesDB{}
 	h := NewFavoritesHandler(db, slog.Default())
 
-	// limit > 200 is rejected, stays at default 50
+	// limit > 200 is clamped to max; negative offset falls back to 0.
 	req := favReqWithClaims(http.MethodGet, "/api/v1/favorites?limit=500&offset=-5", uid)
 	rec := httptest.NewRecorder()
 	h.List(rec, req)
 
-	if db.listArg.Limit != 50 {
-		t.Errorf("limit out-of-range should not override default: got %d", db.listArg.Limit)
+	if db.listArg.Limit != 200 {
+		t.Errorf("over-max limit should clamp to 200: got %d", db.listArg.Limit)
 	}
 	if db.listArg.Offset != 0 {
-		t.Errorf("negative offset should not override default: got %d", db.listArg.Offset)
+		t.Errorf("negative offset should fall back to 0: got %d", db.listArg.Offset)
 	}
 }
 

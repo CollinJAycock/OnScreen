@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/google/uuid"
 
@@ -56,12 +55,7 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := int32(20)
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
-			limit = int32(n)
-		}
-	}
+	limit := respond.ParseLimit(r, 20, 100)
 
 	var results []SearchResult
 	var err error

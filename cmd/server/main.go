@@ -34,6 +34,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/intromarker"
+	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
@@ -41,6 +42,7 @@ import (
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/plugin"
+	"github.com/onscreen/onscreen/internal/requests"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/scheduler"
 	"github.com/onscreen/onscreen/internal/streaming"
@@ -287,6 +289,15 @@ func run() error {
 
 	authHandler := v1.NewAuthHandler(authSvc, logger).WithAudit(auditLogger)
 
+	// Native device pairing — short-lived PIN codes stored in Valkey, claimed
+	// by an authenticated browser session to authorise a TV/phone.
+	pairHandler := v1.NewPairHandler(
+		&pairStore{v: valkeyClient},
+		pairTokenIssuer(authSvc, gen.New(rwPool)),
+		logger,
+	)
+
+
 	userSvc := newUserService(gen.New(rwPool))
 
 	userHandler := v1.NewUserHandler(userSvc).
@@ -307,6 +318,17 @@ func run() error {
 	// Derive a stable machine ID from the secret key so webhook payloads
 	// identify this server consistently across restarts without a dedicated config field.
 	machineID := uuid.NewSHA1(uuid.NameSpaceDNS, []byte(cfg.SecretKey)).String()
+
+	// Capabilities — public describing-document for native clients that just
+	// found the server via discovery. Reads settings on each call so toggling
+	// OIDC in the admin UI takes effect immediately.
+	capabilitiesHandler := v1.NewCapabilitiesHandler(&capabilitiesProvider{
+		cfg:       cfg,
+		version:   version,
+		machineID: machineID,
+		settings:  settingsSvc,
+	})
+
 	pluginRegistry := plugin.NewRegistry(gen.New(rwPool))
 	pluginDispatcher := plugin.NewNotificationDispatcher(pluginRegistry, logger, auditLogger)
 	pluginHandler := v1.NewPluginHandler(pluginRegistry, pluginDispatcher, logger).WithAudit(auditLogger)
@@ -474,6 +496,24 @@ func run() error {
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
 	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, logger).WithAudit(auditLogger)
 
+	// ── Media-request workflow + arr-services admin ──────────────────────────
+	// Requests fan out to the arr instances configured in the arr_services
+	// table (multi-instance from day one — separate 4K Radarr alongside the
+	// 1080p one, etc.). The TMDB agent is consulted both for the title
+	// snapshot at create time and to resolve TVDB ids for Sonarr lookups.
+	requestsTMDB := &requestsTMDBAdapter{agentFn: agentFn}
+	requestsSvc := requests.NewService(gen.New(rwPool), requestsTMDB, notifServiceEarly, logger)
+	requestsHandler := v1.NewRequestHandler(requestsSvc, logger).WithAudit(auditLogger)
+	arrServicesHandler := v1.NewArrServicesHandler(gen.New(rwPool), logger).WithAudit(auditLogger)
+	// Discover reuses the same adapter so admins toggling the TMDB key
+	// flow through to search results without a server restart.
+	discoverHandler := v1.NewDiscoverHandler(gen.New(roPool), requestsTMDB, requestsSvc, logger)
+	// Back-fill the scan enqueuer so post-scan goroutines can settle
+	// any media-requests whose download just landed, and let the arr
+	// webhook also fire a reconcile on Download events.
+	libEnqueuer.requestsSvc = requestsSvc
+	arrHandler.WithRequestReconciler(requestsSvc)
+
 	// ── Scheduler (cron-driven admin tasks) ──────────────────────────────────
 	// Registry holds handler implementations keyed by task_type. Built-ins
 	// are registered here; future plugin-provided handlers register against
@@ -554,6 +594,11 @@ func run() error {
 		Tasks:              tasksHandler,
 		People:             peopleHandler,
 		Plugins:            pluginHandler,
+		Pair:               pairHandler,
+		Capabilities:       capabilitiesHandler,
+		ArrServices:        arrServicesHandler,
+		Requests:           requestsHandler,
+		Discover:           discoverHandler,
 		Favorites:          favoritesHandler,
 		StreamTracker:      streamTracker,
 		Artwork:            artworkMgr,
@@ -684,6 +729,27 @@ func run() error {
 		})
 	}
 
+	// LAN discovery — UDP listener so native clients (TVs, phones) can
+	// auto-discover this server on the local network. Best-effort: if the
+	// port is already in use we log and move on rather than failing startup.
+	if cfg.DiscoveryEnabled {
+		discInfo := func() discovery.ServerInfo {
+			return discovery.ServerInfo{
+				ServerName: cfg.ServerName,
+				MachineID:  machineID,
+				Version:    version,
+				HTTPURL:    cfg.BaseURL,
+			}
+		}
+		discListener := discovery.NewListener(cfg.DiscoveryPort, discInfo, logger)
+		g.Go(func() error {
+			if err := discListener.Run(gCtx); err != nil {
+				logger.Warn("discovery listener exited", "err", err)
+			}
+			return nil
+		})
+	}
+
 	// Graceful shutdown on context cancellation (SIGTERM/SIGINT).
 	g.Go(func() error {
 		<-gCtx.Done()
@@ -723,6 +789,10 @@ type scanEnqueuer struct {
 	notifService      *notification.Service
 	settingsSvc       *settings.Service
 	introDetector     *intromarker.Detector
+	// requestsSvc is consulted after every scan to flip approved/downloading
+	// requests to available when the matching media_item lands. Optional —
+	// nil disables fulfillment polling, matching the pre-Requests behaviour.
+	requestsSvc *requests.Service
 
 	watchMu      sync.Mutex
 	watchers     map[uuid.UUID]*scanner.Watcher // one watcher per library
@@ -782,6 +852,11 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 				go e.runIntroDetection(libraryID)
 			}
 		}
+		// Settle any media-requests whose download just landed. Cheap — the
+		// reconciler is bounded by active-request count, not library size.
+		if e.requestsSvc != nil && result.New > 0 {
+			e.requestsSvc.ReconcileFulfillments(context.WithoutCancel(e.serverCtx))
+		}
 	}()
 	return nil
 }
@@ -821,6 +896,12 @@ func (e *scanEnqueuer) TriggerDirectoryScan(_ context.Context, libraryID uuid.UU
 			// Refresh hub so new items appear in recently added.
 			if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
 				e.logger.Warn("refresh hub after dir scan", "err", err)
+			}
+			// Settle any media-requests whose download just landed. The arr
+			// webhook also fires this directly, but a watcher-driven scan
+			// (no webhook) needs its own trigger.
+			if e.requestsSvc != nil {
+				e.requestsSvc.ReconcileFulfillments(context.WithoutCancel(e.serverCtx))
 			}
 		}
 	}()

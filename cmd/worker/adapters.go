@@ -710,6 +710,63 @@ func (a *mediaAdapter) SoftDeleteEmptyContainerItems(ctx context.Context, librar
 	return a.q.SoftDeleteEmptyContainerItems(ctx, libraryID)
 }
 
+func (a *mediaAdapter) UpsertPhotoMetadata(ctx context.Context, p media.PhotoMetadataParams) error {
+	out := gen.UpsertPhotoMetadataParams{
+		ItemID:        p.ItemID,
+		CameraMake:    p.CameraMake,
+		CameraModel:   p.CameraModel,
+		LensModel:     p.LensModel,
+		FocalLengthMm: p.FocalLengthMM,
+		Aperture:      p.Aperture,
+		ShutterSpeed:  p.ShutterSpeed,
+		Iso:           p.ISO,
+		Flash:         p.Flash,
+		Orientation:   p.Orientation,
+		Width:         p.Width,
+		Height:        p.Height,
+		GpsLat:        p.GPSLat,
+		GpsLon:        p.GPSLon,
+		GpsAlt:        p.GPSAlt,
+		RawExif:       p.RawEXIF,
+	}
+	if p.TakenAt != nil {
+		out.TakenAt = pgtype.Timestamptz{Time: *p.TakenAt, Valid: true}
+	}
+	return a.q.UpsertPhotoMetadata(ctx, out)
+}
+
+func (a *mediaAdapter) GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*media.PhotoMetadata, error) {
+	row, err := a.q.GetPhotoMetadata(ctx, itemID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, media.ErrNotFound
+		}
+		return nil, err
+	}
+	out := &media.PhotoMetadata{
+		ItemID:        row.ItemID,
+		CameraMake:    row.CameraMake,
+		CameraModel:   row.CameraModel,
+		LensModel:     row.LensModel,
+		FocalLengthMM: row.FocalLengthMm,
+		Aperture:      row.Aperture,
+		ShutterSpeed:  row.ShutterSpeed,
+		ISO:           row.Iso,
+		Flash:         row.Flash,
+		Orientation:   row.Orientation,
+		Width:         row.Width,
+		Height:        row.Height,
+		GPSLat:        row.GpsLat,
+		GPSLon:        row.GpsLon,
+		GPSAlt:        row.GpsAlt,
+	}
+	if row.TakenAt.Valid {
+		t := row.TakenAt.Time
+		out.TakenAt = &t
+	}
+	return out, nil
+}
+
 // Stub methods for media.Querier — worker doesn't need filtered listing.
 func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
 	return a.ListMediaItems(ctx, libraryID, itemType, limit, offset)

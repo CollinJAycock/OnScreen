@@ -62,16 +62,16 @@ func TestAudit_List_ClampsLimit(t *testing.T) {
 	db := &mockAuditDB{}
 	h := NewAuditHandler(db, slog.Default())
 
-	// limit=0 and limit>200 are rejected; offset=-1 is rejected.
+	// limit > 200 is clamped to max; negative offset falls back to 0.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit?limit=9999&offset=-1", nil)
 	rec := httptest.NewRecorder()
 	h.List(rec, req)
 
-	if db.gotArg.Limit != 50 {
-		t.Errorf("out-of-range limit should not override default: got %d", db.gotArg.Limit)
+	if db.gotArg.Limit != 200 {
+		t.Errorf("over-max limit should clamp to 200: got %d", db.gotArg.Limit)
 	}
 	if db.gotArg.Offset != 0 {
-		t.Errorf("negative offset should not override default: got %d", db.gotArg.Offset)
+		t.Errorf("negative offset should fall back to 0: got %d", db.gotArg.Offset)
 	}
 }
 

@@ -35,6 +35,18 @@ const (
 	ActionTranscodeStart = "transcode.start"
 	ActionBackupDownload = "backup.download"
 	ActionBackupRestore  = "backup.restore"
+
+	// arr-service admin CRUD — captures who configured an outbound arr
+	// instance, since the api_key in the row is a privileged credential.
+	ActionArrServiceCreate     = "arr_service.create"
+	ActionArrServiceUpdate     = "arr_service.update"
+	ActionArrServiceDelete     = "arr_service.delete"
+	ActionArrServiceSetDefault = "arr_service.set_default"
+
+	// Media-request admin actions — record who approved/declined what.
+	ActionRequestApprove = "request.approve"
+	ActionRequestDecline = "request.decline"
+	ActionRequestDelete  = "request.delete"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -295,16 +294,9 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-genre collections query media_items directly.
 	if col.Type == "auto_genre" && col.Genre != nil {
-		limit := int32(50)
-		offset := int32(0)
-		if v, err := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 32); err == nil && v > 0 {
-			limit = int32(v)
-		}
-		if v, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 32); err == nil && v >= 0 {
-			offset = int32(v)
-		}
+		page := respond.ParsePagination(r, 50, 200)
 		rows, err := h.db.ListItemsByGenre(r.Context(), gen.ListItemsByGenreParams{
-			Genres: []string{*col.Genre}, Limit: limit, Offset: offset,
+			Genres: []string{*col.Genre}, Limit: page.Limit, Offset: page.Offset,
 		})
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "list items by genre", "genre", *col.Genre, "err", err)

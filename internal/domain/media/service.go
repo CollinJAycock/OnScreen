@@ -180,6 +180,31 @@ type Querier interface {
 	TouchMediaItemEnrichAttempt(ctx context.Context, id uuid.UUID) error
 	SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error
 	SoftDeleteEmptyContainerItems(ctx context.Context, libraryID uuid.UUID) error
+
+	UpsertPhotoMetadata(ctx context.Context, p PhotoMetadataParams) error
+	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*PhotoMetadata, error)
+}
+
+// PhotoMetadataParams carries the parsed EXIF data for one photo. All fields
+// other than ItemID are optional — absent EXIF tags simply remain nil.
+type PhotoMetadataParams struct {
+	ItemID        uuid.UUID
+	TakenAt       *time.Time
+	CameraMake    *string
+	CameraModel   *string
+	LensModel     *string
+	FocalLengthMM *float64
+	Aperture      *float64
+	ShutterSpeed  *string
+	ISO           *int32
+	Flash         *bool
+	Orientation   *int32
+	Width         *int32
+	Height        *int32
+	GPSLat        *float64
+	GPSLon        *float64
+	GPSAlt        *float64
+	RawEXIF       []byte
 }
 
 // CreateItemParams holds the input for creating a media item.
@@ -586,6 +611,46 @@ func (s *Service) UpdateItemMetadata(ctx context.Context, p UpdateItemMetadataPa
 		return nil, fmt.Errorf("update item metadata %s: %w", p.ID, err)
 	}
 	return &item, nil
+}
+
+// UpsertPhotoMetadata writes the per-photo EXIF row, replacing any prior data
+// for this item. Called by the scanner after extracting EXIF from an image.
+func (s *Service) UpsertPhotoMetadata(ctx context.Context, p PhotoMetadataParams) error {
+	if err := s.rw.UpsertPhotoMetadata(ctx, p); err != nil {
+		return fmt.Errorf("upsert photo metadata %s: %w", p.ItemID, err)
+	}
+	return nil
+}
+
+// PhotoMetadata is the domain representation of a photo's EXIF data. Returned
+// by GetPhotoMetadata for display in the photo viewer.
+type PhotoMetadata struct {
+	ItemID        uuid.UUID
+	TakenAt       *time.Time
+	CameraMake    *string
+	CameraModel   *string
+	LensModel     *string
+	FocalLengthMM *float64
+	Aperture      *float64
+	ShutterSpeed  *string
+	ISO           *int32
+	Flash         *bool
+	Orientation   *int32
+	Width         *int32
+	Height        *int32
+	GPSLat        *float64
+	GPSLon        *float64
+	GPSAlt        *float64
+}
+
+// GetPhotoMetadata returns the EXIF row for a photo item. ErrNotFound when
+// the item has no EXIF row (e.g. PNG without an EXIF block).
+func (s *Service) GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*PhotoMetadata, error) {
+	pm, err := s.ro.GetPhotoMetadata(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	return pm, nil
 }
 
 // normalizeTitle folds a title to a canonical form for deduplication:

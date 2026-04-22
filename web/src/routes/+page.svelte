@@ -70,6 +70,21 @@
     return Math.min(100, (item.view_offset_ms / item.duration_ms) * 100);
   }
 
+  // Hub items mix media types; route to the page that knows how to render each.
+  function hubHref(item: HubItem): string {
+    switch (item.type) {
+      case 'album':  return `/albums/${item.id}`;
+      case 'artist': return `/artists/${item.id}`;
+      case 'photo':  return `/photos/${item.id}`;
+      default:       return `/watch/${item.id}`;
+    }
+  }
+
+  // Albums and photos look right as squares; movies/shows keep the 2:3 poster.
+  function isSquare(item: HubItem): boolean {
+    return item.type === 'album' || item.type === 'photo';
+  }
+
   const types: Record<string, { label: string; gradient: string; icon: string }> = {
     movie: { label: 'Movies',   gradient: 'linear-gradient(135deg,#1a2744 0%,#0f1520 100%)', icon: '🎬' },
     show:  { label: 'TV Shows', gradient: 'linear-gradient(135deg,#25173a 0%,#0f1520 100%)', icon: '📺' },
@@ -105,7 +120,7 @@
         <div class="hub-scroll">
           {#each continueWatching as item (item.id)}
             {@const art = item.poster_path ?? item.thumb_path}
-            <a class="hub-card" href="/watch/{item.id}">
+            <a class="hub-card" class:square={isSquare(item)} href={hubHref(item)}>
               {#if art}
                 <img src="/artwork/{encodeURI(art)}?v={item.updated_at}&w=300"
                      srcset="/artwork/{encodeURI(art)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(art)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(art)}?v={item.updated_at}&w=450 450w"
@@ -133,14 +148,14 @@
         <h2 class="hub-title">Recently Added</h2>
         <div class="hub-scroll">
           {#each recentlyAdded as item (item.id)}
-            <a class="hub-card" href="/watch/{item.id}">
+            <a class="hub-card" class:square={isSquare(item)} href={hubHref(item)}>
               {#if item.poster_path}
                 <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
                      srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=450 450w"
                      sizes="(max-width: 768px) 130px, 220px"
                      alt={item.title} loading="lazy" />
               {:else}
-                <div class="hub-poster-blank">
+                <div class="hub-poster-blank" class:square={isSquare(item)}>
                   <span>{item.title[0]?.toUpperCase()}</span>
                 </div>
               {/if}
@@ -283,6 +298,11 @@
     height: calc(var(--card-w) * 1.5);
     object-fit: cover;
     display: block;
+  }
+  .hub-card.square img,
+  .hub-card.square .hub-poster-blank,
+  .hub-poster-blank.square {
+    height: var(--card-w);
   }
   .hub-poster-blank {
     width: var(--card-w);

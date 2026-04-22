@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -55,23 +54,12 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := int32(20)
-	offset := int32(0)
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
-			limit = int32(n)
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			offset = int32(n)
-		}
-	}
+	page := respond.ParsePagination(r, 20, 100)
 
 	rows, err := h.db.ListNotifications(r.Context(), gen.ListNotificationsParams{
 		UserID: claims.UserID,
-		Limit:  limit,
-		Offset: offset,
+		Limit:  page.Limit,
+		Offset: page.Offset,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list notifications", "err", err)

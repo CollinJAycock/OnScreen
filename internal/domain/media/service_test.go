@@ -356,6 +356,14 @@ func (m *mockQuerier) SoftDeleteEmptyContainerItems(_ context.Context, libID uui
 	return nil
 }
 
+func (m *mockQuerier) UpsertPhotoMetadata(_ context.Context, _ PhotoMetadataParams) error {
+	return nil
+}
+
+func (m *mockQuerier) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*PhotoMetadata, error) {
+	return nil, ErrNotFound
+}
+
 func newService(t *testing.T) (*Service, *mockQuerier) {
 	t.Helper()
 	q := newMockQuerier()

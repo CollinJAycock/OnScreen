@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,23 +57,11 @@ func tsToTimeAudit(ts pgtype.Timestamptz) time.Time {
 
 // List handles GET /api/v1/audit — returns paginated audit log entries.
 func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
-	limit := int32(50)
-	offset := int32(0)
-
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			limit = int32(n)
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			offset = int32(n)
-		}
-	}
+	page := respond.ParsePagination(r, 50, 200)
 
 	rows, err := h.db.ListAuditLog(r.Context(), gen.ListAuditLogParams{
-		Limit:  limit,
-		Offset: offset,
+		Limit:  page.Limit,
+		Offset: page.Offset,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "audit: list", "err", err)

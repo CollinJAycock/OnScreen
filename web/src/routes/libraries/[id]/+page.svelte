@@ -58,6 +58,7 @@
   let query = '';
   let sortField: SortField = 'title';
   let sortAsc = true;
+  let sortDefaulted = false;
 
   // Filters
   let genres: GenreCount[] = [];
@@ -81,6 +82,16 @@
   $: id = $page.params.id!;
 
   $: isPhotoLibrary = library?.type === 'photo';
+  $: isMusicLibrary = library?.type === 'music';
+
+  // Top-level items in a music library are artists; in show libraries, shows;
+  // in photo libraries, photos. Each routes to a different detail view.
+  function itemHref(item: MediaItem): string {
+    if (item.type === 'artist') return `/artists/${item.id}`;
+    if (item.type === 'album') return `/albums/${item.id}`;
+    if (item.type === 'photo') return `/photos/${item.id}`;
+    return `/watch/${item.id}`;
+  }
 
   // Client-side text filter on already-loaded items
   $: filtered = query
@@ -123,7 +134,9 @@
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     prevId = id;
     readFiltersFromURL();
-    await Promise.all([loadLibrary(), loadItems(), loadGenres()]);
+    // Await library first so we can pick the right default sort before listing.
+    await loadLibrary();
+    await Promise.all([loadItems(), loadGenres()]);
     mounted = true;
   });
 
@@ -141,13 +154,23 @@
     library = null;
     genres = [];
     selectedGenre = '';
-    loadLibrary();
-    loadItems();
-    loadGenres();
+    sortDefaulted = false;
+    loadLibrary().then(() => {
+      loadItems();
+      loadGenres();
+    });
   }
 
   async function loadLibrary() {
-    try { library = await libraryApi.get(id); }
+    try {
+      library = await libraryApi.get(id);
+      // Photo libraries sort by date taken by default; user can still override.
+      if (library?.type === 'photo' && !sortDefaulted) {
+        sortField = 'taken_at';
+        sortAsc = false;
+        sortDefaulted = true;
+      }
+    }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
     finally { loadingLib = false; }
   }
@@ -298,7 +321,7 @@
     </div>
 
     <div class="sort-row">
-      {#each [['title','Title'],['year','Year'],['rating','Rating'],['created_at','Added']] as [f, l]}
+      {#each (isPhotoLibrary ? [['taken_at','Taken'],['created_at','Added'],['title','Title']] : [['title','Title'],['year','Year'],['rating','Rating'],['created_at','Added']]) as [f, l]}
         <button class="sort-pill" class:on={sortField === f} on:click={() => toggleSort(f as SortField)}>
           {l}{sortField === f ? (sortAsc ? ' ↑' : ' ↓') : ''}
         </button>
@@ -338,9 +361,9 @@
       <button class="clear-link" on:click={() => query = ''}>Clear filter</button>
     </div>
   {:else}
-    <div class="grid" class:photo-grid={isPhotoLibrary}>
+    <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary}>
       {#each filtered as item (item.id)}
-        <a class="item" href="/watch/{item.id}" tabindex="0">
+        <a class="item" class:circle-poster={isMusicLibrary} href={itemHref(item)} tabindex="0">
           <div class="poster">
             {#if item.poster_path}
               <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
@@ -353,9 +376,9 @@
               </div>
             {/if}
             <div class="poster-overlay">
-              {#if !isPhotoLibrary}<div class="play-icon">▶</div>{/if}
+              {#if !isPhotoLibrary && !isMusicLibrary}<div class="play-icon">▶</div>{/if}
               <div class="overlay-title">{item.title}</div>
-              {#if !isPhotoLibrary}
+              {#if !isPhotoLibrary && !isMusicLibrary}
                 <div class="overlay-meta">
                   {#if item.year}{item.year}{/if}
                   {#if item.duration_ms} · {dur(item.duration_ms)}{/if}
@@ -373,11 +396,13 @@
                 on:click={(e) => enrichItem(e, item.id)}
               >⟳</button>
             {/if}
-            <button
-              class="add-playlist-btn"
-              title="Add to playlist"
-              on:click={(e) => openPlaylistPicker(e, item.id)}
-            >+</button>
+            {#if !isMusicLibrary && !isPhotoLibrary}
+              <button
+                class="add-playlist-btn"
+                title="Add to playlist"
+                on:click={(e) => openPlaylistPicker(e, item.id)}
+              >+</button>
+            {/if}
           </div>
           <div class="item-foot">
             <div class="item-title">{item.title}</div>
@@ -584,6 +609,10 @@
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 0.5rem;
   }
+  .music-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1.25rem;
+  }
 
   .item { display: flex; flex-direction: column; text-decoration: none; color: inherit; }
 
@@ -592,6 +621,15 @@
   }
   .photo-grid .poster img {
     object-fit: cover;
+  }
+
+  .music-grid .poster,
+  .item.circle-poster .poster {
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+  }
+  .music-grid .item-foot {
+    text-align: center;
   }
 
   .poster {

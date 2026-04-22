@@ -130,6 +130,9 @@ func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.U
 	return nil, nil
 }
 func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockMediaService) UpsertPhotoMetadata(_ context.Context, _ media.PhotoMetadataParams) error {
+	return nil
+}
 func (m *mockMediaService) PurgeDeletedFiles(_ context.Context, _ uuid.UUID) (int64, error) {
 	return 0, nil
 }

@@ -26,16 +26,34 @@ type ArrLibraryFinder interface {
 	TriggerDirectoryScan(ctx context.Context, libraryID uuid.UUID, dir string) error
 }
 
+// ArrRequestReconciler is the request-fulfillment hook fired after a webhook
+// scan. The arr-side trigger directory scan is async, so the reconciler is
+// fired via the same scan goroutine — wiring is done in the adapter that
+// owns both the scanner and the requests service. Kept as an interface so
+// the webhook stays decoupled from the requests package.
+type ArrRequestReconciler interface {
+	ReconcileFulfillments(ctx context.Context)
+}
+
 // ArrHandler handles incoming webhook notifications from Radarr, Sonarr, and Lidarr.
 type ArrHandler struct {
-	settings ArrSettingsReader
-	libs     ArrLibraryFinder
-	logger   *slog.Logger
+	settings   ArrSettingsReader
+	libs       ArrLibraryFinder
+	reconciler ArrRequestReconciler
+	logger     *slog.Logger
 }
 
 // NewArrHandler creates an ArrHandler.
 func NewArrHandler(settings ArrSettingsReader, libs ArrLibraryFinder, logger *slog.Logger) *ArrHandler {
 	return &ArrHandler{settings: settings, libs: libs, logger: logger}
+}
+
+// WithRequestReconciler attaches the fulfillment reconciler. When nil, the
+// webhook only triggers a scan; request transitions rely on the periodic
+// scheduled task instead.
+func (h *ArrHandler) WithRequestReconciler(r ArrRequestReconciler) *ArrHandler {
+	h.reconciler = r
+	return h
 }
 
 // arrPayload is a minimal representation of a Radarr/Sonarr/Lidarr webhook body.
@@ -129,6 +147,14 @@ func (h *ArrHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 			"library_id", libraryID, "dir", dir, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+
+	// Reconcile request fulfillments. Picks up re-imports (the title was
+	// already in the library before the webhook fired) immediately. Fresh
+	// imports are caught by the scan-completion hook in the adapter, since
+	// the scan triggered above runs asynchronously.
+	if h.reconciler != nil && payload.EventType == "Download" {
+		go h.reconciler.ReconcileFulfillments(context.WithoutCancel(r.Context()))
 	}
 
 	h.logger.InfoContext(r.Context(), "arr webhook: scan triggered",

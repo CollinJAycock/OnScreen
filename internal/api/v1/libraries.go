@@ -419,15 +419,8 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const defaultLimit = 50
-	limit := int32(defaultLimit)
-	offset := int32(0)
-	if v, err := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 32); err == nil && v > 0 {
-		limit = int32(v)
-	}
-	if v, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 32); err == nil && v >= 0 {
-		offset = int32(v)
-	}
+	page := respond.ParsePagination(r, 50, 200)
+	limit, offset := page.Limit, page.Offset
 
 	// Parse filter/sort params.
 	q := r.URL.Query()
@@ -454,8 +447,8 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 		fp.SortAsc = false
 	} else if q.Get("sort_dir") == "asc" {
 		fp.SortAsc = true
-	} else if fp.Sort == "rating" || fp.Sort == "created_at" || fp.Sort == "year" {
-		fp.SortAsc = false // default desc for rating/date/year
+	} else if fp.Sort == "rating" || fp.Sort == "created_at" || fp.Sort == "year" || fp.Sort == "taken_at" {
+		fp.SortAsc = false // default desc for rating/date/year/taken
 	}
 
 	// Inject content rating ceiling from auth claims.

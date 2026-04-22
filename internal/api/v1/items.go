@@ -34,6 +34,7 @@ type ItemMediaService interface {
 	GetFile(ctx context.Context, id uuid.UUID) (*media.File, error)
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error)
+	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*media.PhotoMetadata, error)
 }
 
 // ItemEnricher re-runs metadata enrichment for a single item on demand.
@@ -476,6 +477,76 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// PhotoEXIFResponse is the JSON shape returned by GET /items/{id}/exif. Every
+// field is optional — missing EXIF tags simply remain nil.
+type PhotoEXIFResponse struct {
+	TakenAt       *time.Time `json:"taken_at,omitempty"`
+	CameraMake    *string    `json:"camera_make,omitempty"`
+	CameraModel   *string    `json:"camera_model,omitempty"`
+	LensModel     *string    `json:"lens_model,omitempty"`
+	FocalLengthMM *float64   `json:"focal_length_mm,omitempty"`
+	Aperture      *float64   `json:"aperture,omitempty"`
+	ShutterSpeed  *string    `json:"shutter_speed,omitempty"`
+	ISO           *int32     `json:"iso,omitempty"`
+	Flash         *bool      `json:"flash,omitempty"`
+	Orientation   *int32     `json:"orientation,omitempty"`
+	Width         *int32     `json:"width,omitempty"`
+	Height        *int32     `json:"height,omitempty"`
+	GPSLat        *float64   `json:"gps_lat,omitempty"`
+	GPSLon        *float64   `json:"gps_lon,omitempty"`
+	GPSAlt        *float64   `json:"gps_alt,omitempty"`
+}
+
+// GetEXIF handles GET /api/v1/items/{id}/exif. Returns 404 when the item has
+// no EXIF row (e.g. PNG without an EXIF block, or non-photo item).
+func (h *ItemHandler) GetEXIF(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for exif", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
+	pm, err := h.media.GetPhotoMetadata(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get photo metadata", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, PhotoEXIFResponse{
+		TakenAt:       pm.TakenAt,
+		CameraMake:    pm.CameraMake,
+		CameraModel:   pm.CameraModel,
+		LensModel:     pm.LensModel,
+		FocalLengthMM: pm.FocalLengthMM,
+		Aperture:      pm.Aperture,
+		ShutterSpeed:  pm.ShutterSpeed,
+		ISO:           pm.ISO,
+		Flash:         pm.Flash,
+		Orientation:   pm.Orientation,
+		Width:         pm.Width,
+		Height:        pm.Height,
+		GPSLat:        pm.GPSLat,
+		GPSLon:        pm.GPSLon,
+		GPSAlt:        pm.GPSAlt,
+	})
 }
 
 // ListMarkers handles GET /api/v1/items/{id}/markers. Returns an empty list

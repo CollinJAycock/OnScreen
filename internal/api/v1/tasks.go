@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -137,10 +136,8 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 // ListTypes handles GET /api/v1/admin/tasks/types.
 // Returns the task_type names registered with the scheduler so the admin
 // UI can populate its dropdown.
-func (h *TasksHandler) ListTypes(w http.ResponseWriter, _ *http.Request) {
-	types := h.registry.Types()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"data": types})
+func (h *TasksHandler) ListTypes(w http.ResponseWriter, r *http.Request) {
+	respond.Success(w, r, h.registry.Types())
 }
 
 type createTaskRequest struct {
@@ -337,15 +334,7 @@ func (h *TasksHandler) Runs(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid id")
 		return
 	}
-	limit := int32(50)
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			if n > 500 {
-				n = 500
-			}
-			limit = int32(n)
-		}
-	}
+	limit := respond.ParseLimit(r, 50, 500)
 	rows, err := h.q.ListTaskRuns(r.Context(), gen.ListTaskRunsParams{TaskID: id, Limit: limit})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "tasks: list runs failed", "err", err)

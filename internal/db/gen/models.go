@@ -12,6 +12,25 @@ import (
 	"time"
 )
 
+type ArrService struct {
+	ID                      uuid.UUID          `json:"id"`
+	Name                    string             `json:"name"`
+	Kind                    string             `json:"kind"`
+	BaseUrl                 string             `json:"base_url"`
+	ApiKey                  string             `json:"api_key"`
+	DefaultQualityProfileID *int32             `json:"default_quality_profile_id"`
+	DefaultRootFolder       *string            `json:"default_root_folder"`
+	DefaultTags             []byte             `json:"default_tags"`
+	MinimumAvailability     *string            `json:"minimum_availability"`
+	SeriesType              *string            `json:"series_type"`
+	SeasonFolder            *bool              `json:"season_folder"`
+	LanguageProfileID       *int32             `json:"language_profile_id"`
+	IsDefault               bool               `json:"is_default"`
+	Enabled                 bool               `json:"enabled"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AuditLog struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    pgtype.UUID        `json:"user_id"`
@@ -179,6 +198,30 @@ type MediaItem struct {
 	LastEnrichAttemptedAt pgtype.Timestamptz `json:"last_enrich_attempted_at"`
 }
 
+type MediaRequest struct {
+	ID                 uuid.UUID          `json:"id"`
+	UserID             uuid.UUID          `json:"user_id"`
+	Type               string             `json:"type"`
+	TmdbID             int32              `json:"tmdb_id"`
+	Title              string             `json:"title"`
+	Year               *int32             `json:"year"`
+	PosterUrl          *string            `json:"poster_url"`
+	Overview           *string            `json:"overview"`
+	Status             string             `json:"status"`
+	Seasons            []byte             `json:"seasons"`
+	RequestedServiceID pgtype.UUID        `json:"requested_service_id"`
+	QualityProfileID   *int32             `json:"quality_profile_id"`
+	RootFolder         *string            `json:"root_folder"`
+	ServiceID          pgtype.UUID        `json:"service_id"`
+	DeclineReason      *string            `json:"decline_reason"`
+	DecidedBy          pgtype.UUID        `json:"decided_by"`
+	DecidedAt          pgtype.Timestamptz `json:"decided_at"`
+	FulfilledItemID    pgtype.UUID        `json:"fulfilled_item_id"`
+	FulfilledAt        pgtype.Timestamptz `json:"fulfilled_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Notification struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
@@ -209,6 +252,27 @@ type Person struct {
 	Deathday     pgtype.Date        `json:"deathday"`
 	PlaceOfBirth *string            `json:"place_of_birth"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PhotoMetadatum struct {
+	ItemID        uuid.UUID          `json:"item_id"`
+	TakenAt       pgtype.Timestamptz `json:"taken_at"`
+	CameraMake    *string            `json:"camera_make"`
+	CameraModel   *string            `json:"camera_model"`
+	LensModel     *string            `json:"lens_model"`
+	FocalLengthMm *float64           `json:"focal_length_mm"`
+	Aperture      *float64           `json:"aperture"`
+	ShutterSpeed  *string            `json:"shutter_speed"`
+	Iso           *int32             `json:"iso"`
+	Flash         *bool              `json:"flash"`
+	Orientation   *int32             `json:"orientation"`
+	Width         *int32             `json:"width"`
+	Height        *int32             `json:"height"`
+	GpsLat        *float64           `json:"gps_lat"`
+	GpsLon        *float64           `json:"gps_lon"`
+	GpsAlt        *float64           `json:"gps_alt"`
+	RawExif       []byte             `json:"raw_exif"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Plugin struct {

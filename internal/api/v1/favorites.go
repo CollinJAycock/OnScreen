@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -65,18 +64,8 @@ func (h *FavoritesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := int32(50)
-	offset := int32(0)
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			limit = int32(n)
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			offset = int32(n)
-		}
-	}
+	page := respond.ParsePagination(r, 50, 200)
+	limit, offset := page.Limit, page.Offset
 
 	var maxRank *int32
 	if claims.MaxContentRating != "" {

@@ -952,6 +952,7 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ws.user_id = $1
   AND ws.status = 'in_progress'
   AND m.deleted_at IS NULL
+  AND m.type IN ('movie', 'episode')
   AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
 ORDER BY ws.last_watched_at DESC
 LIMIT $2
@@ -2064,6 +2065,295 @@ func (q *Queries) ListMediaItemsByRatingAsc(ctx context.Context, arg ListMediaIt
 	return items, nil
 }
 
+const listMediaItemsByTMDBIDs = `-- name: ListMediaItemsByTMDBIDs :many
+SELECT id, library_id, tmdb_id
+FROM media_items
+WHERE type = $1
+  AND tmdb_id = ANY($2::int[])
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+`
+
+type ListMediaItemsByTMDBIDsParams struct {
+	Type    string  `json:"type"`
+	TmdbIds []int32 `json:"tmdb_ids"`
+}
+
+type ListMediaItemsByTMDBIDsRow struct {
+	ID        uuid.UUID `json:"id"`
+	LibraryID uuid.UUID `json:"library_id"`
+	TmdbID    *int32    `json:"tmdb_id"`
+}
+
+// Returns the (id, library_id, tmdb_id) for every top-level media item that
+// matches one of the supplied TMDB IDs for the given type. Used by Discover
+// to mark search results as already-in-library in a single round-trip rather
+// than per-result. Library scope is library-agnostic — Discover surfaces
+// "available somewhere" regardless of which specific library the title is in.
+func (q *Queries) ListMediaItemsByTMDBIDs(ctx context.Context, arg ListMediaItemsByTMDBIDsParams) ([]ListMediaItemsByTMDBIDsRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemsByTMDBIDs, arg.Type, arg.TmdbIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemsByTMDBIDsRow{}
+	for rows.Next() {
+		var i ListMediaItemsByTMDBIDsRow
+		if err := rows.Scan(&i.ID, &i.LibraryID, &i.TmdbID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMediaItemsByTakenAt = `-- name: ListMediaItemsByTakenAt :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND ($5::text IS NULL OR $5 = ANY(genres))
+  AND ($6::int IS NULL OR year >= $6)
+  AND ($7::int IS NULL OR year <= $7)
+  AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
+ORDER BY originally_available_at DESC NULLS LAST, created_at DESC
+LIMIT $3 OFFSET $4
+`
+
+type ListMediaItemsByTakenAtParams struct {
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
+}
+
+type ListMediaItemsByTakenAtRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Sort by originally_available_at DESC. Photos mirror EXIF DateTimeOriginal
+// onto this column at scan time, so this is the natural "Date taken" sort.
+func (q *Queries) ListMediaItemsByTakenAt(ctx context.Context, arg ListMediaItemsByTakenAtParams) ([]ListMediaItemsByTakenAtRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemsByTakenAt,
+		arg.LibraryID,
+		arg.Type,
+		arg.Limit,
+		arg.Offset,
+		arg.Genre,
+		arg.YearMin,
+		arg.YearMax,
+		arg.RatingMin,
+		arg.MaxRatingRank,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemsByTakenAtRow{}
+	for rows.Next() {
+		var i ListMediaItemsByTakenAtRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMediaItemsByTakenAtAsc = `-- name: ListMediaItemsByTakenAtAsc :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = $1
+  AND type = $2
+  AND deleted_at IS NULL
+  AND ($5::text IS NULL OR $5 = ANY(genres))
+  AND ($6::int IS NULL OR year >= $6)
+  AND ($7::int IS NULL OR year <= $7)
+  AND ($8::numeric IS NULL OR rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
+ORDER BY originally_available_at ASC NULLS LAST, created_at ASC
+LIMIT $3 OFFSET $4
+`
+
+type ListMediaItemsByTakenAtAscParams struct {
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
+}
+
+type ListMediaItemsByTakenAtAscRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) ListMediaItemsByTakenAtAsc(ctx context.Context, arg ListMediaItemsByTakenAtAscParams) ([]ListMediaItemsByTakenAtAscRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemsByTakenAtAsc,
+		arg.LibraryID,
+		arg.Type,
+		arg.Limit,
+		arg.Offset,
+		arg.Genre,
+		arg.YearMin,
+		arg.YearMax,
+		arg.RatingMin,
+		arg.MaxRatingRank,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemsByTakenAtAscRow{}
+	for rows.Next() {
+		var i ListMediaItemsByTakenAtAscRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMediaItemsByTitle = `-- name: ListMediaItemsByTitle :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -2792,7 +3082,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE deleted_at IS NULL
-  AND type IN ('movie', 'show')
+  AND type IN ('movie', 'show', 'album', 'photo')
   AND ($1::uuid IS NULL OR library_id = $1)
   AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
 ORDER BY created_at DESC

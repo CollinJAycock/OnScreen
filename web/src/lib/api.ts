@@ -184,7 +184,10 @@ export const authApi = {
     api.post<TokenPair>('/auth/ldap/login', { username, password }),
   forgotPasswordEnabled: () => api.get<{ enabled: boolean }>('/auth/forgot-password/enabled'),
   forgotPassword: (email: string) => api.post<{ message: string }>('/auth/forgot-password', { email }),
-  resetPassword: (token: string, password: string) => api.post<{ message: string }>('/auth/reset-password', { token, password })
+  resetPassword: (token: string, password: string) => api.post<{ message: string }>('/auth/reset-password', { token, password }),
+  // Native client device pairing.
+  claimPair: (pin: string, device_name?: string) =>
+    api.post<{ status: string; device_name: string }>('/auth/pair/claim', { pin, device_name })
 };
 
 // ── Email (admin) ─────────────────────────────────────────────────────────────
@@ -301,7 +304,25 @@ export interface MediaItem {
   updated_at: string;
 }
 
-export type SortField = 'title' | 'year' | 'rating' | 'created_at';
+export type SortField = 'title' | 'year' | 'rating' | 'created_at' | 'taken_at';
+
+export interface PhotoEXIF {
+  taken_at?: string;
+  camera_make?: string;
+  camera_model?: string;
+  lens_model?: string;
+  focal_length_mm?: number;
+  aperture?: number;
+  shutter_speed?: string;
+  iso?: number;
+  flash?: boolean;
+  orientation?: number;
+  width?: number;
+  height?: number;
+  gps_lat?: number;
+  gps_lon?: number;
+  gps_alt?: number;
+}
 
 export interface ListItemsParams {
   sort?: SortField;
@@ -761,6 +782,7 @@ export const profileApi = {
 
 export const itemApi = {
   get: (id: string) => api.get<ItemDetail>(`/items/${id}`),
+  exif: (id: string) => api.get<PhotoEXIF>(`/items/${id}/exif`),
   children: (id: string) =>
     api.requestList<ChildItem>(`/items/${id}/children`),
   progress: (id: string, viewOffsetMs: number, durationMs: number, state: 'playing' | 'paused' | 'stopped') =>
@@ -1132,4 +1154,195 @@ export const tasksApi = {
   runNow: (id: string) => api.post<{ queued: boolean }>(`/admin/tasks/${id}/run`, {}),
   runs: (id: string, limit = 50) =>
     api.get<TaskRun[]>(`/admin/tasks/${id}/runs?limit=${limit}`)
+};
+
+// ── Discover (TMDB search for the request UI) ────────────────────────────────
+
+export interface DiscoverItem {
+  type: 'movie' | 'show';
+  tmdb_id: number;
+  title: string;
+  year?: number;
+  overview?: string;
+  rating?: number;
+  poster_url?: string;
+  fanart_url?: string;
+  in_library: boolean;
+  library_item_id?: string;
+  has_active_request: boolean;
+  active_request_id?: string;
+  active_request_status?: string;
+}
+
+export const discoverApi = {
+  search: (q: string, limit = 20) =>
+    api.get<DiscoverItem[]>(`/discover/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+};
+
+// ── Media Requests ───────────────────────────────────────────────────────────
+
+export type RequestStatus =
+  | 'pending'
+  | 'approved'
+  | 'declined'
+  | 'downloading'
+  | 'available'
+  | 'failed';
+
+export interface MediaRequest {
+  id: string;
+  user_id: string;
+  type: 'movie' | 'show';
+  tmdb_id: number;
+  title: string;
+  year?: number;
+  poster_url?: string;
+  overview?: string;
+  status: RequestStatus;
+  seasons?: number[];
+  requested_service_id?: string;
+  quality_profile_id?: number;
+  root_folder?: string;
+  service_id?: string;
+  decline_reason?: string;
+  decided_by?: string;
+  decided_at?: string;
+  fulfilled_item_id?: string;
+  fulfilled_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateRequestBody {
+  type: 'movie' | 'show';
+  tmdb_id: number;
+  seasons?: number[];
+  requested_service_id?: string;
+  quality_profile_id?: number;
+  root_folder?: string;
+}
+
+export interface ApproveRequestBody {
+  service_id?: string;
+  quality_profile_id?: number;
+  root_folder?: string;
+}
+
+function buildRequestsQuery(params: {
+  scope?: 'mine' | 'all';
+  status?: RequestStatus;
+  limit?: number;
+  offset?: number;
+}): string {
+  const qs = new URLSearchParams();
+  if (params.scope === 'all') qs.set('scope', 'all');
+  if (params.status) qs.set('status', params.status);
+  qs.set('limit', String(params.limit ?? 50));
+  qs.set('offset', String(params.offset ?? 0));
+  return qs.toString();
+}
+
+export const requestsApi = {
+  list: (params: { status?: RequestStatus; limit?: number; offset?: number } = {}) =>
+    api.requestList<MediaRequest>(`/requests?${buildRequestsQuery({ scope: 'mine', ...params })}`),
+  get: (id: string) => api.get<MediaRequest>(`/requests/${id}`),
+  create: (body: CreateRequestBody) => api.post<MediaRequest>('/requests', body),
+  cancel: (id: string) => api.post<void>(`/requests/${id}/cancel`),
+};
+
+export const requestsAdminApi = {
+  list: (params: { status?: RequestStatus; limit?: number; offset?: number } = {}) =>
+    api.requestList<MediaRequest>(`/requests?${buildRequestsQuery({ scope: 'all', ...params })}`),
+  approve: (id: string, body: ApproveRequestBody = {}) =>
+    api.post<MediaRequest>(`/admin/requests/${id}/approve`, body),
+  decline: (id: string, reason?: string) =>
+    api.post<MediaRequest>(`/admin/requests/${id}/decline`, { reason: reason ?? '' }),
+  del: (id: string) => api.del(`/admin/requests/${id}`),
+};
+
+// ── Arr Services (admin) ─────────────────────────────────────────────────────
+
+export type ArrServiceKind = 'radarr' | 'sonarr';
+
+export interface ArrService {
+  id: string;
+  name: string;
+  kind: ArrServiceKind;
+  base_url: string;
+  api_key_set: boolean;
+  default_quality_profile_id?: number;
+  default_root_folder?: string;
+  default_tags: number[];
+  minimum_availability?: string;
+  series_type?: string;
+  season_folder?: boolean;
+  language_profile_id?: number;
+  is_default: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArrServiceCreate {
+  name: string;
+  kind: ArrServiceKind;
+  base_url: string;
+  api_key: string;
+  default_quality_profile_id?: number | null;
+  default_root_folder?: string | null;
+  default_tags?: number[];
+  minimum_availability?: string | null;
+  series_type?: string | null;
+  season_folder?: boolean | null;
+  language_profile_id?: number | null;
+  is_default?: boolean;
+  enabled?: boolean;
+}
+
+export interface ArrServiceUpdate {
+  name?: string;
+  base_url?: string;
+  api_key?: string;
+  default_quality_profile_id?: number | null;
+  default_root_folder?: string | null;
+  default_tags?: number[];
+  minimum_availability?: string | null;
+  series_type?: string | null;
+  season_folder?: boolean | null;
+  language_profile_id?: number | null;
+  enabled?: boolean;
+}
+
+export interface ArrQualityProfile { id: number; name: string; }
+export interface ArrRootFolder     { id: number; path: string; free_space?: number; }
+export interface ArrTag            { id: number; label: string; }
+export interface ArrLanguageProfile { id: number; name: string; }
+
+export interface ArrProbeResult {
+  status: string;
+  version?: string;
+  app_name?: string;
+  quality_profiles: ArrQualityProfile[];
+  root_folders: ArrRootFolder[];
+  tags: ArrTag[];
+  language_profiles: ArrLanguageProfile[];
+}
+
+export interface ArrProbeBody {
+  kind?: ArrServiceKind;
+  base_url?: string;
+  api_key?: string;
+  service_id?: string;
+}
+
+export const arrServicesApi = {
+  list: () => api.requestList<ArrService>('/admin/arr-services'),
+  get: (id: string) => api.get<ArrService>(`/admin/arr-services/${id}`),
+  create: (body: ArrServiceCreate) => api.post<ArrService>('/admin/arr-services', body),
+  update: (id: string, body: ArrServiceUpdate) =>
+    api.patch<ArrService>(`/admin/arr-services/${id}`, body),
+  del: (id: string) => api.del(`/admin/arr-services/${id}`),
+  setDefault: (id: string) =>
+    api.post<ArrService>(`/admin/arr-services/${id}/set-default`, {}),
+  probe: (body: ArrProbeBody) => api.post<ArrProbeResult>('/admin/arr-services/probe', body),
 };

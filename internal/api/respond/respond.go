@@ -9,6 +9,7 @@ package respond
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/onscreen/onscreen/internal/observability"
 )
@@ -80,6 +81,65 @@ func Forbidden(w http.ResponseWriter, r *http.Request) {
 // to the client; it should be logged by the caller.
 func InternalError(w http.ResponseWriter, r *http.Request) {
 	Error(w, r, http.StatusInternalServerError, "INTERNAL", "an unexpected error occurred")
+}
+
+// Pagination is the parsed (limit, offset) pair for a list request.
+type Pagination struct {
+	Limit  int32
+	Offset int32
+}
+
+// ParsePagination reads `limit` and `offset` query params, applying defaults
+// and clamping `limit` to maxLimit. Negative or non-numeric values silently
+// fall back to the defaults — handlers don't need to special-case them. Pass
+// maxLimit=0 to use the package default of 200.
+func ParsePagination(r *http.Request, defaultLimit, maxLimit int) Pagination {
+	if defaultLimit <= 0 {
+		defaultLimit = 50
+	}
+	if maxLimit <= 0 {
+		maxLimit = 200
+	}
+	q := r.URL.Query()
+	limit := int32(defaultLimit)
+	if raw := q.Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			if n > maxLimit {
+				n = maxLimit
+			}
+			limit = int32(n)
+		}
+	}
+	var offset int32
+	if raw := q.Get("offset"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			offset = int32(n)
+		}
+	}
+	return Pagination{Limit: limit, Offset: offset}
+}
+
+// ParseLimit reads the `limit` query param, applying defaults and clamping to
+// maxLimit. Negative or non-numeric values silently fall back to the default.
+// Pass maxLimit=0 to use the package default of 200. Use this for endpoints
+// that page by something other than offset (e.g. cron-task run history).
+func ParseLimit(r *http.Request, defaultLimit, maxLimit int) int32 {
+	if defaultLimit <= 0 {
+		defaultLimit = 50
+	}
+	if maxLimit <= 0 {
+		maxLimit = 200
+	}
+	limit := int32(defaultLimit)
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			if n > maxLimit {
+				n = maxLimit
+			}
+			limit = int32(n)
+		}
+	}
+	return limit
 }
 
 // JSON writes any value as JSON with the given HTTP status code.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/google/uuid"
 
@@ -37,15 +36,7 @@ func NewMaintenanceHandler(svc MaintenanceMediaService, enricher ItemEnricher, l
 // top-level items that currently have no poster. Successes and failures are
 // counted individually so one bad item doesn't abort the batch.
 func (h *MaintenanceHandler) RefreshMissingArt(w http.ResponseWriter, r *http.Request) {
-	limit := int32(200)
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			if n > 1000 {
-				n = 1000
-			}
-			limit = int32(n)
-		}
-	}
+	limit := respond.ParseLimit(r, 200, 1000)
 
 	items, err := h.media.ListItemsMissingArt(r.Context(), limit)
 	if err != nil {

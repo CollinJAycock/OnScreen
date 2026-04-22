@@ -55,6 +55,11 @@ type Handlers struct {
 	Tasks           *v1.TasksHandler
 	People          *v1.PeopleHandler
 	Plugins         *v1.PluginHandler
+	Pair            *v1.PairHandler
+	Capabilities    *v1.CapabilitiesHandler
+	ArrServices     *v1.ArrServicesHandler // outbound arr instance CRUD (admin)
+	Requests        *v1.RequestHandler     // user + admin request workflow
+	Discover        *v1.DiscoverHandler    // TMDB-backed search for the request UI
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []string // returns all library scan_paths for artwork serving
@@ -188,6 +193,9 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.LDAPAuth != nil {
 				r.Get("/auth/ldap/enabled", h.LDAPAuth.Enabled)
 			}
+			if h.Capabilities != nil {
+				r.Get("/system/capabilities", h.Capabilities.Get)
+			}
 		})
 
 		// Auth endpoints — rate limited by IP.
@@ -206,6 +214,14 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Post("/auth/reset-password", h.PasswordReset.ResetPassword)
 			if h.Invite != nil {
 				r.Post("/invites/accept", h.Invite.Accept)
+			}
+
+			// Native client device pairing — no user auth (the device_token
+			// itself serves as a one-shot credential for poll, and the PIN
+			// is rate-limited at the IP layer to deter brute force).
+			if h.Pair != nil {
+				r.Post("/auth/pair/code", h.Pair.CreateCode)
+				r.Get("/auth/pair/poll", h.Pair.Poll)
 			}
 
 			// OIDC SSO flow (settings-driven).
@@ -259,6 +275,12 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Get("/users/switchable", h.User.ListSwitchable)
 				r.Post("/auth/pin-switch", h.User.PINSwitch)
+			}
+
+			// Native client device pairing — claim binds a PIN to the
+			// browser-authenticated user, authorising the waiting device.
+			if h.Pair != nil {
+				r.Post("/auth/pair/claim", h.Pair.Claim)
 			}
 
 			// Notifications.
@@ -386,6 +408,39 @@ func NewRouter(h *Handlers) http.Handler {
 				})
 			}
 
+			// Arr-services admin CRUD + probe — admin only.
+			if h.ArrServices != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/arr-services", h.ArrServices.List)
+					r.Post("/admin/arr-services", h.ArrServices.Create)
+					r.Post("/admin/arr-services/probe", h.ArrServices.Probe)
+					r.Get("/admin/arr-services/{id}", h.ArrServices.Get)
+					r.Patch("/admin/arr-services/{id}", h.ArrServices.Update)
+					r.Delete("/admin/arr-services/{id}", h.ArrServices.Delete)
+					r.Post("/admin/arr-services/{id}/set-default", h.ArrServices.SetDefault)
+				})
+			}
+
+			// Discover — TMDB-backed search powering the Request UI.
+			if h.Discover != nil {
+				r.Get("/discover/search", h.Discover.Search)
+			}
+
+			// Media requests — user-facing workflow + admin queue actions.
+			if h.Requests != nil {
+				r.Get("/requests", h.Requests.List)
+				r.Post("/requests", h.Requests.Create)
+				r.Get("/requests/{id}", h.Requests.Get)
+				r.Post("/requests/{id}/cancel", h.Requests.Cancel)
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Post("/admin/requests/{id}/approve", h.Requests.Approve)
+					r.Post("/admin/requests/{id}/decline", h.Requests.Decline)
+					r.Delete("/admin/requests/{id}", h.Requests.Delete)
+				})
+			}
+
 			// Home page hub — continue watching + recently added.
 			if h.Hub != nil {
 				r.Get("/hub", h.Hub.Get)
@@ -457,6 +512,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/markers", h.Items.ListMarkers)
 				r.Put("/items/{id}/markers/{kind}", h.Items.UpsertMarker)
 				r.Delete("/items/{id}/markers/{kind}", h.Items.DeleteMarker)
+				r.Get("/items/{id}/exif", h.Items.GetEXIF)
 			}
 
 			// Trickplay (seekbar thumbnail previews).

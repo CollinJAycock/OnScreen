@@ -57,6 +57,10 @@ func (m *mockItemMedia) ListChildren(_ context.Context, _ uuid.UUID) ([]media.It
 	return m.children, nil
 }
 
+func (m *mockItemMedia) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
+	return nil, media.ErrNotFound
+}
+
 // ── mock watch service ───────────────────────────────────────────────────────
 
 type mockItemWatch struct {

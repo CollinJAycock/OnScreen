@@ -9,8 +9,12 @@
   import ToastContainer from '$lib/components/ToastContainer.svelte';
   import NotificationBell from '$lib/components/NotificationBell.svelte';
   import NotificationPanel from '$lib/components/NotificationPanel.svelte';
+  import AudioPlayer from '$lib/components/AudioPlayer.svelte';
   import { theme } from '$lib/stores/theme';
   import { initNotifications, stopNotifications } from '$lib/stores/notifications';
+  import { currentTrack } from '$lib/stores/audio';
+
+  $: hasAudio = $currentTrack !== null;
 
   let currentTheme: 'light' | 'dark' | 'system';
   theme.subscribe(v => { currentTheme = v; });
@@ -205,6 +209,12 @@
           </svg>
           History
         </a>
+        <a href="/requests" class="nav-link" class:active={path.startsWith('/requests')}>
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 7a1 1 0 011 1v2h2a1 1 0 110 2h-2v2a1 1 0 11-2 0v-2H7a1 1 0 110-2h2V8a1 1 0 011-1z" clip-rule="evenodd"/>
+          </svg>
+          Request
+        </a>
         <a href="/favorites" class="nav-link" class:active={path.startsWith('/favorites')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M9.653 16.915l-.005-.003-.019-.01a20.759 20.759 0 01-1.162-.682 22.045 22.045 0 01-2.582-1.9C4.045 12.733 2 10.352 2 7.5a4.5 4.5 0 018-2.828A4.5 4.5 0 0118 7.5c0 2.852-2.044 5.233-3.885 6.82a22.049 22.049 0 01-3.744 2.582l-.019.01-.005.003h-.002a.739.739 0 01-.69.001l-.002-.001z"/>
@@ -264,9 +274,10 @@
       </div>
     </aside>
 
-    <main class="main">
+    <main class="main" class:has-audio={hasAudio}>
       <slot />
     </main>
+    <AudioPlayer />
   </div>
 
   {#if switcherOpen}
@@ -522,6 +533,7 @@
     overflow-y: auto;
     background: var(--bg-primary);
   }
+  .main.has-audio { padding-bottom: 76px; }
 
   /* User switcher overlay */
   .switcher-backdrop {
@@ -746,6 +758,7 @@
       padding-bottom: 60px;
       width: 100%;
     }
+    .main.has-audio { padding-bottom: 160px; }
 
     .switcher-panel {
       width: calc(100% - 2rem);

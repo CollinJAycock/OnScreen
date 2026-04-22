@@ -42,6 +42,15 @@ type Config struct {
 	LogLevel     string `env:"LOG_LEVEL"     envDefault:"info"`
 	RetainMonths int    `env:"RETAIN_MONTHS" envDefault:"24"`
 
+	// ServerName is the human-friendly name advertised over LAN discovery
+	// and surfaced in capability responses. Defaults to "OnScreen" if unset.
+	ServerName string `env:"SERVER_NAME" envDefault:"OnScreen"`
+
+	// DiscoveryPort is the UDP port the LAN discovery listener binds to.
+	// Set DiscoveryEnabled=false to disable broadcasting entirely.
+	DiscoveryEnabled bool `env:"DISCOVERY_ENABLED" envDefault:"true"`
+	DiscoveryPort    int  `env:"DISCOVERY_PORT"    envDefault:"7368"`
+
 	// ── Scanning (hot-reloadable via SIGHUP) ─────────────────────────────────
 	// ScanFileConcurrency defaults to runtime.NumCPU()*2 (I/O-bound).
 	ScanFileConcurrency    int           `env:"SCAN_FILE_CONCURRENCY"`

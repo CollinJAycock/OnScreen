@@ -155,6 +155,86 @@ func (c *Client) SearchTV(ctx context.Context, title string, year int) (*metadat
 	return result, nil
 }
 
+// DiscoverResult is one row in a SearchMulti result. MediaType is "movie"
+// or "tv" (Sonarr-side; OnScreen normalises to "show" at the API layer).
+// Person rows from /search/multi are filtered out — Discover surfaces
+// titles, not actors.
+type DiscoverResult struct {
+	MediaType   string  // "movie" | "tv"
+	TMDBID      int
+	Title       string
+	Overview    string
+	Year        int     // 0 if unknown
+	Rating      float64
+	PosterURL   string
+	FanartURL   string
+}
+
+// SearchMulti hits /search/multi to return movies + TV shows in one shot.
+// Used by the Request UI's discover surface so users don't have to pick a
+// type before searching. Limits the response to maxResults rows (default
+// 20) so the caller can cheaply enrich each result against the library.
+func (c *Client) SearchMulti(ctx context.Context, query string, maxResults int) ([]DiscoverResult, error) {
+	if maxResults <= 0 {
+		maxResults = 20
+	}
+	params := url.Values{}
+	params.Set("query", query)
+	params.Set("language", c.language)
+	params.Set("include_adult", "false")
+
+	var resp struct {
+		Results []struct {
+			MediaType    string  `json:"media_type"`
+			ID           int     `json:"id"`
+			Title        string  `json:"title"`         // movie
+			Name         string  `json:"name"`          // tv / person
+			Overview     string  `json:"overview"`
+			ReleaseDate  string  `json:"release_date"`  // movie
+			FirstAirDate string  `json:"first_air_date"`// tv
+			VoteAverage  float64 `json:"vote_average"`
+			PosterPath   string  `json:"poster_path"`
+			BackdropPath string  `json:"backdrop_path"`
+		} `json:"results"`
+	}
+	if err := c.get(ctx, "/search/multi", params, &resp); err != nil {
+		return nil, fmt.Errorf("tmdb search multi %q: %w", query, err)
+	}
+
+	out := make([]DiscoverResult, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		if r.MediaType != "movie" && r.MediaType != "tv" {
+			continue
+		}
+		title := r.Title
+		dateStr := r.ReleaseDate
+		if r.MediaType == "tv" {
+			title = r.Name
+			dateStr = r.FirstAirDate
+		}
+		year := 0
+		if dateStr != "" {
+			if d, err := time.Parse("2006-01-02", dateStr); err == nil {
+				year = d.Year()
+			}
+		}
+		out = append(out, DiscoverResult{
+			MediaType: r.MediaType,
+			TMDBID:    r.ID,
+			Title:     title,
+			Overview:  r.Overview,
+			Year:      year,
+			Rating:    r.VoteAverage,
+			PosterURL: imageURL(r.PosterPath),
+			FanartURL: imageURL(r.BackdropPath),
+		})
+		if len(out) >= maxResults {
+			break
+		}
+	}
+	return out, nil
+}
+
 // SearchTVCandidates implements metadata.Agent.
 // Returns up to 10 TV show results for manual match selection.
 func (c *Client) SearchTVCandidates(ctx context.Context, query string) ([]metadata.TVShowResult, error) {

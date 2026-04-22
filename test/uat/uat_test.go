@@ -239,6 +239,9 @@ func (s *stubItemMediaService) GetFiles(_ context.Context, _ uuid.UUID) ([]media
 func (s *stubItemMediaService) ListChildren(_ context.Context, _ uuid.UUID) ([]media.Item, error) {
 	return s.kids, nil
 }
+func (s *stubItemMediaService) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
+	return nil, media.ErrNotFound
+}
 
 // stubItemWatchService implements v1.ItemWatchService.
 type stubItemWatchService struct{ recorded bool }

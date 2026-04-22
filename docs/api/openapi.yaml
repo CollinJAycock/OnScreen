@@ -1,0 +1,3380 @@
+openapi: 3.1.0
+info:
+  title: OnScreen API
+  version: "1.0.0"
+  description: |
+    HTTP API for the OnScreen media server.
+
+    All JSON responses use a uniform envelope:
+      - Success: `{ "data": <payload> }`
+      - List:    `{ "data": [...], "meta": { "total": <int>, "cursor": "<string>" } }`
+      - Error:   `{ "error": { "code": "<UPPER_SNAKE>", "message": "...", "request_id": "..." } }`
+
+    The HLS playlist and segment endpoints under `/api/v1/transcode/sessions/{sid}/`
+    are an intentional exception: HLS players cannot consume JSON errors, so those
+    paths return raw `text/plain` errors with appropriate HTTP status codes.
+
+    Auth is delivered as either a Paseto v4 bearer token (`Authorization: Bearer ...`)
+    or the `os_access` httpOnly cookie set by `/auth/login`. Browser clients use the
+    cookie; native and third-party clients use the bearer header.
+  license:
+    name: AGPL-3.0
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://onscreen.example.com
+    description: Production deployment (replace with your origin)
+
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+
+tags:
+  - name: Auth
+    description: Login, registration, password recovery, OIDC and LDAP SSO.
+  - name: Pairing
+    description: Native client device pairing via short-lived PIN.
+  - name: System
+    description: Capabilities discovery and setup status.
+  - name: Libraries
+    description: Library CRUD plus item browsing inside a library.
+  - name: Items
+    description: Per-item metadata, playback progress, markers, EXIF, enrichment.
+  - name: Search
+    description: Full-text search across media items.
+  - name: Hub
+    description: Home-page rails (continue watching, recently added).
+  - name: History
+    description: Per-user watch history.
+  - name: Favorites
+    description: Per-user favorited items.
+  - name: Collections
+    description: Curated, server-wide collections.
+  - name: Playlists
+    description: User-owned ordered playlists.
+  - name: People
+    description: Cast and crew.
+  - name: Subtitles
+    description: External subtitle search, download, and OCR.
+  - name: Trickplay
+    description: Seekbar thumbnail previews.
+  - name: Transcode
+    description: HLS transcode sessions (start, stop, segments).
+  - name: Notifications
+    description: User notifications (list, mark read, SSE stream).
+  - name: Sessions
+    description: Active playback sessions.
+  - name: Users
+    description: User profile, PIN management, managed profiles, admin user management.
+  - name: Settings
+    description: Server-wide settings (admin only).
+  - name: Webhooks
+    description: Outbound webhooks (admin only).
+  - name: Maintenance
+    description: One-shot admin operations (artwork backfill, dedupe).
+  - name: Plugins
+    description: Outbound MCP plugin registrations (admin only).
+  - name: Backup
+    description: Backup download and restore (admin only).
+  - name: Tasks
+    description: Scheduled task CRUD plus run history (admin only).
+  - name: Audit
+    description: Audit log (admin only).
+  - name: Analytics
+    description: Usage analytics (admin only).
+  - name: Invites
+    description: Invitation creation and acceptance.
+  - name: Email
+    description: SMTP test (admin only).
+  - name: Arr
+    description: Sonarr/Radarr webhook ingestion.
+  - name: ArrServices
+    description: Multi-instance Radarr/Sonarr configuration (admin only).
+  - name: Discover
+    description: TMDB-backed search for the request workflow.
+  - name: Requests
+    description: Media request workflow (user submit, admin approve/decline).
+
+paths:
+  # ── Health ─────────────────────────────────────────────────────────────────
+  /health/live:
+    get:
+      summary: Liveness probe
+      description: Returns 200 with `{"status":"ok"}` if the process is up.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  # ── System ─────────────────────────────────────────────────────────────────
+  /api/v1/setup/status:
+    get:
+      summary: Initial setup status
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Whether first-run setup has been completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatusEnvelope'
+
+  /api/v1/system/capabilities:
+    get:
+      summary: Server capabilities
+      description: Server build, enabled features, and operational limits.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Capabilities snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilitiesEnvelope'
+
+  /api/v1/email/enabled:
+    get:
+      summary: Email-feature visibility flag
+      tags: [System]
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/BoolEnabled' }
+
+  /api/v1/auth/forgot-password/enabled:
+    get:
+      summary: Password-reset feature visibility flag
+      tags: [System]
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/BoolEnabled' }
+
+  /api/v1/auth/oidc/enabled:
+    get:
+      summary: OIDC SSO visibility flag
+      tags: [System]
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/BoolEnabled' }
+
+  /api/v1/auth/ldap/enabled:
+    get:
+      summary: LDAP login visibility flag
+      tags: [System]
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/BoolEnabled' }
+
+  # ── Auth ───────────────────────────────────────────────────────────────────
+  /api/v1/auth/login:
+    post:
+      summary: Local username/password login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Token pair plus user metadata. Sets `os_access` and `os_refresh` cookies.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/refresh:
+    post:
+      summary: Refresh access token
+      description: Reads refresh token from JSON body (`refresh_token`) or `os_refresh` cookie.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/logout:
+    post:
+      summary: Revoke the current refresh token
+      tags: [Auth]
+      security: []
+      responses:
+        '204':
+          description: Logged out. Clears `os_access` and `os_refresh` cookies.
+
+  /api/v1/auth/register:
+    post:
+      summary: Register a new user
+      description: |
+        First call (no users yet) creates the initial admin and is unauthenticated.
+        Subsequent calls require an admin caller; the new account is non-admin.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, pattern: '^[a-zA-Z0-9_]{2,32}$' }
+                email:    { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UserInfo' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/auth/forgot-password:
+    post:
+      summary: Request a password reset email
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '204':
+          description: Always 204 — never reveals whether the address exists.
+
+  /api/v1/auth/reset-password:
+    post:
+      summary: Complete a password reset
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:    { type: string }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        '204': { description: Password reset. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/auth/oidc:
+    get:
+      summary: Begin OIDC SSO flow
+      description: 302 redirect to the configured IdP authorization endpoint.
+      tags: [Auth]
+      security: []
+      responses:
+        '302': { description: Redirect to IdP. }
+
+  /api/v1/auth/oidc/callback:
+    get:
+      summary: OIDC callback
+      description: Exchanges the authorization code, issues tokens, and 302s to the SPA.
+      tags: [Auth]
+      security: []
+      parameters:
+        - { in: query, name: code,  required: true, schema: { type: string } }
+        - { in: query, name: state, required: true, schema: { type: string } }
+      responses:
+        '302': { description: Redirect after successful login. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/ldap/login:
+    post:
+      summary: LDAP bind login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Token pair (LDAP-backed account).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/pin-switch:
+    post:
+      summary: Switch to another local user via PIN
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, pin]
+              properties:
+                user_id: { type: string, format: uuid }
+                pin:     { type: string, minLength: 4, maxLength: 8 }
+      responses:
+        '200':
+          description: Token pair for the target user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairEnvelope'
+
+  # ── Pairing ────────────────────────────────────────────────────────────────
+  /api/v1/auth/pair/code:
+    post:
+      summary: Create a pairing PIN
+      description: |
+        Issued to a native client. Returns a 6-digit PIN to display to the user
+        plus a `device_token` the client uses to poll. PIN expires in 10 minutes.
+      tags: [Pairing]
+      security: []
+      responses:
+        '200':
+          description: New pairing record.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PairCodeResponse'
+
+  /api/v1/auth/pair/poll:
+    get:
+      summary: Poll for pairing completion
+      tags: [Pairing]
+      security: []
+      parameters:
+        - { in: query, name: device_token, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Pending or claimed status; on `claimed` includes a token pair.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PairPollResponse'
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/auth/pair/claim:
+    post:
+      summary: Claim a pairing PIN (browser-side)
+      description: Binds a displayed PIN to the authenticated user, releasing tokens to the waiting device.
+      tags: [Pairing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin:         { type: string, minLength: 6, maxLength: 6 }
+                device_name: { type: string }
+      responses:
+        '204': { description: Claimed. The polling device now has tokens. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Libraries ──────────────────────────────────────────────────────────────
+  /api/v1/libraries:
+    get:
+      summary: List libraries the caller can access
+      tags: [Libraries]
+      responses:
+        '200':
+          description: Library list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryListEnvelope'
+    post:
+      summary: Create a library (admin)
+      tags: [Libraries]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LibraryCreate'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Library' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/libraries/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Get a single library
+      tags: [Libraries]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Library' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update a library (admin)
+      tags: [Libraries]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LibraryUpdate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Library' }
+    delete:
+      summary: Delete a library (admin)
+      tags: [Libraries]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/libraries/{id}/items:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { $ref: '#/components/parameters/Limit' }
+      - { $ref: '#/components/parameters/Offset' }
+      - { in: query, name: q,        schema: { type: string }, description: 'Title contains substring.' }
+      - { in: query, name: genre,    schema: { type: string }, description: 'Filter by genre name.' }
+      - { in: query, name: year_min, schema: { type: integer } }
+      - { in: query, name: year_max, schema: { type: integer } }
+      - { in: query, name: rating_min, schema: { type: number, format: float } }
+      - { in: query, name: sort, schema: { type: string, enum: [title, year, rating, created_at, updated_at] } }
+      - { in: query, name: order, schema: { type: string, enum: [asc, desc] } }
+    get:
+      summary: List items in a library
+      tags: [Libraries]
+      responses:
+        '200':
+          description: Filtered list of media items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItemListEnvelope'
+
+  /api/v1/libraries/{id}/genres:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List distinct genres in a library
+      tags: [Libraries]
+      responses:
+        '200':
+          description: Genre counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/GenreCount' }
+
+  /api/v1/libraries/{id}/years:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List distinct years in a library
+      tags: [Libraries]
+      responses:
+        '200':
+          description: Year counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/YearCount' }
+
+  /api/v1/libraries/{id}/scan:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Trigger a library scan (admin)
+      tags: [Libraries]
+      responses:
+        '202': { description: Scan enqueued. }
+
+  /api/v1/libraries/{id}/detect-intros:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Trigger intro detection across the library (admin)
+      tags: [Libraries]
+      responses:
+        '202': { description: Detection enqueued. }
+
+  # ── Search ─────────────────────────────────────────────────────────────────
+  /api/v1/search:
+    get:
+      summary: Full-text item search
+      tags: [Search]
+      parameters:
+        - { in: query, name: q, required: true, schema: { type: string } }
+        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SearchResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  # ── Hub ────────────────────────────────────────────────────────────────────
+  /api/v1/hub:
+    get:
+      summary: Home-page rails
+      description: Continue watching, recently added, and on-deck rails for the current user.
+      tags: [Hub]
+      responses:
+        '200':
+          description: Hub data.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Hub' }
+
+  # ── History ────────────────────────────────────────────────────────────────
+  /api/v1/history:
+    get:
+      summary: Watch history
+      tags: [History]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: History entries (newest first).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/WatchHistoryItem' }
+
+  # ── Favorites ──────────────────────────────────────────────────────────────
+  /api/v1/favorites:
+    get:
+      summary: List favorited items
+      tags: [Favorites]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Favorites.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/FavoriteItem' }
+
+  /api/v1/items/{id}/favorite:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Add an item to favorites
+      tags: [Favorites]
+      responses:
+        '204': { description: Added. }
+    delete:
+      summary: Remove an item from favorites
+      tags: [Favorites]
+      responses:
+        '204': { description: Removed. }
+
+  # ── Items ──────────────────────────────────────────────────────────────────
+  /api/v1/items/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Get a single media item with files and markers
+      tags: [Items]
+      responses:
+        '200':
+          description: Item detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ItemDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/items/{id}/children:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List children (seasons of a show, episodes of a season)
+      tags: [Items]
+      responses:
+        '200':
+          description: Children.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChildItem' }
+
+  /api/v1/items/{id}/progress:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Update playback progress
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [position_ms]
+              properties:
+                position_ms: { type: integer, format: int64 }
+                duration_ms: { type: integer, format: int64 }
+                file_id:     { type: string, format: uuid }
+                client_name: { type: string }
+                event:       { type: string, enum: [play, pause, stop, scrub] }
+      responses:
+        '204': { description: Recorded. }
+
+  /api/v1/items/{id}/enrich:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Re-run metadata enrichment (TMDB/TVDB)
+      tags: [Items]
+      responses:
+        '202': { description: Enqueued. }
+
+  /api/v1/items/{id}/match/search:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Search external metadata sources for a manual match
+      tags: [Items]
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+      responses:
+        '200':
+          description: Candidate matches.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MatchCandidate' }
+
+  /api/v1/items/{id}/match:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Apply a chosen external match
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tmdb_id]
+              properties:
+                tmdb_id: { type: integer }
+      responses:
+        '204': { description: Applied. }
+
+  /api/v1/items/{id}/markers:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List markers (intro, recap, credits) for an item
+      tags: [Items]
+      responses:
+        '200':
+          description: Markers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Marker' }
+
+  /api/v1/items/{id}/markers/{kind}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [intro, recap, credits] } }
+    put:
+      summary: Upsert a marker
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [start_ms, end_ms]
+              properties:
+                start_ms: { type: integer, format: int64 }
+                end_ms:   { type: integer, format: int64 }
+      responses:
+        '204': { description: Saved. }
+    delete:
+      summary: Delete a marker
+      tags: [Items]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/items/{id}/exif:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Photo EXIF metadata
+      tags: [Items]
+      responses:
+        '200':
+          description: EXIF (if a photo).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoEXIF' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/items/{id}/credits:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Cast and crew for an item
+      tags: [People]
+      responses:
+        '200':
+          description: Credits.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Credit' }
+
+  # ── People ─────────────────────────────────────────────────────────────────
+  /api/v1/people:
+    get:
+      summary: Search people
+      tags: [People]
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: People.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PersonSummary' }
+
+  /api/v1/people/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Person detail
+      tags: [People]
+      responses:
+        '200':
+          description: Person.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Person' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/people/{id}/filmography:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Person filmography
+      tags: [People]
+      responses:
+        '200':
+          description: Filmography entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FilmographyEntry' }
+
+  # ── Subtitles ──────────────────────────────────────────────────────────────
+  /api/v1/items/{id}/subtitles/search:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Search external subtitle providers
+      tags: [Subtitles]
+      parameters:
+        - { in: query, name: language, schema: { type: string, description: 'ISO 639-1 or 639-2 code.' } }
+      responses:
+        '200':
+          description: Provider results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SubtitleSearchResult' }
+
+  /api/v1/items/{id}/subtitles/download:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Download an external subtitle to disk
+      tags: [Subtitles]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, provider_file_id, language]
+              properties:
+                provider:         { type: string }
+                provider_file_id: { type: string }
+                language:         { type: string }
+      responses:
+        '201':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+
+  /api/v1/items/{id}/subtitles/ocr:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: OCR a PGS/VobSub track to text
+      tags: [Subtitles]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stream_index]
+              properties:
+                stream_index: { type: integer }
+                language:     { type: string }
+      responses:
+        '202': { description: Job enqueued. }
+
+  /api/v1/items/{id}/subtitles/{subId}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: path, name: subId, required: true, schema: { type: string, format: uuid } }
+    delete:
+      summary: Delete an external subtitle
+      tags: [Subtitles]
+      responses:
+        '204': { description: Deleted. }
+
+  # ── Trickplay ──────────────────────────────────────────────────────────────
+  /api/v1/items/{id}/trickplay:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Trickplay status
+      tags: [Trickplay]
+      responses:
+        '200':
+          description: Status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/TrickplayStatus' }
+    post:
+      summary: Generate trickplay sprites
+      tags: [Trickplay]
+      responses:
+        '202': { description: Enqueued. }
+
+  /trickplay/{id}/{file}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: path, name: file, required: true, schema: { type: string } }
+    get:
+      summary: Serve a trickplay sprite or VTT
+      description: No auth (loaded by `<video><track>`); the handler whitelists filenames.
+      tags: [Trickplay]
+      security: []
+      responses:
+        '200':
+          description: Sprite/VTT.
+          content:
+            image/jpeg: {}
+            text/vtt:   {}
+
+  # ── Transcode ──────────────────────────────────────────────────────────────
+  /api/v1/items/{id}/transcode:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Start a HLS transcode session
+      tags: [Transcode]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranscodeStartRequest'
+      responses:
+        '201':
+          description: Session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/TranscodeStartResponse' }
+
+  /api/v1/transcode/sessions/{sid}:
+    parameters: [{ in: path, name: sid, required: true, schema: { type: string } }]
+    delete:
+      summary: Stop a HLS transcode session
+      tags: [Transcode]
+      responses:
+        '204': { description: Stopped. }
+
+  /api/v1/transcode/sessions/{sid}/playlist.m3u8:
+    parameters:
+      - { in: path, name: sid, required: true, schema: { type: string } }
+      - { in: query, name: token, required: true, schema: { type: string }, description: 'Segment token from `transcodeStart`.' }
+    get:
+      summary: Serve the rewritten HLS playlist
+      description: Returns `application/x-mpegURL`. Errors are plain text, not the JSON envelope.
+      tags: [Transcode]
+      security: []
+      responses:
+        '200':
+          description: Playlist.
+          content:
+            application/x-mpegURL: {}
+        '401': { description: Bad or missing token. }
+        '503': { description: Playlist not yet ready or request cancelled. }
+
+  /api/v1/transcode/sessions/{sid}/seg/{name}:
+    parameters:
+      - { in: path, name: sid,  required: true, schema: { type: string } }
+      - { in: path, name: name, required: true, schema: { type: string } }
+      - { in: query, name: token, required: true, schema: { type: string } }
+    get:
+      summary: Serve a HLS segment
+      description: Returns `video/MP2T` or `video/mp4`. Errors are plain text.
+      tags: [Transcode]
+      security: []
+      responses:
+        '200':
+          description: Segment.
+          content:
+            video/MP2T: {}
+            video/mp4:  {}
+        '401': { description: Bad or missing token. }
+        '404': { description: Segment not found upstream. }
+
+  # ── Direct play / subtitles ────────────────────────────────────────────────
+  /media/stream/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Direct-play a media file
+      description: Serves the raw container with HTTP range support. Auth via cookie or bearer.
+      tags: [Items]
+      responses:
+        '200':
+          description: Full body.
+          content:
+            'video/*': {}
+        '206':
+          description: Partial content (range request).
+
+  /media/subtitles/{fileId}/{streamIndex}:
+    parameters:
+      - { in: path, name: fileId,      required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: streamIndex, required: true, schema: { type: integer } }
+    get:
+      summary: Serve an embedded subtitle as VTT
+      tags: [Subtitles]
+      responses:
+        '200':
+          description: Subtitle.
+          content:
+            text/vtt: {}
+
+  /media/external-subtitles/{subId}:
+    parameters:
+      - { in: path, name: subId, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Serve a downloaded external subtitle
+      tags: [Subtitles]
+      responses:
+        '200':
+          description: Subtitle.
+          content:
+            text/vtt: {}
+
+  /artwork/{path}:
+    parameters:
+      - { in: path, name: path, required: true, schema: { type: string }, description: 'Relative artwork path beneath any library scan_path.' }
+      - { in: query, name: w, schema: { type: integer, maximum: 1920 }, description: 'Resize target width.' }
+      - { in: query, name: h, schema: { type: integer, maximum: 1920 }, description: 'Resize target height.' }
+    get:
+      summary: Serve a poster/fanart image
+      description: No auth so `<img>` tags load without credentials.
+      tags: [Items]
+      security: []
+      responses:
+        '200':
+          description: Image.
+          content:
+            image/jpeg: {}
+            image/png:  {}
+        '404': { description: Not found in any library root. }
+
+  # ── Notifications ──────────────────────────────────────────────────────────
+  /api/v1/notifications:
+    get:
+      summary: List notifications
+      tags: [Notifications]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Notifications.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+
+  /api/v1/notifications/unread-count:
+    get:
+      summary: Unread notification count
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      count: { type: integer, format: int64 }
+
+  /api/v1/notifications/{id}/read:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Mark a notification read
+      tags: [Notifications]
+      responses:
+        '204': { description: Marked read. }
+
+  /api/v1/notifications/read-all:
+    post:
+      summary: Mark all notifications read
+      tags: [Notifications]
+      responses:
+        '204': { description: Marked read. }
+
+  /api/v1/notifications/stream:
+    get:
+      summary: Server-Sent Events stream of new notifications
+      description: |
+        `text/event-stream`. Each event is a JSON-encoded notification on a `data:` line.
+        The server emits `:` keepalive comments to defeat intermediary buffering.
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Stream open.
+          content:
+            text/event-stream: {}
+
+  # ── Sessions ───────────────────────────────────────────────────────────────
+  /api/v1/sessions:
+    get:
+      summary: Active playback sessions
+      tags: [Sessions]
+      responses:
+        '200':
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Session' }
+
+  # ── Collections ────────────────────────────────────────────────────────────
+  /api/v1/collections:
+    get:
+      summary: List collections
+      tags: [Collections]
+      responses:
+        '200':
+          description: Collections.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Collection' }
+    post:
+      summary: Create a collection
+      tags: [Collections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:    { type: string }
+                summary: { type: string }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Collection' }
+
+  /api/v1/collections/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Get a collection
+      tags: [Collections]
+      responses:
+        '200':
+          description: Collection.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Collection' }
+    patch:
+      summary: Update a collection
+      tags: [Collections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:    { type: string }
+                summary: { type: string }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Collection' }
+    delete:
+      summary: Delete a collection
+      tags: [Collections]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/collections/{id}/items:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List items in a collection
+      tags: [Collections]
+      responses:
+        '200':
+          description: Items.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/CollectionItem' }
+    post:
+      summary: Add an item to a collection
+      tags: [Collections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_id]
+              properties:
+                item_id: { type: string, format: uuid }
+      responses:
+        '204': { description: Added. }
+
+  /api/v1/collections/{id}/items/{itemId}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
+    delete:
+      summary: Remove an item from a collection
+      tags: [Collections]
+      responses:
+        '204': { description: Removed. }
+
+  # ── Playlists ──────────────────────────────────────────────────────────────
+  /api/v1/playlists:
+    get:
+      summary: List the caller's playlists
+      tags: [Playlists]
+      responses:
+        '200':
+          description: Playlists.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Playlist' }
+    post:
+      summary: Create a playlist
+      tags: [Playlists]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:    { type: string }
+                summary: { type: string }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Playlist' }
+
+  /api/v1/playlists/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    patch:
+      summary: Update a playlist
+      tags: [Playlists]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:    { type: string }
+                summary: { type: string }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Playlist' }
+    delete:
+      summary: Delete a playlist
+      tags: [Playlists]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/playlists/{id}/items:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List items in a playlist
+      tags: [Playlists]
+      responses:
+        '200':
+          description: Items.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PlaylistItem' }
+    post:
+      summary: Append an item to a playlist
+      tags: [Playlists]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_id]
+              properties:
+                item_id: { type: string, format: uuid }
+      responses:
+        '204': { description: Added. }
+
+  /api/v1/playlists/{id}/items/{itemId}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
+    delete:
+      summary: Remove an item from a playlist
+      tags: [Playlists]
+      responses:
+        '204': { description: Removed. }
+
+  /api/v1/playlists/{id}/items/order:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Reorder playlist items
+      tags: [Playlists]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_ids]
+              properties:
+                item_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '204': { description: Reordered. }
+
+  # ── Users / profile ────────────────────────────────────────────────────────
+  /api/v1/users/me/pin:
+    put:
+      summary: Set or change the caller's PIN
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin: { type: string, minLength: 4, maxLength: 8 }
+      responses:
+        '204': { description: Saved. }
+    delete:
+      summary: Clear the caller's PIN
+      tags: [Users]
+      responses:
+        '204': { description: Cleared. }
+
+  /api/v1/users/me/preferences:
+    get:
+      summary: Get caller preferences
+      tags: [Users]
+      responses:
+        '200':
+          description: Preferences.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Preferences' }
+    put:
+      summary: Replace caller preferences
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Preferences' }
+      responses:
+        '204': { description: Saved. }
+
+  /api/v1/users/switchable:
+    get:
+      summary: List local users the caller can switch into via PIN
+      tags: [Users]
+      responses:
+        '200':
+          description: Switchable users.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/UserInfo' }
+
+  /api/v1/users:
+    get:
+      summary: List all users (admin)
+      tags: [Users]
+      responses:
+        '200':
+          description: Users.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/UserInfo' }
+
+  /api/v1/users/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Delete a user (admin)
+      tags: [Users]
+      responses:
+        '204': { description: Deleted. }
+    patch:
+      summary: Set admin flag (admin)
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_admin]
+              properties:
+                is_admin: { type: boolean }
+      responses:
+        '204': { description: Updated. }
+
+  /api/v1/users/{id}/password:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Reset another user's password (admin)
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        '204': { description: Reset. }
+
+  /api/v1/users/{id}/content-rating:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Set max content rating for a user (admin)
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [max_content_rating]
+              properties:
+                max_content_rating: { type: string, description: 'e.g. PG-13, TV-MA, or "" to clear.' }
+      responses:
+        '204': { description: Set. }
+
+  /api/v1/users/{id}/libraries:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List libraries a user can access (admin)
+      tags: [Users]
+      responses:
+        '200':
+          description: Library IDs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: string, format: uuid }
+    put:
+      summary: Set the libraries a user can access (admin)
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [library_ids]
+              properties:
+                library_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '204': { description: Set. }
+
+  /api/v1/profiles:
+    get:
+      summary: List managed profiles owned by the caller
+      tags: [Users]
+      responses:
+        '200':
+          description: Profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ManagedProfile' }
+    post:
+      summary: Create a managed profile
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ManagedProfile' }
+
+  /api/v1/profiles/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    patch:
+      summary: Update a managed profile
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ManagedProfile' }
+    delete:
+      summary: Delete a managed profile
+      tags: [Users]
+      responses:
+        '204': { description: Deleted. }
+
+  # ── Settings (admin) ───────────────────────────────────────────────────────
+  /api/v1/settings:
+    get:
+      summary: Get server settings (admin)
+      tags: [Settings]
+      responses:
+        '200':
+          description: Settings document.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, additionalProperties: true }
+    patch:
+      summary: Patch server settings (admin)
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Updated settings document.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, additionalProperties: true }
+
+  /api/v1/settings/encoders:
+    get:
+      summary: Detected encoder hardware (admin)
+      tags: [Settings]
+      responses:
+        '200':
+          description: Encoder list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object, additionalProperties: true } }
+
+  /api/v1/settings/workers:
+    get:
+      summary: Connected transcode workers (admin)
+      tags: [Settings]
+      responses:
+        '200':
+          description: Workers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object, additionalProperties: true } }
+
+  /api/v1/settings/fleet:
+    get:
+      summary: Get fleet configuration (admin)
+      tags: [Settings]
+      responses:
+        '200':
+          description: Config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, additionalProperties: true }
+    put:
+      summary: Replace fleet configuration (admin)
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Saved. }
+
+  /api/v1/settings/transcode-config:
+    get:
+      summary: Get transcode tuning config (admin)
+      tags: [Settings]
+      responses:
+        '200':
+          description: Config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, additionalProperties: true }
+    put:
+      summary: Replace transcode tuning config (admin)
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Saved. }
+
+  # ── Webhooks (admin) ───────────────────────────────────────────────────────
+  /api/v1/webhooks:
+    get:
+      summary: List webhooks (admin)
+      tags: [Webhooks]
+      responses:
+        '200':
+          description: Webhooks.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Webhook' } }
+    post:
+      summary: Create a webhook (admin)
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Webhook' }
+
+  /api/v1/webhooks/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    patch:
+      summary: Update a webhook (admin)
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookCreate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Webhook' }
+    delete:
+      summary: Delete a webhook (admin)
+      tags: [Webhooks]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/webhooks/{id}/test:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Fire a test event (admin)
+      tags: [Webhooks]
+      responses:
+        '200':
+          description: Test result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, additionalProperties: true }
+
+  # ── Maintenance (admin) ────────────────────────────────────────────────────
+  /api/v1/maintenance/refresh-missing-art:
+    post:
+      summary: Re-enrich items lacking poster art (admin)
+      tags: [Maintenance]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 } }
+      responses:
+        '200':
+          description: Result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      candidates: { type: integer }
+                      refreshed:  { type: integer }
+                      failed:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:    { type: string, format: uuid }
+                            title: { type: string }
+                            error: { type: string }
+
+  /api/v1/maintenance/dedupe-shows:
+    post:
+      summary: Collapse duplicate shows (admin)
+      tags: [Maintenance]
+      parameters:
+        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Dedupe summary.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /api/v1/maintenance/dedupe-movies:
+    post:
+      summary: Collapse duplicate movies (admin)
+      tags: [Maintenance]
+      parameters:
+        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Dedupe summary.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  # ── Plugins (admin) ────────────────────────────────────────────────────────
+  /api/v1/admin/plugins:
+    get:
+      summary: List plugins (admin)
+      tags: [Plugins]
+      responses:
+        '200':
+          description: Plugins.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Plugin' } }
+    post:
+      summary: Register a plugin (admin)
+      tags: [Plugins]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PluginCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Plugin' }
+
+  /api/v1/admin/plugins/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    patch:
+      summary: Update a plugin (admin)
+      tags: [Plugins]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PluginCreate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Plugin' }
+    delete:
+      summary: Delete a plugin (admin)
+      tags: [Plugins]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/admin/plugins/{id}/test:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Test plugin connectivity (admin)
+      tags: [Plugins]
+      responses:
+        '200':
+          description: Test result.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  # ── Backup (admin) ─────────────────────────────────────────────────────────
+  /api/v1/admin/backup:
+    get:
+      summary: Download a backup archive (admin)
+      tags: [Backup]
+      responses:
+        '200':
+          description: tar.gz archive.
+          content:
+            application/gzip: {}
+
+  /api/v1/admin/restore:
+    post:
+      summary: Restore from a backup archive (admin)
+      tags: [Backup]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archive]
+              properties:
+                archive: { type: string, format: binary }
+      responses:
+        '202': { description: Restore enqueued. }
+
+  # ── Tasks (admin) ──────────────────────────────────────────────────────────
+  /api/v1/admin/tasks:
+    get:
+      summary: List scheduled tasks (admin)
+      tags: [Tasks]
+      responses:
+        '200':
+          description: Tasks.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ScheduledTask' } }
+    post:
+      summary: Create a scheduled task (admin)
+      tags: [Tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduledTaskCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ScheduledTask' }
+
+  /api/v1/admin/tasks/types:
+    get:
+      summary: List registered task types (admin)
+      tags: [Tasks]
+      responses:
+        '200':
+          description: Type names.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: string }
+
+  /api/v1/admin/tasks/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    patch:
+      summary: Update a scheduled task (admin)
+      tags: [Tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduledTaskUpdate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ScheduledTask' }
+    delete:
+      summary: Delete a scheduled task (admin)
+      tags: [Tasks]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/admin/tasks/{id}/run:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Run a scheduled task on the next tick (admin)
+      tags: [Tasks]
+      responses:
+        '200':
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      queued: { type: boolean }
+
+  /api/v1/admin/tasks/{id}/runs:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: query, name: limit, schema: { type: integer, default: 50, maximum: 500 } }
+    get:
+      summary: List task run history (admin)
+      tags: [Tasks]
+      responses:
+        '200':
+          description: Runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TaskRun' } }
+
+  # ── Audit, Analytics, Invites, Email, FS, Arr ──────────────────────────────
+  /api/v1/audit:
+    get:
+      summary: Audit log (admin)
+      tags: [Audit]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+
+  /api/v1/analytics:
+    get:
+      summary: Usage analytics (admin)
+      tags: [Analytics]
+      responses:
+        '200':
+          description: Aggregates.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, additionalProperties: true }
+
+  /api/v1/invites:
+    get:
+      summary: List invites (admin)
+      tags: [Invites]
+      responses:
+        '200':
+          description: Invites.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Invite' } }
+    post:
+      summary: Create an invite (admin)
+      tags: [Invites]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:    { type: string, format: email }
+                expires_in_hours: { type: integer }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Invite' }
+
+  /api/v1/invites/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Revoke an invite (admin)
+      tags: [Invites]
+      responses:
+        '204': { description: Revoked. }
+
+  /api/v1/invites/accept:
+    post:
+      summary: Accept an invite (creates account)
+      tags: [Invites]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, username, password]
+              properties:
+                token:    { type: string }
+                username: { type: string }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        '201':
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UserInfo' }
+
+  /api/v1/email/test:
+    post:
+      summary: Send a test email (admin)
+      tags: [Email]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, format: email }
+      responses:
+        '204': { description: Sent. }
+
+  /api/v1/fs/browse:
+    get:
+      summary: Browse server filesystem (admin)
+      description: Used by the library wizard to pick scan paths.
+      tags: [Settings]
+      parameters:
+        - { in: query, name: path, schema: { type: string }, description: 'Absolute path; empty lists volume roots.' }
+      responses:
+        '200':
+          description: Directory listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      path:    { type: string }
+                      entries:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:  { type: string }
+                            path:  { type: string }
+                            is_dir: { type: boolean }
+
+  /api/v1/arr/webhook:
+    post:
+      summary: Sonarr/Radarr webhook ingestion
+      description: Authenticated by an arr API-key shared secret, not user auth.
+      tags: [Arr]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Accepted. }
+
+  /api/v1/admin/arr-services:
+    get:
+      summary: List configured arr services
+      tags: [ArrServices]
+      responses:
+        '200':
+          description: List of arr services. api_key is never returned; api_key_set indicates whether one is stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ArrService' }
+                  meta: { $ref: '#/components/schemas/ListMeta' }
+    post:
+      summary: Add a new arr service
+      tags: [ArrServices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArrServiceCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/ArrService' } }
+        '400': { description: Validation error. }
+
+  /api/v1/admin/arr-services/probe:
+    post:
+      summary: Probe an arr instance for connection metadata + dropdown options
+      description: |
+        Calls Ping + QualityProfiles + RootFolders + Tags (+ LanguageProfiles for sonarr)
+        in one round-trip. Used by the admin UI to populate the create/edit form. Pass
+        service_id to reuse the stored API key when editing a saved row.
+      tags: [ArrServices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind:        { type: string, enum: [radarr, sonarr] }
+                base_url:    { type: string }
+                api_key:     { type: string }
+                service_id:  { type: string, format: uuid, nullable: true }
+      responses:
+        '200':
+          description: Probe result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/ArrProbeResult' } }
+        '400': { description: Validation or upstream error. }
+
+  /api/v1/admin/arr-services/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    get:
+      summary: Get one arr service
+      tags: [ArrServices]
+      responses:
+        '200':
+          description: Service.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/ArrService' } }
+        '404': { description: Not found. }
+    patch:
+      summary: Update an arr service
+      description: |
+        Partial update — every field is optional. Send `api_key` only when rotating
+        the credential; an omitted or empty `api_key` keeps the existing value.
+        `is_default` is intentionally not settable here — use /set-default.
+      tags: [ArrServices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArrServiceUpdate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/ArrService' } }
+        '404': { description: Not found. }
+    delete:
+      summary: Delete an arr service
+      description: |
+        In-flight requests bound to this service have their service_id set NULL via
+        FK ON DELETE SET NULL — they survive but the admin must re-route them.
+      tags: [ArrServices]
+      responses:
+        '204': { description: Deleted. }
+
+  /api/v1/admin/arr-services/{id}/set-default:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    post:
+      summary: Mark this service as the default for its kind
+      description: |
+        Atomically clears any existing default for this kind, then sets the flag on
+        this row. The unique partial index on (kind) WHERE is_default enforces the
+        invariant of at most one default per kind.
+      tags: [ArrServices]
+      responses:
+        '200':
+          description: Updated service.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/ArrService' } }
+
+  /api/v1/discover/search:
+    get:
+      summary: TMDB search-multi enriched with library + request state
+      description: |
+        Returns up to `limit` titles from TMDB. Each row is decorated with whether
+        the title is already in the user's library (`in_library`, `library_item_id`)
+        and whether the calling user already has an open request for it
+        (`has_active_request`, `active_request_id`, `active_request_status`).
+        Returns 503 with code TMDB_UNAVAILABLE when no TMDB key is configured.
+      tags: [Discover]
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        '200':
+          description: Discover results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiscoverItem' }
+        '400': { description: Missing query. }
+        '503': { description: TMDB not configured. }
+
+  /api/v1/requests:
+    get:
+      summary: List requests
+      description: |
+        Default scope is the calling user's own history. Admins may pass
+        `scope=all` to see the full server queue. Optional `status` filter narrows
+        to a single state.
+      tags: [Requests]
+      parameters:
+        - in: query
+          name: scope
+          schema: { type: string, enum: [mine, all], default: mine }
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, approved, declined, downloading, available, failed] }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: List of requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MediaRequest' }
+                  meta: { $ref: '#/components/schemas/ListMeta' }
+        '403': { description: scope=all is admin-only. }
+    post:
+      summary: Submit a new request
+      tags: [Requests]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, tmdb_id]
+              properties:
+                type:                  { type: string, enum: [movie, show] }
+                tmdb_id:               { type: integer }
+                seasons:
+                  description: Optional season numbers for show requests; omit for full series.
+                  type: array
+                  items: { type: integer }
+                requested_service_id:  { type: string, format: uuid, nullable: true, description: User's preferred arr service (e.g. 4K vs 1080p). Admin can override at approve time. }
+                quality_profile_id:    { type: integer, nullable: true }
+                root_folder:           { type: string,  nullable: true }
+      responses:
+        '201':
+          description: Request created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/MediaRequest' } }
+        '400': { description: Validation error. }
+        '409': { description: Already an active request for this title. }
+
+  /api/v1/requests/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    get:
+      summary: Get a request (owner or admin)
+      tags: [Requests]
+      responses:
+        '200':
+          description: Request.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/MediaRequest' } }
+        '403': { description: Not the owner. }
+        '404': { description: Not found. }
+
+  /api/v1/requests/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    post:
+      summary: Withdraw a still-pending request (owner only)
+      tags: [Requests]
+      responses:
+        '204': { description: Cancelled. }
+        '403': { description: Not the owner. }
+        '409': { description: Request is already decided and cannot be cancelled. }
+
+  /api/v1/admin/requests/{id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    post:
+      summary: Approve a pending request and dispatch it to the arr service
+      description: |
+        Body fields override the per-request and per-service defaults at approval
+        time — useful when redirecting a request to a different arr instance than
+        the user originally chose.
+      tags: [Requests]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service_id:         { type: string, format: uuid, nullable: true }
+                quality_profile_id: { type: integer, nullable: true }
+                root_folder:        { type: string,  nullable: true }
+      responses:
+        '200':
+          description: Approved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/MediaRequest' } }
+        '400': { description: No arr service configured / mismatched / disabled / arr add failed. }
+        '409': { description: Request is no longer pending. }
+
+  /api/v1/admin/requests/{id}/decline:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    post:
+      summary: Decline a pending request
+      tags: [Requests]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, description: Optional message shown to the requester. }
+      responses:
+        '200':
+          description: Declined.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/MediaRequest' } }
+        '409': { description: Request is no longer pending. }
+
+  /api/v1/admin/requests/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    delete:
+      summary: Hard-delete a request (admin escape hatch)
+      description: Does not contact the upstream arr instance — only the OnScreen row goes away.
+      tags: [Requests]
+      responses:
+        '204': { description: Deleted. }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: paseto-v4
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: os_access
+
+  parameters:
+    UUID:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Offset:
+      in: query
+      name: offset
+      schema: { type: integer, minimum: 0, default: 0 }
+
+  responses:
+    BoolEnabled:
+      description: Boolean visibility flag.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+    BadRequest:
+      description: Malformed request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: Caller is authenticated but not allowed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Conflict:
+      description: Duplicate or state conflict.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  schemas:
+    # ── Envelopes ──────────────────────────────────────────────────────────
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:       { type: string, description: 'UPPER_SNAKE_CASE machine code.' }
+            message:    { type: string }
+            request_id: { type: string }
+    ListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          type: object
+          properties:
+            total:  { type: integer, format: int64, description: '`-1` when total is unknown (load-more pagination).' }
+            cursor: { type: string }
+
+    # ── Auth ───────────────────────────────────────────────────────────────
+    TokenPair:
+      type: object
+      properties:
+        access_token:  { type: string }
+        refresh_token: { type: string }
+        expires_at:    { type: string, format: date-time }
+        user_id:       { type: string, format: uuid }
+        username:      { type: string }
+        is_admin:      { type: boolean }
+    TokenPairEnvelope:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/TokenPair' }
+    UserInfo:
+      type: object
+      properties:
+        id:       { type: string, format: uuid }
+        username: { type: string }
+        is_admin: { type: boolean }
+
+    # ── Pairing ────────────────────────────────────────────────────────────
+    PairCodeResponse:
+      type: object
+      properties:
+        pin:           { type: string, minLength: 6, maxLength: 6 }
+        device_token:  { type: string, format: uuid }
+        expires_in:    { type: integer, description: 'Seconds until expiry.' }
+        poll_interval: { type: integer, description: 'Suggested poll interval, seconds.' }
+    PairPollResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [pending, claimed, expired] }
+        tokens: { $ref: '#/components/schemas/TokenPair' }
+
+    # ── System ─────────────────────────────────────────────────────────────
+    SetupStatusEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            user_count:  { type: integer, format: int64 }
+            initialized: { type: boolean }
+    CapabilitiesEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            server:
+              type: object
+              properties:
+                name:       { type: string }
+                machine_id: { type: string }
+                version:    { type: string }
+                started_at: { type: string, format: date-time }
+            features:
+              type: object
+              properties:
+                transcode:          { type: boolean }
+                trickplay:          { type: boolean }
+                subtitles_external: { type: boolean }
+                subtitles_ocr:      { type: boolean }
+                oidc:               { type: boolean }
+                ldap:               { type: boolean }
+                device_pairing:     { type: boolean }
+                plugins:            { type: boolean }
+                backup:             { type: boolean }
+                people_credits:     { type: boolean }
+                photos:             { type: boolean }
+                music:              { type: boolean }
+                webhooks:           { type: boolean }
+                notifications:      { type: boolean }
+            limits:
+              type: object
+              properties:
+                max_request_bytes:  { type: integer }
+                max_artwork_dim:    { type: integer }
+                max_pagination:     { type: integer }
+            discovery:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                port:    { type: integer }
+
+    # ── Libraries / items ──────────────────────────────────────────────────
+    Library:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string }
+        type:         { type: string, enum: [movie, show, music, photo, mixed] }
+        scan_paths:   { type: array, items: { type: string } }
+        item_count:   { type: integer, format: int64 }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+    LibraryListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Library' }
+    LibraryCreate:
+      type: object
+      required: [name, type, scan_paths]
+      properties:
+        name:       { type: string }
+        type:       { type: string, enum: [movie, show, music, photo, mixed] }
+        scan_paths: { type: array, items: { type: string } }
+    LibraryUpdate:
+      type: object
+      properties:
+        name:       { type: string }
+        scan_paths: { type: array, items: { type: string } }
+    GenreCount:
+      type: object
+      properties:
+        genre: { type: string }
+        count: { type: integer, format: int64 }
+    YearCount:
+      type: object
+      properties:
+        year:  { type: integer }
+        count: { type: integer, format: int64 }
+    MediaItem:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        library_id:   { type: string, format: uuid }
+        title:        { type: string }
+        type:         { type: string }
+        year:         { type: integer, nullable: true }
+        summary:      { type: string, nullable: true }
+        rating:       { type: number, format: float, nullable: true }
+        duration_ms:  { type: integer, format: int64, nullable: true }
+        poster_path:  { type: string, nullable: true }
+        thumb_path:   { type: string, nullable: true }
+        content_rating: { type: string, nullable: true }
+    MediaItemListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MediaItem' }
+        meta:
+          type: object
+          properties:
+            total:  { type: integer, format: int64 }
+            cursor: { type: string }
+    AudioStream:
+      type: object
+      properties:
+        index:    { type: integer }
+        codec:    { type: string }
+        channels: { type: integer }
+        language: { type: string }
+        title:    { type: string }
+    SubtitleStream:
+      type: object
+      properties:
+        index:    { type: integer }
+        codec:    { type: string }
+        language: { type: string }
+        title:    { type: string }
+        forced:   { type: boolean }
+    ExternalSubtitle:
+      type: object
+      properties:
+        id:       { type: string, format: uuid }
+        language: { type: string }
+        format:   { type: string }
+        url:      { type: string }
+    Chapter:
+      type: object
+      properties:
+        title:    { type: string }
+        start_ms: { type: integer, format: int64 }
+        end_ms:   { type: integer, format: int64 }
+    Marker:
+      type: object
+      properties:
+        kind:     { type: string, enum: [intro, recap, credits] }
+        start_ms: { type: integer, format: int64 }
+        end_ms:   { type: integer, format: int64 }
+        source:   { type: string }
+    ItemFile:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        stream_url:        { type: string }
+        container:         { type: string, nullable: true }
+        video_codec:       { type: string, nullable: true }
+        audio_codec:       { type: string, nullable: true }
+        resolution_w:      { type: integer, nullable: true }
+        resolution_h:      { type: integer, nullable: true }
+        bitrate:           { type: integer, format: int64, nullable: true }
+        hdr_type:          { type: string, nullable: true }
+        duration_ms:       { type: integer, format: int64, nullable: true }
+        faststart:         { type: boolean }
+        audio_streams:     { type: array, items: { $ref: '#/components/schemas/AudioStream' } }
+        subtitle_streams:  { type: array, items: { $ref: '#/components/schemas/SubtitleStream' } }
+        external_subtitles: { type: array, items: { $ref: '#/components/schemas/ExternalSubtitle' } }
+        chapters:          { type: array, items: { $ref: '#/components/schemas/Chapter' } }
+    ItemDetail:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        library_id:     { type: string, format: uuid }
+        title:          { type: string }
+        type:           { type: string }
+        year:           { type: integer, nullable: true }
+        summary:        { type: string, nullable: true }
+        rating:         { type: number, format: float, nullable: true }
+        duration_ms:    { type: integer, format: int64, nullable: true }
+        poster_path:    { type: string, nullable: true }
+        fanart_path:    { type: string, nullable: true }
+        content_rating: { type: string, nullable: true }
+        genres:         { type: array, items: { type: string } }
+        parent_id:      { type: string, nullable: true, format: uuid }
+        index:          { type: integer, nullable: true }
+        view_offset_ms: { type: integer, format: int64 }
+        is_favorite:    { type: boolean }
+        updated_at:     { type: integer, format: int64 }
+        files:          { type: array, items: { $ref: '#/components/schemas/ItemFile' } }
+        markers:        { type: array, items: { $ref: '#/components/schemas/Marker' } }
+    ChildItem:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        title:          { type: string }
+        type:           { type: string }
+        year:           { type: integer, nullable: true }
+        summary:        { type: string, nullable: true }
+        rating:         { type: number, format: float, nullable: true }
+        duration_ms:    { type: integer, format: int64, nullable: true }
+        poster_path:    { type: string, nullable: true }
+        thumb_path:     { type: string, nullable: true }
+        index:          { type: integer, nullable: true }
+        view_offset_ms: { type: integer, format: int64 }
+        watched:        { type: boolean }
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: integer, format: int64 }
+    MatchCandidate:
+      type: object
+      properties:
+        tmdb_id:    { type: integer }
+        title:      { type: string }
+        year:       { type: integer }
+        summary:    { type: string }
+        poster_url: { type: string }
+        rating:     { type: number, format: float }
+    PhotoEXIF:
+      type: object
+      properties:
+        taken_at:        { type: string, format: date-time, nullable: true }
+        camera_make:     { type: string, nullable: true }
+        camera_model:    { type: string, nullable: true }
+        lens_model:      { type: string, nullable: true }
+        focal_length_mm: { type: number, format: float, nullable: true }
+
+    # ── Search / Hub / History / Favorites ─────────────────────────────────
+    SearchResult:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        library_id:  { type: string, format: uuid }
+        title:       { type: string }
+        type:        { type: string }
+        year:        { type: integer, nullable: true }
+        poster_path: { type: string, nullable: true }
+        thumb_path:  { type: string, nullable: true }
+    Hub:
+      type: object
+      properties:
+        continue_watching: { type: array, items: { $ref: '#/components/schemas/ChildItem' } }
+        recently_added:    { type: array, items: { $ref: '#/components/schemas/MediaItem' } }
+        on_deck:           { type: array, items: { $ref: '#/components/schemas/ChildItem' } }
+    WatchHistoryItem:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        media_id:     { type: string, format: uuid }
+        title:        { type: string }
+        type:         { type: string }
+        year:         { type: integer, nullable: true }
+        thumb_path:   { type: string, nullable: true }
+        client_name:  { type: string, nullable: true }
+        duration_ms:  { type: integer, format: int64, nullable: true }
+        occurred_at:  { type: string, format: date-time }
+    FavoriteItem:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        library_id:   { type: string, format: uuid }
+        type:         { type: string }
+        title:        { type: string }
+        year:         { type: integer, nullable: true }
+        summary:      { type: string, nullable: true }
+        poster_path:  { type: string, nullable: true }
+        thumb_path:   { type: string, nullable: true }
+        duration_ms:  { type: integer, format: int64, nullable: true }
+        favorited_at: { type: integer, format: int64, description: 'Unix milliseconds.' }
+
+    # ── People ─────────────────────────────────────────────────────────────
+    PersonSummary:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string }
+        photo_path:  { type: string, nullable: true }
+    Credit:
+      type: object
+      properties:
+        person_id:  { type: string, format: uuid }
+        name:       { type: string }
+        role:       { type: string, enum: [actor, director, writer] }
+        character:  { type: string, nullable: true }
+        photo_path: { type: string, nullable: true }
+    Person:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        biography:  { type: string, nullable: true }
+        birth_date: { type: string, format: date, nullable: true }
+        photo_path: { type: string, nullable: true }
+    FilmographyEntry:
+      type: object
+      properties:
+        item_id:     { type: string, format: uuid }
+        title:       { type: string }
+        year:        { type: integer, nullable: true }
+        role:        { type: string }
+        character:   { type: string, nullable: true }
+        poster_path: { type: string, nullable: true }
+
+    # ── Subtitles / Trickplay ──────────────────────────────────────────────
+    SubtitleSearchResult:
+      type: object
+      properties:
+        provider:         { type: string }
+        provider_file_id: { type: string }
+        language:         { type: string }
+        release:          { type: string }
+        downloads:        { type: integer }
+        rating:           { type: number, format: float }
+    TrickplayStatus:
+      type: object
+      properties:
+        status:        { type: string, enum: [absent, pending, ready, failed] }
+        sprite_count:  { type: integer }
+        interval_ms:   { type: integer }
+        index_url:     { type: string, nullable: true }
+
+    # ── Transcode ──────────────────────────────────────────────────────────
+    TranscodeStartRequest:
+      type: object
+      properties:
+        file_id:       { type: string, format: uuid }
+        max_height:    { type: integer }
+        max_bitrate:   { type: integer, format: int64 }
+        prefer_hevc:   { type: boolean }
+        audio_index:   { type: integer }
+        subtitle_index: { type: integer }
+    TranscodeStartResponse:
+      type: object
+      properties:
+        session_id:   { type: string }
+        playlist_url: { type: string }
+        token:        { type: string }
+        decision:     { type: string, enum: [direct, transcode] }
+
+    # ── Notifications / Sessions ───────────────────────────────────────────
+    Notification:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        type:       { type: string }
+        title:      { type: string }
+        body:       { type: string }
+        item_id:    { type: string, format: uuid, nullable: true }
+        read:       { type: boolean }
+        created_at: { type: integer, format: int64, description: 'Unix milliseconds.' }
+    Session:
+      type: object
+      properties:
+        id:           { type: string }
+        user_id:      { type: string, format: uuid }
+        username:     { type: string }
+        client_name:  { type: string }
+        item_id:      { type: string, format: uuid }
+        title:        { type: string }
+        position_ms:  { type: integer, format: int64 }
+        duration_ms:  { type: integer, format: int64 }
+        decision:     { type: string, enum: [direct, transcode] }
+        started_at:   { type: string, format: date-time }
+
+    # ── Users / preferences / profiles ─────────────────────────────────────
+    Preferences:
+      type: object
+      additionalProperties: true
+      description: Free-form per-user preferences (subtitle defaults, theme, etc.).
+    ManagedProfile:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        owner_id:   { type: string, format: uuid }
+        name:       { type: string }
+        created_at: { type: string, format: date-time }
+
+    # ── Collections / Playlists ────────────────────────────────────────────
+    Collection:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        summary:    { type: string, nullable: true }
+        item_count: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CollectionItem:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        title:      { type: string }
+        type:       { type: string }
+        year:       { type: integer, nullable: true }
+        poster_path: { type: string, nullable: true }
+    Playlist:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        owner_id:   { type: string, format: uuid }
+        name:       { type: string }
+        summary:    { type: string, nullable: true }
+        item_count: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    PlaylistItem:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        item_id:     { type: string, format: uuid }
+        position:    { type: integer }
+        title:       { type: string }
+        type:        { type: string }
+        poster_path: { type: string, nullable: true }
+
+    # ── Webhooks / Plugins / Tasks / Audit / Invites ───────────────────────
+    Webhook:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string }
+        url:          { type: string, format: uri }
+        events:       { type: array, items: { type: string } }
+        enabled:      { type: boolean }
+        secret_set:   { type: boolean }
+        created_at:   { type: string, format: date-time }
+    WebhookCreate:
+      type: object
+      required: [name, url, events]
+      properties:
+        name:    { type: string }
+        url:     { type: string, format: uri }
+        events:  { type: array, items: { type: string } }
+        secret:  { type: string }
+        enabled: { type: boolean }
+    Plugin:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string }
+        endpoint:    { type: string, format: uri }
+        enabled:     { type: boolean }
+        capabilities: { type: array, items: { type: string } }
+        last_seen:   { type: string, format: date-time, nullable: true }
+    PluginCreate:
+      type: object
+      required: [name, endpoint]
+      properties:
+        name:     { type: string }
+        endpoint: { type: string, format: uri }
+        api_key:  { type: string }
+        enabled:  { type: boolean }
+    ScheduledTask:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string }
+        task_type:    { type: string }
+        config:       { type: object, additionalProperties: true }
+        cron_expr:    { type: string }
+        enabled:      { type: boolean }
+        last_run_at:  { type: string, format: date-time, nullable: true }
+        next_run_at:  { type: string, format: date-time }
+        last_status:  { type: string }
+        last_error:   { type: string }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+    ScheduledTaskCreate:
+      type: object
+      required: [name, task_type, cron_expr]
+      properties:
+        name:      { type: string }
+        task_type: { type: string }
+        config:    { type: object, additionalProperties: true }
+        cron_expr: { type: string }
+        enabled:   { type: boolean }
+    ScheduledTaskUpdate:
+      type: object
+      properties:
+        name:      { type: string }
+        task_type: { type: string }
+        config:    { type: object, additionalProperties: true }
+        cron_expr: { type: string }
+        enabled:   { type: boolean }
+    TaskRun:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        task_id:    { type: string, format: uuid }
+        started_at: { type: string, format: date-time }
+        ended_at:   { type: string, format: date-time, nullable: true }
+        status:     { type: string, enum: [running, success, failure, skipped] }
+        output:     { type: string }
+        error:      { type: string }
+    AuditEntry:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        user_id:    { type: string, format: uuid, nullable: true }
+        action:     { type: string }
+        target:     { type: string, nullable: true }
+        detail:     { type: object, additionalProperties: true }
+        ip_addr:    { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+    Invite:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        email:      { type: string, format: email, nullable: true }
+        token:      { type: string, description: 'Only present on create.' }
+        expires_at: { type: string, format: date-time }
+        used_at:    { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    ListMeta:
+      type: object
+      properties:
+        total:  { type: integer, format: int64, description: '`-1` when total is unknown (load-more pagination).' }
+        cursor: { type: string }
+
+    ArrService:
+      type: object
+      description: |
+        A single Radarr/Sonarr instance. Multi-instance is supported per kind —
+        is_default flags the one OnScreen will use when no per-request override
+        is supplied.
+      properties:
+        id:                          { type: string, format: uuid }
+        name:                        { type: string }
+        kind:                        { type: string, enum: [radarr, sonarr] }
+        base_url:                    { type: string }
+        api_key_set:                 { type: boolean, description: api_key value is never returned; this flag indicates whether one is stored. }
+        default_quality_profile_id:  { type: integer, nullable: true }
+        default_root_folder:         { type: string,  nullable: true }
+        default_tags:                { type: array, items: { type: integer } }
+        minimum_availability:        { type: string, nullable: true, description: 'Radarr only: announced | inCinemas | released' }
+        series_type:                 { type: string, nullable: true, description: 'Sonarr only: standard | daily | anime' }
+        season_folder:               { type: boolean, nullable: true, description: Sonarr only. }
+        language_profile_id:         { type: integer, nullable: true, description: Sonarr only (legacy v3). }
+        is_default:                  { type: boolean }
+        enabled:                     { type: boolean }
+        created_at:                  { type: string, format: date-time }
+        updated_at:                  { type: string, format: date-time }
+
+    ArrServiceCreate:
+      type: object
+      required: [name, kind, base_url, api_key]
+      properties:
+        name:                        { type: string }
+        kind:                        { type: string, enum: [radarr, sonarr] }
+        base_url:                    { type: string }
+        api_key:                     { type: string }
+        default_quality_profile_id:  { type: integer, nullable: true }
+        default_root_folder:         { type: string,  nullable: true }
+        default_tags:                { type: array, items: { type: integer } }
+        minimum_availability:        { type: string, nullable: true }
+        series_type:                 { type: string, nullable: true }
+        season_folder:               { type: boolean, nullable: true }
+        language_profile_id:         { type: integer, nullable: true }
+        is_default:                  { type: boolean, default: false }
+        enabled:                     { type: boolean, default: true }
+
+    ArrServiceUpdate:
+      type: object
+      description: |
+        Every field is optional. Send `api_key` only when rotating the credential —
+        an omitted or empty `api_key` keeps the existing value. is_default is not
+        settable here; use POST /api/v1/admin/arr-services/{id}/set-default.
+      properties:
+        name:                        { type: string }
+        base_url:                    { type: string }
+        api_key:                     { type: string }
+        default_quality_profile_id:  { type: integer, nullable: true }
+        default_root_folder:         { type: string,  nullable: true }
+        default_tags:                { type: array, items: { type: integer } }
+        minimum_availability:        { type: string, nullable: true }
+        series_type:                 { type: string, nullable: true }
+        season_folder:               { type: boolean, nullable: true }
+        language_profile_id:         { type: integer, nullable: true }
+        enabled:                     { type: boolean }
+
+    ArrProbeResult:
+      type: object
+      properties:
+        status:    { type: string, example: ok }
+        version:   { type: string }
+        app_name:  { type: string }
+        quality_profiles:
+          type: array
+          items:
+            type: object
+            properties: { id: { type: integer }, name: { type: string } }
+        root_folders:
+          type: array
+          items:
+            type: object
+            properties:
+              id:         { type: integer }
+              path:       { type: string }
+              free_space: { type: integer, format: int64 }
+        tags:
+          type: array
+          items:
+            type: object
+            properties: { id: { type: integer }, label: { type: string } }
+        language_profiles:
+          type: array
+          items:
+            type: object
+            properties: { id: { type: integer }, name: { type: string } }
+
+    DiscoverItem:
+      type: object
+      properties:
+        type:                  { type: string, enum: [movie, show] }
+        tmdb_id:               { type: integer }
+        title:                 { type: string }
+        year:                  { type: integer }
+        overview:              { type: string }
+        rating:                { type: number, format: float }
+        poster_url:            { type: string }
+        fanart_url:            { type: string }
+        in_library:            { type: boolean }
+        library_item_id:       { type: string, format: uuid, nullable: true }
+        has_active_request:    { type: boolean }
+        active_request_id:     { type: string, format: uuid, nullable: true }
+        active_request_status: { type: string, nullable: true }
+
+    MediaRequest:
+      type: object
+      properties:
+        id:                    { type: string, format: uuid }
+        user_id:               { type: string, format: uuid }
+        type:                  { type: string, enum: [movie, show] }
+        tmdb_id:               { type: integer }
+        title:                 { type: string }
+        year:                  { type: integer, nullable: true }
+        poster_url:            { type: string, nullable: true }
+        overview:              { type: string, nullable: true }
+        status:                { type: string, enum: [pending, approved, declined, downloading, available, failed] }
+        seasons:               { type: array, items: { type: integer } }
+        requested_service_id:  { type: string, format: uuid, nullable: true, description: User's preferred arr service. }
+        quality_profile_id:    { type: integer, nullable: true }
+        root_folder:           { type: string,  nullable: true }
+        service_id:            { type: string, format: uuid, nullable: true, description: Bound at approve time; nulled if the service is later deleted. }
+        decline_reason:        { type: string, nullable: true }
+        decided_by:            { type: string, format: uuid, nullable: true }
+        decided_at:            { type: string, format: date-time, nullable: true }
+        fulfilled_item_id:     { type: string, format: uuid, nullable: true, description: Set when the matching media_item appears post-import. }
+        fulfilled_at:          { type: string, format: date-time, nullable: true }
+        created_at:            { type: string, format: date-time }
+        updated_at:            { type: string, format: date-time }

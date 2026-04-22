@@ -195,6 +195,34 @@ func assertContentType(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 }
 
+func TestParsePagination(t *testing.T) {
+	cases := []struct {
+		name       string
+		url        string
+		def, max   int
+		wantLimit  int32
+		wantOffset int32
+	}{
+		{"defaults", "/x", 50, 200, 50, 0},
+		{"override", "/x?limit=10&offset=20", 50, 200, 10, 20},
+		{"clamp_max", "/x?limit=99999", 50, 200, 200, 0},
+		{"negative_limit_falls_back", "/x?limit=-5", 50, 200, 50, 0},
+		{"negative_offset_falls_back", "/x?offset=-1", 50, 200, 50, 0},
+		{"non_numeric_falls_back", "/x?limit=foo&offset=bar", 50, 200, 50, 0},
+		{"package_default_max", "/x?limit=99999", 50, 0, 200, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tc.url, nil)
+			p := ParsePagination(req, tc.def, tc.max)
+			if p.Limit != tc.wantLimit || p.Offset != tc.wantOffset {
+				t.Errorf("got (%d, %d), want (%d, %d)",
+					p.Limit, p.Offset, tc.wantLimit, tc.wantOffset)
+			}
+		})
+	}
+}
+
 func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var body map[string]any

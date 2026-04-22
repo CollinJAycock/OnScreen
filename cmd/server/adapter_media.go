@@ -388,6 +388,67 @@ func (a *mediaAdapter) SoftDeleteEmptyContainerItems(ctx context.Context, librar
 	return a.q.SoftDeleteEmptyContainerItems(ctx, libraryID)
 }
 
+func (a *mediaAdapter) UpsertPhotoMetadata(ctx context.Context, p media.PhotoMetadataParams) error {
+	return a.q.UpsertPhotoMetadata(ctx, photoMetadataParamsToGen(p))
+}
+
+func (a *mediaAdapter) GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*media.PhotoMetadata, error) {
+	row, err := a.q.GetPhotoMetadata(ctx, itemID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, media.ErrNotFound
+		}
+		return nil, err
+	}
+	out := &media.PhotoMetadata{
+		ItemID:        row.ItemID,
+		CameraMake:    row.CameraMake,
+		CameraModel:   row.CameraModel,
+		LensModel:     row.LensModel,
+		FocalLengthMM: row.FocalLengthMm,
+		Aperture:      row.Aperture,
+		ShutterSpeed:  row.ShutterSpeed,
+		ISO:           row.Iso,
+		Flash:         row.Flash,
+		Orientation:   row.Orientation,
+		Width:         row.Width,
+		Height:        row.Height,
+		GPSLat:        row.GpsLat,
+		GPSLon:        row.GpsLon,
+		GPSAlt:        row.GpsAlt,
+	}
+	if row.TakenAt.Valid {
+		t := row.TakenAt.Time
+		out.TakenAt = &t
+	}
+	return out, nil
+}
+
+func photoMetadataParamsToGen(p media.PhotoMetadataParams) gen.UpsertPhotoMetadataParams {
+	out := gen.UpsertPhotoMetadataParams{
+		ItemID:        p.ItemID,
+		CameraMake:    p.CameraMake,
+		CameraModel:   p.CameraModel,
+		LensModel:     p.LensModel,
+		FocalLengthMm: p.FocalLengthMM,
+		Aperture:      p.Aperture,
+		ShutterSpeed:  p.ShutterSpeed,
+		Iso:           p.ISO,
+		Flash:         p.Flash,
+		Orientation:   p.Orientation,
+		Width:         p.Width,
+		Height:        p.Height,
+		GpsLat:        p.GPSLat,
+		GpsLon:        p.GPSLon,
+		GpsAlt:        p.GPSAlt,
+		RawExif:       p.RawEXIF,
+	}
+	if p.TakenAt != nil {
+		out.TakenAt = pgtype.Timestamptz{Time: *p.TakenAt, Valid: true}
+	}
+	return out
+}
+
 func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]media.File, error) {
 	fs, err := a.q.ListMissingFilesOlderThan(ctx, pgtype.Timestamptz{Time: before, Valid: true})
 	if err != nil {
@@ -482,6 +543,22 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredDateAddedAscRowToItem), nil
 
+	case "taken_at_desc":
+		tap := gen.ListMediaItemsByTakenAtParams(p)
+		rows, err := a.q.ListMediaItemsByTakenAt(ctx, tap)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredTakenAtRowToItem), nil
+
+	case "taken_at_asc":
+		taap := gen.ListMediaItemsByTakenAtAscParams(p)
+		rows, err := a.q.ListMediaItemsByTakenAtAsc(ctx, taap)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredTakenAtAscRowToItem), nil
+
 	default:
 		rows, err := a.q.ListMediaItemsByTitle(ctx, p)
 		if err != nil {
@@ -563,6 +640,22 @@ func genFilteredDateAddedRowToItem(r gen.ListMediaItemsByDateAddedRow) media.Ite
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
 }
 func genFilteredDateAddedAscRowToItem(r gen.ListMediaItemsByDateAddedAscRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredTakenAtRowToItem(r gen.ListMediaItemsByTakenAtRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredTakenAtAscRowToItem(r gen.ListMediaItemsByTakenAtAscRow) media.Item {
 	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
 		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
