@@ -448,6 +448,8 @@ func TestEnrich_NoEnricher(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
+	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "admin", IsAdmin: true})
+	req = req.WithContext(ctx)
 	h.Enrich(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -461,10 +463,27 @@ func TestEnrich_Success(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
+	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "admin", IsAdmin: true})
+	req = req.WithContext(ctx)
 	h.Enrich(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestEnrich_NonAdminForbidden(t *testing.T) {
+	enricher := &mockEnricher{}
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, enricher, nil, nil, nil, nil, slog.Default())
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
+	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"})
+	req = req.WithContext(ctx)
+	h.Enrich(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
 

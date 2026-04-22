@@ -57,7 +57,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
       libgnutls28-dev libzimg-dev ocl-icd-libopencl1 \
-      libchromaprint-tools postgresql-client && \
+      libchromaprint-tools postgresql-client \
+      tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa tesseract-ocr-fra \
+      tesseract-ocr-deu tesseract-ocr-ita tesseract-ocr-por tesseract-ocr-jpn \
+      tesseract-ocr-chi-sim tesseract-ocr-chi-tra tesseract-ocr-kor \
+      tesseract-ocr-rus tesseract-ocr-ara && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /etc/OpenCL/vendors && \
     echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd

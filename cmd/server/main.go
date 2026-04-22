@@ -45,6 +45,7 @@ import (
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/subtitles"
+	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/trickplay"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
@@ -318,7 +319,9 @@ func run() error {
 	arrHandler := v1.NewArrHandler(settingsSvc, arrAdapter, logger)
 	favoritesHandler := v1.NewFavoritesHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc)
 	favoritesChecker := &favoritesChecker{q: gen.New(roPool)}
-	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger)
+	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger).
+		WithLibraryAccess(libSvc).
+		WithAudit(auditLogger)
 
 	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
 	// rootDir holds sprite_NNN.jpg + index.vtt per item. Lives alongside the
@@ -356,13 +359,24 @@ func run() error {
 		}
 	}, "")
 	subtitleSvc := subtitles.New(subtitleProvider, gen.New(rwPool), subtitleCacheRoot, logger)
+	// OCR engine wires PGS/VOBSUB → WebVTT via ffmpeg + tesseract. The binaries
+	// ship in the runtime image; if they're missing here (dev box without them
+	// installed) OCR endpoints return ErrNoOCR — no crash at startup.
+	ocrEngine := &ocr.Engine{Logger: logger}
+	if err := ocrEngine.Available(); err != nil {
+		logger.Warn("ocr disabled — required binaries missing", "err", err)
+	} else {
+		subtitleSvc.SetOCR(ocrEngine)
+		logger.Info("subtitle OCR enabled (ffmpeg + tesseract on PATH)")
+	}
 	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
 		WithLibraryAccess(libSvc)
 
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
 		WithLibraryAccess(libSvc).
 		WithMarkers(intromarker.NewStore(rwPool)).
-		WithExternalSubtitles(subtitleSvc)
+		WithExternalSubtitles(subtitleSvc).
+		WithAudit(auditLogger)
 
 	// ── Embedded transcode worker ─────────────────────────────────────────────
 	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
@@ -440,38 +454,13 @@ func run() error {
 	inviteDB := &inviteAdapter{q: gen.New(rwPool)}
 	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, cfg.BaseURL, logger)
 
-	// ── Google OAuth2 SSO (optional) ─────────────────────────────────────────
-	var googleAuthHandler *v1.GoogleOAuthHandler
-	if cfg.GoogleOAuthEnabled() {
-		googleSvc := v1.NewGoogleAuthService(
-			gen.New(rwPool),
-			authSvc.issueTokenPair,
-			logger,
-		)
-		googleAuthHandler = v1.NewGoogleOAuthHandler(
-			cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.BaseURL,
-			googleSvc, logger,
-		)
-		logger.Info("google SSO enabled")
-	}
-
-	var githubAuthHandler *v1.GitHubOAuthHandler
-	if cfg.GitHubOAuthEnabled() {
-		githubAuthHandler = v1.NewGitHubOAuthHandler(
-			cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL,
-			gen.New(rwPool), authSvc.issueTokenPair, logger,
-		)
-		logger.Info("github SSO enabled")
-	}
-
-	var discordAuthHandler *v1.DiscordOAuthHandler
-	if cfg.DiscordOAuthEnabled() {
-		discordAuthHandler = v1.NewDiscordOAuthHandler(
-			cfg.DiscordClientID, cfg.DiscordClientSecret, cfg.BaseURL,
-			gen.New(rwPool), authSvc.issueTokenPair, logger,
-		)
-		logger.Info("discord SSO enabled")
-	}
+	// ── OIDC + LDAP (settings-driven, always wired) ───────────────────────────
+	// Both pull config from server_settings on each request, so admins enable
+	// and reconfigure them through the UI without a restart.
+	oidcSvc := v1.NewOIDCAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
+	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, cfg.BaseURL, logger)
+	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger)
+	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger)
 
 	// ── Notifications ────────────────────────────────────────────────────────
 	_ = notifServiceEarly // used by scanEnqueuer above
@@ -479,7 +468,7 @@ func run() error {
 
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
-	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, logger)
+	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, logger).WithAudit(auditLogger)
 
 	// ── Scheduler (cron-driven admin tasks) ──────────────────────────────────
 	// Registry holds handler implementations keyed by task_type. Built-ins
@@ -487,19 +476,23 @@ func run() error {
 	// the same registry.
 	schedRegistry := scheduler.NewRegistry()
 	schedRegistry.Register("backup_database", scheduler.NewBackupHandler(cfg.DatabaseURL))
-	schedRegistry.Register("scan_library", scheduler.NewScanHandler(
-		libEnqueuer,
-		scheduler.LibraryListerFunc(func(ctx context.Context) ([]uuid.UUID, error) {
-			libs, err := libSvc.List(ctx)
-			if err != nil {
-				return nil, err
-			}
-			ids := make([]uuid.UUID, len(libs))
-			for i, l := range libs {
-				ids[i] = l.ID
-			}
-			return ids, nil
-		}),
+	libIDLister := scheduler.LibraryListerFunc(func(ctx context.Context) ([]uuid.UUID, error) {
+		libs, err := libSvc.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]uuid.UUID, len(libs))
+		for i, l := range libs {
+			ids[i] = l.ID
+		}
+		return ids, nil
+	})
+	schedRegistry.Register("scan_library", scheduler.NewScanHandler(libEnqueuer, libIDLister))
+	schedRegistry.Register("ocr_subtitles", scheduler.NewOCRHandler(
+		mediaSvc,
+		subtitleSvc,
+		libIDLister,
+		&ocrExistsChecker{q: gen.New(roPool)},
 	))
 	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger)
 	tasksHandler := v1.NewTasksHandler(gen.New(rwPool), schedRegistry, logger)
@@ -545,9 +538,8 @@ func run() error {
 		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Playlists:          v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Arr:                arrHandler,
-		GoogleAuth:         googleAuthHandler,
-		GitHubAuth:         githubAuthHandler,
-		DiscordAuth:        discordAuthHandler,
+		OIDCAuth:           oidcAuthHandler,
+		LDAPAuth:           ldapAuthHandler,
 		Audit:              auditHandler,
 		Email:              emailHandler,
 		PasswordReset:      passwordResetHandler,
@@ -561,7 +553,6 @@ func run() error {
 		StreamTracker:      streamTracker,
 		Artwork:            artworkMgr,
 		ArtworkRoots:       scanPathsFn,
-		MediaPath:          cfg.MediaPath,
 		Logger:             logger,
 		Metrics:            metrics,
 		Auth_mw:            authMiddleware,

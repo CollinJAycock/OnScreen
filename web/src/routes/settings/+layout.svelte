@@ -22,6 +22,7 @@
     { href: '/settings/webhooks', label: 'Webhooks', exact: false },
     { href: '/settings/tasks', label: 'Tasks', exact: false },
     { href: '/settings/backup', label: 'Backup', exact: false },
+    { href: '/settings/sso', label: 'SSO', exact: false },
     { href: '/settings/audit', label: 'Audit Log', exact: false },
   ];
 

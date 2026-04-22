@@ -47,6 +47,28 @@ func (q *Queries) GetExternalSubtitle(ctx context.Context, id uuid.UUID) (Extern
 	return i, err
 }
 
+const hasOCRForStream = `-- name: HasOCRForStream :one
+SELECT EXISTS(
+  SELECT 1 FROM external_subtitles
+  WHERE file_id = $1 AND source = 'ocr' AND source_id = $2
+)
+`
+
+type HasOCRForStreamParams struct {
+	FileID   uuid.UUID `json:"file_id"`
+	SourceID *string   `json:"source_id"`
+}
+
+// Reports whether an OCR'd row already exists for (file, stream). Used by
+// the scheduler's ocr_subtitles sweep to skip files that have already
+// been processed.
+func (q *Queries) HasOCRForStream(ctx context.Context, arg HasOCRForStreamParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasOCRForStream, arg.FileID, arg.SourceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const insertExternalSubtitle = `-- name: InsertExternalSubtitle :one
 INSERT INTO external_subtitles (
     file_id, language, title, forced, sdh,

@@ -33,3 +33,12 @@ RETURNING id, file_id, language, title, forced, sdh, source, source_id,
 
 -- name: DeleteExternalSubtitle :exec
 DELETE FROM external_subtitles WHERE id = $1;
+
+-- name: HasOCRForStream :one
+-- Reports whether an OCR'd row already exists for (file, stream). Used by
+-- the scheduler's ocr_subtitles sweep to skip files that have already
+-- been processed.
+SELECT EXISTS(
+  SELECT 1 FROM external_subtitles
+  WHERE file_id = $1 AND source = 'ocr' AND source_id = $2
+);

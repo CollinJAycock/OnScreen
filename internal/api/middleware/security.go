@@ -17,6 +17,13 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Content-Security-Policy", csp)
+		// HSTS only when the request is actually HTTPS. Sending Strict-Transport-
+		// Security over plain HTTP is ignored by browsers per RFC 6797 §7.2,
+		// but gating it avoids confusing operators who curl --insecure in dev.
+		// 1 year max-age, includeSubDomains; preload is opt-in by the operator.
+		if IsSecure(r) {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

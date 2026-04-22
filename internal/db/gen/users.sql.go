@@ -48,6 +48,7 @@ INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
@@ -80,6 +81,9 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -94,6 +98,7 @@ INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
@@ -126,6 +131,9 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -140,6 +148,7 @@ INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
@@ -174,6 +183,9 @@ func (q *Queries) CreateGoogleUser(ctx context.Context, arg CreateGoogleUserPara
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -225,6 +237,7 @@ INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 `
@@ -257,6 +270,9 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -301,6 +317,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id uuid.UUID) error {
 const getUser = `-- name: GetUser :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -323,6 +340,9 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -335,6 +355,7 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 const getUserByDiscordID = `-- name: GetUserByDiscordID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -357,6 +378,9 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -369,6 +393,7 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -391,6 +416,9 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, erro
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -403,6 +431,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, erro
 const getUserByGitHubID = `-- name: GetUserByGitHubID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -425,6 +454,9 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -437,6 +469,7 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User
 const getUserByGoogleID = `-- name: GetUserByGoogleID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -459,6 +492,9 @@ func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
@@ -471,6 +507,7 @@ func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -493,6 +530,9 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,

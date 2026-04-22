@@ -178,9 +178,10 @@ export const authApi = {
   register: (username: string, password: string, email?: string) =>
     api.post<{ id: string; username: string }>('/auth/register', { username, password, email }),
   logout: () => api.post('/auth/logout'),
-  googleEnabled: () => api.get<{ enabled: boolean; client_id?: string }>('/auth/google/enabled'),
-  githubEnabled: () => api.get<{ enabled: boolean }>('/auth/github/enabled'),
-  discordEnabled: () => api.get<{ enabled: boolean }>('/auth/discord/enabled'),
+  oidcEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/oidc/enabled'),
+  ldapEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/ldap/enabled'),
+  ldapLogin: (username: string, password: string) =>
+    api.post<TokenPair>('/auth/ldap/login', { username, password }),
   forgotPasswordEnabled: () => api.get<{ enabled: boolean }>('/auth/forgot-password/enabled'),
   forgotPassword: (email: string) => api.post<{ message: string }>('/auth/forgot-password', { email }),
   resetPassword: (token: string, password: string) => api.post<{ message: string }>('/auth/reset-password', { token, password })
@@ -321,6 +322,34 @@ export interface OpenSubtitlesSettings {
   enabled: boolean;
 }
 
+export interface OIDCSettings {
+  enabled: boolean;
+  display_name: string;
+  issuer_url: string;
+  client_id: string;
+  client_secret: string; // "****" if set, "" if empty
+  scopes: string;
+  username_claim: string;
+  groups_claim: string;
+  admin_group: string;
+}
+
+export interface LDAPSettings {
+  enabled: boolean;
+  display_name: string;
+  host: string;
+  start_tls: boolean;
+  use_ldaps: boolean;
+  skip_tls_verify: boolean;
+  bind_dn: string;
+  bind_password: string; // "****" if set, "" if empty
+  user_search_base: string;
+  user_filter: string;
+  username_attr: string;
+  email_attr: string;
+  admin_group_dn: string;
+}
+
 export interface ServerSettings {
   tmdb_api_key: string;
   tvdb_api_key: string;
@@ -329,6 +358,8 @@ export interface ServerSettings {
   arr_path_mappings?: Record<string, string>;
   transcode_encoders: string;
   opensubtitles: OpenSubtitlesSettings;
+  oidc: OIDCSettings;
+  ldap: LDAPSettings;
 }
 
 export interface OpenSubtitlesUpdate {
@@ -531,6 +562,7 @@ export interface ExternalSubtitle {
   forced: boolean;
   sdh: boolean;
   source: string;
+  source_id?: string;
   url: string;
 }
 
@@ -769,6 +801,14 @@ export const subtitleApi = {
   }) => api.post<ExternalSubtitle>(`/items/${itemId}/subtitles/download`, body),
   remove: (itemId: string, subId: string) =>
     api.delete(`/items/${itemId}/subtitles/${subId}`),
+  ocr: (itemId: string, body: {
+    file_id: string;
+    stream_index: number;
+    language?: string;
+    title?: string;
+    forced?: boolean;
+    sdh?: boolean;
+  }) => api.post<ExternalSubtitle>(`/items/${itemId}/subtitles/ocr`, body),
 };
 
 export const favoritesApi = {

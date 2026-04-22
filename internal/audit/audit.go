@@ -30,6 +30,11 @@ const (
 	ActionInviteCreate   = "invite.create"
 	ActionLoginSuccess   = "auth.login_success"
 	ActionLoginFailed    = "auth.login_failed"
+	ActionItemEnrich     = "item.enrich"
+	ActionItemMatchApply = "item.match_apply"
+	ActionTranscodeStart = "transcode.start"
+	ActionBackupDownload = "backup.download"
+	ActionBackupRestore  = "backup.restore"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

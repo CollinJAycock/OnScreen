@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -710,5 +711,79 @@ func TestRegister_AdminCreatesNonAdmin(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.Data.Username != "newuser" {
 		t.Errorf("username: got %q, want %q", resp.Data.Username, "newuser")
+	}
+}
+
+// ── isSecure / trusted-proxy gate ───────────────────────────────────────────
+
+func TestIsSecure_TLSConn(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.TLS = &tls.ConnectionState{}
+	if !isSecure(r) {
+		t.Error("TLS connection must be Secure")
+	}
+}
+
+func TestIsSecure_PlainHTTP(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "203.0.113.5:443"
+	if isSecure(r) {
+		t.Error("plain HTTP must not be Secure")
+	}
+}
+
+func TestIsSecure_TrustsForwardedProtoFromLoopback(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.RemoteAddr = "127.0.0.1:55123"
+	if !isSecure(r) {
+		t.Error("X-Forwarded-Proto from loopback must be trusted")
+	}
+}
+
+func TestIsSecure_TrustsForwardedProtoFromPrivate(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.RemoteAddr = "10.0.5.7:443"
+	if !isSecure(r) {
+		t.Error("X-Forwarded-Proto from RFC1918 must be trusted")
+	}
+}
+
+func TestIsSecure_RejectsForwardedProtoFromPublic(t *testing.T) {
+	// An attacker with a direct connection to an exposed OnScreen instance
+	// must not be able to flip the Secure flag with a header.
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.RemoteAddr = "203.0.113.5:55555"
+	if isSecure(r) {
+		t.Error("X-Forwarded-Proto from public IP must NOT be trusted")
+	}
+}
+
+func TestClearAuthCookies_MatchesSetAttributes(t *testing.T) {
+	// Browsers will silently ignore a deletion cookie whose Path/Secure/SameSite
+	// don't match the cookie that was originally set. Logout would then leave
+	// the access cookie alive until its TTL expires.
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
+	r.RemoteAddr = "127.0.0.1:55555"
+	r.Header.Set("X-Forwarded-Proto", "https")
+	clearAuthCookies(w, r)
+
+	cookies := w.Result().Cookies()
+	if len(cookies) != 2 {
+		t.Fatalf("expected 2 cookies, got %d", len(cookies))
+	}
+	for _, c := range cookies {
+		if c.MaxAge != -1 {
+			t.Errorf("%s: MaxAge: got %d, want -1", c.Name, c.MaxAge)
+		}
+		if !c.HttpOnly {
+			t.Errorf("%s: must be HttpOnly", c.Name)
+		}
+		if !c.Secure {
+			t.Errorf("%s: must be Secure when X-Forwarded-Proto=https from loopback", c.Name)
+		}
 	}
 }

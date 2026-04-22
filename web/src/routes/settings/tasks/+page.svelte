@@ -37,6 +37,7 @@
     outputDir: string;
     retainCount: number;
     libraryId: string;
+    skipExisting: boolean;
     // raw fallback
     configJson: string;
   };
@@ -51,6 +52,7 @@
       outputDir: '/var/backups/onscreen',
       retainCount: 7,
       libraryId: 'all',
+      skipExisting: true,
       configJson: '{}'
     };
   }
@@ -122,6 +124,11 @@
     if (f.taskType === 'scan_library') {
       return f.libraryId === 'all' ? {} : { library_id: f.libraryId };
     }
+    if (f.taskType === 'ocr_subtitles') {
+      const cfg: Record<string, unknown> = { skip_existing: f.skipExisting };
+      if (f.libraryId !== 'all') cfg.library_id = f.libraryId;
+      return cfg;
+    }
     // Fallback: parse JSON textarea.
     try {
       const parsed = JSON.parse(f.configJson || '{}');
@@ -155,6 +162,9 @@
       f.retainCount = (cfg.retain_count as number) ?? 7;
     } else if (t.task_type === 'scan_library') {
       f.libraryId = (cfg.library_id as string) ?? 'all';
+    } else if (t.task_type === 'ocr_subtitles') {
+      f.libraryId = (cfg.library_id as string) ?? 'all';
+      f.skipExisting = (cfg.skip_existing as boolean) ?? true;
     }
     f.configJson = JSON.stringify(cfg, null, 2);
     return f;
@@ -415,6 +425,30 @@
               {/each}
             </select>
           </div>
+        {:else if addForm.taskType === 'ocr_subtitles'}
+          <div class="field">
+            <label for="add-ocr-library">Library</label>
+            <select id="add-ocr-library" bind:value={addForm.libraryId}>
+              <option value="all">All libraries</option>
+              {#each libraries as lib}
+                <option value={lib.id}>{lib.name}</option>
+              {/each}
+            </select>
+            <div class="hint">Walks every file and OCRs image-based subtitle streams (PGS/VOBSUB). Multi-hour on large libraries.</div>
+          </div>
+          <div class="field">
+            <label class="toggle-label">
+              <span>Skip files already OCR'd</span>
+              <button
+                class="toggle"
+                class:toggle-on={addForm.skipExisting}
+                on:click={() => addForm.skipExisting = !addForm.skipExisting}
+                type="button"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </label>
+          </div>
         {:else if addForm.taskType}
           <div class="field">
             <label for="add-config">Config (JSON)</label>
@@ -516,6 +550,29 @@
                     <option value={lib.id}>{lib.name}</option>
                   {/each}
                 </select>
+              </div>
+            {:else if editForm.taskType === 'ocr_subtitles'}
+              <div class="field">
+                <label for="edit-ocr-library">Library</label>
+                <select id="edit-ocr-library" bind:value={editForm.libraryId}>
+                  <option value="all">All libraries</option>
+                  {#each libraries as lib}
+                    <option value={lib.id}>{lib.name}</option>
+                  {/each}
+                </select>
+              </div>
+              <div class="field">
+                <label class="toggle-label">
+                  <span>Skip files already OCR'd</span>
+                  <button
+                    class="toggle"
+                    class:toggle-on={editForm.skipExisting}
+                    on:click={() => editForm.skipExisting = !editForm.skipExisting}
+                    type="button"
+                  >
+                    <span class="toggle-knob"></span>
+                  </button>
+                </label>
               </div>
             {:else}
               <div class="field">

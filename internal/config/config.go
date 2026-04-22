@@ -79,16 +79,10 @@ type Config struct {
 	// OTELEndpoint: tracing is disabled if unset.
 	OTELEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 
-	// ── OAuth / SSO (optional) ──────────────────────────────────────────
+	// ── SSO (optional) ──────────────────────────────────────────────────
 	// BaseURL: public URL of the server (e.g. https://media.example.com).
-	// Required for OAuth redirect URIs. Falls back to http://localhost:$LISTEN_ADDR.
-	BaseURL             string `env:"BASE_URL"`
-	GoogleClientID      string `env:"GOOGLE_CLIENT_ID"`
-	GoogleClientSecret  string `env:"GOOGLE_CLIENT_SECRET"`
-	GitHubClientID      string `env:"GITHUB_CLIENT_ID"`
-	GitHubClientSecret  string `env:"GITHUB_CLIENT_SECRET"`
-	DiscordClientID     string `env:"DISCORD_CLIENT_ID"`
-	DiscordClientSecret string `env:"DISCORD_CLIENT_SECRET"`
+	// Required for OIDC redirect URIs. Falls back to http://localhost:$LISTEN_ADDR.
+	BaseURL string `env:"BASE_URL"`
 
 	// ── Email / SMTP (optional) ─────────────────────────────────────────
 	SMTPHost     string `env:"SMTP_HOST"`
@@ -108,21 +102,6 @@ type Config struct {
 	// DevFrontendURL: when set (build tag dev), Go server proxies non-API requests
 	// to this URL (Vite dev server on :5173). Ignored in production builds.
 	DevFrontendURL string `env:"DEV_FRONTEND_URL"`
-}
-
-// GoogleOAuthEnabled returns true if Google SSO is configured.
-func (c *Config) GoogleOAuthEnabled() bool {
-	return c.GoogleClientID != "" && c.GoogleClientSecret != ""
-}
-
-// GitHubOAuthEnabled returns true if GitHub SSO is configured.
-func (c *Config) GitHubOAuthEnabled() bool {
-	return c.GitHubClientID != "" && c.GitHubClientSecret != ""
-}
-
-// DiscordOAuthEnabled returns true if Discord SSO is configured.
-func (c *Config) DiscordOAuthEnabled() bool {
-	return c.DiscordClientID != "" && c.DiscordClientSecret != ""
 }
 
 // SMTPEnabled returns true if SMTP email sending is configured.
@@ -194,23 +173,6 @@ func (c *Config) applyDefaults() error {
 	}
 	if c.TranscodeNVENCRC == "" {
 		c.TranscodeNVENCRC = "vbr"
-	}
-	// Validate OAuth pairs — if one half is set, the other must be too.
-	if (c.GoogleClientID == "") != (c.GoogleClientSecret == "") {
-		return fmt.Errorf("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set (or both empty)")
-	}
-	if (c.GitHubClientID == "") != (c.GitHubClientSecret == "") {
-		return fmt.Errorf("GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must both be set (or both empty)")
-	}
-	if (c.DiscordClientID == "") != (c.DiscordClientSecret == "") {
-		return fmt.Errorf("DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET must both be set (or both empty)")
-	}
-	// If any OAuth provider is enabled, BaseURL must be explicitly configured
-	// (the auto-generated localhost fallback is not suitable for redirect URIs).
-	if c.GoogleOAuthEnabled() || c.GitHubOAuthEnabled() || c.DiscordOAuthEnabled() {
-		if c.BaseURL == "" || c.BaseURL == "http://localhost"+c.ListenAddr {
-			return fmt.Errorf("BASE_URL must be set when an OAuth provider is enabled")
-		}
 	}
 	return nil
 }

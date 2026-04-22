@@ -34,6 +34,8 @@ type mockSettingsService struct {
 	fleet        settings.WorkerFleetConfig
 	setFleetErr  error
 	setFleetCall *settings.WorkerFleetConfig // captures last SetWorkerFleet call
+	oidc         settings.OIDCConfig
+	ldap         settings.LDAPConfig
 }
 
 func (m *mockSettingsService) TMDBAPIKey(_ context.Context) string {
@@ -88,6 +90,26 @@ func (m *mockSettingsService) OpenSubtitles(_ context.Context) settings.OpenSubt
 	return settings.OpenSubtitlesConfig{}
 }
 func (m *mockSettingsService) SetOpenSubtitles(_ context.Context, _ settings.OpenSubtitlesConfig) error {
+	return nil
+}
+func (m *mockSettingsService) OIDC(_ context.Context) settings.OIDCConfig {
+	return m.oidc
+}
+func (m *mockSettingsService) SetOIDC(_ context.Context, cfg settings.OIDCConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.oidc = cfg
+	return nil
+}
+func (m *mockSettingsService) LDAP(_ context.Context) settings.LDAPConfig {
+	return m.ldap
+}
+func (m *mockSettingsService) SetLDAP(_ context.Context, cfg settings.LDAPConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.ldap = cfg
 	return nil
 }
 
@@ -593,5 +615,147 @@ func TestSettings_GetWorkers_NilLister(t *testing.T) {
 	}
 	if len(resp.Data) != 0 {
 		t.Errorf("want empty array, got %d items", len(resp.Data))
+	}
+}
+
+// ── OIDC + LDAP DTO masking ─────────────────────────────────────────────────
+
+func TestSettings_GetMasksOIDCSecret(t *testing.T) {
+	svc := &mockSettingsService{
+		oidc: settings.OIDCConfig{
+			Enabled: true, IssuerURL: "https://idp", ClientID: "cid",
+			ClientSecret: "supersecret",
+		},
+	}
+	h := newSettingsHandler(svc)
+	rec := httptest.NewRecorder()
+	h.Get(rec, httptest.NewRequest("GET", "/", nil))
+
+	var resp struct {
+		Data struct {
+			OIDC struct {
+				ClientID     string `json:"client_id"`
+				ClientSecret string `json:"client_secret"`
+			} `json:"oidc"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Data.OIDC.ClientID != "cid" {
+		t.Errorf("client_id should not be masked: got %q", resp.Data.OIDC.ClientID)
+	}
+	if resp.Data.OIDC.ClientSecret != "****" {
+		t.Errorf("client_secret should be masked: got %q", resp.Data.OIDC.ClientSecret)
+	}
+}
+
+func TestSettings_GetMasksLDAPPassword(t *testing.T) {
+	svc := &mockSettingsService{
+		ldap: settings.LDAPConfig{
+			Enabled: true, Host: "ldap.example.com:389",
+			BindDN: "cn=svc", BindPassword: "topsecret",
+		},
+	}
+	h := newSettingsHandler(svc)
+	rec := httptest.NewRecorder()
+	h.Get(rec, httptest.NewRequest("GET", "/", nil))
+
+	var resp struct {
+		Data struct {
+			LDAP struct {
+				BindDN       string `json:"bind_dn"`
+				BindPassword string `json:"bind_password"`
+			} `json:"ldap"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Data.LDAP.BindDN != "cn=svc" {
+		t.Errorf("bind_dn should not be masked: got %q", resp.Data.LDAP.BindDN)
+	}
+	if resp.Data.LDAP.BindPassword != "****" {
+		t.Errorf("bind_password should be masked: got %q", resp.Data.LDAP.BindPassword)
+	}
+}
+
+func TestSettings_UpdateOIDC_PreservesMaskedSecret(t *testing.T) {
+	svc := &mockSettingsService{
+		oidc: settings.OIDCConfig{
+			Enabled: true, IssuerURL: "https://idp", ClientID: "cid",
+			ClientSecret: "original-secret",
+		},
+	}
+	h := newSettingsHandler(svc)
+	body := `{"oidc":{"enabled":true,"client_secret":"****","display_name":"Authentik"}}`
+	req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.oidc.ClientSecret != "original-secret" {
+		t.Errorf("masked secret was overwritten: got %q", svc.oidc.ClientSecret)
+	}
+	if svc.oidc.DisplayName != "Authentik" {
+		t.Errorf("display_name not updated: got %q", svc.oidc.DisplayName)
+	}
+}
+
+func TestSettings_UpdateOIDC_ReplacesNewSecret(t *testing.T) {
+	svc := &mockSettingsService{
+		oidc: settings.OIDCConfig{ClientSecret: "original-secret"},
+	}
+	h := newSettingsHandler(svc)
+	body := `{"oidc":{"client_secret":"new-secret"}}`
+	req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", rec.Code)
+	}
+	if svc.oidc.ClientSecret != "new-secret" {
+		t.Errorf("secret not replaced: got %q", svc.oidc.ClientSecret)
+	}
+}
+
+func TestSettings_UpdateLDAP_PreservesMaskedPassword(t *testing.T) {
+	svc := &mockSettingsService{
+		ldap: settings.LDAPConfig{
+			Enabled: true, Host: "ldap.example.com:389",
+			BindDN: "cn=svc", BindPassword: "original-pw",
+		},
+	}
+	h := newSettingsHandler(svc)
+	body := `{"ldap":{"enabled":true,"bind_password":"****","host":"new-host:636"}}`
+	req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.ldap.BindPassword != "original-pw" {
+		t.Errorf("masked password was overwritten: got %q", svc.ldap.BindPassword)
+	}
+	if svc.ldap.Host != "new-host:636" {
+		t.Errorf("host not updated: got %q", svc.ldap.Host)
+	}
+}
+
+func TestSettings_UpdateLDAP_ReplacesNewPassword(t *testing.T) {
+	svc := &mockSettingsService{
+		ldap: settings.LDAPConfig{BindPassword: "original-pw"},
+	}
+	h := newSettingsHandler(svc)
+	body := `{"ldap":{"bind_password":"new-pw"}}`
+	req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", rec.Code)
+	}
+	if svc.ldap.BindPassword != "new-pw" {
+		t.Errorf("password not replaced: got %q", svc.ldap.BindPassword)
 	}
 }

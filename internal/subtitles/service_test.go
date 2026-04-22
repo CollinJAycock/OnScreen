@@ -13,8 +13,27 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/subtitles/opensubtitles"
 )
+
+// fakeOCREngine returns canned cues / errors and records the args it was called with.
+type fakeOCREngine struct {
+	cues       []ocr.Cue
+	err        error
+	gotInput   string
+	gotStream  int
+	gotLang    string
+	gotWorkDir string
+}
+
+func (f *fakeOCREngine) Run(_ context.Context, input string, stream int, lang, workDir string) ([]ocr.Cue, error) {
+	f.gotInput = input
+	f.gotStream = stream
+	f.gotLang = lang
+	f.gotWorkDir = workDir
+	return f.cues, f.err
+}
 
 // fakeProvider captures the last Search/Download call and serves canned data.
 type fakeProvider struct {
@@ -200,4 +219,170 @@ type failingInsertStore struct{ fakeStore }
 
 func (f *failingInsertStore) InsertExternalSubtitle(_ context.Context, _ gen.InsertExternalSubtitleParams) (gen.ExternalSubtitle, error) {
 	return gen.ExternalSubtitle{}, errors.New("boom")
+}
+
+// ── OCRStream ──────────────────────────────────────────────────────────────
+
+func TestOCRStream_NoEngineReturnsErrNoOCR(t *testing.T) {
+	svc := New(nil, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_, err := svc.OCRStream(context.Background(), OCROpts{
+		FileID:    uuid.New(),
+		InputPath: "/x.mkv",
+	})
+	if !errors.Is(err, ErrNoOCR) {
+		t.Fatalf("expected ErrNoOCR, got %v", err)
+	}
+}
+
+func TestOCRStream_ValidatesRequiredFields(t *testing.T) {
+	svc := New(nil, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetOCR(&fakeOCREngine{})
+
+	if _, err := svc.OCRStream(context.Background(), OCROpts{InputPath: "/x.mkv"}); err == nil {
+		t.Error("expected error for nil FileID")
+	}
+	if _, err := svc.OCRStream(context.Background(), OCROpts{FileID: uuid.New()}); err == nil {
+		t.Error("expected error for empty InputPath")
+	}
+}
+
+func TestOCRStream_HappyPathWritesVTTAndInsertsRow(t *testing.T) {
+	tmp := t.TempDir()
+	store := &fakeStore{}
+	engine := &fakeOCREngine{
+		cues: []ocr.Cue{
+			{StartMS: 0, EndMS: 1500, Text: "First"},
+			{StartMS: 2000, EndMS: 3500, Text: "Second"},
+		},
+	}
+	svc := New(nil, store, tmp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetOCR(engine)
+
+	fileID := uuid.New()
+	row, err := svc.OCRStream(context.Background(), OCROpts{
+		FileID:         fileID,
+		InputPath:      "/movies/x.mkv",
+		AbsStreamIndex: 3,
+		Language:       "fr",
+		Title:          "Forced FR",
+		Forced:         true,
+	})
+	if err != nil {
+		t.Fatalf("OCRStream: %v", err)
+	}
+
+	// Engine got the right args (workdir is per-stream so its name encodes the index).
+	if engine.gotInput != "/movies/x.mkv" || engine.gotStream != 3 || engine.gotLang != "fr" {
+		t.Errorf("engine args wrong: input=%q stream=%d lang=%q", engine.gotInput, engine.gotStream, engine.gotLang)
+	}
+	if !strings.HasSuffix(engine.gotWorkDir, "ocr_work_stream3") {
+		t.Errorf("workdir should encode stream index, got %q", engine.gotWorkDir)
+	}
+
+	// Row got source="ocr", source_id="stream_3", and the title was preserved.
+	if row.Source != "ocr" || row.SourceID == nil || *row.SourceID != "stream_3" {
+		t.Errorf("source metadata wrong: %+v", row)
+	}
+	if row.Title == nil || *row.Title != "Forced FR" {
+		t.Errorf("expected title preserved, got %v", row.Title)
+	}
+	if !row.Forced {
+		t.Errorf("expected forced=true to round-trip")
+	}
+	if row.Language != "fr" {
+		t.Errorf("expected lang fr, got %q", row.Language)
+	}
+
+	// VTT was written with the expected name and contains the cues.
+	wantPath := filepath.Join(tmp, fileID.String(), "ocr_stream3_fr.vtt")
+	if row.StoragePath != wantPath {
+		t.Errorf("storage path: got %q, want %q", row.StoragePath, wantPath)
+	}
+	body, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read vtt: %v", err)
+	}
+	if !strings.HasPrefix(string(body), "WEBVTT") {
+		t.Errorf("expected WEBVTT header, got %q", string(body)[:min(20, len(body))])
+	}
+	if !strings.Contains(string(body), "First") || !strings.Contains(string(body), "Second") {
+		t.Errorf("expected cues serialized, got %q", string(body))
+	}
+
+	// Per-stream workdir is removed after the run (deferred RemoveAll).
+	if _, err := os.Stat(engine.gotWorkDir); !os.IsNotExist(err) {
+		t.Errorf("workdir should have been removed, stat err: %v", err)
+	}
+}
+
+func TestOCRStream_LanguageDefaultsToEn(t *testing.T) {
+	tmp := t.TempDir()
+	store := &fakeStore{}
+	engine := &fakeOCREngine{cues: []ocr.Cue{{StartMS: 0, EndMS: 1000, Text: "x"}}}
+	svc := New(nil, store, tmp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetOCR(engine)
+
+	row, err := svc.OCRStream(context.Background(), OCROpts{
+		FileID:         uuid.New(),
+		InputPath:      "/m.mkv",
+		AbsStreamIndex: 0,
+	})
+	if err != nil {
+		t.Fatalf("OCRStream: %v", err)
+	}
+	if row.Language != "en" {
+		t.Errorf("expected language to default to en, got %q", row.Language)
+	}
+	if engine.gotLang != "en" {
+		t.Errorf("engine should also receive en, got %q", engine.gotLang)
+	}
+}
+
+func TestOCRStream_NoCuesReturnsError(t *testing.T) {
+	svc := New(nil, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetOCR(&fakeOCREngine{cues: nil})
+
+	_, err := svc.OCRStream(context.Background(), OCROpts{
+		FileID:    uuid.New(),
+		InputPath: "/m.mkv",
+	})
+	if err == nil || !strings.Contains(err.Error(), "no cues") {
+		t.Fatalf("expected 'no cues' error, got %v", err)
+	}
+}
+
+func TestOCRStream_EngineErrorPropagates(t *testing.T) {
+	svc := New(nil, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetOCR(&fakeOCREngine{err: errors.New("ffmpeg explode")})
+
+	_, err := svc.OCRStream(context.Background(), OCROpts{
+		FileID:    uuid.New(),
+		InputPath: "/m.mkv",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ffmpeg explode") {
+		t.Fatalf("expected engine err to bubble up, got %v", err)
+	}
+}
+
+func TestOCRStream_RollsBackFileOnInsertFailure(t *testing.T) {
+	tmp := t.TempDir()
+	engine := &fakeOCREngine{cues: []ocr.Cue{{StartMS: 0, EndMS: 1000, Text: "x"}}}
+	store := &failingInsertStore{}
+	svc := New(nil, store, tmp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetOCR(engine)
+
+	fileID := uuid.New()
+	_, err := svc.OCRStream(context.Background(), OCROpts{
+		FileID:         fileID,
+		InputPath:      "/m.mkv",
+		AbsStreamIndex: 7,
+		Language:       "en",
+	})
+	if err == nil {
+		t.Fatal("expected insert failure to bubble up")
+	}
+	path := filepath.Join(tmp, fileID.String(), "ocr_stream7_en.vtt")
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("expected vtt to be removed after insert failure, stat err: %v", statErr)
+	}
 }

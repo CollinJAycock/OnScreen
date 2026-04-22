@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
@@ -42,10 +41,9 @@ type Handlers struct {
 	Collections     *v1.CollectionHandler
 	Playlists       *v1.PlaylistHandler
 	Subtitles       *v1.SubtitleHandler
-	Arr             *v1.ArrHandler          // incoming arr app notifications
-	GoogleAuth      *v1.GoogleOAuthHandler  // nil when SSO not configured
-	GitHubAuth      *v1.GitHubOAuthHandler  // nil when SSO not configured
-	DiscordAuth     *v1.DiscordOAuthHandler // nil when SSO not configured
+	Arr             *v1.ArrHandler  // incoming arr app notifications
+	OIDCAuth        *v1.OIDCHandler // settings-driven, always non-nil
+	LDAPAuth        *v1.LDAPHandler // settings-driven, always non-nil
 	Audit           *v1.AuditHandler
 	Email           *v1.EmailHandler
 	PasswordReset   *v1.PasswordResetHandler
@@ -59,7 +57,6 @@ type Handlers struct {
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []string // returns all library scan_paths for artwork serving
-	MediaPath       string          // deprecated — only used for /media/files/* fallback
 	Logger          *slog.Logger
 	Metrics         *observability.Metrics
 	Auth_mw         *middleware.Authenticator
@@ -73,8 +70,10 @@ type Handlers struct {
 func NewRouter(h *Handlers) http.Handler {
 	r := chi.NewRouter()
 
-	// Global middleware (applied to all routes).
-	r.Use(chimiddleware.RealIP)
+	// Global middleware (applied to all routes). TrustedRealIP rewrites
+	// RemoteAddr from X-Forwarded-* only when the immediate peer is private,
+	// preventing public clients from spoofing audit-log / rate-limit IPs.
+	r.Use(middleware.TrustedRealIP)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.CORS(h.CORSAllowedOrigins))
@@ -89,20 +88,22 @@ func NewRouter(h *Handlers) http.Handler {
 	})
 	// /health/ready is registered by the server after checking deps.
 
-	// ── Artwork file server ───────────────────────────────────────────────────
-	// Serves poster/fanart images from the media path. No auth required so that
-	// <img> tags load without credentials. Path traversal is blocked by
-	// http.FileServer's own path cleaning.
-	// ── Media stream by file UUID ──────────────────────────────────────────────
-	// Serves a media file by its DB UUID. Used by the native web/Android client.
-	// No auth required — UUID is opaque; browser video elements cannot send tokens.
-	if h.Items != nil {
-		r.Get("/media/stream/{id}", h.Items.StreamFile)
-		r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
-	}
-	if h.Subtitles != nil {
-		r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
-	}
+	// ── Media stream + subtitle endpoints ─────────────────────────────────────
+	// Serves a media file by its DB UUID for direct play, plus extracted/embedded
+	// and external VTT subtitles. Auth is required: browser <video> and <track>
+	// elements send same-origin cookies, so the cookie auth path in Auth_mw
+	// covers these even though they cannot attach Bearer headers. Each handler
+	// additionally enforces per-library ACL and the parent item's content rating.
+	r.Group(func(r chi.Router) {
+		r.Use(h.Auth_mw.Required)
+		if h.Items != nil {
+			r.Get("/media/stream/{id}", h.Items.StreamFile)
+			r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
+		}
+		if h.Subtitles != nil {
+			r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
+		}
+	})
 
 	// Native HLS playlist + segment endpoints — auth via segment token in query param,
 	// not Bearer header, because HLS.js cannot attach arbitrary headers to segment fetches.
@@ -119,7 +120,7 @@ func NewRouter(h *Handlers) http.Handler {
 		r.Get("/artwork/*", func(w http.ResponseWriter, req *http.Request) {
 			rel := strings.TrimPrefix(req.URL.Path, "/artwork/")
 			clean := filepath.Clean(rel)
-			if clean == "." || strings.HasPrefix(clean, "..") {
+			if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
@@ -163,39 +164,6 @@ func NewRouter(h *Handlers) http.Handler {
 		r.Get("/trickplay/{id}/{file}", h.Trickplay.ServeFile)
 	}
 
-	if h.ArtworkRoots != nil {
-
-		// ── Direct-play file server ───────────────────────────────────────────
-		// Serves raw media files for direct play. Tries each library root.
-		mediaFileHandler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			rel := strings.TrimPrefix(req.URL.Path, "/media/files/")
-			clean := filepath.Clean(rel)
-			if clean == "." || strings.HasPrefix(clean, "..") {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			for _, root := range h.ArtworkRoots() {
-				abs := filepath.Join(root, clean)
-				if _, err := os.Stat(abs); err == nil {
-					http.ServeFile(w, req, abs)
-					return
-				}
-			}
-			http.NotFound(w, req)
-		})
-		var wrappedMedia http.Handler = mediaFileHandler
-		if h.StreamTracker != nil {
-			// Use first root for tracker middleware context.
-			roots := h.ArtworkRoots()
-			mediaRoot := ""
-			if len(roots) > 0 {
-				mediaRoot = roots[0]
-			}
-			wrappedMedia = h.StreamTracker.Middleware("/media/files", mediaRoot, mediaFileHandler)
-		}
-		r.Get("/media/files/*", wrappedMedia.ServeHTTP)
-	}
-
 	// ── Arr notification webhook (API-key auth, outside user auth) ───────────
 	if h.Arr != nil {
 		r.Route("/api/v1/arr", func(r chi.Router) {
@@ -213,20 +181,11 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/setup/status", h.Auth.SetupStatus)
 			r.Get("/email/enabled", h.Email.Enabled)
 			r.Get("/auth/forgot-password/enabled", h.PasswordReset.Enabled)
-			if h.GoogleAuth != nil {
-				r.Get("/auth/google/enabled", h.GoogleAuth.Enabled)
-			} else {
-				r.Get("/auth/google/enabled", v1.GoogleDisabledHandler())
+			if h.OIDCAuth != nil {
+				r.Get("/auth/oidc/enabled", h.OIDCAuth.Enabled)
 			}
-			if h.GitHubAuth != nil {
-				r.Get("/auth/github/enabled", h.GitHubAuth.Enabled)
-			} else {
-				r.Get("/auth/github/enabled", v1.GitHubDisabledHandler())
-			}
-			if h.DiscordAuth != nil {
-				r.Get("/auth/discord/enabled", h.DiscordAuth.Enabled)
-			} else {
-				r.Get("/auth/discord/enabled", v1.DiscordDisabledHandler())
+			if h.LDAPAuth != nil {
+				r.Get("/auth/ldap/enabled", h.LDAPAuth.Enabled)
 			}
 		})
 
@@ -248,18 +207,13 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/invites/accept", h.Invite.Accept)
 			}
 
-			// OAuth2 SSO flows (redirects + callbacks).
-			if h.GoogleAuth != nil {
-				r.Get("/auth/google", h.GoogleAuth.Redirect)
-				r.Get("/auth/google/callback", h.GoogleAuth.Callback)
+			// OIDC SSO flow (settings-driven).
+			if h.OIDCAuth != nil {
+				r.Get("/auth/oidc", h.OIDCAuth.Redirect)
+				r.Get("/auth/oidc/callback", h.OIDCAuth.Callback)
 			}
-			if h.GitHubAuth != nil {
-				r.Get("/auth/github", h.GitHubAuth.Redirect)
-				r.Get("/auth/github/callback", h.GitHubAuth.Callback)
-			}
-			if h.DiscordAuth != nil {
-				r.Get("/auth/discord", h.DiscordAuth.Redirect)
-				r.Get("/auth/discord/callback", h.DiscordAuth.Callback)
+			if h.LDAPAuth != nil {
+				r.Post("/auth/ldap/login", h.LDAPAuth.Login)
 			}
 		})
 
@@ -502,6 +456,7 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Subtitles != nil {
 				r.Get("/items/{id}/subtitles/search", h.Subtitles.Search)
 				r.Post("/items/{id}/subtitles/download", h.Subtitles.Download)
+				r.Post("/items/{id}/subtitles/ocr", h.Subtitles.OCR)
 				r.Delete("/items/{id}/subtitles/{subId}", h.Subtitles.Delete)
 			}
 

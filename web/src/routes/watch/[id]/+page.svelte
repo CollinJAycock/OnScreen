@@ -288,6 +288,53 @@
     return [...embedded, ...external];
   })();
 
+  // Image-based subtitle codecs (PGS, VOBSUB, DVB) the player can't render
+  // directly — surfaced in the picker as "OCR" actions so the user can
+  // convert one in-place without leaving the watch page.
+  const imageSubCodecs = new Set([
+    'hdmv_pgs_subtitle', 'pgssub', 'dvd_subtitle', 'dvb_subtitle', 'xsub',
+  ]);
+  $: imageSubsToOCR = (() => {
+    const file = item?.files?.[0];
+    if (!file) return [] as SubtitleStream[];
+    const ocredStreams = new Set(
+      (file.external_subtitles ?? [])
+        .filter(e => e.source === 'ocr' && e.source_id)
+        .map(e => e.source_id as string),
+    );
+    return (file.subtitle_streams ?? [])
+      .filter(s => imageSubCodecs.has(s.codec.toLowerCase()))
+      .filter(s => !ocredStreams.has(`stream_${s.index}`));
+  })();
+
+  let ocrInFlight: number | null = null;
+  let ocrError = '';
+  async function ocrSubtitle(streamIndex: number, lang: string) {
+    if (!item?.files?.[0]) return;
+    ocrInFlight = streamIndex;
+    ocrError = '';
+    try {
+      const ext = await subtitleApi.ocr(item.id, {
+        file_id: item.files[0].id,
+        stream_index: streamIndex,
+        language: lang || undefined,
+      });
+      const fresh = await itemApi.get(item.id);
+      item = fresh;
+      const picked = (fresh.files?.[0]?.external_subtitles ?? [])
+        .find(e => e.id === ext.id);
+      if (picked) selectedSubtitle = externalToPicked(picked);
+      showSubtitleMenu = false;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'OCR failed';
+      ocrError = msg.toLowerCase().includes('not available')
+        ? 'OCR is not installed on this server (ffmpeg + tesseract required).'
+        : msg;
+    } finally {
+      ocrInFlight = null;
+    }
+  }
+
   $: audioStreams = item?.files?.[0]?.audio_streams ?? [];
 
   // Skip the auto-seek in onVideoLoaded during quality switches
@@ -2011,6 +2058,21 @@
                         {#if sub.origin === 'external'} · online{/if}
                       </button>
                     {/each}
+                    {#each imageSubsToOCR as imgSub (imgSub.index)}
+                      <button
+                        class="quality-option search-online-option"
+                        on:click|stopPropagation={() => ocrSubtitle(imgSub.index, imgSub.language || 'en')}
+                        disabled={ocrInFlight !== null}
+                        role="menuitem"
+                      >
+                        {ocrInFlight === imgSub.index
+                          ? `OCR'ing ${imgSub.language || 'subtitle'}… (a few minutes)`
+                          : `OCR ${imgSub.title || imgSub.language || `track ${imgSub.index}`} (image-based)`}
+                      </button>
+                    {/each}
+                    {#if ocrError}
+                      <div class="subtitle-size-row" style="color: var(--accent-text)">{ocrError}</div>
+                    {/if}
                     <button
                       class="quality-option search-online-option"
                       on:click={() => { showSubtitleMenu = false; openSubtitleSearch(); }}

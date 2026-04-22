@@ -1,6 +1,7 @@
 -- name: GetUser :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -9,6 +10,7 @@ WHERE id = $1;
 -- name: GetUserByUsername :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -25,6 +27,7 @@ INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
 
@@ -91,6 +94,7 @@ ORDER BY p.username, u.username;
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -99,6 +103,7 @@ WHERE email = $1;
 -- name: GetUserByGoogleID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -116,12 +121,14 @@ INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
 
 -- name: GetUserByGitHubID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -139,12 +146,14 @@ INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
 
 -- name: GetUserByDiscordID :one
 SELECT id, username, email, password_hash, is_admin, pin,
        created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
        parent_user_id, avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating
 FROM users
@@ -162,6 +171,58 @@ INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, password_hash, is_admin, pin,
           created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+
+-- name: GetUserByOIDCSubject :one
+SELECT id, username, email, password_hash, is_admin, pin,
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+FROM users
+WHERE oidc_issuer = $1 AND oidc_subject = $2;
+
+-- name: LinkOIDCAccount :exec
+UPDATE users
+SET oidc_issuer = $2,
+    oidc_subject = $3,
+    email = COALESCE(email, $4),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: CreateOIDCUser :one
+INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, username, email, password_hash, is_admin, pin,
+          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
+          parent_user_id, avatar_url,
+          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+
+-- name: GetUserByLDAPDN :one
+SELECT id, username, email, password_hash, is_admin, pin,
+       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+       oidc_issuer, oidc_subject, ldap_dn,
+       parent_user_id, avatar_url,
+       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+FROM users
+WHERE ldap_dn = $1;
+
+-- name: LinkLDAPAccount :exec
+UPDATE users
+SET ldap_dn = $2,
+    email = COALESCE(email, $3),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: CreateLDAPUser :one
+INSERT INTO users (username, email, ldap_dn, is_admin)
+VALUES ($1, $2, $3, $4)
+RETURNING id, username, email, password_hash, is_admin, pin,
+          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
+          oidc_issuer, oidc_subject, ldap_dn,
           parent_user_id, avatar_url,
           preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
 

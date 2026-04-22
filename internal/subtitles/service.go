@@ -45,6 +45,7 @@ type Service struct {
 	store    Store
 	cacheDir string // root for *.vtt files, e.g. /var/cache/subtitles
 	logger   *slog.Logger
+	ocr      OCREngine // optional; nil disables OCRStream
 }
 
 // New constructs a Service. provider may be nil — in that case Search/Download

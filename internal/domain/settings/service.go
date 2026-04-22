@@ -23,6 +23,8 @@ const keyWorkerFleet = "worker_fleet"
 const keyTranscodeConfig = "transcode_config"
 const keyIntroDetectionMode = "intro_detection_mode"
 const keyOpenSubtitlesConfig = "opensubtitles_config"
+const keyOIDCConfig = "oidc_config"
+const keyLDAPConfig = "ldap_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -239,6 +241,100 @@ func (s *Service) SetOpenSubtitles(ctx context.Context, cfg OpenSubtitlesConfig)
 		return err
 	}
 	return s.set(ctx, keyOpenSubtitlesConfig, string(b))
+}
+
+// OIDCConfig holds the configuration for a single generic OIDC identity
+// provider (Authentik, Keycloak, Auth0, Google Workspace, etc.).
+//
+// IssuerURL is the discovery base URL — the handler appends
+// /.well-known/openid-configuration to find the auth/token/jwks endpoints.
+//
+// AdminGroup is matched against the configured GroupsClaim from the ID token;
+// users present in that group are auto-promoted to admin on each login. Empty
+// disables admin sync (only the first-ever user becomes admin, as elsewhere).
+type OIDCConfig struct {
+	Enabled       bool   `json:"enabled"`
+	DisplayName   string `json:"display_name,omitempty"` // shown on the "Sign in with X" button
+	IssuerURL     string `json:"issuer_url"`
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret,omitempty"`
+	Scopes        string `json:"scopes,omitempty"`        // space-separated; default "openid profile email"
+	UsernameClaim string `json:"username_claim,omitempty"` // default "preferred_username", falls back to email-prefix
+	GroupsClaim   string `json:"groups_claim,omitempty"`   // default "groups"
+	AdminGroup    string `json:"admin_group,omitempty"`
+}
+
+// OIDC returns the stored OIDC config or the zero value if not persisted.
+func (s *Service) OIDC(ctx context.Context) OIDCConfig {
+	raw := s.get(ctx, keyOIDCConfig)
+	if raw == "" {
+		return OIDCConfig{}
+	}
+	var cfg OIDCConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse oidc_config", "err", err)
+		return OIDCConfig{}
+	}
+	return cfg
+}
+
+// SetOIDC persists the OIDC config as JSON.
+func (s *Service) SetOIDC(ctx context.Context, cfg OIDCConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyOIDCConfig, string(b))
+}
+
+// LDAPConfig holds the configuration for an LDAP/Active Directory login flow.
+//
+// BindDN/BindPassword are the service-account credentials used to bind for
+// the user search. UserSearchBase + UserFilter locate the user record; the
+// "{username}" placeholder in UserFilter is replaced with the form value
+// (LDAP-escaped). Once located, the handler bind-as-user with the supplied
+// password to authenticate.
+//
+// AdminGroupDN: when set, users that are members of this group (group's
+// "member" or "uniqueMember" attribute contains the user's DN) are
+// auto-promoted to admin on each login.
+type LDAPConfig struct {
+	Enabled        bool   `json:"enabled"`
+	DisplayName    string `json:"display_name,omitempty"` // e.g. "Company SSO"
+	Host           string `json:"host"`                   // host:port, e.g. "ldap.example.com:636"
+	StartTLS       bool   `json:"start_tls"`              // upgrade plain LDAP to TLS
+	UseLDAPS       bool   `json:"use_ldaps"`              // use ldaps:// (implicit TLS)
+	SkipTLSVerify  bool   `json:"skip_tls_verify"`        // dev/self-signed; do not enable in prod
+	BindDN         string `json:"bind_dn"`
+	BindPassword   string `json:"bind_password,omitempty"`
+	UserSearchBase string `json:"user_search_base"` // e.g. "ou=people,dc=example,dc=com"
+	UserFilter     string `json:"user_filter"`      // e.g. "(uid={username})" or "(sAMAccountName={username})"
+	UsernameAttr   string `json:"username_attr,omitempty"`
+	EmailAttr      string `json:"email_attr,omitempty"`
+	AdminGroupDN   string `json:"admin_group_dn,omitempty"`
+}
+
+// LDAP returns the stored LDAP config or the zero value if not persisted.
+func (s *Service) LDAP(ctx context.Context) LDAPConfig {
+	raw := s.get(ctx, keyLDAPConfig)
+	if raw == "" {
+		return LDAPConfig{}
+	}
+	var cfg LDAPConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse ldap_config", "err", err)
+		return LDAPConfig{}
+	}
+	return cfg
+}
+
+// SetLDAP persists the LDAP config as JSON.
+func (s *Service) SetLDAP(ctx context.Context, cfg LDAPConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyLDAPConfig, string(b))
 }
 
 func (s *Service) get(ctx context.Context, key string) string {

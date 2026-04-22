@@ -114,7 +114,58 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
+	if !h.requireOwnerOrAdmin(w, r, col) {
+		return
+	}
 	respond.Success(w, r, toCollectionResponse(col))
+}
+
+// requireOwnerOrAdmin returns true when the caller may mutate or read the
+// given collection. Auto-generated collections (e.g. type=auto_genre) have
+// no UserID and are treated as server-owned: any authenticated user may
+// read them, but only admins may mutate. Per-user collections are gated to
+// their owner, with admins permitted as a service-level override. On a
+// denial, this writes the response (404 to avoid existence leaks) and
+// returns false.
+func (h *CollectionHandler) requireOwnerOrAdmin(w http.ResponseWriter, r *http.Request, col gen.Collection) bool {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return false
+	}
+	if claims.IsAdmin {
+		return true
+	}
+	if !col.UserID.Valid {
+		// Server-owned (auto-genre etc.) — non-admins may read but not mutate.
+		// The mutating handlers wrap this helper so getting here from one of
+		// them already implies admin via the IsAdmin branch above; for Get/
+		// Items the read is allowed, so return true.
+		return true
+	}
+	if uuid.UUID(col.UserID.Bytes) != claims.UserID {
+		respond.NotFound(w, r)
+		return false
+	}
+	return true
+}
+
+// requireOwnerOrAdminMutate is the mutate-only variant: it additionally
+// rejects auto-generated (server-owned) collections for non-admin callers.
+func (h *CollectionHandler) requireOwnerOrAdminMutate(w http.ResponseWriter, r *http.Request, col gen.Collection) bool {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return false
+	}
+	if claims.IsAdmin {
+		return true
+	}
+	if !col.UserID.Valid || uuid.UUID(col.UserID.Bytes) != claims.UserID {
+		respond.NotFound(w, r)
+		return false
+	}
+	return true
 }
 
 // Create handles POST /api/v1/collections.
@@ -151,6 +202,14 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid collection id")
 		return
 	}
+	existing, err := h.db.GetCollection(r.Context(), id)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if !h.requireOwnerOrAdminMutate(w, r, existing) {
+		return
+	}
 	var body struct {
 		Name        string  `json:"name"`
 		Description *string `json:"description"`
@@ -178,6 +237,14 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid collection id")
 		return
 	}
+	existing, err := h.db.GetCollection(r.Context(), id)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if !h.requireOwnerOrAdminMutate(w, r, existing) {
+		return
+	}
 	if err := h.db.DeleteCollection(r.Context(), id); err != nil {
 		respond.NotFound(w, r)
 		return
@@ -196,6 +263,9 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 	col, err := h.db.GetCollection(r.Context(), id)
 	if err != nil {
 		respond.NotFound(w, r)
+		return
+	}
+	if !h.requireOwnerOrAdmin(w, r, col) {
 		return
 	}
 
@@ -302,6 +372,14 @@ func (h *CollectionHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid collection id")
 		return
 	}
+	col, err := h.db.GetCollection(r.Context(), id)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if !h.requireOwnerOrAdminMutate(w, r, col) {
+		return
+	}
 	var body struct {
 		MediaItemID string `json:"media_item_id"`
 	}
@@ -331,6 +409,14 @@ func (h *CollectionHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid collection id")
+		return
+	}
+	col, err := h.db.GetCollection(r.Context(), id)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if !h.requireOwnerOrAdminMutate(w, r, col) {
 		return
 	}
 	itemID, err := uuid.Parse(chi.URLParam(r, "itemId"))

@@ -20,7 +20,9 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/config"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
@@ -53,6 +55,8 @@ type NativeTranscodeHandler struct {
 	sessions *transcode.SessionStore
 	segToken *transcode.SegmentTokenManager
 	media    NativeTranscodeMediaService
+	access   LibraryAccessChecker
+	audit    *audit.Logger
 	cfg      *config.Config
 	logger   *slog.Logger
 	killer   SessionKiller // optional — set for embedded worker deployments
@@ -73,6 +77,18 @@ func NewNativeTranscodeHandler(
 		cfg:      cfg,
 		logger:   logger,
 	}
+}
+
+// WithLibraryAccess attaches per-library ACL enforcement to Start.
+func (h *NativeTranscodeHandler) WithLibraryAccess(a LibraryAccessChecker) *NativeTranscodeHandler {
+	h.access = a
+	return h
+}
+
+// WithAudit attaches the audit logger so transcode session creation is recorded.
+func (h *NativeTranscodeHandler) WithAudit(a *audit.Logger) *NativeTranscodeHandler {
+	h.audit = a
+	return h
 }
 
 // SetSessionKiller wires the embedded worker so Stop can kill FFmpeg immediately.
@@ -127,6 +143,36 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the parent item up-front so we can enforce per-library ACL
+	// and content-rating gates before spending any worker resources.
+	item, err := h.media.GetItem(ctx, itemID)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if h.access != nil {
+		ok, aerr := h.access.CanAccessLibrary(ctx, claims.UserID, item.LibraryID, claims.IsAdmin)
+		if aerr != nil {
+			h.logger.ErrorContext(ctx, "transcode: library access check", "library_id", item.LibraryID, "err", aerr)
+			respond.InternalError(w, r)
+			return
+		}
+		if !ok {
+			respond.NotFound(w, r)
+			return
+		}
+	}
+	if claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.Forbidden(w, r)
+			return
+		}
+	}
+
 	// Select the file to transcode.
 	var file *media.File
 	if body.FileID != nil && *body.FileID != "" {
@@ -137,6 +183,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 		f, err := h.media.GetFile(ctx, fid)
 		if err != nil {
+			respond.NotFound(w, r)
+			return
+		}
+		// Reject cross-item file IDs — otherwise a caller can use an
+		// allowed item ID to launch a session that streams a different,
+		// disallowed file.
+		if f.MediaItemID != itemID {
 			respond.NotFound(w, r)
 			return
 		}
@@ -246,6 +299,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		SegToken:    segTok,
 		BitrateKbps: sessionBitrate,
 		HEVCOutput:  preferHEVC,
+	}
+	if h.audit != nil {
+		actor := claims.UserID
+		h.audit.Log(ctx, &actor, audit.ActionTranscodeStart, sessionID,
+			map[string]any{
+				"item_id":  itemID.String(),
+				"file_id":  file.ID.String(),
+				"decision": decision,
+				"height":   height,
+			}, audit.ClientIP(r))
 	}
 	if err := h.sessions.Create(ctx, sess); err != nil {
 		h.logger.WarnContext(ctx, "create transcode session", "err", err)
@@ -357,7 +420,14 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	sessionID := chi.URLParam(r, "sid")
 	token := r.URL.Query().Get("token")
 
-	if _, _, err := h.segToken.Validate(ctx, token); err != nil {
+	tokSession, _, err := h.segToken.Validate(ctx, token)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Bind the token to the requested session — otherwise a token issued for
+	// session A would let the holder fetch any other session's playlist.
+	if tokSession != sessionID {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -427,7 +497,12 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 	segName := chi.URLParam(r, "name")
 	token := r.URL.Query().Get("token")
 
-	if _, _, err := h.segToken.Validate(ctx, token); err != nil {
+	tokSession, _, err := h.segToken.Validate(ctx, token)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if tokSession != sessionID {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

@@ -37,7 +37,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
 FROM alpine:3.21
-RUN apk add --no-cache ffmpeg ca-certificates tzdata chromaprint postgresql17-client
+RUN apk add --no-cache ffmpeg ca-certificates tzdata chromaprint postgresql17-client \
+      tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-spa \
+      tesseract-ocr-data-fra tesseract-ocr-data-deu tesseract-ocr-data-ita \
+      tesseract-ocr-data-por tesseract-ocr-data-jpn tesseract-ocr-data-chi_sim \
+      tesseract-ocr-data-chi_tra tesseract-ocr-data-kor tesseract-ocr-data-rus \
+      tesseract-ocr-data-ara
 
 # Non-root user
 RUN addgroup -S onscreen && adduser -S onscreen -G onscreen

@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
@@ -34,6 +36,10 @@ type SettingsServiceIface interface {
 	SetTranscodeConfig(ctx context.Context, cfg settings.TranscodeConfig) error
 	OpenSubtitles(ctx context.Context) settings.OpenSubtitlesConfig
 	SetOpenSubtitles(ctx context.Context, cfg settings.OpenSubtitlesConfig) error
+	OIDC(ctx context.Context) settings.OIDCConfig
+	SetOIDC(ctx context.Context, cfg settings.OIDCConfig) error
+	LDAP(ctx context.Context) settings.LDAPConfig
+	SetLDAP(ctx context.Context, cfg settings.LDAPConfig) error
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -294,6 +300,78 @@ type settingsResponse struct {
 	ArrPathMappings   map[string]string       `json:"arr_path_mappings,omitempty"`
 	TranscodeEncoders string                  `json:"transcode_encoders"`
 	OpenSubtitles     openSubtitlesSettingDTO `json:"opensubtitles"`
+	OIDC              oidcSettingDTO          `json:"oidc"`
+	LDAP              ldapSettingDTO          `json:"ldap"`
+}
+
+// oidcSettingDTO masks the client secret before returning to the client.
+type oidcSettingDTO struct {
+	Enabled       bool   `json:"enabled"`
+	DisplayName   string `json:"display_name"`
+	IssuerURL     string `json:"issuer_url"`
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret"` // "****" if set, "" if empty
+	Scopes        string `json:"scopes"`
+	UsernameClaim string `json:"username_claim"`
+	GroupsClaim   string `json:"groups_claim"`
+	AdminGroup    string `json:"admin_group"`
+}
+
+func toOIDCDTO(cfg settings.OIDCConfig) oidcSettingDTO {
+	cs := ""
+	if cfg.ClientSecret != "" {
+		cs = "****"
+	}
+	return oidcSettingDTO{
+		Enabled:       cfg.Enabled,
+		DisplayName:   cfg.DisplayName,
+		IssuerURL:     cfg.IssuerURL,
+		ClientID:      cfg.ClientID,
+		ClientSecret:  cs,
+		Scopes:        cfg.Scopes,
+		UsernameClaim: cfg.UsernameClaim,
+		GroupsClaim:   cfg.GroupsClaim,
+		AdminGroup:    cfg.AdminGroup,
+	}
+}
+
+// ldapSettingDTO masks the bind password before returning to the client.
+type ldapSettingDTO struct {
+	Enabled        bool   `json:"enabled"`
+	DisplayName    string `json:"display_name"`
+	Host           string `json:"host"`
+	StartTLS       bool   `json:"start_tls"`
+	UseLDAPS       bool   `json:"use_ldaps"`
+	SkipTLSVerify  bool   `json:"skip_tls_verify"`
+	BindDN         string `json:"bind_dn"`
+	BindPassword   string `json:"bind_password"` // "****" if set, "" if empty
+	UserSearchBase string `json:"user_search_base"`
+	UserFilter     string `json:"user_filter"`
+	UsernameAttr   string `json:"username_attr"`
+	EmailAttr      string `json:"email_attr"`
+	AdminGroupDN   string `json:"admin_group_dn"`
+}
+
+func toLDAPDTO(cfg settings.LDAPConfig) ldapSettingDTO {
+	pw := ""
+	if cfg.BindPassword != "" {
+		pw = "****"
+	}
+	return ldapSettingDTO{
+		Enabled:        cfg.Enabled,
+		DisplayName:    cfg.DisplayName,
+		Host:           cfg.Host,
+		StartTLS:       cfg.StartTLS,
+		UseLDAPS:       cfg.UseLDAPS,
+		SkipTLSVerify:  cfg.SkipTLSVerify,
+		BindDN:         cfg.BindDN,
+		BindPassword:   pw,
+		UserSearchBase: cfg.UserSearchBase,
+		UserFilter:     cfg.UserFilter,
+		UsernameAttr:   cfg.UsernameAttr,
+		EmailAttr:      cfg.EmailAttr,
+		AdminGroupDN:   cfg.AdminGroupDN,
+	}
 }
 
 // openSubtitlesSettingDTO masks the API key and password before returning the
@@ -367,6 +445,8 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ArrPathMappings:   h.svc.ArrPathMappings(ctx),
 		TranscodeEncoders: h.svc.TranscodeEncoders(ctx),
 		OpenSubtitles:     toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
+		OIDC:              toOIDCDTO(h.svc.OIDC(ctx)),
+		LDAP:              toLDAPDTO(h.svc.LDAP(ctx)),
 	})
 }
 
@@ -385,6 +465,32 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			Languages *string `json:"languages"`
 			Enabled   *bool   `json:"enabled"`
 		} `json:"opensubtitles"`
+		OIDC *struct {
+			Enabled       *bool   `json:"enabled"`
+			DisplayName   *string `json:"display_name"`
+			IssuerURL     *string `json:"issuer_url"`
+			ClientID      *string `json:"client_id"`
+			ClientSecret  *string `json:"client_secret"`
+			Scopes        *string `json:"scopes"`
+			UsernameClaim *string `json:"username_claim"`
+			GroupsClaim   *string `json:"groups_claim"`
+			AdminGroup    *string `json:"admin_group"`
+		} `json:"oidc"`
+		LDAP *struct {
+			Enabled        *bool   `json:"enabled"`
+			DisplayName    *string `json:"display_name"`
+			Host           *string `json:"host"`
+			StartTLS       *bool   `json:"start_tls"`
+			UseLDAPS       *bool   `json:"use_ldaps"`
+			SkipTLSVerify  *bool   `json:"skip_tls_verify"`
+			BindDN         *string `json:"bind_dn"`
+			BindPassword   *string `json:"bind_password"`
+			UserSearchBase *string `json:"user_search_base"`
+			UserFilter     *string `json:"user_filter"`
+			UsernameAttr   *string `json:"username_attr"`
+			EmailAttr      *string `json:"email_attr"`
+			AdminGroupDN   *string `json:"admin_group_dn"`
+		} `json:"ldap"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -451,6 +557,88 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.OIDC != nil {
+		cur := h.svc.OIDC(ctx)
+		if body.OIDC.Enabled != nil {
+			cur.Enabled = *body.OIDC.Enabled
+		}
+		if body.OIDC.DisplayName != nil {
+			cur.DisplayName = *body.OIDC.DisplayName
+		}
+		if body.OIDC.IssuerURL != nil {
+			cur.IssuerURL = *body.OIDC.IssuerURL
+		}
+		if body.OIDC.ClientID != nil {
+			cur.ClientID = *body.OIDC.ClientID
+		}
+		if body.OIDC.ClientSecret != nil && *body.OIDC.ClientSecret != "****" {
+			cur.ClientSecret = *body.OIDC.ClientSecret
+		}
+		if body.OIDC.Scopes != nil {
+			cur.Scopes = *body.OIDC.Scopes
+		}
+		if body.OIDC.UsernameClaim != nil {
+			cur.UsernameClaim = *body.OIDC.UsernameClaim
+		}
+		if body.OIDC.GroupsClaim != nil {
+			cur.GroupsClaim = *body.OIDC.GroupsClaim
+		}
+		if body.OIDC.AdminGroup != nil {
+			cur.AdminGroup = *body.OIDC.AdminGroup
+		}
+		if err := h.svc.SetOIDC(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "oidc", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.LDAP != nil {
+		cur := h.svc.LDAP(ctx)
+		if body.LDAP.Enabled != nil {
+			cur.Enabled = *body.LDAP.Enabled
+		}
+		if body.LDAP.DisplayName != nil {
+			cur.DisplayName = *body.LDAP.DisplayName
+		}
+		if body.LDAP.Host != nil {
+			cur.Host = *body.LDAP.Host
+		}
+		if body.LDAP.StartTLS != nil {
+			cur.StartTLS = *body.LDAP.StartTLS
+		}
+		if body.LDAP.UseLDAPS != nil {
+			cur.UseLDAPS = *body.LDAP.UseLDAPS
+		}
+		if body.LDAP.SkipTLSVerify != nil {
+			cur.SkipTLSVerify = *body.LDAP.SkipTLSVerify
+		}
+		if body.LDAP.BindDN != nil {
+			cur.BindDN = *body.LDAP.BindDN
+		}
+		if body.LDAP.BindPassword != nil && *body.LDAP.BindPassword != "****" {
+			cur.BindPassword = *body.LDAP.BindPassword
+		}
+		if body.LDAP.UserSearchBase != nil {
+			cur.UserSearchBase = *body.LDAP.UserSearchBase
+		}
+		if body.LDAP.UserFilter != nil {
+			cur.UserFilter = *body.LDAP.UserFilter
+		}
+		if body.LDAP.UsernameAttr != nil {
+			cur.UsernameAttr = *body.LDAP.UsernameAttr
+		}
+		if body.LDAP.EmailAttr != nil {
+			cur.EmailAttr = *body.LDAP.EmailAttr
+		}
+		if body.LDAP.AdminGroupDN != nil {
+			cur.AdminGroupDN = *body.LDAP.AdminGroupDN
+		}
+		if err := h.svc.SetLDAP(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "ldap", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
 	if h.audit != nil {
 		detail := map[string]any{}
 		if body.TMDBAPIKey != nil {
@@ -471,10 +659,19 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if body.OpenSubtitles != nil {
 			detail["opensubtitles"] = "changed"
 		}
-		claims := middleware.ClaimsFromContext(r.Context())
-		if claims != nil {
-			h.audit.Log(r.Context(), &claims.UserID, audit.ActionSettingsUpdate, "", detail, audit.ClientIP(r))
+		if body.OIDC != nil {
+			detail["oidc"] = "changed"
 		}
+		if body.LDAP != nil {
+			detail["ldap"] = "changed"
+		}
+		// Always log, even if claims are somehow nil — the route is admin-gated,
+		// so a missing actor here means an invariant break worth recording.
+		var actor *uuid.UUID
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			actor = &claims.UserID
+		}
+		h.audit.Log(r.Context(), actor, audit.ActionSettingsUpdate, "", detail, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }

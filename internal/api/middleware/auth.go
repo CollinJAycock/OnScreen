@@ -9,12 +9,21 @@ import (
 	"github.com/onscreen/onscreen/internal/observability"
 )
 
-// Auth is Bearer-token only; we do not issue session cookies. Because every
-// authenticated request must carry an explicit `Authorization: Bearer <paseto>`
-// header (which browsers do not attach automatically on cross-origin requests),
-// cross-site request forgery is not applicable and no CSRF middleware is
-// required. If cookie-based auth is ever added, a CSRF token layer must be
-// added alongside it.
+// Auth accepts two credential carriers:
+//
+//   1. `Authorization: Bearer <paseto>` — used by native API clients. Browsers
+//      never attach this automatically on cross-origin requests, so it carries
+//      no CSRF surface.
+//   2. The httpOnly `onscreen_at` cookie set by setAuthCookies in the v1
+//      package. This *does* carry CSRF surface, mitigated by SameSite=Lax on
+//      the cookie itself (cross-origin POST/PATCH/PUT/DELETE never include the
+//      cookie). The refresh cookie uses SameSite=Strict and is scoped to
+//      /api/v1/auth, so it is not attached to non-auth endpoints at all.
+//
+// Two invariants protect the cookie path: every state-changing route must use
+// a non-GET method (chi routers enforce per-method handlers), and no top-level
+// GET endpoint may have side effects. Audit both before adding new routes — if
+// either invariant breaks, a double-submit CSRF token layer becomes required.
 
 type claimsKey struct{}
 

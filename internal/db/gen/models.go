@@ -284,6 +284,9 @@ type User struct {
 	GoogleAvatarUrl       *string            `json:"google_avatar_url"`
 	GithubID              *string            `json:"github_id"`
 	DiscordID             *string            `json:"discord_id"`
+	OidcIssuer            *string            `json:"oidc_issuer"`
+	OidcSubject           *string            `json:"oidc_subject"`
+	LdapDn                *string            `json:"ldap_dn"`
 	ParentUserID          pgtype.UUID        `json:"parent_user_id"`
 	AvatarUrl             *string            `json:"avatar_url"`
 	PreferredAudioLang    *string            `json:"preferred_audio_lang"`

@@ -18,6 +18,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -107,6 +108,7 @@ type ItemHandler struct {
 	access    LibraryAccessChecker
 	subs      ExternalSubLister
 	tracker   *streaming.Tracker
+	audit     *audit.Logger
 	logger    *slog.Logger
 }
 
@@ -141,6 +143,13 @@ func (h *ItemHandler) WithLibraryAccess(a LibraryAccessChecker) *ItemHandler {
 // alongside the embedded streams.
 func (h *ItemHandler) WithExternalSubtitles(s ExternalSubLister) *ItemHandler {
 	h.subs = s
+	return h
+}
+
+// WithAudit attaches the audit logger. When nil, mutating operations skip
+// audit emission (still functional, just unobserved).
+func (h *ItemHandler) WithAudit(a *audit.Logger) *ItemHandler {
+	h.audit = a
 	return h
 }
 
@@ -707,6 +716,11 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 // useful when a scan ran without a TMDB key configured, or when artwork
 // is missing due to a transient download failure.
 func (h *ItemHandler) Enrich(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid item id")
@@ -715,6 +729,21 @@ func (h *ItemHandler) Enrich(w http.ResponseWriter, r *http.Request) {
 	if h.enricher == nil {
 		respond.BadRequest(w, r, "metadata enrichment not configured")
 		return
+	}
+	// Verify the item exists before kicking off background work so we can
+	// return an accurate 404 and avoid spamming TMDB on guessed IDs.
+	if _, err := h.media.GetItem(r.Context(), id); err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for enrich", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		actor := claims.UserID
+		h.audit.Log(r.Context(), &actor, audit.ActionItemEnrich, id.String(), nil, audit.ClientIP(r))
 	}
 	// Run enrichment in the background so the request returns immediately.
 	// Use WithoutCancel so the work continues after the HTTP request ends
@@ -730,7 +759,13 @@ func (h *ItemHandler) Enrich(w http.ResponseWriter, r *http.Request) {
 
 // SearchMatch handles GET /api/v1/items/{id}/match/search?query=...
 // Returns TMDB candidates so the user can pick the correct match.
+// Admin-only: pairs with ApplyMatch as part of the manual-match workflow,
+// and the per-query TMDB call costs against the operator's API quota.
 func (h *ItemHandler) SearchMatch(w http.ResponseWriter, r *http.Request) {
+	if claims := middleware.ClaimsFromContext(r.Context()); claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid item id")
@@ -780,7 +815,13 @@ func (h *ItemHandler) SearchMatch(w http.ResponseWriter, r *http.Request) {
 
 // ApplyMatch handles POST /api/v1/items/{id}/match.
 // Sets the TMDB ID for an item and re-enriches it from that specific match.
+// Admin-only: this rewrites globally-visible metadata for the item.
 func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid item id")
@@ -790,6 +831,15 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "metadata enrichment not configured")
 		return
 	}
+	if _, err := h.media.GetItem(r.Context(), id); err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for match", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
 
 	var body struct {
 		TMDBID int `json:"tmdb_id"`
@@ -797,6 +847,12 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TMDBID <= 0 {
 		respond.BadRequest(w, r, "tmdb_id is required and must be positive")
 		return
+	}
+
+	if h.audit != nil {
+		actor := claims.UserID
+		h.audit.Log(r.Context(), &actor, audit.ActionItemMatchApply, id.String(),
+			map[string]any{"tmdb_id": body.TMDBID}, audit.ClientIP(r))
 	}
 
 	// Run in background so the request returns immediately.
@@ -811,8 +867,9 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 
 // StreamFile handles GET /media/stream/{id}.
 // Looks up the file in the DB and serves it directly using the stored absolute
-// path, bypassing any filepath.Rel computation. No auth required — the UUID is
-// opaque and the browser video element cannot send auth headers.
+// path. Requires authentication — browser <video> elements send same-origin
+// cookies, so the cookie auth path in the auth middleware applies here too.
+// Enforces per-library ACL and content-rating restriction on the parent item.
 func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -836,18 +893,28 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce content rating restriction via the parent media item.
+	// Enforce per-library ACL and content rating restriction via the parent item.
+	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for stream", "file_id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
-		item, err := h.media.GetItem(r.Context(), file.MediaItemID)
-		if err == nil {
-			cr := ""
-			if item.ContentRating != nil {
-				cr = *item.ContentRating
-			}
-			if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
-				respond.Forbidden(w, r)
-				return
-			}
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.Forbidden(w, r)
+			return
 		}
 	}
 
@@ -984,9 +1051,33 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce per-library ACL and content rating via the parent item.
+	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for subtitle", "file_id", fileID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.Forbidden(w, r)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	cmd := exec.CommandContext(r.Context(), "ffmpeg",
 		"-i", file.FilePath,

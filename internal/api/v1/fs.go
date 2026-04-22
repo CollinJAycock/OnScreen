@@ -23,6 +23,10 @@ type browseResult struct {
 
 // Browse handles GET /api/v1/fs/browse?path=<dir>
 func (h *FSHandler) Browse(w http.ResponseWriter, r *http.Request) {
+	// Directory listings reveal server filesystem layout; never let a shared
+	// cache or browser back-button leak them. Set before any respond.* call.
+	w.Header().Set("Cache-Control", "no-store")
+
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		path = "/"

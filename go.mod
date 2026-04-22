@@ -6,6 +6,7 @@ require (
 	aidanwoods.dev/go-paseto v1.5.3
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/caarlos0/env/v11 v11.3.1
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/go-chi/chi/v5 v5.2.1
@@ -14,6 +15,7 @@ require (
 	github.com/pressly/goose/v3 v3.24.1
 	github.com/prometheus/client_golang v1.20.0
 	github.com/redis/go-redis/v9 v9.7.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
 	golang.org/x/crypto v0.48.0
@@ -29,6 +31,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
+	github.com/Azure/go-ntlmssp v0.1.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -46,6 +49,9 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-ldap/ldap/v3 v3.4.13 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
@@ -74,7 +80,6 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.2 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect

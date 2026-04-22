@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -117,7 +118,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	pair, err := h.svc.Refresh(r.Context(), refreshToken)
 	if err != nil {
-		clearAuthCookies(w)
+		clearAuthCookies(w, r)
 		respond.Unauthorized(w, r)
 		return
 	}
@@ -140,7 +141,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if refreshToken != "" {
 		_ = h.svc.Logout(r.Context(), refreshToken)
 	}
-	clearAuthCookies(w)
+	clearAuthCookies(w, r)
 	respond.NoContent(w)
 }
 
@@ -223,12 +224,36 @@ const (
 )
 
 // isSecure returns true if the request arrived over HTTPS.
+//
+// We accept X-Forwarded-Proto only when the request reached us from a
+// loopback or RFC1918 private address — i.e., a reverse proxy on the same
+// host or the same private network. Internet-facing clients can't influence
+// the cookie's Secure flag this way; if you front OnScreen with a proxy on a
+// public IP, the proxy must terminate TLS itself or the auth cookies will be
+// issued without Secure (which is the safer failure mode).
 func isSecure(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	// Trust X-Forwarded-Proto from the reverse proxy (chi.RealIP already validated the source).
-	return r.Header.Get("X-Forwarded-Proto") == "https"
+	if r.Header.Get("X-Forwarded-Proto") == "https" && remoteAddrIsTrusted(r) {
+		return true
+	}
+	return false
+}
+
+// remoteAddrIsTrusted reports whether the request's RemoteAddr is loopback or
+// in an RFC1918 / unique-local address range — the proxies we trust to set
+// X-Forwarded-Proto. Anything else (public IPs) is rejected.
+func remoteAddrIsTrusted(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
 }
 
 // setAuthCookies writes httpOnly cookies for both tokens.
@@ -257,13 +282,18 @@ func setAuthCookies(w http.ResponseWriter, r *http.Request, pair *TokenPair) {
 	})
 }
 
-// clearAuthCookies expires both auth cookies.
-func clearAuthCookies(w http.ResponseWriter) {
+// clearAuthCookies expires both auth cookies. Cookie attributes (Path,
+// Secure, SameSite) must match what setAuthCookies wrote so browsers
+// actually evict them — a Strict-on-write/Lax-on-delete cookie can survive.
+func clearAuthCookies(w http.ResponseWriter, r *http.Request) {
+	secure := isSecure(r)
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieAccessToken,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
 	http.SetCookie(w, &http.Cookie{
@@ -271,6 +301,8 @@ func clearAuthCookies(w http.ResponseWriter) {
 		Value:    "",
 		Path:     "/api/v1/auth",
 		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
 }

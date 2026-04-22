@@ -9,18 +9,16 @@ const mockSetUser = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 const mockSetupStatus = vi.hoisted(() => vi.fn());
-const mockGoogleEnabled = vi.hoisted(() => vi.fn());
-const mockGithubEnabled = vi.hoisted(() => vi.fn());
-const mockDiscordEnabled = vi.hoisted(() => vi.fn());
+const mockOidcEnabled = vi.hoisted(() => vi.fn());
+const mockLdapEnabled = vi.hoisted(() => vi.fn());
 const mockForgotEnabled = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/api', () => ({
   authApi: {
     login: mockLogin,
     setupStatus: mockSetupStatus,
-    googleEnabled: mockGoogleEnabled,
-    githubEnabled: mockGithubEnabled,
-    discordEnabled: mockDiscordEnabled,
+    oidcEnabled: mockOidcEnabled,
+    ldapEnabled: mockLdapEnabled,
     forgotPasswordEnabled: mockForgotEnabled,
   },
   api: { setUser: mockSetUser }
@@ -31,9 +29,8 @@ describe('Login page', () => {
     vi.clearAllMocks();
     localStorage.clear();
     mockSetupStatus.mockResolvedValue({ setup_required: false });
-    mockGoogleEnabled.mockResolvedValue({ enabled: false });
-    mockGithubEnabled.mockResolvedValue({ enabled: false });
-    mockDiscordEnabled.mockResolvedValue({ enabled: false });
+    mockOidcEnabled.mockResolvedValue({ enabled: false, display_name: '' });
+    mockLdapEnabled.mockResolvedValue({ enabled: false, display_name: '' });
     mockForgotEnabled.mockResolvedValue({ enabled: false });
   });
 

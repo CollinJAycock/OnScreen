@@ -28,6 +28,7 @@ type SubtitleService interface {
 	List(ctx context.Context, fileID uuid.UUID) ([]gen.ExternalSubtitle, error)
 	Get(ctx context.Context, id uuid.UUID) (gen.ExternalSubtitle, error)
 	Delete(ctx context.Context, id uuid.UUID) error
+	OCRStream(ctx context.Context, opts subtitles.OCROpts) (gen.ExternalSubtitle, error)
 }
 
 // SubtitleHandler exposes search/download/list endpoints for external subtitles.
@@ -66,14 +67,15 @@ type SearchResultJSON struct {
 
 // ExternalSubtitleJSON is the API representation of a stored external subtitle.
 type ExternalSubtitleJSON struct {
-	ID              string  `json:"id"`
-	FileID          string  `json:"file_id"`
-	Language        string  `json:"language"`
-	Title           *string `json:"title,omitempty"`
-	Forced          bool    `json:"forced"`
-	SDH             bool    `json:"sdh"`
-	Source          string  `json:"source"`
-	URL             string  `json:"url"`
+	ID       string  `json:"id"`
+	FileID   string  `json:"file_id"`
+	Language string  `json:"language"`
+	Title    *string `json:"title,omitempty"`
+	Forced   bool    `json:"forced"`
+	SDH      bool    `json:"sdh"`
+	Source   string  `json:"source"`
+	SourceID *string `json:"source_id,omitempty"`
+	URL      string  `json:"url"`
 }
 
 // Search handles GET /api/v1/items/{id}/subtitles/search?lang=en&query=...
@@ -237,6 +239,90 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 	respond.Created(w, r, toExternalSubtitleJSON(row))
 }
 
+// OCR handles POST /api/v1/items/{id}/subtitles/ocr.
+// Body: { file_id, stream_index, language?, title?, forced?, sdh? }
+//
+// Runs the OCR pipeline synchronously — for a typical 90-minute movie this
+// is multi-minute. Caller (UI) should show a spinner and not retry. The
+// resulting external_subtitles row is returned in the response.
+func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
+	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkAccess(w, r, item.LibraryID) {
+		return
+	}
+
+	var body struct {
+		FileID      string `json:"file_id"`
+		StreamIndex int    `json:"stream_index"`
+		Language    string `json:"language"`
+		Title       string `json:"title"`
+		Forced      bool   `json:"forced"`
+		SDH         bool   `json:"sdh"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid body")
+		return
+	}
+	fileID, err := uuid.Parse(body.FileID)
+	if err != nil {
+		respond.BadRequest(w, r, "invalid file_id")
+		return
+	}
+
+	files, err := h.media.GetFiles(r.Context(), itemID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "ocr: list files", "id", itemID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	var inputPath string
+	for _, f := range files {
+		if f.ID == fileID {
+			inputPath = f.FilePath
+			break
+		}
+	}
+	if inputPath == "" {
+		respond.NotFound(w, r)
+		return
+	}
+
+	row, err := h.svc.OCRStream(r.Context(), subtitles.OCROpts{
+		FileID:         fileID,
+		InputPath:      inputPath,
+		AbsStreamIndex: body.StreamIndex,
+		Language:       body.Language,
+		Title:          body.Title,
+		Forced:         body.Forced,
+		SDH:            body.SDH,
+	})
+	if err != nil {
+		if errors.Is(err, subtitles.ErrNoOCR) {
+			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{
+				"error": "OCR not available — ffmpeg + tesseract are required on the server",
+			})
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "ocr: run", "id", itemID, "stream", body.StreamIndex, "err", err)
+		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	respond.Created(w, r, toExternalSubtitleJSON(row))
+}
+
 // Delete handles DELETE /api/v1/items/{id}/subtitles/{subId}.
 func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -282,6 +368,7 @@ func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Serve handles GET /media/external-subtitles/{subId}. Returns the on-disk VTT.
+// Requires auth — browsers send same-origin cookies on <track> requests.
 func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	subID, err := uuid.Parse(chi.URLParam(r, "subId"))
 	if err != nil {
@@ -293,6 +380,20 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
+	// Resolve the parent item so we can enforce per-library ACL.
+	file, err := h.media.GetFile(r.Context(), row.FileID)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if !h.checkAccess(w, r, item.LibraryID) {
+		return
+	}
 	data, err := os.ReadFile(row.StoragePath)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "subtitles: read file", "id", subID, "err", err)
@@ -300,8 +401,7 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
 }
@@ -379,6 +479,7 @@ func toExternalSubtitleJSON(row gen.ExternalSubtitle) ExternalSubtitleJSON {
 		Forced:   row.Forced,
 		SDH:      row.Sdh,
 		Source:   row.Source,
+		SourceID: row.SourceID,
 		URL:      "/media/external-subtitles/" + row.ID.String(),
 	}
 }

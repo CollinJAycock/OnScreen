@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 )
 
 // BackupHandler exposes admin-only DB backup/restore operations.
@@ -32,10 +34,17 @@ import (
 type BackupHandler struct {
 	databaseURL string
 	logger      *slog.Logger
+	audit       *audit.Logger
 }
 
 func NewBackupHandler(databaseURL string, logger *slog.Logger) *BackupHandler {
 	return &BackupHandler{databaseURL: databaseURL, logger: logger}
+}
+
+// WithAudit wires the audit logger so backup/restore actions are recorded.
+func (h *BackupHandler) WithAudit(a *audit.Logger) *BackupHandler {
+	h.audit = a
+	return h
 }
 
 // Download handles GET /api/v1/admin/backup.
@@ -119,6 +128,14 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.logger.Info("backup downloaded", "filename", filename, "bytes", info.Size())
+
+	if h.audit != nil {
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			actor := claims.UserID
+			h.audit.Log(r.Context(), &actor, audit.ActionBackupDownload, filename,
+				map[string]any{"bytes": info.Size()}, audit.ClientIP(r))
+		}
+	}
 }
 
 // Restore handles POST /api/v1/admin/restore.
@@ -197,6 +214,16 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		"exit_err", runErr,
 		"stderr_bytes", stderr.Len(),
 	)
+
+	if h.audit != nil {
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			actor := claims.UserID
+			h.audit.Log(r.Context(), &actor, audit.ActionBackupRestore, hdr.Filename,
+				map[string]any{"size": hdr.Size, "exit_error": errString(runErr)},
+				audit.ClientIP(r))
+		}
+	}
+
 	respond.Success(w, r, map[string]any{
 		"filename":   hdr.Filename,
 		"size":       hdr.Size,
