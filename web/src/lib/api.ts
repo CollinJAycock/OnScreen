@@ -999,3 +999,58 @@ export const notificationApi = {
   markAllRead: () =>
     api.post<void>('/notifications/read-all', {}),
 };
+
+// ── Scheduled Tasks (admin) ──────────────────────────────────────────────────
+
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  task_type: string;
+  config: Record<string, unknown>;
+  cron_expr: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string;
+  last_status: string;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskRun {
+  id: string;
+  task_id: string;
+  started_at: string;
+  ended_at: string | null;
+  status: string;
+  output: string;
+  error: string;
+}
+
+export interface CreateTaskBody {
+  name: string;
+  task_type: string;
+  cron_expr: string;
+  config?: Record<string, unknown>;
+  enabled?: boolean;
+}
+
+export interface UpdateTaskBody {
+  name?: string;
+  task_type?: string;
+  cron_expr?: string;
+  config?: Record<string, unknown>;
+  enabled?: boolean;
+}
+
+export const tasksApi = {
+  list: () => api.get<ScheduledTask[]>('/admin/tasks'),
+  types: () => api.get<string[]>('/admin/tasks/types'),
+  create: (body: CreateTaskBody) => api.post<ScheduledTask>('/admin/tasks', body),
+  update: (id: string, body: UpdateTaskBody) =>
+    api.patch<ScheduledTask>(`/admin/tasks/${id}`, body),
+  del: (id: string) => api.del(`/admin/tasks/${id}`),
+  runNow: (id: string) => api.post<{ queued: boolean }>(`/admin/tasks/${id}/run`, {}),
+  runs: (id: string, limit = 50) =>
+    api.get<TaskRun[]>(`/admin/tasks/${id}/runs?limit=${limit}`)
+};
