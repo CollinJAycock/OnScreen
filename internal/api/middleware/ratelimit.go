@@ -21,6 +21,15 @@ var (
 	AuthLimit = RateLimitConfig{Limit: 10, Window: time.Minute}
 	// SessionLimit applies to all authenticated endpoints — 1000 req/min per token.
 	SessionLimit = RateLimitConfig{Limit: 1000, Window: time.Minute}
+	// TranscodeStartLimit caps how often a session can spin up new ffmpeg
+	// transcode jobs. Each Start kicks off a hardware encoder and writes a
+	// segment directory; a runaway client (or a bug in the player) shouldn't
+	// be able to DoS the host by hammering the endpoint.
+	TranscodeStartLimit = RateLimitConfig{Limit: 10, Window: time.Minute}
+	// DiscoverLimit caps TMDB-backed search hits per session. The Discover
+	// endpoint proxies every keystroke to TMDB; even with debouncing in the
+	// UI a noisy client could burn the operator's TMDB budget.
+	DiscoverLimit = RateLimitConfig{Limit: 60, Window: time.Minute}
 )
 
 // RateLimit returns a middleware that enforces the given rate limit config.

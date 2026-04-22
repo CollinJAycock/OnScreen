@@ -423,8 +423,11 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 
 			// Discover — TMDB-backed search powering the Request UI.
+			// Per-session cap on top of SessionLimit since each call hits TMDB.
 			if h.Discover != nil {
-				r.Get("/discover/search", h.Discover.Search)
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.DiscoverLimit,
+					middleware.SessionKey("ratelimit:discover"))).
+					Get("/discover/search", h.Discover.Search)
 			}
 
 			// Media requests — user-facing workflow + admin queue actions.
@@ -537,8 +540,13 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 
 			// Native HLS transcode.
+			// Start spins up an ffmpeg job — limited per session to keep a
+			// runaway player from DoS-ing the host. Stop is a cheap teardown
+			// and only protected by SessionLimit.
 			if h.NativeTranscode != nil {
-				r.Post("/items/{id}/transcode", h.NativeTranscode.Start)
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.TranscodeStartLimit,
+					middleware.SessionKey("ratelimit:transcode_start"))).
+					Post("/items/{id}/transcode", h.NativeTranscode.Start)
 				r.Delete("/transcode/sessions/{sid}", h.NativeTranscode.Stop)
 			}
 		})
