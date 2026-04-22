@@ -20,6 +20,7 @@
     { href: '/settings/transcode', label: 'Transcode', exact: false },
     { href: '/settings/users', label: 'Users', exact: false },
     { href: '/settings/webhooks', label: 'Webhooks', exact: false },
+    { href: '/settings/plugins', label: 'Plugins', exact: false },
     { href: '/settings/tasks', label: 'Tasks', exact: false },
     { href: '/settings/backup', label: 'Backup', exact: false },
     { href: '/settings/sso', label: 'SSO', exact: false },

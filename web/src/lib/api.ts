@@ -895,6 +895,45 @@ export const webhookApi = {
   test: (id: string) => api.post<void>(`/webhooks/${id}/test`)
 };
 
+// ── Plugins (admin) ───────────────────────────────────────────────────────────
+
+export type PluginRole = 'notification' | 'metadata' | 'task';
+
+export interface Plugin {
+  id: string;
+  name: string;
+  role: PluginRole;
+  transport: string;
+  endpoint_url: string;
+  allowed_hosts: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PluginCreateInput {
+  name: string;
+  role: PluginRole;
+  endpoint_url: string;
+  allowed_hosts?: string[];
+  enabled?: boolean;
+}
+
+export interface PluginUpdateInput {
+  name?: string;
+  endpoint_url?: string;
+  allowed_hosts?: string[];
+  enabled?: boolean;
+}
+
+export const pluginApi = {
+  list: () => api.requestList<Plugin>('/admin/plugins'),
+  create: (body: PluginCreateInput) => api.post<Plugin>('/admin/plugins', body),
+  update: (id: string, body: PluginUpdateInput) => api.patch<Plugin>(`/admin/plugins/${id}`, body),
+  del: (id: string) => api.del(`/admin/plugins/${id}`),
+  test: (id: string) => api.post<void>(`/admin/plugins/${id}/test`)
+};
+
 // ── Active Sessions ───────────────────────────────────────────────────────────
 
 export interface ActiveSession {

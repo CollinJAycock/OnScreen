@@ -15,8 +15,16 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/plugin"
 	"github.com/onscreen/onscreen/internal/webhook"
 )
+
+// PluginNotifier is the subset of plugin.NotificationDispatcher the webhook
+// fan-out needs. Defined as an interface so tests don't need a real plugin
+// registry.
+type PluginNotifier interface {
+	Dispatch(plugin.NotificationEvent)
+}
 
 // WebhookServerInfo identifies this server in webhook payloads.
 type WebhookServerInfo struct {
@@ -40,18 +48,23 @@ type webhookMediaDB interface {
 // unbounded memory/goroutine growth under heavy webhook load.
 const maxConcurrentDeliveries = 20
 
-// WebhookDispatcher delivers webhook events asynchronously to all subscribed endpoints.
+// WebhookDispatcher delivers webhook events asynchronously to all subscribed
+// endpoints. If a PluginNotifier is attached via WithPluginNotifier, every
+// dispatched event is also fanned out to the registered notification plugins;
+// the two paths are independent (a webhook delivery failure does not affect
+// plugin delivery, and vice versa).
 type WebhookDispatcher struct {
-	db     webhookDeliveryDB
-	media  webhookMediaDB
-	enc    *auth.Encryptor
-	server WebhookServerInfo
-	client *http.Client
-	logger *slog.Logger
-	sem    chan struct{} // concurrency limiter for delivery goroutines
-	wg     sync.WaitGroup
-	ctx    context.Context // cancelled on Close to interrupt retries
-	cancel context.CancelFunc
+	db       webhookDeliveryDB
+	media    webhookMediaDB
+	enc      *auth.Encryptor
+	server   WebhookServerInfo
+	client   *http.Client
+	logger   *slog.Logger
+	sem      chan struct{} // concurrency limiter for delivery goroutines
+	wg       sync.WaitGroup
+	ctx      context.Context // cancelled on Close to interrupt retries
+	cancel   context.CancelFunc
+	plugins  PluginNotifier
 }
 
 // NewWebhookDispatcher creates a WebhookDispatcher.
@@ -76,9 +89,21 @@ func NewWebhookDispatcher(
 	}
 }
 
+// WithPluginNotifier returns d with a PluginNotifier attached. nil disables
+// plugin fan-out for this dispatcher (the webhook path is unaffected either way).
+func (d *WebhookDispatcher) WithPluginNotifier(p PluginNotifier) *WebhookDispatcher {
+	d.plugins = p
+	return d
+}
+
 // Dispatch fires eventType to all enabled, subscribed endpoints.
-// Non-blocking — each delivery runs in its own goroutine.
+// Non-blocking — each delivery runs in its own goroutine. If a PluginNotifier
+// is attached, the same event is also fanned out to notification plugins.
 func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID) {
+	if d.plugins != nil {
+		d.plugins.Dispatch(d.buildPluginEvent(eventType, userID, mediaID))
+	}
+
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -167,6 +192,27 @@ func (d *WebhookDispatcher) buildPayload(ctx context.Context, eventType string, 
 		}
 	}
 	return p
+}
+
+// buildPluginEvent translates the webhook-style (eventType, userID, mediaID)
+// triple into the plugin notification payload. We don't reuse the webhook
+// payload struct because plugins receive the canonical event name only — no
+// Plex-compatibility shape, no Server section.
+func (d *WebhookDispatcher) buildPluginEvent(eventType string, userID, mediaID uuid.UUID) plugin.NotificationEvent {
+	evt := plugin.NotificationEvent{Event: webhookEvent(eventType)}
+	if userID != uuid.Nil {
+		evt.UserID = userID.String()
+	}
+	if mediaID != uuid.Nil {
+		evt.MediaID = mediaID.String()
+		// Best-effort title — failure here is fine, the plugin gets an empty title.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if item, err := d.media.GetItem(ctx, mediaID); err == nil {
+			evt.Title = item.Title
+		}
+	}
+	return evt
 }
 
 // deliverWithRetry attempts delivery up to 3 times with cancellable sleeps.

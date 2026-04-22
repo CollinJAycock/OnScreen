@@ -54,6 +54,7 @@ type Handlers struct {
 	Backup          *v1.BackupHandler
 	Tasks           *v1.TasksHandler
 	People          *v1.PeopleHandler
+	Plugins         *v1.PluginHandler
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []string // returns all library scan_paths for artwork serving
@@ -313,6 +314,18 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/maintenance/refresh-missing-art", h.Maintenance.RefreshMissingArt)
 					r.Post("/maintenance/dedupe-shows", h.Maintenance.DedupeShows)
 					r.Post("/maintenance/dedupe-movies", h.Maintenance.DedupeMovies)
+				})
+			}
+
+			// Plugins — admin only. Outbound MCP plugin registrations.
+			if h.Plugins != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/plugins", h.Plugins.List)
+					r.Post("/admin/plugins", h.Plugins.Create)
+					r.Patch("/admin/plugins/{id}", h.Plugins.Update)
+					r.Delete("/admin/plugins/{id}", h.Plugins.Delete)
+					r.Post("/admin/plugins/{id}/test", h.Plugins.Test)
 				})
 			}
 

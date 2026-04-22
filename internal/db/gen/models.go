@@ -211,6 +211,18 @@ type Person struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Plugin struct {
+	ID           uuid.UUID          `json:"id"`
+	Name         string             `json:"name"`
+	Role         string             `json:"role"`
+	Transport    string             `json:"transport"`
+	EndpointUrl  string             `json:"endpoint_url"`
+	AllowedHosts []byte             `json:"allowed_hosts"`
+	Enabled      bool               `json:"enabled"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ScheduledTask struct {
 	ID         uuid.UUID          `json:"id"`
 	Name       string             `json:"name"`
@@ -284,14 +296,14 @@ type User struct {
 	GoogleAvatarUrl       *string            `json:"google_avatar_url"`
 	GithubID              *string            `json:"github_id"`
 	DiscordID             *string            `json:"discord_id"`
-	OidcIssuer            *string            `json:"oidc_issuer"`
-	OidcSubject           *string            `json:"oidc_subject"`
-	LdapDn                *string            `json:"ldap_dn"`
 	ParentUserID          pgtype.UUID        `json:"parent_user_id"`
 	AvatarUrl             *string            `json:"avatar_url"`
 	PreferredAudioLang    *string            `json:"preferred_audio_lang"`
 	PreferredSubtitleLang *string            `json:"preferred_subtitle_lang"`
 	MaxContentRating      *string            `json:"max_content_rating"`
+	OidcIssuer            *string            `json:"oidc_issuer"`
+	OidcSubject           *string            `json:"oidc_subject"`
+	LdapDn                *string            `json:"ldap_dn"`
 }
 
 type UserFavorite struct {

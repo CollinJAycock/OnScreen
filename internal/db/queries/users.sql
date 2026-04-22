@@ -1,20 +1,8 @@
 -- name: GetUser :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE id = $1;
+SELECT * FROM users WHERE id = $1;
 
 -- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE username = $1;
+SELECT * FROM users WHERE username = $1;
 
 -- name: ListUsers :many
 SELECT id, username, email, is_admin,
@@ -25,11 +13,7 @@ ORDER BY username;
 -- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+RETURNING *;
 
 -- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
@@ -92,22 +76,10 @@ JOIN users p ON p.id = u.parent_user_id
 ORDER BY p.username, u.username;
 
 -- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE email = $1;
+SELECT * FROM users WHERE email = $1;
 
 -- name: GetUserByGoogleID :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE google_id = $1;
+SELECT * FROM users WHERE google_id = $1;
 
 -- name: LinkGoogleAccount :exec
 UPDATE users
@@ -119,20 +91,10 @@ WHERE id = $1;
 -- name: CreateGoogleUser :one
 INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+RETURNING *;
 
 -- name: GetUserByGitHubID :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE github_id = $1;
+SELECT * FROM users WHERE github_id = $1;
 
 -- name: LinkGitHubAccount :exec
 UPDATE users
@@ -144,20 +106,10 @@ WHERE id = $1;
 -- name: CreateGitHubUser :one
 INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+RETURNING *;
 
 -- name: GetUserByDiscordID :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE discord_id = $1;
+SELECT * FROM users WHERE discord_id = $1;
 
 -- name: LinkDiscordAccount :exec
 UPDATE users
@@ -169,20 +121,10 @@ WHERE id = $1;
 -- name: CreateDiscordUser :one
 INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+RETURNING *;
 
 -- name: GetUserByOIDCSubject :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE oidc_issuer = $1 AND oidc_subject = $2;
+SELECT * FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2;
 
 -- name: LinkOIDCAccount :exec
 UPDATE users
@@ -195,20 +137,10 @@ WHERE id = $1;
 -- name: CreateOIDCUser :one
 INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+RETURNING *;
 
 -- name: GetUserByLDAPDN :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE ldap_dn = $1;
+SELECT * FROM users WHERE ldap_dn = $1;
 
 -- name: LinkLDAPAccount :exec
 UPDATE users
@@ -220,11 +152,7 @@ WHERE id = $1;
 -- name: CreateLDAPUser :one
 INSERT INTO users (username, email, ldap_dn, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating;
+RETURNING *;
 
 -- name: GetUserPreferences :one
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating

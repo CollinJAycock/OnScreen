@@ -40,6 +40,7 @@ import (
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/observability"
+	"github.com/onscreen/onscreen/internal/plugin"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/scheduler"
 	"github.com/onscreen/onscreen/internal/streaming"
@@ -306,13 +307,16 @@ func run() error {
 	// Derive a stable machine ID from the secret key so webhook payloads
 	// identify this server consistently across restarts without a dedicated config field.
 	machineID := uuid.NewSHA1(uuid.NameSpaceDNS, []byte(cfg.SecretKey)).String()
+	pluginRegistry := plugin.NewRegistry(gen.New(rwPool))
+	pluginDispatcher := plugin.NewNotificationDispatcher(pluginRegistry, logger, auditLogger)
+	pluginHandler := v1.NewPluginHandler(pluginRegistry, pluginDispatcher, logger).WithAudit(auditLogger)
 	webhookDispatcher := worker.NewWebhookDispatcher(
 		gen.New(rwPool),
 		mediaSvc,
 		encryptor,
 		worker.WebhookServerInfo{Title: "OnScreen", MachineID: machineID},
 		logger,
-	)
+	).WithPluginNotifier(pluginDispatcher)
 	libEnqueuer.webhookDispatcher = webhookDispatcher
 	matchAdapter := &matchSearchAdapter{enricher: metaAgent}
 	arrAdapter := &arrLibraryAdapter{libSvc: libSvc, scanner: libEnqueuer}
@@ -549,6 +553,7 @@ func run() error {
 		Backup:             backupHandler,
 		Tasks:              tasksHandler,
 		People:             peopleHandler,
+		Plugins:            pluginHandler,
 		Favorites:          favoritesHandler,
 		StreamTracker:      streamTracker,
 		Artwork:            artworkMgr,
@@ -693,6 +698,9 @@ func run() error {
 		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 			logger.Error("metrics server shutdown error", "err", err)
 		}
+		// Stop plugin workers after the HTTP servers so we don't drop
+		// in-flight notifications triggered by requests already in progress.
+		pluginDispatcher.Close()
 		return nil
 	})
 

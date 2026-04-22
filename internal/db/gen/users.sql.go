@@ -46,11 +46,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createDiscordUser = `-- name: CreateDiscordUser :one
 INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn
 `
 
 type CreateDiscordUserParams struct {
@@ -81,14 +77,14 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
@@ -96,11 +92,7 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 const createGitHubUser = `-- name: CreateGitHubUser :one
 INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn
 `
 
 type CreateGitHubUserParams struct {
@@ -131,14 +123,14 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
@@ -146,11 +138,7 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 const createGoogleUser = `-- name: CreateGoogleUser :one
 INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn
 `
 
 type CreateGoogleUserParams struct {
@@ -183,14 +171,60 @@ func (q *Queries) CreateGoogleUser(ctx context.Context, arg CreateGoogleUserPara
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
+	)
+	return i, err
+}
+
+const createLDAPUser = `-- name: CreateLDAPUser :one
+INSERT INTO users (username, email, ldap_dn, is_admin)
+VALUES ($1, $2, $3, $4)
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn
+`
+
+type CreateLDAPUserParams struct {
+	Username string  `json:"username"`
+	Email    *string `json:"email"`
+	LdapDn   *string `json:"ldap_dn"`
+	IsAdmin  bool    `json:"is_admin"`
+}
+
+func (q *Queries) CreateLDAPUser(ctx context.Context, arg CreateLDAPUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createLDAPUser,
+		arg.Username,
+		arg.Email,
+		arg.LdapDn,
+		arg.IsAdmin,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsAdmin,
+		&i.Pin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GoogleID,
+		&i.GoogleAvatarUrl,
+		&i.GithubID,
+		&i.DiscordID,
+		&i.ParentUserID,
+		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
@@ -232,14 +266,58 @@ func (q *Queries) CreateManagedProfile(ctx context.Context, arg CreateManagedPro
 	return i, err
 }
 
+const createOIDCUser = `-- name: CreateOIDCUser :one
+INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn
+`
+
+type CreateOIDCUserParams struct {
+	Username    string  `json:"username"`
+	Email       *string `json:"email"`
+	OidcIssuer  *string `json:"oidc_issuer"`
+	OidcSubject *string `json:"oidc_subject"`
+	IsAdmin     bool    `json:"is_admin"`
+}
+
+func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createOIDCUser,
+		arg.Username,
+		arg.Email,
+		arg.OidcIssuer,
+		arg.OidcSubject,
+		arg.IsAdmin,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsAdmin,
+		&i.Pin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GoogleID,
+		&i.GoogleAvatarUrl,
+		&i.GithubID,
+		&i.DiscordID,
+		&i.ParentUserID,
+		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
+	)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin,
-          created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-          oidc_issuer, oidc_subject, ldap_dn,
-          parent_user_id, avatar_url,
-          preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn
 `
 
 type CreateUserParams struct {
@@ -270,14 +348,14 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
@@ -315,13 +393,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id uuid.UUID) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -340,26 +412,20 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
 
 const getUserByDiscordID = `-- name: GetUserByDiscordID :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE discord_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE discord_id = $1
 `
 
 func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (User, error) {
@@ -378,26 +444,20 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE email = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, error) {
@@ -416,26 +476,20 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, erro
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
 
 const getUserByGitHubID = `-- name: GetUserByGitHubID :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE github_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE github_id = $1
 `
 
 func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User, error) {
@@ -454,26 +508,20 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
 
 const getUserByGoogleID = `-- name: GetUserByGoogleID :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE google_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE google_id = $1
 `
 
 func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User, error) {
@@ -492,26 +540,89 @@ func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
+	)
+	return i, err
+}
+
+const getUserByLDAPDN = `-- name: GetUserByLDAPDN :one
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE ldap_dn = $1
+`
+
+func (q *Queries) GetUserByLDAPDN(ctx context.Context, ldapDn *string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByLDAPDN, ldapDn)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsAdmin,
+		&i.Pin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GoogleID,
+		&i.GoogleAvatarUrl,
+		&i.GithubID,
+		&i.DiscordID,
+		&i.ParentUserID,
+		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
+	)
+	return i, err
+}
+
+const getUserByOIDCSubject = `-- name: GetUserByOIDCSubject :one
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
+`
+
+type GetUserByOIDCSubjectParams struct {
+	OidcIssuer  *string `json:"oidc_issuer"`
+	OidcSubject *string `json:"oidc_subject"`
+}
+
+func (q *Queries) GetUserByOIDCSubject(ctx context.Context, arg GetUserByOIDCSubjectParams) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByOIDCSubject, arg.OidcIssuer, arg.OidcSubject)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsAdmin,
+		&i.Pin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GoogleID,
+		&i.GoogleAvatarUrl,
+		&i.GithubID,
+		&i.DiscordID,
+		&i.ParentUserID,
+		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, is_admin, pin,
-       created_at, updated_at, google_id, google_avatar_url, github_id, discord_id,
-       oidc_issuer, oidc_subject, ldap_dn,
-       parent_user_id, avatar_url,
-       preferred_audio_lang, preferred_subtitle_lang, max_content_rating
-FROM users
-WHERE username = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn FROM users WHERE username = $1
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -530,14 +641,14 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.GoogleAvatarUrl,
 		&i.GithubID,
 		&i.DiscordID,
-		&i.OidcIssuer,
-		&i.OidcSubject,
-		&i.LdapDn,
 		&i.ParentUserID,
 		&i.AvatarUrl,
 		&i.PreferredAudioLang,
 		&i.PreferredSubtitleLang,
 		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
 	)
 	return i, err
 }
@@ -619,6 +730,51 @@ func (q *Queries) LinkGoogleAccount(ctx context.Context, arg LinkGoogleAccountPa
 		arg.ID,
 		arg.GoogleID,
 		arg.GoogleAvatarUrl,
+		arg.Email,
+	)
+	return err
+}
+
+const linkLDAPAccount = `-- name: LinkLDAPAccount :exec
+UPDATE users
+SET ldap_dn = $2,
+    email = COALESCE(email, $3),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type LinkLDAPAccountParams struct {
+	ID     uuid.UUID `json:"id"`
+	LdapDn *string   `json:"ldap_dn"`
+	Email  *string   `json:"email"`
+}
+
+func (q *Queries) LinkLDAPAccount(ctx context.Context, arg LinkLDAPAccountParams) error {
+	_, err := q.db.Exec(ctx, linkLDAPAccount, arg.ID, arg.LdapDn, arg.Email)
+	return err
+}
+
+const linkOIDCAccount = `-- name: LinkOIDCAccount :exec
+UPDATE users
+SET oidc_issuer = $2,
+    oidc_subject = $3,
+    email = COALESCE(email, $4),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type LinkOIDCAccountParams struct {
+	ID          uuid.UUID `json:"id"`
+	OidcIssuer  *string   `json:"oidc_issuer"`
+	OidcSubject *string   `json:"oidc_subject"`
+	Email       *string   `json:"email"`
+}
+
+func (q *Queries) LinkOIDCAccount(ctx context.Context, arg LinkOIDCAccountParams) error {
+	_, err := q.db.Exec(ctx, linkOIDCAccount,
+		arg.ID,
+		arg.OidcIssuer,
+		arg.OidcSubject,
 		arg.Email,
 	)
 	return err
