@@ -182,3 +182,40 @@ func TestTestEmail(t *testing.T) {
 		t.Error("body should contain the heading text")
 	}
 }
+
+// TestRender_EscapesInterpolatedFields verifies that render() passes every
+// interpolated field through html.EscapeString. Today's call sites pass
+// server-controlled strings and regex-restricted usernames, but a future
+// caller that forwards looser user content (display name, profile label)
+// must not be able to land stored XSS in the recipient's mail client.
+func TestRender_EscapesInterpolatedFields(t *testing.T) {
+	out := render(emailTemplate{
+		Heading:    `<script>alert(1)</script>`,
+		Body:       `hi "bob" & <img src=x onerror=alert(1)>`,
+		ButtonText: `Click <me>`,
+		ButtonURL:  `javascript:alert(1)"`,
+		Footer:     `<b>footer</b>`,
+	})
+
+	// None of the raw payload markers may survive into the HTML.
+	forbidden := []string{
+		`<script>`,
+		`<img src=x`,
+		`Click <me>`,
+		`<b>footer</b>`,
+	}
+	for _, f := range forbidden {
+		if strings.Contains(out, f) {
+			t.Errorf("unescaped %q leaked into rendered email:\n%s", f, out)
+		}
+	}
+	// The escaped form should appear somewhere (sanity: escaping happened).
+	if !strings.Contains(out, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("expected escaped <script> in body")
+	}
+	// The href attribute must contain the escaped quote, not a raw one
+	// that could break out of the attribute.
+	if !strings.Contains(out, `javascript:alert(1)&#34;`) {
+		t.Error("expected href value to be escaped")
+	}
+}

@@ -375,3 +375,65 @@ func min(a, b int) int {
 // Touch the time package so it stays in the imports if every other use
 // goes away — the package is part of the public API of this file.
 var _ = time.Now
+
+// infiniteReader emits `chunk` forever. Used to prove ParseXMLTV stops
+// reading at the size cap instead of ballooning memory on a hostile or
+// runaway upstream guide.
+type infiniteReader struct {
+	chunk []byte
+	off   int
+	read  int64
+}
+
+func (r *infiniteReader) Read(p []byte) (int, error) {
+	n := 0
+	for n < len(p) {
+		if r.off >= len(r.chunk) {
+			r.off = 0
+		}
+		m := copy(p[n:], r.chunk[r.off:])
+		r.off += m
+		n += m
+	}
+	r.read += int64(n)
+	return n, nil
+}
+
+// TestParseXMLTV_CapsReaderAtMaxBytes verifies the io.LimitReader wrap.
+// Without the cap, this test would loop reading garbage until the
+// process died. With the cap it returns within milliseconds: ParseXMLTV
+// reads at most maxXMLTVBytes and the decoder surfaces an error on the
+// truncated (never-closed </tv>) document.
+func TestParseXMLTV_CapsReaderAtMaxBytes(t *testing.T) {
+	// Shrink the cap so we can exercise the bound without spending seconds
+	// shovelling GiBs through the XML decoder. Production code never
+	// mutates this variable.
+	orig := maxXMLTVBytes
+	maxXMLTVBytes = 64 * 1024
+	t.Cleanup(func() { maxXMLTVBytes = orig })
+
+	// Start with valid opening tags so the decoder commits to reading
+	// rather than bailing on the first byte; then infinite garbage that
+	// will never yield a closing </tv>.
+	prefix := []byte(`<?xml version="1.0"?><tv>`)
+	r := &infiniteReader{chunk: []byte("<programme>x</programme>")}
+	combined := io.MultiReader(bytes.NewReader(prefix), r)
+
+	done := make(chan struct{})
+	var parseErr error
+	go func() {
+		_, _, _, parseErr = ParseXMLTV(combined)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ParseXMLTV did not return within 5s — LimitReader cap may be missing")
+	}
+	if parseErr == nil {
+		t.Fatal("expected decode error on truncated document, got nil")
+	}
+	if r.read > maxXMLTVBytes {
+		t.Errorf("reader consumed %d bytes past cap %d", r.read, maxXMLTVBytes)
+	}
+}

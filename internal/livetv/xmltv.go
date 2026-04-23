@@ -196,7 +196,9 @@ func (g *gzipReadCloser) Close() error {
 // still safely below anything that would OOM a small homelab server.
 // Beyond this, parsing is refused — prevents admin-session hijack +
 // malicious source URL → OOM DoS.
-const maxXMLTVBytes = 1 << 30 // 1 GiB
+// Package-level so tests can lower it (restore via t.Cleanup). Production
+// code never reassigns this.
+var maxXMLTVBytes int64 = 1 << 30 // 1 GiB
 
 // ParseXMLTV reads an XMLTV document and returns the parsed channels +
 // programmes. Programmes whose start/stop fail to parse are silently

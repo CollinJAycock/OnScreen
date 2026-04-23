@@ -255,6 +255,103 @@ func TestPair_Claim_UnknownPIN(t *testing.T) {
 	}
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// TestRandomPIN_FormatAndDistribution spot-checks the rejection-sampled
+// PIN generator: every output is exactly six ASCII digits and over many
+// iterations we actually see values across the full 0..999_999 range.
+func TestRandomPIN_FormatAndDistribution(t *testing.T) {
+	seen := make(map[string]struct{}, 10000)
+	const iterations = 10000
+	minVal, maxVal := 999999, 0
+	for i := 0; i < iterations; i++ {
+		p, err := randomPIN()
+		if err != nil {
+			t.Fatalf("randomPIN: %v", err)
+		}
+		if !validPIN(p) {
+			t.Fatalf("randomPIN returned %q, not 6 digits", p)
+		}
+		seen[p] = struct{}{}
+		n := 0
+		for _, c := range p {
+			n = n*10 + int(c-'0')
+		}
+		if n < minVal {
+			minVal = n
+		}
+		if n > maxVal {
+			maxVal = n
+		}
+	}
+	// With 10k samples across a 1M space, collision rate is ~5%, so we
+	// expect ≥9000 uniques. A broken generator that returns the same
+	// value or a tiny sub-range would miss this floor by a mile.
+	if len(seen) < 9000 {
+		t.Errorf("randomPIN produced only %d uniques in %d draws", len(seen), iterations)
+	}
+	// Uniform-ish distribution: max should be well above 900000 and min
+	// well below 100000 after 10k samples. This catches modulo-bias
+	// regressions that shift the distribution.
+	if maxVal < 900000 {
+		t.Errorf("randomPIN max=%d, expected ≥900000 after %d draws", maxVal, iterations)
+	}
+	if minVal > 100000 {
+		t.Errorf("randomPIN min=%d, expected ≤100000 after %d draws", minVal, iterations)
+	}
+}
+
+func TestExtractDeviceToken_PrefersAuthorizationHeader(t *testing.T) {
+	req := httptest.NewRequest("GET", "/poll?device_token=from-query", nil)
+	req.Header.Set("Authorization", "Bearer from-header")
+	if got := extractDeviceToken(req); got != "from-header" {
+		t.Errorf("header should win over query; got %q", got)
+	}
+}
+
+func TestExtractDeviceToken_FallsBackToQuery(t *testing.T) {
+	req := httptest.NewRequest("GET", "/poll?device_token=from-query", nil)
+	if got := extractDeviceToken(req); got != "from-query" {
+		t.Errorf("expected query fallback, got %q", got)
+	}
+}
+
+func TestExtractDeviceToken_EmptyWhenNeitherPresent(t *testing.T) {
+	req := httptest.NewRequest("GET", "/poll", nil)
+	if got := extractDeviceToken(req); got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+func TestExtractDeviceToken_IgnoresNonBearerAuthorization(t *testing.T) {
+	req := httptest.NewRequest("GET", "/poll?device_token=from-query", nil)
+	req.Header.Set("Authorization", "Basic user:pass")
+	if got := extractDeviceToken(req); got != "from-query" {
+		t.Errorf("non-Bearer auth should fall through to query, got %q", got)
+	}
+}
+
+func TestPair_Poll_AcceptsBearerHeader(t *testing.T) {
+	store := newMemPairStore()
+	h := newPairHandler(store, nil)
+
+	// Seed a pending record and grab its device token.
+	rec := httptest.NewRecorder()
+	h.CreateCode(rec, httptest.NewRequest("POST", "/api/v1/auth/pair/code", nil))
+	dev, _ := decodePairData(t, rec.Body.Bytes())["device_token"].(string)
+
+	// Poll using the header form (no ?device_token in the URL).
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/auth/pair/poll", nil)
+	req.Header.Set("Authorization", "Bearer "+dev)
+	h.Poll(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("bearer-header poll: got %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ── Already-claimed edge case ────────────────────────────────────────────────
+
 func TestPair_Claim_AlreadyClaimedReturns409(t *testing.T) {
 	store := newMemPairStore()
 	issuer := func(_ context.Context, uid uuid.UUID) (*TokenPair, error) {
