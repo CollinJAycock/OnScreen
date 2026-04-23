@@ -12,6 +12,20 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
+)
+
+// Package vars so tests can swap in loopback-permissive clients for
+// httptest. Production values block private/loopback/link-local to
+// prevent admin-initiated SSRF (memory says operators only paste
+// public IPTV URLs, but defense in depth).
+var (
+	// m3uStreamClient: no timeout — live-TV session body is long-lived.
+	m3uStreamClient = safehttp.NewClient(safehttp.DialPolicy{}, 0)
+	// m3uPlaylistClient: 30s to fetch the whole .m3u file.
+	m3uPlaylistClient = safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second)
 )
 
 // M3UConfig is the per-source JSON blob stored in `tuner_devices.config` for
@@ -133,7 +147,9 @@ func (d *M3UDriver) OpenStream(ctx context.Context, channelNumber string) (Strea
 	if d.cfg.UserAgent != "" {
 		req.Header.Set("User-Agent", d.cfg.UserAgent)
 	}
-	resp, err := (&http.Client{}).Do(req)
+	// No request timeout — the response body is the live-TV tune
+	// session. Stream lifetime is controlled by the caller's context.
+	resp, err := m3uStreamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("m3u open stream: %w", err)
 	}
@@ -173,7 +189,7 @@ func (d *M3UDriver) fetchPlaylist(ctx context.Context) (io.ReadCloser, error) {
 		if d.cfg.UserAgent != "" {
 			req.Header.Set("User-Agent", d.cfg.UserAgent)
 		}
-		resp, err := (&http.Client{}).Do(req)
+		resp, err := m3uPlaylistClient.Do(req)
 		if err != nil {
 			return nil, err
 		}

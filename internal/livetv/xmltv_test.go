@@ -14,6 +14,14 @@ import (
 	"time"
 )
 
+// Swap the production safehttp-guarded xmltvClient for one that allows
+// loopback, so httptest servers (127.0.0.1) are reachable in tests.
+// The SSRF guard is a production concern; tests exercise logic around
+// it rather than the guard itself (which has its own test file).
+func init() {
+	xmltvClient = &http.Client{Timeout: 60 * time.Second}
+}
+
 const sampleXMLTV = `<?xml version="1.0" encoding="UTF-8"?>
 <tv source-info-name="test">
   <channel id="WCBS.5.1.us">

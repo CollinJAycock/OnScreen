@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // HDHomeRunConfig is the per-device JSON blob stored in
@@ -74,8 +75,9 @@ func NewHDHomeRunDriver(name string, cfg HDHomeRunConfig) *HDHomeRunDriver {
 		// HTTP timeout has to be longer than the streaming endpoint's first
 		// byte (some HDHRs take ~10s to lock onto a channel) but the streaming
 		// endpoint uses a separate stream-aware request, so this is fine for
-		// the small JSON endpoints.
-		http:       &http.Client{Timeout: 15 * time.Second},
+		// the small JSON endpoints. LocalDevice policy allows RFC1918 —
+		// HDHomeRuns live on the LAN.
+		http:       safehttp.LocalDevice(),
 		streamURLs: make(map[string]string),
 	}
 }
@@ -185,7 +187,9 @@ func (d *HDHomeRunDriver) OpenStream(ctx context.Context, channelNumber string) 
 	// IMPORTANT: do not set a timeout on the streaming client — the body is
 	// the entire tune session. The upstream context cancellation is what
 	// closes the stream.
-	streamClient := &http.Client{}
+	streamClient := safehttp.NewClient(safehttp.DialPolicy{
+		AllowPrivate: true, AllowLoopback: true, AllowLinkLocal: true,
+	}, 0)
 	resp, err := streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("hdhomerun open stream: %w", err)

@@ -11,7 +11,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// Override the safehttp-guarded clients so httptest's loopback servers
+// are reachable in-tests. Production values block loopback.
+func init() {
+	m3uStreamClient = &http.Client{}
+	m3uPlaylistClient = &http.Client{Timeout: 30 * time.Second}
+}
 
 const samplePlaylist = `#EXTM3U
 #EXTINF:-1 tvg-id="wcbs" tvg-chno="5.1" tvg-logo="http://logos/wcbs.png" tvg-name="WCBS-DT",WCBS-DT

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // XMLTVChannel is one <channel> element from the source. We keep the
@@ -91,6 +93,12 @@ type xmltvRating struct {
 	Value  string `xml:"value"`
 }
 
+// xmltvClient is the http.Client used to fetch XMLTV URLs. Declared as
+// a package var (not inlined) so tests can swap in a permissive client
+// that reaches httptest's loopback binds. Production value blocks
+// private/loopback/link-local addresses to prevent admin-initiated SSRF.
+var xmltvClient = safehttp.NewClient(safehttp.DialPolicy{}, 60*time.Second)
+
 // FetchXMLTV pulls an XMLTV document from a URL or file path. The
 // returned reader yields decompressed XML — gzip is auto-detected by
 // peeking at the first two bytes (0x1F 0x8B) so callers don't have to
@@ -115,7 +123,7 @@ func FetchXMLTV(ctx context.Context, source string) (io.ReadCloser, error) {
 		if err != nil {
 			return nil, err
 		}
-		resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+		resp, err := xmltvClient.Do(req)
 		if err != nil {
 			return nil, err
 		}

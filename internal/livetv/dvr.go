@@ -219,6 +219,27 @@ func (s *DVRService) ListSchedulesForUser(ctx context.Context, userID uuid.UUID)
 	return rows, nil
 }
 
+// GetSchedule returns a schedule row for ownership checks. The handler
+// verifies user_id == caller before allowing mutations; without this
+// lookup anyone holding an authenticated session could delete another
+// user's rules just by knowing the UUID (IDOR).
+func (s *DVRService) GetSchedule(ctx context.Context, id uuid.UUID) (Schedule, error) {
+	row, err := s.q.GetSchedule(ctx, id)
+	if err != nil {
+		return Schedule{}, fmt.Errorf("get schedule: %w", err)
+	}
+	return row, nil
+}
+
+// GetRecording returns a recording row for ownership checks.
+func (s *DVRService) GetRecording(ctx context.Context, id uuid.UUID) (Recording, error) {
+	row, err := s.q.GetRecording(ctx, id)
+	if err != nil {
+		return Recording{}, fmt.Errorf("get recording: %w", err)
+	}
+	return row, nil
+}
+
 // DeleteSchedule removes a rule. Any already-scheduled recordings it
 // produced stay in place (with schedule_id set to NULL via ON DELETE
 // SET NULL) — the user presumably wants the in-flight capture to

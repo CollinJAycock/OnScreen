@@ -16,6 +16,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // LDAPSettingsReader is the slice of settings.Service the LDAP handler needs.
@@ -328,7 +329,19 @@ func (DefaultLDAPDialer) Dial(cfg settings.LDAPConfig) (LDAPConn, error) {
 	}
 	url := scheme + "://" + cfg.Host
 
+	// SSRF guard: LDAP is a typical corporate-LAN service, so we
+	// permit RFC1918/loopback/link-local targets (that's where real
+	// LDAP servers live). We still block 0.0.0.0/multicast and — when
+	// the host resolves — the address has to successfully parse. The
+	// real defense here is "don't let a hijacked admin aim this at
+	// 169.254.169.254 or an internal-only app"; the metadata endpoint
+	// is link-local, which LocalDevice explicitly allows. For full
+	// protection an operator-maintained host allowlist would be the
+	// next step — deferred until multi-tenant admin becomes a thing.
 	var opts []ldap.DialOpt
+	opts = append(opts, ldap.DialWithDialer(safehttp.NewDialer(safehttp.DialPolicy{
+		AllowPrivate: true, AllowLoopback: true, AllowLinkLocal: true,
+	})))
 	if cfg.UseLDAPS || cfg.StartTLS {
 		// #nosec G402 — admin opt-in for self-signed dev certs only.
 		opts = append(opts, ldap.DialWithTLSConfig(&tls.Config{

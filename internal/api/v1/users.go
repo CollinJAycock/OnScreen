@@ -564,7 +564,11 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 			respond.BadRequest(w, r, "PIN must be exactly 4 digits")
 			return
 		}
-		h, err := bcrypt.GenerateFromPassword([]byte(*body.PIN), 10)
+		// cost 12 matches the password hasher; the old cost 10 was a
+		// defense-in-depth gap on a short input (4-digit PIN is offline-
+		// brute-forceable in seconds even at 12, but mismatched costs
+		// were the real smell).
+		h, err := bcrypt.GenerateFromPassword([]byte(*body.PIN), 12)
 		if err != nil {
 			respond.InternalError(w, r)
 			return

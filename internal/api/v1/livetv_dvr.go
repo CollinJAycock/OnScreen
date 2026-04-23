@@ -18,9 +18,11 @@ import (
 // via interface so tests don't spin up the real worker.
 type LiveTVDVRService interface {
 	CreateSchedule(ctx context.Context, p livetv.CreateScheduleParams) (livetv.Schedule, error)
+	GetSchedule(ctx context.Context, id uuid.UUID) (livetv.Schedule, error)
 	ListSchedulesForUser(ctx context.Context, userID uuid.UUID) ([]livetv.Schedule, error)
 	DeleteSchedule(ctx context.Context, id uuid.UUID) error
 	SetScheduleEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
+	GetRecording(ctx context.Context, id uuid.UUID) (livetv.Recording, error)
 	ListRecordingsForUser(ctx context.Context, userID uuid.UUID, status string, limit, offset int32) ([]livetv.RecordingWithChannel, error)
 	CancelRecording(ctx context.Context, id uuid.UUID) error
 }
@@ -152,14 +154,32 @@ func (h *LiveTVHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 	respond.List(w, r, out, int64(len(out)), "")
 }
 
-// DeleteSchedule handles DELETE /api/v1/tv/schedules/{id}.
+// DeleteSchedule handles DELETE /api/v1/tv/schedules/{id}. Owner-only —
+// foreign-owned rows return 404 to avoid leaking existence (the UUID
+// might still be guessed but the attacker learns nothing from the
+// response).
 func (h *LiveTVHandler) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	if !h.dvrAvailable(w, r) {
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
 		return
 	}
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid schedule id")
+		return
+	}
+	row, err := h.dvr.GetSchedule(r.Context(), id)
+	if err != nil || row.UserID != claims.UserID {
+		// Obfuscate: a wrong-owner delete is indistinguishable from a
+		// non-existent row. Admins can still delete their own; we don't
+		// grant admins a global delete bypass here since schedules are
+		// personal — if an admin needs to clear someone else's, they can
+		// log in as that user or touch the DB directly.
+		respond.NotFound(w, r)
 		return
 	}
 	if err := h.dvr.DeleteSchedule(r.Context(), id); err != nil {
@@ -213,13 +233,25 @@ func (h *LiveTVHandler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 // the row to status='cancelled' — the worker sees the flip on its next
 // tick and stops capturing. The on-disk file (if any) stays put; user
 // can delete it via the media-item path later.
+//
+// Owner-only: 404 on foreign rows to obfuscate existence.
 func (h *LiveTVHandler) CancelRecording(w http.ResponseWriter, r *http.Request) {
 	if !h.dvrAvailable(w, r) {
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
 		return
 	}
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid recording id")
+		return
+	}
+	row, err := h.dvr.GetRecording(r.Context(), id)
+	if err != nil || row.UserID != claims.UserID {
+		respond.NotFound(w, r)
 		return
 	}
 	if err := h.dvr.CancelRecording(r.Context(), id); err != nil {
