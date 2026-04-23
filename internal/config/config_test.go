@@ -21,39 +21,60 @@ func TestValidateSecretKey_TooShort(t *testing.T) {
 	}
 }
 
+// realKey returns 32 bytes of realistic random-looking material —
+// comfortably above the entropy floor. Deterministic so tests stay
+// reproducible; NOT used as an actual secret.
+func realKey() []byte {
+	// Pseudo-random mixture of byte values; not cryptographically random
+	// but entropy ≥ 3 bits/byte as measured by checkKeyEntropy.
+	return []byte("3f7a9c2e8b1d4f60a5c8e1b4d7f0a3c6")
+}
+
 func TestValidateSecretKey_RawBytes32(t *testing.T) {
-	key := strings.Repeat("x", 32)
-	if err := validateSecretKey(key); err != nil {
+	if err := validateSecretKey(string(realKey())); err != nil {
 		t.Errorf("32-byte raw key should be valid: %v", err)
 	}
 }
 
 func TestValidateSecretKey_RawBytesLong(t *testing.T) {
-	key := strings.Repeat("x", 64) // 64 raw bytes but not valid hex
-	// "xxxx..." is not valid hex, so hex decode fails, but raw len >= 32 passes.
+	// 64 raw bytes of varied characters; not valid hex (contains 'z').
+	key := "3f7a9c2e8b1d4f60a5c8e1b4d7f0a3c63f7a9c2e8b1d4f60a5c8e1b4d7f0a3c6"
 	if err := validateSecretKey(key); err != nil {
 		t.Errorf("64-byte raw key should be valid: %v", err)
 	}
 }
 
 func TestValidateSecretKey_Hex64(t *testing.T) {
-	key := hex.EncodeToString(make([]byte, 32)) // 64-char hex = 32 bytes
+	key := hex.EncodeToString(realKey()) // 64-char hex = 32 bytes
 	if err := validateSecretKey(key); err != nil {
 		t.Errorf("hex-encoded 32-byte key should be valid: %v", err)
 	}
 }
 
 func TestValidateSecretKey_Base64(t *testing.T) {
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32)) // 44 chars
+	key := base64.StdEncoding.EncodeToString(realKey()) // 44 chars
 	if err := validateSecretKey(key); err != nil {
 		t.Errorf("base64-encoded 32-byte key should be valid: %v", err)
 	}
 }
 
 func TestValidateSecretKey_Base64NoPadding(t *testing.T) {
-	key := base64.RawStdEncoding.EncodeToString(make([]byte, 32)) // 43 chars
+	key := base64.RawStdEncoding.EncodeToString(realKey()) // 43 chars
 	if err := validateSecretKey(key); err != nil {
 		t.Errorf("base64-encoded (no padding) 32-byte key should be valid: %v", err)
+	}
+}
+
+func TestValidateSecretKey_RejectsAllSameByte(t *testing.T) {
+	if err := validateSecretKey(strings.Repeat("x", 32)); err == nil {
+		t.Error("all-same-byte key should be rejected")
+	}
+}
+
+func TestValidateSecretKey_RejectsLowEntropy(t *testing.T) {
+	// "abababab..." has entropy ~1 bit/byte — well under the 3.0 floor.
+	if err := validateSecretKey(strings.Repeat("ab", 16)); err == nil {
+		t.Error("low-entropy key should be rejected")
 	}
 }
 
@@ -70,7 +91,11 @@ func validConfig() *Config {
 	return &Config{
 		DatabaseURL: "postgres://localhost/test",
 		ValkeyURL:   "redis://localhost:6379",
-		SecretKey:   strings.Repeat("k", 32),
+		// Mix of characters to satisfy the entropy/all-same-byte guards
+		// in validateSecretKey. Real keys should be generated via
+		// `openssl rand -hex 32` — this is just a deterministic test
+		// value that clears the entropy floor.
+		SecretKey:   "abcdefghijklmnopqrstuvwxyz012345",
 		ListenAddr:  ":7070",
 	}
 }

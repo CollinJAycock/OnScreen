@@ -133,15 +133,22 @@ func (h *PairHandler) CreateCode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Poll handles GET /api/v1/auth/pair/poll?device_token=...
+// Poll handles GET /api/v1/auth/pair/poll.
 //
-// No auth required; the device_token itself is the credential. Returns 202
-// while pending, 200 with TokenPair once claimed (and consumes the record),
-// 410 once expired or already collected.
+// The device_token is passed via `Authorization: Bearer <token>` — NOT
+// as a query param — so it never appears in reverse-proxy access logs,
+// CDN caches, or browser history. Falls back to reading
+// `?device_token=...` for clients that haven't migrated yet (we will
+// remove the fallback before the native clients ship).
+//
+// No user auth required; the device_token itself is the one-shot
+// credential. Returns 202 while pending, 200 with TokenPair once
+// claimed (and consumes the record), 410 once expired or already
+// collected.
 func (h *PairHandler) Poll(w http.ResponseWriter, r *http.Request) {
-	deviceToken := strings.TrimSpace(r.URL.Query().Get("device_token"))
+	deviceToken := extractDeviceToken(r)
 	if deviceToken == "" {
-		respond.BadRequest(w, r, "device_token is required")
+		respond.BadRequest(w, r, "device_token is required (pass as Authorization: Bearer <token>)")
 		return
 	}
 	raw, err := h.store.Get(r.Context(), pairKeyDev+deviceToken)
@@ -262,13 +269,39 @@ func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 }
 
 // randomPIN returns a 6-digit zero-padded PIN drawn from crypto/rand.
+// Rejection-samples to eliminate modulo bias — without this, values
+// 0..967,295 would occur ~0.023% more often than 967,296..999,999.
+// The expected retry rate is <1%; in practice this completes on the
+// first iteration almost always.
 func randomPIN() (string, error) {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
+	const pinSpace uint32 = 1_000_000
+	// Largest multiple of pinSpace that fits in uint32; reads above
+	// this threshold are discarded to keep the distribution uniform.
+	const threshold = 4_294_000_000
+	for {
+		var b [4]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", err
+		}
+		n := binary.BigEndian.Uint32(b[:])
+		if n >= threshold {
+			continue
+		}
+		return fmt.Sprintf("%06d", n%pinSpace), nil
 	}
-	n := binary.BigEndian.Uint32(b[:]) % 1_000_000
-	return fmt.Sprintf("%06d", n), nil
+}
+
+// extractDeviceToken pulls the one-shot device credential from either
+// the Authorization header (preferred: not logged by proxies, not
+// cached by CDNs, not exposed in browser history) or — as a transient
+// backward-compat path — the `?device_token=...` query param. Clients
+// should move to the header form; the query fallback will be removed
+// before client dev ships.
+func extractDeviceToken(r *http.Request) string {
+	if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(bearer, "Bearer "))
+	}
+	return strings.TrimSpace(r.URL.Query().Get("device_token"))
 }
 
 // validPIN reports whether s is exactly six ASCII digits.

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/riandyrn/otelchi"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
@@ -22,6 +23,16 @@ import (
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/webui"
 )
+
+// ArtworkRoot pairs a library's UUID with its scan paths so the artwork
+// handler can check per-library ACL before serving. An authenticated
+// user without access to the library that owns the resolved file gets
+// a 404 (obfuscates existence vs. distinguishing "file not found" from
+// "not allowed to see this file").
+type ArtworkRoot struct {
+	LibraryID uuid.UUID
+	Paths     []string
+}
 
 // Handlers groups all handler dependencies.
 type Handlers struct {
@@ -67,7 +78,8 @@ type Handlers struct {
 	Discover        *v1.DiscoverHandler    // TMDB-backed search for the request UI
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
-	ArtworkRoots    func() []string // returns all library scan_paths for artwork serving
+	ArtworkRoots    func() []ArtworkRoot             // per-library scan_paths for ACL-aware artwork serving
+	LibraryAccess   v1.LibraryAccessChecker          // ACL for artwork; nil = bypass (dev setups)
 	Logger          *slog.Logger
 	Metrics         *observability.Metrics
 	Auth_mw         *middleware.Authenticator
@@ -131,46 +143,67 @@ func NewRouter(h *Handlers) http.Handler {
 	}
 
 	// ── Artwork file server ──────────────────────────────────────────────────
-	// Serves poster/fanart images from library scan_paths. No auth required so
-	// that <img> tags load without credentials. Tries each known scan_path root
-	// until the file is found.
+	// Serves poster/fanart images from library scan_paths. Requires auth
+	// (cookie for browsers, Bearer for native clients) and checks the
+	// caller's library ACL against whichever library owns the resolved
+	// file. This was previously unauthenticated — any user with a valid
+	// URL could read artwork from any library, breaking content-rating
+	// confidentiality on mixed-access deployments (kids vs adult library).
 	if h.ArtworkRoots != nil {
-		r.Get("/artwork/*", func(w http.ResponseWriter, req *http.Request) {
-			rel := strings.TrimPrefix(req.URL.Path, "/artwork/")
-			clean := filepath.Clean(rel)
-			if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-
-			// Parse optional resize query params (?w=300&h=450).
-			wParam, _ := strconv.Atoi(req.URL.Query().Get("w"))
-			hParam, _ := strconv.Atoi(req.URL.Query().Get("h"))
-			if wParam > 1920 {
-				wParam = 1920
-			}
-			if hParam > 1920 {
-				hParam = 1920
-			}
-
-			for _, root := range h.ArtworkRoots() {
-				abs := filepath.Join(root, clean)
-				if _, err := os.Stat(abs); err == nil {
-					// Serve resized variant if dimensions requested.
-					if (wParam > 0 || hParam > 0) && h.Artwork != nil {
-						w.Header().Set("Content-Type", "image/jpeg")
-						w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
-						if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
-							h.Logger.Error("artwork resize failed", "path", abs, "error", err)
-						}
-						return
-					}
-					w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
-					http.ServeFile(w, req, abs)
+		r.Group(func(r chi.Router) {
+			r.Use(h.Auth_mw.Required)
+			r.Get("/artwork/*", func(w http.ResponseWriter, req *http.Request) {
+				rel := strings.TrimPrefix(req.URL.Path, "/artwork/")
+				clean := filepath.Clean(rel)
+				if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
-			}
-			http.NotFound(w, req)
+
+				// Parse optional resize query params (?w=300&h=450).
+				wParam, _ := strconv.Atoi(req.URL.Query().Get("w"))
+				hParam, _ := strconv.Atoi(req.URL.Query().Get("h"))
+				if wParam > 1920 {
+					wParam = 1920
+				}
+				if hParam > 1920 {
+					hParam = 1920
+				}
+
+				claims := middleware.ClaimsFromContext(req.Context())
+				for _, root := range h.ArtworkRoots() {
+					for _, path := range root.Paths {
+						abs := filepath.Join(path, clean)
+						if _, err := os.Stat(abs); err != nil {
+							continue
+						}
+						// File exists; check whether the caller can see
+						// the owning library. Fail-closed: 404 (not 403)
+						// so the absence of access is indistinguishable
+						// from a missing file.
+						if h.LibraryAccess != nil && claims != nil {
+							ok, err := h.LibraryAccess.CanAccessLibrary(req.Context(), claims.UserID, root.LibraryID, claims.IsAdmin)
+							if err != nil || !ok {
+								http.NotFound(w, req)
+								return
+							}
+						}
+						// Serve resized variant if dimensions requested.
+						if (wParam > 0 || hParam > 0) && h.Artwork != nil {
+							w.Header().Set("Content-Type", "image/jpeg")
+							w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
+							if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
+								h.Logger.Error("artwork resize failed", "path", abs, "error", err)
+							}
+							return
+						}
+						w.Header().Set("Cache-Control", "private, max-age=86400, must-revalidate")
+						http.ServeFile(w, req, abs)
+						return
+					}
+				}
+				http.NotFound(w, req)
+			})
 		})
 	}
 

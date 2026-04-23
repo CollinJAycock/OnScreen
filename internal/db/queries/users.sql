@@ -189,3 +189,30 @@ UPDATE users
 SET max_content_rating = $2,
     updated_at = NOW()
 WHERE id = $1;
+
+-- name: BumpSessionEpoch :exec
+-- Invalidates all outstanding PASETO access tokens for a user by bumping
+-- their session_epoch counter. Called from admin demote, delete, and any
+-- other future path that needs "kick this user out NOW" semantics.
+UPDATE users
+SET session_epoch = session_epoch + 1,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: GetSessionEpoch :one
+-- Cheap lookup hit by the auth middleware on every authenticated request
+-- so tokens whose epoch doesn't match the current DB row get rejected.
+-- Indexed by the existing users PK — no extra index needed.
+SELECT session_epoch FROM users WHERE id = $1;
+
+-- name: CreateFirstAdmin :one
+-- Atomic "first user is admin" gate — creates the row only if the
+-- users table is empty. Returns (zero, pgx.ErrNoRows) when a user
+-- already exists, letting the caller fall back to the normal admin-
+-- only CreateUser path. Closes the race where two concurrent POST
+-- /auth/register requests could each see count=0 and both become
+-- admin.
+INSERT INTO users (username, email, password_hash, is_admin)
+SELECT $1, $2, $3, true
+WHERE NOT EXISTS (SELECT 1 FROM users)
+RETURNING *;

@@ -35,9 +35,12 @@ type webhookService struct {
 
 func newWebhookService(db webhookQuerier, enc *auth.Encryptor, logger *slog.Logger) *webhookService {
 	return &webhookService{
-		db:     db,
-		enc:    enc,
-		client: &http.Client{Timeout: 10 * time.Second},
+		db:  db,
+		enc: enc,
+		// SafeTransport rejects private/loopback/link-local IPs at dial time —
+		// keeps the admin-facing "Test Webhook" button from turning into an SSRF
+		// pivot into cloud metadata or same-host admin endpoints.
+		client: &http.Client{Timeout: 10 * time.Second, Transport: webhook.SafeTransport()},
 		logger: logger,
 	}
 }

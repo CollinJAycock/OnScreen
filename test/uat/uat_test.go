@@ -32,6 +32,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/testvalkey"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -110,6 +111,16 @@ func (s *stubAuthService) CreateUser(_ context.Context, username, _, password st
 		return nil, v1.ErrUserExists
 	}
 	return s.addUser(username, password, isAdmin), nil
+}
+
+func (s *stubAuthService) CreateFirstAdmin(_ context.Context, username, _, password string) (*v1.UserInfo, error) {
+	if s.count > 0 {
+		return nil, v1.ErrNotFirstUser
+	}
+	if _, exists := s.users[username]; exists {
+		return nil, v1.ErrUserExists
+	}
+	return s.addUser(username, password, true), nil
 }
 
 func (s *stubAuthService) UserCount(_ context.Context) (int64, error) {
@@ -366,6 +377,7 @@ func (s *stubUserDB) SetUserAdmin(_ context.Context, _ gen.SetUserAdminParams) e
 	return nil
 }
 func (s *stubUserDB) CountAdmins(_ context.Context) (int64, error) { return 1, nil }
+func (s *stubUserDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error { return nil }
 func (s *stubUserDB) UpdateUserPassword(_ context.Context, _ gen.UpdateUserPasswordParams) error {
 	return nil
 }
@@ -392,6 +404,9 @@ func (s *stubUserDB) GetUserPreferences(_ context.Context, _ uuid.UUID) (gen.Get
 	return gen.GetUserPreferencesRow{}, nil
 }
 func (s *stubUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPreferencesParams) error {
+	return nil
+}
+func (s *stubUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUserQualityProfileParams) error {
 	return nil
 }
 func (s *stubUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUserContentRatingParams) error {
@@ -478,7 +493,7 @@ func newTestServer(t *testing.T) *testServer {
 		History:   v1.NewHistoryHandler(&stubHistoryDB{}, log),
 		Analytics: v1.NewAnalyticsHandler(&stubAnalyticsDB{}, log),
 		Audit:     v1.NewAuditHandler(&stubAuditDB{}, log),
-		Email:     v1.NewEmailHandler(nil, log), // nil sender → email disabled
+		Email:     v1.NewEmailHandler(email.NewSender(nil), log), // disabled sender
 		User:      v1.NewUserHandler(&stubUserService{}).WithDB(&stubUserDB{}).WithTokenMaker(tm, log),
 		Items: v1.NewItemHandler(
 			itemMedia,

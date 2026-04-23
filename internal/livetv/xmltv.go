@@ -190,11 +190,25 @@ func (g *gzipReadCloser) Close() error {
 	return g.underlying.Close()
 }
 
+// maxXMLTVBytes caps the decompressed XMLTV document size. The largest
+// legitimate feeds we've seen (full-country 14-day grids from
+// epgshare01) run ~500MB decompressed; 1 GiB is 2× that headroom and
+// still safely below anything that would OOM a small homelab server.
+// Beyond this, parsing is refused — prevents admin-session hijack +
+// malicious source URL → OOM DoS.
+const maxXMLTVBytes = 1 << 30 // 1 GiB
+
 // ParseXMLTV reads an XMLTV document and returns the parsed channels +
 // programmes. Programmes whose start/stop fail to parse are silently
 // skipped (a single bad row in a 50,000-row grid shouldn't fail the
 // whole pull) — the count is exposed via the returned skipped counter.
+//
+// The input is wrapped in an io.LimitReader at maxXMLTVBytes; docs
+// that exceed the cap are truncated, which surfaces as an XML decode
+// error at the tail (not silently-missing data at the end — the XML
+// parser needs the closing </tv> to finish cleanly).
 func ParseXMLTV(r io.Reader) (channels []XMLTVChannel, programs []XMLTVProgram, skipped int, err error) {
+	r = io.LimitReader(r, maxXMLTVBytes)
 	dec := xml.NewDecoder(r)
 	// XMLTV spec doesn't strictly require an encoding declaration; some
 	// sources serve UTF-8 without one. Permissive charset reader avoids

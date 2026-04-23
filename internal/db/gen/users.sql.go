@@ -12,6 +12,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bumpSessionEpoch = `-- name: BumpSessionEpoch :exec
+UPDATE users
+SET session_epoch = session_epoch + 1,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+// Invalidates all outstanding PASETO access tokens for a user by bumping
+// their session_epoch counter. Called from admin demote, delete, and any
+// other future path that needs "kick this user out NOW" semantics.
+func (q *Queries) BumpSessionEpoch(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, bumpSessionEpoch, id)
+	return err
+}
+
 const clearUserPIN = `-- name: ClearUserPIN :exec
 UPDATE users SET pin = NULL, updated_at = NOW() WHERE id = $1
 `
@@ -46,7 +61,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createDiscordUser = `-- name: CreateDiscordUser :one
 INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch
 `
 
 type CreateDiscordUserParams struct {
@@ -90,6 +105,60 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
+	)
+	return i, err
+}
+
+const createFirstAdmin = `-- name: CreateFirstAdmin :one
+INSERT INTO users (username, email, password_hash, is_admin)
+SELECT $1, $2, $3, true
+WHERE NOT EXISTS (SELECT 1 FROM users)
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch
+`
+
+type CreateFirstAdminParams struct {
+	Username     string  `json:"username"`
+	Email        *string `json:"email"`
+	PasswordHash *string `json:"password_hash"`
+}
+
+// Atomic "first user is admin" gate — creates the row only if the
+// users table is empty. Returns (zero, pgx.ErrNoRows) when a user
+// already exists, letting the caller fall back to the normal admin-
+// only CreateUser path. Closes the race where two concurrent POST
+// /auth/register requests could each see count=0 and both become
+// admin.
+func (q *Queries) CreateFirstAdmin(ctx context.Context, arg CreateFirstAdminParams) (User, error) {
+	row := q.db.QueryRow(ctx, createFirstAdmin, arg.Username, arg.Email, arg.PasswordHash)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsAdmin,
+		&i.Pin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GoogleID,
+		&i.GoogleAvatarUrl,
+		&i.GithubID,
+		&i.DiscordID,
+		&i.ParentUserID,
+		&i.AvatarUrl,
+		&i.PreferredAudioLang,
+		&i.PreferredSubtitleLang,
+		&i.MaxContentRating,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.LdapDn,
+		&i.MaxVideoBitrateKbps,
+		&i.MaxAudioBitrateKbps,
+		&i.MaxVideoHeight,
+		&i.PreferredVideoCodec,
+		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
@@ -97,7 +166,7 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 const createGitHubUser = `-- name: CreateGitHubUser :one
 INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch
 `
 
 type CreateGitHubUserParams struct {
@@ -141,6 +210,7 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
@@ -148,7 +218,7 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 const createGoogleUser = `-- name: CreateGoogleUser :one
 INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch
 `
 
 type CreateGoogleUserParams struct {
@@ -194,6 +264,7 @@ func (q *Queries) CreateGoogleUser(ctx context.Context, arg CreateGoogleUserPara
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
@@ -201,7 +272,7 @@ func (q *Queries) CreateGoogleUser(ctx context.Context, arg CreateGoogleUserPara
 const createLDAPUser = `-- name: CreateLDAPUser :one
 INSERT INTO users (username, email, ldap_dn, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch
 `
 
 type CreateLDAPUserParams struct {
@@ -245,6 +316,7 @@ func (q *Queries) CreateLDAPUser(ctx context.Context, arg CreateLDAPUserParams) 
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
@@ -289,7 +361,7 @@ func (q *Queries) CreateManagedProfile(ctx context.Context, arg CreateManagedPro
 const createOIDCUser = `-- name: CreateOIDCUser :one
 INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch
 `
 
 type CreateOIDCUserParams struct {
@@ -335,6 +407,7 @@ func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) 
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
@@ -342,7 +415,7 @@ func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch
 `
 
 type CreateUserParams struct {
@@ -386,6 +459,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
@@ -422,8 +496,22 @@ func (q *Queries) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const getSessionEpoch = `-- name: GetSessionEpoch :one
+SELECT session_epoch FROM users WHERE id = $1
+`
+
+// Cheap lookup hit by the auth middleware on every authenticated request
+// so tokens whose epoch doesn't match the current DB row get rejected.
+// Indexed by the existing users PK — no extra index needed.
+func (q *Queries) GetSessionEpoch(ctx context.Context, id uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, getSessionEpoch, id)
+	var session_epoch int64
+	err := row.Scan(&session_epoch)
+	return session_epoch, err
+}
+
 const getUser = `-- name: GetUser :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -455,12 +543,13 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
 
 const getUserByDiscordID = `-- name: GetUserByDiscordID :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE discord_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE discord_id = $1
 `
 
 func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (User, error) {
@@ -492,12 +581,13 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE email = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, error) {
@@ -529,12 +619,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, erro
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
 
 const getUserByGitHubID = `-- name: GetUserByGitHubID :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE github_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE github_id = $1
 `
 
 func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User, error) {
@@ -566,12 +657,13 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
 
 const getUserByGoogleID = `-- name: GetUserByGoogleID :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE google_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE google_id = $1
 `
 
 func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User, error) {
@@ -603,12 +695,13 @@ func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
 
 const getUserByLDAPDN = `-- name: GetUserByLDAPDN :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE ldap_dn = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE ldap_dn = $1
 `
 
 func (q *Queries) GetUserByLDAPDN(ctx context.Context, ldapDn *string) (User, error) {
@@ -640,12 +733,13 @@ func (q *Queries) GetUserByLDAPDN(ctx context.Context, ldapDn *string) (User, er
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
 
 const getUserByOIDCSubject = `-- name: GetUserByOIDCSubject :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
 `
 
 type GetUserByOIDCSubjectParams struct {
@@ -682,12 +776,13 @@ func (q *Queries) GetUserByOIDCSubject(ctx context.Context, arg GetUserByOIDCSub
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only FROM users WHERE username = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch FROM users WHERE username = $1
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -719,6 +814,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SessionEpoch,
 	)
 	return i, err
 }

@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -203,6 +205,60 @@ func TestAdminRequired_NoToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// ── SessionEpoch revocation ─────────────────────────────────────────────────
+
+type stubEpochReader struct {
+	epoch int64
+	err   error
+}
+
+func (s stubEpochReader) GetSessionEpoch(_ context.Context, _ uuid.UUID) (int64, error) {
+	return s.epoch, s.err
+}
+
+func TestRequired_DeletedUser_FailsClosed(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm).WithEpochReader(stubEpochReader{err: ErrUserNotFound})
+	token := issueTestToken(t, tm, false)
+
+	handler := a.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called for deleted user")
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("deleted user: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRequired_EpochReaderTransientError_FailsOpen(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm).WithEpochReader(stubEpochReader{err: errors.New("connection refused")})
+	token := issueTestToken(t, tm, false)
+
+	called := false
+	handler := a.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("transient DB error should fail open, not reject")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("transient DB error: got %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 

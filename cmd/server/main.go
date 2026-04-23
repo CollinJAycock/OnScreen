@@ -237,11 +237,14 @@ func run() error {
 		return agentCache
 	}
 	// scanPathsFn returns all active library scan paths — used by the enricher
-	// to convert absolute artwork paths to paths relative to the library root,
-	// and by the router to serve artwork files.
+	// to convert absolute artwork paths to paths relative to the library root.
 	// Initially returns an empty slice; once libSvc is created we replace it.
 	var scanPathsFn func() []string
 	scanPathsFn = func() []string { return nil }
+	// artworkRootsFn returns the same paths grouped by library so the artwork
+	// handler can ACL-check against the owning library before serving a file.
+	var artworkRootsFn func() []api.ArtworkRoot
+	artworkRootsFn = func() []api.ArtworkRoot { return nil }
 	metaAgent := scanner.NewEnricher(agentFn, artworkMgr, mediaSvc, func() []string { return scanPathsFn() }, logger)
 
 	// Wire TVDB fallback — reads key from DB setting, falls back to env var.
@@ -290,7 +293,8 @@ func run() error {
 	libSvc := library.NewService(rwQ, roQ, libEnqueuer, logger)
 	libEnqueuer.libSvc = libSvc
 
-	// Now that libSvc exists, wire up scanPathsFn for artwork path resolution.
+	// Now that libSvc exists, wire up scanPathsFn for artwork path resolution
+	// and artworkRootsFn for ACL-scoped artwork serving.
 	scanPathsFn = func() []string {
 		libs, err := libSvc.List(context.WithoutCancel(ctx))
 		if err != nil {
@@ -301,6 +305,17 @@ func run() error {
 			paths = append(paths, lib.Paths...)
 		}
 		return paths
+	}
+	artworkRootsFn = func() []api.ArtworkRoot {
+		libs, err := libSvc.List(context.WithoutCancel(ctx))
+		if err != nil {
+			return nil
+		}
+		roots := make([]api.ArtworkRoot, 0, len(libs))
+		for _, lib := range libs {
+			roots = append(roots, api.ArtworkRoot{LibraryID: lib.ID, Paths: lib.Paths})
+		}
+		return roots
 	}
 
 	// Start watching all libraries that already exist (from a previous run).
@@ -329,7 +344,8 @@ func run() error {
 		logger: logger,
 	}
 
-	authMiddleware := middleware.NewAuthenticator(tokenMaker)
+	authMiddleware := middleware.NewAuthenticator(tokenMaker).
+		WithEpochReader(&sessionEpochAdapter{q: gen.New(roPool)})
 
 	libHandler := v1.NewLibraryHandler(libSvc, logger).
 		WithMedia(mediaSvc).
@@ -762,7 +778,8 @@ func run() error {
 		Favorites:          favoritesHandler,
 		StreamTracker:      streamTracker,
 		Artwork:            artworkMgr,
-		ArtworkRoots:       scanPathsFn,
+		ArtworkRoots:       artworkRootsFn,
+		LibraryAccess:      libSvc,
 		Logger:             logger,
 		Metrics:            metrics,
 		Auth_mw:            authMiddleware,

@@ -24,12 +24,23 @@ var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_]{2,32}$`)
 // ErrUserExists is returned by AuthService.CreateUser when the username is taken.
 var ErrUserExists = errors.New("user already exists")
 
+// ErrNotFirstUser is returned by CreateFirstAdmin when the users table
+// already has rows. Setup-wizard callers translate to a 409 "setup
+// already complete" so the loser of a concurrent setup race gets a
+// clear message instead of a misleading 500.
+var ErrNotFirstUser = errors.New("users already exist")
+
 // AuthService defines the domain interface for authentication.
 type AuthService interface {
 	LoginLocal(ctx context.Context, username, password string) (*TokenPair, error)
 	Refresh(ctx context.Context, refreshToken string) (*TokenPair, error)
 	Logout(ctx context.Context, refreshToken string) error
 	CreateUser(ctx context.Context, username, email, password string, isAdmin bool) (*UserInfo, error)
+	// CreateFirstAdmin is the atomic setup-wizard path. Inserts the user
+	// as admin if and only if the users table is empty. Returns
+	// ErrNotFirstUser if someone beat us to it — caller can fall back
+	// to admin-authenticated CreateUser or surface a clearer error.
+	CreateFirstAdmin(ctx context.Context, username, email, password string) (*UserInfo, error)
 	UserCount(ctx context.Context) (int64, error)
 }
 
@@ -190,12 +201,22 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// First user is always admin.
+	// First user is always admin — go through the atomic
+	// CreateFirstAdmin path so two concurrent /auth/register calls when
+	// count=0 can't both succeed as admins. The SQL uses
+	// `INSERT ... WHERE NOT EXISTS` so only one of the racing goroutines
+	// wins; the loser gets ErrNotFirstUser and we surface a helpful 409.
+	var user *UserInfo
 	if count == 0 {
-		body.IsAdmin = true
+		user, err = h.svc.CreateFirstAdmin(r.Context(), body.Username, body.Email, body.Password)
+		if errors.Is(err, ErrNotFirstUser) {
+			respond.Error(w, r, http.StatusConflict, "SETUP_COMPLETE",
+				"setup already complete — an admin must create additional users")
+			return
+		}
+	} else {
+		user, err = h.svc.CreateUser(r.Context(), body.Username, body.Email, body.Password, body.IsAdmin)
 	}
-
-	user, err := h.svc.CreateUser(r.Context(), body.Username, body.Email, body.Password, body.IsAdmin)
 	if err != nil {
 		if errors.Is(err, ErrUserExists) {
 			respond.Error(w, r, http.StatusConflict, "CONFLICT", "username already taken")

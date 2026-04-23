@@ -2,6 +2,7 @@ package email
 
 import (
 	"fmt"
+	"html"
 	"strings"
 )
 
@@ -66,11 +67,20 @@ type emailTemplate struct {
 }
 
 func render(t emailTemplate) string {
+	// Escape every interpolated field. Call sites currently pass
+	// server-controlled strings and regex-restricted usernames, but routing
+	// the raw value through html.EscapeString means a future caller that
+	// forwards a looser field (display name, managed-profile label, etc.)
+	// cannot land stored XSS in recipients' mail clients.
+	heading := html.EscapeString(t.Heading)
+	body := html.EscapeString(t.Body)
+	footer := html.EscapeString(t.Footer)
+
 	var btn string
 	if t.ButtonText != "" && t.ButtonURL != "" {
 		btn = fmt.Sprintf(`<tr><td style="padding:24px 0 0">
 			<a href="%s" style="display:inline-block;padding:12px 32px;background:#7c6af7;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:15px">%s</a>
-		</td></tr>`, t.ButtonURL, t.ButtonText)
+		</td></tr>`, html.EscapeString(t.ButtonURL), html.EscapeString(t.ButtonText))
 	}
 
 	var b strings.Builder
@@ -85,10 +95,10 @@ func render(t emailTemplate) string {
 	b.WriteString(`</td></tr>`)
 
 	// Heading
-	b.WriteString(fmt.Sprintf(`<tr><td style="font-size:18px;font-weight:600;color:#eeeef8;padding-bottom:12px">%s</td></tr>`, t.Heading))
+	b.WriteString(fmt.Sprintf(`<tr><td style="font-size:18px;font-weight:600;color:#eeeef8;padding-bottom:12px">%s</td></tr>`, heading))
 
 	// Body
-	b.WriteString(fmt.Sprintf(`<tr><td style="font-size:14px;color:#8888a0;line-height:1.6">%s</td></tr>`, t.Body))
+	b.WriteString(fmt.Sprintf(`<tr><td style="font-size:14px;color:#8888a0;line-height:1.6">%s</td></tr>`, body))
 
 	// Button
 	if btn != "" {
@@ -96,7 +106,7 @@ func render(t emailTemplate) string {
 	}
 
 	// Footer
-	b.WriteString(fmt.Sprintf(`<tr><td style="padding-top:32px;font-size:12px;color:#44445a;border-top:1px solid rgba(255,255,255,0.06);margin-top:24px">%s</td></tr>`, t.Footer))
+	b.WriteString(fmt.Sprintf(`<tr><td style="padding-top:32px;font-size:12px;color:#44445a;border-top:1px solid rgba(255,255,255,0.06);margin-top:24px">%s</td></tr>`, footer))
 
 	b.WriteString(`</table></td></tr></table></body></html>`)
 	return b.String()

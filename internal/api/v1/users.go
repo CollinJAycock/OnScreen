@@ -40,6 +40,7 @@ type PINSwitchResult struct {
 	Username         string
 	IsAdmin          bool
 	MaxContentRating string
+	SessionEpoch     int64
 }
 
 // UserService manages user profile operations.
@@ -55,6 +56,7 @@ type UserDB interface {
 	ListUsers(ctx context.Context) ([]gen.ListUsersRow, error)
 	DeleteUser(ctx context.Context, id uuid.UUID) error
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
 	CountAdmins(ctx context.Context) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) error
 	ListManagedProfiles(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListManagedProfilesRow, error)
@@ -316,6 +318,20 @@ func (h *UserHandler) SetAdmin(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
+	// Invalidate the target's outstanding access tokens. The DB update
+	// above takes effect for new tokens via IssueAccessToken; this
+	// ensures already-issued tokens stop working within the next
+	// request round trip rather than waiting out the 1h TTL.
+	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
+		// Non-fatal: role change already applied; we log but don't
+		// fail the request. In practice the next successful request
+		// from the target will roll the epoch forward — this path is
+		// only about shortening the window.
+		if h.logger != nil {
+			h.logger.WarnContext(r.Context(), "bump session epoch after role change",
+				"target_id", targetID, "err", err)
+		}
+	}
 	if h.audit != nil {
 		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRoleChange, targetID.String(), map[string]any{"is_admin": *body.IsAdmin}, audit.ClientIP(r))
 	}
@@ -428,6 +444,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		Username:         result.Username,
 		IsAdmin:          result.IsAdmin,
 		MaxContentRating: result.MaxContentRating,
+		SessionEpoch:     result.SessionEpoch,
 	})
 	if err != nil {
 		if h.logger != nil {

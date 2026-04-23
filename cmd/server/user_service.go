@@ -110,9 +110,10 @@ func (s *userService) VerifyPIN(ctx context.Context, userID uuid.UUID, rawPIN st
 	}
 
 	result := &v1.PINSwitchResult{
-		UserID:   user.ID,
-		Username: user.Username,
-		IsAdmin:  user.IsAdmin,
+		UserID:       user.ID,
+		Username:     user.Username,
+		IsAdmin:      user.IsAdmin,
+		SessionEpoch: user.SessionEpoch,
 	}
 	if user.MaxContentRating != nil {
 		result.MaxContentRating = *user.MaxContentRating

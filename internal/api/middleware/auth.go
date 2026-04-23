@@ -2,12 +2,21 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/observability"
 )
+
+// ErrUserNotFound is the sentinel a SessionEpochReader must return when the
+// user row is gone. The middleware treats this as authoritative revocation
+// (fail closed); other errors fall back to fail-open so a transient DB blip
+// doesn't log everybody out.
+var ErrUserNotFound = errors.New("auth: user not found")
 
 // Auth accepts two credential carriers:
 //
@@ -27,9 +36,21 @@ import (
 
 type claimsKey struct{}
 
+// SessionEpochReader looks up the current session_epoch for a user.
+// Token epochs that don't match the DB row's epoch are rejected — this
+// is what makes a stateless PASETO token revocable in seconds after
+// admin demotion, delete, or force-logout.
+//
+// Interface is kept minimal so the auth package has no direct DB
+// dependency. cmd/server supplies a gen.Queries-backed impl.
+type SessionEpochReader interface {
+	GetSessionEpoch(ctx context.Context, userID uuid.UUID) (int64, error)
+}
+
 // Authenticator validates Paseto access tokens.
 type Authenticator struct {
 	tokens *auth.TokenMaker
+	epochs SessionEpochReader // optional; when nil the middleware skips the epoch check
 }
 
 // NewAuthenticator creates an Authenticator.
@@ -37,11 +58,27 @@ func NewAuthenticator(tokens *auth.TokenMaker) *Authenticator {
 	return &Authenticator{tokens: tokens}
 }
 
-// Required rejects unauthenticated requests with 401.
+// WithEpochReader attaches the session-epoch lookup. Without it, PASETO
+// tokens remain valid until TTL expiry (the pre-hardening behavior).
+// Production wiring supplies one; tests that don't care about
+// revocation can omit.
+func (a *Authenticator) WithEpochReader(r SessionEpochReader) *Authenticator {
+	a.epochs = r
+	return a
+}
+
+// Required rejects unauthenticated requests with 401. When an epoch
+// reader is configured, tokens whose session_epoch doesn't match the
+// DB's current value are also rejected — this is how admin demotion
+// or user delete take effect before the token's 1h TTL.
 func (a *Authenticator) Required(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := a.extractClaims(r)
 		if err != nil || claims == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !a.epochValid(r.Context(), claims) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -55,7 +92,7 @@ func (a *Authenticator) Required(next http.Handler) http.Handler {
 func (a *Authenticator) Optional(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, _ := a.extractClaims(r)
-		if claims != nil {
+		if claims != nil && a.epochValid(r.Context(), claims) {
 			ctx := context.WithValue(r.Context(), claimsKey{}, claims)
 			ctx = observability.ContextWithUserID(ctx, claims.UserID.String())
 			r = r.WithContext(ctx)
@@ -63,6 +100,43 @@ func (a *Authenticator) Optional(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// epochValid compares the token's session_epoch against the DB's
+// current value. Missing reader → skip (legacy test setup); DB error
+// → fail-open (we don't want a DB blip to log everybody out) but log
+// as a concern; mismatch → fail-closed.
+//
+// Zero-epoch tokens minted before the field existed match any row —
+// they age out within 1h via TTL, and after a single demote/delete
+// the DB row's epoch diverges so they're rejected anyway.
+func (a *Authenticator) epochValid(ctx context.Context, claims *auth.Claims) bool {
+	if a.epochs == nil {
+		return true
+	}
+	current, err := a.epochs.GetSessionEpoch(ctx, claims.UserID)
+	if err != nil {
+		// Fail closed when the user row is gone — a deleted user's PASETO
+		// token must stop working immediately, not ride out the 1h TTL.
+		if errors.Is(err, ErrUserNotFound) {
+			return false
+		}
+		// Fail open on other errors: a DB hiccup shouldn't log everybody
+		// out. A real revocation (epoch bump) requires the DB write to
+		// succeed anyway, so this failure mode doesn't compromise the
+		// security property.
+		return true
+	}
+	if claims.SessionEpoch == 0 {
+		// Token predates the session_epoch field. Accept but treat the
+		// next demote/delete as authoritative.
+		return current == 0
+	}
+	return claims.SessionEpoch == current
+}
+
+// ensure uuid package stays imported even when only used inside the
+// interface declaration above.
+var _ uuid.UUID
 
 // AdminRequired rejects non-admin users with 403.
 func (a *Authenticator) AdminRequired(next http.Handler) http.Handler {

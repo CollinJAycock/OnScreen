@@ -52,6 +52,12 @@ func (m *mockAuthService) CreateUser(_ context.Context, _, _, _ string, _ bool) 
 	}
 	return m.createUserResult, nil
 }
+func (m *mockAuthService) CreateFirstAdmin(_ context.Context, _, _, _ string) (*UserInfo, error) {
+	if m.createUserErr != nil {
+		return nil, m.createUserErr
+	}
+	return m.createUserResult, nil
+}
 func (m *mockAuthService) UserCount(_ context.Context) (int64, error) {
 	if m.userCountErr != nil {
 		return 0, m.userCountErr

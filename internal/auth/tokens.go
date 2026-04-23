@@ -18,11 +18,18 @@ const (
 )
 
 // Claims are the standard fields embedded in every Paseto access token.
+//
+// SessionEpoch is bumped server-side on admin demotion, user delete, or
+// any "force logout" path. The auth middleware compares the token's
+// epoch against the DB row's epoch on every authenticated request and
+// rejects mismatches — this is what makes PASETO (a stateless token)
+// revocable in seconds rather than waiting out its 1h TTL.
 type Claims struct {
 	UserID           uuid.UUID `json:"user_id"`
 	Username         string    `json:"username"`
 	IsAdmin          bool      `json:"is_admin"`
 	MaxContentRating string    `json:"max_content_rating,omitempty"` // parental filter ceiling; empty = unrestricted
+	SessionEpoch     int64     `json:"session_epoch"`
 	IssuedAt         time.Time `json:"iat"`
 	ExpiresAt        time.Time `json:"exp"`
 }
@@ -58,6 +65,7 @@ func (m *TokenMaker) IssueAccessToken(claims Claims) (string, error) {
 	if claims.MaxContentRating != "" {
 		token.SetString("max_content_rating", claims.MaxContentRating)
 	}
+	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 
 	return token.V4Encrypt(m.key, nil), nil
 }
@@ -89,6 +97,17 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	isAdminStr, _ := token.GetString("is_admin")
 	isAdmin := isAdminStr == "true"
 	maxContentRating, _ := token.GetString("max_content_rating")
+	// session_epoch is zero for tokens minted before the field was
+	// added — that's OK, validateSessionEpoch treats missing/zero as
+	// matching any current epoch on upgrade. After a single demote/
+	// delete the epoch diverges and old tokens get rejected.
+	epochStr, _ := token.GetString("session_epoch")
+	var sessionEpoch int64
+	if epochStr != "" {
+		// strconv.ParseInt tolerates leading/trailing whitespace poorly;
+		// Sprintf wrote a clean decimal so we're safe.
+		fmt.Sscanf(epochStr, "%d", &sessionEpoch)
+	}
 	issuedAt, _ := token.GetIssuedAt()
 
 	return &Claims{
@@ -96,6 +115,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		Username:         username,
 		IsAdmin:          isAdmin,
 		MaxContentRating: maxContentRating,
+		SessionEpoch:     sessionEpoch,
 		IssuedAt:         issuedAt,
 		ExpiresAt:        exp,
 	}, nil

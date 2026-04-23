@@ -24,6 +24,7 @@ type authQuerier interface {
 	GetUser(ctx context.Context, id uuid.UUID) (gen.User, error)
 	GetUserByUsername(ctx context.Context, username string) (gen.User, error)
 	CreateUser(ctx context.Context, arg gen.CreateUserParams) (gen.User, error)
+	CreateFirstAdmin(ctx context.Context, arg gen.CreateFirstAdminParams) (gen.User, error)
 	CreateSession(ctx context.Context, arg gen.CreateSessionParams) (gen.Session, error)
 	GetSessionByTokenHash(ctx context.Context, tokenHash string) (gen.Session, error)
 	RotateSession(ctx context.Context, arg gen.RotateSessionParams) (gen.Session, error)
@@ -39,6 +40,41 @@ type authService struct {
 
 func (s *authService) UserCount(ctx context.Context) (int64, error) {
 	return s.db.CountUsers(ctx)
+}
+
+// CreateFirstAdmin atomically creates the first user as admin only if
+// the users table is empty. Returns v1.ErrNotFirstUser when another
+// goroutine (or operator) has already completed setup — the loser of
+// the race gets a clean error instead of a spurious unique-constraint
+// conflict or a silent "second admin created" incident.
+func (s *authService) CreateFirstAdmin(ctx context.Context, username, email, password string) (*v1.UserInfo, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return nil, fmt.Errorf("hash password: %w", err)
+	}
+	hashStr := string(hash)
+	var emailPtr *string
+	if email != "" {
+		emailPtr = &email
+	}
+	user, err := s.db.CreateFirstAdmin(ctx, gen.CreateFirstAdminParams{
+		Username:     username,
+		Email:        emailPtr,
+		PasswordHash: &hashStr,
+	})
+	if err != nil {
+		// pgx returns ErrNoRows when the WHERE NOT EXISTS clause filters
+		// out the insert — that's our "setup already done" signal.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, v1.ErrNotFirstUser
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, v1.ErrUserExists
+		}
+		return nil, fmt.Errorf("create first admin: %w", err)
+	}
+	return &v1.UserInfo{ID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin}, nil
 }
 
 func (s *authService) CreateUser(ctx context.Context, username, email, password string, isAdmin bool) (*v1.UserInfo, error) {
@@ -109,9 +145,10 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 	}
 
 	refreshClaims := auth.Claims{
-		UserID:   user.ID,
-		Username: user.Username,
-		IsAdmin:  user.IsAdmin,
+		UserID:       user.ID,
+		Username:     user.Username,
+		IsAdmin:      user.IsAdmin,
+		SessionEpoch: user.SessionEpoch,
 	}
 	if user.MaxContentRating != nil {
 		refreshClaims.MaxContentRating = *user.MaxContentRating
@@ -142,9 +179,10 @@ func (s *authService) Logout(ctx context.Context, refreshToken string) error {
 // issueTokenPair creates an access + refresh token and persists the session.
 func (s *authService) issueTokenPair(ctx context.Context, user gen.User) (*v1.TokenPair, error) {
 	claims := auth.Claims{
-		UserID:   user.ID,
-		Username: user.Username,
-		IsAdmin:  user.IsAdmin,
+		UserID:       user.ID,
+		Username:     user.Username,
+		IsAdmin:      user.IsAdmin,
+		SessionEpoch: user.SessionEpoch,
 	}
 	if user.MaxContentRating != nil {
 		claims.MaxContentRating = *user.MaxContentRating

@@ -488,6 +488,7 @@ type User struct {
 	MaxVideoHeight        *int32             `json:"max_video_height"`
 	PreferredVideoCodec   *string            `json:"preferred_video_codec"`
 	ForcedSubtitlesOnly   bool               `json:"forced_subtitles_only"`
+	SessionEpoch          int64              `json:"session_epoch"`
 }
 
 type UserFavorite struct {
