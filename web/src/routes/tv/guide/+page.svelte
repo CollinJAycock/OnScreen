@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { liveTvApi, type LiveTVChannel, type LiveTVProgram } from '$lib/api';
+  import { toast } from '$lib/stores/toast';
 
   let channels: LiveTVChannel[] = [];
   let programs: LiveTVProgram[] = [];
@@ -23,6 +24,23 @@
 
   // Selected program for the detail popover.
   let selected: LiveTVProgram | null = null;
+  let recording = false;
+
+  async function recordSelected() {
+    if (!selected) return;
+    recording = true;
+    try {
+      await liveTvApi.createSchedule({
+        type: 'once',
+        program_id: selected.id,
+        channel_id: selected.channel_id,
+      });
+      toast.success(`Recording scheduled: ${selected.title}`);
+      selected = null;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to schedule recording');
+    } finally { recording = false; }
+  }
 
   $: windowEnd = new Date(windowStart.getTime() + windowHours * 3600_000);
 
@@ -138,6 +156,7 @@
       <button class="btn" on:click={() => shiftWindow(-windowHours)}>← Earlier</button>
       <button class="btn" on:click={jumpToNow}>Now</button>
       <button class="btn" on:click={() => shiftWindow(windowHours)}>Later →</button>
+      <a class="btn" href="/tv/recordings">Recordings</a>
       <a class="btn" href="/tv">Channels</a>
     </div>
   </div>
@@ -244,6 +263,9 @@
       {/if}
       <div class="modal-actions">
         <a class="btn" href="/tv/{selected.channel_id}">Watch channel</a>
+        <button class="btn btn-primary" disabled={recording} on:click={recordSelected}>
+          {recording ? 'Scheduling…' : 'Record'}
+        </button>
         <button class="btn" on:click={() => selected = null}>Close</button>
       </div>
     </div>
@@ -261,6 +283,9 @@
     border-radius: 4px; font-size: 0.78rem; cursor: pointer; text-decoration: none;
   }
   .btn:hover { background: var(--bg-hover); }
+  .btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .banner-error { background: var(--error-bg); border: 1px solid var(--error); color: var(--error); padding: 0.65rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
 

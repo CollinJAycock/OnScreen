@@ -26,8 +26,9 @@ type mockLiveTVService struct {
 	tuners   map[uuid.UUID]livetv.TunerDevice
 	channels map[uuid.UUID]livetv.Channel
 
-	now   []livetv.NowNextEntry
-	guide []livetv.EPGProgram
+	now        []livetv.NowNextEntry
+	guide      []livetv.EPGProgram
+	discovered []livetv.DiscoveredDevice
 
 	listChansEnabledOnly *bool
 	guideFrom            time.Time
@@ -106,6 +107,9 @@ func (m *mockLiveTVService) RescanTuner(_ context.Context, _ uuid.UUID) (int, er
 	m.rescanCount++
 	return 7, nil
 }
+func (m *mockLiveTVService) DiscoverHDHomeRuns(_ context.Context) ([]livetv.DiscoveredDevice, error) {
+	return m.discovered, nil
+}
 func (m *mockLiveTVService) ListChannels(_ context.Context, enabledOnly bool) ([]livetv.ChannelWithTuner, error) {
 	if m.listChansErr != nil {
 		return nil, m.listChansErr
@@ -167,6 +171,13 @@ func (m *mockLiveTVService) RefreshEPGSource(_ context.Context, _ uuid.UUID) (li
 func (m *mockLiveTVService) SetChannelEPGID(_ context.Context, _ uuid.UUID, _ *string) error {
 	return nil
 }
+func (m *mockLiveTVService) ListKnownEPGIDs(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+func (m *mockLiveTVService) ListUnmappedChannels(_ context.Context) ([]livetv.Channel, error) {
+	return nil, nil
+}
+func (m *mockLiveTVService) ReorderChannels(_ context.Context, _ []uuid.UUID) error { return nil }
 
 // ── 503 path when service not configured ─────────────────────────────────────
 

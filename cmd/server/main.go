@@ -36,6 +36,7 @@ import (
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/livetv"
+	"github.com/onscreen/onscreen/internal/lyrics"
 	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
@@ -372,12 +373,13 @@ func run() error {
 	// Capabilities — public describing-document for native clients that just
 	// found the server via discovery. Reads settings on each call so toggling
 	// OIDC in the admin UI takes effect immediately.
-	capabilitiesHandler := v1.NewCapabilitiesHandler(&capabilitiesProvider{
+	capsProvider := &capabilitiesProvider{
 		cfg:       cfg,
 		version:   version,
 		machineID: machineID,
 		settings:  settingsSvc,
-	})
+	}
+	capabilitiesHandler := v1.NewCapabilitiesHandler(capsProvider)
 
 	pluginRegistry := plugin.NewRegistry(gen.New(rwPool))
 	pluginDispatcher := plugin.NewNotificationDispatcher(pluginRegistry, logger, auditLogger)
@@ -505,6 +507,61 @@ func run() error {
 	}, liveTVSvc, logger)
 	liveTVHandler = v1.NewLiveTVHandler(liveTVSvc, logger).WithStreamProxy(liveTVProxy)
 
+	// DVR: matcher + recording worker. Recordings land in
+	// {CachePath}/dvr by default — users should point a "dvr" library
+	// at that path so the scanner surfaces finalized captures.
+	dvrQueries := newDVRAdapter(gen.New(rwPool), newLiveTVAdapter(gen.New(rwPool)))
+	dvrSvc := livetv.NewDVRService(dvrQueries, liveTVSvc,
+		filepath.Join(cfg.CachePath, "dvr"), logger)
+	dvrWorker := livetv.NewDVRWorker(livetv.DVRWorkerConfig{
+		RecordDir: filepath.Join(cfg.CachePath, "dvr"),
+	}, dvrQueries, liveTVSvc,
+		// Library resolver: find the first enabled library of type 'dvr'.
+		func(ctx context.Context) (uuid.UUID, error) {
+			libs, err := libSvc.List(ctx)
+			if err != nil {
+				return uuid.Nil, err
+			}
+			for _, l := range libs {
+				if l.Type == "dvr" {
+					return l.ID, nil
+				}
+			}
+			return uuid.Nil, nil
+		},
+		&dvrMediaCreator{svc: mediaSvc},
+		logger)
+	go func() {
+		// Run forever; context cancellation on server shutdown stops it.
+		_ = dvrWorker.Run(ctx, 5*time.Second)
+	}()
+	liveTVHandler.WithDVR(dvrSvc)
+
+	// Lyrics: tag-sourced at scan time, LRCLIB fallback on first GET.
+	lyricsHandler := v1.NewLyricsHandler(
+		&lyricsStoreAdapter{q: gen.New(rwPool)},
+		&lyricsItemAdapter{svc: mediaSvc},
+		lyrics.NewLRCLIBClient(),
+		logger,
+	).WithLibraryAccess(libSvc)
+
+	// Populate runtime-detected capabilities now that Live TV + encoder
+	// detection are both wired. The capabilities handler is published
+	// via Handlers struct construction which happens later, but
+	// Capabilities() isn't called until the HTTP server starts listening,
+	// so setting fields here is safe without locking.
+	// Max concurrent transcodes is per-worker; report the embedded
+	// worker's cap since it's the only one guaranteed to exist. Remote
+	// workers that join later can lift the ceiling — clients shouldn't
+	// treat this as a hard wall.
+	maxTranscodes := 12
+	capsProvider.setRuntimeDetected(
+		true, // Live TV is always wired in this build
+		0,    // tune count is per-tuner; aggregate not meaningful here
+		transcode.EncoderNames(allEncoders),
+		maxTranscodes,
+	)
+
 	embeddedEnabled := fleetCfg.EmbeddedEnabled && !cfg.DisableEmbeddedWorker
 	var embeddedWorker *transcode.Worker
 	if embeddedEnabled {
@@ -631,6 +688,12 @@ func run() error {
 		libIDLister,
 		&ocrExistsChecker{q: gen.New(roPool)},
 	))
+	// EPG refresh: wakes every few minutes and pulls any EPG source
+	// whose last_pull_at + refresh_interval_min is in the past.
+	schedRegistry.Register("epg_refresh", scheduler.NewEPGRefreshHandler(liveTVSvc))
+	// DVR matcher runs every minute, scans enabled schedules against
+	// the upcoming EPG window, and upserts scheduled recordings.
+	schedRegistry.Register("dvr_match", scheduler.NewDVRMatcherHandler(dvrSvc))
 	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger)
 	tasksHandler := v1.NewTasksHandler(gen.New(rwPool), schedRegistry, logger)
 
@@ -677,6 +740,7 @@ func run() error {
 		Playlists:          v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		PhotoAlbums:        v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		LiveTV:             liveTVHandler,
+		Lyrics:             lyricsHandler,
 		Arr:                arrHandler,
 		OIDCAuth:           oidcAuthHandler,
 		LDAPAuth:           ldapAuthHandler,

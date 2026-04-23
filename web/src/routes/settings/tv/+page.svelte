@@ -1,12 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { liveTvApi, type LiveTVTuner, type LiveTVEPGSource } from '$lib/api';
+  import { liveTvApi, type LiveTVTuner, type LiveTVEPGSource, type LiveTVChannel } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let tuners: LiveTVTuner[] = [];
   let epgSources: LiveTVEPGSource[] = [];
+  let unmapped: Array<{ id: string; number: string; callsign?: string; name: string; logo_url?: string }> = [];
+  let knownEPGIDs: string[] = [];
   let loading = true;
   let error = '';
+  let busyMapId = '';
+
+  // All channels (including disabled) for the reorder/hide section.
+  let allChannels: LiveTVChannel[] = [];
+  let busyChannelId = '';
 
   // Add-EPG-source form. Only XMLTV-URL and XMLTV-file backends in
   // Phase B Round 1 — Schedules Direct slots in here later.
@@ -30,20 +37,71 @@
   // don't disable each other's button.
   let busyId = '';
 
+  // Auto-discovery state.
+  let discovering = false;
+  let discovered: Array<{ device_id: string; base_url: string; tune_count: number; model?: string }> = [];
+
   onMount(load);
 
   async function load() {
     loading = true; error = '';
     try {
-      const [tRes, eRes] = await Promise.all([
+      const [tRes, eRes, uRes, idsRes, cRes] = await Promise.all([
         liveTvApi.listTuners(),
         liveTvApi.listEPGSources(),
+        liveTvApi.listUnmappedChannels(),
+        liveTvApi.listEPGIDs(),
+        liveTvApi.listAllChannels(),
       ]);
       tuners = tRes.items;
       epgSources = eRes.items;
+      unmapped = uRes.items;
+      knownEPGIDs = idsRes.items;
+      allChannels = cRes.items;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load settings';
     } finally { loading = false; }
+  }
+
+  // Reorder: swap adjacent, then PUT the new ordering. Local mutation
+  // first for snappy UI; if the API call fails we reload from the server.
+  async function moveChannel(ch: LiveTVChannel, delta: number) {
+    const idx = allChannels.findIndex(c => c.id === ch.id);
+    const target = idx + delta;
+    if (idx < 0 || target < 0 || target >= allChannels.length) return;
+    busyChannelId = ch.id;
+    const newOrder = [...allChannels];
+    [newOrder[idx], newOrder[target]] = [newOrder[target], newOrder[idx]];
+    allChannels = newOrder;
+    try {
+      await liveTvApi.reorderChannels(newOrder.map(c => c.id));
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Reorder failed');
+      await load();
+    } finally { busyChannelId = ''; }
+  }
+
+  async function toggleChannel(ch: LiveTVChannel) {
+    busyChannelId = ch.id;
+    try {
+      await liveTvApi.setChannelEnabled(ch.id, !ch.enabled);
+      allChannels = allChannels.map(c => c.id === ch.id ? { ...c, enabled: !c.enabled } : c);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Toggle failed');
+      await load();
+    } finally { busyChannelId = ''; }
+  }
+
+  async function setChannelEPGID(channelId: string, epgID: string) {
+    if (!epgID) return;
+    busyMapId = channelId;
+    try {
+      await liveTvApi.setChannelEPGID(channelId, epgID);
+      toast.success('Mapped — refresh the EPG source to fill in programs');
+      await load();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Mapping failed');
+    } finally { busyMapId = ''; }
   }
 
   async function addEPG() {
@@ -90,6 +148,31 @@
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Delete failed');
     } finally { busyEPGId = ''; }
+  }
+
+  async function discover() {
+    discovering = true;
+    discovered = [];
+    try {
+      const res = await liveTvApi.discoverTuners();
+      discovered = res;
+      if (res.length === 0) {
+        toast.error('No HDHomeRun devices found on the local network');
+      } else {
+        toast.success(`Found ${res.length} HDHomeRun device${res.length === 1 ? '' : 's'}`);
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Discovery failed');
+    } finally { discovering = false; }
+  }
+
+  // Clicking a discovered device pre-fills the add form with its BaseURL
+  // and name so the user just confirms + submits.
+  function selectDiscovered(d: { device_id: string; base_url: string; tune_count: number }) {
+    addType = 'hdhomerun';
+    addHostUrl = d.base_url;
+    addName = `HDHomeRun ${d.device_id}`;
+    toast.success('Form pre-filled — click "Add tuner" to save');
   }
 
   async function add() {
@@ -229,6 +312,27 @@
         </p>
       </header>
 
+      <div class="discover-row">
+        <button class="btn" disabled={discovering} on:click={discover}>
+          {discovering ? 'Searching…' : 'Find HDHomeRun devices'}
+        </button>
+        <span class="discover-hint">Broadcasts a UDP query on your local network.</span>
+      </div>
+
+      {#if discovered.length > 0}
+        <ul class="discovered-list">
+          {#each discovered as d (d.device_id)}
+            <li class="discovered-item">
+              <div>
+                <strong>{d.device_id}</strong>
+                <span class="muted">{d.base_url} · {d.tune_count} tune slot{d.tune_count === 1 ? '' : 's'}</span>
+              </div>
+              <button class="btn" on:click={() => selectDiscovered(d)}>Use</button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
       <div class="type-toggle">
         <label class="radio">
           <input type="radio" bind:group={addType} value="hdhomerun" />
@@ -269,6 +373,45 @@
         </button>
       </div>
     </section>
+
+    {#if unmapped.length > 0}
+      <section>
+        <header>
+          <h2>Unmapped channels</h2>
+          <p class="hint">
+            These channels have no EPG mapping — they show up in the guide
+            with no "now playing" info. Auto-match checks lcn → number and
+            display-name → callsign; pick a source ID manually for anything
+            auto-match missed.
+          </p>
+        </header>
+        <ul class="tuner-list">
+          {#each unmapped as ch (ch.id)}
+            <li class="tuner">
+              <div class="tuner-main">
+                <div class="tuner-name">
+                  {ch.name}
+                  <span class="badge">{ch.number}</span>
+                  {#if ch.callsign}<span class="badge">{ch.callsign}</span>{/if}
+                </div>
+              </div>
+              <div class="tuner-actions">
+                <select
+                  class="epg-pick"
+                  disabled={busyMapId === ch.id}
+                  on:change={(e) => setChannelEPGID(ch.id, (e.currentTarget as HTMLSelectElement).value)}
+                >
+                  <option value="">Pick an EPG ID…</option>
+                  {#each knownEPGIDs as id}
+                    <option value={id}>{id}</option>
+                  {/each}
+                </select>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
 
     <section>
       <header>
@@ -346,6 +489,47 @@
         </button>
       </div>
     </section>
+
+    {#if allChannels.length > 0}
+      <section>
+        <header>
+          <h2>Channels</h2>
+          <p class="hint">
+            Reorder channels or hide ones you don't watch from the guide.
+            Hidden channels stay mapped and ingested; they just don't
+            appear in the grid or now/next strip.
+          </p>
+        </header>
+        <ul class="channel-list">
+          {#each allChannels as ch, i (ch.id)}
+            <li class="channel-row" class:disabled={!ch.enabled}>
+              <div class="channel-info">
+                {#if ch.logo_url}
+                  <img class="chan-logo" src={ch.logo_url} alt="" loading="lazy" />
+                {:else}
+                  <div class="chan-logo-blank">{ch.number}</div>
+                {/if}
+                <div>
+                  <div class="channel-label">
+                    <span class="num">{ch.number}</span>
+                    {ch.name}
+                    {#if !ch.enabled}<span class="badge badge-off">hidden</span>{/if}
+                  </div>
+                  <div class="channel-sub">{ch.tuner_name} · {ch.tuner_type}</div>
+                </div>
+              </div>
+              <div class="tuner-actions">
+                <button class="btn" disabled={busyChannelId === ch.id || i === 0} on:click={() => moveChannel(ch, -1)}>↑</button>
+                <button class="btn" disabled={busyChannelId === ch.id || i === allChannels.length - 1} on:click={() => moveChannel(ch, 1)}>↓</button>
+                <button class="btn" disabled={busyChannelId === ch.id} on:click={() => toggleChannel(ch)}>
+                  {ch.enabled ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   </div>
 {/if}
 
@@ -393,6 +577,42 @@
     border-radius: 3px; font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em;
   }
   .badge-off { background: rgba(255,100,100,0.12); color: rgb(255,140,140); }
+
+  .discover-row { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
+  .discover-hint { font-size: 0.75rem; color: var(--text-muted); }
+  .discovered-list { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+  .discovered-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.55rem 0.8rem; background: var(--bg); border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 5px; font-size: 0.82rem;
+  }
+  .discovered-item .muted { margin-left: 0.75rem; }
+
+  .channel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; max-height: 540px; overflow-y: auto; }
+  .channel-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    background: var(--bg);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 5px;
+  }
+  .channel-row.disabled { opacity: 0.55; }
+  .channel-info { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+  .chan-logo { width: 40px; height: 28px; object-fit: contain; background: #000; border-radius: 3px; flex-shrink: 0; }
+  .chan-logo-blank {
+    width: 40px; height: 28px; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.7rem; background: var(--bg-elevated); border-radius: 3px; flex-shrink: 0;
+  }
+  .channel-label { font-size: 0.88rem; color: var(--text-primary); display: flex; gap: 0.4rem; align-items: center; }
+  .channel-label .num { color: var(--text-muted); font-size: 0.75rem; font-weight: 600; }
+  .channel-sub { font-size: 0.72rem; color: var(--text-muted); }
+
+  .epg-pick {
+    padding: 0.4rem 0.5rem; border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: var(--bg); color: var(--text-primary);
+    font-size: 0.82rem; min-width: 200px;
+  }
 
   .type-toggle { display: flex; gap: 1.25rem; margin-bottom: 1rem; }
   .radio { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; }

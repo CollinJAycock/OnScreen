@@ -174,6 +174,7 @@ type Querier interface {
 	ListChannels(ctx context.Context, enabled *bool) ([]ChannelWithTuner, error)
 	ListChannelsByTuner(ctx context.Context, tunerID uuid.UUID) ([]Channel, error)
 	SetChannelEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
+	SetChannelSortOrder(ctx context.Context, id uuid.UUID, sortOrder int32) error
 	GetNowAndNextForChannels(ctx context.Context) ([]NowNextEntry, error)
 	ListEPGProgramsInWindow(ctx context.Context, from, to time.Time) ([]EPGProgram, error)
 
@@ -189,6 +190,7 @@ type Querier interface {
 	GetChannelByEPGID(ctx context.Context, epgChannelID string) (Channel, error)
 	UpsertEPGProgram(ctx context.Context, p UpsertEPGProgramParams) error
 	TrimOldEPGPrograms(ctx context.Context) error
+	ListAllKnownEPGChannelIDs(ctx context.Context) ([]string, error)
 }
 
 // CreateTunerDeviceParams is the input to Querier.CreateTunerDevice.
@@ -312,6 +314,32 @@ func (s *Service) DeleteTuner(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// DiscoverHDHomeRuns runs an SSDP-style UDP broadcast to find
+// HDHomeRun devices on the local subnet, then enriches each result with
+// `/discover.json` metadata (TunerCount, FriendlyName). Used by the
+// settings UI's "Find devices" button so users don't have to type IPs.
+func (s *Service) DiscoverHDHomeRuns(ctx context.Context) ([]DiscoveredDevice, error) {
+	devices, err := DiscoverHDHomeRuns(ctx, 3*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("discover hdhomeruns: %w", err)
+	}
+	// Enrich each device: fetch /discover.json for tune_count + friendly
+	// name. Failures are non-fatal — we still return the device with the
+	// fields we got from the UDP response.
+	for i := range devices {
+		d := NewHDHomeRunDriver("", HDHomeRunConfig{HostURL: devices[i].BaseURL})
+		enrichCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if _, err := d.Discover(enrichCtx); err == nil {
+			devices[i].TunerCount = d.TuneCount()
+		} else {
+			s.logger.WarnContext(ctx, "hdhr enrich failed",
+				"base_url", devices[i].BaseURL, "err", err)
+		}
+		cancel()
+	}
+	return devices, nil
+}
+
 // RescanTuner re-runs Discover for an existing tuner and upserts the
 // channel list. Returns the count of channels currently visible after the
 // scan. Used by the settings UI's "Rescan channels" button.
@@ -356,6 +384,23 @@ func (s *Service) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 func (s *Service) SetChannelEnabled(ctx context.Context, id uuid.UUID, enabled bool) error {
 	if err := s.q.SetChannelEnabled(ctx, id, enabled); err != nil {
 		return fmt.Errorf("set channel enabled: %w", err)
+	}
+	return nil
+}
+
+// ReorderChannels applies a new ordering. `orderedIDs` is the list of
+// channel UUIDs in the desired top-to-bottom order; each index becomes
+// the channel's sort_order. IDs not in the list are untouched (caller
+// should pass the whole visible set).
+//
+// This is a simple N-row update rather than a drag-and-drop "move X
+// above Y" operation — easier for the client to drive and avoids the
+// classic fractional-position edge cases.
+func (s *Service) ReorderChannels(ctx context.Context, orderedIDs []uuid.UUID) error {
+	for i, id := range orderedIDs {
+		if err := s.q.SetChannelSortOrder(ctx, id, int32(i)); err != nil {
+			return fmt.Errorf("set sort order for %s: %w", id, err)
+		}
 	}
 	return nil
 }
@@ -684,6 +729,29 @@ func (s *Service) autoMatchChannels(ctx context.Context, xmltvChans []XMLTVChann
 			"channel_name", ch.Name, "epg_id", found)
 	}
 	return matched, nil
+}
+
+// ListKnownEPGIDs returns every EPG channel ID the system currently
+// knows about — from existing channel mappings and from ingested
+// program rows. Used by the manual-mapping UI so operators can pick
+// from a dropdown instead of typing IDs.
+func (s *Service) ListKnownEPGIDs(ctx context.Context) ([]string, error) {
+	ids, err := s.q.ListAllKnownEPGChannelIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list epg ids: %w", err)
+	}
+	return ids, nil
+}
+
+// ListUnmappedChannels returns enabled channels that don't yet have an
+// epg_channel_id. Surface this in the settings UI with a dropdown so
+// the user can pick an ID from ListKnownEPGIDs.
+func (s *Service) ListUnmappedChannels(ctx context.Context) ([]Channel, error) {
+	rows, err := s.q.ListUnmappedChannels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list unmapped channels: %w", err)
+	}
+	return rows, nil
 }
 
 // SetChannelEPGID is the manual-override path for the settings UI. nil

@@ -46,6 +46,13 @@ type mockQuerier struct {
 	unmapped         []Channel
 	epgIDSets        []epgIDSet
 	upsertedPrograms []UpsertEPGProgramParams
+	knownEPGIDs      []string
+	sortOrderSets    []sortOrderSet
+}
+
+type sortOrderSet struct {
+	ID        uuid.UUID
+	SortOrder int32
 }
 
 func newMockQuerier() *mockQuerier {
@@ -177,6 +184,11 @@ func (m *mockQuerier) SetChannelEnabled(_ context.Context, _ uuid.UUID, _ bool) 
 	return nil
 }
 
+func (m *mockQuerier) SetChannelSortOrder(_ context.Context, id uuid.UUID, sortOrder int32) error {
+	m.sortOrderSets = append(m.sortOrderSets, sortOrderSet{ID: id, SortOrder: sortOrder})
+	return nil
+}
+
 func (m *mockQuerier) GetNowAndNextForChannels(_ context.Context) ([]NowNextEntry, error) {
 	return nil, nil
 }
@@ -235,6 +247,9 @@ func (m *mockQuerier) UpsertEPGProgram(_ context.Context, p UpsertEPGProgramPara
 	return nil
 }
 func (m *mockQuerier) TrimOldEPGPrograms(_ context.Context) error { return nil }
+func (m *mockQuerier) ListAllKnownEPGChannelIDs(_ context.Context) ([]string, error) {
+	return m.knownEPGIDs, nil
+}
 
 type epgIDSet struct {
 	ID    uuid.UUID

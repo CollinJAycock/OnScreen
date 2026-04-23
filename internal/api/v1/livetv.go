@@ -24,6 +24,7 @@ type LiveTVService interface {
 	SetTunerEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
 	DeleteTuner(ctx context.Context, id uuid.UUID) error
 	RescanTuner(ctx context.Context, id uuid.UUID) (int, error)
+	DiscoverHDHomeRuns(ctx context.Context) ([]livetv.DiscoveredDevice, error)
 
 	ListChannels(ctx context.Context, enabledOnly bool) ([]livetv.ChannelWithTuner, error)
 	GetChannel(ctx context.Context, id uuid.UUID) (livetv.Channel, error)
@@ -37,6 +38,9 @@ type LiveTVService interface {
 	SetEPGSourceEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
 	RefreshEPGSource(ctx context.Context, id uuid.UUID) (livetv.RefreshResult, error)
 	SetChannelEPGID(ctx context.Context, id uuid.UUID, epgChannelID *string) error
+	ListKnownEPGIDs(ctx context.Context) ([]string, error)
+	ListUnmappedChannels(ctx context.Context) ([]livetv.Channel, error)
+	ReorderChannels(ctx context.Context, orderedIDs []uuid.UUID) error
 }
 
 // LiveTVHandler serves the live-TV HTTP API: tuner CRUD (admin),
@@ -45,6 +49,7 @@ type LiveTVService interface {
 type LiveTVHandler struct {
 	svc    LiveTVService
 	proxy  LiveTVStreamProxy
+	dvr    LiveTVDVRService
 	logger *slog.Logger
 }
 
@@ -248,6 +253,40 @@ func (h *LiveTVHandler) DeleteTuner(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// DiscoveredDeviceResponse is one HDHomeRun found by auto-discovery.
+type DiscoveredDeviceResponse struct {
+	DeviceID   string `json:"device_id"`
+	BaseURL    string `json:"base_url"`
+	TunerCount int    `json:"tune_count"`
+	Model      string `json:"model,omitempty"`
+}
+
+// DiscoverTuners handles POST /api/v1/tv/tuners/discover (admin-only).
+// Broadcasts a Silicondust UDP discovery packet on the local subnet and
+// returns HDHomeRun devices that responded. Caller is expected to loop
+// over the result and POST /tv/tuners for each device the user wants to
+// add — discovery is intentionally decoupled from persistence so users
+// can pick which boxes to import.
+func (h *LiveTVHandler) DiscoverTuners(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	devices, err := h.svc.DiscoverHDHomeRuns(r.Context())
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "discover hdhomeruns", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]DiscoveredDeviceResponse, len(devices))
+	for i, d := range devices {
+		out[i] = DiscoveredDeviceResponse{
+			DeviceID: d.DeviceID, BaseURL: d.BaseURL,
+			TunerCount: d.TunerCount, Model: d.Model,
+		}
+	}
+	respond.List(w, r, out, int64(len(out)), "")
+}
+
 // RescanTuner handles POST /api/v1/tv/tuners/{id}/rescan. Re-runs the
 // driver's Discover and upserts the resulting channels. Returns the
 // number of channels visible after the scan.
@@ -316,6 +355,35 @@ func (h *LiveTVHandler) SetChannelEnabled(w http.ResponseWriter, r *http.Request
 	}
 	if err := h.svc.SetChannelEnabled(r.Context(), id, body.Enabled); err != nil {
 		h.logger.ErrorContext(r.Context(), "set channel enabled", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// reorderChannelsRequest is the PUT body for /api/v1/tv/channels/order.
+type reorderChannelsRequest struct {
+	ChannelIDs []uuid.UUID `json:"channel_ids"`
+}
+
+// ReorderChannels handles PUT /api/v1/tv/channels/order (admin-only).
+// Body is an ordered array of channel UUIDs; each index becomes that
+// channel's sort_order. IDs not in the list are untouched.
+func (h *LiveTVHandler) ReorderChannels(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	var body reorderChannelsRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid JSON body")
+		return
+	}
+	if len(body.ChannelIDs) == 0 {
+		respond.BadRequest(w, r, "channel_ids is required")
+		return
+	}
+	if err := h.svc.ReorderChannels(r.Context(), body.ChannelIDs); err != nil {
+		h.logger.ErrorContext(r.Context(), "reorder channels", "err", err)
 		respond.InternalError(w, r)
 		return
 	}
@@ -563,6 +631,54 @@ func (h *LiveTVHandler) RefreshEPGSource(w http.ResponseWriter, r *http.Request)
 		"unmapped_channels":     res.UnmappedChannels,
 		"skipped":               res.Skipped,
 	})
+}
+
+// UnmappedChannelResponse is one channel lacking an EPG mapping. Client
+// renders these in the manual-mapping settings section.
+type UnmappedChannelResponse struct {
+	ID       uuid.UUID `json:"id"`
+	Number   string    `json:"number"`
+	Callsign *string   `json:"callsign,omitempty"`
+	Name     string    `json:"name"`
+	LogoURL  *string   `json:"logo_url,omitempty"`
+}
+
+// ListUnmappedChannels handles GET /api/v1/tv/channels/unmapped.
+// Admin-only; drives the manual mapping UI.
+func (h *LiveTVHandler) ListUnmappedChannels(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	rows, err := h.svc.ListUnmappedChannels(r.Context())
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list unmapped channels", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]UnmappedChannelResponse, len(rows))
+	for i, c := range rows {
+		out[i] = UnmappedChannelResponse{
+			ID: c.ID, Number: c.Number, Callsign: c.Callsign,
+			Name: c.Name, LogoURL: c.LogoURL,
+		}
+	}
+	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// ListEPGIDs handles GET /api/v1/tv/epg-ids. Admin-only; returns every
+// EPG channel ID the system has seen (from current mappings or ingested
+// programs) so the mapping UI can show a dropdown.
+func (h *LiveTVHandler) ListEPGIDs(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	ids, err := h.svc.ListKnownEPGIDs(r.Context())
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list epg ids", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.List(w, r, ids, int64(len(ids)), "")
 }
 
 // setChannelEPGIDRequest is the PATCH body for assigning an EPG channel ID.

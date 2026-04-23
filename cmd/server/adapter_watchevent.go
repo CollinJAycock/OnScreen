@@ -48,12 +48,14 @@ func (a *watchEventAdapter) GetWatchState(ctx context.Context, userID, mediaID u
 		return watchevent.WatchState{}, err
 	}
 	return watchevent.WatchState{
-		UserID:        r.UserID,
-		MediaID:       r.MediaID,
-		PositionMS:    r.PositionMs,
-		DurationMS:    r.DurationMs,
-		Status:        r.Status,
-		LastWatchedAt: r.LastWatchedAt.Time,
+		UserID:         r.UserID,
+		MediaID:        r.MediaID,
+		PositionMS:     r.PositionMs,
+		DurationMS:     r.DurationMs,
+		Status:         r.Status,
+		LastWatchedAt:  r.LastWatchedAt.Time,
+		LastClientID:   r.LastClientID,
+		LastClientName: r.LastClientName,
 	}, nil
 }
 
@@ -65,12 +67,14 @@ func (a *watchEventAdapter) ListWatchStateForUser(ctx context.Context, userID uu
 	out := make([]watchevent.WatchState, len(rows))
 	for i, r := range rows {
 		out[i] = watchevent.WatchState{
-			UserID:        r.UserID,
-			MediaID:       r.MediaID,
-			PositionMS:    r.PositionMs,
-			DurationMS:    r.DurationMs,
-			Status:        r.Status,
-			LastWatchedAt: r.LastWatchedAt.Time,
+			UserID:         r.UserID,
+			MediaID:        r.MediaID,
+			PositionMS:     r.PositionMs,
+			DurationMS:     r.DurationMs,
+			Status:         r.Status,
+			LastWatchedAt:  r.LastWatchedAt.Time,
+			LastClientID:   r.LastClientID,
+			LastClientName: r.LastClientName,
 		}
 	}
 	return out, nil

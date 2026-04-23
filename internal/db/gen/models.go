@@ -258,6 +258,8 @@ type MediaItem struct {
 	OriginalYear              *int32             `json:"original_year"`
 	Compilation               bool               `json:"compilation"`
 	ReleaseType               *string            `json:"release_type"`
+	LyricsPlain               *string            `json:"lyrics_plain"`
+	LyricsSynced              *string            `json:"lyrics_synced"`
 }
 
 type MediaRequest struct {
@@ -347,6 +349,45 @@ type Plugin struct {
 	Enabled      bool               `json:"enabled"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Recording struct {
+	ID         uuid.UUID          `json:"id"`
+	ScheduleID pgtype.UUID        `json:"schedule_id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	ChannelID  uuid.UUID          `json:"channel_id"`
+	ProgramID  pgtype.UUID        `json:"program_id"`
+	Title      string             `json:"title"`
+	Subtitle   *string            `json:"subtitle"`
+	SeasonNum  *int32             `json:"season_num"`
+	EpisodeNum *int32             `json:"episode_num"`
+	Status     string             `json:"status"`
+	StartsAt   pgtype.Timestamptz `json:"starts_at"`
+	EndsAt     pgtype.Timestamptz `json:"ends_at"`
+	FilePath   *string            `json:"file_path"`
+	ItemID     pgtype.UUID        `json:"item_id"`
+	Error      *string            `json:"error"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Schedule struct {
+	ID             uuid.UUID          `json:"id"`
+	UserID         uuid.UUID          `json:"user_id"`
+	Type           string             `json:"type"`
+	ProgramID      pgtype.UUID        `json:"program_id"`
+	ChannelID      pgtype.UUID        `json:"channel_id"`
+	TitleMatch     *string            `json:"title_match"`
+	NewOnly        bool               `json:"new_only"`
+	TimeStart      *string            `json:"time_start"`
+	TimeEnd        *string            `json:"time_end"`
+	PaddingPreSec  int32              `json:"padding_pre_sec"`
+	PaddingPostSec int32              `json:"padding_post_sec"`
+	Priority       int32              `json:"priority"`
+	RetentionDays  *int32             `json:"retention_days"`
+	Enabled        bool               `json:"enabled"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ScheduledTask struct {
@@ -442,6 +483,11 @@ type User struct {
 	OidcIssuer            *string            `json:"oidc_issuer"`
 	OidcSubject           *string            `json:"oidc_subject"`
 	LdapDn                *string            `json:"ldap_dn"`
+	MaxVideoBitrateKbps   *int32             `json:"max_video_bitrate_kbps"`
+	MaxAudioBitrateKbps   *int32             `json:"max_audio_bitrate_kbps"`
+	MaxVideoHeight        *int32             `json:"max_video_height"`
+	PreferredVideoCodec   *string            `json:"preferred_video_codec"`
+	ForcedSubtitlesOnly   bool               `json:"forced_subtitles_only"`
 }
 
 type UserFavorite struct {
@@ -526,12 +572,14 @@ type WatchEventsDefault struct {
 }
 
 type WatchState struct {
-	UserID        uuid.UUID          `json:"user_id"`
-	MediaID       uuid.UUID          `json:"media_id"`
-	PositionMs    int64              `json:"position_ms"`
-	DurationMs    *int64             `json:"duration_ms"`
-	Status        string             `json:"status"`
-	LastWatchedAt pgtype.Timestamptz `json:"last_watched_at"`
+	UserID         uuid.UUID          `json:"user_id"`
+	MediaID        uuid.UUID          `json:"media_id"`
+	PositionMs     int64              `json:"position_ms"`
+	DurationMs     *int64             `json:"duration_ms"`
+	Status         string             `json:"status"`
+	LastWatchedAt  pgtype.Timestamptz `json:"last_watched_at"`
+	LastClientID   *string            `json:"last_client_id"`
+	LastClientName *string            `json:"last_client_name"`
 }
 
 type WebhookEndpoint struct {

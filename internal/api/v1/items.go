@@ -258,6 +258,11 @@ type ItemDetailResponse struct {
 	ParentID      *string            `json:"parent_id,omitempty"`
 	Index         *int               `json:"index,omitempty"`
 	ViewOffsetMS  int64              `json:"view_offset_ms"`
+	// LastClientName carries the name of the device that last emitted a
+	// scrobble/stop for this (user, media). Lets clients render "Resume
+	// from Living Room TV" UX instead of a bare position. Nil = never
+	// watched or client didn't identify itself.
+	LastClientName *string `json:"last_client_name,omitempty"`
 	IsFavorite    bool               `json:"is_favorite"`
 	UpdatedAt     int64              `json:"updated_at"`
 	Files         []ItemFileResponse `json:"files"`
@@ -338,11 +343,13 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	var viewOffsetMS int64
 	var isFavorite bool
+	var lastClientName *string
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		state, _ := h.watch.GetState(r.Context(), claims.UserID, id)
 		if state.Status == "in_progress" {
 			viewOffsetMS = state.PositionMS
 		}
+		lastClientName = state.LastClientName
 		if h.favorites != nil {
 			if fav, err := h.favorites.IsFavorite(r.Context(), claims.UserID, id); err == nil {
 				isFavorite = fav
@@ -369,10 +376,11 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ContentRating: item.ContentRating,
 		Genres:        genres,
 		Index:         item.Index,
-		ViewOffsetMS:  viewOffsetMS,
-		IsFavorite:    isFavorite,
-		UpdatedAt:     item.UpdatedAt.UnixMilli(),
-		Files:         make([]ItemFileResponse, 0, len(files)),
+		ViewOffsetMS:   viewOffsetMS,
+		LastClientName: lastClientName,
+		IsFavorite:     isFavorite,
+		UpdatedAt:      item.UpdatedAt.UnixMilli(),
+		Files:          make([]ItemFileResponse, 0, len(files)),
 	}
 	if item.ParentID != nil {
 		s := item.ParentID.String()

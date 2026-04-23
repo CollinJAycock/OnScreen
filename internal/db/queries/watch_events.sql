@@ -15,12 +15,14 @@ INSERT INTO watch_events (
 REFRESH MATERIALIZED VIEW CONCURRENTLY watch_state;
 
 -- name: GetWatchState :one
-SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at
+SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at,
+       last_client_id, last_client_name
 FROM watch_state
 WHERE user_id = $1 AND media_id = $2;
 
 -- name: ListWatchStateForUser :many
-SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at
+SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at,
+       last_client_id, last_client_name
 FROM watch_state
 WHERE user_id = $1
 ORDER BY last_watched_at DESC

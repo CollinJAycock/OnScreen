@@ -119,6 +119,10 @@ func (m *mockUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUser
 	return nil
 }
 
+func (m *mockUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUserQualityProfileParams) error {
+	return nil
+}
+
 func authedRequest(r *http.Request) *http.Request {
 	ctx := middleware.WithClaims(r.Context(), &auth.Claims{
 		UserID:   uuid.New(),

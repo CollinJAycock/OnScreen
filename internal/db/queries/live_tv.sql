@@ -113,6 +113,24 @@ FROM channels
 WHERE epg_channel_id = $1
 LIMIT 1;
 
+-- name: ListAllKnownEPGChannelIDs :many
+-- Distinct EPG channel IDs known to the system: both currently-mapped
+-- channels and the channel-portion of ingested programs'
+-- source_program_id (format is "<epg_id>@<timestamp>", so split on @).
+-- Used by the manual-mapping UI's dropdown so operators pick from real
+-- IDs rather than typing them.
+SELECT epg_id::text AS epg_id
+FROM (
+    SELECT epg_channel_id AS epg_id
+    FROM channels
+    WHERE epg_channel_id IS NOT NULL
+    UNION
+    SELECT split_part(source_program_id, '@', 1) AS epg_id
+    FROM epg_programs
+) s
+WHERE epg_id != ''
+ORDER BY epg_id;
+
 -- name: ListUnmappedChannels :many
 -- Channels lacking an EPG mapping. The ingester scans these on every
 -- pull and tries to auto-match against the source's <display-name>/lcn.

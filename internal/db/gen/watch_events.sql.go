@@ -14,7 +14,8 @@ import (
 )
 
 const getWatchState = `-- name: GetWatchState :one
-SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at
+SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at,
+       last_client_id, last_client_name
 FROM watch_state
 WHERE user_id = $1 AND media_id = $2
 `
@@ -34,6 +35,8 @@ func (q *Queries) GetWatchState(ctx context.Context, arg GetWatchStateParams) (W
 		&i.DurationMs,
 		&i.Status,
 		&i.LastWatchedAt,
+		&i.LastClientID,
+		&i.LastClientName,
 	)
 	return i, err
 }
@@ -180,7 +183,8 @@ func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryPara
 }
 
 const listWatchStateForUser = `-- name: ListWatchStateForUser :many
-SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at
+SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at,
+       last_client_id, last_client_name
 FROM watch_state
 WHERE user_id = $1
 ORDER BY last_watched_at DESC
@@ -203,6 +207,8 @@ func (q *Queries) ListWatchStateForUser(ctx context.Context, userID uuid.UUID) (
 			&i.DurationMs,
 			&i.Status,
 			&i.LastWatchedAt,
+			&i.LastClientID,
+			&i.LastClientName,
 		); err != nil {
 			return nil, err
 		}

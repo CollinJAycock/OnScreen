@@ -12,6 +12,7 @@ import (
 type CapabilitiesResponse struct {
 	Server    CapabilitiesServer    `json:"server"`
 	Features  CapabilitiesFeatures  `json:"features"`
+	Codecs    CapabilitiesCodecs    `json:"codecs"`
 	Limits    CapabilitiesLimits    `json:"limits"`
 	Discovery CapabilitiesDiscovery `json:"discovery"`
 }
@@ -44,6 +45,23 @@ type CapabilitiesFeatures struct {
 	Webhooks          bool `json:"webhooks"`
 	Notifications     bool `json:"notifications"`
 	Requests          bool `json:"requests"`
+	LiveTV            bool `json:"live_tv"`
+	DVR               bool `json:"dvr"`
+	Lyrics            bool `json:"lyrics"`
+	IntroMarkers      bool `json:"intro_markers"`
+	Chapters          bool `json:"chapters"`
+}
+
+// CapabilitiesCodecs advertises which codecs this server can transcode
+// TO — clients match against these when picking a target profile. Listed
+// explicitly rather than assumed so we can drop codecs at runtime based
+// on detected encoders.
+type CapabilitiesCodecs struct {
+	Video         []string `json:"video"` // e.g. ["h264", "hevc"]
+	Audio         []string `json:"audio"` // e.g. ["aac", "ac3", "mp3"]
+	Containers    []string `json:"containers"`
+	Hardware      []string `json:"hardware"` // active encoder names: h264_nvenc, h264_amf, ...
+	HDRToneMap    bool     `json:"hdr_tonemap"`
 }
 
 // CapabilitiesLimits documents server-side caps so a client can pre-validate
@@ -53,6 +71,8 @@ type CapabilitiesLimits struct {
 	MaxTranscodeBitrateKbps int   `json:"max_transcode_bitrate_kbps"`
 	MaxTranscodeWidth       int   `json:"max_transcode_width"`
 	MaxTranscodeHeight      int   `json:"max_transcode_height"`
+	MaxConcurrentTranscodes int   `json:"max_concurrent_transcodes"`
+	LiveTVTuneCount         int   `json:"live_tv_tune_count"`
 }
 
 // CapabilitiesDiscovery describes how to find this server again later

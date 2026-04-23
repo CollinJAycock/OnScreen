@@ -955,3 +955,21 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000;
+
+-- name: GetMediaItemLyrics :one
+-- Returns the stored lyrics for a track. Empty strings mean "not
+-- fetched yet" — callers fall back to LRCLIB and persist via
+-- UpdateMediaItemLyrics.
+SELECT lyrics_plain, lyrics_synced
+FROM media_items
+WHERE id = $1;
+
+-- name: UpdateMediaItemLyrics :exec
+-- Writes lyrics for a track. Called by the scanner (from ID3 tags) and
+-- the lyrics service (from LRCLIB fallback). Either value may be an
+-- empty string — callers coalesce sources explicitly before writing.
+UPDATE media_items
+SET lyrics_plain = $2,
+    lyrics_synced = $3,
+    updated_at = NOW()
+WHERE id = $1;

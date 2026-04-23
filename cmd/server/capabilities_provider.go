@@ -16,6 +16,30 @@ type capabilitiesProvider struct {
 	version   string
 	machineID string
 	settings  *settings.Service
+
+	// Runtime-detected fields populated at wiring time. Taken as
+	// snapshots so Capabilities() stays O(1); values that can change
+	// dynamically (DVR enabled after live TV is disabled) require a
+	// server restart, which is consistent with how settings-layer
+	// toggles already behave.
+	liveTVAvailable         bool
+	liveTVTuneCount         int
+	activeEncoders          []string
+	maxConcurrentTranscodes int
+}
+
+// setRuntimeDetected populates the runtime-sensed fields. Called from
+// main.go after encoder detection and Live TV wiring complete. Safe
+// because the HTTP server hasn't started listening yet — no concurrent
+// Capabilities() readers are possible.
+func (p *capabilitiesProvider) setRuntimeDetected(
+	liveTV bool, tuneCount int,
+	encoders []string, maxTranscodes int,
+) {
+	p.liveTVAvailable = liveTV
+	p.liveTVTuneCount = tuneCount
+	p.activeEncoders = encoders
+	p.maxConcurrentTranscodes = maxTranscodes
 }
 
 // Capabilities returns the current snapshot. Background context is fine —
@@ -56,12 +80,27 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			// dispatch downstream, but the user-facing surface is live
 			// as soon as TMDB is wired.
 			Requests: p.cfg.TMDBAPIKey != "",
+			// Always-on features that became first-class post-Phase-A.
+			LiveTV:       p.liveTVAvailable,
+			DVR:          p.liveTVAvailable, // share one flag; DVR rides Live TV
+			Lyrics:       true,
+			IntroMarkers: true,
+			Chapters:     true,
+		},
+		Codecs: v1.CapabilitiesCodecs{
+			Video:      []string{"h264", "hevc"},
+			Audio:      []string{"aac", "ac3", "eac3", "mp3", "opus", "flac"},
+			Containers: []string{"mp4", "mkv", "ts", "webm"},
+			Hardware:   p.activeEncoders,
+			HDRToneMap: true,
 		},
 		Limits: v1.CapabilitiesLimits{
 			MaxUploadBytes:          1 << 20, // matches MaxBytesBody middleware
 			MaxTranscodeBitrateKbps: p.cfg.TranscodeMaxBitrate,
 			MaxTranscodeWidth:       p.cfg.TranscodeMaxWidth,
 			MaxTranscodeHeight:      p.cfg.TranscodeMaxHeight,
+			MaxConcurrentTranscodes: p.maxConcurrentTranscodes,
+			LiveTVTuneCount:         p.liveTVTuneCount,
 		},
 	}
 	if p.cfg.DiscoveryEnabled {

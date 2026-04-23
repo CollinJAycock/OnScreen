@@ -938,6 +938,27 @@ func (q *Queries) GetMediaItemEnrichAttemptedAt(ctx context.Context, id uuid.UUI
 	return last_enrich_attempted_at, err
 }
 
+const getMediaItemLyrics = `-- name: GetMediaItemLyrics :one
+SELECT lyrics_plain, lyrics_synced
+FROM media_items
+WHERE id = $1
+`
+
+type GetMediaItemLyricsRow struct {
+	LyricsPlain  *string `json:"lyrics_plain"`
+	LyricsSynced *string `json:"lyrics_synced"`
+}
+
+// Returns the stored lyrics for a track. Empty strings mean "not
+// fetched yet" — callers fall back to LRCLIB and persist via
+// UpdateMediaItemLyrics.
+func (q *Queries) GetMediaItemLyrics(ctx context.Context, id uuid.UUID) (GetMediaItemLyricsRow, error) {
+	row := q.db.QueryRow(ctx, getMediaItemLyrics, id)
+	var i GetMediaItemLyricsRow
+	err := row.Scan(&i.LyricsPlain, &i.LyricsSynced)
+	return i, err
+}
+
 const hardDeleteSoftDeletedFilesByLibrary = `-- name: HardDeleteSoftDeletedFilesByLibrary :execrows
 DELETE FROM media_files
 WHERE status = 'deleted'
@@ -3913,6 +3934,28 @@ func (q *Queries) UpdateMediaFileTechnicalMetadata(ctx context.Context, arg Upda
 		arg.Chapters,
 		arg.DurationMs,
 	)
+	return err
+}
+
+const updateMediaItemLyrics = `-- name: UpdateMediaItemLyrics :exec
+UPDATE media_items
+SET lyrics_plain = $2,
+    lyrics_synced = $3,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateMediaItemLyricsParams struct {
+	ID           uuid.UUID `json:"id"`
+	LyricsPlain  *string   `json:"lyrics_plain"`
+	LyricsSynced *string   `json:"lyrics_synced"`
+}
+
+// Writes lyrics for a track. Called by the scanner (from ID3 tags) and
+// the lyrics service (from LRCLIB fallback). Either value may be an
+// empty string — callers coalesce sources explicitly before writing.
+func (q *Queries) UpdateMediaItemLyrics(ctx context.Context, arg UpdateMediaItemLyricsParams) error {
+	_, err := q.db.Exec(ctx, updateMediaItemLyrics, arg.ID, arg.LyricsPlain, arg.LyricsSynced)
 	return err
 }
 

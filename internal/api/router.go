@@ -44,6 +44,7 @@ type Handlers struct {
 	Playlists       *v1.PlaylistHandler
 	PhotoAlbums     *v1.PhotoAlbumHandler
 	LiveTV          *v1.LiveTVHandler
+	Lyrics          *v1.LyricsHandler
 	Subtitles       *v1.SubtitleHandler
 	Arr             *v1.ArrHandler  // incoming arr app notifications
 	OIDCAuth        *v1.OIDCHandler // settings-driven, always non-nil
@@ -284,6 +285,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Delete("/users/me/pin", h.User.ClearPIN)
 				r.Get("/users/me/preferences", h.User.GetPreferences)
 				r.Put("/users/me/preferences", h.User.SetPreferences)
+				r.Put("/users/me/quality-profile", h.User.SetQualityProfile)
 				r.Get("/users/switchable", h.User.ListSwitchable)
 				r.Post("/auth/pin-switch", h.User.PINSwitch)
 			}
@@ -527,16 +529,26 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/tv/channels/{id}/stream.m3u8", h.LiveTV.StreamPlaylist)
 				r.Get("/tv/channels/{id}/segments/{name}", h.LiveTV.StreamSegment)
 				r.Get("/tv/guide", h.LiveTV.Guide)
+				// DVR endpoints are user-scoped (not admin).
+				r.Post("/tv/schedules", h.LiveTV.CreateSchedule)
+				r.Get("/tv/schedules", h.LiveTV.ListSchedules)
+				r.Delete("/tv/schedules/{id}", h.LiveTV.DeleteSchedule)
+				r.Get("/tv/recordings", h.LiveTV.ListRecordings)
+				r.Delete("/tv/recordings/{id}", h.LiveTV.CancelRecording)
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/tv/tuners", h.LiveTV.ListTuners)
 					r.Post("/tv/tuners", h.LiveTV.CreateTuner)
+					r.Post("/tv/tuners/discover", h.LiveTV.DiscoverTuners)
 					r.Get("/tv/tuners/{id}", h.LiveTV.GetTuner)
 					r.Patch("/tv/tuners/{id}", h.LiveTV.UpdateTuner)
 					r.Delete("/tv/tuners/{id}", h.LiveTV.DeleteTuner)
 					r.Post("/tv/tuners/{id}/rescan", h.LiveTV.RescanTuner)
 					r.Patch("/tv/channels/{id}", h.LiveTV.SetChannelEnabled)
 					r.Patch("/tv/channels/{id}/epg-id", h.LiveTV.SetChannelEPGID)
+					r.Put("/tv/channels/order", h.LiveTV.ReorderChannels)
+					r.Get("/tv/channels/unmapped", h.LiveTV.ListUnmappedChannels)
+					r.Get("/tv/epg-ids", h.LiveTV.ListEPGIDs)
 					r.Get("/tv/epg-sources", h.LiveTV.ListEPGSources)
 					r.Post("/tv/epg-sources", h.LiveTV.CreateEPGSource)
 					r.Delete("/tv/epg-sources/{id}", h.LiveTV.DeleteEPGSource)
@@ -570,6 +582,10 @@ func NewRouter(h *Handlers) http.Handler {
 			// /items/{id} prefix because it is item-scoped; List/Timeline
 			// live under /photos because they aggregate across an entire
 			// library.
+			if h.Lyrics != nil {
+				r.Get("/items/{id}/lyrics", h.Lyrics.Get)
+			}
+
 			if h.Photos != nil {
 				r.Get("/photos", h.Photos.List)
 				r.Get("/photos/timeline", h.Photos.Timeline)

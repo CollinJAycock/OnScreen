@@ -12,13 +12,18 @@ import (
 )
 
 // WatchState represents the derived playback state for a user+media pair.
+// LastClient fields carry the most-recent device's attribution so resume
+// UX can say "pick up where you left off on Living Room TV" rather than
+// just showing a bare position.
 type WatchState struct {
-	UserID        uuid.UUID
-	MediaID       uuid.UUID
-	PositionMS    int64
-	DurationMS    *int64
-	Status        string // "watched" | "in_progress" | "unwatched"
-	LastWatchedAt time.Time
+	UserID         uuid.UUID
+	MediaID        uuid.UUID
+	PositionMS     int64
+	DurationMS     *int64
+	Status         string // "watched" | "in_progress" | "unwatched"
+	LastWatchedAt  time.Time
+	LastClientID   *string
+	LastClientName *string
 }
 
 // RecordParams holds the input for inserting a watch event.

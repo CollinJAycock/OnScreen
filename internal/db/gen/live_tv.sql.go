@@ -334,6 +334,45 @@ func (q *Queries) GetTunerDevice(ctx context.Context, id uuid.UUID) (TunerDevice
 	return i, err
 }
 
+const listAllKnownEPGChannelIDs = `-- name: ListAllKnownEPGChannelIDs :many
+SELECT epg_id::text AS epg_id
+FROM (
+    SELECT epg_channel_id AS epg_id
+    FROM channels
+    WHERE epg_channel_id IS NOT NULL
+    UNION
+    SELECT split_part(source_program_id, '@', 1) AS epg_id
+    FROM epg_programs
+) s
+WHERE epg_id != ''
+ORDER BY epg_id
+`
+
+// Distinct EPG channel IDs known to the system: both currently-mapped
+// channels and the channel-portion of ingested programs'
+// source_program_id (format is "<epg_id>@<timestamp>", so split on @).
+// Used by the manual-mapping UI's dropdown so operators pick from real
+// IDs rather than typing them.
+func (q *Queries) ListAllKnownEPGChannelIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listAllKnownEPGChannelIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var epg_id string
+		if err := rows.Scan(&epg_id); err != nil {
+			return nil, err
+		}
+		items = append(items, epg_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChannels = `-- name: ListChannels :many
 SELECT c.id, c.tuner_id, c.number, c.callsign, c.name, c.logo_url,
        c.enabled, c.sort_order, c.created_at, c.updated_at, c.epg_channel_id,

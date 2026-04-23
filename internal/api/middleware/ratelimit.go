@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -40,7 +41,8 @@ func RateLimit(limiter *valkey.RateLimiter, cfg RateLimitConfig, keyFn func(r *h
 			key := keyFn(r)
 			allowed, remaining, resetAt, err := limiter.Allow(r.Context(), key, cfg.Limit, cfg.Window)
 			if err != nil {
-				http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+				writeRateLimitError(w, http.StatusServiceUnavailable,
+					"RATE_LIMITER_UNAVAILABLE", "request cancelled")
 				return
 			}
 
@@ -52,7 +54,8 @@ func RateLimit(limiter *valkey.RateLimiter, cfg RateLimitConfig, keyFn func(r *h
 			}
 
 			if !allowed {
-				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				writeRateLimitError(w, http.StatusTooManyRequests,
+					"RATE_LIMITED", "rate limit exceeded")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -77,6 +80,19 @@ func SessionKey(prefix string) func(r *http.Request) string {
 		}
 		return fmt.Sprintf("%s:%s", prefix, auth.HashToken(claims.UserID.String()))
 	}
+}
+
+// writeRateLimitError emits an envelope-shaped error so clients see the
+// same shape as every other endpoint (code/message/request_id). The
+// respond package is in internal/api/respond, but importing it here
+// would create a middleware→api cycle; duplicate the small shape
+// inline instead.
+func writeRateLimitError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]string{"code": code, "message": message},
+	})
 }
 
 // clientIP extracts the client IP from r.RemoteAddr.

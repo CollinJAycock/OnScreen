@@ -66,6 +66,7 @@ type UserDB interface {
 	DeleteManagedProfileAdmin(ctx context.Context, id uuid.UUID) error
 	GetUserPreferences(ctx context.Context, id uuid.UUID) (gen.GetUserPreferencesRow, error)
 	UpdateUserPreferences(ctx context.Context, arg gen.UpdateUserPreferencesParams) error
+	UpdateUserQualityProfile(ctx context.Context, arg gen.UpdateUserQualityProfileParams) error
 	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
 }
 
@@ -704,6 +705,11 @@ type preferencesResponse struct {
 	PreferredAudioLang    *string `json:"preferred_audio_lang"`
 	PreferredSubtitleLang *string `json:"preferred_subtitle_lang"`
 	MaxContentRating      *string `json:"max_content_rating"`
+	MaxVideoBitrateKbps   *int32  `json:"max_video_bitrate_kbps,omitempty"`
+	MaxAudioBitrateKbps   *int32  `json:"max_audio_bitrate_kbps,omitempty"`
+	MaxVideoHeight        *int32  `json:"max_video_height,omitempty"`
+	PreferredVideoCodec   *string `json:"preferred_video_codec,omitempty"`
+	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
 }
 
 // GetPreferences handles GET /api/v1/users/me/preferences.
@@ -726,6 +732,11 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		PreferredAudioLang:    row.PreferredAudioLang,
 		PreferredSubtitleLang: row.PreferredSubtitleLang,
 		MaxContentRating:      row.MaxContentRating,
+		MaxVideoBitrateKbps:   row.MaxVideoBitrateKbps,
+		MaxAudioBitrateKbps:   row.MaxAudioBitrateKbps,
+		MaxVideoHeight:        row.MaxVideoHeight,
+		PreferredVideoCodec:   row.PreferredVideoCodec,
+		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
 	})
 }
 
@@ -752,6 +763,56 @@ func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
 		ID:                    claims.UserID,
 		PreferredAudioLang:    body.PreferredAudioLang,
 		PreferredSubtitleLang: body.PreferredSubtitleLang,
+	}); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
+}
+
+// SetQualityProfile handles PUT /api/v1/users/me/quality-profile.
+// Each field is a pointer so clients can leave any subset alone (send
+// {"max_video_height": 1080} to cap resolution without touching bitrate
+// caps). forced_subtitles_only is a plain bool — it's either on or off.
+func (h *UserHandler) SetQualityProfile(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	var body struct {
+		MaxVideoBitrateKbps *int32  `json:"max_video_bitrate_kbps"`
+		MaxAudioBitrateKbps *int32  `json:"max_audio_bitrate_kbps"`
+		MaxVideoHeight      *int32  `json:"max_video_height"`
+		PreferredVideoCodec *string `json:"preferred_video_codec"`
+		ForcedSubtitlesOnly bool    `json:"forced_subtitles_only"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	// Validate codec: empty/nil ok; otherwise must be a known name so we
+	// don't store "h.264" garbage that mismatches the capabilities codec
+	// list clients see.
+	if body.PreferredVideoCodec != nil && *body.PreferredVideoCodec != "" {
+		switch *body.PreferredVideoCodec {
+		case "h264", "hevc":
+		default:
+			respond.BadRequest(w, r, "preferred_video_codec must be 'h264' or 'hevc'")
+			return
+		}
+	}
+	if err := h.db.UpdateUserQualityProfile(r.Context(), gen.UpdateUserQualityProfileParams{
+		ID:                  claims.UserID,
+		MaxVideoBitrateKbps: body.MaxVideoBitrateKbps,
+		MaxAudioBitrateKbps: body.MaxAudioBitrateKbps,
+		MaxVideoHeight:      body.MaxVideoHeight,
+		PreferredVideoCodec: body.PreferredVideoCodec,
+		ForcedSubtitlesOnly: body.ForcedSubtitlesOnly,
 	}); err != nil {
 		respond.InternalError(w, r)
 		return

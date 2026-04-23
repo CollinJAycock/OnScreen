@@ -144,6 +144,10 @@ func (a *livetvAdapter) SetChannelEnabled(ctx context.Context, id uuid.UUID, ena
 	return a.q.SetChannelEnabled(ctx, gen.SetChannelEnabledParams{ID: id, Enabled: enabled})
 }
 
+func (a *livetvAdapter) SetChannelSortOrder(ctx context.Context, id uuid.UUID, sortOrder int32) error {
+	return a.q.SetChannelSortOrder(ctx, gen.SetChannelSortOrderParams{ID: id, SortOrder: sortOrder})
+}
+
 func (a *livetvAdapter) ListEPGProgramsInWindow(ctx context.Context, from, to time.Time) ([]livetv.EPGProgram, error) {
 	rows, err := a.q.ListEPGProgramsInWindow(ctx, gen.ListEPGProgramsInWindowParams{
 		// SQL: ends_at > $1 AND starts_at < $2 → first param is window
@@ -303,6 +307,10 @@ func (a *livetvAdapter) UpsertEPGProgram(ctx context.Context, p livetv.UpsertEPG
 
 func (a *livetvAdapter) TrimOldEPGPrograms(ctx context.Context) error {
 	return a.q.TrimOldEPGPrograms(ctx)
+}
+
+func (a *livetvAdapter) ListAllKnownEPGChannelIDs(ctx context.Context) ([]string, error) {
+	return a.q.ListAllKnownEPGChannelIDs(ctx)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

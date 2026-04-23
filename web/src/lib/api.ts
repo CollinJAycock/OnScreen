@@ -269,7 +269,7 @@ export interface UserPreferences {
 export interface Library {
   id: string;
   name: string;
-  type: 'movie' | 'show' | 'music' | 'photo';
+  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr';
   scan_paths: string[];
   agent: string;
   language: string;
@@ -961,6 +961,12 @@ export const liveTvApi = {
     api.patch<LiveTVTuner>(`/tv/tuners/${id}`, body),
   deleteTuner: (id: string) => api.delete(`/tv/tuners/${id}`),
   rescanTuner: (id: string) => api.post<{ channel_count: number }>(`/tv/tuners/${id}/rescan`, {}),
+  // POST (UDP broadcast has side effects) but returns a list envelope.
+  // api.post unwraps .data — and since this handler uses respond.List,
+  // .data is the array itself.
+  discoverTuners: () =>
+    api.post<Array<{ device_id: string; base_url: string; tune_count: number; model?: string }>>(
+      '/tv/tuners/discover', {}),
 
   // EPG sources.
   listEPGSources: () => api.requestList<LiveTVEPGSource>('/tv/epg-sources'),
@@ -972,7 +978,60 @@ export const liveTvApi = {
       `/tv/epg-sources/${id}/refresh`, {}),
   setChannelEPGID: (channelId: string, epgChannelID: string | null) =>
     api.patch<void>(`/tv/channels/${channelId}/epg-id`, { epg_channel_id: epgChannelID }),
+  listUnmappedChannels: () =>
+    api.requestList<{ id: string; number: string; callsign?: string; name: string; logo_url?: string }>('/tv/channels/unmapped'),
+  listEPGIDs: () => api.requestList<string>('/tv/epg-ids'),
+  // Include disabled channels in the listing (admin view).
+  listAllChannels: () => api.requestList<LiveTVChannel>('/tv/channels?enabled=false'),
+  setChannelEnabled: (channelId: string, enabled: boolean) =>
+    api.patch<void>(`/tv/channels/${channelId}`, { enabled }),
+  reorderChannels: (channelIDs: string[]) =>
+    api.put<void>('/tv/channels/order', { channel_ids: channelIDs }),
+
+  // DVR.
+  listSchedules: () => api.requestList<LiveTVSchedule>('/tv/schedules'),
+  createSchedule: (body: Partial<LiveTVSchedule> & { type: string }) =>
+    api.post<LiveTVSchedule>('/tv/schedules', body),
+  deleteSchedule: (id: string) => api.delete(`/tv/schedules/${id}`),
+  listRecordings: (status?: string) =>
+    api.requestList<LiveTVRecording>('/tv/recordings' + (status ? `?status=${status}` : '')),
+  cancelRecording: (id: string) => api.delete(`/tv/recordings/${id}`),
 };
+
+export interface LiveTVSchedule {
+  id: string;
+  type: 'once' | 'series' | 'channel_block';
+  program_id?: string;
+  channel_id?: string;
+  title_match?: string;
+  new_only: boolean;
+  time_start?: string;
+  time_end?: string;
+  padding_pre_sec: number;
+  padding_post_sec: number;
+  priority: number;
+  retention_days?: number;
+  enabled: boolean;
+}
+
+export interface LiveTVRecording {
+  id: string;
+  schedule_id?: string;
+  channel_id: string;
+  channel_number: string;
+  channel_name: string;
+  channel_logo?: string;
+  program_id?: string;
+  title: string;
+  subtitle?: string;
+  season_num?: number;
+  episode_num?: number;
+  status: 'scheduled' | 'recording' | 'completed' | 'failed' | 'cancelled' | 'superseded';
+  starts_at: string;
+  ends_at: string;
+  item_id?: string;
+  error?: string;
+}
 
 export interface LiveTVEPGSource {
   id: string;

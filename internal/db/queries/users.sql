@@ -155,14 +155,32 @@ VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetUserPreferences :one
-SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating
+-- Client reads this on login to seed player defaults (language,
+-- quality cap, codec preference). All nullable fields = "no preference"
+-- → client falls back to its own logic or server defaults.
+SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
+       max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
+       preferred_video_codec, forced_subtitles_only
 FROM users
 WHERE id = $1;
 
 -- name: UpdateUserPreferences :exec
+-- Language and content-rating preferences.
 UPDATE users
 SET preferred_audio_lang = $2,
     preferred_subtitle_lang = $3,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: UpdateUserQualityProfile :exec
+-- Quality profile update. Pass NULL to clear any of these; client
+-- then falls back to its own defaults.
+UPDATE users
+SET max_video_bitrate_kbps = $2,
+    max_audio_bitrate_kbps = $3,
+    max_video_height = $4,
+    preferred_video_codec = $5,
+    forced_subtitles_only = $6,
     updated_at = NOW()
 WHERE id = $1;
 
