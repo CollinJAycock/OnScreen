@@ -41,6 +41,19 @@ type AuditLog struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Channel struct {
+	ID        uuid.UUID          `json:"id"`
+	TunerID   uuid.UUID          `json:"tuner_id"`
+	Number    string             `json:"number"`
+	Callsign  *string            `json:"callsign"`
+	Name      string             `json:"name"`
+	LogoUrl   *string            `json:"logo_url"`
+	Enabled   bool               `json:"enabled"`
+	SortOrder int32              `json:"sort_order"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Collection struct {
 	ID          uuid.UUID          `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -60,6 +73,37 @@ type CollectionItem struct {
 	MediaItemID  uuid.UUID          `json:"media_item_id"`
 	Position     int32              `json:"position"`
 	AddedAt      pgtype.Timestamptz `json:"added_at"`
+}
+
+type EpgProgram struct {
+	ID              uuid.UUID          `json:"id"`
+	ChannelID       uuid.UUID          `json:"channel_id"`
+	SourceProgramID string             `json:"source_program_id"`
+	Title           string             `json:"title"`
+	Subtitle        *string            `json:"subtitle"`
+	Description     *string            `json:"description"`
+	Category        []string           `json:"category"`
+	Rating          *string            `json:"rating"`
+	SeasonNum       *int32             `json:"season_num"`
+	EpisodeNum      *int32             `json:"episode_num"`
+	OriginalAirDate pgtype.Date        `json:"original_air_date"`
+	StartsAt        pgtype.Timestamptz `json:"starts_at"`
+	EndsAt          pgtype.Timestamptz `json:"ends_at"`
+	RawData         []byte             `json:"raw_data"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type EpgSource struct {
+	ID                 uuid.UUID          `json:"id"`
+	Type               string             `json:"type"`
+	Name               string             `json:"name"`
+	Config             []byte             `json:"config"`
+	RefreshIntervalMin int32              `json:"refresh_interval_min"`
+	Enabled            bool               `json:"enabled"`
+	LastPullAt         pgtype.Timestamptz `json:"last_pull_at"`
+	LastError          *string            `json:"last_error"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ExternalSubtitle struct {
@@ -362,6 +406,18 @@ type TrickplayStatus struct {
 	LastAttemptedAt pgtype.Timestamptz `json:"last_attempted_at"`
 	LastError       *string            `json:"last_error"`
 	GeneratedAt     pgtype.Timestamptz `json:"generated_at"`
+}
+
+type TunerDevice struct {
+	ID         uuid.UUID          `json:"id"`
+	Type       string             `json:"type"`
+	Name       string             `json:"name"`
+	Config     []byte             `json:"config"`
+	TuneCount  int32              `json:"tune_count"`
+	Enabled    bool               `json:"enabled"`
+	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {

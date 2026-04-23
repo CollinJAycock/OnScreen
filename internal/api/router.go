@@ -43,6 +43,7 @@ type Handlers struct {
 	Collections     *v1.CollectionHandler
 	Playlists       *v1.PlaylistHandler
 	PhotoAlbums     *v1.PhotoAlbumHandler
+	LiveTV          *v1.LiveTVHandler
 	Subtitles       *v1.SubtitleHandler
 	Arr             *v1.ArrHandler  // incoming arr app notifications
 	OIDCAuth        *v1.OIDCHandler // settings-driven, always non-nil
@@ -515,6 +516,26 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/photo-albums/{id}/items", h.PhotoAlbums.Items)
 				r.Post("/photo-albums/{id}/items", h.PhotoAlbums.AddItem)
 				r.Delete("/photo-albums/{id}/items/{itemId}", h.PhotoAlbums.RemoveItem)
+			}
+
+			// Live TV — channels list + now/next available to any
+			// authenticated user; tuner CRUD is admin-only and lives
+			// in the admin block below.
+			if h.LiveTV != nil {
+				r.Get("/tv/channels", h.LiveTV.ListChannels)
+				r.Get("/tv/channels/now-next", h.LiveTV.NowAndNext)
+				r.Get("/tv/channels/{id}/stream.m3u8", h.LiveTV.StreamPlaylist)
+				r.Get("/tv/channels/{id}/segments/{name}", h.LiveTV.StreamSegment)
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/tv/tuners", h.LiveTV.ListTuners)
+					r.Post("/tv/tuners", h.LiveTV.CreateTuner)
+					r.Get("/tv/tuners/{id}", h.LiveTV.GetTuner)
+					r.Patch("/tv/tuners/{id}", h.LiveTV.UpdateTuner)
+					r.Delete("/tv/tuners/{id}", h.LiveTV.DeleteTuner)
+					r.Post("/tv/tuners/{id}/rescan", h.LiveTV.RescanTuner)
+					r.Patch("/tv/channels/{id}", h.LiveTV.SetChannelEnabled)
+				})
 			}
 
 			// People (cast/crew) — lazy TMDB fetch on first /credits view.

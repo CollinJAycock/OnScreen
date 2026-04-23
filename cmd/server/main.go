@@ -35,6 +35,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/intromarker"
+	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
@@ -456,6 +457,19 @@ func run() error {
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
 
+	// ── Live TV ──────────────────────────────────────────────────────────────
+	// Phase A: tuner abstraction + HDHomeRun and M3U drivers; channels list +
+	// now/next display + (next file) HLS proxy. DVR scheduling lives in
+	// Phase B and slots in here through the same service.
+	liveTVRegistry := livetv.NewRegistry()
+	liveTVRegistry.Register(livetv.TunerTypeHDHomeRun, livetv.HDHomeRunFactory)
+	liveTVRegistry.Register(livetv.TunerTypeM3U, livetv.M3UFactory)
+	liveTVSvc := livetv.NewService(newLiveTVAdapter(gen.New(rwPool)), liveTVRegistry, logger)
+	liveTVProxy := livetv.NewHLSProxy(livetv.HLSConfig{
+		Dir: filepath.Join(cfg.CachePath, "livetv"),
+	}, liveTVSvc, logger)
+	liveTVHandler := v1.NewLiveTVHandler(liveTVSvc, logger).WithStreamProxy(liveTVProxy)
+
 	// ── Embedded transcode worker ─────────────────────────────────────────────
 	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
 	// single-node deployments. Encoder detection is best-effort; falls back to
@@ -644,6 +658,7 @@ func run() error {
 		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Playlists:          v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		PhotoAlbums:        v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		LiveTV:             liveTVHandler,
 		Arr:                arrHandler,
 		OIDCAuth:           oidcAuthHandler,
 		LDAPAuth:           ldapAuthHandler,

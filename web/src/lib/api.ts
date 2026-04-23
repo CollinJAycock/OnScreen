@@ -884,6 +884,65 @@ export const favoritesApi = {
     api.requestList<FavoriteItem>(`/favorites?limit=${limit}&offset=${offset}`)
 };
 
+// ── Live TV ───────────────────────────────────────────────────────────────────
+
+export interface LiveTVChannel {
+  id: string;
+  tuner_id: string;
+  tuner_name: string;
+  tuner_type: string;
+  number: string;
+  callsign?: string;
+  name: string;
+  logo_url?: string;
+  enabled: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LiveTVNowNext {
+  channel_id: string;
+  number: string;
+  channel_name: string;
+  logo_url?: string;
+  program_id?: string;
+  title?: string;
+  subtitle?: string;
+  starts_at?: string;
+  ends_at?: string;
+  season_num?: number;
+  episode_num?: number;
+}
+
+export interface LiveTVTuner {
+  id: string;
+  type: string;
+  name: string;
+  config: Record<string, unknown>;
+  tune_count: number;
+  enabled: boolean;
+  last_seen_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const liveTvApi = {
+  channels: () => api.requestList<LiveTVChannel>('/tv/channels'),
+  nowNext: () => api.requestList<LiveTVNowNext>('/tv/channels/now-next'),
+  // Stream URLs are used directly by the player; not fetched as JSON.
+  streamUrl: (channelId: string) => `/api/v1/tv/channels/${channelId}/stream.m3u8`,
+
+  // Admin endpoints for the settings UI.
+  listTuners: () => api.requestList<LiveTVTuner>('/tv/tuners'),
+  createTuner: (body: { type: string; name: string; config: Record<string, unknown>; tune_count?: number }) =>
+    api.post<LiveTVTuner>('/tv/tuners', body),
+  updateTuner: (id: string, body: { name: string; config: Record<string, unknown>; tune_count?: number; enabled?: boolean }) =>
+    api.patch<LiveTVTuner>(`/tv/tuners/${id}`, body),
+  deleteTuner: (id: string) => api.delete(`/tv/tuners/${id}`),
+  rescanTuner: (id: string) => api.post<{ channel_count: number }>(`/tv/tuners/${id}/rescan`, {}),
+};
+
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 export interface AnalyticsOverview {
