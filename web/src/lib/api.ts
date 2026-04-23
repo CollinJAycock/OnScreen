@@ -903,14 +903,11 @@ export interface LiveTVChannel {
 
 export interface LiveTVNowNext {
   channel_id: string;
-  number: string;
-  channel_name: string;
-  logo_url?: string;
-  program_id?: string;
-  title?: string;
+  program_id: string;
+  title: string;
   subtitle?: string;
-  starts_at?: string;
-  ends_at?: string;
+  starts_at: string;
+  ends_at: string;
   season_num?: number;
   episode_num?: number;
 }
@@ -927,9 +924,32 @@ export interface LiveTVTuner {
   updated_at: string;
 }
 
+export interface LiveTVProgram {
+  id: string;
+  channel_id: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  category?: string[];
+  rating?: string;
+  season_num?: number;
+  episode_num?: number;
+  original_air_date?: string;
+  starts_at: string;
+  ends_at: string;
+}
+
 export const liveTvApi = {
   channels: () => api.requestList<LiveTVChannel>('/tv/channels'),
   nowNext: () => api.requestList<LiveTVNowNext>('/tv/channels/now-next'),
+  // Window is RFC3339 UTC; missing args means "now → now+4h" server-side.
+  guide: (from?: string, to?: string) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const path = '/tv/guide' + (qs.toString() ? '?' + qs.toString() : '');
+    return api.requestList<LiveTVProgram>(path);
+  },
   // Stream URLs are used directly by the player; not fetched as JSON.
   streamUrl: (channelId: string) => `/api/v1/tv/channels/${channelId}/stream.m3u8`,
 
@@ -941,7 +961,31 @@ export const liveTvApi = {
     api.patch<LiveTVTuner>(`/tv/tuners/${id}`, body),
   deleteTuner: (id: string) => api.delete(`/tv/tuners/${id}`),
   rescanTuner: (id: string) => api.post<{ channel_count: number }>(`/tv/tuners/${id}/rescan`, {}),
+
+  // EPG sources.
+  listEPGSources: () => api.requestList<LiveTVEPGSource>('/tv/epg-sources'),
+  createEPGSource: (body: { type: string; name: string; config: Record<string, unknown>; refresh_interval_min?: number }) =>
+    api.post<LiveTVEPGSource>('/tv/epg-sources', body),
+  deleteEPGSource: (id: string) => api.delete(`/tv/epg-sources/${id}`),
+  refreshEPGSource: (id: string) =>
+    api.post<{ programs_ingested: number; channels_auto_matched: number; unmapped_channels: number; skipped: number }>(
+      `/tv/epg-sources/${id}/refresh`, {}),
+  setChannelEPGID: (channelId: string, epgChannelID: string | null) =>
+    api.patch<void>(`/tv/channels/${channelId}/epg-id`, { epg_channel_id: epgChannelID }),
 };
+
+export interface LiveTVEPGSource {
+  id: string;
+  type: string;
+  name: string;
+  config: Record<string, unknown>;
+  refresh_interval_min: number;
+  enabled: boolean;
+  last_pull_at?: string;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+}
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 

@@ -526,6 +526,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/tv/channels/now-next", h.LiveTV.NowAndNext)
 				r.Get("/tv/channels/{id}/stream.m3u8", h.LiveTV.StreamPlaylist)
 				r.Get("/tv/channels/{id}/segments/{name}", h.LiveTV.StreamSegment)
+				r.Get("/tv/guide", h.LiveTV.Guide)
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/tv/tuners", h.LiveTV.ListTuners)
@@ -535,6 +536,11 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Delete("/tv/tuners/{id}", h.LiveTV.DeleteTuner)
 					r.Post("/tv/tuners/{id}/rescan", h.LiveTV.RescanTuner)
 					r.Patch("/tv/channels/{id}", h.LiveTV.SetChannelEnabled)
+					r.Patch("/tv/channels/{id}/epg-id", h.LiveTV.SetChannelEPGID)
+					r.Get("/tv/epg-sources", h.LiveTV.ListEPGSources)
+					r.Post("/tv/epg-sources", h.LiveTV.CreateEPGSource)
+					r.Delete("/tv/epg-sources/{id}", h.LiveTV.DeleteEPGSource)
+					r.Post("/tv/epg-sources/{id}/refresh", h.LiveTV.RefreshEPGSource)
 				})
 			}
 

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/livetv"
@@ -142,6 +144,40 @@ func (a *livetvAdapter) SetChannelEnabled(ctx context.Context, id uuid.UUID, ena
 	return a.q.SetChannelEnabled(ctx, gen.SetChannelEnabledParams{ID: id, Enabled: enabled})
 }
 
+func (a *livetvAdapter) ListEPGProgramsInWindow(ctx context.Context, from, to time.Time) ([]livetv.EPGProgram, error) {
+	rows, err := a.q.ListEPGProgramsInWindow(ctx, gen.ListEPGProgramsInWindowParams{
+		// SQL: ends_at > $1 AND starts_at < $2 → first param is window
+		// start (compared against ends_at), second is window end.
+		EndsAt:   pgtype.Timestamptz{Time: from, Valid: true},
+		StartsAt: pgtype.Timestamptz{Time: to, Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]livetv.EPGProgram, len(rows))
+	for i, r := range rows {
+		p := livetv.EPGProgram{
+			ID:          r.ID,
+			ChannelID:   r.ChannelID,
+			Title:       r.Title,
+			Subtitle:    r.Subtitle,
+			Description: r.Description,
+			Category:    r.Category,
+			Rating:      r.Rating,
+			SeasonNum:   r.SeasonNum,
+			EpisodeNum:  r.EpisodeNum,
+			StartsAt:    r.StartsAt.Time,
+			EndsAt:      r.EndsAt.Time,
+		}
+		if r.OriginalAirDate.Valid {
+			t := r.OriginalAirDate.Time
+			p.OriginalAirDate = &t
+		}
+		out[i] = p
+	}
+	return out, nil
+}
+
 func (a *livetvAdapter) GetNowAndNextForChannels(ctx context.Context) ([]livetv.NowNextEntry, error) {
 	rows, err := a.q.GetNowAndNextForChannels(ctx)
 	if err != nil {
@@ -149,38 +185,150 @@ func (a *livetvAdapter) GetNowAndNextForChannels(ctx context.Context) ([]livetv.
 	}
 	out := make([]livetv.NowNextEntry, len(rows))
 	for i, r := range rows {
-		entry := livetv.NowNextEntry{
-			ChannelID:   r.ChannelID,
-			Number:      r.Number,
-			ChannelName: r.ChannelName,
-			LogoURL:     r.LogoUrl,
-			Subtitle:    r.Subtitle,
-			SeasonNum:   r.SeasonNum,
-			EpisodeNum:  r.EpisodeNum,
+		out[i] = livetv.NowNextEntry{
+			ChannelID:  r.ChannelID,
+			ProgramID:  r.ProgramID,
+			Title:      r.Title,
+			Subtitle:   r.Subtitle,
+			StartsAt:   r.StartsAt.Time,
+			EndsAt:     r.EndsAt.Time,
+			SeasonNum:  r.SeasonNum,
+			EpisodeNum: r.EpisodeNum,
 		}
-		// LEFT JOIN LATERAL may produce a NULL program row, but sqlc can't
-		// see that and emits the columns as non-nullable. uuid.Nil + invalid
-		// Timestamptz is the actual signal we get from pgx for "no row."
-		if r.ProgramID != uuid.Nil {
-			pid := r.ProgramID
-			entry.ProgramID = &pid
-			title := r.Title
-			entry.Title = &title
-		}
-		if r.StartsAt.Valid {
-			t := r.StartsAt.Time
-			entry.StartsAt = &t
-		}
-		if r.EndsAt.Valid {
-			t := r.EndsAt.Time
-			entry.EndsAt = &t
-		}
-		out[i] = entry
 	}
 	return out, nil
 }
 
+// ── EPG sources + ingestion ──────────────────────────────────────────────────
+
+func (a *livetvAdapter) ListEPGSources(ctx context.Context) ([]livetv.EPGSource, error) {
+	rows, err := a.q.ListEPGSources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]livetv.EPGSource, len(rows))
+	for i, r := range rows {
+		out[i] = epgSourceFromGen(r)
+	}
+	return out, nil
+}
+
+func (a *livetvAdapter) GetEPGSource(ctx context.Context, id uuid.UUID) (livetv.EPGSource, error) {
+	row, err := a.q.GetEPGSource(ctx, id)
+	if err != nil {
+		return livetv.EPGSource{}, err
+	}
+	return epgSourceFromGen(row), nil
+}
+
+func (a *livetvAdapter) CreateEPGSource(ctx context.Context, p livetv.CreateEPGSourceParams) (livetv.EPGSource, error) {
+	row, err := a.q.CreateEPGSource(ctx, gen.CreateEPGSourceParams{
+		Type:               string(p.Type),
+		Name:               p.Name,
+		Config:             p.Config,
+		RefreshIntervalMin: p.RefreshIntervalMin,
+	})
+	if err != nil {
+		return livetv.EPGSource{}, err
+	}
+	return epgSourceFromGen(row), nil
+}
+
+func (a *livetvAdapter) DeleteEPGSource(ctx context.Context, id uuid.UUID) error {
+	return a.q.DeleteEPGSource(ctx, id)
+}
+
+func (a *livetvAdapter) SetEPGSourceEnabled(ctx context.Context, id uuid.UUID, enabled bool) error {
+	return a.q.SetEPGSourceEnabled(ctx, gen.SetEPGSourceEnabledParams{ID: id, Enabled: enabled})
+}
+
+func (a *livetvAdapter) RecordEPGPull(ctx context.Context, id uuid.UUID, lastError *string) error {
+	return a.q.RecordEPGPull(ctx, gen.RecordEPGPullParams{ID: id, LastError: lastError})
+}
+
+func (a *livetvAdapter) ListUnmappedChannels(ctx context.Context) ([]livetv.Channel, error) {
+	rows, err := a.q.ListUnmappedChannels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]livetv.Channel, len(rows))
+	for i, r := range rows {
+		out[i] = channelFromGen(r)
+	}
+	return out, nil
+}
+
+func (a *livetvAdapter) SetChannelEPGID(ctx context.Context, id uuid.UUID, epgChannelID *string) error {
+	return a.q.SetChannelEPGID(ctx, gen.SetChannelEPGIDParams{ID: id, EpgChannelID: epgChannelID})
+}
+
+func (a *livetvAdapter) GetChannelByEPGID(ctx context.Context, epgChannelID string) (livetv.Channel, error) {
+	row, err := a.q.GetChannelByEPGID(ctx, &epgChannelID)
+	if err != nil {
+		return livetv.Channel{}, err
+	}
+	return channelFromGen(row), nil
+}
+
+func (a *livetvAdapter) UpsertEPGProgram(ctx context.Context, p livetv.UpsertEPGProgramParams) error {
+	// category is `TEXT[] NOT NULL DEFAULT '{}'` — a nil Go slice gets
+	// sent as NULL by pgx, which violates the constraint even though the
+	// column has a default (defaults only kick in when the column is
+	// omitted from the INSERT, not when an explicit NULL is provided).
+	// Coalesce nil → empty slice so XMLTV programs without any
+	// <category> tags still ingest cleanly.
+	cats := p.Category
+	if cats == nil {
+		cats = []string{}
+	}
+	args := gen.UpsertEPGProgramParams{
+		ChannelID:       p.ChannelID,
+		SourceProgramID: p.SourceProgramID,
+		Title:           p.Title,
+		Subtitle:        p.Subtitle,
+		Description:     p.Description,
+		Category:        cats,
+		Rating:          p.Rating,
+		SeasonNum:       p.SeasonNum,
+		EpisodeNum:      p.EpisodeNum,
+		StartsAt:        pgtype.Timestamptz{Time: p.StartsAt, Valid: true},
+		EndsAt:          pgtype.Timestamptz{Time: p.EndsAt, Valid: true},
+		RawData:         p.RawData,
+	}
+	if p.OriginalAirDate != nil {
+		args.OriginalAirDate = pgtype.Date{Time: *p.OriginalAirDate, Valid: true}
+	}
+	return a.q.UpsertEPGProgram(ctx, args)
+}
+
+func (a *livetvAdapter) TrimOldEPGPrograms(ctx context.Context) error {
+	return a.q.TrimOldEPGPrograms(ctx)
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+func epgSourceFromGen(r gen.EpgSource) livetv.EPGSource {
+	out := livetv.EPGSource{
+		ID:                 r.ID,
+		Type:               livetv.EPGSourceType(r.Type),
+		Name:               r.Name,
+		Config:             r.Config,
+		RefreshIntervalMin: r.RefreshIntervalMin,
+		Enabled:            r.Enabled,
+		LastError:          r.LastError,
+	}
+	if r.LastPullAt.Valid {
+		t := r.LastPullAt.Time
+		out.LastPullAt = &t
+	}
+	if r.CreatedAt.Valid {
+		out.CreatedAt = r.CreatedAt.Time
+	}
+	if r.UpdatedAt.Valid {
+		out.UpdatedAt = r.UpdatedAt.Time
+	}
+	return out
+}
 
 func tunerFromGen(r gen.TunerDevice) livetv.TunerDevice {
 	t := livetv.TunerDevice{
@@ -206,14 +354,15 @@ func tunerFromGen(r gen.TunerDevice) livetv.TunerDevice {
 
 func channelFromGen(r gen.Channel) livetv.Channel {
 	c := livetv.Channel{
-		ID:        r.ID,
-		TunerID:   r.TunerID,
-		Number:    r.Number,
-		Callsign:  r.Callsign,
-		Name:      r.Name,
-		LogoURL:   r.LogoUrl,
-		Enabled:   r.Enabled,
-		SortOrder: r.SortOrder,
+		ID:           r.ID,
+		TunerID:      r.TunerID,
+		Number:       r.Number,
+		Callsign:     r.Callsign,
+		Name:         r.Name,
+		LogoURL:      r.LogoUrl,
+		Enabled:      r.Enabled,
+		SortOrder:    r.SortOrder,
+		EPGChannelID: r.EpgChannelID,
 	}
 	if r.CreatedAt.Valid {
 		c.CreatedAt = r.CreatedAt.Time

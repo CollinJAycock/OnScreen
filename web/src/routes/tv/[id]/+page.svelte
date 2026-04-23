@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Hls from 'hls.js';
@@ -43,10 +43,16 @@
       if (!found) { error = 'Channel not found'; return; }
       channel = found;
       nowNext = nnRes.items.filter(e => e.channel_id === id);
-      await attachStream(id);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load channel';
-    } finally { loading = false; }
+    } finally {
+      loading = false;
+    }
+    // Wait for the {#if !loading} block to render so videoEl is bound,
+    // THEN attach the stream. Without the tick, attachStream runs while
+    // <video> is still off-DOM and silently bails.
+    await tick();
+    if (channel) await attachStream(id);
   }
 
   async function switchChannel(channelId: string) {
@@ -54,6 +60,7 @@
     if (!found) return;
     channel = found;
     nowNext = nowNext.filter(e => e.channel_id === channelId); // best-effort; reload below refreshes
+    await tick();
     await attachStream(channelId);
     try {
       const nnRes = await liveTvApi.nowNext();
@@ -62,17 +69,47 @@
   }
 
   async function attachStream(channelId: string) {
-    if (!videoEl) return;
+    if (!videoEl) {
+      // Defensive: should never happen now that callers tick() first.
+      console.warn('attachStream: videoEl not bound yet');
+      return;
+    }
     if (hls) { hls.destroy(); hls = null; }
     error = '';
 
     const url = liveTvApi.streamUrl(channelId);
     if (Hls.isSupported()) {
-      hls = new Hls({ liveDurationInfinity: true, lowLatencyMode: false });
+      hls = new Hls({
+        liveDurationInfinity: true,
+        lowLatencyMode: false,
+        // Sit further behind the live edge so a brief encoder stall doesn't
+        // blow the buffer. With 2s segments, 4 segments = ~8s safety margin.
+        liveSyncDurationCount: 4,
+        liveMaxLatencyDurationCount: 10,
+        // Aggressively recover from transient errors instead of giving up
+        // on the first stall — broadcast TV via TS+ffmpeg has occasional
+        // bursts the decoder hates, and there's no point bailing on the
+        // session for one bad segment.
+        nudgeOffset: 0.2,
+        nudgeMaxRetry: 10,
+        manifestLoadingMaxRetry: 4,
+        levelLoadingMaxRetry: 4,
+        fragLoadingMaxRetry: 4,
+      });
       hls.loadSource(url);
       hls.attachMedia(videoEl);
       hls.on(Hls.Events.ERROR, (_event, data) => {
+        // Auto-recover from media errors (decoder confusion) and network
+        // errors (transient segment 404s while ffmpeg rotates files).
         if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls?.startLoad();
+            return;
+          }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls?.recoverMediaError();
+            return;
+          }
           error = data.details || 'Stream error';
         }
       });

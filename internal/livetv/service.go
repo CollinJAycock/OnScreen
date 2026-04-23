@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,16 +35,83 @@ type TunerDevice struct {
 // Channel mirrors a `channels` row. Joined-in tuner metadata appears on
 // ChannelWithTuner since the channel table doesn't carry it.
 type Channel struct {
-	ID         uuid.UUID
-	TunerID    uuid.UUID
-	Number     string
-	Callsign   *string
-	Name       string
-	LogoURL    *string
-	Enabled    bool
-	SortOrder  int32
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID           uuid.UUID
+	TunerID      uuid.UUID
+	Number       string
+	Callsign     *string
+	Name         string
+	LogoURL      *string
+	Enabled      bool
+	SortOrder    int32
+	EPGChannelID *string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// EPGSource mirrors a `epg_sources` row. Config is opaque JSON whose
+// shape depends on Type: XMLTV uses {"url": "..."}; Schedules Direct
+// uses {"username":"...","password_hash":"...","lineup":"..."}.
+type EPGSource struct {
+	ID                  uuid.UUID
+	Type                EPGSourceType
+	Name                string
+	Config              json.RawMessage
+	RefreshIntervalMin  int32
+	Enabled             bool
+	LastPullAt          *time.Time
+	LastError           *string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+// EPGSourceType identifies an EPG backend.
+type EPGSourceType string
+
+const (
+	EPGSourceTypeXMLTVURL  EPGSourceType = "xmltv_url"
+	EPGSourceTypeXMLTVFile EPGSourceType = "xmltv_file"
+)
+
+// XMLTVSourceConfig is the per-source config blob for XMLTV sources.
+// Source is a URL ("https://provider/grid.xml") or local file path.
+type XMLTVSourceConfig struct {
+	Source string `json:"source"`
+}
+
+// CreateEPGSourceParams is the input to Querier.CreateEPGSource.
+type CreateEPGSourceParams struct {
+	Type               EPGSourceType
+	Name               string
+	Config             json.RawMessage
+	RefreshIntervalMin int32
+}
+
+// UpsertEPGProgramParams is the input to Querier.UpsertEPGProgram. Times
+// are normalized to UTC by the ingester before reaching this struct.
+type UpsertEPGProgramParams struct {
+	ChannelID       uuid.UUID
+	SourceProgramID string
+	Title           string
+	Subtitle        *string
+	Description     *string
+	Category        []string
+	Rating          *string
+	SeasonNum       *int32
+	EpisodeNum      *int32
+	OriginalAirDate *time.Time
+	StartsAt        time.Time
+	EndsAt          time.Time
+	RawData         []byte
+}
+
+// RefreshResult is the outcome of one EPG source refresh — surfaced in
+// the API response so the settings UI can show "ingested 8,432 programs,
+// auto-mapped 7 channels."
+type RefreshResult struct {
+	ProgramsIngested    int
+	ChannelsAutoMatched int
+	UnmappedChannels    int
+	Skipped             int // programs with bad timestamps
 }
 
 // ChannelWithTuner is what the channels-list endpoint returns — the
@@ -55,20 +123,38 @@ type ChannelWithTuner struct {
 	TunerType TunerType
 }
 
-// NowNextEntry is one row in the channels-page now/next display. The same
-// channel can appear twice (program=now, program=next).
+// EPGProgram is one row in the guide-grid response. Matches the columns
+// surfaced by ListEPGProgramsInWindow — enough to render a clickable
+// time-slot tile (title, subtitle, episode tag, time) without a follow-up
+// per-program fetch.
+type EPGProgram struct {
+	ID              uuid.UUID
+	ChannelID       uuid.UUID
+	Title           string
+	Subtitle        *string
+	Description     *string
+	Category        []string
+	Rating          *string
+	SeasonNum       *int32
+	EpisodeNum      *int32
+	OriginalAirDate *time.Time
+	StartsAt        time.Time
+	EndsAt          time.Time
+}
+
+// NowNextEntry is one upcoming program in the channels-page now/next
+// display — at most two rows per channel (current + next). Channels
+// with no EPG data don't appear here; the client merges by channel_id
+// against the channels list and renders "no guide data" for missing IDs.
 type NowNextEntry struct {
-	ChannelID   uuid.UUID
-	Number      string
-	ChannelName string
-	LogoURL     *string
-	ProgramID   *uuid.UUID
-	Title       *string
-	Subtitle    *string
-	StartsAt    *time.Time
-	EndsAt      *time.Time
-	SeasonNum   *int32
-	EpisodeNum  *int32
+	ChannelID  uuid.UUID
+	ProgramID  uuid.UUID
+	Title      string
+	Subtitle   *string
+	StartsAt   time.Time
+	EndsAt     time.Time
+	SeasonNum  *int32
+	EpisodeNum *int32
 }
 
 // Querier is the slice of generated sqlc methods the service uses. Kept
@@ -89,6 +175,20 @@ type Querier interface {
 	ListChannelsByTuner(ctx context.Context, tunerID uuid.UUID) ([]Channel, error)
 	SetChannelEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
 	GetNowAndNextForChannels(ctx context.Context) ([]NowNextEntry, error)
+	ListEPGProgramsInWindow(ctx context.Context, from, to time.Time) ([]EPGProgram, error)
+
+	// EPG sources + ingestion.
+	ListEPGSources(ctx context.Context) ([]EPGSource, error)
+	GetEPGSource(ctx context.Context, id uuid.UUID) (EPGSource, error)
+	CreateEPGSource(ctx context.Context, p CreateEPGSourceParams) (EPGSource, error)
+	DeleteEPGSource(ctx context.Context, id uuid.UUID) error
+	SetEPGSourceEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
+	RecordEPGPull(ctx context.Context, id uuid.UUID, lastError *string) error
+	ListUnmappedChannels(ctx context.Context) ([]Channel, error)
+	SetChannelEPGID(ctx context.Context, id uuid.UUID, epgChannelID *string) error
+	GetChannelByEPGID(ctx context.Context, epgChannelID string) (Channel, error)
+	UpsertEPGProgram(ctx context.Context, p UpsertEPGProgramParams) error
+	TrimOldEPGPrograms(ctx context.Context) error
 }
 
 // CreateTunerDeviceParams is the input to Querier.CreateTunerDevice.
@@ -271,6 +371,22 @@ func (s *Service) NowAndNext(ctx context.Context) ([]NowNextEntry, error) {
 	return rows, nil
 }
 
+// Guide returns every program across visible channels overlapping the
+// window [from, to]. Caller is responsible for sensible window sizing
+// (the UI currently uses 4-hour windows snapped to the half-hour). An
+// empty result just means no EPG data has been ingested for that range
+// — handlers should render an empty grid rather than 404.
+func (s *Service) Guide(ctx context.Context, from, to time.Time) ([]EPGProgram, error) {
+	if !to.After(from) {
+		return nil, fmt.Errorf("guide: window must have to > from")
+	}
+	rows, err := s.q.ListEPGProgramsInWindow(ctx, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("guide window: %w", err)
+	}
+	return rows, nil
+}
+
 // ── Streaming ────────────────────────────────────────────────────────────────
 
 // OpenChannelStream resolves the channel's tuner, builds (or reuses) the
@@ -282,20 +398,301 @@ func (s *Service) NowAndNext(ctx context.Context) ([]NowNextEntry, error) {
 func (s *Service) OpenChannelStream(ctx context.Context, channelID uuid.UUID) (Stream, error) {
 	ch, err := s.q.GetChannel(ctx, channelID)
 	if err != nil {
+		s.logger.WarnContext(ctx, "open channel stream: channel lookup failed",
+			"channel_id", channelID, "err", err)
 		return nil, ErrNotFound
 	}
 	tuner, err := s.q.GetTunerDevice(ctx, ch.TunerID)
 	if err != nil {
+		s.logger.WarnContext(ctx, "open channel stream: tuner lookup failed",
+			"channel_id", channelID, "tuner_id", ch.TunerID, "err", err)
 		return nil, ErrNotFound
 	}
 	if !tuner.Enabled {
+		s.logger.WarnContext(ctx, "open channel stream: tuner disabled",
+			"channel_id", channelID, "tuner_id", tuner.ID)
 		return nil, ErrNotFound
 	}
 	driver, err := s.driverFor(tuner)
 	if err != nil {
+		s.logger.ErrorContext(ctx, "open channel stream: driver build failed",
+			"tuner_id", tuner.ID, "tuner_type", tuner.Type, "err", err)
 		return nil, fmt.Errorf("driver for tuner %s: %w", tuner.ID, err)
 	}
-	return driver.OpenStream(ctx, ch.Number)
+	stream, err := driver.OpenStream(ctx, ch.Number)
+	if err != nil {
+		s.logger.WarnContext(ctx, "open channel stream: driver OpenStream failed",
+			"channel_id", channelID, "channel_number", ch.Number,
+			"tuner_id", tuner.ID, "err", err)
+	}
+	return stream, err
+}
+
+// ── EPG sources ──────────────────────────────────────────────────────────────
+
+// ListEPGSources returns all configured EPG sources.
+func (s *Service) ListEPGSources(ctx context.Context) ([]EPGSource, error) {
+	rows, err := s.q.ListEPGSources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list epg sources: %w", err)
+	}
+	return rows, nil
+}
+
+// CreateEPGSource persists a new source. Refresh is not auto-triggered —
+// the caller (settings UI) typically follows up with a Refresh call so
+// the user gets immediate feedback that auth + URL are valid.
+func (s *Service) CreateEPGSource(ctx context.Context, p CreateEPGSourceParams) (EPGSource, error) {
+	if p.RefreshIntervalMin <= 0 {
+		p.RefreshIntervalMin = 360 // 6h default; matches schema default
+	}
+	row, err := s.q.CreateEPGSource(ctx, p)
+	if err != nil {
+		return EPGSource{}, fmt.Errorf("create epg source: %w", err)
+	}
+	return row, nil
+}
+
+// DeleteEPGSource removes a source. Does not delete already-ingested
+// programs — they expire naturally via TrimOldEPGPrograms.
+func (s *Service) DeleteEPGSource(ctx context.Context, id uuid.UUID) error {
+	if err := s.q.DeleteEPGSource(ctx, id); err != nil {
+		return fmt.Errorf("delete epg source: %w", err)
+	}
+	return nil
+}
+
+// SetEPGSourceEnabled toggles a source. Disabled sources are skipped
+// by the background refresh loop (when implemented in Phase B Round 2).
+func (s *Service) SetEPGSourceEnabled(ctx context.Context, id uuid.UUID, enabled bool) error {
+	if err := s.q.SetEPGSourceEnabled(ctx, id, enabled); err != nil {
+		return fmt.Errorf("set epg source enabled: %w", err)
+	}
+	return nil
+}
+
+// RefreshEPGSource pulls the source's grid, parses it, auto-matches
+// any unmapped channels, and upserts programs.
+//
+// Auto-match strategy: for each unmapped enabled channel, try matching
+// the source's <channel> entries against (in order):
+//  1. lcn → channel.number (most reliable, e.g. "5.1" matches HDHomeRun
+//     guide numbers exactly)
+//  2. display-name → channel.callsign (case-insensitive substring)
+//  3. display-name → channel.name (case-insensitive substring)
+//
+// Programs whose `channel` attribute doesn't resolve to a known channel
+// are silently dropped — there's no point recording EPG for channels
+// the user hasn't tuned.
+//
+// last_pull_at + last_error are recorded on every call regardless of
+// outcome so the settings UI can show "last pulled 12s ago, 8 errors".
+func (s *Service) RefreshEPGSource(ctx context.Context, id uuid.UUID) (RefreshResult, error) {
+	src, err := s.q.GetEPGSource(ctx, id)
+	if err != nil {
+		return RefreshResult{}, fmt.Errorf("get epg source: %w", err)
+	}
+
+	result, err := s.refreshXMLTV(ctx, src)
+	// Always record the pull, success or failure, so the UI can surface
+	// the error inline. Wrap the original error for the caller.
+	var lastErr *string
+	if err != nil {
+		msg := err.Error()
+		lastErr = &msg
+	}
+	if recErr := s.q.RecordEPGPull(ctx, src.ID, lastErr); recErr != nil {
+		s.logger.WarnContext(ctx, "record epg pull",
+			"source_id", src.ID, "err", recErr)
+	}
+	if err != nil {
+		return result, err
+	}
+	// Best-effort cleanup of expired programs after a successful pull —
+	// keeps the table from growing unboundedly across many sources.
+	if trimErr := s.q.TrimOldEPGPrograms(ctx); trimErr != nil {
+		s.logger.WarnContext(ctx, "trim old epg programs", "err", trimErr)
+	}
+	return result, nil
+}
+
+// refreshXMLTV is the XMLTV-specific path. Schedules Direct will get its
+// own refresh* method when added — RefreshEPGSource picks based on type.
+func (s *Service) refreshXMLTV(ctx context.Context, src EPGSource) (RefreshResult, error) {
+	if src.Type != EPGSourceTypeXMLTVURL && src.Type != EPGSourceTypeXMLTVFile {
+		return RefreshResult{}, fmt.Errorf("xmltv refresh: unsupported source type %q", src.Type)
+	}
+	var cfg XMLTVSourceConfig
+	if err := json.Unmarshal(src.Config, &cfg); err != nil {
+		return RefreshResult{}, fmt.Errorf("xmltv config parse: %w", err)
+	}
+	if cfg.Source == "" {
+		return RefreshResult{}, fmt.Errorf("xmltv source: empty source URL/path")
+	}
+
+	body, err := FetchXMLTV(ctx, cfg.Source)
+	if err != nil {
+		return RefreshResult{}, fmt.Errorf("fetch: %w", err)
+	}
+	defer body.Close()
+
+	xmltvChannels, programs, skipped, err := ParseXMLTV(body)
+	if err != nil {
+		return RefreshResult{}, fmt.Errorf("parse: %w", err)
+	}
+
+	matched, err := s.autoMatchChannels(ctx, xmltvChannels)
+	if err != nil {
+		return RefreshResult{}, fmt.Errorf("auto-match: %w", err)
+	}
+
+	// Resolve EPG channel IDs to OnScreen channel UUIDs in a single pass —
+	// then upsert. A program whose channel has no mapping (still NULL after
+	// auto-match) is silently dropped.
+	idCache := make(map[string]uuid.UUID, len(programs))
+	ingested := 0
+	for _, p := range programs {
+		uid, ok := idCache[p.ChannelID]
+		if !ok {
+			ch, err := s.q.GetChannelByEPGID(ctx, p.ChannelID)
+			if err != nil {
+				idCache[p.ChannelID] = uuid.Nil
+				continue
+			}
+			uid = ch.ID
+			idCache[p.ChannelID] = uid
+		}
+		if uid == uuid.Nil {
+			continue
+		}
+		var subPtr, descPtr, ratingPtr *string
+		if p.Subtitle != "" {
+			s := p.Subtitle
+			subPtr = &s
+		}
+		if p.Description != "" {
+			s := p.Description
+			descPtr = &s
+		}
+		if p.Rating != "" {
+			s := p.Rating
+			ratingPtr = &s
+		}
+		if err := s.q.UpsertEPGProgram(ctx, UpsertEPGProgramParams{
+			ChannelID:       uid,
+			SourceProgramID: p.SourceProgramID(),
+			Title:           p.Title,
+			Subtitle:        subPtr,
+			Description:     descPtr,
+			Category:        p.Category,
+			Rating:          ratingPtr,
+			SeasonNum:       p.SeasonNum,
+			EpisodeNum:      p.EpisodeNum,
+			OriginalAirDate: p.OriginalAirDate,
+			StartsAt:        p.StartsAt,
+			EndsAt:          p.EndsAt,
+		}); err != nil {
+			return RefreshResult{}, fmt.Errorf("upsert program %s: %w", p.SourceProgramID(), err)
+		}
+		ingested++
+	}
+
+	// Count channels that remain unmapped after auto-match — surfaced in
+	// the UI so users know how many they need to map manually.
+	unmapped, err := s.q.ListUnmappedChannels(ctx)
+	unmappedCount := 0
+	if err == nil {
+		unmappedCount = len(unmapped)
+	}
+
+	return RefreshResult{
+		ProgramsIngested:    ingested,
+		ChannelsAutoMatched: matched,
+		UnmappedChannels:    unmappedCount,
+		Skipped:             skipped,
+	}, nil
+}
+
+// autoMatchChannels tries to assign an epg_channel_id to every enabled
+// channel that lacks one. Returns the number of newly-mapped channels.
+//
+// Match priority (first hit wins per channel):
+//   - lcn exact → channel.number
+//   - display-name case-insensitive → channel.callsign
+//   - display-name case-insensitive → channel.name
+//
+// We don't unset existing mappings even if they don't appear in this
+// source's channel list — operator-set or previously-matched mappings
+// are sticky; they get cleared only via SetChannelEPGID(..., nil).
+func (s *Service) autoMatchChannels(ctx context.Context, xmltvChans []XMLTVChannel) (int, error) {
+	unmapped, err := s.q.ListUnmappedChannels(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if len(unmapped) == 0 {
+		return 0, nil
+	}
+
+	matched := 0
+	for _, ch := range unmapped {
+		var found string
+		for _, x := range xmltvChans {
+			if x.LCN != "" && x.LCN == ch.Number {
+				found = x.ID
+				break
+			}
+		}
+		if found == "" && ch.Callsign != nil {
+			lcCallsign := strings.ToLower(*ch.Callsign)
+			for _, x := range xmltvChans {
+				for _, name := range x.DisplayNames {
+					if strings.Contains(strings.ToLower(name), lcCallsign) {
+						found = x.ID
+						break
+					}
+				}
+				if found != "" {
+					break
+				}
+			}
+		}
+		if found == "" {
+			lcName := strings.ToLower(ch.Name)
+			for _, x := range xmltvChans {
+				for _, name := range x.DisplayNames {
+					if strings.Contains(strings.ToLower(name), lcName) {
+						found = x.ID
+						break
+					}
+				}
+				if found != "" {
+					break
+				}
+			}
+		}
+		if found == "" {
+			continue
+		}
+		if err := s.q.SetChannelEPGID(ctx, ch.ID, &found); err != nil {
+			s.logger.WarnContext(ctx, "set channel epg id",
+				"channel_id", ch.ID, "epg_id", found, "err", err)
+			continue
+		}
+		matched++
+		s.logger.InfoContext(ctx, "auto-matched channel",
+			"channel_id", ch.ID, "channel_number", ch.Number,
+			"channel_name", ch.Name, "epg_id", found)
+	}
+	return matched, nil
+}
+
+// SetChannelEPGID is the manual-override path for the settings UI. nil
+// clears the mapping so the next ingest re-runs auto-match.
+func (s *Service) SetChannelEPGID(ctx context.Context, id uuid.UUID, epgChannelID *string) error {
+	if err := s.q.SetChannelEPGID(ctx, id, epgChannelID); err != nil {
+		return fmt.Errorf("set channel epg id: %w", err)
+	}
+	return nil
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────

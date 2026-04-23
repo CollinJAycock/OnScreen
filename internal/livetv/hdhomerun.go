@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -53,6 +54,14 @@ type HDHomeRunDriver struct {
 	cfg       HDHomeRunConfig
 	tuneCount int // resolved at construction time from /discover.json or override
 	http      *http.Client
+
+	// Per-channel stream URLs, populated by Discover from each lineup
+	// entry's URL field. Constructing /auto/v{number} works on most
+	// firmwares but some variants (CableCARD-era HDHR PRIME, certain
+	// HDHR5 builds) only honor the lineup's pre-computed URL. Storing
+	// what the device tells us is cheaper than guessing.
+	mu         sync.RWMutex
+	streamURLs map[string]string // GuideNumber -> stream URL
 }
 
 // NewHDHomeRunDriver constructs a driver from a stored device row's config.
@@ -66,7 +75,8 @@ func NewHDHomeRunDriver(name string, cfg HDHomeRunConfig) *HDHomeRunDriver {
 		// byte (some HDHRs take ~10s to lock onto a channel) but the streaming
 		// endpoint uses a separate stream-aware request, so this is fine for
 		// the small JSON endpoints.
-		http: &http.Client{Timeout: 15 * time.Second},
+		http:       &http.Client{Timeout: 15 * time.Second},
+		streamURLs: make(map[string]string),
 	}
 }
 
@@ -115,6 +125,7 @@ func (d *HDHomeRunDriver) Discover(ctx context.Context) ([]DiscoveredChannel, er
 	}
 
 	out := make([]DiscoveredChannel, 0, len(lineup))
+	streams := make(map[string]string, len(lineup))
 	for _, e := range lineup {
 		if e.DRM == 1 {
 			// Encrypted channels (CableCARD) — we can't stream them, hide them.
@@ -124,7 +135,18 @@ func (d *HDHomeRunDriver) Discover(ctx context.Context) ([]DiscoveredChannel, er
 			Number: e.GuideNumber,
 			Name:   e.GuideName,
 		})
+		// Use the lineup's pre-computed URL when present (canonical) and
+		// fall back to /auto/v{number} for older firmwares that didn't
+		// include URL in the lineup response.
+		if e.URL != "" {
+			streams[e.GuideNumber] = e.URL
+		} else {
+			streams[e.GuideNumber] = fmt.Sprintf("%s/auto/v%s", d.cfg.HostURL, e.GuideNumber)
+		}
 	}
+	d.mu.Lock()
+	d.streamURLs = streams
+	d.mu.Unlock()
 	return out, nil
 }
 
@@ -133,11 +155,29 @@ func (d *HDHomeRunDriver) Discover(ctx context.Context) ([]DiscoveredChannel, er
 // the body releases the tune slot — this is the contract HDHomeRun
 // documents and what the device firmware actually does.
 //
+// Looks up the channel's stream URL from the in-memory map populated by
+// Discover. If the map is empty (server restarted without re-running
+// Discover) or the channel isn't in it, runs Discover lazily before
+// giving up — without this, restoring channel rows from the DB without a
+// rescan would fail every tune.
+//
 // HDHomeRun returns 503 when all tuners are in use; we map that to
 // ErrAllTunersBusy so the HLS proxy can render the right UX. Any other
 // non-2xx is wrapped with the body for debugging.
 func (d *HDHomeRunDriver) OpenStream(ctx context.Context, channelNumber string) (Stream, error) {
-	streamURL := fmt.Sprintf("%s/auto/v%s", d.cfg.HostURL, channelNumber)
+	streamURL := d.lookupStreamURL(channelNumber)
+	if streamURL == "" {
+		// Lazy discover so a fresh server start can tune without an
+		// explicit rescan. Discover repopulates the map and updates
+		// tune_count as a side effect.
+		if _, err := d.Discover(ctx); err != nil {
+			return nil, fmt.Errorf("hdhomerun lazy discover: %w", err)
+		}
+		streamURL = d.lookupStreamURL(channelNumber)
+		if streamURL == "" {
+			return nil, ErrChannelNotFound
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
 	if err != nil {
 		return nil, err
@@ -170,6 +210,14 @@ func (d *HDHomeRunDriver) OpenStream(ctx context.Context, channelNumber string) 
 func (d *HDHomeRunDriver) Probe(ctx context.Context) error {
 	var disc hdhomerunDiscover
 	return d.fetchJSON(ctx, "/discover.json", &disc)
+}
+
+// lookupStreamURL returns the cached per-channel stream URL or "" when
+// not present. Callers fall back to lazy Discover before giving up.
+func (d *HDHomeRunDriver) lookupStreamURL(channelNumber string) string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.streamURLs[channelNumber]
 }
 
 func (d *HDHomeRunDriver) fetchJSON(ctx context.Context, path string, out any) error {

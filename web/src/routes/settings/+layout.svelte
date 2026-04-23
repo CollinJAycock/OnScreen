@@ -26,6 +26,7 @@
     { href: '/settings/backup', label: 'Backup', exact: false },
     { href: '/settings/sso', label: 'SSO', exact: false },
     { href: '/settings/email', label: 'Email', exact: false },
+    { href: '/settings/tv', label: 'Live TV', exact: false },
     { href: '/settings/observability', label: 'Observability', exact: false },
     { href: '/settings/audit', label: 'Audit Log', exact: false },
   ];

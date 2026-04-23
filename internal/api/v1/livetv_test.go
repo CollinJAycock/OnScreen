@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,9 +26,12 @@ type mockLiveTVService struct {
 	tuners   map[uuid.UUID]livetv.TunerDevice
 	channels map[uuid.UUID]livetv.Channel
 
-	now []livetv.NowNextEntry
+	now   []livetv.NowNextEntry
+	guide []livetv.EPGProgram
 
 	listChansEnabledOnly *bool
+	guideFrom            time.Time
+	guideTo              time.Time
 
 	rescanCount  int
 	deleteCount  int
@@ -139,6 +143,31 @@ func (m *mockLiveTVService) NowAndNext(_ context.Context) ([]livetv.NowNextEntry
 	return m.now, nil
 }
 
+func (m *mockLiveTVService) Guide(_ context.Context, from, to time.Time) ([]livetv.EPGProgram, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.guideFrom = from
+	m.guideTo = to
+	return m.guide, nil
+}
+
+func (m *mockLiveTVService) ListEPGSources(_ context.Context) ([]livetv.EPGSource, error) {
+	return nil, nil
+}
+func (m *mockLiveTVService) CreateEPGSource(_ context.Context, _ livetv.CreateEPGSourceParams) (livetv.EPGSource, error) {
+	return livetv.EPGSource{}, nil
+}
+func (m *mockLiveTVService) DeleteEPGSource(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockLiveTVService) SetEPGSourceEnabled(_ context.Context, _ uuid.UUID, _ bool) error {
+	return nil
+}
+func (m *mockLiveTVService) RefreshEPGSource(_ context.Context, _ uuid.UUID) (livetv.RefreshResult, error) {
+	return livetv.RefreshResult{}, nil
+}
+func (m *mockLiveTVService) SetChannelEPGID(_ context.Context, _ uuid.UUID, _ *string) error {
+	return nil
+}
+
 // ── 503 path when service not configured ─────────────────────────────────────
 
 func TestLiveTV_NotConfigured_Returns503(t *testing.T) {
@@ -182,12 +211,14 @@ func TestLiveTV_CreateTuner_HappyPath(t *testing.T) {
 	if len(svc.tuners) != 1 {
 		t.Errorf("tuners: got %d, want 1", len(svc.tuners))
 	}
-	var resp TunerDeviceResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+	var envelope struct {
+		Data TunerDeviceResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Type != "hdhomerun" {
-		t.Errorf("type: got %q", resp.Type)
+	if envelope.Data.Type != "hdhomerun" {
+		t.Errorf("type: got %q", envelope.Data.Type)
 	}
 }
 
@@ -302,10 +333,12 @@ func TestLiveTV_RescanTuner_ReturnsCount(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]int
-	json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp["channel_count"] != 7 {
-		t.Errorf("channel_count: got %d, want 7", resp["channel_count"])
+	var envelope struct {
+		Data map[string]int `json:"data"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &envelope)
+	if envelope.Data["channel_count"] != 7 {
+		t.Errorf("channel_count: got %d, want 7", envelope.Data["channel_count"])
 	}
 }
 
@@ -375,9 +408,8 @@ func TestLiveTV_NowAndNext_PassesThrough(t *testing.T) {
 	svc := newMockLiveTVService()
 	chID := uuid.New()
 	pid := uuid.New()
-	title := "60 Minutes"
 	svc.now = []livetv.NowNextEntry{
-		{ChannelID: chID, Number: "2.1", ChannelName: "WCBS", ProgramID: &pid, Title: &title},
+		{ChannelID: chID, ProgramID: pid, Title: "60 Minutes"},
 	}
 	h := NewLiveTVHandler(svc, slog.Default())
 	req := httptest.NewRequest("GET", "/api/v1/tv/channels/now-next", nil)
@@ -390,7 +422,7 @@ func TestLiveTV_NowAndNext_PassesThrough(t *testing.T) {
 		Data []NowNextResponse `json:"data"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &resp)
-	if len(resp.Data) != 1 || resp.Data[0].Title == nil || *resp.Data[0].Title != title {
+	if len(resp.Data) != 1 || resp.Data[0].Title != "60 Minutes" {
 		t.Errorf("title not passed through: %+v", resp.Data)
 	}
 }
@@ -403,5 +435,97 @@ func TestLiveTV_NowAndNext_EmptyAllowed(t *testing.T) {
 	h.NowAndNext(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("empty channels should still 200; got %d", rec.Code)
+	}
+}
+
+// ── Guide ────────────────────────────────────────────────────────────────────
+
+func TestLiveTV_Guide_DefaultWindowIs4hFromNow(t *testing.T) {
+	svc := newMockLiveTVService()
+	h := NewLiveTVHandler(svc, slog.Default())
+	req := httptest.NewRequest("GET", "/api/v1/tv/guide", nil)
+	rec := httptest.NewRecorder()
+	h.Guide(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	delta := svc.guideTo.Sub(svc.guideFrom)
+	if delta < 3*time.Hour+59*time.Minute || delta > 4*time.Hour+1*time.Minute {
+		t.Errorf("default window: got %v, want ~4h", delta)
+	}
+}
+
+func TestLiveTV_Guide_FromAndToParsedAndPassedThrough(t *testing.T) {
+	svc := newMockLiveTVService()
+	h := NewLiveTVHandler(svc, slog.Default())
+	req := httptest.NewRequest("GET",
+		"/api/v1/tv/guide?from=2026-04-23T18:00:00Z&to=2026-04-23T22:00:00Z", nil)
+	rec := httptest.NewRecorder()
+	h.Guide(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d", rec.Code)
+	}
+	if svc.guideFrom.Hour() != 18 || svc.guideTo.Hour() != 22 {
+		t.Errorf("window: got %v..%v", svc.guideFrom, svc.guideTo)
+	}
+}
+
+func TestLiveTV_Guide_BadTimestampIs400(t *testing.T) {
+	svc := newMockLiveTVService()
+	h := NewLiveTVHandler(svc, slog.Default())
+	req := httptest.NewRequest("GET", "/api/v1/tv/guide?from=garbage", nil)
+	rec := httptest.NewRecorder()
+	h.Guide(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", rec.Code)
+	}
+}
+
+func TestLiveTV_Guide_ToBeforeFromIs400(t *testing.T) {
+	svc := newMockLiveTVService()
+	h := NewLiveTVHandler(svc, slog.Default())
+	req := httptest.NewRequest("GET",
+		"/api/v1/tv/guide?from=2026-04-23T22:00:00Z&to=2026-04-23T18:00:00Z", nil)
+	rec := httptest.NewRecorder()
+	h.Guide(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", rec.Code)
+	}
+}
+
+func TestLiveTV_Guide_WindowOver24hIs400(t *testing.T) {
+	svc := newMockLiveTVService()
+	h := NewLiveTVHandler(svc, slog.Default())
+	req := httptest.NewRequest("GET",
+		"/api/v1/tv/guide?from=2026-04-23T00:00:00Z&to=2026-04-25T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+	h.Guide(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", rec.Code)
+	}
+}
+
+func TestLiveTV_Guide_ReturnsRows(t *testing.T) {
+	chID := uuid.New()
+	svc := newMockLiveTVService()
+	svc.guide = []livetv.EPGProgram{
+		{
+			ID: uuid.New(), ChannelID: chID, Title: "60 Minutes",
+			StartsAt: time.Now(), EndsAt: time.Now().Add(time.Hour),
+		},
+	}
+	h := NewLiveTVHandler(svc, slog.Default())
+	req := httptest.NewRequest("GET", "/api/v1/tv/guide", nil)
+	rec := httptest.NewRecorder()
+	h.Guide(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d", rec.Code)
+	}
+	var resp struct {
+		Data []EPGProgramResponse `json:"data"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Data) != 1 || resp.Data[0].Title != "60 Minutes" {
+		t.Errorf("got %+v", resp.Data)
 	}
 }

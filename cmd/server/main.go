@@ -459,16 +459,16 @@ func run() error {
 
 	// ── Live TV ──────────────────────────────────────────────────────────────
 	// Phase A: tuner abstraction + HDHomeRun and M3U drivers; channels list +
-	// now/next display + (next file) HLS proxy. DVR scheduling lives in
-	// Phase B and slots in here through the same service.
+	// now/next display + HLS proxy. DVR scheduling lives in Phase B and slots
+	// in here through the same service.
 	liveTVRegistry := livetv.NewRegistry()
 	liveTVRegistry.Register(livetv.TunerTypeHDHomeRun, livetv.HDHomeRunFactory)
 	liveTVRegistry.Register(livetv.TunerTypeM3U, livetv.M3UFactory)
 	liveTVSvc := livetv.NewService(newLiveTVAdapter(gen.New(rwPool)), liveTVRegistry, logger)
-	liveTVProxy := livetv.NewHLSProxy(livetv.HLSConfig{
-		Dir: filepath.Join(cfg.CachePath, "livetv"),
-	}, liveTVSvc, logger)
-	liveTVHandler := v1.NewLiveTVHandler(liveTVSvc, logger).WithStreamProxy(liveTVProxy)
+	// Encoder selection is deferred until after the encoder detection
+	// block below — see liveTVProxy/liveTVHandler construction there.
+	var liveTVProxy *livetv.HLSProxy
+	var liveTVHandler *v1.LiveTVHandler
 
 	// ── Embedded transcode worker ─────────────────────────────────────────────
 	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
@@ -486,6 +486,24 @@ func run() error {
 	}
 	settingsHandler.SetDetectedEncoders(transcode.EncoderEntries(ctx, allEncoders))
 	settingsHandler.SetEmbeddedDisabled(cfg.DisableEmbeddedWorker)
+
+	// Pick a Live TV video encoder: first H.264 encoder available,
+	// preferring hardware. Broadcast TS is typically MPEG-2 (US OTA) or
+	// H.264 (newer); browsers can't play MPEG-2 in HLS, so we always
+	// re-encode to H.264. Hardware encoders make this near-free.
+	liveTVEncoder := "libx264"
+	for _, e := range allEncoders {
+		if e == transcode.EncoderNVENC || e == transcode.Encoder("h264_amf") || e == transcode.Encoder("h264_qsv") {
+			liveTVEncoder = string(e)
+			break
+		}
+	}
+	logger.Info("live tv encoder selected", "encoder", liveTVEncoder)
+	liveTVProxy = livetv.NewHLSProxy(livetv.HLSConfig{
+		Dir:          filepath.Join(cfg.CachePath, "livetv"),
+		VideoEncoder: liveTVEncoder,
+	}, liveTVSvc, logger)
+	liveTVHandler = v1.NewLiveTVHandler(liveTVSvc, logger).WithStreamProxy(liveTVProxy)
 
 	embeddedEnabled := fleetCfg.EmbeddedEnabled && !cfg.DisableEmbeddedWorker
 	var embeddedWorker *transcode.Worker

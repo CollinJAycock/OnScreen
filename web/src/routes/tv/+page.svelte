@@ -58,7 +58,10 @@
 
 {#if ready}
 <div class="page">
-  <h1 class="page-title">Live TV</h1>
+  <div class="page-head">
+    <h1 class="page-title">Live TV</h1>
+    <a class="guide-link" href="/tv/guide">Open guide →</a>
+  </div>
 
   {#if error}
     <div class="banner-error">{error}</div>
@@ -120,7 +123,10 @@
 
 <style>
   .page { padding: 2.5rem 2.5rem 4rem; max-width: 1400px; }
-  .page-title { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; margin-bottom: 1.5rem; }
+  .page-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+  .page-title { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; margin: 0; }
+  .guide-link { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+  .guide-link:hover { text-decoration: underline; }
 
   .banner-error { background: var(--error-bg); border: 1px solid var(--error); color: var(--error); padding: 0.65rem 1rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.5rem; }
 

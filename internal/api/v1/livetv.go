@@ -29,6 +29,14 @@ type LiveTVService interface {
 	GetChannel(ctx context.Context, id uuid.UUID) (livetv.Channel, error)
 	SetChannelEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
 	NowAndNext(ctx context.Context) ([]livetv.NowNextEntry, error)
+	Guide(ctx context.Context, from, to time.Time) ([]livetv.EPGProgram, error)
+
+	ListEPGSources(ctx context.Context) ([]livetv.EPGSource, error)
+	CreateEPGSource(ctx context.Context, p livetv.CreateEPGSourceParams) (livetv.EPGSource, error)
+	DeleteEPGSource(ctx context.Context, id uuid.UUID) error
+	SetEPGSourceEnabled(ctx context.Context, id uuid.UUID, enabled bool) error
+	RefreshEPGSource(ctx context.Context, id uuid.UUID) (livetv.RefreshResult, error)
+	SetChannelEPGID(ctx context.Context, id uuid.UUID, epgChannelID *string) error
 }
 
 // LiveTVHandler serves the live-TV HTTP API: tuner CRUD (admin),
@@ -65,36 +73,34 @@ type TunerDeviceResponse struct {
 
 // ChannelResponse is the JSON shape of a channel in the list endpoint.
 type ChannelResponse struct {
-	ID        uuid.UUID `json:"id"`
-	TunerID   uuid.UUID `json:"tuner_id"`
-	TunerName string    `json:"tuner_name"`
-	TunerType string    `json:"tuner_type"`
-	Number    string    `json:"number"`
-	Callsign  *string   `json:"callsign,omitempty"`
-	Name      string    `json:"name"`
-	LogoURL   *string   `json:"logo_url,omitempty"`
-	Enabled   bool      `json:"enabled"`
-	SortOrder int32     `json:"sort_order"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           uuid.UUID `json:"id"`
+	TunerID      uuid.UUID `json:"tuner_id"`
+	TunerName    string    `json:"tuner_name"`
+	TunerType    string    `json:"tuner_type"`
+	Number       string    `json:"number"`
+	Callsign     *string   `json:"callsign,omitempty"`
+	Name         string    `json:"name"`
+	LogoURL      *string   `json:"logo_url,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	SortOrder    int32     `json:"sort_order"`
+	EPGChannelID *string   `json:"epg_channel_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// NowNextResponse is one entry in /tv/channels/now-next. The same channel
-// can appear twice (current program + next program). When `program_id` is
-// missing, the channel has no upcoming EPG data — the UI should render
-// the channel without a "now playing" line.
+// NowNextResponse is one upcoming program in /tv/channels/now-next.
+// Up to two rows per channel (current + next). Channels with no EPG data
+// don't appear here; the client merges by channel_id against the channels
+// list and renders "no guide data" for missing channel IDs.
 type NowNextResponse struct {
-	ChannelID   uuid.UUID  `json:"channel_id"`
-	Number      string     `json:"number"`
-	ChannelName string     `json:"channel_name"`
-	LogoURL     *string    `json:"logo_url,omitempty"`
-	ProgramID   *uuid.UUID `json:"program_id,omitempty"`
-	Title       *string    `json:"title,omitempty"`
-	Subtitle    *string    `json:"subtitle,omitempty"`
-	StartsAt    *time.Time `json:"starts_at,omitempty"`
-	EndsAt      *time.Time `json:"ends_at,omitempty"`
-	SeasonNum   *int32     `json:"season_num,omitempty"`
-	EpisodeNum  *int32     `json:"episode_num,omitempty"`
+	ChannelID  uuid.UUID `json:"channel_id"`
+	ProgramID  uuid.UUID `json:"program_id"`
+	Title      string    `json:"title"`
+	Subtitle   *string   `json:"subtitle,omitempty"`
+	StartsAt   time.Time `json:"starts_at"`
+	EndsAt     time.Time `json:"ends_at"`
+	SeasonNum  *int32    `json:"season_num,omitempty"`
+	EpisodeNum *int32    `json:"episode_num,omitempty"`
 }
 
 // ── Tuner CRUD (admin) ───────────────────────────────────────────────────────
@@ -134,7 +140,7 @@ func (h *LiveTVHandler) GetTuner(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	respond.JSON(w, r, http.StatusOK, tunerToResponse(row))
+	respond.Success(w, r, tunerToResponse(row))
 }
 
 // createTunerRequest is the POST body for /api/v1/tv/tuners.
@@ -175,7 +181,7 @@ func (h *LiveTVHandler) CreateTuner(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.JSON(w, r, http.StatusCreated, tunerToResponse(row))
+	respond.Created(w, r, tunerToResponse(row))
 }
 
 // updateTunerRequest is the PATCH body for /api/v1/tv/tuners/{id}.
@@ -220,7 +226,7 @@ func (h *LiveTVHandler) UpdateTuner(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	respond.JSON(w, r, http.StatusOK, tunerToResponse(row))
+	respond.Success(w, r, tunerToResponse(row))
 }
 
 // DeleteTuner handles DELETE /api/v1/tv/tuners/{id}. Cascades through
@@ -260,7 +266,7 @@ func (h *LiveTVHandler) RescanTuner(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.JSON(w, r, http.StatusOK, map[string]int{"channel_count": n})
+	respond.Success(w, r, map[string]int{"channel_count": n})
 }
 
 // ── Channels (any authenticated user) ────────────────────────────────────────
@@ -332,20 +338,281 @@ func (h *LiveTVHandler) NowAndNext(w http.ResponseWriter, r *http.Request) {
 	out := make([]NowNextResponse, len(rows))
 	for i, e := range rows {
 		out[i] = NowNextResponse{
-			ChannelID:   e.ChannelID,
-			Number:      e.Number,
-			ChannelName: e.ChannelName,
-			LogoURL:     e.LogoURL,
-			ProgramID:   e.ProgramID,
-			Title:       e.Title,
-			Subtitle:    e.Subtitle,
-			StartsAt:    e.StartsAt,
-			EndsAt:      e.EndsAt,
-			SeasonNum:   e.SeasonNum,
-			EpisodeNum:  e.EpisodeNum,
+			ChannelID:  e.ChannelID,
+			ProgramID:  e.ProgramID,
+			Title:      e.Title,
+			Subtitle:   e.Subtitle,
+			StartsAt:   e.StartsAt,
+			EndsAt:     e.EndsAt,
+			SeasonNum:  e.SeasonNum,
+			EpisodeNum: e.EpisodeNum,
 		}
 	}
 	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// guideMaxWindow caps the time window the guide endpoint will expand to.
+// Without this, a curious client passing from=2020 to=2030 would scan the
+// whole programs table. 24 hours is more than enough for any reasonable
+// guide UI; anything wider should be split into multiple requests.
+const guideMaxWindow = 24 * time.Hour
+
+// guideDefaultWindow is what we serve when the caller passes neither
+// `from` nor `to` — the next 4 hours, which matches the UI's default
+// scroll position.
+const guideDefaultWindow = 4 * time.Hour
+
+// EPGProgramResponse is one program tile in the guide grid response.
+type EPGProgramResponse struct {
+	ID              uuid.UUID  `json:"id"`
+	ChannelID       uuid.UUID  `json:"channel_id"`
+	Title           string     `json:"title"`
+	Subtitle        *string    `json:"subtitle,omitempty"`
+	Description     *string    `json:"description,omitempty"`
+	Category        []string   `json:"category,omitempty"`
+	Rating          *string    `json:"rating,omitempty"`
+	SeasonNum       *int32     `json:"season_num,omitempty"`
+	EpisodeNum      *int32     `json:"episode_num,omitempty"`
+	OriginalAirDate *time.Time `json:"original_air_date,omitempty"`
+	StartsAt        time.Time  `json:"starts_at"`
+	EndsAt          time.Time  `json:"ends_at"`
+}
+
+// Guide handles GET /api/v1/tv/guide?from=&to=. Returns every program
+// across visible channels overlapping [from, to]. Both query params are
+// RFC3339 timestamps; missing means "now → now+4h". Window is capped at
+// 24h to prevent runaway scans.
+//
+// Response is a flat list — the client groups by channel_id and lays out
+// programs into a (channel × time) matrix.
+func (h *LiveTVHandler) Guide(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	now := time.Now().UTC()
+	from := now
+	to := now.Add(guideDefaultWindow)
+	if s := q.Get("from"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			respond.BadRequest(w, r, "invalid from timestamp")
+			return
+		}
+		from = t
+	}
+	if s := q.Get("to"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			respond.BadRequest(w, r, "invalid to timestamp")
+			return
+		}
+		to = t
+	}
+	if !to.After(from) {
+		respond.BadRequest(w, r, "to must be after from")
+		return
+	}
+	if to.Sub(from) > guideMaxWindow {
+		respond.BadRequest(w, r, "guide window exceeds 24h cap")
+		return
+	}
+
+	rows, err := h.svc.Guide(r.Context(), from, to)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "guide", "from", from, "to", to, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]EPGProgramResponse, len(rows))
+	for i, p := range rows {
+		out[i] = EPGProgramResponse{
+			ID:              p.ID,
+			ChannelID:       p.ChannelID,
+			Title:           p.Title,
+			Subtitle:        p.Subtitle,
+			Description:     p.Description,
+			Category:        p.Category,
+			Rating:          p.Rating,
+			SeasonNum:       p.SeasonNum,
+			EpisodeNum:      p.EpisodeNum,
+			OriginalAirDate: p.OriginalAirDate,
+			StartsAt:        p.StartsAt,
+			EndsAt:          p.EndsAt,
+		}
+	}
+	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// ── EPG sources ──────────────────────────────────────────────────────────────
+
+// EPGSourceResponse is the JSON shape of an EPG source row.
+type EPGSourceResponse struct {
+	ID                 uuid.UUID       `json:"id"`
+	Type               string          `json:"type"`
+	Name               string          `json:"name"`
+	Config             json.RawMessage `json:"config"`
+	RefreshIntervalMin int32           `json:"refresh_interval_min"`
+	Enabled            bool            `json:"enabled"`
+	LastPullAt         *time.Time      `json:"last_pull_at,omitempty"`
+	LastError          *string         `json:"last_error,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+}
+
+// ListEPGSources handles GET /api/v1/tv/epg-sources (admin-only).
+func (h *LiveTVHandler) ListEPGSources(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	rows, err := h.svc.ListEPGSources(r.Context())
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list epg sources", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]EPGSourceResponse, len(rows))
+	for i, s := range rows {
+		out[i] = epgSourceToResponse(s)
+	}
+	respond.List(w, r, out, int64(len(out)), "")
+}
+
+// createEPGSourceRequest is the POST body for /api/v1/tv/epg-sources.
+type createEPGSourceRequest struct {
+	Type               string          `json:"type"`
+	Name               string          `json:"name"`
+	Config             json.RawMessage `json:"config"`
+	RefreshIntervalMin int32           `json:"refresh_interval_min,omitempty"`
+}
+
+// CreateEPGSource handles POST /api/v1/tv/epg-sources (admin-only).
+// XMLTV is the only Phase B Round 1 backend; Schedules Direct comes later.
+func (h *LiveTVHandler) CreateEPGSource(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	var body createEPGSourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid JSON body")
+		return
+	}
+	if body.Name == "" {
+		respond.BadRequest(w, r, "name is required")
+		return
+	}
+	if body.Type != string(livetv.EPGSourceTypeXMLTVURL) && body.Type != string(livetv.EPGSourceTypeXMLTVFile) {
+		respond.BadRequest(w, r, "type must be 'xmltv_url' or 'xmltv_file'")
+		return
+	}
+	row, err := h.svc.CreateEPGSource(r.Context(), livetv.CreateEPGSourceParams{
+		Type:               livetv.EPGSourceType(body.Type),
+		Name:               body.Name,
+		Config:             body.Config,
+		RefreshIntervalMin: body.RefreshIntervalMin,
+	})
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "create epg source", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Created(w, r, epgSourceToResponse(row))
+}
+
+// DeleteEPGSource handles DELETE /api/v1/tv/epg-sources/{id} (admin-only).
+func (h *LiveTVHandler) DeleteEPGSource(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid epg source id")
+		return
+	}
+	if err := h.svc.DeleteEPGSource(r.Context(), id); err != nil {
+		h.logger.ErrorContext(r.Context(), "delete epg source", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RefreshEPGSource handles POST /api/v1/tv/epg-sources/{id}/refresh
+// (admin-only). Synchronously pulls + parses + ingests; can take tens of
+// seconds for large sources, so the UI should show a spinner.
+func (h *LiveTVHandler) RefreshEPGSource(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid epg source id")
+		return
+	}
+	res, err := h.svc.RefreshEPGSource(r.Context(), id)
+	if err != nil {
+		// Surface the error message in the response body so the settings
+		// UI can show "fetch failed: status 401" inline. The error has
+		// also been recorded into epg_sources.last_error by the service.
+		respond.Error(w, r, http.StatusBadGateway, "EPG_REFRESH_FAILED", err.Error())
+		return
+	}
+	respond.Success(w, r, map[string]any{
+		"programs_ingested":     res.ProgramsIngested,
+		"channels_auto_matched": res.ChannelsAutoMatched,
+		"unmapped_channels":     res.UnmappedChannels,
+		"skipped":               res.Skipped,
+	})
+}
+
+// setChannelEPGIDRequest is the PATCH body for assigning an EPG channel ID.
+type setChannelEPGIDRequest struct {
+	EPGChannelID *string `json:"epg_channel_id"`
+}
+
+// SetChannelEPGID handles PATCH /api/v1/tv/channels/{id}/epg-id
+// (admin-only). Lets operators manually map a channel when auto-match
+// got it wrong. Pass {"epg_channel_id": null} to clear the mapping.
+func (h *LiveTVHandler) SetChannelEPGID(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w, r) {
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid channel id")
+		return
+	}
+	var body setChannelEPGIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid JSON body")
+		return
+	}
+	if err := h.svc.SetChannelEPGID(r.Context(), id, body.EPGChannelID); err != nil {
+		h.logger.ErrorContext(r.Context(), "set channel epg id", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// epgSourceToResponse maps a domain EPGSource into the JSON shape.
+func epgSourceToResponse(s livetv.EPGSource) EPGSourceResponse {
+	out := EPGSourceResponse{
+		ID:                 s.ID,
+		Type:               string(s.Type),
+		Name:               s.Name,
+		Config:             s.Config,
+		RefreshIntervalMin: s.RefreshIntervalMin,
+		Enabled:            s.Enabled,
+		LastError:          s.LastError,
+		CreatedAt:          s.CreatedAt,
+		UpdatedAt:          s.UpdatedAt,
+	}
+	if s.LastPullAt != nil {
+		t := *s.LastPullAt
+		out.LastPullAt = &t
+	}
+	return out
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────
@@ -379,7 +646,7 @@ func channelToResponse(c livetv.ChannelWithTuner) ChannelResponse {
 	return ChannelResponse{
 		ID: c.ID, TunerID: c.TunerID, TunerName: c.TunerName, TunerType: string(c.TunerType),
 		Number: c.Number, Callsign: c.Callsign, Name: c.Name, LogoURL: c.LogoURL,
-		Enabled: c.Enabled, SortOrder: c.SortOrder,
+		Enabled: c.Enabled, SortOrder: c.SortOrder, EPGChannelID: c.EPGChannelID,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }

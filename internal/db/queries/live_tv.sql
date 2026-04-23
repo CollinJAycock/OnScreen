@@ -63,11 +63,11 @@ ON CONFLICT (tuner_id, number) DO UPDATE SET
     logo_url = EXCLUDED.logo_url,
     updated_at = NOW()
 RETURNING id, tuner_id, number, callsign, name, logo_url, enabled,
-          sort_order, created_at, updated_at;
+          sort_order, created_at, updated_at, epg_channel_id;
 
 -- name: GetChannel :one
 SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
-       sort_order, created_at, updated_at
+       sort_order, created_at, updated_at, epg_channel_id
 FROM channels
 WHERE id = $1;
 
@@ -76,7 +76,7 @@ WHERE id = $1;
 -- (NULL = include both). Settings UI passes NULL; the public /tv channels
 -- page passes TRUE.
 SELECT c.id, c.tuner_id, c.number, c.callsign, c.name, c.logo_url,
-       c.enabled, c.sort_order, c.created_at, c.updated_at,
+       c.enabled, c.sort_order, c.created_at, c.updated_at, c.epg_channel_id,
        t.name AS tuner_name, t.type AS tuner_type
 FROM channels c
 JOIN tuner_devices t ON t.id = c.tuner_id
@@ -86,7 +86,7 @@ ORDER BY c.sort_order, c.number;
 
 -- name: ListChannelsByTuner :many
 SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
-       sort_order, created_at, updated_at
+       sort_order, created_at, updated_at, epg_channel_id
 FROM channels
 WHERE tuner_id = $1
 ORDER BY sort_order, number;
@@ -96,6 +96,31 @@ UPDATE channels SET enabled = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: SetChannelSortOrder :exec
 UPDATE channels SET sort_order = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: SetChannelEPGID :exec
+-- Manual mapping override + auto-match write target. NULL clears the
+-- mapping so the next ingest re-runs auto-detection.
+UPDATE channels SET epg_channel_id = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: GetChannelByEPGID :one
+-- EPG ingester hot path: per program, look up the OnScreen channel by
+-- the source's channel id. NULL epg_channel_id rows are intentionally
+-- excluded so unmapped channels silently drop programs (caller must run
+-- auto-match before ingesting).
+SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
+       sort_order, created_at, updated_at, epg_channel_id
+FROM channels
+WHERE epg_channel_id = $1
+LIMIT 1;
+
+-- name: ListUnmappedChannels :many
+-- Channels lacking an EPG mapping. The ingester scans these on every
+-- pull and tries to auto-match against the source's <display-name>/lcn.
+SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
+       sort_order, created_at, updated_at, epg_channel_id
+FROM channels
+WHERE epg_channel_id IS NULL AND enabled = TRUE
+ORDER BY tuner_id, sort_order, number;
 
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;
@@ -186,33 +211,66 @@ WHERE channel_id = $1
 ORDER BY starts_at;
 
 -- name: GetNowAndNextForChannels :many
--- Channels page: for each (visible) channel return at most two programs —
--- the one airing at NOW() and the one immediately after. LATERAL keeps the
--- per-channel sub-pull cheap with the (channel_id, starts_at) index.
+-- Channels page: returns the current + next upcoming program per visible
+-- channel (≤2 rows per channel). Channels with no EPG data simply don't
+-- appear in the result; the client merges this with the channels list
+-- and renders "no guide data" for missing channel IDs.
+--
+-- Implementation note: this used to be a LEFT JOIN LATERAL on channels
+-- so channels without EPG would still get one row (with NULL program
+-- columns), but sqlc can't infer LEFT JOIN nullability — pgx then
+-- failed to scan NULL into the non-nullable `title string` field.
+-- Splitting the query is cleaner and the client-side merge is trivial.
+WITH ranked AS (
+    SELECT
+        p.id, p.channel_id, p.title, p.subtitle,
+        p.starts_at, p.ends_at, p.season_num, p.episode_num,
+        ROW_NUMBER() OVER (PARTITION BY p.channel_id ORDER BY p.starts_at) AS rn
+    FROM epg_programs p
+    JOIN channels c ON c.id = p.channel_id
+    JOIN tuner_devices t ON t.id = c.tuner_id
+    WHERE p.ends_at > NOW()
+      AND c.enabled = TRUE
+      AND t.enabled = TRUE
+)
 SELECT
-    c.id            AS channel_id,
-    c.number,
-    c.name          AS channel_name,
-    c.logo_url,
-    p.id            AS program_id,
-    p.title,
-    p.subtitle,
-    p.starts_at,
-    p.ends_at,
-    p.season_num,
-    p.episode_num
-FROM channels c
-JOIN tuner_devices t ON t.id = c.tuner_id AND t.enabled = TRUE
-LEFT JOIN LATERAL (
-    SELECT id, title, subtitle, starts_at, ends_at, season_num, episode_num
-    FROM epg_programs
-    WHERE channel_id = c.id
-      AND ends_at > NOW()
-    ORDER BY starts_at
-    LIMIT 2
-) p ON TRUE
+    channel_id,
+    id AS program_id,
+    title,
+    subtitle,
+    starts_at,
+    ends_at,
+    season_num,
+    episode_num
+FROM ranked
+WHERE rn <= 2
+ORDER BY channel_id, starts_at;
+
+-- name: ListEPGProgramsInWindow :many
+-- Returns every program across every visible channel that overlaps the
+-- given [from, to] window. Used by the guide grid — caller picks the
+-- window (typically 2-4 hours starting at the current half-hour) and
+-- the UI lays out programs into a (channel × time) matrix.
+--
+-- "Overlap" semantics: a program counts if its end is strictly after
+-- `from` AND its start is strictly before `to`. So a program ending at
+-- exactly `from` is excluded (already over), and one starting at exactly
+-- `to` is excluded (next slot's problem).
+--
+-- Disabled channels and disabled tuners are filtered out so hidden
+-- channels don't pollute the grid.
+SELECT
+    p.id, p.channel_id, p.title, p.subtitle, p.description,
+    p.category, p.rating, p.season_num, p.episode_num,
+    p.original_air_date, p.starts_at, p.ends_at
+FROM epg_programs p
+JOIN channels c ON c.id = p.channel_id
+JOIN tuner_devices t ON t.id = c.tuner_id
 WHERE c.enabled = TRUE
-ORDER BY c.sort_order, c.number, p.starts_at;
+  AND t.enabled = TRUE
+  AND p.ends_at > $1
+  AND p.starts_at < $2
+ORDER BY p.channel_id, p.starts_at;
 
 -- name: TrimOldEPGPrograms :exec
 -- Run by the EPG refresh job to keep the table bounded. One day past the

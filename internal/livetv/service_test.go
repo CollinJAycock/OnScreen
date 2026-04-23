@@ -2,15 +2,27 @@ package livetv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+// newService builds a Service backed by a fresh mockQuerier and an
+// empty driver registry. Returned for tests that need both handles.
+func newService(t *testing.T) (*Service, *mockQuerier) {
+	t.Helper()
+	q := newMockQuerier()
+	return NewService(q, NewRegistry(), slog.Default()), q
+}
 
 // ── Mock Querier ─────────────────────────────────────────────────────────────
 
@@ -27,6 +39,13 @@ type mockQuerier struct {
 	getTunerErr      error
 	getChannelErr    error
 	upsertChannelErr error
+
+	guideRows []EPGProgram
+
+	epgSources       []EPGSource
+	unmapped         []Channel
+	epgIDSets        []epgIDSet
+	upsertedPrograms []UpsertEPGProgramParams
 }
 
 func newMockQuerier() *mockQuerier {
@@ -160,6 +179,66 @@ func (m *mockQuerier) SetChannelEnabled(_ context.Context, _ uuid.UUID, _ bool) 
 
 func (m *mockQuerier) GetNowAndNextForChannels(_ context.Context) ([]NowNextEntry, error) {
 	return nil, nil
+}
+
+func (m *mockQuerier) ListEPGProgramsInWindow(_ context.Context, _, _ time.Time) ([]EPGProgram, error) {
+	return m.guideRows, nil
+}
+
+// EPG sources + ingestion — minimal stubs; tests that need behavior here
+// will set the corresponding result/err fields.
+func (m *mockQuerier) ListEPGSources(_ context.Context) ([]EPGSource, error) {
+	return m.epgSources, nil
+}
+func (m *mockQuerier) GetEPGSource(_ context.Context, id uuid.UUID) (EPGSource, error) {
+	for _, s := range m.epgSources {
+		if s.ID == id {
+			return s, nil
+		}
+	}
+	return EPGSource{}, errors.New("not found")
+}
+func (m *mockQuerier) CreateEPGSource(_ context.Context, p CreateEPGSourceParams) (EPGSource, error) {
+	src := EPGSource{ID: uuid.New(), Type: p.Type, Name: p.Name, Config: p.Config, RefreshIntervalMin: p.RefreshIntervalMin, Enabled: true}
+	m.epgSources = append(m.epgSources, src)
+	return src, nil
+}
+func (m *mockQuerier) DeleteEPGSource(_ context.Context, id uuid.UUID) error {
+	out := m.epgSources[:0]
+	for _, s := range m.epgSources {
+		if s.ID != id {
+			out = append(out, s)
+		}
+	}
+	m.epgSources = out
+	return nil
+}
+func (m *mockQuerier) SetEPGSourceEnabled(_ context.Context, _ uuid.UUID, _ bool) error { return nil }
+func (m *mockQuerier) RecordEPGPull(_ context.Context, _ uuid.UUID, _ *string) error    { return nil }
+func (m *mockQuerier) ListUnmappedChannels(_ context.Context) ([]Channel, error) {
+	return m.unmapped, nil
+}
+func (m *mockQuerier) SetChannelEPGID(_ context.Context, id uuid.UUID, epg *string) error {
+	m.epgIDSets = append(m.epgIDSets, epgIDSet{ID: id, EPGID: epg})
+	return nil
+}
+func (m *mockQuerier) GetChannelByEPGID(_ context.Context, epg string) (Channel, error) {
+	for _, ch := range m.channels {
+		if ch.EPGChannelID != nil && *ch.EPGChannelID == epg {
+			return ch, nil
+		}
+	}
+	return Channel{}, errors.New("not found")
+}
+func (m *mockQuerier) UpsertEPGProgram(_ context.Context, p UpsertEPGProgramParams) error {
+	m.upsertedPrograms = append(m.upsertedPrograms, p)
+	return nil
+}
+func (m *mockQuerier) TrimOldEPGPrograms(_ context.Context) error { return nil }
+
+type epgIDSet struct {
+	ID    uuid.UUID
+	EPGID *string
 }
 
 // ── Fake Driver ──────────────────────────────────────────────────────────────
@@ -418,5 +497,145 @@ func TestService_DeleteTuner_InvalidatesDriver(t *testing.T) {
 	svc.DeleteTuner(context.Background(), row.ID)
 	if len(svc.drivers) != 0 {
 		t.Errorf("driver cache should be empty after delete")
+	}
+}
+
+// ── EPG ingest ───────────────────────────────────────────────────────────────
+
+const epgTestXMLTV = `<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="WCBS.5.1.us">
+    <display-name>WCBS-DT</display-name>
+    <lcn>5.1</lcn>
+  </channel>
+  <channel id="WABC.7.1.us">
+    <display-name>WABC-DT</display-name>
+    <lcn>7.1</lcn>
+  </channel>
+  <programme start="20260423180000 +0000" stop="20260423190000 +0000" channel="WCBS.5.1.us">
+    <title>60 Minutes</title>
+  </programme>
+  <programme start="20260423180000 +0000" stop="20260423190000 +0000" channel="WABC.7.1.us">
+    <title>World News</title>
+  </programme>
+  <programme start="20260423180000 +0000" stop="20260423190000 +0000" channel="UNKNOWN.99.us">
+    <title>Should be dropped</title>
+  </programme>
+</tv>`
+
+func TestRefreshEPGSource_AutoMatchesAndIngests(t *testing.T) {
+	svc, q := newService(t)
+
+	// Two channels, neither yet mapped — auto-match by lcn → number.
+	wcbsID := uuid.New()
+	wabcID := uuid.New()
+	q.channels[wcbsID] = Channel{ID: wcbsID, Number: "5.1", Name: "WCBS"}
+	q.channels[wabcID] = Channel{ID: wabcID, Number: "7.1", Name: "WABC"}
+	q.unmapped = []Channel{q.channels[wcbsID], q.channels[wabcID]}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "g.xml")
+	if err := os.WriteFile(path, []byte(epgTestXMLTV), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, _ := json.Marshal(XMLTVSourceConfig{Source: path})
+
+	// Seed an EPG source row.
+	src, err := svc.CreateEPGSource(context.Background(), CreateEPGSourceParams{
+		Type: EPGSourceTypeXMLTVFile, Name: "test", Config: cfg,
+	})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+
+	// Simulate the auto-match having taken effect by populating the
+	// channels' EPGChannelID — the mock's GetChannelByEPGID looks at it.
+	wcbsEPG := "WCBS.5.1.us"
+	wabcEPG := "WABC.7.1.us"
+	q.channels[wcbsID] = Channel{ID: wcbsID, Number: "5.1", Name: "WCBS", EPGChannelID: &wcbsEPG}
+	q.channels[wabcID] = Channel{ID: wabcID, Number: "7.1", Name: "WABC", EPGChannelID: &wabcEPG}
+
+	res, err := svc.RefreshEPGSource(context.Background(), src.ID)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	// 2 mapped channels matched programs; 1 unknown channel program dropped.
+	if res.ProgramsIngested != 2 {
+		t.Errorf("ingested: got %d, want 2", res.ProgramsIngested)
+	}
+	if len(q.upsertedPrograms) != 2 {
+		t.Errorf("upserted programs: got %d, want 2", len(q.upsertedPrograms))
+	}
+	// auto-match should have written 2 SetChannelEPGID calls (one per
+	// initially-unmapped channel; both matched on lcn).
+	if len(q.epgIDSets) != 2 {
+		t.Errorf("auto-match writes: got %d, want 2", len(q.epgIDSets))
+	}
+}
+
+func TestRefreshEPGSource_RejectsNonXMLTVType(t *testing.T) {
+	svc, q := newService(t)
+	src := EPGSource{ID: uuid.New(), Type: "schedules_direct"}
+	q.epgSources = []EPGSource{src}
+	_, err := svc.RefreshEPGSource(context.Background(), src.ID)
+	if err == nil {
+		t.Error("expected error on unsupported source type")
+	}
+}
+
+func TestRefreshEPGSource_BadConfigReturnsError(t *testing.T) {
+	svc, q := newService(t)
+	src := EPGSource{ID: uuid.New(), Type: EPGSourceTypeXMLTVFile, Config: []byte("not json")}
+	q.epgSources = []EPGSource{src}
+	_, err := svc.RefreshEPGSource(context.Background(), src.ID)
+	if err == nil {
+		t.Error("expected error on bad config")
+	}
+}
+
+func TestRefreshEPGSource_EmptySourceURL(t *testing.T) {
+	svc, q := newService(t)
+	cfg, _ := json.Marshal(XMLTVSourceConfig{Source: ""})
+	src := EPGSource{ID: uuid.New(), Type: EPGSourceTypeXMLTVFile, Config: cfg}
+	q.epgSources = []EPGSource{src}
+	_, err := svc.RefreshEPGSource(context.Background(), src.ID)
+	if err == nil {
+		t.Error("expected error on empty source")
+	}
+}
+
+func TestAutoMatchChannels_MatchesByCallsign(t *testing.T) {
+	svc, q := newService(t)
+	cs := "WCBS"
+	chID := uuid.New()
+	q.unmapped = []Channel{{ID: chID, Number: "5.1", Name: "Channel 5", Callsign: &cs}}
+	xchans := []XMLTVChannel{
+		{ID: "WCBS.5.1.us", DisplayNames: []string{"WCBS-DT"}},
+	}
+	matched, err := svc.autoMatchChannels(context.Background(), xchans)
+	if err != nil {
+		t.Fatalf("auto-match: %v", err)
+	}
+	if matched != 1 {
+		t.Errorf("matched: got %d, want 1", matched)
+	}
+	if len(q.epgIDSets) != 1 || *q.epgIDSets[0].EPGID != "WCBS.5.1.us" {
+		t.Errorf("expected callsign substring match; got %v", q.epgIDSets)
+	}
+}
+
+func TestAutoMatchChannels_LCNTakesPrecedenceOverDisplayName(t *testing.T) {
+	svc, q := newService(t)
+	chID := uuid.New()
+	q.unmapped = []Channel{{ID: chID, Number: "5.1", Name: "WCBS"}}
+	xchans := []XMLTVChannel{
+		// First entry has display-name match, second has lcn match.
+		// LCN should win since it's tried first.
+		{ID: "by-name", DisplayNames: []string{"WCBS"}},
+		{ID: "by-lcn", LCN: "5.1"},
+	}
+	_, _ = svc.autoMatchChannels(context.Background(), xchans)
+	if len(q.epgIDSets) != 1 || *q.epgIDSets[0].EPGID != "by-lcn" {
+		t.Errorf("expected lcn match to win; got %v", q.epgIDSets)
 	}
 }

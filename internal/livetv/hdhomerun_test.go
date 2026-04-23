@@ -140,6 +140,11 @@ func TestHDHomeRunDriver_TuneCountOverrideWins(t *testing.T) {
 func TestHDHomeRunDriver_OpenStream_OK(t *testing.T) {
 	fake := newFakeHDHomeRun(t)
 	fake.streamBody = "MPEG-TS-payload"
+	// Seed the lineup so the lazy Discover inside OpenStream finds the
+	// channel and caches its URL.
+	fake.lineup = []hdhomerunLineupEntry{
+		{GuideNumber: "5.1", GuideName: "WCBS-DT", URL: fake.srv.URL + "/auto/v5.1"},
+	}
 	d := NewHDHomeRunDriver("box", HDHomeRunConfig{HostURL: fake.srv.URL})
 
 	stream, err := d.OpenStream(context.Background(), "5.1")
@@ -159,6 +164,9 @@ func TestHDHomeRunDriver_OpenStream_OK(t *testing.T) {
 func TestHDHomeRunDriver_OpenStream_AllTunersBusy(t *testing.T) {
 	fake := newFakeHDHomeRun(t)
 	fake.streamFails = true
+	fake.lineup = []hdhomerunLineupEntry{
+		{GuideNumber: "5.1", GuideName: "WCBS-DT", URL: fake.srv.URL + "/auto/v5.1"},
+	}
 	d := NewHDHomeRunDriver("box", HDHomeRunConfig{HostURL: fake.srv.URL})
 
 	_, err := d.OpenStream(context.Background(), "5.1")
@@ -168,8 +176,14 @@ func TestHDHomeRunDriver_OpenStream_AllTunersBusy(t *testing.T) {
 }
 
 func TestHDHomeRunDriver_OpenStream_ChannelNotFound(t *testing.T) {
+	// Seed the lineup with the channel so the lazy-discover path inside
+	// OpenStream populates the URL map; the fake's /auto/ handler is what
+	// returns 404 → that's the case we're verifying maps to ErrChannelNotFound.
 	fake := newFakeHDHomeRun(t)
 	fake.notFound = true
+	fake.lineup = []hdhomerunLineupEntry{
+		{GuideNumber: "999.9", GuideName: "Test", URL: fake.srv.URL + "/auto/v999.9"},
+	}
 	d := NewHDHomeRunDriver("box", HDHomeRunConfig{HostURL: fake.srv.URL})
 
 	_, err := d.OpenStream(context.Background(), "999.9")
@@ -179,11 +193,22 @@ func TestHDHomeRunDriver_OpenStream_ChannelNotFound(t *testing.T) {
 }
 
 func TestHDHomeRunDriver_OpenStream_OtherErrorWrapped(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Need a fake that serves valid /discover.json + /lineup.json so the
+	// lazy-discover path populates the URL map, then returns 500 when the
+	// stream URL is hit. Reuse the standard fake and override the stream
+	// handler via a Server-level wrapper.
+	fake := newFakeHDHomeRun(t)
+	fake.lineup = []hdhomerunLineupEntry{
+		{GuideNumber: "5.1", GuideName: "WCBS", URL: fake.srv.URL + "/auto/v5.1"},
+	}
+	streamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer srv.Close()
-	d := NewHDHomeRunDriver("box", HDHomeRunConfig{HostURL: srv.URL})
+	defer streamSrv.Close()
+	// Replace the lineup URL so OpenStream targets the 500-returning server.
+	fake.lineup[0].URL = streamSrv.URL + "/auto/v5.1"
+
+	d := NewHDHomeRunDriver("box", HDHomeRunConfig{HostURL: fake.srv.URL})
 	_, err := d.OpenStream(context.Background(), "5.1")
 	if err == nil || !strings.Contains(err.Error(), "500") {
 		t.Errorf("expected wrapped 500 error, got %v", err)

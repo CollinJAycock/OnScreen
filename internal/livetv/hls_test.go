@@ -56,7 +56,7 @@ EOF
 cat > "$out_dir/seg-00001.ts" <<EOF
 TS-SEG-1
 EOF
-cat > "$out_dir/playlist.m3u8" <<EOF
+cat > "$out_dir/playlist.m3u8.tmp" <<EOF
 #EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-TARGETDURATION:4
@@ -66,6 +66,7 @@ seg-00000.ts
 #EXTINF:4.000,
 seg-00001.ts
 EOF
+mv "$out_dir/playlist.m3u8.tmp" "$out_dir/playlist.m3u8"
 
 # Drain stdin so the upstream Stream.Close() returns promptly when killed.
 cat > /dev/null &

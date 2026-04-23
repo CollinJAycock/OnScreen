@@ -26,22 +26,48 @@ import (
 const hlsStreamLifetime = 30 * time.Second
 
 // hlsSegmentDuration is the target HLS segment length passed to ffmpeg.
-// 4s is a reasonable balance: shorter = lower channel-change latency,
-// longer = fewer files on disk and lower request overhead.
-const hlsSegmentDuration = 4
+// 2s gives the player finer-grained buffering (less chance of underflow
+// during a brief encoder stall) and cuts initial channel-change latency
+// — most players start playback 3 segments behind the live edge, so
+// 2s × 3 = 6s of startup vs 4s × 3 = 12s. Trade-off is more files on
+// disk and slightly more request overhead, both negligible.
+const hlsSegmentDuration = 2
 
-// hlsListSize is the number of segments to keep in the playlist (and on
-// disk, with delete_segments). 6 × 4s = 24s of seekable buffer, enough
-// to absorb a brief network blip without going off the back of the
-// playlist.
-const hlsListSize = 6
+// hlsListSize is the number of segments visible in the playlist (and
+// kept on disk via delete_segments). 10 × 2s = 20s buffer — enough
+// rollback room for client jitter without growing unboundedly.
+const hlsListSize = 10
+
+// keyframeIntervalFrames is how many encoded frames between forced
+// keyframes. Must match segment duration × source FPS so each segment
+// starts on a keyframe — otherwise ffmpeg either inserts extra
+// keyframes (CPU+bitrate spikes) or some segments lack a keyframe at
+// position 0 (player can't start playback at the live edge cleanly).
+//
+// Broadcast TV is 29.97/30 fps in the US and 25 fps in EU; 60 frames
+// × ~33ms = ~2s, matching hlsSegmentDuration. Slightly off for 25 fps
+// (60 / 25 = 2.4s) which the muxer absorbs gracefully via the
+// EXT-X-TARGETDURATION upper bound.
+const keyframeIntervalFrames = 60
 
 // HLSConfig configures the proxy. Dir is where per-session subdirectories
 // are created — must be writable by the server process. FFmpegBin is the
 // ffmpeg binary path (defaults to "ffmpeg" if empty, picked up from PATH).
+//
+// VideoEncoder names the ffmpeg encoder for the video stream. Defaults to
+// "libx264" — we cannot stream-copy because broadcast TV (US OTA in
+// particular) is typically MPEG-2, which browsers can't decode. Set to
+// "h264_nvenc" / "h264_amf" / "h264_qsv" when hardware acceleration is
+// available; the embedded transcode subsystem already auto-detects these.
+//
+// AudioEncoder is similarly transcoded by default — broadcast audio is
+// usually AC-3 (Dolby Digital) which Safari handles but Chrome/Firefox
+// don't. Defaults to "aac" which every browser plays.
 type HLSConfig struct {
-	Dir       string
-	FFmpegBin string
+	Dir           string
+	FFmpegBin     string
+	VideoEncoder  string
+	AudioEncoder  string
 }
 
 // HLSSession represents one active per-channel session. The first viewer
@@ -51,13 +77,14 @@ type HLSSession struct {
 	channelID uuid.UUID
 	dir       string
 
-	mu       sync.Mutex
-	refcount int
-	closing  *time.Timer // grace-period timer scheduled when refcount hits 0
-	cmd      *exec.Cmd
-	upstream Stream
-	cancel   context.CancelFunc
-	closed   bool
+	mu        sync.Mutex
+	refcount  int
+	closing   *time.Timer // grace-period timer scheduled when refcount hits 0
+	cmd       *exec.Cmd
+	upstream  Stream
+	cancel    context.CancelFunc
+	closed    bool
+	stderrBuf *ringBuffer // last few KB of ffmpeg stderr, for crash diagnostics
 }
 
 // PlaylistPath returns the absolute path to this session's master HLS
@@ -107,6 +134,12 @@ func NewHLSProxy(cfg HLSConfig, svc *Service, logger *slog.Logger) *HLSProxy {
 	if cfg.FFmpegBin == "" {
 		cfg.FFmpegBin = "ffmpeg"
 	}
+	if cfg.VideoEncoder == "" {
+		cfg.VideoEncoder = "libx264"
+	}
+	if cfg.AudioEncoder == "" {
+		cfg.AudioEncoder = "aac"
+	}
 	return &HLSProxy{cfg: cfg, svc: svc, logger: logger, sessions: make(map[uuid.UUID]*HLSSession)}
 }
 
@@ -131,41 +164,132 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	}
 	p.mu.Unlock()
 
-	// Create on a separate code path to avoid holding the proxy mutex
-	// across an upstream tune (which can block for ~10s on first lock).
-	upstream, err := p.svc.OpenChannelStream(ctx, channelID)
+	// Session lifetime is decoupled from the request context: the
+	// playlist GET that triggers Acquire returns in seconds, but the
+	// underlying HDHomeRun HTTP body is the entire tune session. Using
+	// the request ctx for upstream would close the upstream the moment
+	// the first playlist response completes, killing ffmpeg's stdin —
+	// no segments would ever be written.
+	streamCtx, cancel := context.WithCancel(context.Background())
+
+	// Open upstream against the session ctx so it lives as long as the
+	// session does. Acquire's caller still gets request-scoped errors
+	// because OpenChannelStream's HTTP request happens synchronously
+	// and returns before the body is read.
+	upstream, err := p.svc.OpenChannelStream(streamCtx, channelID)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
 	if err := os.MkdirAll(p.cfg.Dir, 0o755); err != nil {
+		cancel()
 		upstream.Close()
 		return nil, fmt.Errorf("hls dir: %w", err)
 	}
 	dir, err := os.MkdirTemp(p.cfg.Dir, "ch-*")
 	if err != nil {
+		cancel()
 		upstream.Close()
 		return nil, fmt.Errorf("hls session dir: %w", err)
 	}
-
-	// ffmpeg lifecycle is tied to a context separate from the request — a
-	// disconnecting client must not kill the stream while other viewers
-	// are still attached.
-	streamCtx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(streamCtx, p.cfg.FFmpegBin,
+	// We can't `-c copy` because broadcast TV is typically MPEG-2 video +
+	// AC-3 audio — neither plays in browsers via HLS. Transcode to H.264
+	// + AAC. NVENC/AMF/QSV when available drops CPU to near-zero per
+	// stream; libx264 fallback is the floor at ~15-25% of one CPU core.
+	//
+	// Bitrate target 6 Mbps + 8 Mbps maxrate matches what cable providers
+	// use for 1080p H.264 — preserves the visible quality of broadcast HD
+	// without bloating segment files. NVENC's default of ~2 Mbps was
+	// catastrophic on 1080p (the original "looks bad" complaint).
+	//
+	// Colorspace tagging is critical on HDR displays: without explicit
+	// bt709 metadata the browser/compositor may interpret SDR pixels with
+	// an HDR matrix, producing washed-out or oversaturated output. We
+	// tag the encoded stream as Rec.709 SDR — which is what 99% of
+	// broadcast TV actually is — so HDR monitors render it in the SDR
+	// sub-range correctly.
+	//
+	// -bsf:a aac_adtstoasc fixes a common HLS muxer warning when AAC
+	// audio crosses segment boundaries.
+	// -sn drops subtitles; broadcast TS often carries closed-caption
+	// streams ffmpeg can't mux into HLS.
+	// -pix_fmt yuv420p ensures universal browser/HW decoder compatibility
+	// (some broadcasts are 4:2:2 which Chromium can't decode).
+	args := []string{
 		"-fflags", "+genpts+discardcorrupt",
 		"-i", "pipe:0",
-		"-map", "0",
-		// Stream-copy keeps CPU near zero. Broadcast TS is already
-		// H.264 + AAC for everything but ATSC 3.0 (deferred to Phase D).
-		"-c", "copy",
+		"-map", "0:v:0", // first video stream only
+		"-map", "0:a:0?", // first audio stream if present
+		"-sn",
+		"-c:v", p.cfg.VideoEncoder,
+		"-pix_fmt", "yuv420p",
+		// Tag SDR Rec.709 colorspace so HDR-capable players render correctly.
+		"-color_primaries", "bt709",
+		"-color_trc", "bt709",
+		"-colorspace", "bt709",
+		"-color_range", "tv",
+	}
+	// -g and -keyint_min force a keyframe every N frames so segment
+	// boundaries always land on keyframes — required for clean HLS
+	// playback. Applied to all encoders.
+	gop := fmt.Sprintf("%d", keyframeIntervalFrames)
+	args = append(args,
+		"-g", gop,
+		"-keyint_min", gop,
+		"-sc_threshold", "0", // disable scenecut keyframes (would break GOP alignment)
+	)
+	switch p.cfg.VideoEncoder {
+	case "libx264":
+		args = append(args,
+			"-preset", "veryfast", "-tune", "zerolatency",
+			"-profile:v", "high", "-level", "4.1",
+			"-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M",
+		)
+	case "h264_nvenc":
+		// p4 is the realtime sweet spot — quality close to p5 but with
+		// enough headroom that the GPU can keep encoding while also
+		// servicing library transcodes. -tune ll (low-latency) drops
+		// lookahead and B-frames so frames come out as fast as they go in.
+		args = append(args,
+			"-preset", "p4", "-tune", "ll", "-rc", "vbr",
+			"-profile:v", "high", "-level", "4.1",
+			"-b:v", "6M", "-maxrate", "8M", "-bufsize", "8M",
+			// Force IDR at -g intervals (NVENC otherwise emits non-IDR I-frames).
+			"-forced-idr", "1",
+		)
+	case "h264_amf":
+		args = append(args,
+			"-quality", "speed", "-rc", "vbr_peak",
+			"-profile:v", "high",
+			"-b:v", "6M", "-maxrate", "8M",
+		)
+	case "h264_qsv":
+		args = append(args,
+			"-preset", "veryfast", "-profile:v", "high",
+			"-b:v", "6M", "-maxrate", "8M",
+		)
+	}
+	args = append(args,
+		"-c:a", p.cfg.AudioEncoder,
+		"-ac", "2", // downmix surround → stereo (HLS+browsers expect ≤2ch AAC)
+		"-b:a", "192k",
+		"-bsf:a", "aac_adtstoasc",
 		"-f", "hls",
 		"-hls_time", fmt.Sprintf("%d", hlsSegmentDuration),
 		"-hls_list_size", fmt.Sprintf("%d", hlsListSize),
 		"-hls_flags", "delete_segments+omit_endlist+independent_segments",
 		"-hls_segment_filename", filepath.Join(dir, "seg-%05d.ts"),
+		// Prefix segment URLs in the playlist so the player's relative-URL
+		// resolution from `/tv/channels/{id}/stream.m3u8` lands at our
+		// `/segments/{name}` route. Without this, browsers request
+		// `/tv/channels/{id}/seg-00000.ts` directly, miss the route, and
+		// fall through to the SPA's index.html — segments "load" with 200
+		// but contain HTML, so the player silently shows a black screen.
+		"-hls_base_url", "segments/",
 		filepath.Join(dir, "playlist.m3u8"),
 	)
+	cmd := exec.CommandContext(streamCtx, p.cfg.FFmpegBin, args...)
 	cmd.Stdin = upstream
 	// Capture ffmpeg stderr at warn level — on a healthy stream it's quiet,
 	// on a failing one (codec mismatch, signal loss) it's the only signal.
@@ -184,13 +308,15 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		return nil, fmt.Errorf("ffmpeg start: %w", err)
 	}
 
-	// Drain stderr into the logger so the pipe doesn't block ffmpeg.
-	go p.drainStderr(channelID, stderr)
+	// 64KB ring is plenty — ffmpeg's "command line / input format dump /
+	// fatal error" footprint is rarely more than ~10KB even on weird inputs.
+	stderrBuf := newRingBuffer(64 * 1024)
+	go p.drainStderr(channelID, stderr, stderrBuf)
 	// Reaper: when the process exits (either because we killed it via
 	// cancel or because ffmpeg crashed), close the upstream and tear down
 	// the session entry. Without this an upstream-side error would leak
 	// the session map entry forever.
-	go p.reaper(channelID, cmd)
+	go p.reaper(channelID, cmd, stderrBuf)
 
 	s := &HLSSession{
 		channelID: channelID,
@@ -199,6 +325,7 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		cmd:       cmd,
 		upstream:  upstream,
 		cancel:    cancel,
+		stderrBuf: stderrBuf,
 	}
 	p.mu.Lock()
 	p.sessions[channelID] = s
@@ -262,12 +389,13 @@ func (p *HLSProxy) teardown(s *HLSSession) {
 // reaper waits for ffmpeg to exit and ensures the session is torn down.
 // Only fires if ffmpeg crashes or is killed before normal teardown — the
 // happy path teardown via Release/grace-period also calls cancel which
-// reaches us.
-func (p *HLSProxy) reaper(channelID uuid.UUID, cmd *exec.Cmd) {
+// reaches us. On crash, dumps the captured stderr ring so we can see why
+// ffmpeg actually died (codec mismatches, missing PMT, signal loss, etc.).
+func (p *HLSProxy) reaper(channelID uuid.UUID, cmd *exec.Cmd, stderr *ringBuffer) {
 	err := cmd.Wait()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		p.logger.WarnContext(context.Background(), "hls ffmpeg exited",
-			"channel_id", channelID, "err", err)
+			"channel_id", channelID, "err", err, "stderr", stderr.String())
 	}
 	// Force-teardown: even if there are still refs, the upstream is gone
 	// so the session is dead. Reset refcount to 0 so teardown proceeds.
@@ -282,12 +410,16 @@ func (p *HLSProxy) reaper(channelID uuid.UUID, cmd *exec.Cmd) {
 	}
 }
 
-func (p *HLSProxy) drainStderr(channelID uuid.UUID, pipe io.ReadCloser) {
+// drainStderr forwards ffmpeg stderr into the session's ring buffer (so
+// crash diagnostics in the reaper have the last few KB) and also warn-
+// logs lines that look like errors as they arrive — useful when ffmpeg
+// is producing partial output but degraded (e.g. signal lock issues).
+func (p *HLSProxy) drainStderr(channelID uuid.UUID, pipe io.ReadCloser, ring *ringBuffer) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := pipe.Read(buf)
 		if n > 0 {
-			// ffmpeg is verbose; only log lines that look like errors.
+			ring.Write(buf[:n])
 			line := string(buf[:n])
 			if containsAny(line, "Error", "error", "Failed", "failed") {
 				p.logger.WarnContext(context.Background(), "ffmpeg stderr",
@@ -298,6 +430,46 @@ func (p *HLSProxy) drainStderr(channelID uuid.UUID, pipe io.ReadCloser) {
 			return
 		}
 	}
+}
+
+// ringBuffer is a thread-safe fixed-size byte ring. Used to keep the
+// most recent ffmpeg stderr around so the reaper can dump it on crash.
+// Older bytes are silently dropped — crash diagnostics live in the tail.
+type ringBuffer struct {
+	mu   sync.Mutex
+	buf  []byte
+	full bool
+	head int
+}
+
+func newRingBuffer(size int) *ringBuffer {
+	return &ringBuffer{buf: make([]byte, size)}
+}
+
+func (r *ringBuffer) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, b := range p {
+		r.buf[r.head] = b
+		r.head++
+		if r.head >= len(r.buf) {
+			r.head = 0
+			r.full = true
+		}
+	}
+	return len(p), nil
+}
+
+func (r *ringBuffer) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.full {
+		return string(r.buf[:r.head])
+	}
+	out := make([]byte, 0, len(r.buf))
+	out = append(out, r.buf[r.head:]...)
+	out = append(out, r.buf[:r.head]...)
+	return string(out)
 }
 
 // Shutdown tears down every active session. Called on server stop so the

@@ -42,16 +42,17 @@ type AuditLog struct {
 }
 
 type Channel struct {
-	ID        uuid.UUID          `json:"id"`
-	TunerID   uuid.UUID          `json:"tuner_id"`
-	Number    string             `json:"number"`
-	Callsign  *string            `json:"callsign"`
-	Name      string             `json:"name"`
-	LogoUrl   *string            `json:"logo_url"`
-	Enabled   bool               `json:"enabled"`
-	SortOrder int32              `json:"sort_order"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID           uuid.UUID          `json:"id"`
+	TunerID      uuid.UUID          `json:"tuner_id"`
+	Number       string             `json:"number"`
+	Callsign     *string            `json:"callsign"`
+	Name         string             `json:"name"`
+	LogoUrl      *string            `json:"logo_url"`
+	Enabled      bool               `json:"enabled"`
+	SortOrder    int32              `json:"sort_order"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	EpgChannelID *string            `json:"epg_channel_id"`
 }
 
 type Collection struct {

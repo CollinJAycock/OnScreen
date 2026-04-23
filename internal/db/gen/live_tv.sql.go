@@ -122,7 +122,7 @@ func (q *Queries) DeleteTunerDevice(ctx context.Context, id uuid.UUID) error {
 
 const getChannel = `-- name: GetChannel :one
 SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
-       sort_order, created_at, updated_at
+       sort_order, created_at, updated_at, epg_channel_id
 FROM channels
 WHERE id = $1
 `
@@ -141,6 +141,38 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EpgChannelID,
+	)
+	return i, err
+}
+
+const getChannelByEPGID = `-- name: GetChannelByEPGID :one
+SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
+       sort_order, created_at, updated_at, epg_channel_id
+FROM channels
+WHERE epg_channel_id = $1
+LIMIT 1
+`
+
+// EPG ingester hot path: per program, look up the OnScreen channel by
+// the source's channel id. NULL epg_channel_id rows are intentionally
+// excluded so unmapped channels silently drop programs (caller must run
+// auto-match before ingesting).
+func (q *Queries) GetChannelByEPGID(ctx context.Context, epgChannelID *string) (Channel, error) {
+	row := q.db.QueryRow(ctx, getChannelByEPGID, epgChannelID)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.TunerID,
+		&i.Number,
+		&i.Callsign,
+		&i.Name,
+		&i.LogoUrl,
+		&i.Enabled,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EpgChannelID,
 	)
 	return i, err
 }
@@ -202,49 +234,53 @@ func (q *Queries) GetEPGSource(ctx context.Context, id uuid.UUID) (EpgSource, er
 }
 
 const getNowAndNextForChannels = `-- name: GetNowAndNextForChannels :many
+WITH ranked AS (
+    SELECT
+        p.id, p.channel_id, p.title, p.subtitle,
+        p.starts_at, p.ends_at, p.season_num, p.episode_num,
+        ROW_NUMBER() OVER (PARTITION BY p.channel_id ORDER BY p.starts_at) AS rn
+    FROM epg_programs p
+    JOIN channels c ON c.id = p.channel_id
+    JOIN tuner_devices t ON t.id = c.tuner_id
+    WHERE p.ends_at > NOW()
+      AND c.enabled = TRUE
+      AND t.enabled = TRUE
+)
 SELECT
-    c.id            AS channel_id,
-    c.number,
-    c.name          AS channel_name,
-    c.logo_url,
-    p.id            AS program_id,
-    p.title,
-    p.subtitle,
-    p.starts_at,
-    p.ends_at,
-    p.season_num,
-    p.episode_num
-FROM channels c
-JOIN tuner_devices t ON t.id = c.tuner_id AND t.enabled = TRUE
-LEFT JOIN LATERAL (
-    SELECT id, title, subtitle, starts_at, ends_at, season_num, episode_num
-    FROM epg_programs
-    WHERE channel_id = c.id
-      AND ends_at > NOW()
-    ORDER BY starts_at
-    LIMIT 2
-) p ON TRUE
-WHERE c.enabled = TRUE
-ORDER BY c.sort_order, c.number, p.starts_at
+    channel_id,
+    id AS program_id,
+    title,
+    subtitle,
+    starts_at,
+    ends_at,
+    season_num,
+    episode_num
+FROM ranked
+WHERE rn <= 2
+ORDER BY channel_id, starts_at
 `
 
 type GetNowAndNextForChannelsRow struct {
-	ChannelID   uuid.UUID          `json:"channel_id"`
-	Number      string             `json:"number"`
-	ChannelName string             `json:"channel_name"`
-	LogoUrl     *string            `json:"logo_url"`
-	ProgramID   uuid.UUID          `json:"program_id"`
-	Title       string             `json:"title"`
-	Subtitle    *string            `json:"subtitle"`
-	StartsAt    pgtype.Timestamptz `json:"starts_at"`
-	EndsAt      pgtype.Timestamptz `json:"ends_at"`
-	SeasonNum   *int32             `json:"season_num"`
-	EpisodeNum  *int32             `json:"episode_num"`
+	ChannelID  uuid.UUID          `json:"channel_id"`
+	ProgramID  uuid.UUID          `json:"program_id"`
+	Title      string             `json:"title"`
+	Subtitle   *string            `json:"subtitle"`
+	StartsAt   pgtype.Timestamptz `json:"starts_at"`
+	EndsAt     pgtype.Timestamptz `json:"ends_at"`
+	SeasonNum  *int32             `json:"season_num"`
+	EpisodeNum *int32             `json:"episode_num"`
 }
 
-// Channels page: for each (visible) channel return at most two programs —
-// the one airing at NOW() and the one immediately after. LATERAL keeps the
-// per-channel sub-pull cheap with the (channel_id, starts_at) index.
+// Channels page: returns the current + next upcoming program per visible
+// channel (≤2 rows per channel). Channels with no EPG data simply don't
+// appear in the result; the client merges this with the channels list
+// and renders "no guide data" for missing channel IDs.
+//
+// Implementation note: this used to be a LEFT JOIN LATERAL on channels
+// so channels without EPG would still get one row (with NULL program
+// columns), but sqlc can't infer LEFT JOIN nullability — pgx then
+// failed to scan NULL into the non-nullable `title string` field.
+// Splitting the query is cleaner and the client-side merge is trivial.
 func (q *Queries) GetNowAndNextForChannels(ctx context.Context) ([]GetNowAndNextForChannelsRow, error) {
 	rows, err := q.db.Query(ctx, getNowAndNextForChannels)
 	if err != nil {
@@ -256,9 +292,6 @@ func (q *Queries) GetNowAndNextForChannels(ctx context.Context) ([]GetNowAndNext
 		var i GetNowAndNextForChannelsRow
 		if err := rows.Scan(
 			&i.ChannelID,
-			&i.Number,
-			&i.ChannelName,
-			&i.LogoUrl,
 			&i.ProgramID,
 			&i.Title,
 			&i.Subtitle,
@@ -303,7 +336,7 @@ func (q *Queries) GetTunerDevice(ctx context.Context, id uuid.UUID) (TunerDevice
 
 const listChannels = `-- name: ListChannels :many
 SELECT c.id, c.tuner_id, c.number, c.callsign, c.name, c.logo_url,
-       c.enabled, c.sort_order, c.created_at, c.updated_at,
+       c.enabled, c.sort_order, c.created_at, c.updated_at, c.epg_channel_id,
        t.name AS tuner_name, t.type AS tuner_type
 FROM channels c
 JOIN tuner_devices t ON t.id = c.tuner_id
@@ -313,18 +346,19 @@ ORDER BY c.sort_order, c.number
 `
 
 type ListChannelsRow struct {
-	ID        uuid.UUID          `json:"id"`
-	TunerID   uuid.UUID          `json:"tuner_id"`
-	Number    string             `json:"number"`
-	Callsign  *string            `json:"callsign"`
-	Name      string             `json:"name"`
-	LogoUrl   *string            `json:"logo_url"`
-	Enabled   bool               `json:"enabled"`
-	SortOrder int32              `json:"sort_order"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-	TunerName string             `json:"tuner_name"`
-	TunerType string             `json:"tuner_type"`
+	ID           uuid.UUID          `json:"id"`
+	TunerID      uuid.UUID          `json:"tuner_id"`
+	Number       string             `json:"number"`
+	Callsign     *string            `json:"callsign"`
+	Name         string             `json:"name"`
+	LogoUrl      *string            `json:"logo_url"`
+	Enabled      bool               `json:"enabled"`
+	SortOrder    int32              `json:"sort_order"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	EpgChannelID *string            `json:"epg_channel_id"`
+	TunerName    string             `json:"tuner_name"`
+	TunerType    string             `json:"tuner_type"`
 }
 
 // All channels across all enabled tuners, with an optional enabled filter
@@ -350,6 +384,7 @@ func (q *Queries) ListChannels(ctx context.Context, enabled *bool) ([]ListChanne
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.EpgChannelID,
 			&i.TunerName,
 			&i.TunerType,
 		); err != nil {
@@ -365,7 +400,7 @@ func (q *Queries) ListChannels(ctx context.Context, enabled *bool) ([]ListChanne
 
 const listChannelsByTuner = `-- name: ListChannelsByTuner :many
 SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
-       sort_order, created_at, updated_at
+       sort_order, created_at, updated_at, epg_channel_id
 FROM channels
 WHERE tuner_id = $1
 ORDER BY sort_order, number
@@ -391,6 +426,7 @@ func (q *Queries) ListChannelsByTuner(ctx context.Context, tunerID uuid.UUID) ([
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.EpgChannelID,
 		); err != nil {
 			return nil, err
 		}
@@ -446,6 +482,86 @@ func (q *Queries) ListEPGProgramsByChannel(ctx context.Context, arg ListEPGProgr
 			&i.EndsAt,
 			&i.RawData,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEPGProgramsInWindow = `-- name: ListEPGProgramsInWindow :many
+SELECT
+    p.id, p.channel_id, p.title, p.subtitle, p.description,
+    p.category, p.rating, p.season_num, p.episode_num,
+    p.original_air_date, p.starts_at, p.ends_at
+FROM epg_programs p
+JOIN channels c ON c.id = p.channel_id
+JOIN tuner_devices t ON t.id = c.tuner_id
+WHERE c.enabled = TRUE
+  AND t.enabled = TRUE
+  AND p.ends_at > $1
+  AND p.starts_at < $2
+ORDER BY p.channel_id, p.starts_at
+`
+
+type ListEPGProgramsInWindowParams struct {
+	EndsAt   pgtype.Timestamptz `json:"ends_at"`
+	StartsAt pgtype.Timestamptz `json:"starts_at"`
+}
+
+type ListEPGProgramsInWindowRow struct {
+	ID              uuid.UUID          `json:"id"`
+	ChannelID       uuid.UUID          `json:"channel_id"`
+	Title           string             `json:"title"`
+	Subtitle        *string            `json:"subtitle"`
+	Description     *string            `json:"description"`
+	Category        []string           `json:"category"`
+	Rating          *string            `json:"rating"`
+	SeasonNum       *int32             `json:"season_num"`
+	EpisodeNum      *int32             `json:"episode_num"`
+	OriginalAirDate pgtype.Date        `json:"original_air_date"`
+	StartsAt        pgtype.Timestamptz `json:"starts_at"`
+	EndsAt          pgtype.Timestamptz `json:"ends_at"`
+}
+
+// Returns every program across every visible channel that overlaps the
+// given [from, to] window. Used by the guide grid — caller picks the
+// window (typically 2-4 hours starting at the current half-hour) and
+// the UI lays out programs into a (channel × time) matrix.
+//
+// "Overlap" semantics: a program counts if its end is strictly after
+// `from` AND its start is strictly before `to`. So a program ending at
+// exactly `from` is excluded (already over), and one starting at exactly
+// `to` is excluded (next slot's problem).
+//
+// Disabled channels and disabled tuners are filtered out so hidden
+// channels don't pollute the grid.
+func (q *Queries) ListEPGProgramsInWindow(ctx context.Context, arg ListEPGProgramsInWindowParams) ([]ListEPGProgramsInWindowRow, error) {
+	rows, err := q.db.Query(ctx, listEPGProgramsInWindow, arg.EndsAt, arg.StartsAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEPGProgramsInWindowRow{}
+	for rows.Next() {
+		var i ListEPGProgramsInWindowRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Subtitle,
+			&i.Description,
+			&i.Category,
+			&i.Rating,
+			&i.SeasonNum,
+			&i.EpisodeNum,
+			&i.OriginalAirDate,
+			&i.StartsAt,
+			&i.EndsAt,
 		); err != nil {
 			return nil, err
 		}
@@ -535,6 +651,48 @@ func (q *Queries) ListTunerDevices(ctx context.Context) ([]TunerDevice, error) {
 	return items, nil
 }
 
+const listUnmappedChannels = `-- name: ListUnmappedChannels :many
+SELECT id, tuner_id, number, callsign, name, logo_url, enabled,
+       sort_order, created_at, updated_at, epg_channel_id
+FROM channels
+WHERE epg_channel_id IS NULL AND enabled = TRUE
+ORDER BY tuner_id, sort_order, number
+`
+
+// Channels lacking an EPG mapping. The ingester scans these on every
+// pull and tries to auto-match against the source's <display-name>/lcn.
+func (q *Queries) ListUnmappedChannels(ctx context.Context) ([]Channel, error) {
+	rows, err := q.db.Query(ctx, listUnmappedChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Channel{}
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.TunerID,
+			&i.Number,
+			&i.Callsign,
+			&i.Name,
+			&i.LogoUrl,
+			&i.Enabled,
+			&i.SortOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EpgChannelID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordEPGPull = `-- name: RecordEPGPull :exec
 UPDATE epg_sources
 SET last_pull_at = NOW(), last_error = $2, updated_at = NOW()
@@ -550,6 +708,22 @@ type RecordEPGPullParams struct {
 // on success so a previously-recorded error clears.
 func (q *Queries) RecordEPGPull(ctx context.Context, arg RecordEPGPullParams) error {
 	_, err := q.db.Exec(ctx, recordEPGPull, arg.ID, arg.LastError)
+	return err
+}
+
+const setChannelEPGID = `-- name: SetChannelEPGID :exec
+UPDATE channels SET epg_channel_id = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetChannelEPGIDParams struct {
+	ID           uuid.UUID `json:"id"`
+	EpgChannelID *string   `json:"epg_channel_id"`
+}
+
+// Manual mapping override + auto-match write target. NULL clears the
+// mapping so the next ingest re-runs auto-detection.
+func (q *Queries) SetChannelEPGID(ctx context.Context, arg SetChannelEPGIDParams) error {
+	_, err := q.db.Exec(ctx, setChannelEPGID, arg.ID, arg.EpgChannelID)
 	return err
 }
 
@@ -707,7 +881,7 @@ ON CONFLICT (tuner_id, number) DO UPDATE SET
     logo_url = EXCLUDED.logo_url,
     updated_at = NOW()
 RETURNING id, tuner_id, number, callsign, name, logo_url, enabled,
-          sort_order, created_at, updated_at
+          sort_order, created_at, updated_at, epg_channel_id
 `
 
 type UpsertChannelParams struct {
@@ -742,6 +916,7 @@ func (q *Queries) UpsertChannel(ctx context.Context, arg UpsertChannelParams) (C
 		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EpgChannelID,
 	)
 	return i, err
 }
