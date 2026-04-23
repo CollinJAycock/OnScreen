@@ -1035,6 +1035,15 @@ type TVMatchCandidate struct {
 // relPath converts an absolute artwork path to a path relative to the first
 // matching library scan_path. This relative path is what gets stored in the DB
 // and used in /artwork/* URLs.
+//
+// The fallback returns the bare basename because for flat-layout music
+// libraries the artist poster legitimately sits at the scan root
+// (/<Music>/<artist_id>-poster.jpg), and a "<parent-dir>/<basename>"
+// guess produces a double-path (Music/<artist_id>-poster.jpg) that
+// 404s against <scan_root>/Music/.... Album art, which sits one level
+// deep inside <Artist>/, is populated by the scanner (not the
+// enricher), and the scanner's own fallback includes the parent dir
+// — so the split fallback policies together cover both cases.
 func (e *Enricher) relPath(absPath string) string {
 	clean := filepath.Clean(absPath)
 	if e.scanPaths != nil {
@@ -1045,20 +1054,7 @@ func (e *Enricher) relPath(absPath string) string {
 			}
 		}
 	}
-	// Fallback: keep the immediate parent-dir component so the result has
-	// enough structure that the /artwork/* handler — which joins each
-	// scan root with the stored relpath — can actually find the file.
-	// Returning just the basename produced paths like "<uuid>-poster.jpg"
-	// that only resolved if the file sat directly at the scan root; for
-	// music, artwork lives one level deep inside <Artist>/ (and
-	// occasionally two deep inside <Artist>/<Album>/), so one parent
-	// level recovers the common case. If the scanPaths lookup failed
-	// transiently (e.g. DB hiccup during List), this avoids silently
-	// persisting an unresolvable bare filename.
-	return filepath.ToSlash(filepath.Join(
-		filepath.Base(filepath.Dir(absPath)),
-		filepath.Base(absPath),
-	))
+	return filepath.Base(absPath)
 }
 
 // tvdbShowFallback asks TVDB for a show when TMDB couldn't help. When base is
