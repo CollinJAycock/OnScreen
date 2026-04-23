@@ -23,6 +23,20 @@ RETURNING id, name, task_type, config, cron_expr, enabled,
           last_run_at, next_run_at, last_status, last_error,
           created_at, updated_at;
 
+-- name: EnsureSystemTask :exec
+-- Idempotent insert for a system task: creates the row only if no task of
+-- that task_type already exists. Called at server startup to guarantee the
+-- handlers the server knows how to run (dvr_match, epg_refresh, …) are
+-- actually scheduled — without this, a fresh install has every handler
+-- registered in memory but no row to trigger it, and features like DVR
+-- silently no-op.
+--
+-- Existing rows are never touched: admins can retune cron_expr, disable a
+-- row, or rename it without the seeder fighting back on the next restart.
+INSERT INTO scheduled_tasks (name, task_type, cron_expr, enabled, next_run_at)
+SELECT $1, $2, $3, $4, $5
+WHERE NOT EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_type = $2);
+
 -- name: UpdateScheduledTask :one
 -- Full update of mutable fields. Caller recomputes next_run_at from the
 -- new cron_expr and passes it in.

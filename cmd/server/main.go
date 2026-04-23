@@ -710,6 +710,12 @@ func run() error {
 	// DVR matcher runs every minute, scans enabled schedules against
 	// the upcoming EPG window, and upserts scheduled recordings.
 	schedRegistry.Register("dvr_match", scheduler.NewDVRMatcherHandler(dvrSvc))
+	// Seed the scheduled_tasks rows our handlers depend on. Idempotent:
+	// admin edits to existing rows are preserved (EnsureSystemTask uses
+	// WHERE NOT EXISTS on task_type), so this is safe on every boot.
+	// Without it, a fresh install has handlers registered in memory but
+	// nothing to trigger them — DVR silently stops recording.
+	seedSystemTasks(ctx, gen.New(rwPool), logger)
 	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger)
 	tasksHandler := v1.NewTasksHandler(gen.New(rwPool), schedRegistry, logger)
 

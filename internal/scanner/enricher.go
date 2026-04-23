@@ -1045,8 +1045,20 @@ func (e *Enricher) relPath(absPath string) string {
 			}
 		}
 	}
-	// Fallback: return the basename (poster.jpg / fanart.jpg).
-	return filepath.Base(absPath)
+	// Fallback: keep the immediate parent-dir component so the result has
+	// enough structure that the /artwork/* handler — which joins each
+	// scan root with the stored relpath — can actually find the file.
+	// Returning just the basename produced paths like "<uuid>-poster.jpg"
+	// that only resolved if the file sat directly at the scan root; for
+	// music, artwork lives one level deep inside <Artist>/ (and
+	// occasionally two deep inside <Artist>/<Album>/), so one parent
+	// level recovers the common case. If the scanPaths lookup failed
+	// transiently (e.g. DB hiccup during List), this avoids silently
+	// persisting an unresolvable bare filename.
+	return filepath.ToSlash(filepath.Join(
+		filepath.Base(filepath.Dir(absPath)),
+		filepath.Base(absPath),
+	))
 }
 
 // tvdbShowFallback asks TVDB for a show when TMDB couldn't help. When base is

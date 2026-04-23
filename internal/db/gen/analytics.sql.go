@@ -14,13 +14,14 @@ import (
 
 const getAnalyticsOverview = `
 SELECT
-  (SELECT COUNT(*)                     FROM media_items  WHERE deleted_at IS NULL)               AS total_items,
-  (SELECT COUNT(*)                     FROM media_files  WHERE status = 'active')                AS total_files,
-  (SELECT COALESCE(SUM(file_size), 0)  FROM media_files  WHERE status = 'active')                AS total_size_bytes,
-  -- NOTE: total_plays and total_watch_time_ms scan ALL watch_events (no time bound).
-  -- On large installations this may be slow; consider a summary table if needed.
-  (SELECT COUNT(*)                     FROM watch_events WHERE event_type IN ('stop','scrobble')) AS total_plays,
-  (SELECT COALESCE(SUM(duration_ms),0) FROM watch_events WHERE event_type IN ('stop','scrobble')) AS total_watch_time_ms`
+  (SELECT COUNT(*)                     FROM media_items  WHERE deleted_at IS NULL)          AS total_items,
+  (SELECT COUNT(*)                     FROM media_files  WHERE status = 'active')           AS total_files,
+  (SELECT COALESCE(SUM(file_size), 0)  FROM media_files  WHERE status = 'active')           AS total_size_bytes,
+  -- Counts and sums route through watch_plays so scrobble+stop pairs
+  -- from one session don't double-count. The view applies a 30-min
+  -- dedupe per (user, media) — see migration 00053.
+  (SELECT COUNT(*)                     FROM watch_plays)                                    AS total_plays,
+  (SELECT COALESCE(SUM(duration_ms),0) FROM watch_plays)                                    AS total_watch_time_ms`
 
 type AnalyticsOverviewRow struct {
 	TotalItems       int64
@@ -156,9 +157,8 @@ func (q *Queries) GetContainerBreakdown(ctx context.Context) ([]ContainerCountRo
 
 const getPlaysPerDay = `
 SELECT DATE(occurred_at) AS date, COUNT(*) AS count
-FROM watch_events
-WHERE event_type IN ('stop', 'scrobble')
-  AND occurred_at >= NOW() - INTERVAL '30 days'
+FROM watch_plays
+WHERE occurred_at >= NOW() - INTERVAL '30 days'
 GROUP BY DATE(occurred_at)
 ORDER BY date`
 
@@ -185,11 +185,10 @@ func (q *Queries) GetPlaysPerDay(ctx context.Context) ([]DayCountRow, error) {
 }
 
 const getTopPlayed = `
-SELECT mi.id, mi.title, mi.year, mi.type, mi.poster_path, COUNT(we.id) AS play_count
-FROM watch_events we
-JOIN media_items mi ON mi.id = we.media_id
-WHERE we.event_type IN ('stop', 'scrobble')
-  AND we.occurred_at > NOW() - INTERVAL '90 days'
+SELECT mi.id, mi.title, mi.year, mi.type, mi.poster_path, COUNT(wp.id) AS play_count
+FROM watch_plays wp
+JOIN media_items mi ON mi.id = wp.media_id
+WHERE wp.occurred_at > NOW() - INTERVAL '90 days'
   AND mi.deleted_at IS NULL
 GROUP BY mi.id, mi.title, mi.year, mi.type, mi.poster_path
 ORDER BY play_count DESC
@@ -278,23 +277,22 @@ func (q *Queries) GetMediaItemByFilePath(ctx context.Context, filePath string) (
 // ── Analytics: bandwidth per day ─────────────────────────────────────────────
 
 const getBandwidthPerDay = `
-SELECT DATE(we.occurred_at) AS date,
+SELECT DATE(wp.occurred_at) AS date,
        COALESCE(SUM(
-         COALESCE(mf_direct.bitrate, mf_any.bitrate)::BIGINT * we.duration_ms / 8000
+         COALESCE(mf_direct.bitrate, mf_any.bitrate)::BIGINT * wp.duration_ms / 8000
        ), 0) AS bytes
-FROM watch_events we
+FROM watch_plays wp
 LEFT JOIN media_files mf_direct
-       ON mf_direct.id = we.file_id AND mf_direct.bitrate IS NOT NULL
+       ON mf_direct.id = wp.file_id AND mf_direct.bitrate IS NOT NULL
 LEFT JOIN LATERAL (
   SELECT bitrate FROM media_files
-  WHERE media_item_id = we.media_id AND status = 'active' AND bitrate IS NOT NULL
+  WHERE media_item_id = wp.media_id AND status = 'active' AND bitrate IS NOT NULL
   ORDER BY bitrate DESC LIMIT 1
 ) mf_any ON TRUE
-WHERE we.event_type IN ('stop', 'scrobble')
-  AND we.occurred_at >= NOW() - INTERVAL '30 days'
-  AND we.duration_ms IS NOT NULL
+WHERE wp.occurred_at >= NOW() - INTERVAL '30 days'
+  AND wp.duration_ms IS NOT NULL
   AND COALESCE(mf_direct.bitrate, mf_any.bitrate) IS NOT NULL
-GROUP BY DATE(we.occurred_at)
+GROUP BY DATE(wp.occurred_at)
 ORDER BY date`
 
 type DayBytesRow struct {
@@ -320,12 +318,11 @@ func (q *Queries) GetBandwidthPerDay(ctx context.Context) ([]DayBytesRow, error)
 }
 
 const getRecentPlays = `
-SELECT mi.title, mi.year, mi.type, we.occurred_at, we.client_name, we.duration_ms
-FROM watch_events we
-JOIN media_items mi ON mi.id = we.media_id
-WHERE we.event_type IN ('stop', 'scrobble')
-  AND we.occurred_at > NOW() - INTERVAL '30 days'
-ORDER BY we.occurred_at DESC
+SELECT mi.title, mi.year, mi.type, wp.occurred_at, wp.client_name, wp.duration_ms
+FROM watch_plays wp
+JOIN media_items mi ON mi.id = wp.media_id
+WHERE wp.occurred_at > NOW() - INTERVAL '30 days'
+ORDER BY wp.occurred_at DESC
 LIMIT 20`
 
 type RecentPlayRow struct {

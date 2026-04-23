@@ -90,6 +90,40 @@ func (q *Queries) DeleteScheduledTask(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const ensureSystemTask = `-- name: EnsureSystemTask :exec
+INSERT INTO scheduled_tasks (name, task_type, cron_expr, enabled, next_run_at)
+SELECT $1, $2, $3, $4, $5
+WHERE NOT EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_type = $2)
+`
+
+type EnsureSystemTaskParams struct {
+	Name      string             `json:"name"`
+	TaskType  string             `json:"task_type"`
+	CronExpr  string             `json:"cron_expr"`
+	Enabled   bool               `json:"enabled"`
+	NextRunAt pgtype.Timestamptz `json:"next_run_at"`
+}
+
+// Idempotent insert for a system task: creates the row only if no task of
+// that task_type already exists. Called at server startup to guarantee the
+// handlers the server knows how to run (dvr_match, epg_refresh, …) are
+// actually scheduled — without this, a fresh install has every handler
+// registered in memory but no row to trigger it, and features like DVR
+// silently no-op.
+//
+// Existing rows are never touched: admins can retune cron_expr, disable a
+// row, or rename it without the seeder fighting back on the next restart.
+func (q *Queries) EnsureSystemTask(ctx context.Context, arg EnsureSystemTaskParams) error {
+	_, err := q.db.Exec(ctx, ensureSystemTask,
+		arg.Name,
+		arg.TaskType,
+		arg.CronExpr,
+		arg.Enabled,
+		arg.NextRunAt,
+	)
+	return err
+}
+
 const finishTaskRun = `-- name: FinishTaskRun :exec
 UPDATE task_runs
 SET ended_at = NOW(),

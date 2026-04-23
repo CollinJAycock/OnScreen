@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
@@ -104,61 +106,62 @@ type analyticsResponse struct {
 }
 
 // Get handles GET /api/v1/analytics.
+//
+// The eight underlying aggregates are independent, so they run in parallel
+// against the shared pgxpool. Wall time drops from the sum of query
+// latencies to the max — critical for this endpoint because the heavy
+// watch_events scans (overview + per-day + top_played + bandwidth) each
+// take hundreds of ms on non-trivial libraries and sequential execution
+// compounded into ~10s page loads.
 func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	overview, err := h.db.GetAnalyticsOverview(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: overview", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
+	var (
+		overview        gen.AnalyticsOverviewRow
+		libs            []gen.LibraryAnalyticsRow
+		codecs          []gen.CodecCountRow
+		containers      []gen.ContainerCountRow
+		playsPerDay     []gen.DayCountRow
+		bandwidthPerDay []gen.DayBytesRow
+		topPlayed       []gen.TopPlayedRow
+		recentPlays     []gen.RecentPlayRow
+	)
 
-	libs, err := h.db.GetLibraryAnalytics(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: libraries", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	codecs, err := h.db.GetVideoCodecBreakdown(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: codecs", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	containers, err := h.db.GetContainerBreakdown(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: containers", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	playsPerDay, err := h.db.GetPlaysPerDay(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: plays per day", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	bandwidthPerDay, err := h.db.GetBandwidthPerDay(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: bandwidth per day", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	topPlayed, err := h.db.GetTopPlayed(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: top played", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	recentPlays, err := h.db.GetRecentPlays(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "analytics: recent plays", "err", err)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() (err error) {
+		overview, err = h.db.GetAnalyticsOverview(gctx)
+		return err
+	})
+	g.Go(func() (err error) {
+		libs, err = h.db.GetLibraryAnalytics(gctx)
+		return err
+	})
+	g.Go(func() (err error) {
+		codecs, err = h.db.GetVideoCodecBreakdown(gctx)
+		return err
+	})
+	g.Go(func() (err error) {
+		containers, err = h.db.GetContainerBreakdown(gctx)
+		return err
+	})
+	g.Go(func() (err error) {
+		playsPerDay, err = h.db.GetPlaysPerDay(gctx)
+		return err
+	})
+	g.Go(func() (err error) {
+		bandwidthPerDay, err = h.db.GetBandwidthPerDay(gctx)
+		return err
+	})
+	g.Go(func() (err error) {
+		topPlayed, err = h.db.GetTopPlayed(gctx)
+		return err
+	})
+	g.Go(func() (err error) {
+		recentPlays, err = h.db.GetRecentPlays(gctx)
+		return err
+	})
+	if err := g.Wait(); err != nil {
+		h.logger.ErrorContext(ctx, "analytics: query", "err", err)
 		respond.InternalError(w, r)
 		return
 	}
