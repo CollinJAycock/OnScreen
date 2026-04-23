@@ -368,16 +368,41 @@ func (s *stubUserService) VerifyPIN(_ context.Context, _ uuid.UUID, _ string) (*
 	return nil, fmt.Errorf("invalid PIN")
 }
 
-// stubUserDB implements v1.UserDB.
-type stubUserDB struct{}
+// stubUserDB implements v1.UserDB. Session epochs are tracked in an
+// optional map so the epoch-revocation UAT can observe bumps made by
+// the admin PATCH /users/{id} handler. Defaults to nil (no tracking)
+// so the existing suite doesn't pay a cost for it.
+// adminCount defaults to 1 — matches the original fixed-value behavior
+// — so existing tests that never set it still see the last-admin guard
+// in effect; the epoch UAT sets it to 2 to exercise the demote path.
+type stubUserDB struct {
+	epochs     map[uuid.UUID]int64
+	adminCount int64
+}
 
 func (s *stubUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) { return nil, nil }
 func (s *stubUserDB) DeleteUser(_ context.Context, _ uuid.UUID) error         { return nil }
 func (s *stubUserDB) SetUserAdmin(_ context.Context, _ gen.SetUserAdminParams) error {
 	return nil
 }
-func (s *stubUserDB) CountAdmins(_ context.Context) (int64, error) { return 1, nil }
-func (s *stubUserDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubUserDB) CountAdmins(_ context.Context) (int64, error) {
+	if s.adminCount == 0 {
+		return 1, nil
+	}
+	return s.adminCount, nil
+}
+func (s *stubUserDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
+	if s.epochs != nil {
+		s.epochs[id]++
+	}
+	return nil
+}
+func (s *stubUserDB) getEpoch(id uuid.UUID) int64 {
+	if s.epochs == nil {
+		return 0
+	}
+	return s.epochs[id]
+}
 func (s *stubUserDB) UpdateUserPassword(_ context.Context, _ gen.UpdateUserPasswordParams) error {
 	return nil
 }
@@ -1158,4 +1183,396 @@ func TestHubDB_WithContent(t *testing.T) {
 	if first["title"] != "Inception" {
 		t.Errorf("continue_watching[0].title = %v, want Inception", first["title"])
 	}
+}
+
+// ── Security headers ─────────────────────────────────────────────────────────
+
+// TestSecurityHeaders_PresentOnEveryResponse pins the baseline defensive
+// headers applied by middleware.SecurityHeaders. A regression here would
+// silently re-open clickjacking (X-Frame-Options), MIME-sniff XSS
+// (X-Content-Type-Options), or the referrer leak on outgoing navigations.
+func TestSecurityHeaders_PresentOnEveryResponse(t *testing.T) {
+	ts := newTestServer(t)
+	resp := ts.do("GET", "/health/live", "", nil)
+	defer resp.Body.Close()
+
+	wantPrefixes := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+		"Referrer-Policy":         "strict-origin-when-cross-origin",
+		"Content-Security-Policy": "default-src 'self'",
+	}
+	for header, prefix := range wantPrefixes {
+		got := resp.Header.Get(header)
+		if !strings.HasPrefix(got, prefix) {
+			t.Errorf("%s: got %q, want prefix %q", header, got, prefix)
+		}
+	}
+}
+
+// ── Full auth flow via cookies ───────────────────────────────────────────────
+
+// TestAuth_Refresh_RotatesCookie exercises the full cookie path: login
+// sets httpOnly access + refresh cookies, /auth/refresh swaps them for
+// fresh ones, and the old refresh cookie stops working. This is the path
+// every browser client actually takes — previous UAT only ever used
+// Authorization: Bearer.
+func TestAuth_Refresh_RotatesCookie(t *testing.T) {
+	ts := newTestServer(t)
+
+	// Seed a user and log in — /auth/register takes the first-admin path.
+	reg := ts.do("POST", "/api/v1/auth/register", "", map[string]any{
+		"username": "alice", "password": "password12345",
+	})
+	assertStatus(t, reg, http.StatusCreated)
+	reg.Body.Close()
+
+	login := ts.do("POST", "/api/v1/auth/login", "", map[string]any{
+		"username": "alice", "password": "password12345",
+	})
+	assertStatus(t, login, http.StatusOK)
+	login.Body.Close()
+
+	var accessCookie, refreshCookie *http.Cookie
+	for _, c := range login.Cookies() {
+		switch c.Name {
+		case "onscreen_at":
+			accessCookie = c
+		case "onscreen_rt":
+			refreshCookie = c
+		}
+	}
+	if accessCookie == nil || refreshCookie == nil {
+		t.Fatalf("login response missing cookies: access=%v refresh=%v", accessCookie, refreshCookie)
+	}
+	if !accessCookie.HttpOnly {
+		t.Error("access cookie is not HttpOnly")
+	}
+	if !refreshCookie.HttpOnly {
+		t.Error("refresh cookie is not HttpOnly")
+	}
+
+	// Refresh using the refresh cookie — the stub AuthService rotates
+	// the refresh token, and the handler re-sets cookies with the new
+	// values so the browser rolls forward seamlessly.
+	refReq, _ := http.NewRequest("POST", ts.url("/api/v1/auth/refresh"), nil)
+	refReq.AddCookie(refreshCookie)
+	refResp, err := ts.client.Do(refReq)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	assertStatus(t, refResp, http.StatusOK)
+	refResp.Body.Close()
+
+	var rotated *http.Cookie
+	for _, c := range refResp.Cookies() {
+		if c.Name == "onscreen_rt" {
+			rotated = c
+		}
+	}
+	if rotated == nil {
+		t.Fatal("refresh did not re-issue onscreen_rt cookie")
+	}
+	if rotated.Value == refreshCookie.Value {
+		t.Error("refresh cookie value did not rotate")
+	}
+
+	// The pre-rotation refresh token must stop working.
+	stale, _ := http.NewRequest("POST", ts.url("/api/v1/auth/refresh"), nil)
+	stale.AddCookie(refreshCookie)
+	staleResp, err := ts.client.Do(stale)
+	if err != nil {
+		t.Fatalf("stale refresh: %v", err)
+	}
+	defer staleResp.Body.Close()
+	if staleResp.StatusCode == http.StatusOK {
+		t.Error("pre-rotation refresh cookie still works — rotation did not invalidate the old token")
+	}
+}
+
+// TestAuth_Logout_ClearsCookies verifies logout expires both auth
+// cookies so the browser evicts them (Max-Age < 0). Without this,
+// "log out" leaves the cookies sitting in the jar until they time out.
+func TestAuth_Logout_ClearsCookies(t *testing.T) {
+	ts := newTestServer(t)
+	ts.do("POST", "/api/v1/auth/register", "", map[string]any{
+		"username": "bob", "password": "password12345",
+	}).Body.Close()
+	login := ts.do("POST", "/api/v1/auth/login", "", map[string]any{
+		"username": "bob", "password": "password12345",
+	})
+	defer login.Body.Close()
+
+	req, _ := http.NewRequest("POST", ts.url("/api/v1/auth/logout"), nil)
+	for _, c := range login.Cookies() {
+		req.AddCookie(c)
+	}
+	resp, err := ts.client.Do(req)
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	defer resp.Body.Close()
+	assertStatus(t, resp, http.StatusNoContent)
+
+	var clearedAccess, clearedRefresh bool
+	for _, c := range resp.Cookies() {
+		if c.MaxAge < 0 {
+			switch c.Name {
+			case "onscreen_at":
+				clearedAccess = true
+			case "onscreen_rt":
+				clearedRefresh = true
+			}
+		}
+	}
+	if !clearedAccess {
+		t.Error("logout did not expire onscreen_at (Max-Age<0 missing)")
+	}
+	if !clearedRefresh {
+		t.Error("logout did not expire onscreen_rt (Max-Age<0 missing)")
+	}
+}
+
+// ── Rate limiting ────────────────────────────────────────────────────────────
+
+// TestRateLimit_Auth_Trips429 confirms middleware.AuthLimit (10 req/min
+// per IP) is actually wired on /auth/login. Hammer past the limit and
+// verify we see 429 responses. Without this, a regression that forgets
+// r.Use(RateLimit(...)) passes every other UAT and silently opens the
+// login endpoint to brute force.
+func TestRateLimit_Auth_Trips429(t *testing.T) {
+	ts := newTestServer(t)
+	var saw429 bool
+	for i := 0; i < 40; i++ {
+		resp := ts.do("POST", "/api/v1/auth/login", "", map[string]any{
+			"username": "nobody", "password": "wrong",
+		})
+		if resp.StatusCode == http.StatusTooManyRequests {
+			saw429 = true
+			resp.Body.Close()
+			break
+		}
+		resp.Body.Close()
+	}
+	if !saw429 {
+		t.Error("40 rapid /auth/login calls never tripped 429 — rate limiter may not be mounted")
+	}
+}
+
+// ── Device pairing ───────────────────────────────────────────────────────────
+
+// memPairStore is a minimal in-memory PairStore for UAT.
+type memPairStore struct {
+	data map[string]string
+}
+
+func newMemPairStore() *memPairStore {
+	return &memPairStore{data: map[string]string{}}
+}
+
+func (m *memPairStore) Set(_ context.Context, key, value string, _ time.Duration) error {
+	m.data[key] = value
+	return nil
+}
+
+func (m *memPairStore) Get(_ context.Context, key string) (string, error) {
+	v, ok := m.data[key]
+	if !ok {
+		return "", v1.ErrPairNotFound
+	}
+	return v, nil
+}
+
+func (m *memPairStore) Del(_ context.Context, keys ...string) error {
+	for _, k := range keys {
+		delete(m.data, k)
+	}
+	return nil
+}
+
+// newPairServer wires a fresh server that includes the Pair handler.
+// The stock newTestServer omits it because most tests don't need it.
+func newPairServer(t *testing.T) (*testServer, uuid.UUID) {
+	t.Helper()
+	ts := newTestServer(t)
+
+	store := newMemPairStore()
+	tokenIssuer := func(_ context.Context, uid uuid.UUID) (*v1.TokenPair, error) {
+		return &v1.TokenPair{
+			AccessToken:  "issued-access",
+			RefreshToken: "issued-refresh",
+			UserID:       uid,
+			Username:     "alice",
+			IsAdmin:      false,
+			ExpiresAt:    time.Now().Add(time.Hour),
+		}, nil
+	}
+	authMW := middleware.NewAuthenticator(ts.tm)
+
+	handlers := &api.Handlers{
+		Auth:        v1.NewAuthHandler(newStubAuthService(), slog.Default()),
+		Pair:        v1.NewPairHandler(store, tokenIssuer, slog.Default()),
+		Hub:         v1.NewHubHandler(&stubHubDB{}, slog.Default()),
+		Auth_mw:     authMW,
+		RateLimiter: valkey.NewRateLimiter(testvalkey.New(t), nil, func() {}),
+		Metrics:     observability.NewMetrics(prometheus.NewRegistry()),
+		Logger:      slog.Default(),
+	}
+	srv := httptest.NewServer(api.NewRouter(handlers))
+	t.Cleanup(srv.Close)
+
+	return &testServer{
+		t:      t,
+		server: srv,
+		tm:     ts.tm,
+		client: &http.Client{Timeout: 10 * time.Second},
+	}, uuid.New()
+}
+
+// TestPair_FullFlow_ViaBearerHeader drives the end-to-end pairing
+// handshake using the preferred Authorization: Bearer form (no
+// ?device_token in the URL). This is the path we just migrated to —
+// the regression we'd miss otherwise is the header being silently
+// dropped while the handler falls back to the query form forever.
+func TestPair_FullFlow_ViaBearerHeader(t *testing.T) {
+	ts, _ := newPairServer(t)
+
+	// 1. Device requests a code.
+	codeResp := ts.do("POST", "/api/v1/auth/pair/code", "", nil)
+	assertStatus(t, codeResp, http.StatusCreated)
+	var codeEnv map[string]any
+	mustDecode(t, codeResp, &codeEnv)
+	code := codeEnv["data"].(map[string]any)
+	pin, _ := code["pin"].(string)
+	deviceToken, _ := code["device_token"].(string)
+	if pin == "" || deviceToken == "" {
+		t.Fatalf("create-code response missing fields: %v", code)
+	}
+
+	// 2. Browser-authenticated user claims the PIN.
+	claimResp := ts.do("POST", "/api/v1/auth/pair/claim", ts.userToken(), map[string]any{
+		"pin":         pin,
+		"device_name": "Living Room TV",
+	})
+	assertStatus(t, claimResp, http.StatusOK)
+	claimResp.Body.Close()
+
+	// 3. Device polls using the Authorization: Bearer form — no query
+	//    string. This is the whole point of the recent security fix:
+	//    the device token never appears in access logs or referers.
+	pollReq, _ := http.NewRequest("GET", ts.url("/api/v1/auth/pair/poll"), nil)
+	pollReq.Header.Set("Authorization", "Bearer "+deviceToken)
+	pollResp, err := ts.client.Do(pollReq)
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	defer pollResp.Body.Close()
+	assertStatus(t, pollResp, http.StatusOK)
+	var pollEnv map[string]any
+	mustDecode(t, pollResp, &pollEnv)
+	data := pollEnv["data"].(map[string]any)
+	if data["access_token"] != "issued-access" {
+		t.Errorf("access_token = %v, want issued-access — claim→poll handoff is broken", data["access_token"])
+	}
+}
+
+// ── Session-epoch revocation ─────────────────────────────────────────────────
+
+// sessionEpochReader reads the stubUserDB's in-memory epoch map. Mirrors
+// the production adapter_session_epoch.go that wraps gen.Queries.
+type sessionEpochReader struct{ db *stubUserDB }
+
+func (r *sessionEpochReader) GetSessionEpoch(_ context.Context, id uuid.UUID) (int64, error) {
+	return r.db.getEpoch(id), nil
+}
+
+// TestSessionEpoch_DemotionRevokesTargetToken proves the end-to-end
+// revocation path: admin PATCH /users/{id} bumps session_epoch, and
+// the target's outstanding PASETO access token (minted with epoch=0)
+// stops working on the very next request. Without the middleware
+// wiring, the demoted user keeps admin access until their 1h TTL
+// runs out.
+func TestSessionEpoch_DemotionRevokesTargetToken(t *testing.T) {
+	v := testvalkey.New(t)
+	secretKey := auth.DeriveKey32("uat-test-secret-key-32bytes!!!!!")
+	tm, err := auth.NewTokenMaker(secretKey)
+	if err != nil {
+		t.Fatalf("NewTokenMaker: %v", err)
+	}
+	userDB := &stubUserDB{epochs: map[uuid.UUID]int64{}, adminCount: 2}
+	authMW := middleware.NewAuthenticator(tm).WithEpochReader(&sessionEpochReader{db: userDB})
+
+	handlers := &api.Handlers{
+		Library:     v1.NewLibraryHandler(newStubLibraryService(), slog.Default()),
+		User:        v1.NewUserHandler(&stubUserService{}).WithDB(userDB).WithTokenMaker(tm, slog.Default()),
+		Auth_mw:     authMW,
+		RateLimiter: valkey.NewRateLimiter(v, nil, func() {}),
+		Metrics:     observability.NewMetrics(prometheus.NewRegistry()),
+		Logger:      slog.Default(),
+	}
+	srv := httptest.NewServer(api.NewRouter(handlers))
+	t.Cleanup(srv.Close)
+
+	adminID := uuid.New()
+	targetID := uuid.New()
+	adminTok, _ := tm.IssueAccessToken(auth.Claims{UserID: adminID, Username: "admin", IsAdmin: true})
+	targetTok, _ := tm.IssueAccessToken(auth.Claims{UserID: targetID, Username: "target", IsAdmin: false})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	request := func(method, path, tok string, body any) *http.Response {
+		var rdr *bytes.Buffer
+		if body != nil {
+			b, _ := json.Marshal(body)
+			rdr = bytes.NewBuffer(b)
+		} else {
+			rdr = bytes.NewBuffer(nil)
+		}
+		req, _ := http.NewRequest(method, srv.URL+path, rdr)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		return resp
+	}
+
+	// Sanity: target's token currently works.
+	pre := request("GET", "/api/v1/libraries", targetTok, nil)
+	if pre.StatusCode != http.StatusOK {
+		t.Fatalf("pre-demote: status=%d, want 200", pre.StatusCode)
+	}
+	pre.Body.Close()
+
+	// Admin demotes the target. The handler's BumpSessionEpoch call on
+	// stubUserDB advances the target's epoch past 0.
+	isAdmin := false
+	demote := request("PATCH", "/api/v1/users/"+targetID.String(), adminTok, map[string]any{
+		"is_admin": &isAdmin,
+	})
+	if demote.StatusCode != http.StatusNoContent {
+		t.Fatalf("demote: status=%d body=%s", demote.StatusCode, readBody(demote))
+	}
+	demote.Body.Close()
+
+	if got := userDB.getEpoch(targetID); got != 1 {
+		t.Fatalf("epoch after demote = %d, want 1", got)
+	}
+
+	// Target's old token, minted with epoch=0, must now be rejected.
+	post := request("GET", "/api/v1/libraries", targetTok, nil)
+	defer post.Body.Close()
+	if post.StatusCode != http.StatusUnauthorized {
+		t.Errorf("post-demote: status=%d, want 401 — stale token still accepted", post.StatusCode)
+	}
+}
+
+func readBody(r *http.Response) string {
+	b := make([]byte, 1024)
+	n, _ := r.Body.Read(b)
+	return string(b[:n])
 }
