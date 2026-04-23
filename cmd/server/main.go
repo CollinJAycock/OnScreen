@@ -21,6 +21,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/artwork"
+	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
@@ -77,8 +78,16 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	// ── Bootstrap settings (one-shot pgx.Conn, no pool) ──────────────────────
+	// General config (BaseURL, LogLevel, CORS) lives in server_settings; we
+	// read it before the logger and HTTP handlers are built. Missing row /
+	// missing table degrades to GeneralConfig{} so fresh installs still boot.
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	generalCfg := settings.LoadGeneralConfig(bootCtx, cfg.DatabaseURL)
+	bootCancel()
+
 	// ── Logging ───────────────────────────────────────────────────────────────
-	logLevel, err := cfg.LogLevelVar()
+	logLevel, err := observability.NewLogLevelVar(generalCfg.LogLevel)
 	if err != nil {
 		return fmt.Errorf("log level: %w", err)
 	}
@@ -87,9 +96,18 @@ func run() error {
 
 	logger.Info("starting onscreen server", "version", version, "build_time", buildTime)
 
+	// Resolve BaseURL — settings value wins; fall back to localhost on the
+	// configured listen addr so the discovery info and OAuth redirects have
+	// a sensible default before an admin sets the public URL.
+	baseURL := generalCfg.BaseURL
+	if baseURL == "" {
+		baseURL = "http://localhost" + cfg.ListenAddr
+	}
+	corsAllowedOrigins := generalCfg.CORSAllowedOrigins
+
 	// ── Hot-reloadable config (ADR-027) ───────────────────────────────────────
 	hot := config.NewHotReloadable(cfg)
-	config.WatchSIGHUP(logger, hot, cfg, logLevel)
+	config.WatchSIGHUP(logger, hot, cfg)
 
 	// ── Prometheus ────────────────────────────────────────────────────────────
 	promReg := prometheus.NewRegistry()
@@ -99,6 +117,32 @@ func run() error {
 	// ── Database (rw + ro, ADR-021) ───────────────────────────────────────────
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// ── OpenTelemetry tracing ────────────────────────────────────────────────
+	// Tracing config lives in server_settings (admin Settings → Observability).
+	// We bootstrap a one-shot pgx.Conn here — no pool, no instrumentation —
+	// because the TracerProvider must be in place BEFORE the instrumented
+	// pgxpool is built (otelpgx caches the global TP at NewWithConfig time).
+	// Disabled when no Endpoint is set; missing settings table degrades to off.
+	otelCfg := settings.LoadOTelConfig(ctx, cfg.DatabaseURL)
+	otelEndpoint := ""
+	if otelCfg.Enabled {
+		otelEndpoint = otelCfg.Endpoint
+	}
+	tp, err := observability.NewTracerProvider(ctx, observability.TracerOptions{
+		Endpoint:       otelEndpoint,
+		ServiceName:    "onscreen",
+		ServiceVersion: version,
+		DeploymentEnv:  otelCfg.DeploymentEnv,
+		SampleRatio:    otelCfg.SampleRatio,
+	})
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+	defer observability.ShutdownTracer(context.Background(), tp)
+	if tp != nil {
+		logger.Info("otel tracing enabled", "endpoint", otelCfg.Endpoint, "sample_ratio", otelCfg.SampleRatio)
+	}
 
 	rwPool, err := db.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -156,6 +200,11 @@ func run() error {
 
 	// ── Artwork ───────────────────────────────────────────────────────────────
 	artworkMgr := artwork.New(cfg.CachePath)
+
+	// ── Photo image server ────────────────────────────────────────────────────
+	// Shares the cache root with artwork but uses a different subdirectory so
+	// the two pipelines don't collide on cache key SHA prefixes.
+	photoImageSrv := photoimage.New(filepath.Join(cfg.CachePath, "photos"))
 
 	// ── Metadata enricher ─────────────────────────────────────────────────────
 	// agentFn is called per newly discovered file and returns a TMDB client
@@ -404,6 +453,9 @@ func run() error {
 		WithExternalSubtitles(subtitleSvc).
 		WithAudit(auditLogger)
 
+	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
+		WithLibraryAccess(libSvc)
+
 	// ── Embedded transcode worker ─────────────────────────────────────────────
 	// Runs FFmpeg in-process so a separate cmd/worker binary is not required for
 	// single-node deployments. Encoder detection is best-effort; falls back to
@@ -462,29 +514,33 @@ func run() error {
 		logger.Info("embedded transcode worker disabled — using remote workers only")
 	}
 
-	// ── Email / SMTP (optional) ──────────────────────────────────────────────
-	emailSender := email.NewSender(email.Config{
-		Host:     cfg.SMTPHost,
-		Port:     cfg.SMTPPort,
-		Username: cfg.SMTPUsername,
-		Password: cfg.SMTPPassword,
-		From:     cfg.SMTPFrom,
+	// ── Email / SMTP (settings-driven) ───────────────────────────────────────
+	// Sender resolves SMTPConfig on every Send so admins can rotate creds and
+	// flip Enabled from the UI without a restart. Sender is always non-nil;
+	// callers gate flows on emailSender.Enabled(ctx).
+	emailSender := email.NewSender(func(ctx context.Context) email.Config {
+		c := settingsSvc.SMTP(ctx)
+		return email.Config{
+			Enabled:  c.Enabled,
+			Host:     c.Host,
+			Port:     c.Port,
+			Username: c.Username,
+			Password: c.Password,
+			From:     c.From,
+		}
 	})
-	if emailSender != nil {
-		logger.Info("smtp email enabled", "host", cfg.SMTPHost, "from", cfg.SMTPFrom)
-	}
 
 	emailHandler := v1.NewEmailHandler(emailSender, logger)
 	passwordResetDB := &passwordResetAdapter{q: gen.New(rwPool)}
-	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, cfg.BaseURL, logger)
+	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, baseURL, logger)
 	inviteDB := &inviteAdapter{q: gen.New(rwPool)}
-	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, cfg.BaseURL, logger)
+	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, baseURL, logger)
 
 	// ── OIDC + LDAP (settings-driven, always wired) ───────────────────────────
 	// Both pull config from server_settings on each request, so admins enable
 	// and reconfigure them through the UI without a restart.
 	oidcSvc := v1.NewOIDCAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
-	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, cfg.BaseURL, logger)
+	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, baseURL, logger)
 	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger)
 	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger)
 
@@ -494,7 +550,12 @@ func run() error {
 
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
-	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, logger).WithAudit(auditLogger)
+	expectedSchemaVersion, err := dbmigrations.Highest()
+	if err != nil {
+		logger.Error("scan embedded migrations for schema version", "err", err)
+		os.Exit(1)
+	}
+	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, expectedSchemaVersion, dbmigrations.FS, logger).WithAudit(auditLogger)
 
 	// ── Media-request workflow + arr-services admin ──────────────────────────
 	// Requests fan out to the arr instances configured in the arr_services
@@ -576,11 +637,13 @@ func run() error {
 		Search:             searchHandler,
 		History:            historyHandler,
 		Items:              itemHandler,
+		Photos:             photosHandler,
 		Trickplay:          trickplayHandler,
 		Subtitles:          subtitleHandler,
 		NativeTranscode:    nativeTranscodeHandler,
 		Collections:        v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Playlists:          v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		PhotoAlbums:        v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		Arr:                arrHandler,
 		OIDCAuth:           oidcAuthHandler,
 		LDAPAuth:           ldapAuthHandler,
@@ -607,7 +670,7 @@ func run() error {
 		Metrics:            metrics,
 		Auth_mw:            authMiddleware,
 		RateLimiter:        rateLimiter,
-		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
+		CORSAllowedOrigins: corsAllowedOrigins,
 	}
 	router := api.NewRouter(h)
 
@@ -738,7 +801,7 @@ func run() error {
 				ServerName: cfg.ServerName,
 				MachineID:  machineID,
 				Version:    version,
-				HTTPURL:    cfg.BaseURL,
+				HTTPURL:    baseURL,
 			}
 		}
 		discListener := discovery.NewListener(cfg.DiscoveryPort, discInfo, logger)

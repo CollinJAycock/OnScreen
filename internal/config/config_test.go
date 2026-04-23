@@ -136,42 +136,6 @@ func TestApplyDefaults_TranscodeLimits_ValidValues(t *testing.T) {
 	}
 }
 
-// ── SMTPEnabled ─────────────────────────────────────────────────────────────
-
-func TestSMTPEnabled(t *testing.T) {
-	c := &Config{SMTPHost: "smtp.example.com", SMTPFrom: "no-reply@example.com", SMTPUsername: "user", SMTPPassword: "pass"}
-	if !c.SMTPEnabled() {
-		t.Error("expected SMTPEnabled=true")
-	}
-	c.SMTPHost = ""
-	if c.SMTPEnabled() {
-		t.Error("expected SMTPEnabled=false when host is empty")
-	}
-}
-
-// ── LogLevelVar ─────────────────────────────────────────────────────────────
-
-func TestLogLevelVar_Valid(t *testing.T) {
-	for _, level := range []string{"debug", "info", "warn", "error"} {
-		c := &Config{LogLevel: level}
-		lv, err := c.LogLevelVar()
-		if err != nil {
-			t.Errorf("LogLevelVar(%q): unexpected error: %v", level, err)
-		}
-		if lv == nil {
-			t.Errorf("LogLevelVar(%q): returned nil", level)
-		}
-	}
-}
-
-func TestLogLevelVar_Invalid(t *testing.T) {
-	c := &Config{LogLevel: "not-a-level"}
-	_, err := c.LogLevelVar()
-	if err == nil {
-		t.Fatal("expected error for invalid log level")
-	}
-}
-
 // ── HotReloadable ───────────────────────────────────────────────────────────
 
 func TestHotReloadable_RoundTrip(t *testing.T) {

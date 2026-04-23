@@ -94,6 +94,75 @@ func TestIntegration_SessionStore_DeleteByMedia_NoMatch(t *testing.T) {
 	}
 }
 
+// ── ListByUserItem ───────────────────────────────────────────────────────────
+
+func TestIntegration_SessionStore_ListByUserItem(t *testing.T) {
+	v := testvalkey.New(t)
+	store := NewSessionStore(v)
+	ctx := context.Background()
+
+	userA := uuid.New()
+	userB := uuid.New()
+	itemX := uuid.New()
+	itemY := uuid.New()
+
+	// Two sessions for (userA, itemX), one for (userA, itemY), one for (userB, itemX).
+	want := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		s := Session{
+			ID: NewSessionID(), UserID: userA, MediaItemID: itemX,
+			FileID: uuid.New(), CreatedAt: time.Now().UTC(),
+		}
+		if err := store.Create(ctx, s); err != nil {
+			t.Fatalf("Create userA/itemX[%d]: %v", i, err)
+		}
+		want[s.ID] = true
+	}
+	for _, s := range []Session{
+		{ID: NewSessionID(), UserID: userA, MediaItemID: itemY, FileID: uuid.New(), CreatedAt: time.Now().UTC()},
+		{ID: NewSessionID(), UserID: userB, MediaItemID: itemX, FileID: uuid.New(), CreatedAt: time.Now().UTC()},
+	} {
+		if err := store.Create(ctx, s); err != nil {
+			t.Fatalf("Create noise session: %v", err)
+		}
+	}
+
+	got, err := store.ListByUserItem(ctx, userA, itemX)
+	if err != nil {
+		t.Fatalf("ListByUserItem: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 sessions for (userA, itemX), got %d", len(got))
+	}
+	for _, s := range got {
+		if !want[s.ID] {
+			t.Errorf("unexpected session %s in result (different user or item)", s.ID)
+		}
+	}
+}
+
+func TestIntegration_SessionStore_ListByUserItem_NoMatch(t *testing.T) {
+	v := testvalkey.New(t)
+	store := NewSessionStore(v)
+	ctx := context.Background()
+
+	s := Session{
+		ID: NewSessionID(), UserID: uuid.New(), MediaItemID: uuid.New(),
+		FileID: uuid.New(), CreatedAt: time.Now().UTC(),
+	}
+	if err := store.Create(ctx, s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := store.ListByUserItem(ctx, uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatalf("ListByUserItem: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want 0 sessions, got %d", len(got))
+	}
+}
+
 // ── UpdatePositionByMedia ────────────────────────────────────────────────────
 
 func TestIntegration_SessionStore_UpdatePositionByMedia(t *testing.T) {

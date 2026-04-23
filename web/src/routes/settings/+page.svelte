@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { settingsApi, userApi, emailApi, api } from '$lib/api';
+  import { settingsApi, userApi, api } from '$lib/api';
   import type { UserMeta, UserPreferences } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
@@ -24,12 +24,10 @@
   let osLanguages = '';
   let osEnabled = false;
 
-  // Email test state
-  let emailEnabled = false;
-  let testEmail = '';
-  let sendingTest = false;
-  let testResult = '';
-  let testError = '';
+  // General server config (BaseURL, LogLevel, CORS) — restart-required.
+  let genBaseURL = '';
+  let genLogLevel = 'info';
+  let genCORS = ''; // comma-separated
 
   // PIN management state
   let hasPin = false;
@@ -65,17 +63,17 @@
         osLanguages = os.languages ?? '';
         osEnabled = !!os.enabled;
       }
+      const gen = s.general;
+      if (gen) {
+        genBaseURL = gen.base_url ?? '';
+        genLogLevel = gen.log_level || 'info';
+        genCORS = (gen.cors_allowed_origins ?? []).join(', ');
+      }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load settings';
     } finally {
       loading = false;
     }
-    // Check email status
-    try {
-      const e = await emailApi.enabled();
-      emailEnabled = e.enabled;
-    } catch { /* ignore */ }
-
     // Check current user's PIN status
     try {
       const user: UserMeta | null = api.getUser();
@@ -137,6 +135,14 @@
           languages: osLanguages.trim(),
           enabled: osEnabled,
         },
+        general: {
+          base_url: genBaseURL.trim(),
+          log_level: genLogLevel,
+          cors_allowed_origins: genCORS
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        },
       });
       // Reload to get updated webhook URL
       const s = await settingsApi.get();
@@ -147,21 +153,6 @@
       toast.error(e instanceof Error ? e.message : 'Failed to save');
     } finally {
       saving = false;
-    }
-  }
-
-  async function sendTestEmail() {
-    testResult = '';
-    testError = '';
-    sendingTest = true;
-    try {
-      const res = await emailApi.sendTest(testEmail);
-      testResult = res.message;
-      toast.success('Test email sent');
-    } catch (e: unknown) {
-      testError = e instanceof Error ? e.message : 'Failed to send test email';
-    } finally {
-      sendingTest = false;
     }
   }
 
@@ -220,6 +211,53 @@
     <div class="skeleton-block"></div>
   {:else}
     <form on:submit|preventDefault={save}>
+      <section>
+        <div class="sec-label">Server</div>
+        <div class="hint" style="margin-top: -0.5rem;">
+          Restart required after changes — these are read at process startup.
+        </div>
+        <div class="field">
+          <label for="gen-base-url">Public URL</label>
+          <input
+            id="gen-base-url"
+            type="text"
+            bind:value={genBaseURL}
+            placeholder="https://media.example.com"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="hint">
+            Used in OAuth/OIDC redirect URIs and LAN discovery responses.
+            Leave blank to fall back to <code>http://localhost:&lt;listen-port&gt;</code>.
+          </div>
+        </div>
+        <div class="field">
+          <label for="gen-log-level">Log level</label>
+          <select id="gen-log-level" bind:value={genLogLevel}>
+            <option value="debug">debug</option>
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="error">error</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gen-cors">CORS allowed origins</label>
+          <input
+            id="gen-cors"
+            type="text"
+            bind:value={genCORS}
+            placeholder="https://app.example.com, https://admin.example.com"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="hint">
+            Comma-separated origin list for cross-origin XHR. Use <code>*</code> to allow any
+            origin (safe — the API authenticates via Bearer headers, not cookies).
+            Leave blank for same-origin only.
+          </div>
+        </div>
+      </section>
+
       <section>
         <div class="sec-label">Metadata</div>
         <div class="field">
@@ -420,39 +458,6 @@
         </button>
       </div>
     </form>
-
-    <section>
-      <div class="sec-label">Email</div>
-      {#if emailEnabled}
-        <div class="hint" style="margin-top: -0.5rem;">
-          SMTP is configured. Send a test email to verify it's working.
-        </div>
-        <form class="email-test-form" on:submit|preventDefault={sendTestEmail}>
-          <div class="email-test-row">
-            <input
-              type="email"
-              bind:value={testEmail}
-              placeholder="recipient@example.com"
-              required
-              style="flex: 1;"
-            />
-            <button type="submit" class="btn-save" disabled={sendingTest || !testEmail}>
-              {sendingTest ? 'Sending...' : 'Send Test'}
-            </button>
-          </div>
-        </form>
-        {#if testResult}
-          <div class="banner ok">{testResult}</div>
-        {/if}
-        {#if testError}
-          <div class="banner error">{testError}</div>
-        {/if}
-      {:else}
-        <div class="hint" style="margin-top: -0.5rem;">
-          SMTP is not configured. Set <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_FROM</code> (and optionally <code>SMTP_USERNAME</code>/<code>SMTP_PASSWORD</code>) environment variables to enable email features like password reset.
-        </div>
-      {/if}
-    </section>
 
     <section>
       <div class="sec-label">Profile PIN</div>
@@ -744,13 +749,6 @@
     margin-top: 0.2rem;
   }
 
-  /* Email test */
-  .email-test-row {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-  .email-test-row input { font-family: inherit; }
   code {
     background: var(--border);
     padding: 0.1rem 0.35rem;

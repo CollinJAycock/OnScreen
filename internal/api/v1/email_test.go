@@ -9,7 +9,7 @@ import (
 )
 
 func TestEmail_Enabled_NoSender(t *testing.T) {
-	h := NewEmailHandler(nil, slog.Default())
+	h := NewEmailHandler(disabledSender(), slog.Default())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/email/enabled", nil)
 	rec := httptest.NewRecorder()
@@ -36,7 +36,7 @@ func TestEmail_Enabled_WithSender(t *testing.T) {
 }
 
 func TestEmail_SendTest_RejectsWhenSMTPNotConfigured(t *testing.T) {
-	h := NewEmailHandler(nil, slog.Default())
+	h := NewEmailHandler(disabledSender(), slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/email/test", strings.NewReader(`{"to":"a@b.c"}`))
 	req.Header.Set("Content-Type", "application/json")

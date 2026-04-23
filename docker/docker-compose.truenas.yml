@@ -70,7 +70,6 @@ services:
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${SERVER_PORT:-7070}:7070"
     volumes:
@@ -97,7 +96,6 @@ services:
       VALKEY_URL: redis://valkey:6379
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
       WORKER_ADDR: "worker:7073"
       # TRANSCODE_ENCODERS: "nvenc"         # uncomment for GPU
       # TRANSCODE_MAX_SESSIONS: "4"         # tune based on GPU VRAM

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -37,6 +38,13 @@ func NewPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
 	cfg.MaxConnLifetime = 15 * time.Minute
 	cfg.MaxConnIdleTime = 3 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
+
+	// OTel tracing on every query. When no tracer provider is registered, the
+	// global no-op provider is used, so this is free at runtime. Query
+	// parameters are excluded from spans to keep PII out of traces.
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer(
+		otelpgx.WithTrimSQLInSpanName(),
+	)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

@@ -55,10 +55,19 @@ type Item struct {
 	Genres         []string
 	Tags           []string
 
-	// External IDs
-	TMDBID *int
-	TVDBID *int
-	IMDBID *string
+	// External IDs. MusicBrainzID is the "primary" MBID for the row's type:
+	// recording MBID on tracks, release MBID on albums, artist MBID on
+	// artists. The more specific cross-reference MBIDs below fill in the
+	// context a track needs (which release / release group / album-artist
+	// this track came from).
+	TMDBID                    *int
+	TVDBID                    *int
+	IMDBID                    *string
+	MusicBrainzID             *uuid.UUID
+	MusicBrainzReleaseID      *uuid.UUID
+	MusicBrainzReleaseGroupID *uuid.UUID
+	MusicBrainzArtistID       *uuid.UUID
+	MusicBrainzAlbumArtistID  *uuid.UUID
 
 	// Hierarchy
 	ParentID *uuid.UUID
@@ -68,6 +77,16 @@ type Item struct {
 	PosterPath *string
 	FanartPath *string
 	ThumbPath  *string
+
+	// Music-specific. DiscTotal/TrackTotal describe the containing album;
+	// OriginalYear is the work's first-release year distinct from Year (the
+	// reissue year); Compilation flags various-artists albums; ReleaseType
+	// is the MusicBrainz vocabulary (album/single/ep/live/soundtrack/…).
+	DiscTotal    *int
+	TrackTotal   *int
+	OriginalYear *int
+	Compilation  bool
+	ReleaseType  *string
 
 	OriginallyAvailableAt *time.Time
 	CreatedAt             time.Time
@@ -95,10 +114,22 @@ type File struct {
 	Chapters        []byte // JSONB
 	FileHash        *string
 	DurationMS      *int64
-	Status          string // "active" | "missing" | "deleted"
-	MissingSince    *time.Time
-	ScannedAt       time.Time
-	CreatedAt       time.Time
+	// Audiophile fields. Populated for music (and present on the first audio
+	// stream of video files as well). Lossless is a scanner-derived flag
+	// covering the FLAC/ALAC/WAV/DSD/etc. family; clients gate silent
+	// transcoding on it.
+	BitDepth            *int
+	SampleRate          *int
+	ChannelLayout       *string
+	Lossless            *bool
+	ReplayGainTrackGain *float64
+	ReplayGainTrackPeak *float64
+	ReplayGainAlbumGain *float64
+	ReplayGainAlbumPeak *float64
+	Status              string // "active" | "missing" | "deleted"
+	MissingSince        *time.Time
+	ScannedAt           time.Time
+	CreatedAt           time.Time
 }
 
 // FilterParams holds optional filter/sort parameters for listing items.
@@ -183,6 +214,124 @@ type Querier interface {
 
 	UpsertPhotoMetadata(ctx context.Context, p PhotoMetadataParams) error
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*PhotoMetadata, error)
+	ListPhotosByLibrary(ctx context.Context, p ListPhotosParams) ([]PhotoListItem, error)
+	CountPhotosByLibrary(ctx context.Context, p ListPhotosParams) (int64, error)
+	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID) ([]PhotoTimelineBucket, error)
+	ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsParams) ([]PhotoMapPoint, error)
+	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error)
+	CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error)
+}
+
+// ListPhotosParams filters and paginates a photo-list query. From/To
+// constrain by COALESCE(taken_at, created_at); a nil bound means "open."
+type ListPhotosParams struct {
+	LibraryID uuid.UUID
+	From      *time.Time
+	To        *time.Time
+	Limit     int32
+	Offset    int32
+}
+
+// PhotoListItem is the join of media_items + photo_metadata returned to
+// browse endpoints. Most EXIF columns are intentionally omitted — clients
+// hit /items/{id}/exif when they need the full block.
+type PhotoListItem struct {
+	ID          uuid.UUID
+	LibraryID   uuid.UUID
+	Title       string
+	PosterPath  *string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	TakenAt     *time.Time
+	CameraMake  *string
+	CameraModel *string
+	Width       *int32
+	Height      *int32
+	Orientation *int32
+}
+
+// PhotoTimelineBucket is one (year, month, count) row used to render the
+// sticky-section timeline sidebar in the photo grid.
+type PhotoTimelineBucket struct {
+	Year  int32
+	Month int32
+	Count int64
+}
+
+// ListPhotoMapPointsParams filters geotagged photos by an optional bounding
+// box. Each min/max pair is independent — passing nil for any side means
+// "no bound on that edge." Limit caps the rows returned so a million-point
+// library doesn't melt the wire; callers are expected to zoom in to narrow
+// the bbox if they hit the cap.
+type ListPhotoMapPointsParams struct {
+	LibraryID uuid.UUID
+	MinLat    *float64
+	MaxLat    *float64
+	MinLon    *float64
+	MaxLon    *float64
+	Limit     int32
+}
+
+// PhotoMapPoint is one geotagged photo as plotted on a map. PosterPath is
+// included so the client can render a thumbnail preview on marker hover/
+// click without a second round-trip.
+type PhotoMapPoint struct {
+	ID         uuid.UUID
+	LibraryID  uuid.UUID
+	Title      string
+	PosterPath *string
+	Lat        float64
+	Lon        float64
+	TakenAt    *time.Time
+	CreatedAt  time.Time
+}
+
+// SearchPhotosByExifParams filters photos by EXIF metadata. Every field is
+// optional — nil means "don't filter on that dimension." Text fields use
+// case-insensitive substring match; numeric ranges are inclusive on both
+// ends. HasGps tri-state: nil = don't care, true = must have GPS, false =
+// must not have GPS.
+type SearchPhotosByExifParams struct {
+	LibraryID   uuid.UUID
+	CameraMake  *string
+	CameraModel *string
+	LensModel   *string
+	ApertureMin *float64
+	ApertureMax *float64
+	ISOMin      *int32
+	ISOMax      *int32
+	FocalMin    *float64
+	FocalMax    *float64
+	From        *time.Time
+	To          *time.Time
+	HasGPS      *bool
+	Limit       int32
+	Offset      int32
+}
+
+// PhotoSearchResult is one row returned by SearchPhotosByExif. Carries the
+// full set of EXIF fields the search filters on so the result UI can render
+// "matched on f/2.8, ISO 6400" hints without a second round-trip.
+type PhotoSearchResult struct {
+	ID            uuid.UUID
+	LibraryID     uuid.UUID
+	Title         string
+	PosterPath    *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	TakenAt       *time.Time
+	CameraMake    *string
+	CameraModel   *string
+	LensModel     *string
+	FocalLengthMM *float64
+	Aperture      *float64
+	ISO           *int32
+	Width         *int32
+	Height        *int32
+	Orientation   *int32
+	GPSLat        *float64
+	GPSLon        *float64
 }
 
 // PhotoMetadataParams carries the parsed EXIF data for one photo. All fields
@@ -209,29 +358,39 @@ type PhotoMetadataParams struct {
 
 // CreateItemParams holds the input for creating a media item.
 type CreateItemParams struct {
-	LibraryID             uuid.UUID
-	Type                  string
-	Title                 string
-	SortTitle             string
-	OriginalTitle         *string
-	Year                  *int
-	Summary               *string
-	Tagline               *string
-	Rating                *float64
-	AudienceRating        *float64
-	ContentRating         *string
-	DurationMS            *int64
-	Genres                []string
-	Tags                  []string
-	TMDBID                *int
-	TVDBID                *int
-	IMDBID                *string
-	ParentID              *uuid.UUID
-	Index                 *int
-	PosterPath            *string
-	FanartPath            *string
-	ThumbPath             *string
-	OriginallyAvailableAt *time.Time
+	LibraryID                 uuid.UUID
+	Type                      string
+	Title                     string
+	SortTitle                 string
+	OriginalTitle             *string
+	Year                      *int
+	Summary                   *string
+	Tagline                   *string
+	Rating                    *float64
+	AudienceRating            *float64
+	ContentRating             *string
+	DurationMS                *int64
+	Genres                    []string
+	Tags                      []string
+	TMDBID                    *int
+	TVDBID                    *int
+	IMDBID                    *string
+	MusicBrainzID             *uuid.UUID
+	MusicBrainzReleaseID      *uuid.UUID
+	MusicBrainzReleaseGroupID *uuid.UUID
+	MusicBrainzArtistID       *uuid.UUID
+	MusicBrainzAlbumArtistID  *uuid.UUID
+	ParentID                  *uuid.UUID
+	Index                     *int
+	PosterPath                *string
+	FanartPath                *string
+	ThumbPath                 *string
+	OriginallyAvailableAt     *time.Time
+	DiscTotal                 *int
+	TrackTotal                *int
+	OriginalYear              *int
+	Compilation               bool
+	ReleaseType               string
 }
 
 // UpdateItemMetadataParams holds the fields updated by the metadata agent.
@@ -259,22 +418,30 @@ type UpdateItemMetadataParams struct {
 
 // CreateFileParams holds the input for creating a media file record.
 type CreateFileParams struct {
-	MediaItemID     uuid.UUID
-	FilePath        string
-	FileSize        int64
-	Container       *string
-	VideoCodec      *string
-	AudioCodec      *string
-	ResolutionW     *int
-	ResolutionH     *int
-	Bitrate         *int64
-	HDRType         *string
-	FrameRate       *float64
-	AudioStreams    []byte
-	SubtitleStreams []byte
-	Chapters        []byte
-	FileHash        *string
-	DurationMS      *int64
+	MediaItemID         uuid.UUID
+	FilePath            string
+	FileSize            int64
+	Container           *string
+	VideoCodec          *string
+	AudioCodec          *string
+	ResolutionW         *int
+	ResolutionH         *int
+	Bitrate             *int64
+	HDRType             *string
+	FrameRate           *float64
+	AudioStreams        []byte
+	SubtitleStreams     []byte
+	Chapters            []byte
+	FileHash            *string
+	DurationMS          *int64
+	BitDepth            *int
+	SampleRate          *int
+	ChannelLayout       *string
+	Lossless            *bool
+	ReplayGainTrackGain *float64
+	ReplayGainTrackPeak *float64
+	ReplayGainAlbumGain *float64
+	ReplayGainAlbumPeak *float64
 }
 
 // Service implements media business logic with rw/ro querier split (ADR-021).
@@ -651,6 +818,83 @@ func (s *Service) GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*Phot
 		return nil, err
 	}
 	return pm, nil
+}
+
+// ListPhotos returns photo items for a library, joined with EXIF and ordered
+// by taken_at desc (with created_at as fallback so EXIF-less files still
+// appear). Date range filters by COALESCE(taken_at, created_at).
+func (s *Service) ListPhotos(ctx context.Context, p ListPhotosParams) ([]PhotoListItem, error) {
+	rows, err := s.ro.ListPhotosByLibrary(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("list photos: %w", err)
+	}
+	return rows, nil
+}
+
+// CountPhotos returns the total photo count for a library after applying the
+// same date filter as ListPhotos. Used to render pagination totals.
+func (s *Service) CountPhotos(ctx context.Context, p ListPhotosParams) (int64, error) {
+	n, err := s.ro.CountPhotosByLibrary(ctx, p)
+	if err != nil {
+		return 0, fmt.Errorf("count photos: %w", err)
+	}
+	return n, nil
+}
+
+// ListPhotoTimeline returns (year, month, count) buckets for the timeline
+// sidebar. Always returns the full library — pagination would defeat the
+// purpose of a sticky-section index.
+func (s *Service) ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID) ([]PhotoTimelineBucket, error) {
+	rows, err := s.ro.ListPhotoTimelineBuckets(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list photo timeline: %w", err)
+	}
+	return rows, nil
+}
+
+// ListPhotoMapPoints returns geotagged photos for a library, optionally
+// filtered to a bounding box. The result is naturally sparse (only photos
+// with EXIF GPS appear); clients should compare the returned count against
+// CountPhotoMapPoints to decide whether to show "showing N of M" UI.
+func (s *Service) ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsParams) ([]PhotoMapPoint, error) {
+	rows, err := s.ro.ListPhotoMapPoints(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("list photo map points: %w", err)
+	}
+	return rows, nil
+}
+
+// CountPhotoMapPoints returns the total number of geotagged photos in the
+// library (ignoring any bbox). Used to surface "you have X mappable photos"
+// even when the current view is empty.
+func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID)
+	if err != nil {
+		return 0, fmt.Errorf("count photo map points: %w", err)
+	}
+	return n, nil
+}
+
+// SearchPhotosByExif filters photos by their EXIF metadata. The result set
+// is INNER-JOINed against photo_metadata so photos without an EXIF row are
+// excluded — every meaningful filter targets an EXIF column anyway.
+func (s *Service) SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error) {
+	rows, err := s.ro.SearchPhotosByExif(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("search photos by exif: %w", err)
+	}
+	return rows, nil
+}
+
+// CountPhotosByExif returns the total photo count for a search after applying
+// the same EXIF filter as SearchPhotosByExif. Used to render pagination
+// totals on the search results UI.
+func (s *Service) CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error) {
+	n, err := s.ro.CountPhotosByExif(ctx, p)
+	if err != nil {
+		return 0, fmt.Errorf("count photos by exif: %w", err)
+	}
+	return n, nil
 }
 
 // normalizeTitle folds a title to a canonical form for deduplication:

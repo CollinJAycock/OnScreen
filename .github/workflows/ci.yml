@@ -37,6 +37,12 @@ jobs:
       - name: Test
         run: go test ./cmd/... ./internal/... ./test/...
 
+      # Integration tests spin up real Postgres via testcontainers. Gated
+      # behind a build tag so contributors without Docker can still run the
+      # default suite, but every PR exercises the SQL paths against pg.
+      - name: Integration tests
+        run: go test -tags=integration -timeout 10m ./internal/...
+
   lint:
     name: Lint (Go)
     runs-on: ubuntu-latest

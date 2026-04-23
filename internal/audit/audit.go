@@ -33,6 +33,7 @@ const (
 	ActionItemEnrich     = "item.enrich"
 	ActionItemMatchApply = "item.match_apply"
 	ActionTranscodeStart = "transcode.start"
+	ActionTranscodeStop  = "transcode.stop"
 	ActionBackupDownload = "backup.download"
 	ActionBackupRestore  = "backup.restore"
 

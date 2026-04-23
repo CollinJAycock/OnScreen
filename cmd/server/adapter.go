@@ -207,13 +207,40 @@ func itemFromGenFields(
 	}
 }
 
+// applyItemMusicFields fills the music-only columns from a row that returns
+// them. Used by GetMediaItem and CreateMediaItem; list/search rows don't carry
+// these fields and leave them zero.
+func applyItemMusicFields(
+	item *media.Item,
+	mbID, mbReleaseID, mbReleaseGroupID, mbArtistID, mbAlbumArtistID pgtype.UUID,
+	discTotal, trackTotal, originalYear *int32,
+	compilation bool, releaseType *string,
+) {
+	item.MusicBrainzID = pgtypeUUID(mbID)
+	item.MusicBrainzReleaseID = pgtypeUUID(mbReleaseID)
+	item.MusicBrainzReleaseGroupID = pgtypeUUID(mbReleaseGroupID)
+	item.MusicBrainzArtistID = pgtypeUUID(mbArtistID)
+	item.MusicBrainzAlbumArtistID = pgtypeUUID(mbAlbumArtistID)
+	item.DiscTotal = int32PtrToIntPtr(discTotal)
+	item.TrackTotal = int32PtrToIntPtr(trackTotal)
+	item.OriginalYear = int32PtrToIntPtr(originalYear)
+	item.Compilation = compilation
+	item.ReleaseType = releaseType
+}
+
 func genGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
-	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+	item := itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
 		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
 		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
 		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+	applyItemMusicFields(&item,
+		r.MusicbrainzID, r.MusicbrainzReleaseID, r.MusicbrainzReleaseGroupID,
+		r.MusicbrainzArtistID, r.MusicbrainzAlbumArtistID,
+		r.DiscTotal, r.TrackTotal, r.OriginalYear,
+		r.Compilation, r.ReleaseType)
+	return item
 }
 
 func genGetItemByTMDBIDRowToItem(r gen.GetMediaItemByTMDBIDRow) media.Item {
@@ -226,12 +253,18 @@ func genGetItemByTMDBIDRowToItem(r gen.GetMediaItemByTMDBIDRow) media.Item {
 }
 
 func genCreateItemRowToItem(r gen.CreateMediaItemRow) media.Item {
-	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+	item := itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
 		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
 		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
 		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+	applyItemMusicFields(&item,
+		r.MusicbrainzID, r.MusicbrainzReleaseID, r.MusicbrainzReleaseGroupID,
+		r.MusicbrainzArtistID, r.MusicbrainzAlbumArtistID,
+		r.DiscTotal, r.TrackTotal, r.OriginalYear,
+		r.Compilation, r.ReleaseType)
+	return item
 }
 
 func genListItemsRowToItem(r gen.ListMediaItemsRow) media.Item {
@@ -280,30 +313,45 @@ func genUpdateItemRowToItem(r gen.UpdateMediaItemMetadataRow) media.Item {
 }
 
 func createItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
+	var releaseType *string
+	if p.ReleaseType != "" {
+		rt := p.ReleaseType
+		releaseType = &rt
+	}
 	return gen.CreateMediaItemParams{
-		LibraryID:             p.LibraryID,
-		Type:                  p.Type,
-		Title:                 p.Title,
-		SortTitle:             p.SortTitle,
-		OriginalTitle:         p.OriginalTitle,
-		Year:                  intPtrToInt32Ptr(p.Year),
-		Summary:               p.Summary,
-		Tagline:               p.Tagline,
-		Rating:                float64PtrToNumeric(p.Rating),
-		AudienceRating:        float64PtrToNumeric(p.AudienceRating),
-		ContentRating:         p.ContentRating,
-		DurationMs:            p.DurationMS,
-		Genres:                p.Genres,
-		Tags:                  p.Tags,
-		TmdbID:                intPtrToInt32Ptr(p.TMDBID),
-		TvdbID:                intPtrToInt32Ptr(p.TVDBID),
-		ImdbID:                p.IMDBID,
-		ParentID:              uuidPtrToPGUUID(p.ParentID),
-		Index:                 intPtrToInt32Ptr(p.Index),
-		PosterPath:            p.PosterPath,
-		FanartPath:            p.FanartPath,
-		ThumbPath:             p.ThumbPath,
-		OriginallyAvailableAt: timePtrToPGDate(p.OriginallyAvailableAt),
+		LibraryID:                 p.LibraryID,
+		Type:                      p.Type,
+		Title:                     p.Title,
+		SortTitle:                 p.SortTitle,
+		OriginalTitle:             p.OriginalTitle,
+		Year:                      intPtrToInt32Ptr(p.Year),
+		Summary:                   p.Summary,
+		Tagline:                   p.Tagline,
+		Rating:                    float64PtrToNumeric(p.Rating),
+		AudienceRating:            float64PtrToNumeric(p.AudienceRating),
+		ContentRating:             p.ContentRating,
+		DurationMs:                p.DurationMS,
+		Genres:                    p.Genres,
+		Tags:                      p.Tags,
+		TmdbID:                    intPtrToInt32Ptr(p.TMDBID),
+		TvdbID:                    intPtrToInt32Ptr(p.TVDBID),
+		ImdbID:                    p.IMDBID,
+		MusicbrainzID:             uuidPtrToPGUUID(p.MusicBrainzID),
+		MusicbrainzReleaseID:      uuidPtrToPGUUID(p.MusicBrainzReleaseID),
+		MusicbrainzReleaseGroupID: uuidPtrToPGUUID(p.MusicBrainzReleaseGroupID),
+		MusicbrainzArtistID:       uuidPtrToPGUUID(p.MusicBrainzArtistID),
+		MusicbrainzAlbumArtistID:  uuidPtrToPGUUID(p.MusicBrainzAlbumArtistID),
+		DiscTotal:                 intPtrToInt32Ptr(p.DiscTotal),
+		TrackTotal:                intPtrToInt32Ptr(p.TrackTotal),
+		OriginalYear:              intPtrToInt32Ptr(p.OriginalYear),
+		Compilation:               p.Compilation,
+		ReleaseType:               releaseType,
+		ParentID:                  uuidPtrToPGUUID(p.ParentID),
+		Index:                     intPtrToInt32Ptr(p.Index),
+		PosterPath:                p.PosterPath,
+		FanartPath:                p.FanartPath,
+		ThumbPath:                 p.ThumbPath,
+		OriginallyAvailableAt:     timePtrToPGDate(p.OriginallyAvailableAt),
 	}
 }
 
@@ -340,27 +388,35 @@ func genMediaFileToFile(f gen.MediaFile) media.File {
 		frameRate = &fr
 	}
 	return media.File{
-		ID:              f.ID,
-		MediaItemID:     f.MediaItemID,
-		FilePath:        f.FilePath,
-		FileSize:        f.FileSize,
-		Container:       f.Container,
-		VideoCodec:      f.VideoCodec,
-		AudioCodec:      f.AudioCodec,
-		ResolutionW:     int32PtrToIntPtr(f.ResolutionW),
-		ResolutionH:     int32PtrToIntPtr(f.ResolutionH),
-		Bitrate:         f.Bitrate,
-		HDRType:         f.HdrType,
-		FrameRate:       frameRate,
-		AudioStreams:    f.AudioStreams,
-		SubtitleStreams: f.SubtitleStreams,
-		Chapters:        f.Chapters,
-		FileHash:        f.FileHash,
-		DurationMS:      f.DurationMs,
-		Status:          f.Status,
-		MissingSince:    pgtimeTZ(f.MissingSince),
-		ScannedAt:       mustTimeTZ(f.ScannedAt),
-		CreatedAt:       mustTimeTZ(f.CreatedAt),
+		ID:                  f.ID,
+		MediaItemID:         f.MediaItemID,
+		FilePath:            f.FilePath,
+		FileSize:            f.FileSize,
+		Container:           f.Container,
+		VideoCodec:          f.VideoCodec,
+		AudioCodec:          f.AudioCodec,
+		ResolutionW:         int32PtrToIntPtr(f.ResolutionW),
+		ResolutionH:         int32PtrToIntPtr(f.ResolutionH),
+		Bitrate:             f.Bitrate,
+		HDRType:             f.HdrType,
+		FrameRate:           frameRate,
+		AudioStreams:        f.AudioStreams,
+		SubtitleStreams:     f.SubtitleStreams,
+		Chapters:            f.Chapters,
+		FileHash:            f.FileHash,
+		DurationMS:          f.DurationMs,
+		BitDepth:            int32PtrToIntPtr(f.BitDepth),
+		SampleRate:          int32PtrToIntPtr(f.SampleRate),
+		ChannelLayout:       f.ChannelLayout,
+		Lossless:            f.Lossless,
+		ReplayGainTrackGain: numericToFloat64Ptr(f.ReplaygainTrackGain),
+		ReplayGainTrackPeak: numericToFloat64Ptr(f.ReplaygainTrackPeak),
+		ReplayGainAlbumGain: numericToFloat64Ptr(f.ReplaygainAlbumGain),
+		ReplayGainAlbumPeak: numericToFloat64Ptr(f.ReplaygainAlbumPeak),
+		Status:              f.Status,
+		MissingSince:        pgtimeTZ(f.MissingSince),
+		ScannedAt:           mustTimeTZ(f.ScannedAt),
+		CreatedAt:           mustTimeTZ(f.CreatedAt),
 	}
 }
 
@@ -370,21 +426,29 @@ func createFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 		_ = frameRate.Scan(*p.FrameRate)
 	}
 	return gen.CreateMediaFileParams{
-		MediaItemID:     p.MediaItemID,
-		FilePath:        p.FilePath,
-		FileSize:        p.FileSize,
-		Container:       p.Container,
-		VideoCodec:      p.VideoCodec,
-		AudioCodec:      p.AudioCodec,
-		ResolutionW:     intPtrToInt32Ptr(p.ResolutionW),
-		ResolutionH:     intPtrToInt32Ptr(p.ResolutionH),
-		Bitrate:         p.Bitrate,
-		HdrType:         p.HDRType,
-		FrameRate:       frameRate,
-		AudioStreams:    p.AudioStreams,
-		SubtitleStreams: p.SubtitleStreams,
-		Chapters:        p.Chapters,
-		FileHash:        p.FileHash,
-		DurationMs:      p.DurationMS,
+		MediaItemID:         p.MediaItemID,
+		FilePath:            p.FilePath,
+		FileSize:            p.FileSize,
+		Container:           p.Container,
+		VideoCodec:          p.VideoCodec,
+		AudioCodec:          p.AudioCodec,
+		ResolutionW:         intPtrToInt32Ptr(p.ResolutionW),
+		ResolutionH:         intPtrToInt32Ptr(p.ResolutionH),
+		Bitrate:             p.Bitrate,
+		HdrType:             p.HDRType,
+		FrameRate:           frameRate,
+		AudioStreams:        p.AudioStreams,
+		SubtitleStreams:     p.SubtitleStreams,
+		Chapters:            p.Chapters,
+		FileHash:            p.FileHash,
+		DurationMs:          p.DurationMS,
+		BitDepth:            intPtrToInt32Ptr(p.BitDepth),
+		SampleRate:          intPtrToInt32Ptr(p.SampleRate),
+		ChannelLayout:       p.ChannelLayout,
+		Lossless:            p.Lossless,
+		ReplaygainTrackGain: float64PtrToNumeric(p.ReplayGainTrackGain),
+		ReplaygainTrackPeak: float64PtrToNumeric(p.ReplayGainTrackPeak),
+		ReplaygainAlbumGain: float64PtrToNumeric(p.ReplayGainAlbumGain),
+		ReplaygainAlbumPeak: float64PtrToNumeric(p.ReplayGainAlbumPeak),
 	}
 }

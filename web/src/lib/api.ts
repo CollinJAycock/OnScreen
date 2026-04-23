@@ -371,6 +371,28 @@ export interface LDAPSettings {
   admin_group_dn: string;
 }
 
+export interface SMTPSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password: string; // "****" if set, "" if empty
+  from: string;
+}
+
+export interface OTelSettings {
+  enabled: boolean;
+  endpoint: string;          // OTLP/gRPC URL, e.g. http://localhost:4317
+  sample_ratio: number;      // 0.0–1.0
+  deployment_env: string;    // tagged on every span; e.g. "production"
+}
+
+export interface GeneralSettings {
+  base_url: string;            // public URL — used for OAuth redirects, LAN discovery
+  log_level: string;           // debug | info | warn | error
+  cors_allowed_origins: string[];
+}
+
 export interface ServerSettings {
   tmdb_api_key: string;
   tvdb_api_key: string;
@@ -381,6 +403,9 @@ export interface ServerSettings {
   opensubtitles: OpenSubtitlesSettings;
   oidc: OIDCSettings;
   ldap: LDAPSettings;
+  smtp: SMTPSettings;
+  otel: OTelSettings;
+  general: GeneralSettings;
 }
 
 export interface OpenSubtitlesUpdate {
@@ -461,6 +486,7 @@ export const settingsApi = {
   updateFleet: (body: FleetConfig) => api.put<void>('/settings/fleet', body),
   getTranscodeConfig: () => api.get<TranscodeConfig>('/settings/transcode-config'),
   updateTranscodeConfig: (body: TranscodeConfig) => api.put<void>('/settings/transcode-config', body),
+  testEmail: (to: string) => api.post<{ message: string }>('/email/test', { to }),
 };
 
 // ── Filesystem browser ────────────────────────────────────────────────────────
@@ -618,6 +644,15 @@ export interface ItemFile {
   hdr_type?: string;
   duration_ms?: number;
   faststart: boolean;
+  // Audio quality fields (music libraries — undefined for video).
+  bit_depth?: number;
+  sample_rate?: number;
+  channel_layout?: string;
+  lossless?: boolean;
+  replaygain_track_gain?: number;
+  replaygain_track_peak?: number;
+  replaygain_album_gain?: number;
+  replaygain_album_peak?: number;
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
   external_subtitles?: ExternalSubtitle[];
@@ -651,6 +686,17 @@ export interface ItemDetail {
   is_favorite: boolean;
   files: ItemFile[];
   markers?: Marker[];
+  // Music-specific fields (undefined for non-music items).
+  musicbrainz_id?: string;
+  musicbrainz_release_id?: string;
+  musicbrainz_release_group_id?: string;
+  musicbrainz_artist_id?: string;
+  musicbrainz_album_artist_id?: string;
+  disc_total?: number;
+  track_total?: number;
+  original_year?: number;
+  compilation?: boolean;
+  release_type?: string;
 }
 
 export interface FavoriteItem {

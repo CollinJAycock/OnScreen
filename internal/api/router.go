@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/riandyrn/otelchi"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
@@ -36,10 +37,12 @@ type Handlers struct {
 	Search          *v1.SearchHandler
 	History         *v1.HistoryHandler
 	Items           *v1.ItemHandler
+	Photos          *v1.PhotosHandler
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
 	Playlists       *v1.PlaylistHandler
+	PhotoAlbums     *v1.PhotoAlbumHandler
 	Subtitles       *v1.SubtitleHandler
 	Arr             *v1.ArrHandler  // incoming arr app notifications
 	OIDCAuth        *v1.OIDCHandler // settings-driven, always non-nil
@@ -75,6 +78,13 @@ type Handlers struct {
 // NewRouter builds the full Chi router.
 func NewRouter(h *Handlers) http.Handler {
 	r := chi.NewRouter()
+
+	// Outermost middleware: wraps every request in a server span. Placed first
+	// so the span covers all other middleware (auth, rate limit, etc.).
+	// WithChiRoutes resolves the chi route template at span-time, so span names
+	// like "GET /items/{id}" aggregate correctly instead of exploding by UUID.
+	// When no tracer provider is registered, spans are no-op (near-zero cost).
+	r.Use(otelchi.Middleware("onscreen", otelchi.WithChiRoutes(r)))
 
 	// Global middleware (applied to all routes). TrustedRealIP rewrites
 	// RemoteAddr from X-Forwarded-* only when the immediate peer is private,
@@ -496,6 +506,17 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/playlists/{id}/items/order", h.Playlists.Reorder)
 			}
 
+			// Photo albums — ownership-checked, per-user. Items must be type='photo'.
+			if h.PhotoAlbums != nil {
+				r.Get("/photo-albums", h.PhotoAlbums.List)
+				r.Post("/photo-albums", h.PhotoAlbums.Create)
+				r.Patch("/photo-albums/{id}", h.PhotoAlbums.Update)
+				r.Delete("/photo-albums/{id}", h.PhotoAlbums.Delete)
+				r.Get("/photo-albums/{id}/items", h.PhotoAlbums.Items)
+				r.Post("/photo-albums/{id}/items", h.PhotoAlbums.AddItem)
+				r.Delete("/photo-albums/{id}/items/{itemId}", h.PhotoAlbums.RemoveItem)
+			}
+
 			// People (cast/crew) — lazy TMDB fetch on first /credits view.
 			if h.People != nil {
 				r.Get("/items/{id}/credits", h.People.Credits)
@@ -516,6 +537,18 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/items/{id}/markers/{kind}", h.Items.UpsertMarker)
 				r.Delete("/items/{id}/markers/{kind}", h.Items.DeleteMarker)
 				r.Get("/items/{id}/exif", h.Items.GetEXIF)
+			}
+
+			// Photo browse + on-demand resize. Image endpoint shares the
+			// /items/{id} prefix because it is item-scoped; List/Timeline
+			// live under /photos because they aggregate across an entire
+			// library.
+			if h.Photos != nil {
+				r.Get("/photos", h.Photos.List)
+				r.Get("/photos/timeline", h.Photos.Timeline)
+				r.Get("/photos/map", h.Photos.Map)
+				r.Get("/photos/search", h.Photos.Search)
+				r.Get("/items/{id}/image", h.Photos.Image)
 			}
 
 			// Trickplay (seekbar thumbnail previews).

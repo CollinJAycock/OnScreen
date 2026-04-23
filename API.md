@@ -75,12 +75,36 @@ Admin-only endpoints are marked with **[admin]**.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/items/{id}` | user | Get full item detail (includes files, artwork, metadata). |
+| GET | `/items/{id}` | user | Get full item detail (includes files, artwork, metadata, music + audiophile fields). |
 | GET | `/items/{id}/children` | user | List child items (seasons of a show, episodes of a season, tracks of an album). |
 | PUT | `/items/{id}/progress` | user | Save playback progress. Body: `{ "view_offset_ms", "duration_ms", "state" }` |
 | POST | `/items/{id}/enrich` | **[admin]** | Trigger on-demand metadata enrichment. |
 | GET | `/items/{id}/match/search` | **[admin]** | Search TMDB for match candidates. Query param: `q`. |
 | POST | `/items/{id}/match` | **[admin]** | Apply a TMDB match. Body: `{ "tmdb_id" }` |
+| GET | `/items/{id}/exif` | user | Photo EXIF for image items (camera, lens, GPS, capture time). |
+| GET | `/items/{id}/markers` | user | List intro/credits markers (episodes only; empty for movies/containers). |
+| PUT | `/items/{id}/markers/{kind}` | **[admin]** | Upsert an intro/credits marker. `kind` ∈ {`intro`, `credits`}. Body: `{ "start_ms", "end_ms" }` |
+| DELETE | `/items/{id}/markers/{kind}` | **[admin]** | Delete a marker. |
+
+`GET /items/{id}` returns music-specific fields when present (all optional):
+
+- File-level (per `files[]` entry): `bit_depth`, `sample_rate`, `channel_layout`, `lossless`, `replaygain_track_gain`, `replaygain_track_peak`, `replaygain_album_gain`, `replaygain_album_peak`
+- Item-level: `musicbrainz_id`, `musicbrainz_release_id`, `musicbrainz_release_group_id`, `musicbrainz_artist_id`, `musicbrainz_album_artist_id`, `disc_total`, `track_total`, `original_year`, `compilation`, `release_type`
+
+---
+
+## Subtitles
+
+External-subtitle picker (OpenSubtitles downloads + OCR'd image-based subs). Responses return `external_subtitles` rows with `source ∈ {opensubtitles, ocr}`.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/items/{id}/subtitles/search` | user | Search OpenSubtitles for sidecars. Query params: `language`, optional `query`. |
+| POST | `/items/{id}/subtitles/download` | user | Download a search hit and persist as a sidecar. Body identifies the OpenSubtitles file. |
+| POST | `/items/{id}/subtitles/ocr` | user | Run OCR (ffmpeg + tesseract) on an image-based subtitle stream and persist the resulting WebVTT as an `external_subtitles` row. Body: `{ "file_id", "stream_index", "language", "title", "forced", "sdh" }`. Returns 503 with `{"error": "OCR not available …"}` when the engine is not wired. |
+| DELETE | `/items/{id}/subtitles/{subId}` | user | Delete a sidecar (OpenSubtitles or OCR row plus its VTT file). |
+
+Sidecars are served alongside embedded streams via the streaming paths below. A nightly `ocr_subtitles` scheduled task can OCR every image-based stream in a library; configure via `/scheduled-tasks` with `{ "library_id": "all", "skip_existing": true }`.
 
 ---
 
@@ -216,7 +240,8 @@ The signature is in the `X-OnScreen-Signature` header as `sha256=<hex>`.
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/media/stream/{id}` | cookie | Stream a media file directly (direct play). |
-| GET | `/media/subtitles/{fileId}/{streamIndex}` | cookie | Extract and serve a subtitle track as WebVTT. |
+| GET | `/media/subtitles/{fileId}/{streamIndex}` | cookie | Extract and serve an embedded subtitle track as WebVTT. |
+| GET | `/media/external-subtitles/{subId}` | cookie | Serve an external subtitle sidecar (OpenSubtitles download or OCR'd VTT). |
 | GET | `/media/files/*` | cookie | Serve raw media files (legacy Plex-compatible path). |
 | GET | `/artwork/*` | none | Serve artwork images (posters, fanart, thumbnails). |
 

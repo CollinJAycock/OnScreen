@@ -424,9 +424,9 @@ func (a *mediaAdapter) CountMediaItems(ctx context.Context, libraryID uuid.UUID,
 
 func (a *mediaAdapter) SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]media.Item, error) {
 	rows, err := a.q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:      libraryID,
-		PlaintoTsquery: query,
-		Limit:          limit,
+		LibraryID:          libraryID,
+		WebsearchToTsquery: query,
+		Limit:              limit,
 	})
 	if err != nil {
 		return nil, err
@@ -784,6 +784,30 @@ func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.
 
 func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error) {
 	return nil, nil
+}
+
+// Photo browse queries — worker doesn't surface photo lists, but the
+// interface is shared with the server adapter so we stub them.
+func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, _ media.ListPhotosParams) ([]media.PhotoListItem, error) {
+	return nil, nil
+}
+func (a *mediaAdapter) CountPhotosByLibrary(ctx context.Context, _ media.ListPhotosParams) (int64, error) {
+	return 0, nil
+}
+func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, _ uuid.UUID) ([]media.PhotoTimelineBucket, error) {
+	return nil, nil
+}
+func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, _ media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error) {
+	return nil, nil
+}
+func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
+func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, _ media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error) {
+	return nil, nil
+}
+func (a *mediaAdapter) CountPhotosByExif(ctx context.Context, _ media.SearchPhotosByExifParams) (int64, error) {
+	return 0, nil
 }
 
 // ── sessionCleanupAdapter ─────────────────────────────────────────────────────

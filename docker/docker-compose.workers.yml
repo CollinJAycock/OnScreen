@@ -26,7 +26,6 @@ services:
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       DISABLE_EMBEDDED_WORKER: "true"
     volumes:
       - ${MEDIA_DIR:-C:/Movies}:/media:ro
@@ -51,7 +50,6 @@ services:
       VALKEY_URL: redis://valkey:6379
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       WORKER_ADDR: "worker-gpu:7073"
       TRANSCODE_ENCODERS: "nvenc"
       TRANSCODE_MAX_SESSIONS: ${GPU_MAX_SESSIONS:-4}
@@ -87,7 +85,6 @@ services:
       VALKEY_URL: redis://valkey:6379
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       WORKER_ADDR: "worker-cpu:7073"
       TRANSCODE_ENCODERS: "software"
       TRANSCODE_MAX_SESSIONS: ${CPU_MAX_SESSIONS:-2}

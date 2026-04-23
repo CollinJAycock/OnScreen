@@ -40,6 +40,12 @@ type SettingsServiceIface interface {
 	SetOIDC(ctx context.Context, cfg settings.OIDCConfig) error
 	LDAP(ctx context.Context) settings.LDAPConfig
 	SetLDAP(ctx context.Context, cfg settings.LDAPConfig) error
+	SMTP(ctx context.Context) settings.SMTPConfig
+	SetSMTP(ctx context.Context, cfg settings.SMTPConfig) error
+	OTel(ctx context.Context) settings.OTelConfig
+	SetOTel(ctx context.Context, cfg settings.OTelConfig) error
+	General(ctx context.Context) settings.GeneralConfig
+	SetGeneral(ctx context.Context, cfg settings.GeneralConfig) error
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -302,6 +308,73 @@ type settingsResponse struct {
 	OpenSubtitles     openSubtitlesSettingDTO `json:"opensubtitles"`
 	OIDC              oidcSettingDTO          `json:"oidc"`
 	LDAP              ldapSettingDTO          `json:"ldap"`
+	SMTP              smtpSettingDTO          `json:"smtp"`
+	OTel              otelSettingDTO          `json:"otel"`
+	General           generalSettingDTO       `json:"general"`
+}
+
+// generalSettingDTO mirrors settings.GeneralConfig — no secrets, surfaces the
+// public URL, log level and CORS allow-list. All restart-required.
+type generalSettingDTO struct {
+	BaseURL            string   `json:"base_url"`
+	LogLevel           string   `json:"log_level"`
+	CORSAllowedOrigins []string `json:"cors_allowed_origins"`
+}
+
+func toGeneralDTO(cfg settings.GeneralConfig) generalSettingDTO {
+	origins := cfg.CORSAllowedOrigins
+	if origins == nil {
+		origins = []string{}
+	}
+	return generalSettingDTO{
+		BaseURL:            cfg.BaseURL,
+		LogLevel:           cfg.LogLevel,
+		CORSAllowedOrigins: origins,
+	}
+}
+
+// otelSettingDTO mirrors settings.OTelConfig — no secrets to mask, but kept
+// as a typed DTO so the frontend has a stable shape and we can add the
+// "restart required" hint alongside if it ever becomes data-dependent.
+type otelSettingDTO struct {
+	Enabled       bool    `json:"enabled"`
+	Endpoint      string  `json:"endpoint"`
+	SampleRatio   float64 `json:"sample_ratio"`
+	DeploymentEnv string  `json:"deployment_env"`
+}
+
+func toOTelDTO(cfg settings.OTelConfig) otelSettingDTO {
+	return otelSettingDTO{
+		Enabled:       cfg.Enabled,
+		Endpoint:      cfg.Endpoint,
+		SampleRatio:   cfg.SampleRatio,
+		DeploymentEnv: cfg.DeploymentEnv,
+	}
+}
+
+// smtpSettingDTO masks the SMTP password before returning to the client.
+type smtpSettingDTO struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"` // "****" if set, "" if empty
+	From     string `json:"from"`
+}
+
+func toSMTPDTO(cfg settings.SMTPConfig) smtpSettingDTO {
+	pw := ""
+	if cfg.Password != "" {
+		pw = "****"
+	}
+	return smtpSettingDTO{
+		Enabled:  cfg.Enabled,
+		Host:     cfg.Host,
+		Port:     cfg.Port,
+		Username: cfg.Username,
+		Password: pw,
+		From:     cfg.From,
+	}
 }
 
 // oidcSettingDTO masks the client secret before returning to the client.
@@ -447,6 +520,9 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		OpenSubtitles:     toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
 		OIDC:              toOIDCDTO(h.svc.OIDC(ctx)),
 		LDAP:              toLDAPDTO(h.svc.LDAP(ctx)),
+		SMTP:              toSMTPDTO(h.svc.SMTP(ctx)),
+		OTel:              toOTelDTO(h.svc.OTel(ctx)),
+		General:           toGeneralDTO(h.svc.General(ctx)),
 	})
 }
 
@@ -491,6 +567,25 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			EmailAttr      *string `json:"email_attr"`
 			AdminGroupDN   *string `json:"admin_group_dn"`
 		} `json:"ldap"`
+		SMTP *struct {
+			Enabled  *bool   `json:"enabled"`
+			Host     *string `json:"host"`
+			Port     *int    `json:"port"`
+			Username *string `json:"username"`
+			Password *string `json:"password"`
+			From     *string `json:"from"`
+		} `json:"smtp"`
+		OTel *struct {
+			Enabled       *bool    `json:"enabled"`
+			Endpoint      *string  `json:"endpoint"`
+			SampleRatio   *float64 `json:"sample_ratio"`
+			DeploymentEnv *string  `json:"deployment_env"`
+		} `json:"otel"`
+		General *struct {
+			BaseURL            *string   `json:"base_url"`
+			LogLevel           *string   `json:"log_level"`
+			CORSAllowedOrigins *[]string `json:"cors_allowed_origins"`
+		} `json:"general"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -639,6 +734,69 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.SMTP != nil {
+		cur := h.svc.SMTP(ctx)
+		if body.SMTP.Enabled != nil {
+			cur.Enabled = *body.SMTP.Enabled
+		}
+		if body.SMTP.Host != nil {
+			cur.Host = *body.SMTP.Host
+		}
+		if body.SMTP.Port != nil {
+			cur.Port = *body.SMTP.Port
+		}
+		if body.SMTP.Username != nil {
+			cur.Username = *body.SMTP.Username
+		}
+		if body.SMTP.Password != nil && *body.SMTP.Password != "****" {
+			cur.Password = *body.SMTP.Password
+		}
+		if body.SMTP.From != nil {
+			cur.From = *body.SMTP.From
+		}
+		if err := h.svc.SetSMTP(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "smtp", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.OTel != nil {
+		cur := h.svc.OTel(ctx)
+		if body.OTel.Enabled != nil {
+			cur.Enabled = *body.OTel.Enabled
+		}
+		if body.OTel.Endpoint != nil {
+			cur.Endpoint = *body.OTel.Endpoint
+		}
+		if body.OTel.SampleRatio != nil {
+			cur.SampleRatio = *body.OTel.SampleRatio
+		}
+		if body.OTel.DeploymentEnv != nil {
+			cur.DeploymentEnv = *body.OTel.DeploymentEnv
+		}
+		if err := h.svc.SetOTel(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "otel", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.General != nil {
+		cur := h.svc.General(ctx)
+		if body.General.BaseURL != nil {
+			cur.BaseURL = *body.General.BaseURL
+		}
+		if body.General.LogLevel != nil {
+			cur.LogLevel = *body.General.LogLevel
+		}
+		if body.General.CORSAllowedOrigins != nil {
+			cur.CORSAllowedOrigins = *body.General.CORSAllowedOrigins
+		}
+		if err := h.svc.SetGeneral(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "general", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
 	if h.audit != nil {
 		detail := map[string]any{}
 		if body.TMDBAPIKey != nil {
@@ -664,6 +822,15 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.LDAP != nil {
 			detail["ldap"] = "changed"
+		}
+		if body.SMTP != nil {
+			detail["smtp"] = "changed"
+		}
+		if body.OTel != nil {
+			detail["otel"] = "changed"
+		}
+		if body.General != nil {
+			detail["general"] = "changed"
 		}
 		// Always log, even if claims are somehow nil — the route is admin-gated,
 		// so a missing actor here means an invariant break worth recording.

@@ -30,6 +30,23 @@ type mockQuerier struct {
 	missingFiles         []File
 	cleanupLeavesErr     error
 	cleanupContainersErr error
+
+	// Photo browse / map / search return values + injected errors. Set by
+	// the service-level wrapper tests; default zero values keep the rest
+	// of the suite happy with empty slices.
+	photoList         []PhotoListItem
+	photoListErr      error
+	photoCountErr     error
+	photoTimeline     []PhotoTimelineBucket
+	photoTimelineErr  error
+	photoMapPts       []PhotoMapPoint
+	photoMapErr       error
+	photoMapCount     int64
+	photoMapCountErr  error
+	photoSearchHits   []PhotoSearchResult
+	photoSearchErr    error
+	photoSearchCount  int64
+	photoSearchCntErr error
 }
 
 func newMockQuerier() *mockQuerier {
@@ -362,6 +379,34 @@ func (m *mockQuerier) UpsertPhotoMetadata(_ context.Context, _ PhotoMetadataPara
 
 func (m *mockQuerier) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*PhotoMetadata, error) {
 	return nil, ErrNotFound
+}
+
+func (m *mockQuerier) ListPhotosByLibrary(_ context.Context, _ ListPhotosParams) ([]PhotoListItem, error) {
+	return m.photoList, m.photoListErr
+}
+
+func (m *mockQuerier) CountPhotosByLibrary(_ context.Context, _ ListPhotosParams) (int64, error) {
+	return int64(len(m.photoList)), m.photoCountErr
+}
+
+func (m *mockQuerier) ListPhotoTimelineBuckets(_ context.Context, _ uuid.UUID) ([]PhotoTimelineBucket, error) {
+	return m.photoTimeline, m.photoTimelineErr
+}
+
+func (m *mockQuerier) ListPhotoMapPoints(_ context.Context, _ ListPhotoMapPointsParams) ([]PhotoMapPoint, error) {
+	return m.photoMapPts, m.photoMapErr
+}
+
+func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID) (int64, error) {
+	return m.photoMapCount, m.photoMapCountErr
+}
+
+func (m *mockQuerier) SearchPhotosByExif(_ context.Context, _ SearchPhotosByExifParams) ([]PhotoSearchResult, error) {
+	return m.photoSearchHits, m.photoSearchErr
+}
+
+func (m *mockQuerier) CountPhotosByExif(_ context.Context, _ SearchPhotosByExifParams) (int64, error) {
+	return m.photoSearchCount, m.photoSearchCntErr
 }
 
 func newService(t *testing.T) (*Service, *mockQuerier) {
@@ -1423,5 +1468,151 @@ func TestCleanupEmptyItems_PropagatesContainerQueryError(t *testing.T) {
 
 	if err := svc.CleanupEmptyItems(context.Background(), uuid.New()); !errors.Is(err, want) {
 		t.Errorf("want %v, got %v", want, err)
+	}
+}
+
+// ── Photo browse / map / search service wrappers ──────────────────────────────
+//
+// These are all thin pass-throughs to the Querier — one happy path + one
+// error path each is enough to lock in the contract that errors get wrapped
+// (for the slog observability story) rather than dropped.
+
+func TestListPhotos_PassesThrough(t *testing.T) {
+	svc, q := newService(t)
+	q.photoList = []PhotoListItem{{Title: "IMG_001.jpg"}, {Title: "IMG_002.jpg"}}
+	got, err := svc.ListPhotos(context.Background(), ListPhotosParams{LibraryID: uuid.New()})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("want 2, got %d", len(got))
+	}
+}
+
+func TestListPhotos_Error(t *testing.T) {
+	svc, q := newService(t)
+	q.photoListErr = errors.New("db down")
+	if _, err := svc.ListPhotos(context.Background(), ListPhotosParams{}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCountPhotos_PassesThrough(t *testing.T) {
+	svc, q := newService(t)
+	q.photoList = []PhotoListItem{{}, {}, {}}
+	n, err := svc.CountPhotos(context.Background(), ListPhotosParams{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("want 3, got %d", n)
+	}
+}
+
+func TestCountPhotos_Error(t *testing.T) {
+	svc, q := newService(t)
+	q.photoCountErr = errors.New("db down")
+	if _, err := svc.CountPhotos(context.Background(), ListPhotosParams{}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestListPhotoTimeline_PassesThrough(t *testing.T) {
+	svc, q := newService(t)
+	q.photoTimeline = []PhotoTimelineBucket{{Year: 2024, Month: 12, Count: 47}}
+	got, err := svc.ListPhotoTimeline(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Count != 47 {
+		t.Errorf("want one bucket with count=47, got %+v", got)
+	}
+}
+
+func TestListPhotoTimeline_Error(t *testing.T) {
+	svc, q := newService(t)
+	q.photoTimelineErr = errors.New("db down")
+	if _, err := svc.ListPhotoTimeline(context.Background(), uuid.New()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestListPhotoMapPoints_PassesThrough(t *testing.T) {
+	svc, q := newService(t)
+	q.photoMapPts = []PhotoMapPoint{{Lat: 47.6, Lon: -122.3}}
+	got, err := svc.ListPhotoMapPoints(context.Background(), ListPhotoMapPointsParams{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Lat != 47.6 {
+		t.Errorf("want lat=47.6, got %+v", got)
+	}
+}
+
+func TestListPhotoMapPoints_Error(t *testing.T) {
+	svc, q := newService(t)
+	q.photoMapErr = errors.New("db down")
+	if _, err := svc.ListPhotoMapPoints(context.Background(), ListPhotoMapPointsParams{}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCountPhotoMapPoints_PassesThrough(t *testing.T) {
+	svc, q := newService(t)
+	q.photoMapCount = 23107
+	n, err := svc.CountPhotoMapPoints(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 23107 {
+		t.Errorf("want 23107, got %d", n)
+	}
+}
+
+func TestCountPhotoMapPoints_Error(t *testing.T) {
+	svc, q := newService(t)
+	q.photoMapCountErr = errors.New("db down")
+	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSearchPhotosByExif_PassesThrough(t *testing.T) {
+	svc, q := newService(t)
+	q.photoSearchHits = []PhotoSearchResult{{Title: "DSCF1234.raf"}}
+	got, err := svc.SearchPhotosByExif(context.Background(), SearchPhotosByExifParams{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("want 1, got %d", len(got))
+	}
+}
+
+func TestSearchPhotosByExif_Error(t *testing.T) {
+	svc, q := newService(t)
+	q.photoSearchErr = errors.New("db down")
+	if _, err := svc.SearchPhotosByExif(context.Background(), SearchPhotosByExifParams{}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCountPhotosByExif_PassesThrough(t *testing.T) {
+	svc, q := newService(t)
+	q.photoSearchCount = 42
+	n, err := svc.CountPhotosByExif(context.Background(), SearchPhotosByExifParams{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 42 {
+		t.Errorf("want 42, got %d", n)
+	}
+}
+
+func TestCountPhotosByExif_Error(t *testing.T) {
+	svc, q := newService(t)
+	q.photoSearchCntErr = errors.New("db down")
+	if _, err := svc.CountPhotosByExif(context.Background(), SearchPhotosByExifParams{}); err == nil {
+		t.Fatal("expected error")
 	}
 }

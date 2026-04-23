@@ -42,7 +42,7 @@ type PRToken struct {
 // PasswordResetHandler handles forgot password / reset password flows.
 type PasswordResetHandler struct {
 	db      PasswordResetDB
-	sender  *email.Sender // nil if SMTP not configured
+	sender  *email.Sender // always non-nil; live SMTP state via sender.Enabled(ctx)
 	baseURL string
 	logger  *slog.Logger
 }
@@ -54,14 +54,14 @@ func NewPasswordResetHandler(db PasswordResetDB, sender *email.Sender, baseURL s
 
 // Enabled returns whether the forgot password flow is available.
 func (h *PasswordResetHandler) Enabled(w http.ResponseWriter, r *http.Request) {
-	respond.Success(w, r, map[string]bool{"enabled": h.sender != nil})
+	respond.Success(w, r, map[string]bool{"enabled": h.sender.Enabled(r.Context())})
 }
 
 // ForgotPassword handles POST /api/v1/auth/forgot-password.
 // Sends a password reset email if the email exists. Always returns 200
 // to prevent email enumeration.
 func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
-	if h.sender == nil {
+	if !h.sender.Enabled(r.Context()) {
 		respond.BadRequest(w, r, "Email is not configured on this server")
 		return
 	}

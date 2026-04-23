@@ -2,15 +2,17 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, type ItemDetail, type ChildItem } from '$lib/api';
+  import { itemApi, type ItemDetail, type ItemFile, type ChildItem } from '$lib/api';
   import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
+  import TrackInfo from '$lib/components/TrackInfo.svelte';
 
   let album: ItemDetail | null = null;
   let tracks: ChildItem[] = [];
-  let trackFiles: Map<string, string> = new Map(); // trackId -> fileId
+  let trackDetails: Map<string, ItemDetail> = new Map(); // trackId -> full detail
   let artist: { id: string; title: string } | null = null;
   let loading = true;
   let error = '';
+  let infoTrack: ItemDetail | null = null;
 
   $: id = $page.params.id!;
   $: nowPlayingId = $currentTrack?.id ?? null;
@@ -53,18 +55,19 @@
       const list = await itemApi.children(id);
       tracks = list.items.sort((a, b) => (a.index ?? 9999) - (b.index ?? 9999));
 
-      // Resolve file_id for every track in parallel. Tracks need a file_id to
-      // stream; without it the play button is disabled.
-      const map = new Map<string, string>();
+      // Resolve full detail for every track in parallel. Tracks need a file to
+      // stream; without one the play button is disabled. We keep the full
+      // ItemDetail so the info panel can show audiophile/MusicBrainz fields.
+      const map = new Map<string, ItemDetail>();
       await Promise.all(tracks.map(async (t) => {
         try {
           const td = await itemApi.get(t.id);
-          if (td.files.length > 0) map.set(t.id, td.files[0].id);
+          if (td.files.length > 0) map.set(t.id, td);
         } catch {
           // Track with no file — disabled in the UI.
         }
       }));
-      trackFiles = map;
+      trackDetails = map;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load album';
     } finally {
@@ -77,7 +80,8 @@
     let index = 0;
     for (let i = 0; i < tracks.length; i++) {
       const t = tracks[i];
-      const fileId = trackFiles.get(t.id);
+      const td = trackDetails.get(t.id);
+      const fileId = td?.files[0]?.id;
       if (!fileId) continue;
       if (i === startIdx) index = queue.length;
       queue.push({
@@ -98,14 +102,21 @@
 
   function playTrack(idx: number) {
     const t = tracks[idx];
-    if (!trackFiles.has(t.id)) return;
+    if (!trackDetails.has(t.id)) return;
     const { queue, index } = buildQueue(idx);
     audio.play(queue, index);
   }
 
   function playAlbum() {
-    const firstPlayable = tracks.findIndex((t) => trackFiles.has(t.id));
+    const firstPlayable = tracks.findIndex((t) => trackDetails.has(t.id));
     if (firstPlayable >= 0) playTrack(firstPlayable);
+  }
+
+  function qualityBadge(file?: ItemFile): { label: string; cls: string } | null {
+    if (!file) return null;
+    if (!file.lossless) return null;
+    const hiRes = (file.bit_depth ?? 0) > 16 || (file.sample_rate ?? 0) > 48000;
+    return hiRes ? { label: 'Hi-Res', cls: 'hires' } : { label: 'Lossless', cls: 'lossless' };
   }
 
   function formatDuration(ms?: number): string {
@@ -164,7 +175,7 @@
           {#if totalDuration()} · {totalDuration()}{/if}
         </div>
         <div class="actions">
-          <button class="btn-play" on:click={playAlbum} disabled={trackFiles.size === 0}>
+          <button class="btn-play" on:click={playAlbum} disabled={trackDetails.size === 0}>
             <span class="ico">▶</span> Play
           </button>
         </div>
@@ -177,8 +188,10 @@
     {:else}
       <ol class="tracks">
         {#each tracks as t, i (t.id)}
-          {@const playable = trackFiles.has(t.id)}
+          {@const detail = trackDetails.get(t.id)}
+          {@const playable = !!detail}
           {@const playing = nowPlayingId === t.id}
+          {@const badge = qualityBadge(detail?.files[0])}
           <li class="row" class:playing class:disabled={!playable}>
             <button class="num" on:click={() => playTrack(i)} disabled={!playable}
                     title={playable ? `Play ${t.title}` : 'No file available'}>
@@ -190,13 +203,26 @@
               {/if}
             </button>
             <div class="title">{t.title}</div>
+            {#if badge}
+              <span class="badge {badge.cls}" title="{badge.label} audio">{badge.label}</span>
+            {:else}
+              <span class="badge-spacer"></span>
+            {/if}
             <div class="dur">{formatDuration(t.duration_ms)}</div>
+            <button class="info" on:click={() => detail && (infoTrack = detail)}
+                    disabled={!detail} title="File details" aria-label="File details">
+              ⓘ
+            </button>
           </li>
         {/each}
       </ol>
     {/if}
   {/if}
 </div>
+
+{#if infoTrack}
+  <TrackInfo track={infoTrack} {album} on:close={() => infoTrack = null} />
+{/if}
 
 <style>
   .page { padding: 2.5rem 2.5rem 5rem; max-width: 1200px; margin: 0 auto; }
@@ -240,12 +266,28 @@
   .tracks { list-style: none; padding: 0; margin: 0;
             border-top: 1px solid var(--border, rgba(255,255,255,0.08)); }
   .row {
-    display: grid; grid-template-columns: 3rem 1fr auto;
+    display: grid; grid-template-columns: 3rem 1fr auto auto 2.5rem;
     gap: 0.75rem; align-items: center;
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
     font-size: 0.95rem;
   }
+  .badge {
+    display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px;
+    font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    line-height: 1.4;
+  }
+  .badge.hires { background: linear-gradient(135deg, #d4af37, #b8941f); color: #1a1a1a; }
+  .badge.lossless { background: var(--accent, #4a9eff); color: white; }
+  .badge-spacer { width: 0; }
+  .info {
+    background: transparent; border: 0; color: var(--text-muted);
+    cursor: pointer; padding: 0.3rem; font-size: 1rem; line-height: 1;
+    border-radius: 4px; opacity: 0;
+  }
+  .row:hover .info { opacity: 1; }
+  .info:hover:not(:disabled) { color: var(--accent); background: var(--surface-hover, rgba(255,255,255,0.06)); }
+  .info:disabled { cursor: not-allowed; }
   .row:hover:not(.disabled) { background: var(--surface-hover, rgba(255,255,255,0.04)); }
   .row.playing { color: var(--accent); }
   .row.disabled { opacity: 0.4; }

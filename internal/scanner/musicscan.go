@@ -83,23 +83,39 @@ func (s *Scanner) resolveArtistTitle(ctx context.Context, libraryID uuid.UUID, t
 }
 
 // processMusicHierarchy reads tags from a music file and ensures the
-// artist -> album -> track hierarchy exists. Returns the track item.
-func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID, path string, roots []string) (*media.Item, error) {
+// AlbumArtist -> Album -> Track hierarchy exists. Returns the track item and
+// the parsed tags (so the caller can thread ReplayGain and other per-file
+// audio-quality tags into the media_file insert).
+//
+// AlbumArtist is the binding key for the artist level — Artist changes
+// per-track on compilations and classical recordings, but AlbumArtist is
+// stable for the album. Picard-tagged libraries rely on this behaviour.
+func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID, path string, roots []string) (*media.Item, *MusicTags, error) {
 	tags, err := ReadMusicTags(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// 1. Find or create the artist (top-level, parent_id=null).
-	artistTitle := s.resolveArtistTitle(ctx, libraryID, tags.Artist)
-	artist, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
+	// 1. Find or create the artist (top-level, parent_id=null). Use the
+	//    album artist so compilations group under one parent rather than
+	//    fanning out to one artist per track.
+	artistTitle := s.resolveArtistTitle(ctx, libraryID, tags.AlbumArtist)
+	artistParams := media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "artist",
 		Title:     artistTitle,
 		SortTitle: sortTitle(artistTitle),
-	})
+	}
+	if tags.MBAlbumArtistID != uuid.Nil {
+		artistParams.MusicBrainzID = &tags.MBAlbumArtistID
+		artistParams.MusicBrainzArtistID = &tags.MBAlbumArtistID
+	} else if tags.MBArtistID != uuid.Nil {
+		artistParams.MusicBrainzID = &tags.MBArtistID
+		artistParams.MusicBrainzArtistID = &tags.MBArtistID
+	}
+	artist, err := s.media.FindOrCreateHierarchyItem(ctx, artistParams)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// 2. Find or create the album (parent_id=artist.id).
@@ -107,16 +123,45 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	if tags.Year != 0 {
 		albumYear = &tags.Year
 	}
-	album, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
-		LibraryID: libraryID,
-		Type:      "album",
-		Title:     tags.Album,
-		SortTitle: sortTitle(tags.Album),
-		Year:      albumYear,
-		ParentID:  &artist.ID,
-	})
+	var origYear *int
+	if tags.OriginalYear != 0 {
+		origYear = &tags.OriginalYear
+	}
+	var discTotal *int
+	if tags.DiscTotal > 0 {
+		discTotal = &tags.DiscTotal
+	}
+	var trackTotal *int
+	if tags.TrackTotal > 0 {
+		trackTotal = &tags.TrackTotal
+	}
+	albumParams := media.CreateItemParams{
+		LibraryID:    libraryID,
+		Type:         "album",
+		Title:        tags.Album,
+		SortTitle:    sortTitle(tags.Album),
+		Year:         albumYear,
+		OriginalYear: origYear,
+		ParentID:     &artist.ID,
+		Genres:       tags.Genres,
+		Compilation:  tags.Compilation,
+		ReleaseType:  tags.ReleaseType,
+		DiscTotal:    discTotal,
+		TrackTotal:   trackTotal,
+	}
+	if tags.MBReleaseID != uuid.Nil {
+		albumParams.MusicBrainzID = &tags.MBReleaseID
+		albumParams.MusicBrainzReleaseID = &tags.MBReleaseID
+	}
+	if tags.MBReleaseGroupID != uuid.Nil {
+		albumParams.MusicBrainzReleaseGroupID = &tags.MBReleaseGroupID
+	}
+	if tags.MBAlbumArtistID != uuid.Nil {
+		albumParams.MusicBrainzAlbumArtistID = &tags.MBAlbumArtistID
+	}
+	album, err := s.media.FindOrCreateHierarchyItem(ctx, albumParams)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// 3. Find or create the track (parent_id=album.id, index=track number).
@@ -124,11 +169,7 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	if tags.Track > 0 {
 		trackIndex = &tags.Track
 	}
-	var genres []string
-	if tags.Genre != "" {
-		genres = []string{tags.Genre}
-	}
-	track, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
+	trackParams := media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "track",
 		Title:     tags.Title,
@@ -136,10 +177,26 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 		Year:      albumYear,
 		ParentID:  &album.ID,
 		Index:     trackIndex,
-		Genres:    genres,
-	})
+		Genres:    tags.Genres,
+	}
+	if tags.MBRecordingID != uuid.Nil {
+		trackParams.MusicBrainzID = &tags.MBRecordingID
+	}
+	if tags.MBReleaseID != uuid.Nil {
+		trackParams.MusicBrainzReleaseID = &tags.MBReleaseID
+	}
+	if tags.MBReleaseGroupID != uuid.Nil {
+		trackParams.MusicBrainzReleaseGroupID = &tags.MBReleaseGroupID
+	}
+	if tags.MBArtistID != uuid.Nil {
+		trackParams.MusicBrainzArtistID = &tags.MBArtistID
+	}
+	if tags.MBAlbumArtistID != uuid.Nil {
+		trackParams.MusicBrainzAlbumArtistID = &tags.MBAlbumArtistID
+	}
+	track, err := s.media.FindOrCreateHierarchyItem(ctx, trackParams)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// 4. Extract embedded album art if available and poster is missing or stale.
@@ -148,7 +205,7 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 		s.extractAlbumArt(ctx, album, path, roots)
 	}
 
-	return track, nil
+	return track, tags, nil
 }
 
 // extractAlbumArt reads the embedded picture from a music file and writes

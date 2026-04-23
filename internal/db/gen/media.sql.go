@@ -69,35 +69,52 @@ const createMediaFile = `-- name: CreateMediaFile :one
 INSERT INTO media_files (
     media_item_id, file_path, file_size, container, video_codec,
     audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
-    audio_streams, subtitle_streams, chapters, file_hash, duration_ms
+    audio_streams, subtitle_streams, chapters, file_hash, duration_ms,
+    bit_depth, sample_rate, channel_layout, lossless,
+    replaygain_track_gain, replaygain_track_peak,
+    replaygain_album_gain, replaygain_album_peak
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14, $15, $16
+    $12, $13, $14, $15, $16,
+    $17, $18, $19, $20,
+    $21, $22,
+    $23, $24
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
           audio_streams, subtitle_streams, chapters, file_hash,
-          status, missing_since, scanned_at, created_at, duration_ms
+          status, missing_since, scanned_at, created_at, duration_ms,
+          bit_depth, sample_rate, channel_layout, lossless,
+          replaygain_track_gain, replaygain_track_peak,
+          replaygain_album_gain, replaygain_album_peak
 `
 
 type CreateMediaFileParams struct {
-	MediaItemID     uuid.UUID      `json:"media_item_id"`
-	FilePath        string         `json:"file_path"`
-	FileSize        int64          `json:"file_size"`
-	Container       *string        `json:"container"`
-	VideoCodec      *string        `json:"video_codec"`
-	AudioCodec      *string        `json:"audio_codec"`
-	ResolutionW     *int32         `json:"resolution_w"`
-	ResolutionH     *int32         `json:"resolution_h"`
-	Bitrate         *int64         `json:"bitrate"`
-	HdrType         *string        `json:"hdr_type"`
-	FrameRate       pgtype.Numeric `json:"frame_rate"`
-	AudioStreams    []byte         `json:"audio_streams"`
-	SubtitleStreams []byte         `json:"subtitle_streams"`
-	Chapters        []byte         `json:"chapters"`
-	FileHash        *string        `json:"file_hash"`
-	DurationMs      *int64         `json:"duration_ms"`
+	MediaItemID         uuid.UUID      `json:"media_item_id"`
+	FilePath            string         `json:"file_path"`
+	FileSize            int64          `json:"file_size"`
+	Container           *string        `json:"container"`
+	VideoCodec          *string        `json:"video_codec"`
+	AudioCodec          *string        `json:"audio_codec"`
+	ResolutionW         *int32         `json:"resolution_w"`
+	ResolutionH         *int32         `json:"resolution_h"`
+	Bitrate             *int64         `json:"bitrate"`
+	HdrType             *string        `json:"hdr_type"`
+	FrameRate           pgtype.Numeric `json:"frame_rate"`
+	AudioStreams        []byte         `json:"audio_streams"`
+	SubtitleStreams     []byte         `json:"subtitle_streams"`
+	Chapters            []byte         `json:"chapters"`
+	FileHash            *string        `json:"file_hash"`
+	DurationMs          *int64         `json:"duration_ms"`
+	BitDepth            *int32         `json:"bit_depth"`
+	SampleRate          *int32         `json:"sample_rate"`
+	ChannelLayout       *string        `json:"channel_layout"`
+	Lossless            *bool          `json:"lossless"`
+	ReplaygainTrackGain pgtype.Numeric `json:"replaygain_track_gain"`
+	ReplaygainTrackPeak pgtype.Numeric `json:"replaygain_track_peak"`
+	ReplaygainAlbumGain pgtype.Numeric `json:"replaygain_album_gain"`
+	ReplaygainAlbumPeak pgtype.Numeric `json:"replaygain_album_peak"`
 }
 
 // best quality first (ADR-031)
@@ -119,6 +136,14 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		arg.Chapters,
 		arg.FileHash,
 		arg.DurationMs,
+		arg.BitDepth,
+		arg.SampleRate,
+		arg.ChannelLayout,
+		arg.Lossless,
+		arg.ReplaygainTrackGain,
+		arg.ReplaygainTrackPeak,
+		arg.ReplaygainAlbumGain,
+		arg.ReplaygainAlbumPeak,
 	)
 	var i MediaFile
 	err := row.Scan(
@@ -143,6 +168,14 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		&i.ScannedAt,
 		&i.CreatedAt,
 		&i.DurationMs,
+		&i.BitDepth,
+		&i.SampleRate,
+		&i.ChannelLayout,
+		&i.Lossless,
+		&i.ReplaygainTrackGain,
+		&i.ReplaygainTrackPeak,
+		&i.ReplaygainAlbumGain,
+		&i.ReplaygainAlbumPeak,
 	)
 	return i, err
 }
@@ -152,6 +185,9 @@ INSERT INTO media_items (
     library_id, type, title, sort_title, original_title, year,
     summary, tagline, rating, audience_rating, content_rating, duration_ms,
     genres, tags, tmdb_id, tvdb_id, imdb_id,
+    musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
+    musicbrainz_artist_id, musicbrainz_album_artist_id,
+    disc_total, track_total, original_year, compilation, release_type,
     parent_id, index,
     poster_path, fanart_path, thumb_path,
     originally_available_at
@@ -159,72 +195,97 @@ INSERT INTO media_items (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17,
-    $18, $19,
-    $20, $21, $22,
-    $23
+    $18, $19, $20,
+    $21, $22,
+    $23, $24, $25, $26, $27,
+    $28, $29,
+    $30, $31, $32,
+    $33
 )
 RETURNING id, library_id, type, title, sort_title, original_title, year,
           summary, tagline, rating, audience_rating, content_rating, duration_ms,
-          genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+          genres, tags, tmdb_id, tvdb_id, imdb_id,
+          musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
+          musicbrainz_artist_id, musicbrainz_album_artist_id,
+          disc_total, track_total, original_year, compilation, release_type,
           parent_id, index, poster_path, fanart_path, thumb_path,
           originally_available_at, created_at, updated_at, deleted_at
 `
 
 type CreateMediaItemParams struct {
-	LibraryID             uuid.UUID      `json:"library_id"`
-	Type                  string         `json:"type"`
-	Title                 string         `json:"title"`
-	SortTitle             string         `json:"sort_title"`
-	OriginalTitle         *string        `json:"original_title"`
-	Year                  *int32         `json:"year"`
-	Summary               *string        `json:"summary"`
-	Tagline               *string        `json:"tagline"`
-	Rating                pgtype.Numeric `json:"rating"`
-	AudienceRating        pgtype.Numeric `json:"audience_rating"`
-	ContentRating         *string        `json:"content_rating"`
-	DurationMs            *int64         `json:"duration_ms"`
-	Genres                []string       `json:"genres"`
-	Tags                  []string       `json:"tags"`
-	TmdbID                *int32         `json:"tmdb_id"`
-	TvdbID                *int32         `json:"tvdb_id"`
-	ImdbID                *string        `json:"imdb_id"`
-	ParentID              pgtype.UUID    `json:"parent_id"`
-	Index                 *int32         `json:"index"`
-	PosterPath            *string        `json:"poster_path"`
-	FanartPath            *string        `json:"fanart_path"`
-	ThumbPath             *string        `json:"thumb_path"`
-	OriginallyAvailableAt pgtype.Date    `json:"originally_available_at"`
+	LibraryID                 uuid.UUID      `json:"library_id"`
+	Type                      string         `json:"type"`
+	Title                     string         `json:"title"`
+	SortTitle                 string         `json:"sort_title"`
+	OriginalTitle             *string        `json:"original_title"`
+	Year                      *int32         `json:"year"`
+	Summary                   *string        `json:"summary"`
+	Tagline                   *string        `json:"tagline"`
+	Rating                    pgtype.Numeric `json:"rating"`
+	AudienceRating            pgtype.Numeric `json:"audience_rating"`
+	ContentRating             *string        `json:"content_rating"`
+	DurationMs                *int64         `json:"duration_ms"`
+	Genres                    []string       `json:"genres"`
+	Tags                      []string       `json:"tags"`
+	TmdbID                    *int32         `json:"tmdb_id"`
+	TvdbID                    *int32         `json:"tvdb_id"`
+	ImdbID                    *string        `json:"imdb_id"`
+	MusicbrainzID             pgtype.UUID    `json:"musicbrainz_id"`
+	MusicbrainzReleaseID      pgtype.UUID    `json:"musicbrainz_release_id"`
+	MusicbrainzReleaseGroupID pgtype.UUID    `json:"musicbrainz_release_group_id"`
+	MusicbrainzArtistID       pgtype.UUID    `json:"musicbrainz_artist_id"`
+	MusicbrainzAlbumArtistID  pgtype.UUID    `json:"musicbrainz_album_artist_id"`
+	DiscTotal                 *int32         `json:"disc_total"`
+	TrackTotal                *int32         `json:"track_total"`
+	OriginalYear              *int32         `json:"original_year"`
+	Compilation               bool           `json:"compilation"`
+	ReleaseType               *string        `json:"release_type"`
+	ParentID                  pgtype.UUID    `json:"parent_id"`
+	Index                     *int32         `json:"index"`
+	PosterPath                *string        `json:"poster_path"`
+	FanartPath                *string        `json:"fanart_path"`
+	ThumbPath                 *string        `json:"thumb_path"`
+	OriginallyAvailableAt     pgtype.Date    `json:"originally_available_at"`
 }
 
 type CreateMediaItemRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	LibraryID             uuid.UUID          `json:"library_id"`
-	Type                  string             `json:"type"`
-	Title                 string             `json:"title"`
-	SortTitle             string             `json:"sort_title"`
-	OriginalTitle         *string            `json:"original_title"`
-	Year                  *int32             `json:"year"`
-	Summary               *string            `json:"summary"`
-	Tagline               *string            `json:"tagline"`
-	Rating                pgtype.Numeric     `json:"rating"`
-	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
-	ContentRating         *string            `json:"content_rating"`
-	DurationMs            *int64             `json:"duration_ms"`
-	Genres                []string           `json:"genres"`
-	Tags                  []string           `json:"tags"`
-	TmdbID                *int32             `json:"tmdb_id"`
-	TvdbID                *int32             `json:"tvdb_id"`
-	ImdbID                *string            `json:"imdb_id"`
-	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
-	ParentID              pgtype.UUID        `json:"parent_id"`
-	Index                 *int32             `json:"index"`
-	PosterPath            *string            `json:"poster_path"`
-	FanartPath            *string            `json:"fanart_path"`
-	ThumbPath             *string            `json:"thumb_path"`
-	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+	ID                        uuid.UUID          `json:"id"`
+	LibraryID                 uuid.UUID          `json:"library_id"`
+	Type                      string             `json:"type"`
+	Title                     string             `json:"title"`
+	SortTitle                 string             `json:"sort_title"`
+	OriginalTitle             *string            `json:"original_title"`
+	Year                      *int32             `json:"year"`
+	Summary                   *string            `json:"summary"`
+	Tagline                   *string            `json:"tagline"`
+	Rating                    pgtype.Numeric     `json:"rating"`
+	AudienceRating            pgtype.Numeric     `json:"audience_rating"`
+	ContentRating             *string            `json:"content_rating"`
+	DurationMs                *int64             `json:"duration_ms"`
+	Genres                    []string           `json:"genres"`
+	Tags                      []string           `json:"tags"`
+	TmdbID                    *int32             `json:"tmdb_id"`
+	TvdbID                    *int32             `json:"tvdb_id"`
+	ImdbID                    *string            `json:"imdb_id"`
+	MusicbrainzID             pgtype.UUID        `json:"musicbrainz_id"`
+	MusicbrainzReleaseID      pgtype.UUID        `json:"musicbrainz_release_id"`
+	MusicbrainzReleaseGroupID pgtype.UUID        `json:"musicbrainz_release_group_id"`
+	MusicbrainzArtistID       pgtype.UUID        `json:"musicbrainz_artist_id"`
+	MusicbrainzAlbumArtistID  pgtype.UUID        `json:"musicbrainz_album_artist_id"`
+	DiscTotal                 *int32             `json:"disc_total"`
+	TrackTotal                *int32             `json:"track_total"`
+	OriginalYear              *int32             `json:"original_year"`
+	Compilation               bool               `json:"compilation"`
+	ReleaseType               *string            `json:"release_type"`
+	ParentID                  pgtype.UUID        `json:"parent_id"`
+	Index                     *int32             `json:"index"`
+	PosterPath                *string            `json:"poster_path"`
+	FanartPath                *string            `json:"fanart_path"`
+	ThumbPath                 *string            `json:"thumb_path"`
+	OriginallyAvailableAt     pgtype.Date        `json:"originally_available_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt                 pgtype.Timestamptz `json:"deleted_at"`
 }
 
 func (q *Queries) CreateMediaItem(ctx context.Context, arg CreateMediaItemParams) (CreateMediaItemRow, error) {
@@ -246,6 +307,16 @@ func (q *Queries) CreateMediaItem(ctx context.Context, arg CreateMediaItemParams
 		arg.TmdbID,
 		arg.TvdbID,
 		arg.ImdbID,
+		arg.MusicbrainzID,
+		arg.MusicbrainzReleaseID,
+		arg.MusicbrainzReleaseGroupID,
+		arg.MusicbrainzArtistID,
+		arg.MusicbrainzAlbumArtistID,
+		arg.DiscTotal,
+		arg.TrackTotal,
+		arg.OriginalYear,
+		arg.Compilation,
+		arg.ReleaseType,
 		arg.ParentID,
 		arg.Index,
 		arg.PosterPath,
@@ -274,6 +345,15 @@ func (q *Queries) CreateMediaItem(ctx context.Context, arg CreateMediaItemParams
 		&i.TvdbID,
 		&i.ImdbID,
 		&i.MusicbrainzID,
+		&i.MusicbrainzReleaseID,
+		&i.MusicbrainzReleaseGroupID,
+		&i.MusicbrainzArtistID,
+		&i.MusicbrainzAlbumArtistID,
+		&i.DiscTotal,
+		&i.TrackTotal,
+		&i.OriginalYear,
+		&i.Compilation,
+		&i.ReleaseType,
 		&i.ParentID,
 		&i.Index,
 		&i.PosterPath,
@@ -515,7 +595,10 @@ const getMediaFile = `-- name: GetMediaFile :one
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE id = $1
 `
@@ -546,6 +629,14 @@ func (q *Queries) GetMediaFile(ctx context.Context, id uuid.UUID) (MediaFile, er
 		&i.ScannedAt,
 		&i.CreatedAt,
 		&i.DurationMs,
+		&i.BitDepth,
+		&i.SampleRate,
+		&i.ChannelLayout,
+		&i.Lossless,
+		&i.ReplaygainTrackGain,
+		&i.ReplaygainTrackPeak,
+		&i.ReplaygainAlbumGain,
+		&i.ReplaygainAlbumPeak,
 	)
 	return i, err
 }
@@ -554,7 +645,10 @@ const getMediaFileByHash = `-- name: GetMediaFileByHash :one
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE file_hash = $1 AND status IN ('missing', 'deleted')
 ORDER BY created_at DESC
@@ -586,6 +680,14 @@ func (q *Queries) GetMediaFileByHash(ctx context.Context, fileHash *string) (Med
 		&i.ScannedAt,
 		&i.CreatedAt,
 		&i.DurationMs,
+		&i.BitDepth,
+		&i.SampleRate,
+		&i.ChannelLayout,
+		&i.Lossless,
+		&i.ReplaygainTrackGain,
+		&i.ReplaygainTrackPeak,
+		&i.ReplaygainAlbumGain,
+		&i.ReplaygainAlbumPeak,
 	)
 	return i, err
 }
@@ -594,7 +696,10 @@ const getMediaFileByPath = `-- name: GetMediaFileByPath :one
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE file_path = $1
 `
@@ -624,6 +729,14 @@ func (q *Queries) GetMediaFileByPath(ctx context.Context, filePath string) (Medi
 		&i.ScannedAt,
 		&i.CreatedAt,
 		&i.DurationMs,
+		&i.BitDepth,
+		&i.SampleRate,
+		&i.ChannelLayout,
+		&i.Lossless,
+		&i.ReplaygainTrackGain,
+		&i.ReplaygainTrackPeak,
+		&i.ReplaygainAlbumGain,
+		&i.ReplaygainAlbumPeak,
 	)
 	return i, err
 }
@@ -631,7 +744,10 @@ func (q *Queries) GetMediaFileByPath(ctx context.Context, filePath string) (Medi
 const getMediaItem = `-- name: GetMediaItem :one
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
-       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       genres, tags, tmdb_id, tvdb_id, imdb_id,
+       musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
+       musicbrainz_artist_id, musicbrainz_album_artist_id,
+       disc_total, track_total, original_year, compilation, release_type,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
@@ -639,34 +755,43 @@ WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetMediaItemRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	LibraryID             uuid.UUID          `json:"library_id"`
-	Type                  string             `json:"type"`
-	Title                 string             `json:"title"`
-	SortTitle             string             `json:"sort_title"`
-	OriginalTitle         *string            `json:"original_title"`
-	Year                  *int32             `json:"year"`
-	Summary               *string            `json:"summary"`
-	Tagline               *string            `json:"tagline"`
-	Rating                pgtype.Numeric     `json:"rating"`
-	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
-	ContentRating         *string            `json:"content_rating"`
-	DurationMs            *int64             `json:"duration_ms"`
-	Genres                []string           `json:"genres"`
-	Tags                  []string           `json:"tags"`
-	TmdbID                *int32             `json:"tmdb_id"`
-	TvdbID                *int32             `json:"tvdb_id"`
-	ImdbID                *string            `json:"imdb_id"`
-	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
-	ParentID              pgtype.UUID        `json:"parent_id"`
-	Index                 *int32             `json:"index"`
-	PosterPath            *string            `json:"poster_path"`
-	FanartPath            *string            `json:"fanart_path"`
-	ThumbPath             *string            `json:"thumb_path"`
-	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+	ID                        uuid.UUID          `json:"id"`
+	LibraryID                 uuid.UUID          `json:"library_id"`
+	Type                      string             `json:"type"`
+	Title                     string             `json:"title"`
+	SortTitle                 string             `json:"sort_title"`
+	OriginalTitle             *string            `json:"original_title"`
+	Year                      *int32             `json:"year"`
+	Summary                   *string            `json:"summary"`
+	Tagline                   *string            `json:"tagline"`
+	Rating                    pgtype.Numeric     `json:"rating"`
+	AudienceRating            pgtype.Numeric     `json:"audience_rating"`
+	ContentRating             *string            `json:"content_rating"`
+	DurationMs                *int64             `json:"duration_ms"`
+	Genres                    []string           `json:"genres"`
+	Tags                      []string           `json:"tags"`
+	TmdbID                    *int32             `json:"tmdb_id"`
+	TvdbID                    *int32             `json:"tvdb_id"`
+	ImdbID                    *string            `json:"imdb_id"`
+	MusicbrainzID             pgtype.UUID        `json:"musicbrainz_id"`
+	MusicbrainzReleaseID      pgtype.UUID        `json:"musicbrainz_release_id"`
+	MusicbrainzReleaseGroupID pgtype.UUID        `json:"musicbrainz_release_group_id"`
+	MusicbrainzArtistID       pgtype.UUID        `json:"musicbrainz_artist_id"`
+	MusicbrainzAlbumArtistID  pgtype.UUID        `json:"musicbrainz_album_artist_id"`
+	DiscTotal                 *int32             `json:"disc_total"`
+	TrackTotal                *int32             `json:"track_total"`
+	OriginalYear              *int32             `json:"original_year"`
+	Compilation               bool               `json:"compilation"`
+	ReleaseType               *string            `json:"release_type"`
+	ParentID                  pgtype.UUID        `json:"parent_id"`
+	Index                     *int32             `json:"index"`
+	PosterPath                *string            `json:"poster_path"`
+	FanartPath                *string            `json:"fanart_path"`
+	ThumbPath                 *string            `json:"thumb_path"`
+	OriginallyAvailableAt     pgtype.Date        `json:"originally_available_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt                 pgtype.Timestamptz `json:"deleted_at"`
 }
 
 func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemRow, error) {
@@ -692,6 +817,15 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.TvdbID,
 		&i.ImdbID,
 		&i.MusicbrainzID,
+		&i.MusicbrainzReleaseID,
+		&i.MusicbrainzReleaseGroupID,
+		&i.MusicbrainzArtistID,
+		&i.MusicbrainzAlbumArtistID,
+		&i.DiscTotal,
+		&i.TrackTotal,
+		&i.OriginalYear,
+		&i.Compilation,
+		&i.ReleaseType,
 		&i.ParentID,
 		&i.Index,
 		&i.PosterPath,
@@ -828,7 +962,10 @@ const listActiveFilesForLibrary = `-- name: ListActiveFilesForLibrary :many
 SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
        mf.audio_codec, mf.resolution_w, mf.resolution_h, mf.bitrate, mf.hdr_type, mf.frame_rate,
        mf.audio_streams, mf.subtitle_streams, mf.chapters, mf.file_hash,
-       mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms
+       mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms,
+       mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
+       mf.replaygain_track_gain, mf.replaygain_track_peak,
+       mf.replaygain_album_gain, mf.replaygain_album_peak
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active'
@@ -865,6 +1002,14 @@ func (q *Queries) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 			&i.ScannedAt,
 			&i.CreatedAt,
 			&i.DurationMs,
+			&i.BitDepth,
+			&i.SampleRate,
+			&i.ChannelLayout,
+			&i.Lossless,
+			&i.ReplaygainTrackGain,
+			&i.ReplaygainTrackPeak,
+			&i.ReplaygainAlbumGain,
+			&i.ReplaygainAlbumPeak,
 		); err != nil {
 			return nil, err
 		}
@@ -1335,7 +1480,10 @@ const listMediaFilesForItem = `-- name: ListMediaFilesForItem :many
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC
@@ -1372,6 +1520,14 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID uuid.UU
 			&i.ScannedAt,
 			&i.CreatedAt,
 			&i.DurationMs,
+			&i.BitDepth,
+			&i.SampleRate,
+			&i.ChannelLayout,
+			&i.Lossless,
+			&i.ReplaygainTrackGain,
+			&i.ReplaygainTrackPeak,
+			&i.ReplaygainAlbumGain,
+			&i.ReplaygainAlbumPeak,
 		); err != nil {
 			return nil, err
 		}
@@ -2939,7 +3095,10 @@ const listMissingFilesOlderThan = `-- name: ListMissingFilesOlderThan :many
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000
@@ -2976,6 +3135,14 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 			&i.ScannedAt,
 			&i.CreatedAt,
 			&i.DurationMs,
+			&i.BitDepth,
+			&i.SampleRate,
+			&i.ChannelLayout,
+			&i.Lossless,
+			&i.ReplaygainTrackGain,
+			&i.ReplaygainTrackPeak,
+			&i.ReplaygainAlbumGain,
+			&i.ReplaygainAlbumPeak,
 		); err != nil {
 			return nil, err
 		}
@@ -3332,17 +3499,25 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
 FROM media_items
 WHERE library_id = $1
   AND deleted_at IS NULL
-  AND search_vector @@ plainto_tsquery('english', $2)
+  AND (
+        search_vector @@ websearch_to_tsquery('english', $2)
+     OR title % $2
+     OR (original_title IS NOT NULL AND original_title % $2)
+  )
   AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
-ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
+ORDER BY GREATEST(
+    ts_rank(search_vector, websearch_to_tsquery('english', $2)),
+    similarity(title, $2),
+    COALESCE(similarity(original_title, $2), 0)
+) DESC
 LIMIT $3
 `
 
 type SearchMediaItemsParams struct {
-	LibraryID      uuid.UUID `json:"library_id"`
-	PlaintoTsquery string    `json:"plainto_tsquery"`
-	Limit          int32     `json:"limit"`
-	MaxRatingRank  *int32    `json:"max_rating_rank"`
+	LibraryID          uuid.UUID `json:"library_id"`
+	WebsearchToTsquery string    `json:"websearch_to_tsquery"`
+	Limit              int32     `json:"limit"`
+	MaxRatingRank      *int32    `json:"max_rating_rank"`
 }
 
 type SearchMediaItemsRow struct {
@@ -3376,10 +3551,15 @@ type SearchMediaItemsRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
+// websearch_to_tsquery is more forgiving than plainto_tsquery: it accepts
+// "quoted phrases", -negation, and OR — the syntax users intuitively try.
+// Trigram fallback (% operator) catches typos and foreign titles that the
+// english stemmer can't match. Final rank is the GREATEST of FTS and trigram
+// similarities so an exact lexical match still beats a fuzzy one.
 func (q *Queries) SearchMediaItems(ctx context.Context, arg SearchMediaItemsParams) ([]SearchMediaItemsRow, error) {
 	rows, err := q.db.Query(ctx, searchMediaItems,
 		arg.LibraryID,
-		arg.PlaintoTsquery,
+		arg.WebsearchToTsquery,
 		arg.Limit,
 		arg.MaxRatingRank,
 	)
@@ -3438,16 +3618,24 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE deleted_at IS NULL
-  AND search_vector @@ plainto_tsquery('english', $1)
+  AND (
+        search_vector @@ websearch_to_tsquery('english', $1)
+     OR title % $1
+     OR (original_title IS NOT NULL AND original_title % $1)
+  )
   AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
-ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+ORDER BY GREATEST(
+    ts_rank(search_vector, websearch_to_tsquery('english', $1)),
+    similarity(title, $1),
+    COALESCE(similarity(original_title, $1), 0)
+) DESC
 LIMIT $2
 `
 
 type SearchMediaItemsGlobalParams struct {
-	PlaintoTsquery string `json:"plainto_tsquery"`
-	Limit          int32  `json:"limit"`
-	MaxRatingRank  *int32 `json:"max_rating_rank"`
+	WebsearchToTsquery string `json:"websearch_to_tsquery"`
+	Limit              int32  `json:"limit"`
+	MaxRatingRank      *int32 `json:"max_rating_rank"`
 }
 
 type SearchMediaItemsGlobalRow struct {
@@ -3481,8 +3669,10 @@ type SearchMediaItemsGlobalRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
+// See SearchMediaItems for query semantics. Global variant drops the
+// library_id filter; per-user library access is enforced in the handler.
 func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaItemsGlobalParams) ([]SearchMediaItemsGlobalRow, error) {
-	rows, err := q.db.Query(ctx, searchMediaItemsGlobal, arg.PlaintoTsquery, arg.Limit, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, searchMediaItemsGlobal, arg.WebsearchToTsquery, arg.Limit, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}

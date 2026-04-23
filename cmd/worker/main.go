@@ -45,7 +45,13 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	logLevel, err := cfg.LogLevelVar()
+	// Bootstrap-read general config (LogLevel) before the pool exists, mirroring
+	// the server. Missing row / table degrades to defaults.
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	generalCfg := settings.LoadGeneralConfig(bootCtx, cfg.DatabaseURL)
+	bootCancel()
+
+	logLevel, err := observability.NewLogLevelVar(generalCfg.LogLevel)
 	if err != nil {
 		return fmt.Errorf("log level: %w", err)
 	}
@@ -55,10 +61,36 @@ func run() error {
 	logger.Info("starting onscreen worker", "version", version, "build_time", buildTime)
 
 	hot := config.NewHotReloadable(cfg)
-	config.WatchSIGHUP(logger, hot, cfg, logLevel)
+	config.WatchSIGHUP(logger, hot, cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// ── OpenTelemetry tracing ────────────────────────────────────────────────
+	// Config lives in server_settings; bootstrap-read via a one-shot pgx.Conn
+	// so the TracerProvider is built before the instrumented pgxpool below
+	// (otelpgx caches the global TP at NewWithConfig time). Disabled when
+	// the admin hasn't enabled it. Separate service.name so worker spans group
+	// distinctly from the API.
+	otelCfg := settings.LoadOTelConfig(ctx, cfg.DatabaseURL)
+	otelEndpoint := ""
+	if otelCfg.Enabled {
+		otelEndpoint = otelCfg.Endpoint
+	}
+	tp, err := observability.NewTracerProvider(ctx, observability.TracerOptions{
+		Endpoint:       otelEndpoint,
+		ServiceName:    "onscreen-worker",
+		ServiceVersion: version,
+		DeploymentEnv:  otelCfg.DeploymentEnv,
+		SampleRatio:    otelCfg.SampleRatio,
+	})
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+	defer observability.ShutdownTracer(context.Background(), tp)
+	if tp != nil {
+		logger.Info("otel tracing enabled", "endpoint", otelCfg.Endpoint, "sample_ratio", otelCfg.SampleRatio)
+	}
 
 	// ── Database ──────────────────────────────────────────────────────────────
 	rwPool, err := db.NewPool(ctx, cfg.DatabaseURL)

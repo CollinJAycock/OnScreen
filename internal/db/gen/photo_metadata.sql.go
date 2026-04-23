@@ -12,6 +12,115 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPhotoMapPoints = `-- name: CountPhotoMapPoints :one
+SELECT COUNT(*)::bigint
+FROM media_items mi
+JOIN photo_metadata pm ON pm.item_id = mi.id
+WHERE mi.library_id = $1
+  AND mi.type = 'photo'
+  AND mi.deleted_at IS NULL
+  AND pm.gps_lat IS NOT NULL
+  AND pm.gps_lon IS NOT NULL
+`
+
+// Total geotagged photos in the library (ignoring bbox) so the client can
+// show "showing 5000 of 23107 — zoom in to see more" and decide whether
+// to bail on rendering.
+func (q *Queries) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPhotoMapPoints, libraryID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPhotosByExif = `-- name: CountPhotosByExif :one
+SELECT COUNT(*)
+FROM media_items mi
+JOIN photo_metadata pm ON pm.item_id = mi.id
+WHERE mi.library_id = $1
+  AND mi.type = 'photo'
+  AND mi.deleted_at IS NULL
+  AND ($2::text   IS NULL OR pm.camera_make  ILIKE '%' || $2::text  || '%')
+  AND ($3::text  IS NULL OR pm.camera_model ILIKE '%' || $3::text || '%')
+  AND ($4::text    IS NULL OR pm.lens_model   ILIKE '%' || $4::text   || '%')
+  AND ($5::double precision IS NULL OR pm.aperture        >= $5)
+  AND ($6::double precision IS NULL OR pm.aperture        <= $6)
+  AND ($7::int                   IS NULL OR pm.iso             >= $7)
+  AND ($8::int                   IS NULL OR pm.iso             <= $8)
+  AND ($9::double precision    IS NULL OR pm.focal_length_mm >= $9)
+  AND ($10::double precision    IS NULL OR pm.focal_length_mm <= $10)
+  AND ($11::timestamptz IS NULL OR pm.taken_at >= $11)
+  AND ($12::timestamptz   IS NULL OR pm.taken_at <= $12)
+  AND ($13::boolean IS NULL
+       OR ($13::boolean = true  AND pm.gps_lat IS NOT NULL AND pm.gps_lon IS NOT NULL)
+       OR ($13::boolean = false AND (pm.gps_lat IS NULL OR pm.gps_lon IS NULL)))
+`
+
+type CountPhotosByExifParams struct {
+	LibraryID   uuid.UUID          `json:"library_id"`
+	CameraMake  *string            `json:"camera_make"`
+	CameraModel *string            `json:"camera_model"`
+	LensModel   *string            `json:"lens_model"`
+	ApertureMin *float64           `json:"aperture_min"`
+	ApertureMax *float64           `json:"aperture_max"`
+	IsoMin      *int32             `json:"iso_min"`
+	IsoMax      *int32             `json:"iso_max"`
+	FocalMin    *float64           `json:"focal_min"`
+	FocalMax    *float64           `json:"focal_max"`
+	From        pgtype.Timestamptz `json:"from"`
+	To          pgtype.Timestamptz `json:"to"`
+	HasGps      *bool              `json:"has_gps"`
+}
+
+// Companion count for SearchPhotosByExif so paginated UIs can render a
+// total. Same filter semantics.
+func (q *Queries) CountPhotosByExif(ctx context.Context, arg CountPhotosByExifParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPhotosByExif,
+		arg.LibraryID,
+		arg.CameraMake,
+		arg.CameraModel,
+		arg.LensModel,
+		arg.ApertureMin,
+		arg.ApertureMax,
+		arg.IsoMin,
+		arg.IsoMax,
+		arg.FocalMin,
+		arg.FocalMax,
+		arg.From,
+		arg.To,
+		arg.HasGps,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countPhotosByLibrary = `-- name: CountPhotosByLibrary :one
+SELECT COUNT(*)
+FROM media_items mi
+LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
+WHERE mi.library_id = $1
+  AND mi.type = 'photo'
+  AND mi.deleted_at IS NULL
+  AND ($2::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $2)
+  AND ($3::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $3)
+`
+
+type CountPhotosByLibraryParams struct {
+	LibraryID uuid.UUID          `json:"library_id"`
+	From      pgtype.Timestamptz `json:"from"`
+	To        pgtype.Timestamptz `json:"to"`
+}
+
+// Companion count for ListPhotosByLibrary so paginated UIs can render a
+// total. Same date-range semantics.
+func (q *Queries) CountPhotosByLibrary(ctx context.Context, arg CountPhotosByLibraryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPhotosByLibrary, arg.LibraryID, arg.From, arg.To)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deletePhotoMetadata = `-- name: DeletePhotoMetadata :exec
 DELETE FROM photo_metadata WHERE item_id = $1
 `
@@ -54,6 +163,350 @@ func (q *Queries) GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (Photo
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listPhotoMapPoints = `-- name: ListPhotoMapPoints :many
+SELECT
+    mi.id, mi.library_id, mi.title, mi.poster_path,
+    pm.gps_lat, pm.gps_lon,
+    pm.taken_at, mi.created_at
+FROM media_items mi
+JOIN photo_metadata pm ON pm.item_id = mi.id
+WHERE mi.library_id = $1
+  AND mi.type = 'photo'
+  AND mi.deleted_at IS NULL
+  AND pm.gps_lat IS NOT NULL
+  AND pm.gps_lon IS NOT NULL
+  AND ($3::double precision IS NULL OR pm.gps_lat >= $3)
+  AND ($4::double precision IS NULL OR pm.gps_lat <= $4)
+  AND ($5::double precision IS NULL OR pm.gps_lon >= $5)
+  AND ($6::double precision IS NULL OR pm.gps_lon <= $6)
+ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id
+LIMIT $2
+`
+
+type ListPhotoMapPointsParams struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	Limit     int32     `json:"limit"`
+	MinLat    *float64  `json:"min_lat"`
+	MaxLat    *float64  `json:"max_lat"`
+	MinLon    *float64  `json:"min_lon"`
+	MaxLon    *float64  `json:"max_lon"`
+}
+
+type ListPhotoMapPointsRow struct {
+	ID         uuid.UUID          `json:"id"`
+	LibraryID  uuid.UUID          `json:"library_id"`
+	Title      string             `json:"title"`
+	PosterPath *string            `json:"poster_path"`
+	GpsLat     *float64           `json:"gps_lat"`
+	GpsLon     *float64           `json:"gps_lon"`
+	TakenAt    pgtype.Timestamptz `json:"taken_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+// Returns geotagged photos for a library as (id, lat, lon, taken_at, poster).
+// Bbox params are inclusive and optional — pass NULL for any of min/max
+// lat/lon to mean "no bound on this edge." Caller is responsible for
+// handling the antimeridian (west > east) by issuing two queries.
+// Hard cap on rows protects the wire from the worst case (200k geotagged
+// photos in one library) — clients are expected to either zoom in to
+// narrow the bbox or accept truncation at the limit.
+func (q *Queries) ListPhotoMapPoints(ctx context.Context, arg ListPhotoMapPointsParams) ([]ListPhotoMapPointsRow, error) {
+	rows, err := q.db.Query(ctx, listPhotoMapPoints,
+		arg.LibraryID,
+		arg.Limit,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLon,
+		arg.MaxLon,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPhotoMapPointsRow{}
+	for rows.Next() {
+		var i ListPhotoMapPointsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Title,
+			&i.PosterPath,
+			&i.GpsLat,
+			&i.GpsLon,
+			&i.TakenAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPhotoTimelineBuckets = `-- name: ListPhotoTimelineBuckets :many
+SELECT
+    EXTRACT(YEAR  FROM COALESCE(pm.taken_at, mi.created_at))::int AS year,
+    EXTRACT(MONTH FROM COALESCE(pm.taken_at, mi.created_at))::int AS month,
+    COUNT(*)::bigint AS count
+FROM media_items mi
+LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
+WHERE mi.library_id = $1
+  AND mi.type = 'photo'
+  AND mi.deleted_at IS NULL
+GROUP BY year, month
+ORDER BY year DESC, month DESC
+`
+
+type ListPhotoTimelineBucketsRow struct {
+	Year  int32 `json:"year"`
+	Month int32 `json:"month"`
+	Count int64 `json:"count"`
+}
+
+// Returns photo counts per (year, month) for a library. Used by the timeline
+// sidebar — clicking "March 2024" jumps the grid to the first photo of
+// that month. COALESCE(taken_at, created_at) keeps screenshots in the
+// timeline at their import date.
+func (q *Queries) ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID) ([]ListPhotoTimelineBucketsRow, error) {
+	rows, err := q.db.Query(ctx, listPhotoTimelineBuckets, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPhotoTimelineBucketsRow{}
+	for rows.Next() {
+		var i ListPhotoTimelineBucketsRow
+		if err := rows.Scan(&i.Year, &i.Month, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPhotosByLibrary = `-- name: ListPhotosByLibrary :many
+SELECT
+    mi.id, mi.library_id, mi.title, mi.poster_path,
+    mi.created_at, mi.updated_at,
+    pm.taken_at, pm.camera_make, pm.camera_model,
+    pm.width, pm.height, pm.orientation
+FROM media_items mi
+LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
+WHERE mi.library_id = $1
+  AND mi.type = 'photo'
+  AND mi.deleted_at IS NULL
+  AND ($4::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $4)
+  AND ($5::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $5)
+ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListPhotosByLibraryParams struct {
+	LibraryID uuid.UUID          `json:"library_id"`
+	Limit     int32              `json:"limit"`
+	Offset    int32              `json:"offset"`
+	From      pgtype.Timestamptz `json:"from"`
+	To        pgtype.Timestamptz `json:"to"`
+}
+
+type ListPhotosByLibraryRow struct {
+	ID          uuid.UUID          `json:"id"`
+	LibraryID   uuid.UUID          `json:"library_id"`
+	Title       string             `json:"title"`
+	PosterPath  *string            `json:"poster_path"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	TakenAt     pgtype.Timestamptz `json:"taken_at"`
+	CameraMake  *string            `json:"camera_make"`
+	CameraModel *string            `json:"camera_model"`
+	Width       *int32             `json:"width"`
+	Height      *int32             `json:"height"`
+	Orientation *int32             `json:"orientation"`
+}
+
+// Returns photo items for a library, joined with photo_metadata and ordered
+// by taken_at when present (with file mtime as fallback so screenshots and
+// EXIF-less PNGs still sort sensibly). Date range is inclusive on both ends;
+// pass NULL for from/to to mean "no bound." Used by /api/v1/photos to back
+// date-bucketed grids.
+func (q *Queries) ListPhotosByLibrary(ctx context.Context, arg ListPhotosByLibraryParams) ([]ListPhotosByLibraryRow, error) {
+	rows, err := q.db.Query(ctx, listPhotosByLibrary,
+		arg.LibraryID,
+		arg.Limit,
+		arg.Offset,
+		arg.From,
+		arg.To,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPhotosByLibraryRow{}
+	for rows.Next() {
+		var i ListPhotosByLibraryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Title,
+			&i.PosterPath,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TakenAt,
+			&i.CameraMake,
+			&i.CameraModel,
+			&i.Width,
+			&i.Height,
+			&i.Orientation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPhotosByExif = `-- name: SearchPhotosByExif :many
+SELECT
+    mi.id, mi.library_id, mi.title, mi.poster_path,
+    mi.created_at, mi.updated_at,
+    pm.taken_at, pm.camera_make, pm.camera_model,
+    pm.lens_model, pm.focal_length_mm, pm.aperture, pm.iso,
+    pm.width, pm.height, pm.orientation,
+    pm.gps_lat, pm.gps_lon
+FROM media_items mi
+JOIN photo_metadata pm ON pm.item_id = mi.id
+WHERE mi.library_id = $1
+  AND mi.type = 'photo'
+  AND mi.deleted_at IS NULL
+  AND ($4::text   IS NULL OR pm.camera_make  ILIKE '%' || $4::text  || '%')
+  AND ($5::text  IS NULL OR pm.camera_model ILIKE '%' || $5::text || '%')
+  AND ($6::text    IS NULL OR pm.lens_model   ILIKE '%' || $6::text   || '%')
+  AND ($7::double precision IS NULL OR pm.aperture        >= $7)
+  AND ($8::double precision IS NULL OR pm.aperture        <= $8)
+  AND ($9::int                   IS NULL OR pm.iso             >= $9)
+  AND ($10::int                   IS NULL OR pm.iso             <= $10)
+  AND ($11::double precision    IS NULL OR pm.focal_length_mm >= $11)
+  AND ($12::double precision    IS NULL OR pm.focal_length_mm <= $12)
+  AND ($13::timestamptz IS NULL OR pm.taken_at >= $13)
+  AND ($14::timestamptz   IS NULL OR pm.taken_at <= $14)
+  AND ($15::boolean IS NULL
+       OR ($15::boolean = true  AND pm.gps_lat IS NOT NULL AND pm.gps_lon IS NOT NULL)
+       OR ($15::boolean = false AND (pm.gps_lat IS NULL OR pm.gps_lon IS NULL)))
+ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id DESC
+LIMIT $2 OFFSET $3
+`
+
+type SearchPhotosByExifParams struct {
+	LibraryID   uuid.UUID          `json:"library_id"`
+	Limit       int32              `json:"limit"`
+	Offset      int32              `json:"offset"`
+	CameraMake  *string            `json:"camera_make"`
+	CameraModel *string            `json:"camera_model"`
+	LensModel   *string            `json:"lens_model"`
+	ApertureMin *float64           `json:"aperture_min"`
+	ApertureMax *float64           `json:"aperture_max"`
+	IsoMin      *int32             `json:"iso_min"`
+	IsoMax      *int32             `json:"iso_max"`
+	FocalMin    *float64           `json:"focal_min"`
+	FocalMax    *float64           `json:"focal_max"`
+	From        pgtype.Timestamptz `json:"from"`
+	To          pgtype.Timestamptz `json:"to"`
+	HasGps      *bool              `json:"has_gps"`
+}
+
+type SearchPhotosByExifRow struct {
+	ID            uuid.UUID          `json:"id"`
+	LibraryID     uuid.UUID          `json:"library_id"`
+	Title         string             `json:"title"`
+	PosterPath    *string            `json:"poster_path"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	TakenAt       pgtype.Timestamptz `json:"taken_at"`
+	CameraMake    *string            `json:"camera_make"`
+	CameraModel   *string            `json:"camera_model"`
+	LensModel     *string            `json:"lens_model"`
+	FocalLengthMm *float64           `json:"focal_length_mm"`
+	Aperture      *float64           `json:"aperture"`
+	Iso           *int32             `json:"iso"`
+	Width         *int32             `json:"width"`
+	Height        *int32             `json:"height"`
+	Orientation   *int32             `json:"orientation"`
+	GpsLat        *float64           `json:"gps_lat"`
+	GpsLon        *float64           `json:"gps_lon"`
+}
+
+// Filter photos by EXIF metadata. Every filter is optional — pass NULL to
+// skip it. Text fields use case-insensitive substring match (ILIKE %term%)
+// so "sony" matches both "SONY" and "Sony Group Corporation". Numeric
+// ranges are inclusive on both ends. has_gps=true requires both lat and
+// lon present; has_gps=false requires either to be null. NULL (unset)
+// means "don't filter on GPS." INNER JOIN on photo_metadata since every
+// non-trivial filter touches an EXIF field — photos without EXIF rows
+// would never match anyway.
+func (q *Queries) SearchPhotosByExif(ctx context.Context, arg SearchPhotosByExifParams) ([]SearchPhotosByExifRow, error) {
+	rows, err := q.db.Query(ctx, searchPhotosByExif,
+		arg.LibraryID,
+		arg.Limit,
+		arg.Offset,
+		arg.CameraMake,
+		arg.CameraModel,
+		arg.LensModel,
+		arg.ApertureMin,
+		arg.ApertureMax,
+		arg.IsoMin,
+		arg.IsoMax,
+		arg.FocalMin,
+		arg.FocalMax,
+		arg.From,
+		arg.To,
+		arg.HasGps,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchPhotosByExifRow{}
+	for rows.Next() {
+		var i SearchPhotosByExifRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Title,
+			&i.PosterPath,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TakenAt,
+			&i.CameraMake,
+			&i.CameraModel,
+			&i.LensModel,
+			&i.FocalLengthMm,
+			&i.Aperture,
+			&i.Iso,
+			&i.Width,
+			&i.Height,
+			&i.Orientation,
+			&i.GpsLat,
+			&i.GpsLon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertPhotoMetadata = `-- name: UpsertPhotoMetadata :exec

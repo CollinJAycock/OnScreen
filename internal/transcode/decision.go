@@ -48,7 +48,11 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	audioAlias := canonicalAudioCodec(audioCodec)
 	containerAlias := canonicalContainer(container)
 
-	clientSupportsVideo := caps.SupportsVideoCodec(videoAlias)
+	// Audio-only files (no video stream but a known audio codec) skip the
+	// video check; otherwise the empty videoAlias would never match a client
+	// codec and music would always fall through to Transcode.
+	audioOnly := videoAlias == "" && audioAlias != ""
+	clientSupportsVideo := audioOnly || caps.SupportsVideoCodec(videoAlias)
 	clientSupportsAudio := caps.SupportsAudioCodec(audioAlias) || audioAlias == ""
 	clientSupportsContainer := caps.SupportsContainer(containerAlias)
 

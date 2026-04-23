@@ -1,11 +1,17 @@
 // Package email provides SMTP-based email sending for OnScreen.
-// All email is optional — if SMTP is not configured, the Sender is nil
-// and callers should check before calling Send.
+//
+// SMTP credentials live in server_settings (admin Settings → Email), so the
+// Sender resolves Config on every Send rather than caching at startup. That
+// lets admins flip SMTP on/off and rotate credentials without restarting
+// the server. Callers should call Enabled(ctx) before invoking flows that
+// require email — the handler responds with a friendly "not configured"
+// error instead of a doomed SMTP dial.
 package email
 
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -13,8 +19,9 @@ import (
 	"time"
 )
 
-// Config holds SMTP connection parameters.
+// Config holds SMTP connection parameters resolved from server settings.
 type Config struct {
+	Enabled  bool
 	Host     string
 	Port     int
 	Username string
@@ -22,24 +29,53 @@ type Config struct {
 	From     string // e.g. "OnScreen <noreply@example.com>"
 }
 
-// Sender sends emails via SMTP.
-type Sender struct {
-	cfg Config
+// complete returns true when every field required to dial+send is populated.
+// Username/Password are optional (open relay or anonymous SMTP submission).
+func (c Config) complete() bool {
+	return c.Host != "" && c.Port != 0 && c.From != ""
 }
 
-// NewSender creates a new SMTP sender. Returns nil if the config is incomplete.
-func NewSender(cfg Config) *Sender {
-	if cfg.Host == "" || cfg.Port == 0 || cfg.From == "" {
-		return nil
+// ConfigFunc resolves the current SMTP configuration. Called on every
+// Enabled / Send invocation so that admin-side credential changes take
+// effect without a server restart.
+type ConfigFunc func(ctx context.Context) Config
+
+// ErrNotConfigured is returned by Send when SMTP is disabled or incomplete.
+var ErrNotConfigured = errors.New("email: SMTP is not configured")
+
+// Sender sends emails via SMTP using credentials resolved per-call from a
+// ConfigFunc. Always non-nil; check Enabled(ctx) for the live state.
+type Sender struct {
+	config ConfigFunc
+}
+
+// NewSender wires a Sender against a config provider.
+func NewSender(config ConfigFunc) *Sender {
+	if config == nil {
+		config = func(context.Context) Config { return Config{} }
 	}
-	return &Sender{cfg: cfg}
+	return &Sender{config: config}
+}
+
+// Enabled reports whether the current SMTP config is complete and toggled on.
+// Handlers gate their flows on this — the user-facing copy says "Email is
+// not configured on this server" rather than failing at SMTP-dial time.
+func (s *Sender) Enabled(ctx context.Context) bool {
+	cfg := s.config(ctx)
+	return cfg.Enabled && cfg.complete()
 }
 
 // Send sends an email with the given subject and HTML body to the recipients.
+// Returns ErrNotConfigured when SMTP is off or incomplete.
 func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string) error {
-	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
+	cfg := s.config(ctx)
+	if !cfg.Enabled || !cfg.complete() {
+		return ErrNotConfigured
+	}
 
-	msg := buildMessage(s.cfg.From, to, subject, htmlBody)
+	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
+
+	msg := buildMessage(cfg.From, to, subject, htmlBody)
 
 	// Connect to the SMTP server with a bounded deadline.
 	dialer := &net.Dialer{Timeout: 30 * time.Second}
@@ -48,7 +84,7 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 		return fmt.Errorf("email: dial %s: %w", addr, err)
 	}
 
-	c, err := smtp.NewClient(conn, s.cfg.Host)
+	c, err := smtp.NewClient(conn, cfg.Host)
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("email: smtp client: %w", err)
@@ -57,22 +93,22 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 
 	// STARTTLS if supported.
 	if ok, _ := c.Extension("STARTTLS"); ok {
-		tlsCfg := &tls.Config{ServerName: s.cfg.Host}
+		tlsCfg := &tls.Config{ServerName: cfg.Host}
 		if err := c.StartTLS(tlsCfg); err != nil {
 			return fmt.Errorf("email: starttls: %w", err)
 		}
 	}
 
 	// Authenticate if credentials provided.
-	if s.cfg.Username != "" && s.cfg.Password != "" {
-		auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
+	if cfg.Username != "" && cfg.Password != "" {
+		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 		if err := c.Auth(auth); err != nil {
 			return fmt.Errorf("email: auth: %w", err)
 		}
 	}
 
 	// Set sender.
-	if err := c.Mail(extractEmail(s.cfg.From)); err != nil {
+	if err := c.Mail(extractEmail(cfg.From)); err != nil {
 		return fmt.Errorf("email: mail from: %w", err)
 	}
 

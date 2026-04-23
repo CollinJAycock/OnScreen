@@ -71,17 +71,32 @@ func (m *mockPasswordResetDB) UpdatePassword(_ context.Context, userID uuid.UUID
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-// dummySender creates a real *email.Sender with localhost config.
-// It won't actually send (SMTP connect will fail) but is non-nil.
+// dummySender returns a Sender whose ConfigFunc reports a complete + enabled
+// SMTP config. Send won't actually deliver (localhost:1025 dial will fail),
+// but Enabled(ctx) is true so handlers proceed past the gate.
 func dummySender() *email.Sender {
-	return email.NewSender(email.Config{
-		Host: "localhost",
-		Port: 1025,
-		From: "test@test.com",
+	return email.NewSender(func(context.Context) email.Config {
+		return email.Config{
+			Enabled: true,
+			Host:    "localhost",
+			Port:    1025,
+			From:    "test@test.com",
+		}
 	})
 }
 
+// disabledSender returns a Sender whose ConfigFunc reports SMTP off — used
+// to exercise the "not configured" handler branch.
+func disabledSender() *email.Sender {
+	return email.NewSender(func(context.Context) email.Config { return email.Config{} })
+}
+
 func newPRHandler(db PasswordResetDB, sender *email.Sender) *PasswordResetHandler {
+	if sender == nil {
+		// Production wiring guarantees a non-nil sender; tests that pass nil
+		// only exercise paths (e.g. ResetPassword) that don't touch SMTP.
+		sender = disabledSender()
+	}
 	return NewPasswordResetHandler(db, sender, "http://localhost:3000", slog.Default())
 }
 
@@ -173,7 +188,7 @@ func TestForgotPassword_UserNotFound(t *testing.T) {
 
 func TestForgotPassword_SMTPNotConfigured(t *testing.T) {
 	db := &mockPasswordResetDB{}
-	h := newPRHandler(db, nil) // sender is nil
+	h := newPRHandler(db, disabledSender())
 
 	body := `{"email":"alice@example.com"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/forgot-password", strings.NewReader(body))

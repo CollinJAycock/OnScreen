@@ -120,6 +120,39 @@ func TestDecide_Transcode_ResolutionExceedsClient(t *testing.T) {
 	}
 }
 
+func TestDecide_AudioOnly_DirectPlay(t *testing.T) {
+	// Audio-only file with no video stream — should DirectPlay when client
+	// supports the audio codec + container.
+	file := media.File{
+		ID:          uuid.New(),
+		MediaItemID: uuid.New(),
+		FilePath:    "/media/song.flac",
+		AudioCodec:  strPtr("flac"),
+		Container:   strPtr("flac"),
+	}
+	caps := ParseCapabilities("audioDecoder=flac:mp3,protocols=flac:mp3")
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionDirectPlay {
+		t.Errorf("want DirectPlay for audio-only flac, got %s", got)
+	}
+}
+
+func TestDecide_AudioOnly_DirectStream_ContainerMismatch(t *testing.T) {
+	// FLAC audio with unsupported container — DirectStream (remux).
+	file := media.File{
+		ID:          uuid.New(),
+		MediaItemID: uuid.New(),
+		FilePath:    "/media/song.dsf",
+		AudioCodec:  strPtr("flac"),
+		Container:   strPtr("dsf"),
+	}
+	caps := ParseCapabilities("audioDecoder=flac:mp3,protocols=flac:mp3")
+	got := Decide(file, caps, defaultServerCaps)
+	if got != DecisionDirectStream {
+		t.Errorf("want DirectStream for FLAC in unsupported container, got %s", got)
+	}
+}
+
 func TestDecide_NilCodecs(t *testing.T) {
 	// File with no codec info — should not panic.
 	file := media.File{

@@ -97,10 +97,10 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows, qErr := h.db.SearchMediaItems(r.Context(), gen.SearchMediaItemsParams{
-			LibraryID:      uid,
-			PlaintoTsquery: query,
-			Limit:          limit,
-			MaxRatingRank:  maxRank,
+			LibraryID:          uid,
+			WebsearchToTsquery: query,
+			Limit:              limit,
+			MaxRatingRank:      maxRank,
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))
@@ -113,9 +113,9 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		rows, qErr := h.db.SearchMediaItemsGlobal(r.Context(), gen.SearchMediaItemsGlobalParams{
-			PlaintoTsquery: query,
-			Limit:          limit,
-			MaxRatingRank:  maxRank,
+			WebsearchToTsquery: query,
+			Limit:              limit,
+			MaxRatingRank:      maxRank,
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))

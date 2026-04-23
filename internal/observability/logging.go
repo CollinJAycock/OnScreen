@@ -2,9 +2,24 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 )
+
+// NewLogLevelVar parses a log level string ("debug" / "info" / "warn" / "error")
+// into an *slog.LevelVar. An empty string defaults to "info" so callers don't
+// have to special-case unset values from settings storage.
+func NewLogLevelVar(level string) (*slog.LevelVar, error) {
+	if level == "" {
+		level = "info"
+	}
+	var lv slog.LevelVar
+	if err := lv.UnmarshalText([]byte(level)); err != nil {
+		return nil, fmt.Errorf("invalid log level %q: %w", level, err)
+	}
+	return &lv, nil
+}
 
 type contextKey string
 
@@ -15,13 +30,17 @@ const (
 
 // NewLogger creates a structured JSON logger writing to stdout (12-factor).
 // The returned *slog.LevelVar allows changing the log level at runtime (SIGHUP).
+//
+// Log records written with a context carrying an active OTel span get
+// trace_id/span_id fields added automatically — lets operators jump from a
+// log line to the full distributed trace. No-op when no span is active.
 func NewLogger(level *slog.LevelVar) *slog.Logger {
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: level,
 		// Never log the following fields — enforced at source, but belt+suspenders:
 		// passwords, tokens, file_hash, user PINs.
 	})
-	return slog.New(handler)
+	return slog.New(NewTraceHandler(handler))
 }
 
 // WithRequestID returns a child logger with the request ID embedded.

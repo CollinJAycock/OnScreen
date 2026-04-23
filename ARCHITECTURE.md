@@ -210,8 +210,11 @@ OnScreen/
 | Table | Purpose |
 |---|---|
 | `libraries` | Media library roots; type, scan paths, scheduling intervals |
-| `media_items` | Items (movie/show/season/episode/track); hierarchy via `parent_id` |
-| `media_files` | Physical files; technical metadata (codec, resolution, HDR, streams); 3-state lifecycle |
+| `media_items` | Items (movie/show/season/episode/track/album/artist); hierarchy via `parent_id`. Music rows carry MusicBrainz IDs (recording/release/release-group/artist/album-artist), disc/track totals, original year, compilation flag, release type |
+| `media_files` | Physical files; technical metadata (codec, resolution, HDR, streams); 3-state lifecycle. Audio files additionally carry bit depth, sample rate, channel layout, lossless flag, ReplayGain track + album gain/peak |
+| `external_subtitles` | Sidecar subtitle tracks (OpenSubtitles downloads + OCR'd PGS/VOBSUB). UNIQUE on `(file_id, source, source_id)` so re-runs upsert in place |
+| `intro_markers` | Intro / credits / recap timestamps (auto from chapter heuristics, or admin-set via API) |
+| `trickplay_sheets` | Generated sprite-sheet thumbnails for HLS seek-bar previews |
 | `users` | Local accounts; bcrypt password + optional PIN |
 | `sessions` | Refresh token store; only hash stored, never raw token |
 | `watch_events` | Immutable play/pause/stop events; monthly partitions (ADR-002) |
@@ -467,9 +470,9 @@ watch_state (materialized view):
 
 | Signal | Implementation |
 |---|---|
-| **Structured logs** | `log/slog` JSON to stdout; request ID on every log line |
+| **Structured logs** | `log/slog` JSON to stdout; request ID on every log line; `trace_id`/`span_id` auto-added when a span is active |
 | **Metrics** | Prometheus; exposed at `METRICS_ADDR/metrics` |
-| **Tracing** | OpenTelemetry; disabled if `OTEL_EXPORTER_OTLP_ENDPOINT` unset |
+| **Tracing** | OpenTelemetry (OTLP/gRPC); configured in Settings → Observability and read once at startup (restart required). Auto-instruments HTTP (otelchi) + pgx (otelpgx). Custom spans on `scanner.library` and `transcode.run_job`. |
 | **Health** | `GET /health/live` (always 200); `GET /health/ready` (checks PG + Valkey) |
 
 ---
@@ -529,7 +532,7 @@ watch_state (materialized view):
 | **Phase 2** | ✅ Complete | Transcode pipeline: FFmpeg worker, HLS sessions, quality picker, NVENC support |
 | **Phase 3** | ✅ Complete | Native client: SvelteKit web player, progress tracking, Now Playing, analytics, artwork |
 | **Phase 4** | ✅ Complete | OSS launch: Docker image, CI/CD, TV show + music scanning, worker wiring |
-| **Phase 5** | 📋 Planned | pgvector similarity recommendations, TVDB/MusicBrainz, OTel tracing, HA guide |
+| **Phase 5** | 🚧 In progress | TVDB ✅, MusicBrainz ✅, intro/credits markers ✅, trickplay ✅, OCR subtitles ✅, OpenSubtitles ✅, audiophile music metadata ✅, photo EXIF ✅, MCP plugin system ✅, OTel tracing ✅, HA guide, pgvector similarity recommendations |
 
 ### Phase 4 Completed Items
 

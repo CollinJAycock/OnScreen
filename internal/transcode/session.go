@@ -137,6 +137,25 @@ func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 	return sessions, nil
 }
 
+// ListByUserItem returns active sessions belonging to userID for mediaItemID.
+// Used to enforce last-writer-wins semantics on Start: a fresh transcode
+// request from the same user on the same item supersedes any prior session
+// the user had for it (matches Plex/Jellyfin behavior — a new device taking
+// over kills the old playback).
+func (s *SessionStore) ListByUserItem(ctx context.Context, userID, mediaItemID uuid.UUID) ([]Session, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Session, 0, 1)
+	for _, sess := range all {
+		if sess.UserID == userID && sess.MediaItemID == mediaItemID {
+			out = append(out, sess)
+		}
+	}
+	return out, nil
+}
+
 // DeleteByMedia removes all sessions for the given media item.
 // Called by the progress endpoint on "stopped" to clean up even if the client
 // never explicitly hits the Stop endpoint (e.g. tab closed after playback ends).

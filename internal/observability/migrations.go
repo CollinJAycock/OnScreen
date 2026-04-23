@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"strconv"
-	"strings"
+
+	"github.com/onscreen/onscreen/internal/db/migrations"
 )
 
 // VersionQuerier is implemented by anything that can return the highest
@@ -28,7 +28,7 @@ type MigrationStatus struct {
 // CheckMigrations reads the embedded migration filenames, finds the highest
 // NNNNN_*.sql version, and compares it against the DB's goose_db_version.
 func CheckMigrations(ctx context.Context, vq VersionQuerier, migFS fs.FS) (MigrationStatus, error) {
-	expected, err := highestEmbeddedVersion(migFS)
+	expected, err := migrations.HighestVersion(migFS)
 	if err != nil {
 		return MigrationStatus{}, fmt.Errorf("scan embedded migrations: %w", err)
 	}
@@ -41,30 +41,4 @@ func CheckMigrations(ctx context.Context, vq VersionQuerier, migFS fs.FS) (Migra
 		pending = 0 // DB ahead of code (e.g. mid-rollback) — not our concern here
 	}
 	return MigrationStatus{Expected: expected, Applied: applied, Pending: pending}, nil
-}
-
-func highestEmbeddedVersion(migFS fs.FS) (int64, error) {
-	entries, err := fs.ReadDir(migFS, ".")
-	if err != nil {
-		return 0, err
-	}
-	var max int64
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		// Filename pattern: NNNNN_description.sql
-		idx := strings.IndexByte(e.Name(), '_')
-		if idx <= 0 {
-			continue
-		}
-		v, err := strconv.ParseInt(e.Name()[:idx], 10, 64)
-		if err != nil {
-			continue
-		}
-		if v > max {
-			max = v
-		}
-	}
-	return max, nil
 }

@@ -113,9 +113,9 @@ func (a *mediaAdapter) CountMediaItems(ctx context.Context, libraryID uuid.UUID,
 
 func (a *mediaAdapter) SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]media.Item, error) {
 	rows, err := a.q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:      libraryID,
-		PlaintoTsquery: query,
-		Limit:          limit,
+		LibraryID:          libraryID,
+		WebsearchToTsquery: query,
+		Limit:              limit,
 	})
 	if err != nil {
 		return nil, err
@@ -422,6 +422,195 @@ func (a *mediaAdapter) GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (
 		out.TakenAt = &t
 	}
 	return out, nil
+}
+
+func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, p media.ListPhotosParams) ([]media.PhotoListItem, error) {
+	rows, err := a.q.ListPhotosByLibrary(ctx, gen.ListPhotosByLibraryParams{
+		LibraryID: p.LibraryID,
+		Limit:     p.Limit,
+		Offset:    p.Offset,
+		From:      tsOrNull(p.From),
+		To:        tsOrNull(p.To),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.PhotoListItem, len(rows))
+	for i, r := range rows {
+		item := media.PhotoListItem{
+			ID:          r.ID,
+			LibraryID:   r.LibraryID,
+			Title:       r.Title,
+			PosterPath:  r.PosterPath,
+			CameraMake:  r.CameraMake,
+			CameraModel: r.CameraModel,
+			Width:       r.Width,
+			Height:      r.Height,
+			Orientation: r.Orientation,
+		}
+		if r.CreatedAt.Valid {
+			item.CreatedAt = r.CreatedAt.Time
+		}
+		if r.UpdatedAt.Valid {
+			item.UpdatedAt = r.UpdatedAt.Time
+		}
+		if r.TakenAt.Valid {
+			t := r.TakenAt.Time
+			item.TakenAt = &t
+		}
+		out[i] = item
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) CountPhotosByLibrary(ctx context.Context, p media.ListPhotosParams) (int64, error) {
+	return a.q.CountPhotosByLibrary(ctx, gen.CountPhotosByLibraryParams{
+		LibraryID: p.LibraryID,
+		From:      tsOrNull(p.From),
+		To:        tsOrNull(p.To),
+	})
+}
+
+func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID) ([]media.PhotoTimelineBucket, error) {
+	rows, err := a.q.ListPhotoTimelineBuckets(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.PhotoTimelineBucket, len(rows))
+	for i, r := range rows {
+		out[i] = media.PhotoTimelineBucket{
+			Year:  r.Year,
+			Month: r.Month,
+			Count: r.Count,
+		}
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, p media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error) {
+	rows, err := a.q.ListPhotoMapPoints(ctx, gen.ListPhotoMapPointsParams{
+		LibraryID: p.LibraryID,
+		Limit:     p.Limit,
+		MinLat:    p.MinLat,
+		MaxLat:    p.MaxLat,
+		MinLon:    p.MinLon,
+		MaxLon:    p.MaxLon,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.PhotoMapPoint, 0, len(rows))
+	for _, r := range rows {
+		// gps_lat/lon are NOT NULL filtered in SQL — but the generated row
+		// still types them as *float64 because the column is nullable. Skip
+		// the row defensively if either is unexpectedly nil rather than
+		// dereferencing a nil pointer.
+		if r.GpsLat == nil || r.GpsLon == nil {
+			continue
+		}
+		var takenAt *time.Time
+		if r.TakenAt.Valid {
+			t := r.TakenAt.Time
+			takenAt = &t
+		}
+		out = append(out, media.PhotoMapPoint{
+			ID:         r.ID,
+			LibraryID:  r.LibraryID,
+			Title:      r.Title,
+			PosterPath: r.PosterPath,
+			Lat:        *r.GpsLat,
+			Lon:        *r.GpsLon,
+			TakenAt:    takenAt,
+			CreatedAt:  r.CreatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	return a.q.CountPhotoMapPoints(ctx, libraryID)
+}
+
+func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error) {
+	rows, err := a.q.SearchPhotosByExif(ctx, gen.SearchPhotosByExifParams{
+		LibraryID:   p.LibraryID,
+		Limit:       p.Limit,
+		Offset:      p.Offset,
+		CameraMake:  p.CameraMake,
+		CameraModel: p.CameraModel,
+		LensModel:   p.LensModel,
+		ApertureMin: p.ApertureMin,
+		ApertureMax: p.ApertureMax,
+		IsoMin:      p.ISOMin,
+		IsoMax:      p.ISOMax,
+		FocalMin:    p.FocalMin,
+		FocalMax:    p.FocalMax,
+		From:        tsOrNull(p.From),
+		To:          tsOrNull(p.To),
+		HasGps:      p.HasGPS,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.PhotoSearchResult, len(rows))
+	for i, r := range rows {
+		item := media.PhotoSearchResult{
+			ID:            r.ID,
+			LibraryID:     r.LibraryID,
+			Title:         r.Title,
+			PosterPath:    r.PosterPath,
+			CameraMake:    r.CameraMake,
+			CameraModel:   r.CameraModel,
+			LensModel:     r.LensModel,
+			FocalLengthMM: r.FocalLengthMm,
+			Aperture:      r.Aperture,
+			ISO:           r.Iso,
+			Width:         r.Width,
+			Height:        r.Height,
+			Orientation:   r.Orientation,
+			GPSLat:        r.GpsLat,
+			GPSLon:        r.GpsLon,
+		}
+		if r.CreatedAt.Valid {
+			item.CreatedAt = r.CreatedAt.Time
+		}
+		if r.UpdatedAt.Valid {
+			item.UpdatedAt = r.UpdatedAt.Time
+		}
+		if r.TakenAt.Valid {
+			t := r.TakenAt.Time
+			item.TakenAt = &t
+		}
+		out[i] = item
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) CountPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) (int64, error) {
+	return a.q.CountPhotosByExif(ctx, gen.CountPhotosByExifParams{
+		LibraryID:   p.LibraryID,
+		CameraMake:  p.CameraMake,
+		CameraModel: p.CameraModel,
+		LensModel:   p.LensModel,
+		ApertureMin: p.ApertureMin,
+		ApertureMax: p.ApertureMax,
+		IsoMin:      p.ISOMin,
+		IsoMax:      p.ISOMax,
+		FocalMin:    p.FocalMin,
+		FocalMax:    p.FocalMax,
+		From:        tsOrNull(p.From),
+		To:          tsOrNull(p.To),
+		HasGps:      p.HasGPS,
+	})
+}
+
+// tsOrNull converts an optional time pointer into the pgtype.Timestamptz
+// that sqlc.narg generates as the bind parameter. nil → invalid (NULL).
+func tsOrNull(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
 }
 
 func photoMetadataParamsToGen(p media.PhotoMetadataParams) gen.UpsertPhotoMetadataParams {

@@ -39,7 +39,6 @@ type Config struct {
 	// ── Server ───────────────────────────────────────────────────────────────
 	ListenAddr   string `env:"LISTEN_ADDR"   envDefault:":7070"`
 	MetricsAddr  string `env:"METRICS_ADDR"  envDefault:":7071"`
-	LogLevel     string `env:"LOG_LEVEL"     envDefault:"info"`
 	RetainMonths int    `env:"RETAIN_MONTHS" envDefault:"24"`
 
 	// ServerName is the human-friendly name advertised over LAN discovery
@@ -84,38 +83,10 @@ type Config struct {
 	// ── Worker ───────────────────────────────────────────────────────────────
 	WorkerHealthAddr string `env:"WORKER_HEALTH_ADDR" envDefault:":7074"`
 
-	// ── Observability ────────────────────────────────────────────────────────
-	// OTELEndpoint: tracing is disabled if unset.
-	OTELEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
-
-	// ── SSO (optional) ──────────────────────────────────────────────────
-	// BaseURL: public URL of the server (e.g. https://media.example.com).
-	// Required for OIDC redirect URIs. Falls back to http://localhost:$LISTEN_ADDR.
-	BaseURL string `env:"BASE_URL"`
-
-	// ── Email / SMTP (optional) ─────────────────────────────────────────
-	SMTPHost     string `env:"SMTP_HOST"`
-	SMTPPort     int    `env:"SMTP_PORT"     envDefault:"587"`
-	SMTPUsername string `env:"SMTP_USERNAME"`
-	SMTPPassword string `env:"SMTP_PASSWORD"`
-	SMTPFrom     string `env:"SMTP_FROM"`
-
-	// ── Cross-origin clients ────────────────────────────────────────────
-	// CORSAllowedOrigins enables cross-origin XHR from listed origins.
-	// Use "*" to allow any origin — safe here because the API authenticates
-	// via Authorization: Bearer headers, not cookies. Empty disables CORS
-	// entirely (same-origin only), which is the default for web-only deploys.
-	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:","`
-
 	// ── Development ──────────────────────────────────────────────────────────
 	// DevFrontendURL: when set (build tag dev), Go server proxies non-API requests
 	// to this URL (Vite dev server on :5173). Ignored in production builds.
 	DevFrontendURL string `env:"DEV_FRONTEND_URL"`
-}
-
-// SMTPEnabled returns true if SMTP email sending is configured.
-func (c *Config) SMTPEnabled() bool {
-	return c.SMTPHost != "" && c.SMTPFrom != "" && c.SMTPUsername != "" && c.SMTPPassword != ""
 }
 
 // Load reads config from environment variables and validates required fields.
@@ -144,9 +115,6 @@ func (c *Config) applyDefaults() error {
 			home, _ := os.UserHomeDir()
 			c.CachePath = filepath.Join(home, ".onscreen", "cache", "artwork")
 		}
-	}
-	if c.BaseURL == "" {
-		c.BaseURL = "http://localhost" + c.ListenAddr
 	}
 	if c.ScanFileConcurrency == 0 {
 		c.ScanFileConcurrency = runtime.NumCPU() * 2
@@ -184,16 +152,6 @@ func (c *Config) applyDefaults() error {
 		c.TranscodeNVENCRC = "vbr"
 	}
 	return nil
-}
-
-// LogLevelVar returns an slog.LevelVar initialised to the configured log level.
-// The caller owns the returned var and can update it on SIGHUP.
-func (c *Config) LogLevelVar() (*slog.LevelVar, error) {
-	var lv slog.LevelVar
-	if err := lv.UnmarshalText([]byte(c.LogLevel)); err != nil {
-		return nil, fmt.Errorf("invalid LOG_LEVEL %q: %w", c.LogLevel, err)
-	}
-	return &lv, nil
 }
 
 // HotReloadable holds the subset of Config values that can be reloaded via SIGHUP.
@@ -291,7 +249,7 @@ func (h *HotReloadable) TranscodeMaxrateRatio() float64 {
 
 // Reload re-parses the environment and updates all hot-reloadable values.
 // Non-reloadable fields that have changed are logged as WARN.
-func (h *HotReloadable) Reload(logger *slog.Logger, current *Config, lv *slog.LevelVar) {
+func (h *HotReloadable) Reload(logger *slog.Logger, current *Config) {
 	next := &Config{}
 	if err := env.Parse(next); err != nil {
 		logger.Error("config reload failed", "err", err)
@@ -323,17 +281,6 @@ func (h *HotReloadable) Reload(logger *slog.Logger, current *Config, lv *slog.Le
 	h.transcodeNVENCRC = next.TranscodeNVENCRC
 	h.transcodeMaxrateRatio = next.TranscodeMaxrateRatio
 	h.mu.Unlock()
-
-	// Update log level atomically via slog.LevelVar.
-	if next.LogLevel != current.LogLevel {
-		var lv2 slog.LevelVar
-		if err := lv2.UnmarshalText([]byte(next.LogLevel)); err != nil {
-			logger.Warn("invalid LOG_LEVEL after reload, keeping current", "value", next.LogLevel, "err", err)
-		} else {
-			lv.Set(lv2.Level())
-			logger.Info("log level changed", "level", next.LogLevel)
-		}
-	}
 
 	logger.Info("config reloaded")
 }

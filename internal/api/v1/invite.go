@@ -49,7 +49,7 @@ type InviteTokenSummaryRow struct {
 // InviteHandler handles user invitation endpoints.
 type InviteHandler struct {
 	db      InviteDB
-	sender  *email.Sender // nil if SMTP not configured
+	sender  *email.Sender // always non-nil; live SMTP state via sender.Enabled(ctx)
 	baseURL string
 	logger  *slog.Logger
 }
@@ -102,7 +102,7 @@ func (h *InviteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	inviteURL := h.baseURL + "/invite?token=" + rawToken
 
 	// Send email if SMTP is configured and an email address was provided.
-	if h.sender != nil && body.Email != nil && *body.Email != "" {
+	if body.Email != nil && *body.Email != "" && h.sender.Enabled(r.Context()) {
 		subject, htmlBody := email.InviteEmail(claims.Username, inviteURL)
 		if err := h.sender.Send(r.Context(), []string{*body.Email}, subject, htmlBody); err != nil {
 			h.logger.ErrorContext(r.Context(), "invite: send email", "to", *body.Email, "err", err)

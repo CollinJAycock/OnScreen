@@ -46,7 +46,6 @@ services:
       VALKEY_URL: redis://valkey:6379
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       WORKER_ADDR: "worker-remote:7073"
     restart: unless-stopped
     healthcheck:

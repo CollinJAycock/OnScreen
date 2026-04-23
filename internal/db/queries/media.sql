@@ -1,7 +1,10 @@
 -- name: GetMediaItem :one
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
-       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       genres, tags, tmdb_id, tvdb_id, imdb_id,
+       musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
+       musicbrainz_artist_id, musicbrainz_album_artist_id,
+       disc_total, track_total, original_year, compilation, release_type,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
@@ -332,6 +335,9 @@ INSERT INTO media_items (
     library_id, type, title, sort_title, original_title, year,
     summary, tagline, rating, audience_rating, content_rating, duration_ms,
     genres, tags, tmdb_id, tvdb_id, imdb_id,
+    musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
+    musicbrainz_artist_id, musicbrainz_album_artist_id,
+    disc_total, track_total, original_year, compilation, release_type,
     parent_id, index,
     poster_path, fanart_path, thumb_path,
     originally_available_at
@@ -339,13 +345,19 @@ INSERT INTO media_items (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17,
-    $18, $19,
-    $20, $21, $22,
-    $23
+    $18, $19, $20,
+    $21, $22,
+    $23, $24, $25, $26, $27,
+    $28, $29,
+    $30, $31, $32,
+    $33
 )
 RETURNING id, library_id, type, title, sort_title, original_title, year,
           summary, tagline, rating, audience_rating, content_rating, duration_ms,
-          genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+          genres, tags, tmdb_id, tvdb_id, imdb_id,
+          musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
+          musicbrainz_artist_id, musicbrainz_album_artist_id,
+          disc_total, track_total, original_year, compilation, release_type,
           parent_id, index, poster_path, fanart_path, thumb_path,
           originally_available_at, created_at, updated_at, deleted_at;
 
@@ -420,6 +432,11 @@ SELECT COUNT(*) FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL;
 
 -- name: SearchMediaItems :many
+-- websearch_to_tsquery is more forgiving than plainto_tsquery: it accepts
+-- "quoted phrases", -negation, and OR — the syntax users intuitively try.
+-- Trigram fallback (% operator) catches typos and foreign titles that the
+-- english stemmer can't match. Final rank is the GREATEST of FTS and trigram
+-- similarities so an exact lexical match still beats a fuzzy one.
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
@@ -428,12 +445,22 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
 FROM media_items
 WHERE library_id = $1
   AND deleted_at IS NULL
-  AND search_vector @@ plainto_tsquery('english', $2)
+  AND (
+        search_vector @@ websearch_to_tsquery('english', $2)
+     OR title % $2
+     OR (original_title IS NOT NULL AND original_title % $2)
+  )
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
+ORDER BY GREATEST(
+    ts_rank(search_vector, websearch_to_tsquery('english', $2)),
+    similarity(title, $2),
+    COALESCE(similarity(original_title, $2), 0)
+) DESC
 LIMIT $3;
 
 -- name: SearchMediaItemsGlobal :many
+-- See SearchMediaItems for query semantics. Global variant drops the
+-- library_id filter; per-user library access is enforced in the handler.
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
@@ -441,9 +468,17 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE deleted_at IS NULL
-  AND search_vector @@ plainto_tsquery('english', $1)
+  AND (
+        search_vector @@ websearch_to_tsquery('english', $1)
+     OR title % $1
+     OR (original_title IS NOT NULL AND original_title % $1)
+  )
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+ORDER BY GREATEST(
+    ts_rank(search_vector, websearch_to_tsquery('english', $1)),
+    similarity(title, $1),
+    COALESCE(similarity(original_title, $1), 0)
+) DESC
 LIMIT $2;
 
 -- name: ListMediaItemsByTitle :many
@@ -711,7 +746,10 @@ LIMIT $2;
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE id = $1;
 
@@ -719,7 +757,10 @@ WHERE id = $1;
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE file_path = $1;
 
@@ -727,7 +768,10 @@ WHERE file_path = $1;
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE file_hash = $1 AND status IN ('missing', 'deleted')
 ORDER BY created_at DESC
@@ -737,7 +781,10 @@ LIMIT 1;
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best quality first (ADR-031)
@@ -746,16 +793,25 @@ ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best qua
 INSERT INTO media_files (
     media_item_id, file_path, file_size, container, video_codec,
     audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
-    audio_streams, subtitle_streams, chapters, file_hash, duration_ms
+    audio_streams, subtitle_streams, chapters, file_hash, duration_ms,
+    bit_depth, sample_rate, channel_layout, lossless,
+    replaygain_track_gain, replaygain_track_peak,
+    replaygain_album_gain, replaygain_album_peak
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14, $15, $16
+    $12, $13, $14, $15, $16,
+    $17, $18, $19, $20,
+    $21, $22,
+    $23, $24
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
           audio_streams, subtitle_streams, chapters, file_hash,
-          status, missing_since, scanned_at, created_at, duration_ms;
+          status, missing_since, scanned_at, created_at, duration_ms,
+          bit_depth, sample_rate, channel_layout, lossless,
+          replaygain_track_gain, replaygain_track_peak,
+          replaygain_album_gain, replaygain_album_peak;
 
 -- name: UpdateMediaFilePath :exec
 UPDATE media_files
@@ -816,7 +872,10 @@ WHERE id = $1;
 SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
        mf.audio_codec, mf.resolution_w, mf.resolution_h, mf.bitrate, mf.hdr_type, mf.frame_rate,
        mf.audio_streams, mf.subtitle_streams, mf.chapters, mf.file_hash,
-       mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms
+       mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms,
+       mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
+       mf.replaygain_track_gain, mf.replaygain_track_peak,
+       mf.replaygain_album_gain, mf.replaygain_album_peak
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';
@@ -889,7 +948,10 @@ WHERE parent.library_id = $1
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
        audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
        audio_streams, subtitle_streams, chapters, file_hash,
-       status, missing_since, scanned_at, created_at, duration_ms
+       status, missing_since, scanned_at, created_at, duration_ms,
+       bit_depth, sample_rate, channel_layout, lossless,
+       replaygain_track_gain, replaygain_track_peak,
+       replaygain_album_gain, replaygain_album_peak
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000;

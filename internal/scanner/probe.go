@@ -31,6 +31,15 @@ type ProbeResult struct {
 	AudioStreams    []byte
 	SubtitleStreams []byte
 	Chapters        []byte
+	// Audiophile-grade fields. Populated for the first audio stream when the
+	// file is audio-only (music library) — left nil otherwise so video rows
+	// don't accumulate stereo 48 kHz metadata that is redundant with the
+	// audio_streams JSONB. lossless is derived from the extension/codec at
+	// scan time, not from ffprobe directly.
+	BitDepth      *int
+	SampleRate    *int
+	ChannelLayout *string
+	Lossless      *bool
 }
 
 // ffprobeOutput is the top-level ffprobe JSON output structure.
@@ -41,19 +50,23 @@ type ffprobeOutput struct {
 }
 
 type ffprobeStream struct {
-	Index          int               `json:"index"`
-	CodecName      string            `json:"codec_name"`
-	CodecType      string            `json:"codec_type"`
-	Width          int               `json:"width"`
-	Height         int               `json:"height"`
-	RFrameRate     string            `json:"r_frame_rate"`
-	BitRate        string            `json:"bit_rate"`
-	Channels       int               `json:"channels"`
-	Tags           map[string]string `json:"tags"`
-	Disposition    map[string]int    `json:"disposition"`
-	ColorTransfer  string            `json:"color_transfer"`
-	ColorPrimaries string            `json:"color_primaries"`
-	SideDataList   []ffprobeSideData `json:"side_data_list"`
+	Index             int               `json:"index"`
+	CodecName         string            `json:"codec_name"`
+	CodecType         string            `json:"codec_type"`
+	Width             int               `json:"width"`
+	Height            int               `json:"height"`
+	RFrameRate        string            `json:"r_frame_rate"`
+	BitRate           string            `json:"bit_rate"`
+	Channels          int               `json:"channels"`
+	ChannelLayout     string            `json:"channel_layout"`
+	SampleRate        string            `json:"sample_rate"`
+	BitsPerRawSample  string            `json:"bits_per_raw_sample"`
+	BitsPerSample     int               `json:"bits_per_sample"`
+	Tags              map[string]string `json:"tags"`
+	Disposition       map[string]int    `json:"disposition"`
+	ColorTransfer     string            `json:"color_transfer"`
+	ColorPrimaries    string            `json:"color_primaries"`
+	SideDataList      []ffprobeSideData `json:"side_data_list"`
 }
 
 type ffprobeSideData struct {
@@ -153,14 +166,34 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 			lang := s.Tags["language"]
 			title := s.Tags["title"]
 			audioStreams = append(audioStreams, map[string]any{
-				"index":    s.Index,
-				"codec":    s.CodecName,
-				"channels": s.Channels,
-				"language": lang,
-				"title":    title,
+				"index":          s.Index,
+				"codec":          s.CodecName,
+				"channels":       s.Channels,
+				"channel_layout": s.ChannelLayout,
+				"sample_rate":    parseIntSafe(s.SampleRate),
+				"bit_depth":      streamBitDepth(&s),
+				"language":       lang,
+				"title":          title,
 			})
 			if result.AudioCodec == nil {
 				result.AudioCodec = &s.CodecName
+				// First-audio-stream characteristics populate the top-level
+				// audiophile fields. For music files these are the definitive
+				// values; for video files they describe the primary audio
+				// track, which is what a client-side quality badge reflects.
+				if sr := parseIntSafe(s.SampleRate); sr > 0 {
+					result.SampleRate = &sr
+				}
+				if bd := streamBitDepth(&s); bd > 0 {
+					result.BitDepth = &bd
+				}
+				if s.ChannelLayout != "" {
+					layout := s.ChannelLayout
+					result.ChannelLayout = &layout
+				} else if s.Channels > 0 {
+					layout := channelLayoutFromCount(s.Channels)
+					result.ChannelLayout = &layout
+				}
 			}
 
 		case "subtitle":
@@ -245,6 +278,50 @@ func parseFrameRate(s string) float64 {
 func parseTimeToMS(s string) int64 {
 	f, _ := strconv.ParseFloat(s, 64)
 	return int64(f * 1000)
+}
+
+func parseIntSafe(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// streamBitDepth prefers bits_per_raw_sample (the source format's true depth,
+// e.g. 24 for a 24-bit FLAC) and falls back to bits_per_sample (the decoded
+// bits, which equals raw depth for most codecs but not all). Returns 0 when
+// ffprobe exposes neither — common for lossy formats where "bit depth" is
+// not a meaningful concept.
+func streamBitDepth(s *ffprobeStream) int {
+	if s.BitsPerRawSample != "" {
+		if n, err := strconv.Atoi(s.BitsPerRawSample); err == nil && n > 0 {
+			return n
+		}
+	}
+	if s.BitsPerSample > 0 {
+		return s.BitsPerSample
+	}
+	return 0
+}
+
+// channelLayoutFromCount is the fallback when ffprobe reports channels but no
+// channel_layout string (happens for some codecs and containers). Maps the
+// common counts to their canonical layout names; anything exotic returns the
+// count as a string ("9 channels") so the caller has *something* to display.
+func channelLayoutFromCount(n int) string {
+	switch n {
+	case 1:
+		return "mono"
+	case 2:
+		return "stereo"
+	case 3:
+		return "2.1"
+	case 4:
+		return "quad"
+	case 6:
+		return "5.1"
+	case 8:
+		return "7.1"
+	}
+	return strconv.Itoa(n) + " channels"
 }
 
 // IsFaststart reports whether an MP4/MOV file has its moov atom before mdat

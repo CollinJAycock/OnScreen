@@ -14,7 +14,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("onscreen/transcode")
 
 var segmentBaseDir = filepath.Join(os.TempDir(), "onscreen", "sessions")
 
@@ -165,7 +171,25 @@ func (w *Worker) jobLoop(ctx context.Context) error {
 }
 
 // runJob executes a single transcode job.
-func (w *Worker) runJob(ctx context.Context, job TranscodeJob) error {
+func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
+	ctx, span := tracer.Start(ctx, "transcode.run_job", trace.WithAttributes(
+		attribute.String("session.id", job.SessionID),
+		attribute.String("decision", job.Decision),
+		attribute.String("encoder", job.Encoder),
+		attribute.Int("width", job.Width),
+		attribute.Int("height", job.Height),
+		attribute.Int("bitrate_kbps", job.BitrateKbps),
+		attribute.Bool("prefer_hevc", job.PreferHEVC),
+		attribute.Bool("needs_tonemap", job.NeedsToneMap),
+	))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	// Ensure session directory exists.
 	if err := os.MkdirAll(job.SessionDir, 0755); err != nil {
 		return fmt.Errorf("mkdir session dir: %w", err)

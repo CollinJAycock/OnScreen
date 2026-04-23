@@ -25,6 +25,9 @@ const keyIntroDetectionMode = "intro_detection_mode"
 const keyOpenSubtitlesConfig = "opensubtitles_config"
 const keyOIDCConfig = "oidc_config"
 const keyLDAPConfig = "ldap_config"
+const keySMTPConfig = "smtp_config"
+const keyOTelConfig = "otel_config"
+const keyGeneralConfig = "general_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -335,6 +338,125 @@ func (s *Service) SetLDAP(ctx context.Context, cfg LDAPConfig) error {
 		return err
 	}
 	return s.set(ctx, keyLDAPConfig, string(b))
+}
+
+// SMTPConfig holds the SMTP credentials used to send password-reset and
+// invite emails. Disabled or incomplete configs are treated as "email off"
+// — the API exposes the disabled state to the UI so admins know which
+// flows (password reset, invites) won't work yet.
+type SMTPConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	From     string `json:"from"` // e.g. "OnScreen <noreply@example.com>"
+}
+
+// SMTP returns the stored SMTP config or the zero value if not persisted.
+func (s *Service) SMTP(ctx context.Context) SMTPConfig {
+	raw := s.get(ctx, keySMTPConfig)
+	if raw == "" {
+		return SMTPConfig{}
+	}
+	var cfg SMTPConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse smtp_config", "err", err)
+		return SMTPConfig{}
+	}
+	return cfg
+}
+
+// SetSMTP persists the SMTP config as JSON.
+func (s *Service) SetSMTP(ctx context.Context, cfg SMTPConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keySMTPConfig, string(b))
+}
+
+// OTelConfig holds the OpenTelemetry OTLP/gRPC tracing configuration.
+// Tracing is wired at process startup, so changes here require a restart
+// before they take effect — the API surface flags this in its restart_required
+// hint.
+//
+// Endpoint must include a scheme (http:// or https://); TLS is enabled
+// automatically for https. SampleRatio is in [0,1]; values outside that range
+// are clamped at startup. DeploymentEnv is surfaced as the
+// deployment.environment resource attribute on every span.
+type OTelConfig struct {
+	Enabled       bool    `json:"enabled"`
+	Endpoint      string  `json:"endpoint"`
+	SampleRatio   float64 `json:"sample_ratio"`
+	DeploymentEnv string  `json:"deployment_env,omitempty"`
+}
+
+// OTel returns the stored OTel config or the zero value if not persisted.
+func (s *Service) OTel(ctx context.Context) OTelConfig {
+	raw := s.get(ctx, keyOTelConfig)
+	if raw == "" {
+		return OTelConfig{}
+	}
+	var cfg OTelConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse otel_config", "err", err)
+		return OTelConfig{}
+	}
+	return cfg
+}
+
+// SetOTel persists the OTel config as JSON.
+func (s *Service) SetOTel(ctx context.Context, cfg OTelConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyOTelConfig, string(b))
+}
+
+// GeneralConfig groups the general server settings that used to live in
+// optional environment variables. All three fields are read-once at startup
+// (the API surface flags this as restart-required), with the exception of
+// BaseURL which is consumed per-request and could be made dynamic later
+// without a schema change.
+//
+// BaseURL is the public URL of the server (used in OAuth/OIDC redirects,
+// password-reset emails, and capability discovery). Empty falls back to the
+// process-computed default of "http://localhost" + LISTEN_ADDR at startup.
+//
+// LogLevel maps to slog: debug | info | warn | error. Empty defaults to info.
+//
+// CORSAllowedOrigins is a list of origins permitted for cross-origin XHR.
+// Use ["*"] to allow any origin — safe because the API authenticates via
+// Authorization: Bearer headers, not cookies. Empty disables CORS entirely.
+type GeneralConfig struct {
+	BaseURL            string   `json:"base_url,omitempty"`
+	LogLevel           string   `json:"log_level,omitempty"`
+	CORSAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
+}
+
+// General returns the stored general server config or the zero value.
+func (s *Service) General(ctx context.Context) GeneralConfig {
+	raw := s.get(ctx, keyGeneralConfig)
+	if raw == "" {
+		return GeneralConfig{}
+	}
+	var cfg GeneralConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse general_config", "err", err)
+		return GeneralConfig{}
+	}
+	return cfg
+}
+
+// SetGeneral persists the general server config as JSON.
+func (s *Service) SetGeneral(ctx context.Context, cfg GeneralConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyGeneralConfig, string(b))
 }
 
 func (s *Service) get(ctx context.Context, key string) string {

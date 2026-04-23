@@ -36,6 +36,9 @@ type mockSettingsService struct {
 	setFleetCall *settings.WorkerFleetConfig // captures last SetWorkerFleet call
 	oidc         settings.OIDCConfig
 	ldap         settings.LDAPConfig
+	smtp         settings.SMTPConfig
+	otel         settings.OTelConfig
+	general      settings.GeneralConfig
 }
 
 func (m *mockSettingsService) TMDBAPIKey(_ context.Context) string {
@@ -110,6 +113,36 @@ func (m *mockSettingsService) SetLDAP(_ context.Context, cfg settings.LDAPConfig
 		return m.setErr
 	}
 	m.ldap = cfg
+	return nil
+}
+func (m *mockSettingsService) SMTP(_ context.Context) settings.SMTPConfig {
+	return m.smtp
+}
+func (m *mockSettingsService) SetSMTP(_ context.Context, cfg settings.SMTPConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.smtp = cfg
+	return nil
+}
+func (m *mockSettingsService) OTel(_ context.Context) settings.OTelConfig {
+	return m.otel
+}
+func (m *mockSettingsService) SetOTel(_ context.Context, cfg settings.OTelConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.otel = cfg
+	return nil
+}
+func (m *mockSettingsService) General(_ context.Context) settings.GeneralConfig {
+	return m.general
+}
+func (m *mockSettingsService) SetGeneral(_ context.Context, cfg settings.GeneralConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.general = cfg
 	return nil
 }
 

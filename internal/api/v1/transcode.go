@@ -203,6 +203,11 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		file = &files[0] // already sorted best quality first
 	}
 
+	// Last-writer-wins: if this user already has sessions running for this
+	// item (typical when a phone takes over from a TV), kill them first so
+	// we don't pile up GPU slots and orphan playlists.
+	h.supersedeUserItem(ctx, claims.UserID, itemID)
+
 	// Video-copy mode: remux video (no re-encode), only transcode audio.
 	// Used when the source video is already browser-compatible (H.264) but the
 	// audio codec or container is not.
@@ -391,26 +396,66 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 			respond.Forbidden(w, r)
 			return
 		}
-		// Kill FFmpeg immediately if we have an embedded worker reference.
-		// This prevents the process from writing to a directory we're about to remove.
-		if h.killer != nil {
-			h.killer.KillSession(sessionID)
-		}
-		// Revoke the segment token — prefer session-stored token, fall back to query param.
-		revokeToken := sess.SegToken
-		if revokeToken == "" {
-			revokeToken = token
-		}
-		if revokeToken != "" {
-			_ = h.segToken.Revoke(ctx, revokeToken)
-		}
-		_ = h.sessions.Delete(ctx, sessionID)
-		// Sanitize sessionID before using in filesystem path.
-		safeID := filepath.Base(sessionID)
-		go func() { _ = os.RemoveAll(transcode.SessionDir(safeID)) }()
+		h.tearDown(ctx, sess, token)
 	}
 
 	respond.NoContent(w)
+}
+
+// tearDown executes the kill-revoke-delete-rmrf cleanup for a single
+// session. Called by Stop (explicit shutdown) and by the supersede path
+// in Start (last-writer-wins). fallbackToken is only consulted when the
+// session row has no SegToken stamped on it — older sessions sometimes
+// carry the token only in the URL.
+func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.Session, fallbackToken string) {
+	// Kill FFmpeg immediately if we have an embedded worker reference.
+	// For remote workers, the Delete below triggers the worker's heartbeat
+	// loop to notice the missing session and kill its own process.
+	if h.killer != nil {
+		h.killer.KillSession(sess.ID)
+	}
+	revokeToken := sess.SegToken
+	if revokeToken == "" {
+		revokeToken = fallbackToken
+	}
+	if revokeToken != "" {
+		_ = h.segToken.Revoke(ctx, revokeToken)
+	}
+	_ = h.sessions.Delete(ctx, sess.ID)
+	safeID := filepath.Base(sess.ID)
+	go func() { _ = os.RemoveAll(transcode.SessionDir(safeID)) }()
+}
+
+// supersedeUserItem kills any sessions the same user already has running
+// for mediaItemID. Matches Plex/Jellyfin: starting playback on a new
+// device implicitly stops the old one. Logged so operators can see why a
+// player suddenly went dark when a phone took over.
+func (h *NativeTranscodeHandler) supersedeUserItem(ctx context.Context, userID, mediaItemID uuid.UUID) {
+	prior, err := h.sessions.ListByUserItem(ctx, userID, mediaItemID)
+	if err != nil {
+		// Best-effort — if the lookup fails the user just ends up with two
+		// concurrent sessions, the same as the pre-supersede behavior. Log
+		// and let Start proceed.
+		h.logger.WarnContext(ctx, "supersede: list prior sessions",
+			"user_id", userID, "item_id", mediaItemID, "err", err)
+		return
+	}
+	for i := range prior {
+		p := &prior[i]
+		h.logger.InfoContext(ctx, "transcode: superseding prior session",
+			"superseded_session", p.ID,
+			"user_id", userID, "item_id", mediaItemID,
+			"client_name", p.ClientName)
+		if h.audit != nil {
+			actor := userID
+			h.audit.Log(ctx, &actor, audit.ActionTranscodeStop, p.ID,
+				map[string]any{
+					"item_id": mediaItemID.String(),
+					"reason":  "superseded",
+				}, "")
+		}
+		h.tearDown(ctx, p, "")
+	}
 }
 
 // Playlist handles GET /api/v1/transcode/sessions/{sid}/playlist.m3u8.

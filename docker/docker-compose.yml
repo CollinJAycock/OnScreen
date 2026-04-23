@@ -27,6 +27,19 @@ services:
       timeout: 3s
       retries: 10
 
+  # Jaeger all-in-one for local trace inspection. Only active when the
+  # `tracing` compose profile is enabled:
+  #   docker compose --profile tracing up
+  # UI at http://localhost:16686; server sends OTLP to jaeger:4317.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    profiles: ["tracing"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:16686:16686"  # UI
+      - "127.0.0.1:4317:4317"    # OTLP gRPC
+
   migrate:
     image: ${ONSCREEN_IMAGE:-onscreen-server}
     entrypoint: ["/usr/local/bin/goose"]
@@ -53,7 +66,10 @@ services:
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      # OpenTelemetry tracing config now lives in the admin Settings UI
+      # (Settings → Observability). Bring up Jaeger alongside via
+      # `docker compose --profile tracing up`, then point the endpoint at
+      # http://jaeger:4317 from the UI.
     restart: unless-stopped
     ports:
       - "${SERVER_PORT:-7070}:7070"
@@ -83,8 +99,9 @@ services:
       MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       WORKER_ADDR: ":7073"
+      # OTel tracing config is admin-managed (Settings → Observability) and
+      # read from the DB at startup; no env vars required here.
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]

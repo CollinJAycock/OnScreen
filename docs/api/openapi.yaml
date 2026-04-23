@@ -2892,6 +2892,14 @@ components:
         hdr_type:          { type: string, nullable: true }
         duration_ms:       { type: integer, format: int64, nullable: true }
         faststart:         { type: boolean }
+        bit_depth:             { type: integer, nullable: true, description: 'Audio bit depth (e.g. 16, 24). Music files only.' }
+        sample_rate:           { type: integer, nullable: true, description: 'Audio sample rate in Hz (e.g. 44100, 96000). Music files only.' }
+        channel_layout:        { type: string, nullable: true, description: 'Channel layout label (mono, stereo, 5.1, …). Music files only.' }
+        lossless:              { type: boolean, nullable: true, description: 'True for FLAC/ALAC/WAV/etc. Music files only.' }
+        replaygain_track_gain: { type: number, format: double, nullable: true, description: 'ReplayGain track gain in dB. Music files only.' }
+        replaygain_track_peak: { type: number, format: double, nullable: true, description: 'ReplayGain track peak (linear; can exceed 1.0). Music files only.' }
+        replaygain_album_gain: { type: number, format: double, nullable: true, description: 'ReplayGain album gain in dB. Music files only.' }
+        replaygain_album_peak: { type: number, format: double, nullable: true, description: 'ReplayGain album peak (linear; can exceed 1.0). Music files only.' }
         audio_streams:     { type: array, items: { $ref: '#/components/schemas/AudioStream' } }
         subtitle_streams:  { type: array, items: { $ref: '#/components/schemas/SubtitleStream' } }
         external_subtitles: { type: array, items: { $ref: '#/components/schemas/ExternalSubtitle' } }
@@ -2918,6 +2926,16 @@ components:
         updated_at:     { type: integer, format: int64 }
         files:          { type: array, items: { $ref: '#/components/schemas/ItemFile' } }
         markers:        { type: array, items: { $ref: '#/components/schemas/Marker' } }
+        musicbrainz_id:               { type: string, format: uuid, nullable: true, description: 'Primary MBID for the row''s type (recording for tracks, release-group for albums, artist for artists).' }
+        musicbrainz_release_id:       { type: string, format: uuid, nullable: true }
+        musicbrainz_release_group_id: { type: string, format: uuid, nullable: true }
+        musicbrainz_artist_id:        { type: string, format: uuid, nullable: true }
+        musicbrainz_album_artist_id:  { type: string, format: uuid, nullable: true }
+        disc_total:    { type: integer, nullable: true }
+        track_total:   { type: integer, nullable: true }
+        original_year: { type: integer, nullable: true, description: 'Original work release year, distinct from `year` (which may reflect a reissue).' }
+        compilation:   { type: boolean, description: 'True for various-artists compilations.' }
+        release_type:  { type: string, nullable: true, description: 'MusicBrainz vocabulary: album, single, ep, live, soundtrack, …' }
     ChildItem:
       type: object
       properties:

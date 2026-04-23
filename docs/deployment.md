@@ -89,9 +89,10 @@
 
 ### Observability
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | (none) | OTLP endpoint for distributed tracing. Tracing is disabled if unset. |
+OpenTelemetry tracing (OTLP/gRPC) is configured from the admin Settings UI
+under **Settings → Observability** rather than environment variables. The
+tracer provider is built once at process startup, so a server/worker restart
+is required after changing the endpoint, sample ratio, or deployment env tag.
 
 ### OAuth / SSO (optional)
 

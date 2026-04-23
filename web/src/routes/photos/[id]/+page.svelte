@@ -63,6 +63,17 @@
     goto(`/photos/${p.id}`);
   }
 
+  // Always escape to the parent library — per-photo navigations push history
+  // entries, so history.back() would just step to the previous photo instead
+  // of leaving the viewer.
+  function close() {
+    if (item?.library_id) {
+      goto(`/libraries/${item.library_id}`);
+    } else {
+      goto('/');
+    }
+  }
+
   function clearSlideTimer() {
     if (slideTimer) { clearTimeout(slideTimer); slideTimer = null; }
   }
@@ -186,7 +197,8 @@
     else if (e.key === 'ArrowRight') { e.preventDefault(); go(nextPhoto); }
     else if (e.key === 'Escape') {
       if (slideshow) { slideshow = false; clearSlideTimer(); }
-      else history.back();
+      else if (showInfo) { showInfo = false; }
+      else close();
     }
     else if (e.key === 'i' || e.key === 'I') { showInfo = !showInfo; }
     else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomIn(); }
@@ -234,7 +246,7 @@
 
 <div class="page" class:dragging={isDragging} class:slideshow-on={slideshow}>
   <header class="bar">
-    <button class="icon-btn" on:click={() => history.back()} title="Back (Esc)">←</button>
+    <button class="icon-btn" on:click={close} title="Close (Esc)" aria-label="Close">✕</button>
     <div class="title-block">
       <div class="title">{item?.title ?? ''}</div>
       {#if exif?.taken_at}

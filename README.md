@@ -31,6 +31,8 @@ Plex, Jellyfin, and Emby are all great — OnScreen exists because we wanted som
 **Library**
 - Scan movies and TV shows from local directories; ffprobe extracts duration, streams, HDR type, and chapter markers
 - TMDB + TVDB metadata enrichment (posters, fanart, ratings, genres, summaries, content ratings)
+- Audiophile-grade music: ID3/Vorbis/MP4 tag reading via dhowden/tag, MusicBrainz cross-reference IDs, ReplayGain (track + album), bit depth, sample rate, channel layout, and lossless detection — exposed on the API as `bit_depth`, `sample_rate`, `lossless`, `replaygain_*`, and `musicbrainz_*` fields
+- Photo libraries with EXIF extraction (camera, lens, GPS, capture time)
 - Flexible matching with manual override when TMDB gets it wrong
 - Admin dedupe endpoints for duplicate shows/movies (two-pass normalization — handles `"Title"` vs `"Title YYYY"`, apostrophes, `&` vs `and`, HTML entities, prefix-extension folder names)
 
@@ -40,6 +42,11 @@ Plex, Jellyfin, and Emby are all great — OnScreen exists because we wanted som
 - HDR → SDR tonemapping (CUDA, OpenCL, or software zscale fallback)
 - HEVC direct play on Safari and other HEVC-capable browsers
 - JavaScript subtitle renderer with PTS offset detection and ±0.5s sync adjust
+- Subtitle OCR for image-based formats (PGS, VOBSUB, DVB) — ffmpeg + tesseract converts cues to WebVTT so any client can render them. Runs on-demand or as a nightly `ocr_subtitles` task
+- OpenSubtitles search and download from the player; OCR'd and downloaded subs share one `external_subtitles` table
+- Web audio player with album browsing, Hi-Res / Lossless quality badges, and a track-detail panel showing codec, bit depth, sample rate, ReplayGain, and MusicBrainz links
+- Trickplay seek-bar thumbnails generated from the source file
+- Intro / credits markers (auto + manual) with per-episode skip prompts
 - Chapter navigation (jump-to-chapter, next/prev buttons) from ffprobe-parsed chapter markers
 - Per-user default audio/subtitle language preferences — auto-selects matching tracks on load
 - Continue Watching + Recently Added hubs backed by materialized views
@@ -67,6 +74,7 @@ Plex, Jellyfin, and Emby are all great — OnScreen exists because we wanted som
 - Webhooks with HMAC-SHA256 signing and retry (compatible with Overseerr/Tautulli receivers)
 - `/health/ready` gated on schema-vs-code parity — container stays unhealthy until `goose up` has run
 - Prometheus metrics on a separate port
+- OpenTelemetry tracing (OTLP/gRPC) — auto-instruments HTTP + Postgres; logs carry trace IDs for pivoting from log → trace
 - Analytics dashboard (play counts, bandwidth, codec distribution, top played)
 
 ## Screenshots
@@ -132,6 +140,11 @@ Navigate to `http://localhost:5173`, create your admin account, add a library, a
 | `TVDB_API_KEY` | | TVDB v4 API key for show-level fallback |
 | `API_PORT` | | API server listen port (default `7070`) |
 | `METRICS_PORT` | | Prometheus metrics port (default `7071`) |
+
+OpenTelemetry tracing (OTLP/gRPC), SMTP, OIDC, LDAP and other integrations are
+now configured from the admin Settings UI rather than env vars. Tracing
+config is read at process startup, so a server/worker restart is required for
+changes to take effect.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full configuration reference and design notes.
 

@@ -1,43 +1,78 @@
 package email
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 )
 
 // ---------------------------------------------------------------------------
-// NewSender
+// Sender — Enabled / Send gating
 // ---------------------------------------------------------------------------
 
-func TestNewSender_NilWhenMissingHost(t *testing.T) {
-	s := NewSender(Config{Port: 587, From: "OnScreen <noreply@example.com>"})
-	if s != nil {
-		t.Fatal("expected nil sender when Host is empty")
+func staticConfig(c Config) ConfigFunc {
+	return func(context.Context) Config { return c }
+}
+
+func TestSender_Enabled_RequiresEnabledFlag(t *testing.T) {
+	s := NewSender(staticConfig(Config{
+		Host: "smtp.example.com", Port: 587, From: "OnScreen <noreply@example.com>",
+	}))
+	if s.Enabled(context.Background()) {
+		t.Fatal("expected Enabled=false when Config.Enabled is false")
 	}
 }
 
-func TestNewSender_NilWhenMissingPort(t *testing.T) {
-	s := NewSender(Config{Host: "smtp.example.com", From: "OnScreen <noreply@example.com>"})
-	if s != nil {
-		t.Fatal("expected nil sender when Port is 0")
+func TestSender_Enabled_IncompleteHost(t *testing.T) {
+	s := NewSender(staticConfig(Config{
+		Enabled: true, Port: 587, From: "OnScreen <noreply@example.com>",
+	}))
+	if s.Enabled(context.Background()) {
+		t.Fatal("expected Enabled=false when Host is empty")
 	}
 }
 
-func TestNewSender_NilWhenMissingFrom(t *testing.T) {
-	s := NewSender(Config{Host: "smtp.example.com", Port: 587})
-	if s != nil {
-		t.Fatal("expected nil sender when From is empty")
+func TestSender_Enabled_IncompletePort(t *testing.T) {
+	s := NewSender(staticConfig(Config{
+		Enabled: true, Host: "smtp.example.com", From: "OnScreen <noreply@example.com>",
+	}))
+	if s.Enabled(context.Background()) {
+		t.Fatal("expected Enabled=false when Port is 0")
 	}
 }
 
-func TestNewSender_ValidConfig(t *testing.T) {
-	s := NewSender(Config{
-		Host: "smtp.example.com",
-		Port: 587,
+func TestSender_Enabled_IncompleteFrom(t *testing.T) {
+	s := NewSender(staticConfig(Config{
+		Enabled: true, Host: "smtp.example.com", Port: 587,
+	}))
+	if s.Enabled(context.Background()) {
+		t.Fatal("expected Enabled=false when From is empty")
+	}
+}
+
+func TestSender_Enabled_FullConfig(t *testing.T) {
+	s := NewSender(staticConfig(Config{
+		Enabled: true, Host: "smtp.example.com", Port: 587,
 		From: "OnScreen <noreply@example.com>",
-	})
-	if s == nil {
-		t.Fatal("expected non-nil sender with valid config")
+	}))
+	if !s.Enabled(context.Background()) {
+		t.Fatal("expected Enabled=true with complete enabled config")
+	}
+}
+
+func TestSender_Send_ReturnsErrNotConfiguredWhenDisabled(t *testing.T) {
+	s := NewSender(staticConfig(Config{}))
+	err := s.Send(context.Background(), []string{"a@b.c"}, "hi", "<p>x</p>")
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("expected ErrNotConfigured, got %v", err)
+	}
+}
+
+func TestNewSender_NilConfigFuncSafe(t *testing.T) {
+	s := NewSender(nil)
+	if s.Enabled(context.Background()) {
+		t.Fatal("nil ConfigFunc should resolve to disabled")
 	}
 }
 

@@ -26,11 +26,21 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // goose needs the stdlib driver
+	"github.com/onscreen/onscreen/internal/db/migrations"
 )
 
 // New starts a PostgreSQL container, runs all migrations, and returns a pool.
 // The container is terminated and the pool closed via t.Cleanup.
 func New(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, _ := NewWithDSN(t)
+	return pool
+}
+
+// NewWithDSN is the same as New but also returns the connection string so
+// tests that need to invoke external tooling (pg_dump, pg_restore, goose)
+// against the same database can do so.
+func NewWithDSN(t *testing.T) (*pgxpool.Pool, string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -73,7 +83,7 @@ func New(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	return pool
+	return pool, connStr
 }
 
 func runMigrations(connStr string) error {
@@ -83,7 +93,10 @@ func runMigrations(connStr string) error {
 	}
 	defer db.Close()
 
-	goose.SetBaseFS(nil) // use filesystem (migrations dir)
+	// Embed-backed FS works regardless of the test's working directory; the
+	// previous filesystem-relative path broke the moment a test outside
+	// internal/db/ used this helper.
+	goose.SetBaseFS(migrations.FS)
 
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("set dialect: %w", err)
@@ -92,7 +105,7 @@ func runMigrations(connStr string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	if err := goose.UpContext(ctx, db, "internal/db/migrations"); err != nil {
+	if err := goose.UpContext(ctx, db, "."); err != nil {
 		return fmt.Errorf("goose up: %w", err)
 	}
 	return nil

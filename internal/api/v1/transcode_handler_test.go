@@ -261,6 +261,75 @@ func TestStop_ForbiddenForOtherUser(t *testing.T) {
 	}
 }
 
+// ── Start: last-writer-wins supersede ────────────────────────────────────────
+
+func TestStart_SupersedesPriorSessionForSameUserAndItem(t *testing.T) {
+	v := testvalkey.New(t)
+	store := transcode.NewSessionStore(v)
+	segToken := transcode.NewSegmentTokenManager(v)
+	cfg := &config.Config{TranscodeMaxHeight: 2160}
+
+	itemID := uuid.New()
+	fileID := uuid.New()
+	mediaSvc := &mockTranscodeMedia{
+		item: &media.Item{ID: itemID, Type: "movie", Title: "Test"},
+		files: []media.File{{
+			ID: fileID, MediaItemID: itemID,
+			FilePath:   "/media/test.mkv",
+			VideoCodec: strPtr("h264"),
+			AudioCodec: strPtr("aac"),
+		}},
+	}
+	h := NewNativeTranscodeHandler(store, segToken, mediaSvc, cfg, slog.Default())
+	killer := &mockSessionKiller{}
+	h.SetSessionKiller(killer)
+
+	userID := uuid.New()
+
+	// Pre-existing session this user has for itemID — and a noise session
+	// for the same item but a different user, to confirm we don't kill it.
+	priorSelf := transcode.Session{
+		ID: transcode.NewSessionID(), UserID: userID, MediaItemID: itemID,
+		FileID: fileID, Decision: "transcode", SegToken: "self-tok",
+		CreatedAt: time.Now().UTC(),
+	}
+	priorOther := transcode.Session{
+		ID: transcode.NewSessionID(), UserID: uuid.New(), MediaItemID: itemID,
+		FileID: fileID, Decision: "transcode", SegToken: "other-tok",
+		CreatedAt: time.Now().UTC(),
+	}
+	for _, s := range []transcode.Session{priorSelf, priorOther} {
+		if err := store.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed session %s: %v", s.ID, err)
+		}
+	}
+
+	body, _ := json.Marshal(transcodeStartRequest{Height: 720})
+	req := httptest.NewRequest("POST", "/api/v1/items/"+itemID.String()+"/transcode", bytes.NewReader(body))
+	req = withChiParam(req, "id", itemID.String())
+	claims := &auth.Claims{
+		UserID: userID, Username: "user", IsAdmin: false,
+		IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	req = req.WithContext(middleware.WithClaims(req.Context(), claims))
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, req)
+
+	// DispatchJob has no workers registered so Start fails after supersede
+	// runs. We don't care about the response code — we care that the prior
+	// self-session was killed and the other user's session was left alone.
+	if len(killer.killed) != 1 || killer.killed[0] != priorSelf.ID {
+		t.Fatalf("expected KillSession(%q), got %v", priorSelf.ID, killer.killed)
+	}
+	if _, err := store.Get(context.Background(), priorSelf.ID); err == nil {
+		t.Errorf("prior self-session should have been deleted")
+	}
+	if got, err := store.Get(context.Background(), priorOther.ID); err != nil || got == nil {
+		t.Errorf("other user's session must NOT be superseded; got err=%v sess=%v", err, got)
+	}
+}
+
 func TestStop_Unauthorized(t *testing.T) {
 	h, _ := newTestHandler(t)
 

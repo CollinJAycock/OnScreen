@@ -200,21 +200,29 @@ type SubtitleStreamJSON struct {
 
 // ItemFileResponse is the API representation of a media file.
 type ItemFileResponse struct {
-	ID              string               `json:"id"`
-	StreamURL       string               `json:"stream_url"`
-	Container       *string              `json:"container,omitempty"`
-	VideoCodec      *string              `json:"video_codec,omitempty"`
-	AudioCodec      *string              `json:"audio_codec,omitempty"`
-	ResolutionW     *int                 `json:"resolution_w,omitempty"`
-	ResolutionH     *int                 `json:"resolution_h,omitempty"`
-	Bitrate         *int64               `json:"bitrate,omitempty"`
-	HDRType         *string              `json:"hdr_type,omitempty"`
-	DurationMS      *int64               `json:"duration_ms,omitempty"`
-	Faststart       bool                 `json:"faststart"`
-	AudioStreams       []AudioStreamJSON       `json:"audio_streams"`
-	SubtitleStreams    []SubtitleStreamJSON    `json:"subtitle_streams"`
-	ExternalSubtitles  []ExternalSubtitleJSON  `json:"external_subtitles,omitempty"`
-	Chapters           []ChapterJSON           `json:"chapters"`
+	ID                  string                 `json:"id"`
+	StreamURL           string                 `json:"stream_url"`
+	Container           *string                `json:"container,omitempty"`
+	VideoCodec          *string                `json:"video_codec,omitempty"`
+	AudioCodec          *string                `json:"audio_codec,omitempty"`
+	ResolutionW         *int                   `json:"resolution_w,omitempty"`
+	ResolutionH         *int                   `json:"resolution_h,omitempty"`
+	Bitrate             *int64                 `json:"bitrate,omitempty"`
+	HDRType             *string                `json:"hdr_type,omitempty"`
+	DurationMS          *int64                 `json:"duration_ms,omitempty"`
+	Faststart           bool                   `json:"faststart"`
+	BitDepth            *int                   `json:"bit_depth,omitempty"`
+	SampleRate          *int                   `json:"sample_rate,omitempty"`
+	ChannelLayout       *string                `json:"channel_layout,omitempty"`
+	Lossless            *bool                  `json:"lossless,omitempty"`
+	ReplayGainTrackGain *float64               `json:"replaygain_track_gain,omitempty"`
+	ReplayGainTrackPeak *float64               `json:"replaygain_track_peak,omitempty"`
+	ReplayGainAlbumGain *float64               `json:"replaygain_album_gain,omitempty"`
+	ReplayGainAlbumPeak *float64               `json:"replaygain_album_peak,omitempty"`
+	AudioStreams        []AudioStreamJSON      `json:"audio_streams"`
+	SubtitleStreams     []SubtitleStreamJSON   `json:"subtitle_streams"`
+	ExternalSubtitles   []ExternalSubtitleJSON `json:"external_subtitles,omitempty"`
+	Chapters            []ChapterJSON          `json:"chapters"`
 }
 
 // ChapterJSON is the API representation of a chapter marker.
@@ -254,6 +262,18 @@ type ItemDetailResponse struct {
 	UpdatedAt     int64              `json:"updated_at"`
 	Files         []ItemFileResponse `json:"files"`
 	Markers       []MarkerJSON       `json:"markers,omitempty"`
+
+	// Music-specific fields. Empty/nil for non-music items.
+	MusicBrainzID             *string `json:"musicbrainz_id,omitempty"`
+	MusicBrainzReleaseID      *string `json:"musicbrainz_release_id,omitempty"`
+	MusicBrainzReleaseGroupID *string `json:"musicbrainz_release_group_id,omitempty"`
+	MusicBrainzArtistID       *string `json:"musicbrainz_artist_id,omitempty"`
+	MusicBrainzAlbumArtistID  *string `json:"musicbrainz_album_artist_id,omitempty"`
+	DiscTotal                 *int    `json:"disc_total,omitempty"`
+	TrackTotal                *int    `json:"track_total,omitempty"`
+	OriginalYear              *int    `json:"original_year,omitempty"`
+	Compilation               bool    `json:"compilation,omitempty"`
+	ReleaseType               *string `json:"release_type,omitempty"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
@@ -358,26 +378,44 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		s := item.ParentID.String()
 		out.ParentID = &s
 	}
+	out.MusicBrainzID = uuidPtrToStringPtr(item.MusicBrainzID)
+	out.MusicBrainzReleaseID = uuidPtrToStringPtr(item.MusicBrainzReleaseID)
+	out.MusicBrainzReleaseGroupID = uuidPtrToStringPtr(item.MusicBrainzReleaseGroupID)
+	out.MusicBrainzArtistID = uuidPtrToStringPtr(item.MusicBrainzArtistID)
+	out.MusicBrainzAlbumArtistID = uuidPtrToStringPtr(item.MusicBrainzAlbumArtistID)
+	out.DiscTotal = item.DiscTotal
+	out.TrackTotal = item.TrackTotal
+	out.OriginalYear = item.OriginalYear
+	out.Compilation = item.Compilation
+	out.ReleaseType = item.ReleaseType
 
 	for _, f := range files {
 		if f.Status != "active" {
 			continue
 		}
 		fr := ItemFileResponse{
-			ID:              f.ID.String(),
-			StreamURL:       "/media/stream/" + f.ID.String(),
-			Container:       f.Container,
-			VideoCodec:      f.VideoCodec,
-			AudioCodec:      f.AudioCodec,
-			ResolutionW:     f.ResolutionW,
-			ResolutionH:     f.ResolutionH,
-			Bitrate:         f.Bitrate,
-			HDRType:         f.HDRType,
-			DurationMS:      f.DurationMS,
-			Faststart:       scanner.IsFaststart(f.FilePath),
-			AudioStreams:    parseJSONBAudioStreams(f.AudioStreams),
-			SubtitleStreams: parseJSONBSubtitleStreams(f.SubtitleStreams),
-			Chapters:        parseJSONBChapters(f.Chapters),
+			ID:                  f.ID.String(),
+			StreamURL:           "/media/stream/" + f.ID.String(),
+			Container:           f.Container,
+			VideoCodec:          f.VideoCodec,
+			AudioCodec:          f.AudioCodec,
+			ResolutionW:         f.ResolutionW,
+			ResolutionH:         f.ResolutionH,
+			Bitrate:             f.Bitrate,
+			HDRType:             f.HDRType,
+			DurationMS:          f.DurationMS,
+			Faststart:           scanner.IsFaststart(f.FilePath),
+			BitDepth:            f.BitDepth,
+			SampleRate:          f.SampleRate,
+			ChannelLayout:       f.ChannelLayout,
+			Lossless:            f.Lossless,
+			ReplayGainTrackGain: f.ReplayGainTrackGain,
+			ReplayGainTrackPeak: f.ReplayGainTrackPeak,
+			ReplayGainAlbumGain: f.ReplayGainAlbumGain,
+			ReplayGainAlbumPeak: f.ReplayGainAlbumPeak,
+			AudioStreams:        parseJSONBAudioStreams(f.AudioStreams),
+			SubtitleStreams:     parseJSONBSubtitleStreams(f.SubtitleStreams),
+			Chapters:            parseJSONBChapters(f.Chapters),
 		}
 		if h.subs != nil {
 			if rows, err := h.subs.List(r.Context(), f.ID); err == nil && len(rows) > 0 {
@@ -1089,6 +1127,14 @@ func asFloat64(v any) float64 {
 func asBool(v any) bool {
 	b, _ := v.(bool)
 	return b
+}
+
+func uuidPtrToStringPtr(u *uuid.UUID) *string {
+	if u == nil {
+		return nil
+	}
+	s := u.String()
+	return &s
 }
 
 // ServeSubtitle handles GET /media/subtitles/{fileId}/{streamIndex}.

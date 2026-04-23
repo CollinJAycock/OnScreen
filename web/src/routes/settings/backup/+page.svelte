@@ -1,12 +1,26 @@
 <script lang="ts">
   import { toast } from '$lib/stores/toast';
 
+  type RestoreResult = {
+    exit_error?: string;
+    stderr?: string;
+    dump_version?: number;
+    server_version?: number;
+    migrated?: boolean;
+    migrate_error?: string;
+    forced?: boolean;
+  };
+
   let restoring = false;
   let downloading = false;
   let confirmText = '';
   let fileInput: HTMLInputElement;
   let pickedName = '';
-  let lastResult: { exit_error?: string; stderr?: string } | null = null;
+  let lastResult: RestoreResult | null = null;
+  let lastDownloadedVersion: number | null = null;
+  // Set when the server refuses a restore because the dump is from a newer
+  // build. Lets the operator click "Restore anyway" to retry with ?force=true.
+  let pendingForce: { dump: number; server: number; message: string } | null = null;
 
   // Backup is fetched (not a plain <a download>) so a JSON error body
   // from the server surfaces as a toast instead of being silently saved
@@ -19,6 +33,8 @@
         const json = await resp.json().catch(() => null);
         throw new Error(json?.error?.message ?? `HTTP ${resp.status}`);
       }
+      const v = resp.headers.get('X-OnScreen-Schema-Version');
+      lastDownloadedVersion = v ? Number(v) : null;
       const blob = await resp.blob();
       const cd = resp.headers.get('Content-Disposition') ?? '';
       const m = cd.match(/filename="([^"]+)"/);
@@ -42,9 +58,10 @@
     const f = (e.target as HTMLInputElement).files?.[0];
     pickedName = f ? f.name : '';
     lastResult = null;
+    pendingForce = null;
   }
 
-  async function restore() {
+  async function doRestore(force: boolean) {
     const f = fileInput?.files?.[0];
     if (!f) { toast.error('Pick a backup file first'); return; }
     if (confirmText !== 'RESTORE') { toast.error('Type RESTORE to confirm'); return; }
@@ -53,18 +70,35 @@
     try {
       const fd = new FormData();
       fd.append('file', f);
-      const resp = await fetch('/api/v1/admin/restore', {
+      const url = '/api/v1/admin/restore' + (force ? '?force=true' : '');
+      const resp = await fetch(url, {
         method: 'POST',
         body: fd,
         credentials: 'same-origin'
       });
       const json = await resp.json();
+      if (resp.status === 409 && json?.error?.code === 'DUMP_NEWER_THAN_SERVER') {
+        // Surface the override path instead of just toasting.
+        const detail = json?.error?.message ?? 'Dump is from a newer server.';
+        const m = detail.match(/v(\d+).*v(\d+)/);
+        pendingForce = {
+          dump: m ? Number(m[1]) : 0,
+          server: m ? Number(m[2]) : 0,
+          message: detail,
+        };
+        return;
+      }
       if (!resp.ok) {
         throw new Error(json?.error?.message ?? `HTTP ${resp.status}`);
       }
       lastResult = json.data;
+      pendingForce = null;
       if (lastResult?.exit_error) {
         toast.error('Restore finished with errors — review the output below');
+      } else if (lastResult?.migrate_error) {
+        toast.error('Restore succeeded but post-restore migrations failed — review below');
+      } else if (lastResult?.migrated) {
+        toast.success(`Restore complete; schema migrated forward to v${lastResult.server_version}.`);
       } else {
         toast.success('Restore complete. You may need to sign in again.');
       }
@@ -75,6 +109,9 @@
       confirmText = '';
     }
   }
+
+  const restore = () => doRestore(false);
+  const restoreForced = () => doRestore(true);
 </script>
 
 <div class="wrap">
@@ -84,19 +121,26 @@
       Downloads a Postgres custom-format dump of everything OnScreen tracks —
       users, libraries, items, watch history, credits, playlists. Media files
       and artwork live on disk and are not included; they are rebuilt from
-      the scan sources.
+      the scan sources. The filename includes the current schema version
+      (<code>-vN.dump</code>) so future restores know whether the dump is
+      compatible with the running build.
     </p>
     <button class="btn btn-primary" on:click={download} disabled={downloading}>
       {downloading ? 'Preparing…' : 'Download backup'}
     </button>
+    {#if lastDownloadedVersion !== null}
+      <div class="row picked">Last download captured schema <code>v{lastDownloadedVersion}</code></div>
+    {/if}
   </section>
 
   <section>
     <h2>Restore database</h2>
     <p class="hint">
       Upload a backup produced by this page. The existing database is
-      <strong>wiped</strong> and replaced. If the backup predates the running
-      server, re-run migrations after the restore.
+      <strong>wiped</strong> and replaced. If the dump is from an older
+      schema, the server runs migrations after the restore so it ends up
+      matching this build. Dumps from a <em>newer</em> server are refused
+      unless you explicitly override.
     </p>
 
     <div class="row">
@@ -132,12 +176,48 @@
       {restoring ? 'Restoring…' : 'Restore from backup'}
     </button>
 
+    {#if pendingForce}
+      <div class="result">
+        <div class="result-head">
+          Schema mismatch — dump is <code>v{pendingForce.dump}</code>, server expects
+          <code>v{pendingForce.server}</code>.
+        </div>
+        <p class="hint" style="margin: 0.4rem 0 0.6rem;">
+          Restoring would leave the server unable to read columns it expects
+          to find. Upgrade the server build, or override only if you know
+          the schema gap is benign.
+        </p>
+        <button
+          class="btn btn-danger"
+          disabled={restoring}
+          on:click={restoreForced}
+        >
+          Restore anyway (force)
+        </button>
+      </div>
+    {/if}
+
     {#if lastResult}
-      <div class="result" class:ok={!lastResult.exit_error}>
-        {#if lastResult.exit_error}
-          <div class="result-head">pg_restore exited with: <code>{lastResult.exit_error}</code></div>
-        {:else}
-          <div class="result-head">pg_restore completed cleanly.</div>
+      <div class="result" class:ok={!lastResult.exit_error && !lastResult.migrate_error}>
+        <div class="result-head">
+          {#if lastResult.exit_error}
+            pg_restore exited with: <code>{lastResult.exit_error}</code>
+          {:else}
+            pg_restore completed cleanly.
+          {/if}
+        </div>
+        {#if lastResult.dump_version || lastResult.server_version}
+          <div class="result-head">
+            Dump schema: <code>v{lastResult.dump_version ?? '?'}</code> →
+            server schema: <code>v{lastResult.server_version ?? '?'}</code>
+            {#if lastResult.migrated} (migrated forward){/if}
+            {#if lastResult.forced} (forced){/if}
+          </div>
+        {/if}
+        {#if lastResult.migrate_error}
+          <div class="result-head">
+            Post-restore migrations failed: <code>{lastResult.migrate_error}</code>
+          </div>
         {/if}
         {#if lastResult.stderr}
           <pre>{lastResult.stderr}</pre>

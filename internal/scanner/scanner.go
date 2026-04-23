@@ -19,16 +19,27 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
+
+var tracer = otel.Tracer("onscreen/scanner")
 
 // validExtensions is the set of container formats the scanner recognises.
 var validExtensions = map[string]bool{
 	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true,
 	".mov": true, ".wmv": true, ".ts": true, ".m2ts": true,
-	".flac": true, ".mp3": true, ".m4a": true, ".aac": true,
-	".ogg": true, ".opus": true,
+	// Lossy / common music
+	".mp3": true, ".m4a": true, ".aac": true, ".ogg": true, ".opus": true,
+	// Lossless PCM (CD-quality + hi-res)
+	".flac": true, ".wav": true, ".aif": true, ".aiff": true, ".alac": true,
+	// Lossless compressed (non-FLAC)
+	".wv": true, ".ape": true, ".tak": true,
+	// DSD (direct stream digital — SACD rips, hi-res audiophile masters)
+	".dsf": true, ".dff": true,
 }
 
 // imageExtensions is the set of image formats recognised for photo libraries.
@@ -115,6 +126,13 @@ type ScanResult struct {
 // used when creating placeholder media_item records for newly discovered files.
 // It respects the configured file concurrency limit (ADR-024).
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryType string, paths []string) (*ScanResult, error) {
+	ctx, span := tracer.Start(ctx, "scanner.library", trace.WithAttributes(
+		attribute.String("library.id", libraryID.String()),
+		attribute.String("library.type", libraryType),
+		attribute.Int("library.path_count", len(paths)),
+	))
+	defer span.End()
+
 	start := time.Now()
 	result := &ScanResult{LibraryID: libraryID}
 
@@ -295,6 +313,10 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 	result.Found = int(found.Load())
 	result.New = int(newCount.Load())
 	result.Duration = time.Since(start)
+	span.SetAttributes(
+		attribute.Int("scan.files_found", result.Found),
+		attribute.Int("scan.files_new", result.New),
+	)
 	s.logger.InfoContext(ctx, "scan completed",
 		"library_id", libraryID,
 		"found", result.Found,
@@ -454,6 +476,10 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 				"path", path, "err", probeErr)
 			probe = &ProbeResult{}
 		}
+		if isMusicFile(path) {
+			lossless := isLosslessAudio(path, probe.AudioCodec)
+			probe.Lossless = &lossless
+		}
 	}
 
 	// Resolve or create the owning media item.
@@ -462,9 +488,10 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// episode) derived from filename parsing; all other libraries use the
 	// flat filename parser.
 	var item *media.Item
+	var musicTags *MusicTags
 	if libraryType == "music" && isMusicFile(path) {
 		var musicErr error
-		item, musicErr = s.processMusicHierarchy(ctx, libraryID, path, roots)
+		item, musicTags, musicErr = s.processMusicHierarchy(ctx, libraryID, path, roots)
 		if musicErr != nil {
 			return nil, nil, false, fmt.Errorf("music hierarchy for %s: %w", path, musicErr)
 		}
@@ -527,6 +554,16 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		Chapters:        probe.Chapters,
 		FileHash:        hash,
 		DurationMS:      probe.DurationMs,
+		BitDepth:        probe.BitDepth,
+		SampleRate:      probe.SampleRate,
+		ChannelLayout:   probe.ChannelLayout,
+		Lossless:        probe.Lossless,
+	}
+	if musicTags != nil {
+		p.ReplayGainTrackGain = musicTags.ReplayGainTrackGain
+		p.ReplayGainTrackPeak = musicTags.ReplayGainTrackPeak
+		p.ReplayGainAlbumGain = musicTags.ReplayGainAlbumGain
+		p.ReplayGainAlbumPeak = musicTags.ReplayGainAlbumPeak
 	}
 
 	file, isNew, err := s.media.CreateOrUpdateFile(ctx, p)
@@ -781,10 +818,25 @@ func fileTypeForLibrary(libraryType string) string {
 	}
 }
 
-// musicExtensions is the set of file extensions that are audio-only.
+// musicExtensions is the set of file extensions that are audio-only. Kept in
+// sync with the audio subset of validExtensions. Lossless-vs-lossy is encoded
+// separately in losslessExtensions so scanner/probe can flag the media_files
+// row without re-inferring from the codec string.
 var musicExtensions = map[string]bool{
-	".flac": true, ".mp3": true, ".m4a": true, ".aac": true,
-	".ogg": true, ".opus": true,
+	".mp3": true, ".m4a": true, ".aac": true, ".ogg": true, ".opus": true,
+	".flac": true, ".wav": true, ".aif": true, ".aiff": true, ".alac": true,
+	".wv": true, ".ape": true, ".tak": true,
+	".dsf": true, ".dff": true,
+}
+
+// losslessExtensions flags audio containers that are bit-perfect end-to-end.
+// ALAC is usually inside .m4a, so the extension alone can't distinguish it —
+// the probe step has to look at the codec field for .m4a files. Everything
+// here is unambiguous by extension.
+var losslessExtensions = map[string]bool{
+	".flac": true, ".wav": true, ".aif": true, ".aiff": true, ".alac": true,
+	".wv": true, ".ape": true, ".tak": true,
+	".dsf": true, ".dff": true,
 }
 
 func isMediaFile(path string) bool {
@@ -800,6 +852,23 @@ func isImageFile(path string) bool {
 func isMusicFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	return musicExtensions[ext]
+}
+
+// isLosslessAudio classifies a music file as lossless or lossy. The extension
+// alone is authoritative for most formats; .m4a is the one container that can
+// hold either ALAC (lossless) or AAC (lossy), so the codec from ffprobe is the
+// tiebreaker there. Codec passed in may be nil when ffprobe failed — in that
+// case we fall back to the extension and conservatively call .m4a lossy.
+func isLosslessAudio(path string, codec *string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if losslessExtensions[ext] {
+		return true
+	}
+	if ext == ".m4a" && codec != nil {
+		c := strings.ToLower(*codec)
+		return c == "alac"
+	}
+	return false
 }
 
 // badPosterPath reports whether a stored poster_path is stale and must be

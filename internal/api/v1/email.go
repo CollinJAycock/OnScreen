@@ -11,23 +11,23 @@ import (
 
 // EmailHandler handles email-related API endpoints.
 type EmailHandler struct {
-	sender *email.Sender // nil if SMTP not configured
+	sender *email.Sender // always non-nil; live SMTP state via sender.Enabled(ctx)
 	logger *slog.Logger
 }
 
-// NewEmailHandler creates an EmailHandler. sender may be nil.
+// NewEmailHandler creates an EmailHandler. sender must be non-nil.
 func NewEmailHandler(sender *email.Sender, logger *slog.Logger) *EmailHandler {
 	return &EmailHandler{sender: sender, logger: logger}
 }
 
 // Enabled handles GET /api/v1/email/enabled.
 func (h *EmailHandler) Enabled(w http.ResponseWriter, r *http.Request) {
-	respond.Success(w, r, map[string]bool{"enabled": h.sender != nil})
+	respond.Success(w, r, map[string]bool{"enabled": h.sender.Enabled(r.Context())})
 }
 
 // SendTest handles POST /api/v1/email/test — sends a test email (admin only).
 func (h *EmailHandler) SendTest(w http.ResponseWriter, r *http.Request) {
-	if h.sender == nil {
+	if !h.sender.Enabled(r.Context()) {
 		respond.BadRequest(w, r, "SMTP is not configured")
 		return
 	}

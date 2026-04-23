@@ -349,7 +349,7 @@ func TestProcessMusicHierarchy_WithTags(t *testing.T) {
 	}
 	defer func() { readTagFrom = orig }()
 
-	track, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
+	track, _, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestProcessMusicHierarchy_FallbackToPath(t *testing.T) {
 	}
 	defer func() { readTagFrom = orig }()
 
-	track, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
+	track, _, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestProcessMusicHierarchy_GenrePassedToTrack(t *testing.T) {
 	}
 	defer func() { readTagFrom = orig }()
 
-	_, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
+	_, _, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestProcessMusicHierarchy_YearOnAlbumAndTrack(t *testing.T) {
 	}
 	defer func() { readTagFrom = orig }()
 
-	_, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
+	_, _, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestProcessMusicHierarchy_SortTitleStripsArticle(t *testing.T) {
 	}
 	defer func() { readTagFrom = orig }()
 
-	_, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
+	_, _, err := s.processMusicHierarchy(context.Background(), libID, filePath, []string{"/media/music"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
