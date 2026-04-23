@@ -95,7 +95,8 @@ func TestDownload_SkipsRedownloadWhenFileExists(t *testing.T) {
 
 func TestReplacePoster_OverwritesExistingFile(t *testing.T) {
 	dir := t.TempDir()
-	posterPath := filepath.Join(dir, "poster.jpg")
+	id := uuid.New()
+	posterPath := filepath.Join(dir, id.String()+"-poster.jpg")
 	stale := []byte("stale-content")
 	if err := os.WriteFile(posterPath, stale, 0o644); err != nil {
 		t.Fatal(err)
@@ -108,7 +109,7 @@ func TestReplacePoster_OverwritesExistingFile(t *testing.T) {
 	defer srv.Close()
 
 	m := New(t.TempDir())
-	if _, err := m.ReplacePoster(context.Background(), uuid.New(), srv.URL, dir); err != nil {
+	if _, err := m.ReplacePoster(context.Background(), id, srv.URL, dir); err != nil {
 		t.Fatalf("ReplacePoster: %v", err)
 	}
 	got, _ := os.ReadFile(posterPath)
@@ -117,6 +118,51 @@ func TestReplacePoster_OverwritesExistingFile(t *testing.T) {
 	}
 	if !bytes.Equal(got, fresh) {
 		t.Errorf("file content mismatch after replace")
+	}
+}
+
+// TestReplacePoster_ConcurrentAlbumsDontCollide is the regression guard
+// for "every album on an artist shows the same art". Two albums sharing
+// a single directory (typical of flat "/Music/Artist/track.flac"
+// libraries) must write to distinct files — previously both wrote to
+// dir/poster.jpg and the second overwrote the first.
+func TestReplacePoster_ConcurrentAlbumsDontCollide(t *testing.T) {
+	dir := t.TempDir()
+	bytesA := []byte("album-a-art")
+	bytesB := []byte("album-b-art")
+	var serveB bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveB {
+			_, _ = w.Write(bytesB)
+			return
+		}
+		_, _ = w.Write(bytesA)
+	}))
+	defer srv.Close()
+
+	m := New(t.TempDir())
+	idA := uuid.New()
+	idB := uuid.New()
+
+	pathA, err := m.ReplacePoster(context.Background(), idA, srv.URL, dir)
+	if err != nil {
+		t.Fatalf("ReplacePoster A: %v", err)
+	}
+	serveB = true
+	pathB, err := m.ReplacePoster(context.Background(), idB, srv.URL, dir)
+	if err != nil {
+		t.Fatalf("ReplacePoster B: %v", err)
+	}
+	if pathA == pathB {
+		t.Fatalf("both albums wrote to the same path %q — collision regression", pathA)
+	}
+	gotA, _ := os.ReadFile(pathA)
+	gotB, _ := os.ReadFile(pathB)
+	if !bytes.Equal(gotA, bytesA) {
+		t.Errorf("album A content got overwritten: %q", gotA)
+	}
+	if !bytes.Equal(gotB, bytesB) {
+		t.Errorf("album B content wrong: %q", gotB)
 	}
 }
 

@@ -1,8 +1,11 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/jpeg"
 	"io"
 	"log/slog"
 	"os"
@@ -113,6 +116,12 @@ func (m *mockMediaService) GetItem(_ context.Context, id uuid.UUID) (*media.Item
 func (m *mockMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
 	if it, ok := m.items[p.ID]; ok {
 		it.Title = p.Title
+		if p.PosterPath != nil {
+			it.PosterPath = p.PosterPath
+		}
+		if p.FanartPath != nil {
+			it.FanartPath = p.FanartPath
+		}
 		return it, nil
 	}
 	return nil, errors.New("not found")
@@ -532,5 +541,106 @@ func TestProcessMusicHierarchy_SortTitleStripsArticle(t *testing.T) {
 	artistCall := svc.hierarchyCalls[0]
 	if artistCall.SortTitle != "beatles" {
 		t.Errorf("artist sort_title: got %q, want %q", artistCall.SortTitle, "beatles")
+	}
+}
+
+// TestProcessMusicHierarchy_FlatLayout_PostersDontCollide is the
+// regression guard for "every album on an artist shows the same art".
+// Two albums whose tracks share a directory (flat "/Music/Artist/*.flac"
+// layouts are the common case) must end up with distinct poster files
+// on disk AND distinct poster_path values in the DB. Before the fix,
+// both albums wrote to "<dir>/poster.jpg" and the second clobbered the
+// first.
+func TestProcessMusicHierarchy_FlatLayout_PostersDontCollide(t *testing.T) {
+	// makeJPEG produces a tiny valid JPEG the extractor can re-encode.
+	makeJPEG := func(marker byte) []byte {
+		img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		img.Pix[0] = marker
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+			t.Fatalf("encode jpeg: %v", err)
+		}
+		return buf.Bytes()
+	}
+
+	svc := newMockMediaService()
+	s := newTestScanner(svc)
+	libID := uuid.New()
+	musicRoot := t.TempDir()
+	artistDir := filepath.Join(musicRoot, "The Beatles")
+	if err := os.MkdirAll(artistDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two tracks, two different albums, SAME directory — the flat-layout
+	// bug scenario.
+	trackA := filepath.Join(artistDir, "abbey-road-track.flac")
+	trackB := filepath.Join(artistDir, "let-it-be-track.flac")
+	if err := os.WriteFile(trackA, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(trackB, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := readTagFrom
+	defer func() { readTagFrom = orig }()
+	readTagFrom = func(r io.ReadSeeker) (tag.Metadata, error) {
+		// Differentiate by whichever track the scanner is currently
+		// reading — tag.ReadFrom is called on the opened file, and
+		// file identity leaks via the os.File name. Easier: use the
+		// file size stored in each file to pick which fixture to
+		// return (both are "fake" here; distinguish by re-reading the
+		// filename from the reader). In this test we serialise calls,
+		// so a simple counter works.
+		return nil, errors.New("unused")
+	}
+
+	// Run each track through separately with its own tag stub so we
+	// get two distinct albums under one shared artistDir.
+	runOne := func(trackPath string, album string, art []byte) *media.Item {
+		readTagFrom = func(r io.ReadSeeker) (tag.Metadata, error) {
+			return &stubTagMetadata{
+				artist:  "The Beatles",
+				album:   album,
+				title:   "some track",
+				trackN:  1,
+				picture: &tag.Picture{MIMEType: "image/jpeg", Data: art},
+			}, nil
+		}
+		track, _, err := s.processMusicHierarchy(context.Background(), libID, trackPath, []string{musicRoot})
+		if err != nil {
+			t.Fatalf("processMusicHierarchy %s: %v", trackPath, err)
+		}
+		// Find the album item (parent of the track).
+		if track.ParentID == nil {
+			t.Fatalf("track has no parent_id")
+		}
+		album_item, ok := svc.items[*track.ParentID]
+		if !ok {
+			t.Fatalf("album item %s missing from mock", *track.ParentID)
+		}
+		return album_item
+	}
+
+	albumA := runOne(trackA, "Abbey Road", makeJPEG(0xAA))
+	albumB := runOne(trackB, "Let It Be", makeJPEG(0xBB))
+
+	if albumA.ID == albumB.ID {
+		t.Fatal("expected distinct album items")
+	}
+	if albumA.PosterPath == nil || albumB.PosterPath == nil {
+		t.Fatalf("poster_path not set: A=%v B=%v", albumA.PosterPath, albumB.PosterPath)
+	}
+	if *albumA.PosterPath == *albumB.PosterPath {
+		t.Fatalf("both albums share poster_path %q — collision regression", *albumA.PosterPath)
+	}
+
+	// Both posters must exist on disk at their ID-qualified filenames.
+	for _, al := range []*media.Item{albumA, albumB} {
+		want := filepath.Join(artistDir, al.ID.String()+"-poster.jpg")
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("album %q poster missing on disk at %s: %v", al.Title, want, err)
+		}
 	}
 }

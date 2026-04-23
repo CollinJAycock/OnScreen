@@ -70,11 +70,17 @@ func (m *Manager) DownloadThumb(ctx context.Context, itemID uuid.UUID, url strin
 	return m.download(ctx, url, filepath.Join(absDir, filename), false)
 }
 
-// ReplacePoster overwrites absDir/poster.jpg atomically. Used when the
-// metadata enricher finds a confident match and should replace an existing
-// poster (e.g. wrong embedded album art written during the initial scan).
-func (m *Manager) ReplacePoster(ctx context.Context, _ uuid.UUID, url string, absDir string) (string, error) {
-	return m.download(ctx, url, filepath.Join(absDir, "poster.jpg"), true)
+// ReplacePoster overwrites absDir/{itemID}-poster.jpg atomically. Used
+// when the metadata enricher finds a confident match and should replace
+// an existing poster (e.g. wrong embedded album art written during the
+// initial scan).
+//
+// The filename is qualified by item ID so that flat library layouts —
+// where multiple albums under one artist store tracks directly in the
+// artist's folder — don't collide on a single shared poster.jpg. Same
+// rationale as DownloadArtistPoster.
+func (m *Manager) ReplacePoster(ctx context.Context, itemID uuid.UUID, url string, absDir string) (string, error) {
+	return m.download(ctx, url, filepath.Join(absDir, itemID.String()+"-poster.jpg"), true)
 }
 
 // download fetches url and writes to absPath (absolute file path).

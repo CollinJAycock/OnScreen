@@ -31,9 +31,11 @@ type ArtworkFetcher interface {
 	DownloadPoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 	DownloadFanart(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 	DownloadThumb(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
-	// ReplacePoster writes url to mediaDir/poster.jpg even if the file
-	// already exists. Used by the music enricher to override embedded album
-	// art with AudioDB's authoritative cover.
+	// ReplacePoster writes url to mediaDir/{itemID}-poster.jpg even if
+	// the file already exists. Used by the music enricher to override
+	// embedded album art with AudioDB's authoritative cover. The
+	// ID-qualified filename prevents cross-album collisions in flat
+	// layouts (see DownloadArtistPoster).
 	ReplacePoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 	// DownloadArtistPoster/Fanart write to ID-qualified filenames to avoid
 	// collisions in flat music layouts where multiple artists share a parent
@@ -719,7 +721,8 @@ func (e *Enricher) enrichAlbum(ctx context.Context, agent metadata.MusicAgent, i
 		p.Genres = result.Genres
 	}
 	if result.ThumbURL != "" && artDir != "" && e.artwork != nil {
-		// Overwrite poster.jpg — it may be wrong embedded art from the scan.
+		// Overwrite {id}-poster.jpg — if a scan wrote embedded art for
+		// this album, AudioDB's cover should take precedence.
 		if abs, err := e.artwork.ReplacePoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
 			rel := e.relPath(abs)
 			p.PosterPath = &rel

@@ -209,17 +209,26 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 }
 
 // extractAlbumArt reads the embedded picture from a music file and writes
-// poster.jpg next to the music file (in the album directory).
-// On success it updates the album item's poster_path and returns the relative path.
+// {album.id}-poster.jpg next to the music file (in the album directory).
+// On success it updates the album item's poster_path and returns the
+// relative path.
+//
+// The filename is qualified by album ID so that flat libraries — where
+// every album under an artist keeps its tracks directly in the artist
+// folder — don't overwrite each other's poster. Using an unqualified
+// "poster.jpg" here was the cause of "every album has the same art" on
+// flat layouts: whichever album scanned last won the filename, and the
+// DB then pointed every album at that one file.
 func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string, roots []string) string {
 	artData, err := readEmbeddedArtwork(filePath)
 	if err != nil || len(artData) == 0 {
 		return ""
 	}
 
-	// Store poster.jpg in the same directory as the music file.
+	// Store the poster in the same directory as the music file, keyed by
+	// the album's UUID to avoid cross-album collisions in flat layouts.
 	absDir := filepath.Dir(filePath)
-	posterFile := filepath.Join(absDir, "poster.jpg")
+	posterFile := filepath.Join(absDir, album.ID.String()+"-poster.jpg")
 
 	// Compute a path relative to the library root for DB storage.
 	// The /artwork/* route resolves this against library scan_paths.
@@ -231,11 +240,12 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 		}
 	}
 	if relPath == "" {
-		// Fallback: use album-dir/poster.jpg (may not resolve correctly).
-		relPath = filepath.ToSlash(filepath.Join(filepath.Base(absDir), "poster.jpg"))
+		// Fallback: use album-dir/{id}-poster.jpg (may not resolve correctly).
+		relPath = filepath.ToSlash(filepath.Join(filepath.Base(absDir), album.ID.String()+"-poster.jpg"))
 	}
 
-	// If poster.jpg already exists on disk, just ensure the DB path is correct.
+	// If the ID-qualified poster already exists on disk, just ensure
+	// the DB path is correct.
 	if _, err := os.Stat(posterFile); err == nil {
 		if album.PosterPath == nil || *album.PosterPath != relPath {
 			s.updateAlbumPoster(ctx, album, relPath)
