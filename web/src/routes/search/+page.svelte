@@ -16,6 +16,16 @@
   let libraryResults: SearchResult[] = [];
   let libraryLoading = false;
 
+  // Type filters for the library section. Movies + shows default on
+  // because those are the common-case searches; episodes and tracks
+  // default off to reduce noise (a search for "Dream" otherwise buries
+  // the three movie matches under fifty Pink Floyd track names).
+  // Persisted in localStorage so the user's preference survives
+  // reloads without a settings UI.
+  type LibraryFilters = { movie: boolean; show: boolean; episode: boolean; track: boolean };
+  const defaultFilters: LibraryFilters = { movie: true, show: true, episode: false, track: false };
+  let libraryFilters: LibraryFilters = { ...defaultFilters };
+
   // TMDB discover results — anything available to request, minus the
   // entries that already exist in the library (those collapse into the
   // library section so the same title doesn't appear twice).
@@ -29,7 +39,64 @@
 
   onMount(() => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    try {
+      const saved = localStorage.getItem('onscreen_search_filters');
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<LibraryFilters>;
+        libraryFilters = { ...defaultFilters, ...parsed };
+      }
+    } catch { /* corrupt storage — fall back to defaults */ }
   });
+
+  $: {
+    // Persist whenever the filter set changes. Wrapped in try because
+    // Safari private mode throws on setItem.
+    try { localStorage.setItem('onscreen_search_filters', JSON.stringify(libraryFilters)); } catch { /* quota / private mode */ }
+  }
+
+  // Filtered view of libraryResults honoring the checkbox state. The
+  // album + artist + season types stay out of the filter UI (four
+  // boxes is already plenty) but still render when their type is on
+  // — an album match piggybacks on "Track" since an album IS music,
+  // and a season match piggybacks on "Episode".
+  $: visibleLibraryResults = libraryResults.filter(r => {
+    switch (r.type) {
+      case 'movie':   return libraryFilters.movie;
+      case 'show':    return libraryFilters.show;
+      case 'season':  return libraryFilters.show;
+      case 'episode': return libraryFilters.episode;
+      case 'artist':  return libraryFilters.track;
+      case 'album':   return libraryFilters.track;
+      case 'track':   return libraryFilters.track;
+      default:        return true; // unknown types (photo, future) always show
+    }
+  });
+
+  // Titles already in the user's library, normalized for matching so
+  // "Star Wars" and "star wars " collapse. Used to hide discover
+  // items whose in_library flag missed them (TMDB id mismatch,
+  // library item scanned pre-enricher, etc.) — server-side flag is
+  // still primary, this is the belt-and-suspenders filter.
+  $: libraryTitleKeys = (() => {
+    const s = new Set<string>();
+    for (const r of libraryResults) {
+      if (r.type !== 'movie' && r.type !== 'show') continue;
+      const base = normalizeTitle(r.title);
+      s.add(base); // bare title — catches re-release year mismatches
+      if (r.year) s.add(base + '|' + r.year);
+    }
+    return s;
+  })();
+
+  $: visibleDiscoverResults = discoverResults.filter(it => {
+    if (it.in_library) return false;
+    if (libraryTitleKeys.has(normalizeTitle(it.title))) return false;
+    return true;
+  });
+
+  function normalizeTitle(s: string): string {
+    return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
 
   function onInput() {
     clearTimeout(debounceTimer);
@@ -157,18 +224,44 @@
   {:else}
     <!-- ── In your library ─────────────────────────────────────────────── -->
     <section class="result-section">
-      <h2 class="section-title">In your library</h2>
+      <div class="section-head">
+        <h2 class="section-title">In your library</h2>
+        <div class="filter-row">
+          <label class="filter-chip">
+            <input type="checkbox" bind:checked={libraryFilters.movie} />
+            <span>Movies</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" bind:checked={libraryFilters.show} />
+            <span>Shows</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" bind:checked={libraryFilters.episode} />
+            <span>Episodes</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" bind:checked={libraryFilters.track} />
+            <span>Tracks</span>
+          </label>
+        </div>
+      </div>
       {#if libraryLoading}
         <div class="results-grid">
           {#each [1,2,3,4,5,6] as _}
             <div class="result-card skeleton"></div>
           {/each}
         </div>
-      {:else if libraryResults.length === 0}
-        <p class="section-empty">No matches in your library.</p>
+      {:else if visibleLibraryResults.length === 0}
+        <p class="section-empty">
+          {#if libraryResults.length === 0}
+            No matches in your library.
+          {:else}
+            {libraryResults.length} match{libraryResults.length === 1 ? '' : 'es'} hidden by the type filters above.
+          {/if}
+        </p>
       {:else}
         <div class="results-grid">
-          {#each libraryResults as item (item.id)}
+          {#each visibleLibraryResults as item (item.id)}
             {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
             {@const art = item.poster_path ?? item.thumb_path ?? ''}
             <button class="result-card" on:click={() => navigate(item)}>
@@ -206,11 +299,11 @@
             <div class="result-card skeleton"></div>
           {/each}
         </div>
-      {:else if discoverResults.length === 0}
+      {:else if visibleDiscoverResults.length === 0}
         <p class="section-empty">No additional matches available to request.</p>
       {:else}
         <div class="results-grid">
-          {#each discoverResults as item (item.type + ':' + item.tmdb_id)}
+          {#each visibleDiscoverResults as item (item.type + ':' + item.tmdb_id)}
             {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
             <div class="result-card discover">
               <div class="poster-wrap">
@@ -313,12 +406,51 @@
 
   /* ── Sections ─────────────────────────────────────────────────────────── */
   .result-section { margin-bottom: 2.5rem; }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.85rem;
+  }
   .section-title {
     font-size: 0.92rem;
     font-weight: 700;
     color: var(--text-primary);
     letter-spacing: -0.01em;
-    margin-bottom: 0.85rem;
+    margin: 0;
+  }
+  .filter-row {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .filter-chip:hover { color: var(--text-primary); }
+  .filter-chip:has(input:checked) {
+    color: var(--text-primary);
+    border-color: var(--accent, #60a5fa);
+    background: color-mix(in srgb, var(--accent, #60a5fa) 12%, var(--bg-elevated));
+  }
+  .filter-chip input {
+    width: 12px; height: 12px;
+    margin: 0;
+    accent-color: var(--accent, #60a5fa);
+    cursor: pointer;
   }
   .section-empty {
     font-size: 0.78rem;
