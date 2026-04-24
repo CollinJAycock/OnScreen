@@ -44,6 +44,17 @@ var requiredSystemTasks = []systemTask{
 		cronExpr: "*/15 * * * *",
 		enabled:  true,
 	},
+	{
+		name:     "DVR retention purge",
+		taskType: "dvr_retention",
+		// Daily at 3:17am local — off-peak hours, slight prime-number
+		// offset to avoid synchronizing with other hourly jobs if the
+		// operator schedules custom backups later. Each run is a DB
+		// read plus a file-system walk; runtime is negligible even for
+		// hundreds of retained recordings.
+		cronExpr: "17 3 * * *",
+		enabled:  true,
+	},
 }
 
 // seedSystemTasks inserts any missing required task rows. Idempotent —

@@ -3,6 +3,7 @@ package livetv
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -138,11 +139,21 @@ type DVRQuerier interface {
 	SetRecordingCompleted(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	SetRecordingFailed(ctx context.Context, id uuid.UUID, errMsg string) error
 	DeleteRecording(ctx context.Context, id uuid.UUID) error
+	ListExpiredRecordings(ctx context.Context) ([]ExpiredRecording, error)
 
 	// EPG access for the matcher. Reuses the main Querier's methods at
 	// runtime via interface composition in the adapter.
 	ListEPGProgramsInWindow(ctx context.Context, from, to time.Time) ([]EPGProgram, error)
 	ListTunerDevices(ctx context.Context) ([]TunerDevice, error)
+}
+
+// ExpiredRecording is the narrow subset of a recording the retention
+// purge needs: the row ID to delete, the file path to remove from
+// disk, and the item ID to null out in media_items.
+type ExpiredRecording struct {
+	ID       uuid.UUID
+	ItemID   *uuid.UUID
+	FilePath *string
 }
 
 // ── DVR service ──────────────────────────────────────────────────────────────
@@ -286,6 +297,44 @@ func (s *DVRService) CancelRecording(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("cancel recording: %w", err)
 	}
 	return nil
+}
+
+// PurgeExpiredRecordings deletes recordings past their schedule's
+// retention_days window. For each expired row it removes the video
+// file from disk (best-effort — a missing file isn't an error, the
+// admin may have deleted it manually), nulls the recording's
+// item_id so the media_items soft-delete cascade cleans up, and
+// deletes the recording row itself.
+//
+// Called on a daily cron by the scheduler. Returns the number of
+// recordings purged for the scheduled-task output summary.
+func (s *DVRService) PurgeExpiredRecordings(ctx context.Context) (int, error) {
+	expired, err := s.q.ListExpiredRecordings(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list expired recordings: %w", err)
+	}
+	purged := 0
+	for _, r := range expired {
+		if r.FilePath != nil && *r.FilePath != "" {
+			if err := os.Remove(*r.FilePath); err != nil && !os.IsNotExist(err) {
+				s.logger.WarnContext(ctx, "retention: remove file failed",
+					"recording_id", r.ID, "path", *r.FilePath, "err", err)
+			}
+		}
+		// The linked media_items row isn't hard-deleted here — the
+		// normal scanner sweep (CleanupMissingFiles) will soft-delete
+		// the item once its underlying file vanishes, which matches
+		// how other sources of orphaned items get reaped. Keeping the
+		// two paths consistent avoids a retention-specific media.Service
+		// dependency here.
+		if err := s.q.DeleteRecording(ctx, r.ID); err != nil {
+			s.logger.WarnContext(ctx, "retention: delete recording row failed",
+				"recording_id", r.ID, "err", err)
+			continue
+		}
+		purged++
+	}
+	return purged, nil
 }
 
 // ── Matcher ──────────────────────────────────────────────────────────────────

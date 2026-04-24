@@ -208,6 +208,23 @@ func (a *dvrAdapter) DeleteRecording(ctx context.Context, id uuid.UUID) error {
 	return a.q.DeleteRecording(ctx, id)
 }
 
+func (a *dvrAdapter) ListExpiredRecordings(ctx context.Context) ([]livetv.ExpiredRecording, error) {
+	rows, err := a.q.ListExpiredRecordings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]livetv.ExpiredRecording, 0, len(rows))
+	for _, r := range rows {
+		er := livetv.ExpiredRecording{ID: r.ID, FilePath: r.FilePath}
+		if r.ItemID.Valid {
+			id := uuid.UUID(r.ItemID.Bytes)
+			er.ItemID = &id
+		}
+		out = append(out, er)
+	}
+	return out, nil
+}
+
 // ── Reuse from live adapter ─────────────────────────────────────────────────
 
 func (a *dvrAdapter) ListEPGProgramsInWindow(ctx context.Context, from, to time.Time) ([]livetv.EPGProgram, error) {

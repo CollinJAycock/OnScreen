@@ -721,6 +721,9 @@ func run() error {
 	// DVR matcher runs every minute, scans enabled schedules against
 	// the upcoming EPG window, and upserts scheduled recordings.
 	schedRegistry.Register("dvr_match", scheduler.NewDVRMatcherHandler(dvrSvc))
+	// Retention purge runs daily off-peak, deletes recordings past
+	// their schedule's retention_days window + the files on disk.
+	schedRegistry.Register("dvr_retention", scheduler.NewDVRRetentionHandler(dvrSvc))
 	// Seed the scheduled_tasks rows our handlers depend on. Idempotent:
 	// admin edits to existing rows are preserved (EnsureSystemTask uses
 	// WHERE NOT EXISTS on task_type), so this is safe on every boot.
