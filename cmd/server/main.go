@@ -40,6 +40,7 @@ import (
 	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
+	"github.com/onscreen/onscreen/internal/metadata/coverartarchive"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
 	"github.com/onscreen/onscreen/internal/notification"
@@ -275,6 +276,14 @@ func run() error {
 	// Wire TheAudioDB for music enrichment — no API key required.
 	audiodbClient := audiodb.New()
 	metaAgent.SetMusicAgentFn(func() metadata.MusicAgent { return audiodbClient })
+
+	// Cover Art Archive fallback runs after TheAudioDB for albums with
+	// MusicBrainz IDs in their tags but no TheAudioDB match. CAA
+	// indexes indie / classical / compilation releases TheAudioDB
+	// doesn't track, closing a chunk of the "missing album art" gap.
+	// No API key required.
+	caaClient := coverartarchive.New()
+	metaAgent.SetAlbumCoverByMBIDFn(func() scanner.AlbumCoverByMBIDAgent { return caaClient })
 
 	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger)
 	notifBrokerEarly := notification.NewBroker()

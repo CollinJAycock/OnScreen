@@ -57,13 +57,26 @@ type TVDBFallback interface {
 // can convert absolute artwork paths to paths relative to the library root.
 type ScanPathsProvider func() []string
 
+// AlbumCoverByMBIDAgent looks up an album's front cover by its
+// MusicBrainz release / release-group ID. Used as a fallback after
+// a name-based music agent (TheAudioDB) fails to find a cover —
+// MusicBrainz + Cover Art Archive catalog many indie / classical /
+// compilation releases that TheAudioDB doesn't track.
+//
+// Returns ("", nil) when no cover is available for either ID so the
+// enricher can fall through cleanly without an error path.
+type AlbumCoverByMBIDAgent interface {
+	FrontCoverURL(ctx context.Context, releaseID, releaseGroupID uuid.UUID) (string, error)
+}
+
 // Enricher implements MetadataAgent using the TMDB metadata provider and
 // the artwork manager. Returning nil from agentFn disables enrichment —
 // this lets the TMDB key be set at runtime via server settings without restart.
 type Enricher struct {
-	agentFn      func() metadata.Agent      // returns nil when no key is configured
-	tvdbFn       func() TVDBFallback        // returns nil when no key is configured
-	musicAgentFn func() metadata.MusicAgent // returns nil when not configured
+	agentFn      func() metadata.Agent        // returns nil when no key is configured
+	tvdbFn       func() TVDBFallback          // returns nil when no key is configured
+	musicAgentFn func() metadata.MusicAgent   // returns nil when not configured
+	caaFn        func() AlbumCoverByMBIDAgent // returns nil when disabled
 	artwork      ArtworkFetcher
 	updater      ItemUpdater
 	scanPaths    ScanPathsProvider
@@ -99,6 +112,14 @@ func NewEnricher(
 		scanPaths: scanPaths,
 		logger:    logger,
 	}
+}
+
+// SetAlbumCoverByMBIDFn sets the lazy factory for the Cover Art Archive
+// fallback client. Called per album-enrichment attempt after TheAudioDB —
+// returning nil disables the fallback (used by tests + when the
+// operator explicitly opts out).
+func (e *Enricher) SetAlbumCoverByMBIDFn(fn func() AlbumCoverByMBIDAgent) {
+	e.caaFn = fn
 }
 
 // SetTVDBFallbackFn sets the lazy factory for the optional TVDB fallback client.
@@ -697,12 +718,15 @@ func (e *Enricher) enrichAlbum(ctx context.Context, agent metadata.MusicAgent, i
 			artistName = parent.Title
 		}
 	}
+	// A nil result is "TheAudioDB didn't find this album" — not a hard
+	// stop. We still want to try Cover Art Archive when the album has
+	// MusicBrainz IDs, so use an empty result shell and fall through.
 	result, err := agent.SearchAlbum(ctx, artistName, item.Title)
 	if err != nil {
 		return fmt.Errorf("audiodb search album %q/%q: %w", artistName, item.Title, err)
 	}
 	if result == nil {
-		return nil
+		result = &metadata.AlbumResult{}
 	}
 	p := media.UpdateItemMetadataParams{
 		ID:        item.ID,
@@ -720,10 +744,35 @@ func (e *Enricher) enrichAlbum(ctx context.Context, agent metadata.MusicAgent, i
 	if len(result.Genres) > 0 {
 		p.Genres = result.Genres
 	}
-	if result.ThumbURL != "" && artDir != "" && e.artwork != nil {
+	// Resolve cover URL: TheAudioDB first (authoritative for the popular
+	// catalog), then Cover Art Archive via MusicBrainz release IDs
+	// (catches indie / classical / compilations TheAudioDB doesn't have).
+	coverURL := result.ThumbURL
+	if coverURL == "" && e.caaFn != nil {
+		if caa := e.caaFn(); caa != nil {
+			relID := uuid.Nil
+			if item.MusicBrainzReleaseID != nil {
+				relID = *item.MusicBrainzReleaseID
+			}
+			rgID := uuid.Nil
+			if item.MusicBrainzReleaseGroupID != nil {
+				rgID = *item.MusicBrainzReleaseGroupID
+			}
+			if relID != uuid.Nil || rgID != uuid.Nil {
+				if u, err := caa.FrontCoverURL(ctx, relID, rgID); err == nil && u != "" {
+					coverURL = u
+					e.logger.InfoContext(ctx, "album cover from CAA fallback",
+						"item_id", item.ID, "title", item.Title,
+						"release_id", relID, "release_group_id", rgID,
+					)
+				}
+			}
+		}
+	}
+	if coverURL != "" && artDir != "" && e.artwork != nil {
 		// Overwrite {id}-poster.jpg — if a scan wrote embedded art for
-		// this album, AudioDB's cover should take precedence.
-		if abs, err := e.artwork.ReplacePoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
+		// this album, the enricher's cover should take precedence.
+		if abs, err := e.artwork.ReplacePoster(ctx, item.ID, coverURL, artDir); err == nil {
 			rel := e.relPath(abs)
 			p.PosterPath = &rel
 		}
