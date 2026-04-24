@@ -572,6 +572,21 @@ type WatchEventsDefault struct {
 	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type WatchPlay struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	MediaID    uuid.UUID          `json:"media_id"`
+	FileID     pgtype.UUID        `json:"file_id"`
+	SessionID  pgtype.UUID        `json:"session_id"`
+	EventType  string             `json:"event_type"`
+	PositionMs int64              `json:"position_ms"`
+	DurationMs *int64             `json:"duration_ms"`
+	ClientName *string            `json:"client_name"`
+	ClientID   *string            `json:"client_id"`
+	ClientIp   *netip.Addr        `json:"client_ip"`
+	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
+}
+
 type WatchState struct {
 	UserID         uuid.UUID          `json:"user_id"`
 	MediaID        uuid.UUID          `json:"media_id"`

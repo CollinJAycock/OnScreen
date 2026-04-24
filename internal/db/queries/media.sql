@@ -229,30 +229,54 @@ WHERE rn > 1
   AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year);
 
 -- name: ListCollabArtistMerges :many
--- Finds artists whose title matches a collaboration pattern (A & B, A feat B,
--- A / B, A, B) where the primary name before the first marker exists as a
--- separate standalone artist in the same library. Returns (loser_id,
--- survivor_id) pairs so the caller can reparent children and soft-delete
--- losers via the existing merge plumbing. Conservative: only merges when
--- the primary is an actual row, so "Simon & Garfunkel" (no "Simon" row)
--- is left alone.
+-- Finds artists whose title matches a collaboration pattern and whose
+-- primary OR secondary name already exists as a separate standalone
+-- artist in the same library. Returns (loser_id, survivor_id) pairs so
+-- the caller can reparent children and soft-delete losers via the
+-- existing merge plumbing. Conservative: only merges when at least one
+-- side is an actual row — so "Simon & Garfunkel" (no "Simon" row, no
+-- "Garfunkel" row) is left alone.
+--
+-- Two-sided matching: tries the LEFT name (everything before the first
+-- separator) first, then falls back to the RIGHT name (everything after
+-- the LAST separator). The right-side fallback catches "X & Famous"
+-- rows where the famous guest is the canonical the library knows about
+-- and X is a one-off feature; without it, "Glen Campbell & Elton John"
+-- stays orphaned forever because no Glen Campbell row exists.
+--
+-- Separator set: comma, slash, "&", "and", "feat", "ft", "featuring",
+-- "with", and " - " (whitespace-bounded hyphen, for the "Bo Diddley -
+-- Muddy Waters - Little Walter" multi-artist tag style). Naked
+-- in-name hyphens like Wu-Tang Clan or Jay-Z are unaffected because
+-- the separator requires whitespace on both sides.
+--
+-- DISTINCT ON dedupes per-loser when both halves match an existing
+-- canonical; the ORDER BY makes the left match win, matching the
+-- existing precedence convention.
 WITH collabs AS (
     SELECT c.id AS collab_id,
            c.library_id,
            unaccent(regexp_replace(
                c.title,
-               '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+).+$',
+               '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+|\s+-\s+).+$',
                '',
                'i'
-           )) AS primary_norm
+           )) AS left_primary,
+           unaccent(regexp_replace(
+               c.title,
+               '^.+(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+|\s+-\s+)',
+               '',
+               'i'
+           )) AS right_primary
     FROM media_items c
     WHERE c.type = 'artist'
       AND c.parent_id IS NULL
       AND c.deleted_at IS NULL
-      AND c.title ~* '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+)'
+      AND c.title ~* '(\s*,\s*|\s*/\s*|\s+(&|and|feat\.?|ft\.?|featuring|with)\s+|\s+-\s+)'
       AND (sqlc.narg('library_id')::uuid IS NULL OR c.library_id = sqlc.narg('library_id'))
 )
-SELECT c.collab_id AS loser_id,
+SELECT DISTINCT ON (c.collab_id)
+       c.collab_id AS loser_id,
        p.id::uuid  AS survivor_id
 FROM collabs c
 JOIN media_items p
@@ -260,8 +284,14 @@ JOIN media_items p
  AND p.parent_id IS NULL
  AND p.deleted_at IS NULL
  AND p.library_id = c.library_id
- AND lower(unaccent(p.title)) = lower(c.primary_norm)
- AND p.id <> c.collab_id;
+ AND p.id <> c.collab_id
+ AND (
+     lower(unaccent(p.title)) = lower(c.left_primary)
+     OR lower(unaccent(p.title)) = lower(c.right_primary)
+ )
+ORDER BY c.collab_id,
+         -- left-match first (TRUE sorts before FALSE under DESC).
+         (lower(unaccent(p.title)) = lower(c.left_primary)) DESC;
 
 -- name: ReparentMediaItem :exec
 UPDATE media_items

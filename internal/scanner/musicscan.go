@@ -23,13 +23,21 @@ import (
 
 // collabArtistRE matches the tail portion of a collaboration-style artist tag
 // like "Elton John & Bonnie Raitt", "Jay-Z feat. Rihanna",
-// "The Black Eyed Peas, CL", or "Beyonce / Jay-Z". The regex accepts a comma,
-// slash, "&", "and", "feat[.]?", "ft[.]?", "featuring", and "with" as collab
-// markers. Stripping is applied only when the primary name (the text before
-// the first marker) already exists as a standalone artist in the library —
-// otherwise legitimate band names like "Simon & Garfunkel" or
-// "Nick Cave and the Bad Seeds" would be damaged.
-var collabArtistRE = regexp.MustCompile(`(?i)(\s*,\s*|\s*/\s*|\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+).+$`)
+// "The Black Eyed Peas, CL", "Beyonce / Jay-Z", or
+// "Bo Diddley - Muddy Waters - Little Walter". Accepts comma, slash, "&",
+// "and", "feat[.]?", "ft[.]?", "featuring", "with", and " - " (whitespace-
+// bounded hyphen, so single-name hyphens like Jay-Z / Wu-Tang are
+// unaffected). Stripping is applied only when the resulting primary
+// already exists as a standalone artist in the library — otherwise
+// legitimate band names like "Simon & Garfunkel" or "Nick Cave and the
+// Bad Seeds" would be damaged.
+var collabArtistRE = regexp.MustCompile(`(?i)(\s*,\s*|\s*/\s*|\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+|\s+-\s+).+$`)
+
+// collabSecondaryRE captures the LAST name in a collab tag (everything
+// after the final separator). Used as a fallback when the left-side
+// primary doesn't match a library row but the right-side might —
+// "X & Famous" rolls into Famous when X is a one-off feature.
+var collabSecondaryRE = regexp.MustCompile(`(?i)^.+(\s*,\s*|\s*/\s*|\s+(?:&|and|feat\.?|ft\.?|featuring|with)\s+|\s+-\s+)`)
 
 // lastFirstRE matches "Last, First" pairs commonly produced by classical/jazz
 // taggers (e.g. "Dylan, Bob", "Mitchell, Joni"). Both halves must be a single
@@ -48,6 +56,19 @@ func primaryArtistName(s string) string {
 	return strings.TrimSpace(trimmed)
 }
 
+// secondaryArtistName returns the LAST collaborator (everything after the
+// final separator). Returns "" if no collab marker is found. Used by
+// resolveArtistTitle as a fallback when the leading primary isn't in the
+// library — fixes "Glen Campbell & Elton John" type rows where the famous
+// guest is on the right.
+func secondaryArtistName(s string) string {
+	trimmed := collabSecondaryRE.ReplaceAllString(s, "")
+	if trimmed == s {
+		return ""
+	}
+	return strings.TrimSpace(trimmed)
+}
+
 // flipLastFirst rewrites "Last, First" to "First Last". Returns "" if the
 // input doesn't match the pattern so callers can detect no-op cases.
 func flipLastFirst(s string) string {
@@ -59,27 +80,32 @@ func flipLastFirst(s string) string {
 }
 
 // resolveArtistTitle returns the artist title to use for a track's hierarchy.
-// Two corrections are applied in order:
+// Three corrections are applied in order:
 //  1. "Last, First" → "First Last" (e.g. "Dylan, Bob" → "Bob Dylan"), so
 //     taggers that write surname-first don't shard the catalog.
-//  2. Collab tag → primary name, if the primary already exists as a
-//     standalone artist ("Elton John & Bonnie Raitt" → "Elton John").
+//  2. Collab tag → LEFT primary, if it exists as a standalone artist
+//     ("Elton John & Bonnie Raitt" → "Elton John").
+//  3. Collab tag → RIGHT secondary, if the right-side name exists as a
+//     standalone artist and the left didn't match. Catches "X & Famous"
+//     rows where the canonical the library knows about is the guest.
 //
-// If neither applies, the tag is returned unchanged so legitimate multi-name
+// If none apply, the tag is returned unchanged so legitimate multi-name
 // bands like "Simon & Garfunkel" are preserved.
 func (s *Scanner) resolveArtistTitle(ctx context.Context, libraryID uuid.UUID, tagArtist string) string {
 	if flipped := flipLastFirst(tagArtist); flipped != "" {
 		tagArtist = flipped
 	}
-	primary := primaryArtistName(tagArtist)
-	if primary == "" {
-		return tagArtist
+	if primary := primaryArtistName(tagArtist); primary != "" {
+		if existing, err := s.media.FindTopLevelItem(ctx, libraryID, "artist", primary); err == nil && existing != nil {
+			return existing.Title
+		}
 	}
-	existing, err := s.media.FindTopLevelItem(ctx, libraryID, "artist", primary)
-	if err != nil || existing == nil {
-		return tagArtist
+	if secondary := secondaryArtistName(tagArtist); secondary != "" {
+		if existing, err := s.media.FindTopLevelItem(ctx, libraryID, "artist", secondary); err == nil && existing != nil {
+			return existing.Title
+		}
 	}
-	return existing.Title
+	return tagArtist
 }
 
 // processMusicHierarchy reads tags from a music file and ensures the
@@ -119,6 +145,15 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	}
 
 	// 2. Find or create the album (parent_id=artist.id).
+	// When tags.Album is empty (untagged file) the album row would land
+	// with title="" — multiple such files under one artist all collide
+	// into the same nameless album, and the UI shows a row with no
+	// title. Fall back to deriving a title from the file path: the
+	// parent folder's basename is almost always the album folder name
+	// for any sanely-organized library, and even on flat layouts where
+	// the parent folder equals the artist's name, grouping still works
+	// because every same-artist file lands in one bucket.
+	albumTitle := albumTitleOrFallback(tags.Album, path, artistTitle)
 	var albumYear *int
 	if tags.Year != 0 {
 		albumYear = &tags.Year
@@ -138,8 +173,8 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	albumParams := media.CreateItemParams{
 		LibraryID:    libraryID,
 		Type:         "album",
-		Title:        tags.Album,
-		SortTitle:    sortTitle(tags.Album),
+		Title:        albumTitle,
+		SortTitle:    sortTitle(albumTitle),
 		Year:         albumYear,
 		OriginalYear: origYear,
 		ParentID:     &artist.ID,
@@ -313,6 +348,31 @@ func readEmbeddedArtwork(filePath string) ([]byte, error) {
 		return nil, nil
 	}
 	return pic.Data, nil
+}
+
+// albumTitleOrFallback returns tagged when non-empty, otherwise derives
+// a title from the file path. The parent directory's basename works for
+// 99% of layouts: hierarchical "/Artist/Album/track.flac" produces the
+// album name; flat "/Artist/track.flac" produces the artist name, which
+// at least keeps every untagged file under one (artist-named) bucket
+// instead of collapsing into a nameless album that collides with every
+// other untagged album. Last-ditch "Untitled" if even that fails.
+func albumTitleOrFallback(tagged, filePath, artistTitle string) string {
+	if strings.TrimSpace(tagged) != "" {
+		return tagged
+	}
+	parent := filepath.Base(filepath.Dir(filePath))
+	if parent != "" && parent != "." && parent != string(filepath.Separator) {
+		// Don't return the artist name verbatim — give the user a hint
+		// that this row is filling in for a missing tag, while still
+		// keeping the bucket distinct from other artists' untagged
+		// albums.
+		if strings.EqualFold(parent, artistTitle) {
+			return "Untitled Album"
+		}
+		return parent
+	}
+	return "Untitled Album"
 }
 
 // sortTitle produces a lowercased sort key, stripping leading articles.

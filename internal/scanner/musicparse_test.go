@@ -656,3 +656,102 @@ func TestTrackNumberRE(t *testing.T) {
 		})
 	}
 }
+
+// ── Empty-album-title fallback ───────────────────────────────────────────────
+
+func TestAlbumTitleOrFallback(t *testing.T) {
+	cases := []struct {
+		name        string
+		tagged      string
+		filePath    string
+		artistTitle string
+		want        string
+	}{
+		{
+			name:        "tagged wins",
+			tagged:      "Dark Side of the Moon",
+			filePath:    "/music/Pink Floyd/X/track.flac",
+			artistTitle: "Pink Floyd",
+			want:        "Dark Side of the Moon",
+		},
+		{
+			name:        "tagged whitespace-only treated as empty",
+			tagged:      "   ",
+			filePath:    "/music/Pink Floyd/Wish You Were Here/01.flac",
+			artistTitle: "Pink Floyd",
+			want:        "Wish You Were Here",
+		},
+		{
+			name:        "empty tag, hierarchical layout uses parent dir",
+			tagged:      "",
+			filePath:    "/music/Allman Brothers Band/Win Lose Or Draw/01.flac",
+			artistTitle: "The Allman Brothers Band",
+			want:        "Win Lose Or Draw",
+		},
+		{
+			name:        "empty tag, flat layout (parent == artist) falls back to Untitled Album",
+			tagged:      "",
+			filePath:    "/music/Pink Floyd/track.flac",
+			artistTitle: "Pink Floyd",
+			want:        "Untitled Album",
+		},
+		{
+			name:        "empty tag, flat layout case-insensitive",
+			tagged:      "",
+			filePath:    "/music/THE ALLMAN BROTHERS BAND/track.flac",
+			artistTitle: "The Allman Brothers Band",
+			want:        "Untitled Album",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := albumTitleOrFallback(tc.tagged, tc.filePath, tc.artistTitle); got != tc.want {
+				t.Errorf("albumTitleOrFallback(%q, %q, %q) = %q, want %q",
+					tc.tagged, tc.filePath, tc.artistTitle, got, tc.want)
+			}
+		})
+	}
+}
+
+// ── Collab artist parsing ────────────────────────────────────────────────────
+
+func TestPrimaryAndSecondaryArtistName(t *testing.T) {
+	cases := []struct {
+		input            string
+		wantPrimary      string
+		wantSecondary    string
+	}{
+		// Two-name collabs across each separator type
+		{"Elton John & Bonnie Raitt", "Elton John", "Bonnie Raitt"},
+		{"Glen Campbell & Elton John", "Glen Campbell", "Elton John"},
+		{"Beyonce, Jay-Z", "Beyonce", "Jay-Z"},
+		{"Beyonce / Jay-Z", "Beyonce", "Jay-Z"},
+		{"Jay-Z feat. Rihanna", "Jay-Z", "Rihanna"},
+		{"Jay-Z featuring Rihanna", "Jay-Z", "Rihanna"},
+		{"Eminem ft. Dido", "Eminem", "Dido"},
+		{"David Bowie with Mick Jagger", "David Bowie", "Mick Jagger"},
+
+		// Triple-name with hyphen separator (the Bo Diddley case)
+		{"Bo Diddley - Muddy Waters - Little Walter", "Bo Diddley", "Little Walter"},
+
+		// Single-name hyphens must NOT match (whitespace required around hyphen)
+		{"Jay-Z", "", ""},
+		{"Wu-Tang Clan", "", ""},
+
+		// Bands with separators in their names (no canonical → callers leave alone)
+		{"Simon & Garfunkel", "Simon", "Garfunkel"},
+
+		// No collab markers
+		{"The Beatles", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := primaryArtistName(tc.input); got != tc.wantPrimary {
+				t.Errorf("primaryArtistName(%q) = %q, want %q", tc.input, got, tc.wantPrimary)
+			}
+			if got := secondaryArtistName(tc.input); got != tc.wantSecondary {
+				t.Errorf("secondaryArtistName(%q) = %q, want %q", tc.input, got, tc.wantSecondary)
+			}
+		})
+	}
+}
