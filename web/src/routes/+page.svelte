@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { libraryApi, hubApi, type Library, type HubItem } from '$lib/api';
+  import { libraryApi, hubApi, type Library, type HubItem, type HubLibraryRow } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let libraries: Library[] = [];
   let continueWatching: HubItem[] = [];
   let recentlyAdded: HubItem[] = [];
+  let recentlyAddedByLibrary: HubLibraryRow[] = [];
   let loading = true;
   let error = '';
   let confirmDelete: Library | null = null;
@@ -26,6 +27,7 @@
       const hub = await hubApi.get();
       continueWatching = hub.continue_watching;
       recentlyAdded = hub.recently_added;
+      recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
     } catch { /* silently skip — next poll will retry */ }
   }
 
@@ -36,6 +38,7 @@
       libraries = libs;
       continueWatching = hub.continue_watching;
       recentlyAdded = hub.recently_added;
+      recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
     }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load'; }
     finally { loading = false; }
@@ -83,6 +86,14 @@
   // Albums and photos look right as squares; movies/shows keep the 2:3 poster.
   function isSquare(item: HubItem): boolean {
     return item.type === 'album' || item.type === 'photo';
+  }
+
+  // Whole per-library rows render as squares when the library's item
+  // type is square-friendly. Skips the per-item check inside the #each,
+  // which would otherwise produce a mix of shapes if a library ever
+  // returns cross-typed items (shouldn't, but guards against it).
+  function isSquareLibrary(type: string): boolean {
+    return type === 'music' || type === 'photo';
   }
 
   const types: Record<string, { label: string; gradient: string; icon: string }> = {
@@ -166,6 +177,36 @@
         </div>
       </section>
     {/if}
+
+    <!-- Per-library recently added — one strip per library -->
+    {#each recentlyAddedByLibrary as row (row.library_id)}
+      {@const square = isSquareLibrary(row.library_type)}
+      <section class="hub-section">
+        <h2 class="hub-title">
+          <a class="hub-title-link" href={`/libraries/${row.library_id}`}>
+            Recently Added to {row.library_name}
+          </a>
+        </h2>
+        <div class="hub-scroll">
+          {#each row.items as item (item.id)}
+            <a class="hub-card" class:square href={hubHref(item)}>
+              {#if item.poster_path}
+                <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
+                     srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=450 450w"
+                     sizes="(max-width: 768px) 130px, 220px"
+                     alt={item.title} loading="lazy" />
+              {:else}
+                <div class="hub-poster-blank" class:square>
+                  <span>{item.title[0]?.toUpperCase()}</span>
+                </div>
+              {/if}
+              <div class="hub-label">{item.title}</div>
+              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
+            </a>
+          {/each}
+        </div>
+      </section>
+    {/each}
   {/if}
 
   <!-- Libraries -->
@@ -270,6 +311,13 @@
     color: var(--text-primary);
     letter-spacing: -0.02em;
     margin-bottom: 0.85rem;
+  }
+  .hub-title-link {
+    color: inherit;
+    text-decoration: none;
+  }
+  .hub-title-link:hover {
+    color: var(--accent);
   }
   .hub-scroll {
     display: flex;

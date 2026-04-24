@@ -1199,9 +1199,17 @@ export interface HubItem {
   updated_at: number;
 }
 
+export interface HubLibraryRow {
+  library_id: string;
+  library_name: string;
+  library_type: string;
+  items: HubItem[];
+}
+
 export interface HubData {
   continue_watching: HubItem[];
   recently_added: HubItem[];
+  recently_added_by_library: HubLibraryRow[];
 }
 
 export const hubApi = {

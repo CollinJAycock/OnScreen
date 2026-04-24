@@ -378,7 +378,9 @@ func run() error {
 	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
 	streamTracker := streaming.NewValkeyTracker(valkeyClient)
 	analyticsHandler := v1.NewAnalyticsHandler(gen.New(roPool), logger)
-	hubHandler := v1.NewHubHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
+	hubHandler := v1.NewHubHandler(gen.New(roPool), logger).
+		WithLibraryAccess(libSvc).
+		WithLibraries(libSvc)
 	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
 	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
 	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)

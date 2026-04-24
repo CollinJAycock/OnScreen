@@ -4,14 +4,17 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/domain/library"
 )
 
 // HubDB defines the database queries the hub handler needs.
@@ -20,11 +23,21 @@ type HubDB interface {
 	ListRecentlyAdded(ctx context.Context, arg gen.ListRecentlyAddedParams) ([]gen.ListRecentlyAddedRow, error)
 }
 
+// HubLibraryLister returns the libraries the home page should surface
+// per-library recently-added rows for. Kept as its own interface so
+// the hub handler doesn't need to know how the library list is fetched
+// (tests supply a stub, production wires library.Service).
+type HubLibraryLister interface {
+	List(ctx context.Context) ([]library.Library, error)
+}
+
 // HubHandler serves the home page hub data.
 type HubHandler struct {
-	db     HubDB
-	access LibraryAccessChecker
-	logger *slog.Logger
+	db      HubDB
+	access  LibraryAccessChecker
+	libs    HubLibraryLister
+	logger  *slog.Logger
+	perLib  int32 // items per library row; defaults to 12 if zero
 }
 
 // NewHubHandler creates a HubHandler.
@@ -38,10 +51,30 @@ func (h *HubHandler) WithLibraryAccess(a LibraryAccessChecker) *HubHandler {
 	return h
 }
 
+// WithLibraries wires the library lister that drives the per-library
+// "Recently added to <library>" home-screen rows. Without this the
+// response's ByLibrary field stays empty and the home page just shows
+// the global recently-added section.
+func (h *HubHandler) WithLibraries(l HubLibraryLister) *HubHandler {
+	h.libs = l
+	return h
+}
+
 // HubResponse is the combined home page data.
 type HubResponse struct {
-	ContinueWatching []HubItem `json:"continue_watching"`
-	RecentlyAdded    []HubItem `json:"recently_added"`
+	ContinueWatching []HubItem       `json:"continue_watching"`
+	RecentlyAdded    []HubItem       `json:"recently_added"`
+	ByLibrary        []HubLibraryRow `json:"recently_added_by_library"`
+}
+
+// HubLibraryRow is one "Recently added to <library>" strip on the home
+// page. Library info is denormalized so the frontend can label each row
+// without an extra lookup.
+type HubLibraryRow struct {
+	LibraryID   string    `json:"library_id"`
+	LibraryName string    `json:"library_name"`
+	LibraryType string    `json:"library_type"`
+	Items       []HubItem `json:"items"`
 }
 
 // HubItem is a compact item for hub display.
@@ -69,6 +102,7 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out := HubResponse{
 		ContinueWatching: []HubItem{},
 		RecentlyAdded:    []HubItem{},
+		ByLibrary:        []HubLibraryRow{},
 	}
 
 	// Convert max content rating from claims to a rank for SQL filtering.
@@ -123,7 +157,9 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Recently added — newest items across all libraries.
+	// Recently added — newest items across all libraries (the mixed
+	// top-of-home strip). Kept for discovery across the whole catalog;
+	// the per-library strips below narrow the same idea per section.
 	// Fetch extra rows so we still have ≥20 after deduplication.
 	raRows, err := h.db.ListRecentlyAdded(r.Context(), gen.ListRecentlyAddedParams{
 		Limit:         40,
@@ -160,7 +196,122 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Per-library recently added — one row per library the user can see.
+	// Queries run in parallel because they're independent PK-indexed reads.
+	if h.libs != nil {
+		out.ByLibrary = h.perLibraryRecentlyAdded(r.Context(), libAllowed, maxRank)
+	}
+
 	respond.Success(w, r, out)
+}
+
+// perLibraryRecentlyAdded fires one ListRecentlyAdded per library the
+// user can see, in parallel, and returns them in the library's own
+// creation order so the home page has a stable layout across reloads.
+// Libraries with no items in the result are omitted — the section
+// wouldn't render anything useful and an empty row is just noise.
+func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed func(uuid.UUID) bool, maxRank *int32) []HubLibraryRow {
+	libs, err := h.libs.List(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "hub: list libraries", "err", err)
+		return nil
+	}
+
+	perLib := h.perLib
+	if perLib <= 0 {
+		perLib = 12
+	}
+
+	// Filter to libraries the user may access and that have a visible
+	// item type. Non-music/movie/show/photo libraries (e.g. DVR) have
+	// no items matching the recently-added WHERE clause and would
+	// always come back empty — skip the round trip entirely.
+	type slot struct {
+		lib  library.Library
+		rows []gen.ListRecentlyAddedRow
+	}
+	slots := make([]*slot, 0, len(libs))
+	for _, lib := range libs {
+		if lib.DeletedAt != nil {
+			continue
+		}
+		if !libAllowed(lib.ID) {
+			continue
+		}
+		switch lib.Type {
+		case "movie", "show", "music", "photo":
+		default:
+			continue
+		}
+		slots = append(slots, &slot{lib: lib})
+	}
+
+	// Stable order: library creation time ascending, so newly added
+	// libraries always land at the bottom of the home page rather than
+	// shuffling older ones around on the user every time.
+	sort.SliceStable(slots, func(i, j int) bool {
+		return slots[i].lib.CreatedAt.Before(slots[j].lib.CreatedAt)
+	})
+
+	g, gctx := errgroup.WithContext(ctx)
+	for _, s := range slots {
+		s := s
+		g.Go(func() error {
+			id := s.lib.ID
+			rows, err := h.db.ListRecentlyAdded(gctx, gen.ListRecentlyAddedParams{
+				LibraryID:     pgtype.UUID{Bytes: id, Valid: true},
+				Limit:         int32(perLib) * 2, // dedupe budget
+				MaxRatingRank: maxRank,
+			})
+			if err != nil {
+				// Logged; don't fail the whole hub response because one
+				// library's strip couldn't be built.
+				h.logger.WarnContext(gctx, "hub: per-library recently added",
+					"library_id", id, "err", err)
+				return nil
+			}
+			s.rows = rows
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	out := make([]HubLibraryRow, 0, len(slots))
+	for _, s := range slots {
+		items := make([]HubItem, 0, perLib)
+		seen := make(map[string]bool, perLib)
+		for _, row := range s.rows {
+			key := row.Type + "|" + row.Title
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			year := intPtrFrom32(row.Year)
+			items = append(items, HubItem{
+				ID:         row.ID.String(),
+				Title:      row.Title,
+				Type:       row.Type,
+				Year:       year,
+				PosterPath: row.PosterPath,
+				FanartPath: row.FanartPath,
+				DurationMS: row.DurationMs,
+				UpdatedAt:  timestamptzToMilli(row.UpdatedAt),
+			})
+			if int32(len(items)) >= perLib {
+				break
+			}
+		}
+		if len(items) == 0 {
+			continue
+		}
+		out = append(out, HubLibraryRow{
+			LibraryID:   s.lib.ID.String(),
+			LibraryName: s.lib.Name,
+			LibraryType: s.lib.Type,
+			Items:       items,
+		})
+	}
+	return out
 }
 
 func intPtrFrom32(v *int32) *int {
