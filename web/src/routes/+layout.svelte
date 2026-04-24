@@ -369,6 +369,13 @@
 
 <style>
   :global(:root), :global([data-theme="dark"]) {
+    /* Hint native form controls (select option lists, date/time pickers,
+     * scrollbars, file input buttons) to render with the dark system
+     * palette instead of the light default. Without this the options
+     * popup on <select> kept coming back as white-on-dark-text, which
+     * looked like a bug. */
+    color-scheme: dark;
+
     --bg-primary: #07070d;
     --bg-secondary: #0c0c15;
     --bg-elevated: #111118;
@@ -392,6 +399,8 @@
     --input-bg: rgba(255,255,255,0.04);
   }
   :global([data-theme="light"]) {
+    color-scheme: light;
+
     --bg-primary: #f5f5f7;
     --bg-secondary: #ffffff;
     --bg-elevated: #ffffff;
@@ -413,6 +422,18 @@
     --info-bg: rgba(59,130,246,0.08);
     --shadow: rgba(0,0,0,0.12);
     --input-bg: rgba(0,0,0,0.03);
+  }
+
+  /* Belt-and-suspenders for Firefox, which doesn't fully style native
+   * <option> elements via color-scheme on older versions. Chrome 125+
+   * respects color-scheme so these rules are a no-op there. */
+  :global(select) {
+    background-color: var(--input-bg);
+    color: var(--text-primary);
+  }
+  :global(option) {
+    background-color: var(--bg-elevated);
+    color: var(--text-primary);
   }
 
   :global(*, *::before, *::after) { box-sizing: border-box; margin: 0; padding: 0; }
