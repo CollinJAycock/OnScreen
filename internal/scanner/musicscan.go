@@ -234,19 +234,53 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 		return nil, nil, err
 	}
 
-	// 4. Extract embedded album art if available and poster is missing or stale.
-	// Artist posters come from the metadata enricher (TheAudioDB), not album art.
-	if tags.AlbumArt {
-		s.extractAlbumArt(ctx, album, path, roots)
-	}
+	// 4. Album art: prefer disk-side cover files (cover.jpg / folder.jpg /
+	// album.jpg / front.jpg / poster.jpg), then fall back to embedded
+	// tags. Plex and Jellyfin both do this — lots of ripped libraries
+	// keep cover art as loose files in the album folder rather than
+	// re-embedding it into every track, so an embedded-only reader
+	// misses most of what's actually on disk.
+	s.extractAlbumArt(ctx, album, path, roots, tags.AlbumArt)
+
+	// 5. Artist art: look for artist.jpg / poster.jpg / folder.jpg in the
+	// artist directory (one level up from the album). Skipped when the
+	// artist already has a poster — an enricher pass (TheAudioDB) or
+	// a prior disk-discovered file would have set it, and we don't
+	// want to overwrite a curated image on every track re-scan.
+	s.extractArtistArt(ctx, artist, path, roots)
 
 	return track, tags, nil
 }
 
-// extractAlbumArt reads the embedded picture from a music file and writes
-// {album.id}-poster.jpg next to the music file (in the album directory).
-// On success it updates the album item's poster_path and returns the
-// relative path.
+// albumArtFilenames lists the on-disk cover-art filenames we check (in
+// order) in an album's directory. Matches Plex + Jellyfin + MusicBrainz
+// Picard's defaults. Checked case-insensitively against the real
+// directory listing so "Cover.JPG" and "Folder.jpeg" still match.
+var albumArtFilenames = []string{
+	"cover.jpg", "cover.jpeg", "cover.png",
+	"folder.jpg", "folder.jpeg", "folder.png",
+	"album.jpg", "album.jpeg", "album.png",
+	"front.jpg", "front.jpeg", "front.png",
+	"poster.jpg", "poster.jpeg", "poster.png",
+}
+
+// artistArtFilenames lists the on-disk artist-portrait filenames we
+// check in the artist directory. "artist.jpg" is unambiguous; the
+// "folder.jpg"/"poster.jpg" entries only matter when the artist
+// directory is distinct from the album directory (nested layout) —
+// on flat layouts they're the album's own art and we skip them in
+// extractArtistArt.
+var artistArtFilenames = []string{
+	"artist.jpg", "artist.jpeg", "artist.png",
+	"poster.jpg", "poster.jpeg", "poster.png",
+	"folder.jpg", "folder.jpeg", "folder.png",
+}
+
+// extractAlbumArt writes the album's poster to {album.id}-poster.jpg in
+// the album directory. Source order: on-disk cover files first
+// (cover.jpg / folder.jpg / front.jpg / poster.jpg / album.jpg),
+// then the track's embedded picture tag when hasEmbedded is true.
+// Returns the relative poster path, or "" when no source is available.
 //
 // The filename is qualified by album ID so that flat libraries — where
 // every album under an artist keeps its tracks directly in the artist
@@ -254,15 +288,24 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 // "poster.jpg" here was the cause of "every album has the same art" on
 // flat layouts: whichever album scanned last won the filename, and the
 // DB then pointed every album at that one file.
-func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string, roots []string) string {
-	artData, err := readEmbeddedArtwork(filePath)
-	if err != nil || len(artData) == 0 {
+func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string, roots []string, hasEmbedded bool) string {
+	absDir := filepath.Dir(filePath)
+
+	var artData []byte
+	if data, ok := findArtOnDisk(absDir, albumArtFilenames); ok {
+		artData = data
+	} else if hasEmbedded {
+		data, err := readEmbeddedArtwork(filePath)
+		if err == nil && len(data) > 0 {
+			artData = data
+		}
+	}
+	if len(artData) == 0 {
 		return ""
 	}
 
 	// Store the poster in the same directory as the music file, keyed by
 	// the album's UUID to avoid cross-album collisions in flat layouts.
-	absDir := filepath.Dir(filePath)
 	posterFile := filepath.Join(absDir, album.ID.String()+"-poster.jpg")
 
 	// Compute a path relative to the library root for DB storage.
@@ -327,6 +370,159 @@ func (s *Scanner) updateAlbumPoster(ctx context.Context, album *media.Item, relP
 		s.logger.WarnContext(ctx, "failed to update album poster_path",
 			"album_id", album.ID, "err", err)
 	}
+}
+
+// extractArtistArt copies a disk-side artist portrait into the artist's
+// directory as {artist.id}-poster.jpg and updates the artist's
+// poster_path. The lookup directory is the PARENT of the album
+// directory — i.e. the artist folder in a nested layout. On a flat
+// layout where the artist folder IS the album folder, the lookup
+// still runs but only matches "artist.jpg" (the unambiguous one);
+// "folder.jpg" / "poster.jpg" there belong to the album and are
+// passed over.
+//
+// Skipped when the artist already has a poster_path — that's either
+// a previously-discovered disk file or TheAudioDB enricher output,
+// and we don't want to re-copy on every track rescan or overwrite
+// a curated portrait.
+func (s *Scanner) extractArtistArt(ctx context.Context, artist *media.Item, filePath string, roots []string) string {
+	// Skip when the artist already has a valid poster on disk. If
+	// poster_path is set but the file is missing (e.g. a prior
+	// TheAudioDB match didn't actually land bytes on disk), treat
+	// it as unset so this scan gets a chance to find a local cover
+	// and self-heal the broken reference.
+	if artist.PosterPath != nil && *artist.PosterPath != "" {
+		if resolveArtworkPath(*artist.PosterPath, roots) != "" {
+			return ""
+		}
+	}
+
+	albumDir := filepath.Dir(filePath)
+	artistDir := filepath.Dir(albumDir)
+
+	// On flat layouts the artist directory is the same as the album
+	// directory, so cover.jpg / folder.jpg / poster.jpg there is
+	// album art — not artist art. Restrict the candidates to the
+	// unambiguous "artist.jpg" to avoid stealing the album's cover.
+	candidates := artistArtFilenames
+	if artistDir == albumDir {
+		candidates = []string{"artist.jpg", "artist.jpeg", "artist.png"}
+	}
+
+	artData, ok := findArtOnDisk(artistDir, candidates)
+	if !ok {
+		return ""
+	}
+
+	posterFile := filepath.Join(artistDir, artist.ID.String()+"-poster.jpg")
+
+	relPath := ""
+	for _, root := range roots {
+		if rel, err := filepath.Rel(root, posterFile); err == nil && !strings.HasPrefix(rel, "..") {
+			relPath = filepath.ToSlash(rel)
+			break
+		}
+	}
+	if relPath == "" {
+		relPath = filepath.ToSlash(filepath.Join(filepath.Base(artistDir), artist.ID.String()+"-poster.jpg"))
+	}
+
+	// If an ID-qualified portrait already exists on disk (left over
+	// from a prior scan), just make sure the DB is pointing at it.
+	if _, err := os.Stat(posterFile); err == nil {
+		if artist.PosterPath == nil || *artist.PosterPath != relPath {
+			s.updateArtistPoster(ctx, artist, relPath)
+		}
+		return relPath
+	}
+
+	var outData []byte
+	if img, imgErr := decodeImageBytes(artData); imgErr == nil {
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err == nil {
+			outData = buf.Bytes()
+		}
+	}
+	if outData == nil {
+		outData = artData
+	}
+
+	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+		s.logger.WarnContext(ctx, "failed to write artist art",
+			"artist_id", artist.ID, "err", err)
+		return ""
+	}
+
+	s.updateArtistPoster(ctx, artist, relPath)
+	return relPath
+}
+
+// updateArtistPoster sets the artist's poster_path in the database.
+func (s *Scanner) updateArtistPoster(ctx context.Context, artist *media.Item, relPath string) {
+	relPath = filepath.ToSlash(relPath)
+	if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+		ID:         artist.ID,
+		Title:      artist.Title,
+		SortTitle:  artist.SortTitle,
+		Year:       artist.Year,
+		PosterPath: &relPath,
+	}); err != nil {
+		s.logger.WarnContext(ctx, "failed to update artist poster_path",
+			"artist_id", artist.ID, "err", err)
+	}
+}
+
+// resolveArtworkPath joins relPath against each root and returns the
+// first absolute path that exists on disk, or "" when none do. Used
+// to tell a valid poster_path (file present, nothing to do) from a
+// stale one (file missing — a prior download failed but the DB still
+// advertises the reference).
+func resolveArtworkPath(relPath string, roots []string) string {
+	if relPath == "" {
+		return ""
+	}
+	for _, root := range roots {
+		abs := filepath.Join(root, filepath.FromSlash(relPath))
+		if info, err := os.Stat(abs); err == nil && !info.IsDir() && info.Size() > 0 {
+			return abs
+		}
+	}
+	return ""
+}
+
+// findArtOnDisk scans dir for any of the candidate filenames and
+// returns the contents of the first hit. Matching is case-insensitive
+// because ripped libraries are inconsistent — "Cover.jpg", "FOLDER.JPG",
+// and "folder.JPEG" all coexist in the wild. A single ReadDir beats
+// one os.Stat per candidate by an order of magnitude when the list
+// has ~15 entries.
+func findArtOnDisk(dir string, candidates []string) ([]byte, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false
+	}
+	// Build a lowercased name → real DirEntry index so we can honor
+	// the caller's candidate priority order while matching
+	// case-insensitively.
+	byLower := make(map[string]os.DirEntry, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		byLower[strings.ToLower(e.Name())] = e
+	}
+	for _, c := range candidates {
+		e, ok := byLower[strings.ToLower(c)]
+		if !ok {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		return data, true
+	}
+	return nil, false
 }
 
 // readEmbeddedArtwork extracts the raw bytes of the first embedded picture
