@@ -173,6 +173,7 @@ type Querier interface {
 	ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]Item, error)
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
+	UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
 	RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error
@@ -778,6 +779,18 @@ func (s *Service) UpdateItemMetadata(ctx context.Context, p UpdateItemMetadataPa
 		return nil, fmt.Errorf("update item metadata %s: %w", p.ID, err)
 	}
 	return &item, nil
+}
+
+// UpdateItemLyrics stores tag- or sidecar-derived lyrics on a track.
+// Called by the music scanner after reading embedded USLT frames or a
+// .lrc sidecar file. Either arg may be nil; the query writes whatever
+// combination is passed so a subsequent LRCLIB fallback can fill the
+// missing form without clobbering the one we already have.
+func (s *Service) UpdateItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error {
+	if err := s.rw.UpdateMediaItemLyrics(ctx, id, plain, synced); err != nil {
+		return fmt.Errorf("update item lyrics %s: %w", id, err)
+	}
+	return nil
 }
 
 // UpsertPhotoMetadata writes the per-photo EXIF row, replacing any prior data

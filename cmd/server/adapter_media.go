@@ -92,6 +92,14 @@ func (a *mediaAdapter) UpdateMediaItemMetadata(ctx context.Context, p media.Upda
 	return genUpdateItemRowToItem(r), nil
 }
 
+func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error {
+	return a.q.UpdateMediaItemLyrics(ctx, gen.UpdateMediaItemLyricsParams{
+		ID:           id,
+		LyricsPlain:  plain,
+		LyricsSynced: synced,
+	})
+}
+
 func (a *mediaAdapter) SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error {
 	return a.q.SoftDeleteMediaItem(ctx, id)
 }

@@ -249,6 +249,14 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	// want to overwrite a curated image on every track re-scan.
 	s.extractArtistArt(ctx, artist, path, roots)
 
+	// 6. Lyrics: prefer a .lrc sidecar (usually synced / time-tagged)
+	// then fall back to embedded USLT from the track's tags. Anything
+	// written here skips the on-demand LRCLIB fetch at playback time —
+	// a pre-populated library doesn't wait on the internet to show
+	// lyrics. LRCLIB still runs as the fallback for tracks with
+	// nothing local.
+	s.extractLyrics(ctx, track, path, tags.Lyrics)
+
 	return track, tags, nil
 }
 
@@ -486,6 +494,70 @@ func resolveArtworkPath(relPath string, roots []string) string {
 		if info, err := os.Stat(abs); err == nil && !info.IsDir() && info.Size() > 0 {
 			return abs
 		}
+	}
+	return ""
+}
+
+// extractLyrics persists a track's lyrics from local sources: a .lrc
+// sidecar in the album directory (preferred — typically contains
+// time-tagged lines for karaoke-style display) and embedded USLT from
+// the track's tag as a fallback (plain text only; dhowden/tag doesn't
+// parse SYLT into LRC). Skips the write when both sources are empty —
+// the playback-time LRCLIB fetch will still get a shot then.
+//
+// Sidecar path: same directory as the audio file, same base name,
+// ".lrc" extension (case-insensitive). `/Music/Artist/Album/01 - Song.flac`
+// → `/Music/Artist/Album/01 - Song.lrc`. This matches foobar2000,
+// MusicBee, and MusicBrainz Picard conventions.
+func (s *Scanner) extractLyrics(ctx context.Context, track *media.Item, filePath, embedded string) {
+	if track == nil {
+		return
+	}
+
+	synced := readLRCSidecar(filePath)
+	plain := strings.TrimSpace(embedded)
+	if plain == "" && synced == "" {
+		return
+	}
+
+	var plainPtr, syncedPtr *string
+	if plain != "" {
+		plainPtr = &plain
+	}
+	if synced != "" {
+		syncedPtr = &synced
+	}
+	if err := s.media.UpdateItemLyrics(ctx, track.ID, plainPtr, syncedPtr); err != nil {
+		s.logger.WarnContext(ctx, "failed to persist lyrics",
+			"track_id", track.ID, "err", err)
+	}
+}
+
+// readLRCSidecar looks for <basename>.lrc next to the audio file and
+// returns its contents. Case-insensitive match on the ".lrc"
+// extension — ripper tools vary. Returns "" when no sidecar exists,
+// the file is unreadable, or the content is empty.
+func readLRCSidecar(audioPath string) string {
+	dir := filepath.Dir(audioPath)
+	base := strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	wantBase := strings.ToLower(base) + ".lrc"
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.ToLower(e.Name()) != wantBase {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(data))
 	}
 	return ""
 }

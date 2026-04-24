@@ -115,3 +115,58 @@ func write(t *testing.T, path string, data []byte) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// TestReadLRCSidecar_Happy matches `<basename>.lrc` in the same
+// directory as the audio file and returns its content. This is the
+// canonical foobar2000 / MusicBee / Picard sidecar layout.
+func TestReadLRCSidecar_Happy(t *testing.T) {
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "01 - Paranoid.flac")
+	write(t, audio, []byte("not-real-audio"))
+	lrc := "[00:10.00]Finished with my woman\n[00:15.00]Cause she couldn't help me with my mind"
+	write(t, filepath.Join(dir, "01 - Paranoid.lrc"), []byte(lrc))
+
+	got := readLRCSidecar(audio)
+	if got != lrc {
+		t.Errorf("readLRCSidecar returned %q, want %q", got, lrc)
+	}
+}
+
+// TestReadLRCSidecar_CaseInsensitive because rippers are
+// inconsistent — "01 - Paranoid.LRC" still has to match.
+func TestReadLRCSidecar_CaseInsensitive(t *testing.T) {
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "song.mp3")
+	write(t, audio, []byte("audio"))
+	write(t, filepath.Join(dir, "song.LRC"), []byte("[00:01.00]hello"))
+	if got := readLRCSidecar(audio); got == "" {
+		t.Error("expected case-insensitive match, got empty")
+	}
+}
+
+// TestReadLRCSidecar_Missing returns "" when there's no sidecar — the
+// caller uses the empty-string signal to fall through to the
+// embedded tag or the on-demand LRCLIB fetch.
+func TestReadLRCSidecar_Missing(t *testing.T) {
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "no-lyrics.flac")
+	write(t, audio, []byte("audio"))
+	if got := readLRCSidecar(audio); got != "" {
+		t.Errorf("expected empty for missing sidecar, got %q", got)
+	}
+}
+
+// TestReadLRCSidecar_OtherExtensionIgnored guards against a false
+// positive on songname.txt or songname.lyrics — we match only the
+// .lrc extension because that's the only format that carries
+// timestamps the client player can sync to.
+func TestReadLRCSidecar_OtherExtensionIgnored(t *testing.T) {
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "song.flac")
+	write(t, audio, []byte("audio"))
+	write(t, filepath.Join(dir, "song.txt"), []byte("plain lyrics"))
+	write(t, filepath.Join(dir, "song.lyrics"), []byte("also lyrics"))
+	if got := readLRCSidecar(audio); got != "" {
+		t.Errorf("expected .txt/.lyrics to be ignored, got %q", got)
+	}
+}

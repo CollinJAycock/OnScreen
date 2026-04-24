@@ -66,6 +66,7 @@ type MediaService interface {
 	GetFileByPath(ctx context.Context, path string) (*media.File, error)
 	GetItem(ctx context.Context, id uuid.UUID) (*media.Item, error)
 	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
+	UpdateItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
 	DeleteFile(ctx context.Context, id uuid.UUID) error

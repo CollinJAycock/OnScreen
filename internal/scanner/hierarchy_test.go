@@ -127,6 +127,9 @@ func (m *mockMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateI
 	return nil, errors.New("not found")
 }
 
+func (m *mockMediaService) UpdateItemLyrics(_ context.Context, _ uuid.UUID, _, _ *string) error {
+	return nil
+}
 func (m *mockMediaService) MarkFileActive(_ context.Context, _ uuid.UUID) error        { return nil }
 func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error           { return nil }
 func (m *mockMediaService) DeleteFile(_ context.Context, _ uuid.UUID) error            { return nil }
