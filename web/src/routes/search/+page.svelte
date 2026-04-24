@@ -1,13 +1,31 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { searchApi, type SearchResult } from '$lib/api';
+  import {
+    searchApi,
+    discoverApi,
+    requestsApi,
+    type SearchResult,
+    type DiscoverItem,
+  } from '$lib/api';
+  import { toast } from '$lib/stores/toast';
 
   let query = '';
-  let results: SearchResult[] = [];
-  let loading = false;
+
+  // Library results — items already in the user's collection.
+  let libraryResults: SearchResult[] = [];
+  let libraryLoading = false;
+
+  // TMDB discover results — anything available to request, minus the
+  // entries that already exist in the library (those collapse into the
+  // library section so the same title doesn't appear twice).
+  let discoverResults: DiscoverItem[] = [];
+  let discoverLoading = false;
+  let discoverError = ''; // surfaces TMDB API failures (no key configured, rate-limited, etc.)
+
   let searched = false;
   let debounceTimer: ReturnType<typeof setTimeout>;
+  let creatingFor = new Set<number>(); // tmdb_ids of in-flight Request clicks
 
   onMount(() => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
@@ -17,34 +35,76 @@
     clearTimeout(debounceTimer);
     const q = query.trim();
     if (!q) {
-      results = [];
+      libraryResults = [];
+      discoverResults = [];
       searched = false;
-      loading = false;
+      libraryLoading = false;
+      discoverLoading = false;
+      discoverError = '';
       return;
     }
-    loading = true;
+    libraryLoading = true;
+    discoverLoading = true;
     debounceTimer = setTimeout(() => doSearch(q), 300);
   }
 
+  // Run library + TMDB searches in parallel. Library always succeeds (it's
+  // local DB). Discover may fail when TMDB isn't configured — that's a soft
+  // error; we still show library results and surface a hint instead of a
+  // page-level failure.
   async function doSearch(q: string) {
-    try {
-      results = await searchApi.search(q) ?? [];
-    } catch (e) {
-      console.warn('search failed', e);
-      results = [];
-    } finally {
-      loading = false;
-      searched = true;
-    }
+    const libraryPromise = searchApi.search(q)
+      .then(r => libraryResults = r ?? [])
+      .catch(e => { console.warn('library search failed', e); libraryResults = []; })
+      .finally(() => libraryLoading = false);
+
+    const discoverPromise = discoverApi.search(q, 12)
+      .then(r => {
+        // Drop in-library entries — they're already in libraryResults
+        // above, so the side-by-side rendering would dupe them.
+        discoverResults = (r ?? []).filter(it => !it.in_library);
+        discoverError = '';
+      })
+      .catch(e => {
+        const msg = e instanceof Error ? e.message : 'Discover failed';
+        // 404 / 503 = TMDB key not configured; that's the operator's
+        // setup, not a user-facing error worth shouting about.
+        discoverError = /not configured|tmdb/i.test(msg) ? '' : msg;
+        discoverResults = [];
+      })
+      .finally(() => discoverLoading = false);
+
+    await Promise.allSettled([libraryPromise, discoverPromise]);
+    searched = true;
   }
 
   function navigate(item: SearchResult) {
-    if (item.type === 'movie' || item.type === 'episode') {
-      goto(`/watch/${item.id}`);
-    } else {
-      // shows/seasons navigate to item detail
-      goto(`/watch/${item.id}`);
+    goto(`/watch/${item.id}`);
+  }
+
+  async function requestItem(item: DiscoverItem) {
+    creatingFor = new Set(creatingFor).add(item.tmdb_id);
+    try {
+      const created = await requestsApi.create({ type: item.type, tmdb_id: item.tmdb_id });
+      toast.success(`Requested: ${item.title}`);
+      // Mirror the server's response into the row so the card flips
+      // immediately without a re-search.
+      discoverResults = discoverResults.map(r =>
+        r.tmdb_id === item.tmdb_id && r.type === item.type
+          ? { ...r, has_active_request: true, active_request_id: created.id, active_request_status: created.status }
+          : r,
+      );
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      const next = new Set(creatingFor);
+      next.delete(item.tmdb_id);
+      creatingFor = next;
     }
+  }
+
+  function statusLabel(s: string): string {
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
   const typeBadge: Record<string, { label: string; color: string }> = {
@@ -54,9 +114,12 @@
     episode: { label: 'Episode', color: '#67e8f9' },
     music:   { label: 'Music',   color: '#34d399' },
   };
+
+  $: anyLoading = libraryLoading || discoverLoading;
+  $: nothingFound = searched && !anyLoading && libraryResults.length === 0 && discoverResults.length === 0;
 </script>
 
-<svelte:head><title>Search - OnScreen</title></svelte:head>
+<svelte:head><title>Search — OnScreen</title></svelte:head>
 
 <div class="page">
   <h1>Search</h1>
@@ -69,11 +132,11 @@
       type="text"
       bind:value={query}
       on:input={onInput}
-      placeholder="Search movies, shows, episodes..."
+      placeholder="Search your library, or anything to request…"
       autofocus
     />
     {#if query}
-      <button class="clear-btn" on:click={() => { query = ''; results = []; searched = false; }}>
+      <button class="clear-btn" on:click={() => { query = ''; libraryResults = []; discoverResults = []; searched = false; discoverError = ''; }}>
         <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
           <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
         </svg>
@@ -81,51 +144,7 @@
     {/if}
   </div>
 
-  {#if loading}
-    <div class="results-grid">
-      {#each [1,2,3,4,5,6] as _}
-        <div class="result-card skeleton"></div>
-      {/each}
-    </div>
-  {:else if searched && results.length === 0}
-    <div class="empty">
-      <div class="empty-glyph">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
-        </svg>
-      </div>
-      <p class="empty-title">No results for "{query}"</p>
-      <p class="empty-sub">Try a different search term or check your spelling.</p>
-    </div>
-  {:else if results.length > 0}
-    <div class="results-grid">
-      {#each results as item (item.id)}
-        {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
-        {@const art = item.poster_path ?? item.thumb_path ?? ''}
-        <button class="result-card" on:click={() => navigate(item)}>
-          <div class="poster-wrap">
-            {#if art}
-              <img src="/artwork/{encodeURI(art)}?w=300"
-                   srcset="/artwork/{encodeURI(art)}?w=150 150w, /artwork/{encodeURI(art)}?w=300 300w, /artwork/{encodeURI(art)}?w=450 450w"
-                   sizes="(max-width: 768px) 100px, 180px"
-                   alt={item.title} loading="lazy" />
-            {:else}
-              <div class="poster-blank">
-                <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
-              </div>
-            {/if}
-          </div>
-          <div class="result-info">
-            <span class="type-badge" style="color:{badge.color};border-color:{badge.color}">{badge.label}</span>
-            <div class="result-title">{item.title}</div>
-            {#if item.year}
-              <div class="result-year">{item.year}</div>
-            {/if}
-          </div>
-        </button>
-      {/each}
-    </div>
-  {:else}
+  {#if !query}
     <div class="empty">
       <div class="empty-glyph">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
@@ -133,8 +152,111 @@
         </svg>
       </div>
       <p class="empty-title">Search your library</p>
-      <p class="empty-sub">Type above to find movies, shows, and episodes.</p>
+      <p class="empty-sub">Type above to find something — if it's not in your library, you can request it.</p>
     </div>
+  {:else}
+    <!-- ── In your library ─────────────────────────────────────────────── -->
+    <section class="result-section">
+      <h2 class="section-title">In your library</h2>
+      {#if libraryLoading}
+        <div class="results-grid">
+          {#each [1,2,3,4,5,6] as _}
+            <div class="result-card skeleton"></div>
+          {/each}
+        </div>
+      {:else if libraryResults.length === 0}
+        <p class="section-empty">No matches in your library.</p>
+      {:else}
+        <div class="results-grid">
+          {#each libraryResults as item (item.id)}
+            {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
+            {@const art = item.poster_path ?? item.thumb_path ?? ''}
+            <button class="result-card" on:click={() => navigate(item)}>
+              <div class="poster-wrap">
+                {#if art}
+                  <img src="/artwork/{encodeURI(art)}?w=300"
+                       srcset="/artwork/{encodeURI(art)}?w=150 150w, /artwork/{encodeURI(art)}?w=300 300w, /artwork/{encodeURI(art)}?w=450 450w"
+                       sizes="(max-width: 768px) 100px, 180px"
+                       alt={item.title} loading="lazy" />
+                {:else}
+                  <div class="poster-blank">
+                    <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
+                  </div>
+                {/if}
+              </div>
+              <div class="result-info">
+                <span class="type-badge" style="color:{badge.color};border-color:{badge.color}">{badge.label}</span>
+                <div class="result-title">{item.title}</div>
+                {#if item.year}<div class="result-year">{item.year}</div>{/if}
+              </div>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- ── Request from outside library ────────────────────────────────── -->
+    <section class="result-section">
+      <h2 class="section-title">Request</h2>
+      {#if discoverError}
+        <div class="banner-error">{discoverError}</div>
+      {:else if discoverLoading}
+        <div class="results-grid">
+          {#each [1,2,3,4,5,6] as _}
+            <div class="result-card skeleton"></div>
+          {/each}
+        </div>
+      {:else if discoverResults.length === 0}
+        <p class="section-empty">No additional matches available to request.</p>
+      {:else}
+        <div class="results-grid">
+          {#each discoverResults as item (item.type + ':' + item.tmdb_id)}
+            {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
+            <div class="result-card discover">
+              <div class="poster-wrap">
+                {#if item.poster_url}
+                  <img src={item.poster_url} alt={item.title} loading="lazy" />
+                {:else}
+                  <div class="poster-blank">
+                    <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
+                  </div>
+                {/if}
+                <span class="type-pill type-{item.type}">{badge.label}</span>
+              </div>
+              <div class="result-info">
+                <div class="result-title" title={item.title}>{item.title}</div>
+                {#if item.year}<div class="result-year">{item.year}</div>{/if}
+                {#if item.has_active_request}
+                  <span class="status-pill status-{item.active_request_status ?? 'pending'}">
+                    {statusLabel(item.active_request_status ?? 'pending')}
+                  </span>
+                {:else}
+                  <button
+                    class="request-btn"
+                    disabled={creatingFor.has(item.tmdb_id)}
+                    on:click={() => requestItem(item)}
+                  >
+                    {creatingFor.has(item.tmdb_id) ? 'Requesting…' : 'Request'}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    {#if nothingFound}
+      <div class="empty">
+        <div class="empty-glyph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+          </svg>
+        </div>
+        <p class="empty-title">No results for "{query}"</p>
+        <p class="empty-sub">Try a different spelling or check the title.</p>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -189,6 +311,31 @@
   }
   .clear-btn:hover { color: var(--text-secondary); }
 
+  /* ── Sections ─────────────────────────────────────────────────────────── */
+  .result-section { margin-bottom: 2.5rem; }
+  .section-title {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    margin-bottom: 0.85rem;
+  }
+  .section-empty {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    padding: 0.5rem 0 1rem;
+  }
+
+  .banner-error {
+    background: rgba(248,113,113,0.1);
+    border: 1px solid rgba(248,113,113,0.2);
+    color: #fca5a5;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    margin-bottom: 1rem;
+  }
+
   /* ── Results grid ──────────────────────────────────────────────────────── */
   .results-grid {
     display: grid;
@@ -207,9 +354,14 @@
     color: inherit;
     padding: 0;
     font-family: inherit;
+    display: flex;
+    flex-direction: column;
   }
   .result-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px var(--shadow); }
+  .result-card.discover { cursor: default; }
+  .result-card.discover:hover { transform: none; box-shadow: none; }
 
+  .poster-wrap { position: relative; }
   .poster-wrap img {
     width: 100%;
     aspect-ratio: 2/3;
@@ -226,6 +378,19 @@
     font-size: 2rem;
     font-weight: 700;
     color: var(--border-strong);
+  }
+
+  .type-pill {
+    position: absolute;
+    top: 0.4rem;
+    left: 0.4rem;
+    font-size: 0.6rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.65);
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .result-info { padding: 0.45rem 0.55rem 0.55rem; }
@@ -258,12 +423,46 @@
     margin-top: 0.1rem;
   }
 
+  .request-btn {
+    margin-top: 0.5rem;
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .request-btn:hover:not(:disabled) { background: var(--accent-hover); }
+  .request-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .status-pill {
+    display: inline-block;
+    margin-top: 0.5rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 0.18rem 0.55rem;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .status-pending      { background: rgba(251,191,36,0.15); color: #fcd34d; }
+  .status-approved     { background: rgba(124,106,247,0.15); color: var(--accent-text); }
+  .status-downloading  { background: rgba(96,165,250,0.15); color: #93c5fd; }
+  .status-available    { background: rgba(52,211,153,0.15); color: #6ee7b7; }
+  .status-declined     { background: rgba(248,113,113,0.15); color: #fca5a5; }
+  .status-failed       { background: rgba(248,113,113,0.15); color: #fca5a5; }
+
   .result-card.skeleton {
     aspect-ratio: 2/3;
     background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
     border: none;
+    cursor: default;
   }
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 

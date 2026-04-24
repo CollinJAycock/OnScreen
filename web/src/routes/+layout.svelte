@@ -213,7 +213,7 @@
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 7a1 1 0 011 1v2h2a1 1 0 110 2h-2v2a1 1 0 11-2 0v-2H7a1 1 0 110-2h2V8a1 1 0 011-1z" clip-rule="evenodd"/>
           </svg>
-          Request
+          Requests
         </a>
         <a href="/favorites" class="nav-link" class:active={path.startsWith('/favorites')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">

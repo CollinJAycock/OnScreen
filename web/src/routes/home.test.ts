@@ -78,18 +78,26 @@ describe('Home page', () => {
       });
     });
 
-    it('shows recently added hub', async () => {
+    it('shows per-library "Recently Added" row', async () => {
       mockListLibraries.mockResolvedValue([]);
       mockHubGet.mockResolvedValue({
         continue_watching: [],
-        recently_added: [
-          { id: 'item-2', title: 'Inception', year: 2010, updated_at: '2026-01-01' },
+        recently_added: [],
+        recently_added_by_library: [
+          {
+            library_id: 'lib-movies',
+            library_name: 'Movies',
+            library_type: 'movie',
+            items: [
+              { id: 'item-2', title: 'Inception', year: 2010, updated_at: '2026-01-01' },
+            ],
+          },
         ],
       });
 
       render(Page);
       await waitFor(() => {
-        expect(screen.getByText('Recently Added')).toBeTruthy();
+        expect(screen.getByText(/Recently Added to Movies/)).toBeTruthy();
         expect(screen.getByText('Inception')).toBeTruthy();
       });
     });

@@ -3,28 +3,22 @@
   import { goto } from '$app/navigation';
   import {
     api,
-    discoverApi,
     requestsApi,
     requestsAdminApi,
-    type DiscoverItem,
     type MediaRequest,
     type RequestStatus,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
-  type Tab = 'discover' | 'mine' | 'queue';
+  // Discover used to live here as a third tab; it's now folded into /search
+  // (search results show library hits + a "Request" section for TMDB
+  // matches in one pass), so this page is just for managing existing
+  // requests and the admin approval queue.
+  type Tab = 'mine' | 'queue';
 
   let ready = false;
   let isAdmin = false;
-  let activeTab: Tab = 'discover';
-
-  // Discover state
-  let query = '';
-  let searching = false;
-  let searchError = '';
-  let results: DiscoverItem[] = [];
-  let creatingFor = new Set<number>(); // tmdb_ids in flight
-  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let activeTab: Tab = 'mine';
 
   // My Requests state
   let mineLoading = true;
@@ -52,49 +46,6 @@
     await loadMine();
     if (isAdmin) await loadQueue();
   });
-
-  // ── Discover ──────────────────────────────────────────────────────────────
-
-  function debounceSearch() {
-    if (searchTimer) clearTimeout(searchTimer);
-    if (!query.trim()) { results = []; searchError = ''; return; }
-    searchTimer = setTimeout(runSearch, 300);
-  }
-
-  async function runSearch() {
-    searching = true;
-    searchError = '';
-    try {
-      results = await discoverApi.search(query.trim(), 24);
-    } catch (e: unknown) {
-      searchError = e instanceof Error ? e.message : 'Search failed';
-      results = [];
-    } finally {
-      searching = false;
-    }
-  }
-
-  async function requestItem(item: DiscoverItem) {
-    creatingFor = new Set(creatingFor).add(item.tmdb_id);
-    try {
-      const created = await requestsApi.create({ type: item.type, tmdb_id: item.tmdb_id });
-      toast.success(`Requested: ${item.title}`);
-      // Mirror the returned state into the result row so the card flips immediately.
-      results = results.map(r =>
-        r.tmdb_id === item.tmdb_id && r.type === item.type
-          ? { ...r, has_active_request: true, active_request_id: created.id, active_request_status: created.status }
-          : r,
-      );
-      // Refresh My Requests in the background so the count is correct when the user switches tab.
-      loadMine();
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Request failed');
-    } finally {
-      const next = new Set(creatingFor);
-      next.delete(item.tmdb_id);
-      creatingFor = next;
-    }
-  }
 
   // ── My Requests ───────────────────────────────────────────────────────────
 
@@ -206,12 +157,9 @@
 
 {#if ready}
 <div class="page">
-  <h1 class="page-title">Request</h1>
+  <h1 class="page-title">Requests</h1>
 
   <div class="tabs">
-    <button class="tab" class:active={activeTab === 'discover'} on:click={() => (activeTab = 'discover')}>
-      Discover
-    </button>
     <button class="tab" class:active={activeTab === 'mine'} on:click={() => { activeTab = 'mine'; loadMine(); }}>
       My Requests
     </button>
@@ -220,80 +168,10 @@
         Queue
       </button>
     {/if}
+    <span class="hint">
+      To request something new, use <a href="/search">Search</a>.
+    </span>
   </div>
-
-  {#if activeTab === 'discover'}
-    <div class="search-row">
-      <input
-        type="search"
-        bind:value={query}
-        on:input={debounceSearch}
-        placeholder="Search TMDB for a movie or show…"
-        autocomplete="off"
-        spellcheck="false"
-      />
-    </div>
-
-    {#if searchError}
-      <div class="banner error">{searchError}</div>
-    {/if}
-
-    {#if searching}
-      <div class="grid">
-        {#each [1,2,3,4,5,6,7,8] as _}
-          <div class="skeleton-tile"></div>
-        {/each}
-      </div>
-    {:else if results.length === 0 && query.trim()}
-      <div class="empty">
-        <p>No matches for "{query.trim()}"</p>
-      </div>
-    {:else if results.length === 0}
-      <div class="empty">
-        <p>Search TMDB to find something to request.</p>
-      </div>
-    {:else}
-      <div class="grid">
-        {#each results as it (it.type + ':' + it.tmdb_id)}
-          <div class="tile">
-            <div class="poster">
-              {#if it.poster_url}
-                <img src={it.poster_url} alt={it.title} loading="lazy" />
-              {:else}
-                <div class="poster-blank">{it.title[0]?.toUpperCase() ?? '?'}</div>
-              {/if}
-              <span class="type-pill type-{it.type}">{it.type === 'show' ? 'Show' : 'Movie'}</span>
-              {#if it.in_library}
-                <span class="library-check" title="In your library" aria-label="In your library">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                </span>
-              {/if}
-            </div>
-            <div class="tile-title" title={it.title}>{it.title}</div>
-            {#if it.year}<div class="tile-year">{it.year}</div>{/if}
-
-            {#if it.in_library && it.library_item_id}
-              <a class="btn pill in-library" href="/watch/{it.library_item_id}">In library</a>
-            {:else if it.has_active_request}
-              <span class="btn pill status-{it.active_request_status ?? 'pending'}">
-                {statusLabel(it.active_request_status ?? 'pending')}
-              </span>
-            {:else}
-              <button
-                class="btn primary"
-                disabled={creatingFor.has(it.tmdb_id)}
-                on:click={() => requestItem(it)}
-              >
-                {creatingFor.has(it.tmdb_id) ? 'Requesting…' : 'Request'}
-              </button>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
-  {/if}
 
   {#if activeTab === 'mine'}
     <div class="filter-row">
@@ -315,7 +193,7 @@
     {#if mineLoading}
       <div class="skeleton-block"></div>
     {:else if mineItems.length === 0}
-      <div class="empty"><p>No requests yet — head to Discover to request something.</p></div>
+      <div class="empty"><p>No requests yet — head to <a href="/search">Search</a> to request something.</p></div>
     {:else}
       {#each mineItems as req (req.id)}
         <div class="row">
@@ -434,7 +312,13 @@
     margin-bottom: 1.25rem;
   }
 
-  .tabs { display: flex; gap: 0.4rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+  .tabs {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+  }
   .tab {
     background: transparent;
     border: none;
@@ -447,9 +331,16 @@
   }
   .tab:hover { color: var(--text-secondary); }
   .tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+  .hint {
+    margin-left: auto;
+    margin-bottom: 0.55rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+  .hint a { color: var(--accent-text); text-decoration: none; }
+  .hint a:hover { text-decoration: underline; }
 
-  .search-row { margin-bottom: 1.25rem; }
-  input[type="search"], select, textarea {
+  select, textarea {
     background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 7px;
@@ -459,7 +350,7 @@
     width: 100%;
   }
   textarea { resize: vertical; min-height: 70px; margin-bottom: 1rem; font-family: inherit; }
-  input[type="search"]:focus, select:focus, textarea:focus {
+  select:focus, textarea:focus {
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg);
   }
 
@@ -469,61 +360,14 @@
   .banner { padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.25rem; }
   .banner.error { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2); color: #fca5a5; }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-    gap: 1.1rem;
-  }
-  .tile { display: flex; flex-direction: column; gap: 0.35rem; }
-  .poster {
-    aspect-ratio: 2 / 3;
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--bg-elevated);
-    position: relative;
-  }
-  .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .poster-blank {
-    width: 100%; height: 100%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 2rem; color: var(--text-muted);
-  }
-  .type-pill {
-    position: absolute;
-    top: 0.4rem; left: 0.4rem;
-    font-size: 0.6rem;
-    padding: 0.15rem 0.45rem;
-    border-radius: 10px;
-    background: rgba(0,0,0,0.65);
-    color: #fff;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .library-check {
-    position: absolute;
-    top: 0.4rem; right: 0.4rem;
-    width: 1.4rem; height: 1.4rem;
-    display: flex; align-items: center; justify-content: center;
-    border-radius: 50%;
-    background: #16a34a;
-    color: #fff;
-    box-shadow: 0 0 0 2px rgba(0,0,0,0.55);
-  }
-  .library-check svg { width: 0.85rem; height: 0.85rem; }
-  .tile-title {
-    font-size: 0.85rem; font-weight: 500; color: var(--text-primary);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .tile-year { font-size: 0.72rem; color: var(--text-muted); }
-
-  .skeleton-tile, .skeleton-block {
+  .skeleton-block {
     background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
     border-radius: 8px;
+    height: 80px;
+    margin-bottom: 0.75rem;
   }
-  .skeleton-tile { aspect-ratio: 2 / 3; }
-  .skeleton-block { height: 80px; margin-bottom: 0.75rem; }
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
   .btn {
@@ -548,9 +392,6 @@
   .btn.danger:hover { background: rgba(248,113,113,0.22); }
   .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
-  .pill { width: 100%; }
-  .in-library { background: rgba(52,211,153,0.12); color: #6ee7b7; border-color: rgba(52,211,153,0.2); }
-
   .row {
     display: flex;
     gap: 0.9rem;
@@ -574,7 +415,7 @@
   .decline-reason { color: #fca5a5; }
   .row-actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; flex-shrink: 0; min-width: 100px; }
 
-  .status-pill, .pill {
+  .status-pill {
     font-size: 0.65rem;
     font-weight: 600;
     padding: 0.18rem 0.55rem;
@@ -607,7 +448,6 @@
 
   @media (max-width: 600px) {
     .page { padding: 1.25rem 1rem 3rem; }
-    .grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.75rem; }
     .row { flex-direction: column; }
     .row-poster { width: 80px; }
     .row-actions { flex-direction: row; min-width: 0; }

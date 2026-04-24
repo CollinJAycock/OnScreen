@@ -6,7 +6,6 @@
 
   let libraries: Library[] = [];
   let continueWatching: HubItem[] = [];
-  let recentlyAdded: HubItem[] = [];
   let recentlyAddedByLibrary: HubLibraryRow[] = [];
   let loading = true;
   let error = '';
@@ -26,7 +25,6 @@
     try {
       const hub = await hubApi.get();
       continueWatching = hub.continue_watching;
-      recentlyAdded = hub.recently_added;
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
     } catch { /* silently skip — next poll will retry */ }
   }
@@ -37,7 +35,6 @@
       const [libs, hub] = await Promise.all([libraryApi.list(), hubApi.get()]);
       libraries = libs;
       continueWatching = hub.continue_watching;
-      recentlyAdded = hub.recently_added;
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
     }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load'; }
@@ -145,31 +142,6 @@
               <div class="hub-progress">
                 <div class="hub-progress-bar" style="width:{progressPct(item)}%"></div>
               </div>
-              <div class="hub-label">{item.title}</div>
-              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
-            </a>
-          {/each}
-        </div>
-      </section>
-    {/if}
-
-    <!-- Recently Added -->
-    {#if recentlyAdded.length > 0}
-      <section class="hub-section">
-        <h2 class="hub-title">Recently Added</h2>
-        <div class="hub-scroll">
-          {#each recentlyAdded as item (item.id)}
-            <a class="hub-card" class:square={isSquare(item)} href={hubHref(item)}>
-              {#if item.poster_path}
-                <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
-                     srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=450 450w"
-                     sizes="(max-width: 768px) 130px, 220px"
-                     alt={item.title} loading="lazy" />
-              {:else}
-                <div class="hub-poster-blank" class:square={isSquare(item)}>
-                  <span>{item.title[0]?.toUpperCase()}</span>
-                </div>
-              {/if}
               <div class="hub-label">{item.title}</div>
               {#if item.year}<div class="hub-year">{item.year}</div>{/if}
             </a>
