@@ -109,6 +109,13 @@ type transcodeStartResponse struct {
 	SessionID   string `json:"session_id"`
 	PlaylistURL string `json:"playlist_url"`
 	Token       string `json:"token"`
+	// StartOffsetSec is the actual content position the stream begins at.
+	// May be earlier than the requested position_ms when video is being
+	// stream-copied — input-side -ss snaps back to the previous keyframe.
+	// The client uses this for its scrubber-time mapping so the UI matches
+	// what's on screen instead of advertising an exact resume that the
+	// codec can't honor.
+	StartOffsetSec float64 `json:"start_offset_sec"`
 }
 
 // Start handles POST /api/v1/items/{id}/transcode.
@@ -327,11 +334,22 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		jobBitrate = transcode.ScaleBitrateForHEVC(bitrateKbps)
 	}
 
+	// For video-copy (remux), -ss INPUT lands on the keyframe at-or-before
+	// the requested time, which can be 5–10 s earlier on sparse-GOP rips.
+	// Probe the source so we know the real start time and can tell the
+	// client to set its scrubber to match. Skip when offset is 0 (start
+	// of file) or for full re-encode (decoder can land on any frame).
+	requestedStartSec := float64(body.PositionMS) / 1000.0
+	startOffsetSec := requestedStartSec
+	if body.VideoCopy && startOffsetSec > 0 {
+		startOffsetSec = transcode.FindPreviousKeyframe(ctx, file.FilePath, requestedStartSec)
+	}
+
 	job := transcode.TranscodeJob{
 		SessionID:        sessionID,
 		FilePath:         file.FilePath,
 		SessionDir:       transcode.SessionDir(sessionID),
-		StartOffsetSec:   float64(body.PositionMS) / 1000.0,
+		StartOffsetSec:   startOffsetSec,
 		Decision:         decision,
 		Encoder:          encoder,
 		Width:            width,
@@ -373,9 +391,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		sessionID, segTok)
 
 	respond.Success(w, r, transcodeStartResponse{
-		SessionID:   sessionID,
-		PlaylistURL: playlistURL,
-		Token:       segTok,
+		SessionID:      sessionID,
+		PlaylistURL:    playlistURL,
+		Token:          segTok,
+		StartOffsetSec: startOffsetSec,
 	})
 }
 

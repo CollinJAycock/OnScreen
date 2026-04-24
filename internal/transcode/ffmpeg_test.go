@@ -243,14 +243,11 @@ func TestBuildHLS_CustomAudioBitrate(t *testing.T) {
 }
 
 // TestBuildHLS_AACAudioSyncFilter guards the resample filter that fixes
-// the "audio is delayed at the start" bug on remux sessions. Without
-// async=1 on the AAC encode, FFmpeg's MPEG-TS output can leave a
-// multi-second silence at the head of segment 0 when the source's
-// first video keyframe isn't at t=0 (video-copy starts at that
-// keyframe but audio packets get orphaned until the mux catches up).
-// Guard specifically against regressions that reintroduce first_pts=0,
-// which forces audio PTS=0 against video's non-zero start and makes
-// the HLS muxer abort after a single short segment.
+// the "audio is delayed at the start" bug on remux sessions starting
+// from the beginning of file. Guards: (a) async=1 is present at file
+// start, (b) the filter is OMITTED for mid-stream -ss seeks because
+// it swallows segment 0's audio packets, (c) first_pts=0 never
+// appears (it aborts the HLS muxer).
 func TestBuildHLS_AACAudioSyncFilter(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath:     "/media/movie.mkv",
@@ -261,10 +258,29 @@ func TestBuildHLS_AACAudioSyncFilter(t *testing.T) {
 	})
 	argStr := strings.Join(args, " ")
 	if !strings.Contains(argStr, "-af aresample=async=1") {
-		t.Errorf("expected -af aresample=async=1 in AAC args: %s", argStr)
+		t.Errorf("expected -af aresample=async=1 at file start: %s", argStr)
 	}
 	if strings.Contains(argStr, "first_pts=0") {
 		t.Errorf("first_pts=0 must not appear — it aborts the muxer on non-zero-start sources: %s", argStr)
+	}
+}
+
+// TestBuildHLS_AACAudioSyncFilter_MidStream confirms the resampler is
+// skipped when -ss > 0. With mid-stream seek the filter buffers
+// initial samples for its resync computation and never flushes them,
+// shipping segment 0 with zero audio packets and stalling MSE.
+func TestBuildHLS_AACAudioSyncFilter_MidStream(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		StartOffset:   3542.5,
+		Encoder:       "copy",
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "aresample") {
+		t.Errorf("aresample filter must NOT appear with mid-stream -ss — it strips seg 0 audio: %s", argStr)
 	}
 }
 

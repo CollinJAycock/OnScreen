@@ -340,6 +340,15 @@
   // Skip the auto-seek in onVideoLoaded during quality switches
   let skipAutoSeek = false;
 
+  // Tracks whether this is the first loadedmetadata for the current
+  // session. The codec-escalation check (videoWidth === 0 → switch
+  // pipeline) must only fire on the initial decode attempt — after
+  // that, hls.js's recoverMediaError() detaches and reattaches
+  // MediaSource which fires loadedmetadata again with videoWidth=0
+  // *before* any frame decodes, and we'd spuriously escalate to a
+  // brand-new transcode session that resets currentTime to 0.
+  let codecEscalationArmed = true;
+
   // Audio codecs that browsers can decode natively.
   // Audio codecs browsers can decode natively in MP4/WebM containers.
   // AC-3, E-AC-3, DTS, TrueHD, ALAC, MP2, raw PCM are not reliably supported
@@ -971,6 +980,7 @@
 
   async function switchToDirectPlay(posMs: number) {
     const wasPlaying = videoEl && !videoEl.paused;
+    codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
     destroyHls();
     await stopTranscodeSession();
     hlsOffsetSec = 0;
@@ -992,6 +1002,7 @@
   async function switchToTranscode(height: number, posMs: number, videoCopy: boolean = false) {
     if (!item) return;
     const wasPlaying = videoEl && !videoEl.paused;
+    codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
     await stopTranscodeSession();
     destroyHls();
 
@@ -1009,7 +1020,10 @@
       const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC);
       transcodeSessionId = sess.session_id;
       transcodeToken = sess.token;
-      attachHls(sess.playlist_url, posMs / 1000, wasPlaying, videoCopy);
+      // The server may snap the start time back to the previous keyframe
+      // when video-copy is in use — trust its number for the scrubber
+      // mapping so the UI matches what's on screen, not what we asked for.
+      attachHls(sess.playlist_url, sess.start_offset_sec, wasPlaying, videoCopy);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Transcode failed';
     }
@@ -1062,8 +1076,15 @@
         startFragPrefetch: true,
         lowLatencyMode: false,
         backBufferLength: Infinity,
-        // Force playback to start at position 0 (not the live edge).
-        startPosition: 0,
+        // Let HLS.js auto-detect the start position from the stream's first
+        // PTS. We used to force startPosition=0, but with mid-stream -ss
+        // sessions the MPEG-TS muxer emits initial PTS around 10 s — the
+        // explicit 0 then snaps the player back into a no-data range,
+        // and worse, HLS.js re-applies that startPosition during
+        // recoverMediaError, undoing forward playback every time the
+        // buffer hiccups (visible to the user as "scrubber rewinds
+        // 5 seconds every 5 seconds").
+        startPosition: -1,
         // Disable live-edge sync until ENDLIST appears. Without this, HLS.js
         // seeks the player forward toward the live edge and stalls.
         liveSyncDurationCount: 999,
@@ -1132,7 +1153,12 @@
     // If the browser received video segments but videoWidth is 0, it can't decode
     // the video codec (e.g. Hi10P H.264, HEVC in remux). Escalate to full transcode.
     // Skip this check for audio-only files — they legitimately have no video track.
-    if (videoEl.videoWidth === 0 && item?.files?.[0] && item.files[0].video_codec) {
+    // Only fires on the first decode attempt for the current session: hls.js's
+    // recoverMediaError detaches/reattaches MediaSource which re-fires this
+    // event before any frame has decoded, and a spurious escalation here
+    // creates a brand-new session that resets currentTime to 0.
+    if (codecEscalationArmed && videoEl.videoWidth === 0 && item?.files?.[0] && item.files[0].video_codec) {
+      codecEscalationArmed = false;
       const file = item.files[0];
       const posMs = hlsActive
         ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
@@ -1146,6 +1172,11 @@
         switchToTranscode(h, posMs);
       }
       return;
+    }
+    if (videoEl.videoWidth > 0) {
+      // Successful decode — disarm escalation so future re-attaches
+      // (recovery, source-buffer flush) don't retrigger it.
+      codecEscalationArmed = false;
     }
 
     if (!hlsActive) {

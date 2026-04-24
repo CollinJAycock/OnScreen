@@ -259,13 +259,18 @@ func BuildHLS(a BuildArgs) []string {
 		// Align audio with video on remux (video-copy + audio-reencode)
 		// sessions where the source's first keyframe isn't at PTS=0.
 		// aresample=async=1 lets the resampler stretch/squeeze to keep
-		// audio aligned with video mid-stream; it can't manufacture
-		// audio the source doesn't have at the start, so a residual
-		// head gap on "silent intro" MKVs is unavoidable at this
-		// layer. Do not pass first_pts=0 here: it forces audio PTS=0
-		// against video's non-zero start and causes the HLS muxer to
-		// abort after segment 0.
-		args = append(args, "-af", "aresample=async=1")
+		// audio aligned with video mid-stream. Only apply at the
+		// start of the file: with mid-stream -ss, the filter buffers
+		// samples for its initial resync calculation and never
+		// flushes them, so segment 0 ships with zero audio packets
+		// — MSE refuses to append the empty audio sourceBuffer and
+		// playback stalls. FFmpeg's natural A/V alignment after a
+		// keyframe-aligned -ss is already tight (sub-100 ms), so we
+		// don't need the filter for resume seeks. Do not pass
+		// first_pts=0 here either: it aborts the HLS muxer.
+		if a.StartOffset <= 0 {
+			args = append(args, "-af", "aresample=async=1")
+		}
 	}
 
 	// ── Subtitles ────────────────────────────────────────────────────────────

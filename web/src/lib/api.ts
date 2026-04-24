@@ -1261,6 +1261,7 @@ export interface TranscodeSession {
   session_id: string;
   playlist_url: string;
   token: string;
+  start_offset_sec: number;
 }
 
 export const transcodeApi = {
