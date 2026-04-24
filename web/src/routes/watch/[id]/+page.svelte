@@ -1412,23 +1412,31 @@
   // Seek to an absolute content position (seconds).
   // In HLS mode, restarts the transcode session if the target is outside
   // the current stream window; otherwise seeks within the stream directly.
+  //
+  // Stream window sizing: the transcoded playlist grows as FFmpeg produces
+  // segments, but we never emit #EXT-X-ENDLIST until encoding finishes,
+  // so videoEl.duration reports Infinity for the whole session. The
+  // browser's seekable.end() then only reflects HLS.js's forward buffer
+  // (capped at ~30s by our config), NOT the full playlist FFmpeg has
+  // already produced. That made every forward scrub past the buffer
+  // tail trigger a full transcode restart — users felt this as "the
+  // scrubber doesn't work" because the 3-5s of black screen on each
+  // session restart masked the seek.
+  //
+  // Fix: read the playlist-known duration out of HLS.js directly. Every
+  // fragment FFmpeg has produced is in hls.levels[i].details.fragments,
+  // with accurate start + duration values. Summing those gives the real
+  // seekable upper bound, which grows in lock-step with FFmpeg. We only
+  // restart the session when the target is beyond what FFmpeg has
+  // actually encoded.
   function seekToContentTime(targetSec: number) {
     targetSec = Math.max(0, Math.min(targetSec, duration));
     if (!hlsActive) {
       videoEl.currentTime = targetSec;
       return;
     }
-    // Determine the seekable range within the current HLS stream.
-    // videoEl.duration can be Infinity for live-ish streams (before ENDLIST),
-    // so fall back to the seekable/buffered end reported by the browser.
-    let streamDur = 0;
-    if (isFinite(videoEl.duration) && videoEl.duration > 0) {
-      streamDur = videoEl.duration;
-    } else if (videoEl.seekable?.length) {
-      streamDur = videoEl.seekable.end(videoEl.seekable.length - 1);
-    } else if (videoEl.buffered?.length) {
-      streamDur = videoEl.buffered.end(videoEl.buffered.length - 1);
-    }
+
+    const streamDur = hlsPlaylistDurationSec();
     const streamEnd = hlsOffsetSec + streamDur;
     const streamTime = targetSec - hlsOffsetSec;
     if (targetSec >= hlsOffsetSec && targetSec <= streamEnd && streamTime >= 0) {
@@ -1438,6 +1446,24 @@
       // Preserve remux mode if we were in it (videoCopy).
       switchToTranscode(selectedQuality.height, Math.floor(targetSec * 1000), hlsIsRemux);
     }
+  }
+
+  // hlsPlaylistDurationSec returns how far into the stream HLS.js knows
+  // it can seek, using the parsed playlist rather than the browser's
+  // seekable range (which tracks only buffered media). Falls back to
+  // seekable/buffered bounds when the playlist details haven't parsed
+  // yet (very early in a session).
+  function hlsPlaylistDurationSec(): number {
+    const level = hlsInstance?.levels?.[hlsInstance.currentLevel];
+    const frags = level?.details?.fragments;
+    if (frags && frags.length > 0) {
+      const last = frags[frags.length - 1];
+      return last.start + last.duration;
+    }
+    if (isFinite(videoEl.duration) && videoEl.duration > 0) return videoEl.duration;
+    if (videoEl.seekable?.length) return videoEl.seekable.end(videoEl.seekable.length - 1);
+    if (videoEl.buffered?.length) return videoEl.buffered.end(videoEl.buffered.length - 1);
+    return 0;
   }
 
   function onVolumeChange(e: Event) {
