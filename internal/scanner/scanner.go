@@ -496,6 +496,16 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if musicErr != nil {
 			return nil, nil, false, fmt.Errorf("music hierarchy for %s: %w", path, musicErr)
 		}
+	} else if libraryType == "music" && isVideoFile(path) {
+		// Music videos share the music library with audio tracks.
+		// Routed to a dedicated hierarchy so they hang off the artist
+		// (no album), and the existing video transcode + player
+		// pipeline handles playback.
+		var mvErr error
+		item, mvErr = s.processMusicVideo(ctx, libraryID, path, roots)
+		if mvErr != nil {
+			return nil, nil, false, fmt.Errorf("music video for %s: %w", path, mvErr)
+		}
 	} else if libraryType == "show" {
 		var showErr error
 		item, showErr = s.processShowHierarchy(ctx, libraryID, path)
@@ -853,6 +863,21 @@ func isImageFile(path string) bool {
 func isMusicFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	return musicExtensions[ext]
+}
+
+// videoExtensions are the container formats routed through the video
+// transcode pipeline — a proper subset of validExtensions. Kept
+// separate from isMediaFile so the music-library scanner can ask
+// "is this file a video?" without rejecting the audio branch.
+var videoExtensions = map[string]bool{
+	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true,
+	".mov": true, ".wmv": true, ".ts": true, ".m2ts": true,
+	".webm": true,
+}
+
+func isVideoFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return videoExtensions[ext]
 }
 
 // isLosslessAudio classifies a music file as lossless or lossy. The extension

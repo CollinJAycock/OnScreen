@@ -6,6 +6,7 @@
 
   let artist: ItemDetail | null = null;
   let albums: ChildItem[] = [];
+  let musicVideos: ChildItem[] = [];
   let loading = true;
   let error = '';
 
@@ -36,12 +37,20 @@
       }
       artist = detail;
       const list = await itemApi.children(id);
-      albums = list.items.sort((a, b) => {
+      // Split the children into albums and music videos — both hang
+      // off the artist but render as separate rows on the page.
+      // Music videos have no discography hierarchy (no album node),
+      // just a flat list under the artist.
+      const all = list.items;
+      albums = all.filter(c => c.type === 'album').sort((a, b) => {
         const ya = a.year ?? 0;
         const yb = b.year ?? 0;
         if (ya !== yb) return yb - ya; // newest first
         return a.title.localeCompare(b.title);
       });
+      musicVideos = all.filter(c => c.type === 'music_video').sort((a, b) =>
+        a.title.localeCompare(b.title),
+      );
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load artist';
     } finally {
@@ -77,16 +86,23 @@
       <div class="hero-meta">
         <div class="kind">Artist</div>
         <h1>{artist.title}</h1>
-        <div class="counts">{albums.length} {albums.length === 1 ? 'album' : 'albums'}</div>
+        <div class="counts">
+          {albums.length} {albums.length === 1 ? 'album' : 'albums'}
+          {#if musicVideos.length > 0}
+            · {musicVideos.length} music {musicVideos.length === 1 ? 'video' : 'videos'}
+          {/if}
+        </div>
         {#if artist.summary}
           <p class="bio">{artist.summary}</p>
         {/if}
       </div>
     </header>
 
-    {#if albums.length === 0}
-      <p class="empty">No albums in your library yet.</p>
-    {:else}
+    {#if albums.length === 0 && musicVideos.length === 0}
+      <p class="empty">No albums or music videos in your library yet.</p>
+    {/if}
+
+    {#if albums.length > 0}
       <h2 class="section-h">Albums</h2>
       <div class="grid">
         {#each albums as a (a.id)}
@@ -103,6 +119,29 @@
             </div>
             <div class="title">{a.title}</div>
             {#if a.year}<div class="year">{a.year}</div>{/if}
+          </a>
+        {/each}
+      </div>
+    {/if}
+
+    {#if musicVideos.length > 0}
+      <h2 class="section-h mv-h">Music Videos</h2>
+      <div class="grid mv-grid">
+        {#each musicVideos as v (v.id)}
+          <a class="card" href="/watch/{v.id}">
+            <div class="poster mv-poster">
+              {#if v.thumb_path}
+                <img src="/artwork/{encodeURI(v.thumb_path)}?v={v.updated_at}&w=400"
+                     alt={v.title} loading="lazy" />
+              {:else if v.poster_path}
+                <img src="/artwork/{encodeURI(v.poster_path)}?v={v.updated_at}&w=400"
+                     alt={v.title} loading="lazy" />
+              {:else}
+                <div class="poster-blank">▶</div>
+              {/if}
+            </div>
+            <div class="title">{v.title}</div>
+            {#if v.year}<div class="year">{v.year}</div>{/if}
           </a>
         {/each}
       </div>
@@ -162,6 +201,13 @@
 
   .empty, .loading, .err { color: var(--text-muted); padding: 2rem 0; }
   .err { color: var(--danger, #f87171); }
+
+  /* Music-video row sits below albums with a 16:9 poster so it reads
+     visually as video (albums are square). Slightly wider minmax so
+     the same breakpoint renders fewer but larger thumbnails. */
+  .mv-h { margin-top: 2.5rem; }
+  .mv-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .mv-poster { aspect-ratio: 16 / 9; }
 
   @media (max-width: 600px) {
     .page { padding: 1.5rem 1rem 4rem; }
