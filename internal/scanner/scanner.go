@@ -32,8 +32,9 @@ var tracer = otel.Tracer("onscreen/scanner")
 var validExtensions = map[string]bool{
 	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true,
 	".mov": true, ".wmv": true, ".ts": true, ".m2ts": true,
-	// Lossy / common music
-	".mp3": true, ".m4a": true, ".aac": true, ".ogg": true, ".opus": true,
+	// Lossy / common music + audiobooks (m4b is the standard
+	// chaptered audiobook container)
+	".mp3": true, ".m4a": true, ".m4b": true, ".aac": true, ".ogg": true, ".opus": true,
 	// Lossless PCM (CD-quality + hi-res)
 	".flac": true, ".wav": true, ".aif": true, ".aiff": true, ".alac": true,
 	// Lossless compressed (non-FLAC)
@@ -506,6 +507,16 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if mvErr != nil {
 			return nil, nil, false, fmt.Errorf("music video for %s: %w", path, mvErr)
 		}
+	} else if libraryType == "audiobook" && isAudiobookFile(path) {
+		// Audiobooks: one file = one item (flat model for v2.0). The
+		// m4b container's embedded chapter markers come through via
+		// ffprobe at playback time; a richer author/series hierarchy
+		// is planned for v2.1.
+		var abErr error
+		item, abErr = s.processAudiobook(ctx, libraryID, path, roots)
+		if abErr != nil {
+			return nil, nil, false, fmt.Errorf("audiobook for %s: %w", path, abErr)
+		}
 	} else if libraryType == "show" {
 		var showErr error
 		item, showErr = s.processShowHierarchy(ctx, libraryID, path)
@@ -824,6 +835,8 @@ func fileTypeForLibrary(libraryType string) string {
 		return "track"
 	case "photo":
 		return "photo"
+	case "audiobook":
+		return "audiobook"
 	default:
 		return "movie"
 	}
@@ -838,6 +851,21 @@ var musicExtensions = map[string]bool{
 	".flac": true, ".wav": true, ".aif": true, ".aiff": true, ".alac": true,
 	".wv": true, ".ape": true, ".tak": true,
 	".dsf": true, ".dff": true,
+}
+
+// audiobookExtensions are audio containers that typically hold a whole
+// book (m4b chaptered MP4) or episodic audio. The scanner routes
+// these through processAudiobook when the library type is
+// "audiobook" — outside that library they're just regular music
+// files.
+var audiobookExtensions = map[string]bool{
+	".m4b": true, ".m4a": true, ".mp3": true, ".aac": true,
+	".ogg": true, ".opus": true, ".flac": true,
+}
+
+func isAudiobookFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return audiobookExtensions[ext]
 }
 
 // losslessExtensions flags audio containers that are bit-perfect end-to-end.

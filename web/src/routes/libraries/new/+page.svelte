@@ -13,7 +13,7 @@
   }
 
   let name = '';
-  let type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' = 'movie';
+  let type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' = 'movie';
   let paths: string[] = [''];
   let agent = 'tmdb';
   let language = 'en';
@@ -76,7 +76,7 @@
         <input id="name" bind:value={name} placeholder="Movies" autocomplete="off" />
       </div>
       <div class="type-picker">
-        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['music','🎵','Music'],['photo','🖼️','Photos'],['dvr','📼','DVR Recordings']] as [val, icon, label]}
+        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['photo','🖼️','Photos'],['dvr','📼','DVR Recordings']] as [val, icon, label]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
             <span class="type-icon">{icon}</span>
