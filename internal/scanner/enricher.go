@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/metadata/nfo"
 )
 
 // ItemUpdater saves enriched metadata back to the database.
@@ -162,7 +164,97 @@ func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.Fil
 	}
 }
 
+// applyMovieNFO layers NFO values over the in-flight
+// UpdateItemMetadataParams. NFO wins where it's populated — it's
+// operator-curated data, not a scraper guess. Empty NFO fields fall
+// through to whatever TMDB already set on p.
+func applyMovieNFO(p *media.UpdateItemMetadataParams, m *nfo.Movie) {
+	if m == nil {
+		return
+	}
+	if m.Title != "" {
+		p.Title = m.Title
+		sortTitle := m.SortTitle
+		if sortTitle == "" {
+			sortTitle = m.Title
+		}
+		p.SortTitle = sortTitle
+	}
+	if m.OriginalTitle != "" {
+		v := m.OriginalTitle
+		p.OriginalTitle = &v
+	}
+	if m.Year != 0 {
+		v := m.Year
+		p.Year = &v
+	}
+	if m.Plot != "" {
+		v := m.Plot
+		p.Summary = &v
+	}
+	if m.Tagline != "" {
+		v := m.Tagline
+		p.Tagline = &v
+	}
+	if m.Rating > 0 {
+		v := m.Rating
+		p.Rating = &v
+	}
+	if m.MPAA != "" {
+		v := m.MPAA
+		p.ContentRating = &v
+	}
+	if m.RuntimeMin > 0 {
+		ms := int64(m.RuntimeMin) * 60 * 1000
+		p.DurationMS = &ms
+	}
+	if len(m.Genres) > 0 {
+		p.Genres = m.Genres
+	}
+	if m.Premiered != nil {
+		v := *m.Premiered
+		p.OriginallyAvailableAt = &v
+	}
+}
+
+// writeNFOOnly persists NFO metadata when the TMDB lookup failed or
+// wasn't configured. Missing posters aren't populated here — if the
+// user cares they can drop a folder.jpg / poster.jpg next to the
+// movie and the scanner's art discovery will pick it up on the
+// next pass.
+func (e *Enricher) writeNFOOnly(ctx context.Context, itemID uuid.UUID, m *nfo.Movie) error {
+	p := media.UpdateItemMetadataParams{ID: itemID}
+	applyMovieNFO(&p, m)
+	if p.Title == "" {
+		return nil // nothing useful in the NFO
+	}
+	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
+		return fmt.Errorf("update item metadata (nfo-only): %w", err)
+	}
+	e.logger.InfoContext(ctx, "item enriched from NFO (no TMDB match)",
+		"item_id", itemID, "title", m.Title)
+	return nil
+}
+
 func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File) error {
+	// NFO sidecar (movie.nfo / <basename>.nfo) is an operator-curated
+	// metadata source — if it exists we trust it over TMDB guesses.
+	// Use its title for the TMDB search too (gets us better poster
+	// matches when the filename is junk like "Movie_2009_WEB-DL").
+	var nfoMovie *nfo.Movie
+	if nfoPath, err := nfo.FindMovieNFO(file.FilePath); err == nil {
+		if f, err := os.Open(nfoPath); err == nil {
+			parsed, perr := nfo.ParseMovie(f)
+			_ = f.Close()
+			if perr == nil {
+				nfoMovie = parsed
+			} else {
+				e.logger.WarnContext(ctx, "nfo parse failed; falling through to TMDB",
+					"path", nfoPath, "err", perr)
+			}
+		}
+	}
+
 	// Clean the stored title before searching: items scanned before this fix
 	// may have filenames like "Movie_Title_2009_1080p_WEB-DL" stored verbatim.
 	searchTitle, extractedYear := cleanTitle(item.Title)
@@ -173,12 +265,27 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 	if year == 0 && extractedYear != nil {
 		year = *extractedYear
 	}
+	// NFO overrides for the TMDB search terms — its title + year are
+	// user-curated, so they beat whatever we derived from the filename.
+	if nfoMovie != nil {
+		if nfoMovie.Title != "" {
+			searchTitle = nfoMovie.Title
+		}
+		if nfoMovie.Year != 0 {
+			year = nfoMovie.Year
+		}
+	}
 
 	result, err := agent.SearchMovie(ctx, searchTitle, year)
 	if err != nil || result == nil {
 		// No result or API error — not a scan-blocking error.
 		e.logger.InfoContext(ctx, "tmdb search found no result",
 			"title", item.Title, "year", year, "err", err)
+		// Even without TMDB, NFO alone is enough to populate metadata
+		// for a Kodi-migrated library. Write what we have.
+		if nfoMovie != nil {
+			return e.writeNFOOnly(ctx, item.ID, nfoMovie)
+		}
 		return nil
 	}
 
@@ -241,21 +348,91 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		}
 	}
 
+	// NFO overrides happen LAST so user-curated data beats TMDB's
+	// scrape. Artwork URLs (poster/fanart paths we just filled from
+	// TMDB) stay — the NFO doesn't override those.
+	applyMovieNFO(&p, nfoMovie)
+
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update item metadata: %w", err)
 	}
 
 	e.logger.InfoContext(ctx, "item enriched",
 		"item_id", item.ID,
-		"title", result.Title,
+		"title", p.Title,
 		"tmdb_id", result.TMDBID,
 		"has_poster", p.PosterPath != nil,
+		"from_nfo", nfoMovie != nil,
 	)
 	return nil
 }
 
+// applyShowNFO layers NFO values over TMDB-derived UpdateItemMetadataParams
+// for tvshow.nfo. Same philosophy as applyMovieNFO — operator-curated
+// data wins.
+func applyShowNFO(p *media.UpdateItemMetadataParams, s *nfo.Show) {
+	if s == nil {
+		return
+	}
+	if s.Title != "" {
+		p.Title = s.Title
+		sortTitle := s.SortTitle
+		if sortTitle == "" {
+			sortTitle = s.Title
+		}
+		p.SortTitle = sortTitle
+	}
+	if s.OriginalTitle != "" {
+		v := s.OriginalTitle
+		p.OriginalTitle = &v
+	}
+	if s.Year != 0 {
+		v := s.Year
+		p.Year = &v
+	}
+	if s.Plot != "" {
+		v := s.Plot
+		p.Summary = &v
+	}
+	if s.Rating > 0 {
+		v := s.Rating
+		p.Rating = &v
+	}
+	if s.ContentRating != "" {
+		v := s.ContentRating
+		p.ContentRating = &v
+	}
+	if len(s.Genres) > 0 {
+		p.Genres = s.Genres
+	}
+	if s.Premiered != nil {
+		v := *s.Premiered
+		p.OriginallyAvailableAt = &v
+	}
+}
+
 // enrichShow searches TMDB for the show and updates metadata, poster, and fanart.
 func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File) error {
+	// tvshow.nfo lives in the show directory (two levels up from the
+	// episode file: episode → season → show). Reads happen before the
+	// TMDB search so the NFO's title can feed a more accurate search.
+	var nfoShow *nfo.Show
+	showDir := showDirFromFile(file.FilePath)
+	if showDir != "" {
+		if nfoPath, err := nfo.FindShowNFO(showDir); err == nil {
+			if f, err := os.Open(nfoPath); err == nil {
+				parsed, perr := nfo.ParseShow(f)
+				_ = f.Close()
+				if perr == nil {
+					nfoShow = parsed
+				} else {
+					e.logger.WarnContext(ctx, "tvshow.nfo parse failed; falling through to TMDB",
+						"path", nfoPath, "err", perr)
+				}
+			}
+		}
+	}
+
 	searchTitle, extractedYear := cleanTitle(item.Title)
 	year := 0
 	if item.Year != nil {
@@ -263,6 +440,14 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	}
 	if year == 0 && extractedYear != nil {
 		year = *extractedYear
+	}
+	if nfoShow != nil {
+		if nfoShow.Title != "" {
+			searchTitle = nfoShow.Title
+		}
+		if nfoShow.Year != 0 {
+			year = nfoShow.Year
+		}
 	}
 
 	result, err := agent.SearchTV(ctx, searchTitle, year)
@@ -272,6 +457,18 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 		// No TMDB match — try TVDB outright.
 		result = e.tvdbShowFallback(ctx, searchTitle, year, nil)
 		if result == nil {
+			// Fall back to NFO-only when neither TMDB nor TVDB matched.
+			if nfoShow != nil {
+				p := media.UpdateItemMetadataParams{ID: item.ID}
+				applyShowNFO(&p, nfoShow)
+				if p.Title != "" {
+					if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
+						return fmt.Errorf("update show metadata (nfo-only): %w", err)
+					}
+					e.logger.InfoContext(ctx, "show enriched from NFO (no TMDB/TVDB match)",
+						"item_id", item.ID, "title", nfoShow.Title)
+				}
+			}
 			return nil
 		}
 	} else if result.PosterURL == "" {
@@ -341,15 +538,20 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 		}
 	}
 
+	// NFO wins where it has values — applied after TMDB so a Kodi-curated
+	// tvshow.nfo beats a TMDB guess on title/plot/genres.
+	applyShowNFO(&p, nfoShow)
+
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update show metadata: %w", err)
 	}
 
 	e.logger.InfoContext(ctx, "show enriched",
 		"item_id", item.ID,
-		"title", result.Title,
+		"title", p.Title,
 		"tmdb_id", result.TMDBID,
 		"has_poster", p.PosterPath != nil,
+		"from_nfo", nfoShow != nil,
 	)
 
 	// After enriching the show, trigger enrichment for its seasons.
@@ -478,9 +680,55 @@ func (e *Enricher) enrichSeasonChildren(ctx context.Context, agent metadata.Agen
 
 // enrichEpisode fetches episode metadata from TMDB using the grandparent
 // show's TMDB ID and the season/episode indices.
+// applyEpisodeNFO overrides TMDB/TVDB fields with values from the
+// episode-specific NFO (<basename>.nfo with <episodedetails>). NFO
+// is the operator's hand-edit so its title/plot win.
+func applyEpisodeNFO(p *media.UpdateItemMetadataParams, e *nfo.Episode) {
+	if e == nil {
+		return
+	}
+	if e.Title != "" {
+		p.Title = e.Title
+		p.SortTitle = e.Title
+	}
+	if e.Plot != "" {
+		v := e.Plot
+		p.Summary = &v
+	}
+	if e.Rating > 0 {
+		v := e.Rating
+		p.Rating = &v
+	}
+	if e.Aired != nil {
+		v := *e.Aired
+		p.OriginallyAvailableAt = &v
+	}
+	if e.RuntimeMin > 0 {
+		ms := int64(e.RuntimeMin) * 60 * 1000
+		p.DurationMS = &ms
+	}
+}
+
 func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File) error {
 	if item.ParentID == nil || item.Index == nil {
 		return nil
+	}
+
+	// Episode NFO lives next to the media file, same basename. Read
+	// before TMDB so we can fall back to the NFO when the online
+	// lookup can't find the episode.
+	var nfoEpisode *nfo.Episode
+	if nfoPath, err := nfo.FindEpisodeNFO(file.FilePath); err == nil {
+		if f, ferr := os.Open(nfoPath); ferr == nil {
+			parsed, perr := nfo.ParseEpisode(f)
+			_ = f.Close()
+			if perr == nil {
+				nfoEpisode = parsed
+			} else {
+				e.logger.WarnContext(ctx, "episode NFO parse failed",
+					"path", nfoPath, "err", perr)
+			}
+		}
 	}
 
 	// Load parent season.
@@ -572,15 +820,19 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 		}
 	}
 
+	// Apply NFO last so user-curated fields beat TMDB/TVDB.
+	applyEpisodeNFO(&p, nfoEpisode)
+
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update episode metadata: %w", err)
 	}
 
 	e.logger.InfoContext(ctx, "episode enriched",
 		"item_id", item.ID,
-		"title", result.Title,
+		"title", p.Title,
 		"season", *season.Index,
 		"episode", *item.Index,
+		"from_nfo", nfoEpisode != nil,
 	)
 	return nil
 }
