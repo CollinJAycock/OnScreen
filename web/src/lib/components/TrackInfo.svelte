@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  import type { ItemDetail, ItemFile } from '$lib/api';
+  import { createEventDispatcher, onMount } from 'svelte';
+  import { lyricsApi, type ItemDetail, type ItemFile } from '$lib/api';
 
   export let track: ItemDetail;
   export let album: ItemDetail | null = null;
@@ -8,6 +8,40 @@
   const dispatch = createEventDispatcher<{ close: void }>();
 
   $: file = track.files[0] as ItemFile | undefined;
+
+  // Lyrics load lazily on open so the modal doesn't block its own
+  // paint while the server might be doing an LRCLIB fetch. "loading"
+  // shows a spinner; empty plain + empty synced + !loading renders the
+  // "No lyrics available" state so we don't pretend we checked when
+  // we haven't.
+  let lyricsPlain = '';
+  let lyricsSynced = '';
+  let lyricsLoading = true;
+  let lyricsError = '';
+
+  onMount(async () => {
+    try {
+      const res = await lyricsApi.get(track.id);
+      lyricsPlain = res?.plain ?? '';
+      lyricsSynced = res?.synced ?? '';
+    } catch (e) {
+      // Non-fatal: missing lyrics shouldn't block the info modal.
+      // Log for devtools + render the empty state.
+      lyricsError = e instanceof Error ? e.message : 'Failed to load lyrics';
+    } finally {
+      lyricsLoading = false;
+    }
+  });
+
+  // Synced lyrics are LRC format: [mm:ss.xx]Line. Strip the timestamps
+  // for the plain-text display fallback — we'll do karaoke-style
+  // highlighting in a future pass, but "show readable text" is the
+  // immediate win users care about.
+  function stripLRCTimestamps(lrc: string): string {
+    return lrc.replace(/\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\]/g, '').trim();
+  }
+
+  $: displayLyrics = lyricsPlain || (lyricsSynced ? stripLRCTimestamps(lyricsSynced) : '');
 
   function formatHz(hz?: number): string {
     if (!hz) return '';
@@ -115,6 +149,19 @@
       <p class="empty">No file metadata available.</p>
     {/if}
 
+    <section class="lyrics-section">
+      <h3>Lyrics</h3>
+      {#if lyricsLoading}
+        <p class="empty">Loading…</p>
+      {:else if displayLyrics}
+        <pre class="lyrics">{displayLyrics}</pre>
+      {:else if lyricsError}
+        <p class="empty">Couldn't load lyrics.</p>
+      {:else}
+        <p class="empty">No lyrics available for this track.</p>
+      {/if}
+    </section>
+
     {#if track.musicbrainz_id || track.musicbrainz_release_id || track.musicbrainz_artist_id}
       <section>
         <h3>MusicBrainz</h3>
@@ -192,4 +239,20 @@
   dl.mb a:hover { text-decoration: underline; }
 
   .empty { color: var(--text-muted); margin: 0; }
+
+  .lyrics-section { margin-top: 1.5rem; }
+  .lyrics {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    background: var(--surface-hover, rgba(255,255,255,0.03));
+    border-radius: 6px;
+    color: var(--text, #eee);
+    font-family: inherit;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
 </style>

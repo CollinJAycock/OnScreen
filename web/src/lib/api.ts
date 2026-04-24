@@ -525,6 +525,15 @@ export const mediaApi = {
     api.post<void>(`/items/${id}/enrich`)
 };
 
+export interface LyricsResponse {
+  plain: string;
+  synced: string;
+}
+
+export const lyricsApi = {
+  get: (itemId: string) => api.get<LyricsResponse>(`/items/${itemId}/lyrics`),
+};
+
 export interface GenreCount {
   name: string;
   count: number;
