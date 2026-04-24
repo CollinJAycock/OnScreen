@@ -1003,6 +1003,12 @@
     if (!item) return;
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
+    // Surface a spinner during the API wait. The transcode start call
+    // can block for several seconds while the server waits for seg 0 to
+    // be finalized and probes its audio gap — without this flag the
+    // video element stays frozen/black with no loading indicator, and
+    // users think the page is broken.
+    buffering = true;
     await stopTranscodeSession();
     destroyHls();
 
@@ -1022,11 +1028,18 @@
       transcodeToken = sess.token;
       // The server may snap the start time back to the previous keyframe
       // when video-copy is in use — trust its number for the scrubber
-      // mapping so the UI matches what's on screen, not what we asked for.
-      attachHls(sess.playlist_url, sess.start_offset_sec, wasPlaying, videoCopy);
+      // mapping so the UI matches what's on screen, not what we asked
+      // for. seg0_audio_gap_sec (when non-zero) is how far into the
+      // stream to begin playback so we skip silent video while the
+      // AAC encoder warms up on a mid-stream -ss.
+      attachHls(sess.playlist_url, sess.start_offset_sec, wasPlaying, videoCopy, sess.seg0_audio_gap_sec);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Transcode failed';
+      buffering = false;
     }
+    // buffering stays true until the video element fires `playing`,
+    // so the spinner covers both the API wait AND the subsequent
+    // HLS.js init/first-fragment buffering window.
   }
 
   async function selectAudioTrack(index: number) {
@@ -1053,7 +1066,7 @@
     }
   }
 
-  function attachHls(playlistUrl: string, startSec: number, autoPlay: boolean, isRemux: boolean = false) {
+  function attachHls(playlistUrl: string, startSec: number, autoPlay: boolean, isRemux: boolean = false, seg0AudioGapSec: number = 0) {
     // The HLS stream begins at t=0 representing content position startSec.
     // We track the offset ourselves; do NOT seek inside the stream.
     hlsOffsetSec = startSec;
@@ -1076,15 +1089,14 @@
         startFragPrefetch: true,
         lowLatencyMode: false,
         backBufferLength: Infinity,
-        // Let HLS.js auto-detect the start position from the stream's first
-        // PTS. We used to force startPosition=0, but with mid-stream -ss
-        // sessions the MPEG-TS muxer emits initial PTS around 10 s — the
-        // explicit 0 then snaps the player back into a no-data range,
-        // and worse, HLS.js re-applies that startPosition during
-        // recoverMediaError, undoing forward playback every time the
-        // buffer hiccups (visible to the user as "scrubber rewinds
-        // 5 seconds every 5 seconds").
-        startPosition: -1,
+        // When the server measured an audio warmup gap for seg 0, seek
+        // forward into the stream by that amount on open so the player
+        // skips the silent-video head and starts at the first audible
+        // frame. Otherwise let HLS.js auto-detect (-1) — forcing 0
+        // previously caused recoverMediaError to re-snap the player
+        // back to an empty buffer on every media hiccup (the "scrubber
+        // rewinds 5 seconds every 5 seconds" symptom).
+        startPosition: seg0AudioGapSec > 0 ? seg0AudioGapSec : -1,
         // Disable live-edge sync until ENDLIST appears. Without this, HLS.js
         // seeks the player forward toward the live edge and stalls.
         liveSyncDurationCount: 999,

@@ -1262,6 +1262,11 @@ export interface TranscodeSession {
   playlist_url: string;
   token: string;
   start_offset_sec: number;
+  // Seconds to seek forward in the stream on startup to skip the
+  // silent head of seg 0 when mid-stream AAC re-encode needs
+  // warmup. Scrubber offset stays at start_offset_sec; the player
+  // just starts playback at (start_offset_sec + seg0_audio_gap_sec).
+  seg0_audio_gap_sec: number;
 }
 
 export const transcodeApi = {

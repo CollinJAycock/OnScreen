@@ -222,6 +222,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"encoder", enc,
 			"width", job.Width, "height", job.Height,
 			"bitrate_kbps", bitrate,
+			"start_offset_sec", job.StartOffsetSec,
 			"tonemap", job.NeedsToneMap,
 			"prefer_hevc", job.PreferHEVC,
 			"tonemap_cuda", w.hasTonemapCuda,
@@ -253,6 +254,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		actualEncoder = enc
 	}
 
+	w.logger.Info("ffmpeg args",
+		"session_id", job.SessionID,
+		"args", strings.Join(ffArgs, " "),
+	)
 	cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

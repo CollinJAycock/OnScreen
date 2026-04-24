@@ -109,13 +109,24 @@ type transcodeStartResponse struct {
 	SessionID   string `json:"session_id"`
 	PlaylistURL string `json:"playlist_url"`
 	Token       string `json:"token"`
-	// StartOffsetSec is the actual content position the stream begins at.
-	// May be earlier than the requested position_ms when video is being
-	// stream-copied — input-side -ss snaps back to the previous keyframe.
-	// The client uses this for its scrubber-time mapping so the UI matches
-	// what's on screen instead of advertising an exact resume that the
-	// codec can't honor.
+	// StartOffsetSec is the content position the stream content begins
+	// at (keyframe-aligned). May be earlier than the requested
+	// position_ms when video is being stream-copied — input-side -ss
+	// snaps back to the previous keyframe. The client uses this for
+	// its scrubber-time mapping so the UI matches what's on screen
+	// instead of advertising an exact resume that the codec can't
+	// honor.
 	StartOffsetSec float64 `json:"start_offset_sec"`
+	// Seg0AudioGapSec is how far into the stream (in seconds) the
+	// player should seek on startup to skip silent video at the head
+	// of segment 0. With AC3 → AAC re-encode after a mid-stream -ss,
+	// the AAC encoder's first valid frame lands a few seconds after
+	// video's first packet — starting playback at this offset gets
+	// A/V synced from the first audible frame instead of showing
+	// silent video while the audio pipeline warms up. Zero when no
+	// gap was measurable (seg 0 still being written, probe failed,
+	// or gap below the resolution threshold).
+	Seg0AudioGapSec float64 `json:"seg0_audio_gap_sec"`
 }
 
 // Start handles POST /api/v1/items/{id}/transcode.
@@ -387,14 +398,35 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		h.logger.InfoContext(ctx, "dispatched to worker", "session_id", sessionID, "worker", workerAddr)
 	}
 
+	// For mid-stream video-copy sessions, the AAC encoder needs a few
+	// seconds of warmup after the seek before its first valid frame
+	// arrives — seg 0 then carries silent video at the head. Wait
+	// for seg 0 to be finalized, measure the audio/video PTS gap,
+	// and hand it to the client so the player skips the silent head
+	// on startup. Capped so a stuck FFmpeg can't stall session
+	// creation; on timeout we fall back to the bare keyframe offset
+	// and the user sees the old silent-head behavior — the same as
+	// before this probe landed, so it's a no-op not a regression.
+	var seg0AudioGap float64
+	if body.VideoCopy && startOffsetSec > 0 {
+		if gap, ok := transcode.WaitForSeg0Audio(ctx, transcode.SessionDir(sessionID), 5*time.Second); ok {
+			seg0AudioGap = gap
+			h.logger.InfoContext(ctx, "seg 0 audio gap measured",
+				"session_id", sessionID,
+				"gap_sec", gap,
+			)
+		}
+	}
+
 	playlistURL := fmt.Sprintf("/api/v1/transcode/sessions/%s/playlist.m3u8?token=%s",
 		sessionID, segTok)
 
 	respond.Success(w, r, transcodeStartResponse{
-		SessionID:      sessionID,
-		PlaylistURL:    playlistURL,
-		Token:          segTok,
-		StartOffsetSec: startOffsetSec,
+		SessionID:       sessionID,
+		PlaylistURL:     playlistURL,
+		Token:           segTok,
+		StartOffsetSec:  startOffsetSec,
+		Seg0AudioGapSec: seg0AudioGap,
 	})
 }
 

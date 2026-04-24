@@ -326,6 +326,16 @@ func BuildHLS(a BuildArgs) []string {
 		"-hls_segment_filename", segPattern,
 		"-hls_delete_threshold", fmt.Sprint(deleteThreshold),
 	)
+	// Mid-stream -ss + AC3→AAC re-encode leaves seg 0 declared with
+	// "0 channels" and no audio packets — the AAC encoder's priming
+	// samples come in with negative DTS after the seek reset and get
+	// dropped by the default avoid_negative_ts=make_non_negative
+	// behavior. "make_zero" shifts the whole timeline instead of
+	// dropping, so the priming frames survive and seg 0 carries a
+	// valid audio stream with proper channel info.
+	if a.StartOffset > 0 && a.AudioCodec == "aac" {
+		args = append(args, "-avoid_negative_ts", "make_zero")
+	}
 	if isHEVCOutput {
 		args = append(args, "-hls_fmp4_init_filename", "init.mp4")
 	}
