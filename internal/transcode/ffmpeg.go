@@ -256,6 +256,16 @@ func BuildHLS(a BuildArgs) []string {
 		} else {
 			args = append(args, "-b:a", "128k")
 		}
+		// Align audio with video on remux (video-copy + audio-reencode)
+		// sessions where the source's first keyframe isn't at PTS=0.
+		// aresample=async=1 lets the resampler stretch/squeeze to keep
+		// audio aligned with video mid-stream; it can't manufacture
+		// audio the source doesn't have at the start, so a residual
+		// head gap on "silent intro" MKVs is unavoidable at this
+		// layer. Do not pass first_pts=0 here: it forces audio PTS=0
+		// against video's non-zero start and causes the HLS muxer to
+		// abort after segment 0.
+		args = append(args, "-af", "aresample=async=1")
 	}
 
 	// ── Subtitles ────────────────────────────────────────────────────────────

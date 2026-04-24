@@ -242,6 +242,50 @@ func TestBuildHLS_CustomAudioBitrate(t *testing.T) {
 	}
 }
 
+// TestBuildHLS_AACAudioSyncFilter guards the resample filter that fixes
+// the "audio is delayed at the start" bug on remux sessions. Without
+// async=1 on the AAC encode, FFmpeg's MPEG-TS output can leave a
+// multi-second silence at the head of segment 0 when the source's
+// first video keyframe isn't at t=0 (video-copy starts at that
+// keyframe but audio packets get orphaned until the mux catches up).
+// Guard specifically against regressions that reintroduce first_pts=0,
+// which forces audio PTS=0 against video's non-zero start and makes
+// the HLS muxer abort after a single short segment.
+func TestBuildHLS_AACAudioSyncFilter(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       "copy", // remux — the case where the bug was worst
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-af aresample=async=1") {
+		t.Errorf("expected -af aresample=async=1 in AAC args: %s", argStr)
+	}
+	if strings.Contains(argStr, "first_pts=0") {
+		t.Errorf("first_pts=0 must not appear — it aborts the muxer on non-zero-start sources: %s", argStr)
+	}
+}
+
+// TestBuildHLS_AudioCopy_NoResampleFilter guards the inverse: the
+// resample filter must only apply when we're re-encoding to AAC.
+// Applying it to audio-copy would force FFmpeg to decode+re-encode
+// the source audio, defeating the copy.
+func TestBuildHLS_AudioCopy_NoResampleFilter(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       "copy",
+		AudioCodec:    "copy",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "-af aresample") {
+		t.Errorf("audio-copy should not set -af aresample: %s", argStr)
+	}
+}
+
 func TestBuildHLS_AMF_Flags(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath:     "/media/movie.mkv",
