@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/livetv/schedulesdirect"
 )
 
 // ErrNotFound is returned by Service lookup methods when no matching row
@@ -68,14 +70,37 @@ type EPGSource struct {
 type EPGSourceType string
 
 const (
-	EPGSourceTypeXMLTVURL  EPGSourceType = "xmltv_url"
-	EPGSourceTypeXMLTVFile EPGSourceType = "xmltv_file"
+	EPGSourceTypeXMLTVURL        EPGSourceType = "xmltv_url"
+	EPGSourceTypeXMLTVFile       EPGSourceType = "xmltv_file"
+	EPGSourceTypeSchedulesDirect EPGSourceType = "schedules_direct"
 )
 
 // XMLTVSourceConfig is the per-source config blob for XMLTV sources.
 // Source is a URL ("https://provider/grid.xml") or local file path.
 type XMLTVSourceConfig struct {
 	Source string `json:"source"`
+}
+
+// SchedulesDirectConfig is the per-source config blob for the SD JSON
+// service. Username + password authenticate against schedulesdirect.org;
+// LineupIDs scopes the schedule pull to the specific lineups the user
+// has subscribed (per-zip OTA, cable provider, satellite, etc.).
+//
+// Password is stored encrypted at rest by the EPG-source CRUD layer
+// using the same AES-256-GCM secret box that wraps webhook + plugin
+// credentials — see internal/secrets.
+type SchedulesDirectConfig struct {
+	Username string `json:"username"`
+	// PasswordSHA1 is the lowercase hex sha1(password) per the SD
+	// auth contract — not the raw password. Storing the hash here
+	// instead of the raw password means a DB dump leaks only the
+	// already-hashed credential, which SD requires for every login
+	// request anyway.
+	PasswordSHA1 string `json:"password_sha1"`
+	// LineupIDs the SD account is subscribed to. Empty means "pull
+	// every subscribed lineup the API tells us about" — useful for
+	// new users who haven't picked yet, but each pull will be slow.
+	LineupIDs []string `json:"lineup_ids"`
 }
 
 // CreateEPGSourceParams is the input to Querier.CreateEPGSource.
@@ -223,10 +248,26 @@ type UpsertChannelParams struct {
 // instance is constructed once per tuner_devices row and reused so that
 // tuner state (e.g. cached tune count from /discover.json) doesn't get
 // thrown away on every API call.
+// SchedulesDirectClient is the slice of schedulesdirect.Client the
+// EPG refresh path uses — kept narrow so tests can fake it without
+// touching the network.
+type SchedulesDirectClient interface {
+	ListLineups(ctx context.Context) ([]schedulesdirect.Lineup, error)
+	GetLineup(ctx context.Context, lineupID string) (*schedulesdirect.LineupMap, error)
+	FetchSchedules(ctx context.Context, req []schedulesdirect.ScheduleRequest) ([]schedulesdirect.StationSchedule, error)
+	FetchPrograms(ctx context.Context, ids []string) ([]schedulesdirect.Program, error)
+}
+
+// SchedulesDirectClientFn is a factory the Service calls per refresh
+// to build an SD client with the source's stored credentials.
+// Replaceable in tests via SetSchedulesDirectClientFn.
+type SchedulesDirectClientFn func(username, passwordSHA1 string) SchedulesDirectClient
+
 type Service struct {
-	q        Querier
-	registry *Registry
-	logger   *slog.Logger
+	q          Querier
+	registry   *Registry
+	logger     *slog.Logger
+	sdClientFn SchedulesDirectClientFn
 
 	mu      sync.RWMutex
 	drivers map[uuid.UUID]Driver
@@ -240,7 +281,16 @@ func NewService(q Querier, registry *Registry, logger *slog.Logger) *Service {
 		registry: registry,
 		logger:   logger,
 		drivers:  make(map[uuid.UUID]Driver),
+		sdClientFn: func(u, p string) SchedulesDirectClient {
+			return schedulesdirect.New(u, p)
+		},
 	}
+}
+
+// SetSchedulesDirectClientFn replaces the default SD client factory —
+// used by tests to inject a fake.
+func (s *Service) SetSchedulesDirectClientFn(fn SchedulesDirectClientFn) {
+	s.sdClientFn = fn
 }
 
 // ── Tuner CRUD ────────────────────────────────────────────────────────────────
@@ -538,7 +588,15 @@ func (s *Service) RefreshEPGSource(ctx context.Context, id uuid.UUID) (RefreshRe
 		return RefreshResult{}, fmt.Errorf("get epg source: %w", err)
 	}
 
-	result, err := s.refreshXMLTV(ctx, src)
+	var result RefreshResult
+	switch src.Type {
+	case EPGSourceTypeXMLTVURL, EPGSourceTypeXMLTVFile:
+		result, err = s.refreshXMLTV(ctx, src)
+	case EPGSourceTypeSchedulesDirect:
+		result, err = s.refreshSchedulesDirect(ctx, src)
+	default:
+		err = fmt.Errorf("epg refresh: unsupported source type %q", src.Type)
+	}
 	// Always record the pull, success or failure, so the UI can surface
 	// the error inline. Wrap the original error for the caller.
 	var lastErr *string
@@ -656,6 +714,271 @@ func (s *Service) refreshXMLTV(ctx context.Context, src EPGSource) (RefreshResul
 		UnmappedChannels:    unmappedCount,
 		Skipped:             skipped,
 	}, nil
+}
+
+// refreshSchedulesDirect pulls schedules + program metadata from the
+// SD JSON service for every lineup the source's config names. SD is
+// a paid service ($35/yr) — operators bring their own credentials.
+//
+// Flow:
+//  1. Authenticate (SD client caches the token for 23 h).
+//  2. For each lineup, fetch the channel/station map so we can join
+//     SD station IDs to OnScreen channel.epg_channel_id values.
+//  3. Pull next 7 days of airings for the matched stations in
+//     batches of ≤500 stations per call (SD's documented cap).
+//  4. Pull program metadata in batches of ≤5000 IDs.
+//  5. Upsert each airing as one EPGProgram.
+//
+// Channel auto-match: SD lineups already include a station-channel
+// map, so we use SD's own callsign + channel-number to populate
+// epg_channel_id without the heuristics XMLTV needs. SD station IDs
+// are stable (never recycled), so a callsign collision across
+// lineups can't break a previously-set mapping.
+func (s *Service) refreshSchedulesDirect(ctx context.Context, src EPGSource) (RefreshResult, error) {
+	var cfg SchedulesDirectConfig
+	if err := json.Unmarshal(src.Config, &cfg); err != nil {
+		return RefreshResult{}, fmt.Errorf("schedules_direct config parse: %w", err)
+	}
+	if cfg.Username == "" || cfg.PasswordSHA1 == "" {
+		return RefreshResult{}, fmt.Errorf("schedules_direct: empty credentials")
+	}
+	if len(cfg.LineupIDs) == 0 {
+		return RefreshResult{}, fmt.Errorf("schedules_direct: no lineup_ids configured")
+	}
+
+	client := s.sdClientFn(cfg.Username, cfg.PasswordSHA1)
+
+	// 1. Build station→channel map across all configured lineups.
+	// stationCallsigns lets us auto-match channels by callsign (SD
+	// stations carry a stable callsign + name + channel number).
+	type sdChannel struct {
+		callsign string
+		name     string
+		number   string
+	}
+	stations := map[string]sdChannel{}
+	for _, lineupID := range cfg.LineupIDs {
+		lm, err := client.GetLineup(ctx, lineupID)
+		if err != nil {
+			return RefreshResult{}, fmt.Errorf("get lineup %s: %w", lineupID, err)
+		}
+		// Build station-id → channel metadata. The map[] portion of the
+		// SD response gives us the lineup-specific channel number; the
+		// stations[] portion gives the callsign + display name.
+		channels := make(map[string]string, len(lm.Map))
+		for _, m := range lm.Map {
+			channels[m.StationID] = m.Channel
+		}
+		for _, st := range lm.Stations {
+			stations[st.StationID] = sdChannel{
+				callsign: st.Callsign,
+				name:     st.Name,
+				number:   channels[st.StationID],
+			}
+		}
+	}
+
+	// 2. Auto-match SD stations to existing OnScreen channels by
+	// callsign, mirroring the XMLTV path. We hand the auto-matcher a
+	// shaped XMLTVChannel slice so it doesn't need a parallel
+	// implementation just to recognize a different metadata source.
+	xmltvShaped := make([]XMLTVChannel, 0, len(stations))
+	for stationID, sc := range stations {
+		xmltvShaped = append(xmltvShaped, XMLTVChannel{
+			ID:           stationID,
+			DisplayNames: []string{sc.callsign, sc.name},
+			LCN:          sc.number,
+		})
+	}
+	matched, err := s.autoMatchChannels(ctx, xmltvShaped)
+	if err != nil {
+		return RefreshResult{}, fmt.Errorf("auto-match: %w", err)
+	}
+
+	// 3. Resolve which station IDs map to OnScreen channels — we
+	// only fetch schedules for stations we'll actually surface.
+	stationToOnScreen := make(map[string]uuid.UUID, len(stations))
+	for stationID := range stations {
+		ch, gerr := s.q.GetChannelByEPGID(ctx, stationID)
+		if gerr != nil {
+			continue
+		}
+		stationToOnScreen[stationID] = ch.ID
+	}
+	if len(stationToOnScreen) == 0 {
+		// Nothing matched — bail with a friendly error rather than a
+		// huge no-op API call.
+		return RefreshResult{ChannelsAutoMatched: matched}, nil
+	}
+
+	// 4. Build the next-7-days schedule request batch. SD limits a
+	// single /schedules POST to 500 stations; chunk if needed.
+	dates := nextNDates(time.Now().UTC(), 7)
+	stationIDs := make([]string, 0, len(stationToOnScreen))
+	for sid := range stationToOnScreen {
+		stationIDs = append(stationIDs, sid)
+	}
+
+	const sdScheduleBatchSize = 500
+	allAirings := make(map[string][]schedulesdirect.Airing, len(stationIDs)) // stationID → airings
+	for i := 0; i < len(stationIDs); i += sdScheduleBatchSize {
+		end := i + sdScheduleBatchSize
+		if end > len(stationIDs) {
+			end = len(stationIDs)
+		}
+		batch := make([]schedulesdirect.ScheduleRequest, 0, end-i)
+		for _, sid := range stationIDs[i:end] {
+			batch = append(batch, schedulesdirect.ScheduleRequest{StationID: sid, Date: dates})
+		}
+		schedules, serr := client.FetchSchedules(ctx, batch)
+		if serr != nil {
+			return RefreshResult{}, fmt.Errorf("fetch schedules: %w", serr)
+		}
+		for _, sch := range schedules {
+			allAirings[sch.StationID] = append(allAirings[sch.StationID], sch.Programs...)
+		}
+	}
+
+	// 5. Collect unique program IDs across all airings, then batch-
+	// fetch program metadata. /programs accepts up to 5000 per call.
+	programIDSet := make(map[string]struct{}, 4096)
+	for _, airings := range allAirings {
+		for _, a := range airings {
+			programIDSet[a.ProgramID] = struct{}{}
+		}
+	}
+	programIDs := make([]string, 0, len(programIDSet))
+	for pid := range programIDSet {
+		programIDs = append(programIDs, pid)
+	}
+	const sdProgramBatchSize = 5000
+	programDetails := make(map[string]schedulesdirect.Program, len(programIDs))
+	for i := 0; i < len(programIDs); i += sdProgramBatchSize {
+		end := i + sdProgramBatchSize
+		if end > len(programIDs) {
+			end = len(programIDs)
+		}
+		got, perr := client.FetchPrograms(ctx, programIDs[i:end])
+		if perr != nil {
+			return RefreshResult{}, fmt.Errorf("fetch programs: %w", perr)
+		}
+		for _, p := range got {
+			programDetails[p.ProgramID] = p
+		}
+	}
+
+	// 6. Upsert each airing.
+	ingested := 0
+	for stationID, airings := range allAirings {
+		channelUUID := stationToOnScreen[stationID]
+		for _, a := range airings {
+			prog, ok := programDetails[a.ProgramID]
+			if !ok {
+				continue // SD didn't return metadata for this ID — skip
+			}
+			startsAt := a.AirDateTime
+			endsAt := startsAt.Add(time.Duration(a.Duration) * time.Second)
+			title := ""
+			if len(prog.Titles) > 0 {
+				title = prog.Titles[0].Title120
+			}
+			subPtr := strPtrOrNil(prog.EpisodeTitle150)
+			descPtr := strPtrOrNil(firstSDDescription(prog))
+			ratingPtr := strPtrOrNil(firstSDRating(a))
+			var seasonNum, episodeNum *int32
+			if s, e := firstSDSeasonEpisode(prog); s > 0 {
+				v := int32(s)
+				seasonNum = &v
+				if e > 0 {
+					ev := int32(e)
+					episodeNum = &ev
+				}
+			}
+			var origAir *time.Time
+			if prog.OriginalAirDate != "" {
+				if t, err := time.Parse("2006-01-02", prog.OriginalAirDate); err == nil {
+					origAir = &t
+				}
+			}
+			if err := s.q.UpsertEPGProgram(ctx, UpsertEPGProgramParams{
+				ChannelID:       channelUUID,
+				SourceProgramID: a.ProgramID,
+				Title:           title,
+				Subtitle:        subPtr,
+				Description:     descPtr,
+				Category:        prog.Genres,
+				Rating:          ratingPtr,
+				SeasonNum:       seasonNum,
+				EpisodeNum:      episodeNum,
+				OriginalAirDate: origAir,
+				StartsAt:        startsAt,
+				EndsAt:          endsAt,
+				RawData:         nil,
+			}); err != nil {
+				s.logger.WarnContext(ctx, "schedules_direct: upsert program",
+					"program_id", a.ProgramID, "err", err)
+				continue
+			}
+			ingested++
+		}
+	}
+
+	return RefreshResult{
+		ProgramsIngested:    ingested,
+		ChannelsAutoMatched: matched,
+	}, nil
+}
+
+// nextNDates returns YYYY-MM-DD strings for today + the next n-1
+// days, in the format SD's /schedules expects.
+func nextNDates(start time.Time, n int) []string {
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, start.Add(time.Duration(i)*24*time.Hour).Format("2006-01-02"))
+	}
+	return out
+}
+
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func firstSDDescription(p schedulesdirect.Program) string {
+	for _, d := range p.Descriptions.Description1000 {
+		if d.Description != "" {
+			return d.Description
+		}
+	}
+	for _, d := range p.Descriptions.Description100 {
+		if d.Description != "" {
+			return d.Description
+		}
+	}
+	return ""
+}
+
+func firstSDRating(a schedulesdirect.Airing) string {
+	for _, r := range a.Ratings {
+		if r.Code != "" {
+			return r.Code
+		}
+	}
+	return ""
+}
+
+func firstSDSeasonEpisode(p schedulesdirect.Program) (int, int) {
+	for _, m := range p.Metadata {
+		if m.Tribune.Season > 0 {
+			return m.Tribune.Season, m.Tribune.Episode
+		}
+		if m.Gracenote.Season > 0 {
+			return m.Gracenote.Season, m.Gracenote.Episode
+		}
+	}
+	return 0, 0
 }
 
 // autoMatchChannels tries to assign an epg_channel_id to every enabled
