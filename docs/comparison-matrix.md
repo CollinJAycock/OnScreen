@@ -295,7 +295,6 @@
 ## Where OnScreen Trails (as of 2026-04-26)
 
 - **No books / comics** as distinct media types.
-- **No podcast RSS subscriptions** — local files work, feed-driven auto-download is v2.1.
 - **No Tidal / Qobuz integration** for music streaming.
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
