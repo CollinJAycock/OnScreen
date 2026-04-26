@@ -59,6 +59,7 @@ type Handlers struct {
 	Subtitles       *v1.SubtitleHandler
 	Arr             *v1.ArrHandler  // incoming arr app notifications
 	OIDCAuth        *v1.OIDCHandler // settings-driven, always non-nil
+	SAMLAuth        *v1.SAMLHandler // settings-driven, always non-nil
 	LDAPAuth        *v1.LDAPHandler // settings-driven, always non-nil
 	Audit           *v1.AuditHandler
 	Email           *v1.EmailHandler
@@ -235,6 +236,12 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.OIDCAuth != nil {
 				r.Get("/auth/oidc/enabled", h.OIDCAuth.Enabled)
 			}
+			if h.SAMLAuth != nil {
+				r.Get("/auth/saml/enabled", h.SAMLAuth.Enabled)
+				// SP metadata is public so the IdP admin can register
+				// us — XML, no auth required.
+				r.Get("/auth/saml/metadata", h.SAMLAuth.Metadata)
+			}
 			if h.LDAPAuth != nil {
 				r.Get("/auth/ldap/enabled", h.LDAPAuth.Enabled)
 			}
@@ -273,6 +280,13 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.OIDCAuth != nil {
 				r.Get("/auth/oidc", h.OIDCAuth.Redirect)
 				r.Get("/auth/oidc/callback", h.OIDCAuth.Callback)
+			}
+			// SAML 2.0 SP-initiated SSO (settings-driven). Login redirects
+			// to the IdP; ACS receives the signed POST-back. Both are
+			// rate-limited under the same IP bucket as the rest of /auth.
+			if h.SAMLAuth != nil {
+				r.Get("/auth/saml", h.SAMLAuth.Login)
+				r.Post("/auth/saml/acs", h.SAMLAuth.ACS)
 			}
 			if h.LDAPAuth != nil {
 				r.Post("/auth/ldap/login", h.LDAPAuth.Login)

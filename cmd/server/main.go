@@ -652,11 +652,13 @@ func run() error {
 	inviteDB := &inviteAdapter{q: gen.New(rwPool)}
 	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, baseURL, logger)
 
-	// ── OIDC + LDAP (settings-driven, always wired) ───────────────────────────
-	// Both pull config from server_settings on each request, so admins enable
-	// and reconfigure them through the UI without a restart.
+	// ── OIDC + SAML + LDAP (settings-driven, always wired) ────────────────────
+	// All three pull config from server_settings on each request, so admins
+	// enable and reconfigure them through the UI without a restart.
 	oidcSvc := v1.NewOIDCAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
 	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, baseURL, logger)
+	samlSvc := v1.NewSAMLAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
+	samlAuthHandler := v1.NewSAMLHandler(settingsSvc, samlSvc, baseURL, logger)
 	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger)
 	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger)
 
@@ -779,6 +781,7 @@ func run() error {
 		Lyrics:             lyricsHandler,
 		Arr:                arrHandler,
 		OIDCAuth:           oidcAuthHandler,
+		SAMLAuth:           samlAuthHandler,
 		LDAPAuth:           ldapAuthHandler,
 		Audit:              auditHandler,
 		Email:              emailHandler,

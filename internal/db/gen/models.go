@@ -489,6 +489,8 @@ type User struct {
 	PreferredVideoCodec   *string            `json:"preferred_video_codec"`
 	ForcedSubtitlesOnly   bool               `json:"forced_subtitles_only"`
 	SessionEpoch          int64              `json:"session_epoch"`
+	SamlIssuer            *string            `json:"saml_issuer"`
+	SamlSubject           *string            `json:"saml_subject"`
 }
 
 type UserFavorite struct {

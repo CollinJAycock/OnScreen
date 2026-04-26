@@ -24,6 +24,7 @@ const keyTranscodeConfig = "transcode_config"
 const keyIntroDetectionMode = "intro_detection_mode"
 const keyOpenSubtitlesConfig = "opensubtitles_config"
 const keyOIDCConfig = "oidc_config"
+const keySAMLConfig = "saml_config"
 const keyLDAPConfig = "ldap_config"
 const keySMTPConfig = "smtp_config"
 const keyOTelConfig = "otel_config"
@@ -288,6 +289,62 @@ func (s *Service) SetOIDC(ctx context.Context, cfg OIDCConfig) error {
 		return err
 	}
 	return s.set(ctx, keyOIDCConfig, string(b))
+}
+
+// SAMLConfig holds the configuration for SAML 2.0 SP-initiated SSO.
+//
+// IdPMetadataURL points at the IdP's published metadata XML (Okta,
+// Azure AD, Auth0, OneLogin, ADFS all expose one). The metadata
+// carries the IdP's signing cert + SSO endpoint URL — refreshed on
+// each login attempt so a cert rotation upstream doesn't require
+// an OnScreen restart.
+//
+// SP cert + key sign the SAMLRequest we send to the IdP and decrypt
+// any encrypted assertions in the SAMLResponse. Auto-generated on
+// first enable (RSA 2048 + self-signed); the metadata our SP
+// publishes at /api/v1/auth/saml/metadata exposes the public cert
+// so the IdP admin can register us.
+//
+// EmailAttribute / UsernameAttribute / GroupsAttribute name the
+// SAML AttributeStatement keys carrying the user's identity. Most
+// IdPs default to URN names like
+// "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+// — leaving these empty falls back to the SAML Subject NameID for
+// email and the email-prefix for username.
+type SAMLConfig struct {
+	Enabled            bool   `json:"enabled"`
+	DisplayName        string `json:"display_name,omitempty"` // shown on the "Sign in with X" button
+	IdPMetadataURL     string `json:"idp_metadata_url"`
+	EntityID           string `json:"entity_id,omitempty"` // SP entity ID; defaults to baseURL+/api/v1/auth/saml/metadata
+	SPCertificatePEM   string `json:"sp_certificate_pem,omitempty"`
+	SPPrivateKeyPEM    string `json:"sp_private_key_pem,omitempty"`
+	EmailAttribute     string `json:"email_attribute,omitempty"`
+	UsernameAttribute  string `json:"username_attribute,omitempty"`
+	GroupsAttribute    string `json:"groups_attribute,omitempty"`
+	AdminGroup         string `json:"admin_group,omitempty"`
+}
+
+// SAML returns the stored SAML config or the zero value if not persisted.
+func (s *Service) SAML(ctx context.Context) SAMLConfig {
+	raw := s.get(ctx, keySAMLConfig)
+	if raw == "" {
+		return SAMLConfig{}
+	}
+	var cfg SAMLConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse saml_config", "err", err)
+		return SAMLConfig{}
+	}
+	return cfg
+}
+
+// SetSAML persists the SAML config as JSON.
+func (s *Service) SetSAML(ctx context.Context, cfg SAMLConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keySAMLConfig, string(b))
 }
 
 // LDAPConfig holds the configuration for an LDAP/Active Directory login flow.

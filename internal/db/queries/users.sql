@@ -139,6 +139,27 @@ INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
+-- name: GetUserBySAMLSubject :one
+-- Mirror of GetUserByOIDCSubject — keyed on (saml_issuer, saml_subject).
+SELECT * FROM users WHERE saml_issuer = $1 AND saml_subject = $2;
+
+-- name: LinkSAMLAccount :exec
+-- Same shape as LinkOIDCAccount; used when a SAML login matches an
+-- existing email-only stub user (provisioned via invite, etc.) and we
+-- want to attach the SAML identity instead of creating a duplicate.
+UPDATE users
+SET saml_issuer = $2,
+    saml_subject = $3,
+    email = COALESCE(email, $4),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: CreateSAMLUser :one
+-- JIT provisioning for a SAML login with no matching account.
+INSERT INTO users (username, email, saml_issuer, saml_subject, is_admin)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
 -- name: GetUserByLDAPDN :one
 SELECT * FROM users WHERE ldap_dn = $1;
 
