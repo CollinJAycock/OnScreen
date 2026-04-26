@@ -18,7 +18,19 @@ const (
 
 	// HEVC (H.265) output encoders — used for 4K to reduce bitrate ~40%.
 	EncoderHEVCNVENC    Encoder = "hevc_nvenc"
+	EncoderHEVCQSV      Encoder = "hevc_qsv"   // Intel Quick Sync HEVC (Skylake+)
+	EncoderHEVCVAAPI    Encoder = "hevc_vaapi" // Linux generic GPU
+	EncoderHEVCAMF      Encoder = "hevc_amf"   // AMD GPUs on Windows
 	EncoderHEVCSoftware Encoder = "libx265"
+
+	// AV1 output encoders — large-source archival use case where the
+	// bitrate savings (~40% over HEVC) justify the encode cost.
+	// SVT-AV1 is the only software encoder that's actually fast
+	// enough for live transcode at 1080p; AOMENC stays out of the
+	// list because it's ~10× slower in tests.
+	EncoderAV1Software Encoder = "libsvtav1"
+	EncoderAV1NVENC    Encoder = "av1_nvenc" // RTX 40-series only
+	EncoderAV1QSV      Encoder = "av1_qsv"   // Intel ARC and 11th-gen+ iGPU
 )
 
 // EncoderOpts holds per-deployment encoder tuning knobs. Operators set these
@@ -68,6 +80,14 @@ type BuildArgs struct {
 	// Subtitles
 	ExtractSubtitles bool
 	SubtitleStreams  []int // stream indices to extract as WebVTT
+	// BurnSubtitleStream, when set, hard-burns the named subtitle
+	// stream into the video. Used by clients that can't render
+	// external WebVTT (older smart-TV browsers, some embedded
+	// devices). Forces a full re-encode — no video-copy. The value
+	// is the source's subtitle stream index (e.g. 0 for the first
+	// subtitle track), and Encoder must be a real encoder
+	// (libx264 / NVENC / etc.), not "copy".
+	BurnSubtitleStream *int
 
 	// Encoder tuning
 	EncoderOpts EncoderOpts
@@ -200,7 +220,7 @@ func BuildHLS(a BuildArgs) []string {
 		// Encoder-specific flags. NVENC preset/tune/rc are configurable via
 		// TRANSCODE_NVENC_PRESET, TRANSCODE_NVENC_TUNE, TRANSCODE_NVENC_RC.
 		switch a.Encoder {
-		case EncoderNVENC, EncoderHEVCNVENC:
+		case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
 			// Fixed GOP matching segment duration (assume ~30fps max → 120 frames
 			// for 4s segments). More reliable than -force_key_frames with NVENC.
 			gopSize := fmt.Sprint(SegmentDuration * 30)
@@ -214,12 +234,51 @@ func BuildHLS(a BuildArgs) []string {
 			if a.Encoder == EncoderHEVCNVENC {
 				args = append(args, "-profile:v", "main")
 			}
-		case EncoderAMF:
+			// AV1 NVENC requires RTX 40-series; on older cards FFmpeg
+			// fails fast with "No NVENC capable device found" — that's
+			// the operator's GPU detection job, not ours.
+		case EncoderAMF, EncoderHEVCAMF:
 			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
 				"-quality", "balanced", "-rc", "cbr",
 				"-g", gopSize, "-keyint_min", gopSize,
 				"-sc_threshold:v:0", "0",
+			)
+			if a.Encoder == EncoderHEVCAMF {
+				args = append(args, "-profile:v", "main")
+			}
+		case EncoderHEVCQSV, EncoderAV1QSV:
+			// Quick Sync uses its own preset names. Default to "medium"
+			// for the bitrate-vs-speed sweet spot; "veryfast" cuts
+			// quality noticeably on 4K HEVC, "slow" eats the realtime
+			// budget on a NUC-class CPU.
+			gopSize := fmt.Sprint(SegmentDuration * 30)
+			args = append(args,
+				"-preset", "medium",
+				"-g", gopSize, "-keyint_min", gopSize,
+				"-sc_threshold:v:0", "0",
+			)
+			if a.Encoder == EncoderHEVCQSV {
+				args = append(args, "-profile:v", "main")
+			}
+		case EncoderHEVCVAAPI:
+			gopSize := fmt.Sprint(SegmentDuration * 30)
+			args = append(args,
+				"-g", gopSize, "-keyint_min", gopSize,
+				"-sc_threshold:v:0", "0",
+				"-profile:v", "main",
+			)
+		case EncoderAV1Software:
+			// libsvtav1 is the only realtime-capable AV1 software
+			// encoder. preset 8 is the live-streaming sweet spot per
+			// the SVT-AV1 maintainer guidance — preset 4 is film-
+			// archival quality but ~6× slower, preset 12 strips too
+			// much detail for the bitrate.
+			gopSize := fmt.Sprint(SegmentDuration * 30)
+			args = append(args,
+				"-preset", "8",
+				"-g", gopSize, "-keyint_min", gopSize,
+				"-sc_threshold", "0",
 			)
 		default:
 			// Software / VAAPI / QSV — expression-based keyframes work fine.
@@ -288,12 +347,15 @@ func BuildHLS(a BuildArgs) []string {
 	}
 
 	// ── HLS output ───────────────────────────────────────────────────────────
-	// HEVC output requires fMP4 segments — HLS.js's MPEG-TS transmuxer doesn't
-	// support HEVC. fMP4 segments are passed directly to MSE without transmuxing.
+	// HEVC and AV1 output require fMP4 segments — HLS.js's MPEG-TS
+	// transmuxer doesn't support either codec. fMP4 segments are passed
+	// directly to MSE without transmuxing.
 	isHEVCOutput := IsHEVCEncoder(a.Encoder) && !videoCopy
+	isAV1Output := IsAV1Encoder(a.Encoder) && !videoCopy
+	needsFMP4 := isHEVCOutput || isAV1Output
 	segExt := ".ts"
 	segType := "mpegts"
-	if isHEVCOutput {
+	if needsFMP4 {
 		segExt = ".m4s"
 		segType = "fmp4"
 	}
@@ -301,9 +363,14 @@ func BuildHLS(a BuildArgs) []string {
 	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d"+segExt)
 	playlistPath := filepath.Join(a.SessionDir, "index.m3u8")
 
-	// Tag HEVC output as hvc1 (required for browser MSE HEVC playback).
-	if isHEVCOutput {
+	// Codec tag: HEVC → hvc1, AV1 → av01. Browser MSE requires the
+	// modern fourCC tag rather than the codec's native one to
+	// recognize the stream.
+	switch {
+	case isHEVCOutput:
 		args = append(args, "-tag:v", "hvc1")
+	case isAV1Output:
+		args = append(args, "-tag:v", "av01")
 	}
 
 	hlsFlags := "independent_segments+delete_segments"
@@ -336,7 +403,7 @@ func BuildHLS(a BuildArgs) []string {
 	if a.StartOffset > 0 && a.AudioCodec == "aac" {
 		args = append(args, "-avoid_negative_ts", "make_zero")
 	}
-	if isHEVCOutput {
+	if needsFMP4 {
 		args = append(args, "-hls_fmp4_init_filename", "init.mp4")
 	}
 	// Mark remux sessions as EVENT so HLS.js starts from segment 0 rather than
@@ -436,7 +503,7 @@ func buildVideoFilter(a BuildArgs) string {
 	// Scale to target resolution, maintaining aspect ratio.
 	if a.Width > 0 && a.Height > 0 {
 		switch {
-		case a.Encoder == EncoderVAAPI:
+		case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI:
 			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 		default:
 			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", a.Width, a.Height, a.Width, a.Height))
@@ -460,12 +527,49 @@ func buildVideoFilter(a BuildArgs) string {
 		filters = append(filters, toneMap)
 	}
 
+	// Subtitle burn-in. Appended last so the overlay sits on top of any
+	// scale + tonemap output. Only valid on the software path: the
+	// subtitles filter requires the frame in CPU memory (yuv420p), and
+	// inserting a hwdownload+hwupload around it on a hardware pipeline
+	// trashes the throughput win that justified picking GPU encoding
+	// in the first place. Callers that need burn-in should pick
+	// EncoderSoftware up front; the caller's job, not ours, to enforce.
+	if a.BurnSubtitleStream != nil {
+		filters = append(filters, subtitleBurnFilter(a.InputPath, *a.BurnSubtitleStream))
+	}
+
 	return strings.Join(filters, ",")
+}
+
+// subtitleBurnFilter constructs the FFmpeg `subtitles` filter expression
+// that burns stream `si` from `input` into the video. The single
+// quotes around the path let FFmpeg's filter parser handle paths
+// with colons + spaces; the backslash escape protects single quotes
+// inside the path itself.
+func subtitleBurnFilter(input string, si int) string {
+	escaped := strings.ReplaceAll(input, `'`, `\'`)
+	return fmt.Sprintf("subtitles='%s':si=%d", escaped, si)
 }
 
 // IsHEVCEncoder returns true if the encoder produces HEVC (H.265) output.
 func IsHEVCEncoder(enc Encoder) bool {
-	return enc == EncoderHEVCNVENC || enc == EncoderHEVCSoftware
+	switch enc {
+	case EncoderHEVCNVENC, EncoderHEVCQSV, EncoderHEVCVAAPI,
+		EncoderHEVCAMF, EncoderHEVCSoftware:
+		return true
+	}
+	return false
+}
+
+// IsAV1Encoder returns true if the encoder produces AV1 output.
+// AV1 needs the same fMP4 segment treatment as HEVC for HLS — the
+// MPEG-TS muxer doesn't carry AV1 cleanly across all browsers.
+func IsAV1Encoder(enc Encoder) bool {
+	switch enc {
+	case EncoderAV1Software, EncoderAV1NVENC, EncoderAV1QSV:
+		return true
+	}
+	return false
 }
 
 // HEVCVariant returns the HEVC counterpart for a given H.264 encoder.

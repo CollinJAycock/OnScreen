@@ -234,7 +234,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			InputPath:        job.FilePath,
 			StartOffset:      job.StartOffsetSec,
 			Encoder:          enc,
-			IsVAAPI:          enc == EncoderVAAPI,
+			IsVAAPI:          enc == EncoderVAAPI || enc == EncoderHEVCVAAPI,
 			IsHEVC:           job.IsHEVC,
 			Width:            job.Width,
 			Height:           job.Height,

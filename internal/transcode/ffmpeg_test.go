@@ -302,6 +302,177 @@ func TestBuildHLS_AudioCopy_NoResampleFilter(t *testing.T) {
 	}
 }
 
+// TestBuildHLS_BurnSubtitle confirms the `subtitles` filter lands in
+// the -vf chain when BurnSubtitleStream is set, and that the input
+// path is single-quoted so colons / spaces / paths with parens
+// don't break the filter parser.
+func TestBuildHLS_BurnSubtitle(t *testing.T) {
+	si := 1
+	args := BuildHLS(BuildArgs{
+		InputPath:          "/media/Movies/Foo (2024)/Foo.mkv",
+		Encoder:            EncoderSoftware,
+		Width:              1920,
+		Height:             1080,
+		BitrateKbps:        4000,
+		AudioCodec:         "aac",
+		BurnSubtitleStream: &si,
+		SessionDir:         "/tmp/sessions/x",
+		SegmentPrefix:      "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "subtitles='/media/Movies/Foo (2024)/Foo.mkv':si=1") {
+		t.Errorf("expected single-quoted subtitles filter with si=1, got: %s", argStr)
+	}
+}
+
+// TestBuildHLS_NoBurnSubtitle_WhenNil confirms the default path
+// stays clean — a nil BurnSubtitleStream must not add any
+// subtitles filter, even when other filters (scale / tonemap) run.
+func TestBuildHLS_NoBurnSubtitle_WhenNil(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		Width:         1280,
+		Height:        720,
+		BitrateKbps:   2000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	if strings.Contains(strings.Join(args, " "), "subtitles=") {
+		t.Errorf("subtitles filter must not appear with nil BurnSubtitleStream: %v", args)
+	}
+}
+
+// TestSubtitleBurnFilter_EscapesSingleQuote checks the rare-but-real
+// case of a path with an apostrophe in it (`/media/Bob's Movies/...`).
+// Without escape the filter parser treats the apostrophe as a string
+// terminator and the encode aborts with "Invalid argument."
+func TestSubtitleBurnFilter_EscapesSingleQuote(t *testing.T) {
+	got := subtitleBurnFilter("/media/Bob's Movies/x.mkv", 0)
+	if !strings.Contains(got, `Bob\'s Movies`) {
+		t.Errorf("expected escaped apostrophe, got: %s", got)
+	}
+}
+
+// TestIsHEVCEncoder_AllVariants confirms every HEVC encoder we
+// support is recognized — the segment-format selector and the
+// HEVC-output codec tag depend on this flag being right.
+func TestIsHEVCEncoder_AllVariants(t *testing.T) {
+	hevc := []Encoder{EncoderHEVCNVENC, EncoderHEVCQSV, EncoderHEVCVAAPI, EncoderHEVCAMF, EncoderHEVCSoftware}
+	for _, e := range hevc {
+		if !IsHEVCEncoder(e) {
+			t.Errorf("IsHEVCEncoder(%q) = false, want true", e)
+		}
+	}
+	notHEVC := []Encoder{EncoderNVENC, EncoderQSV, EncoderVAAPI, EncoderAMF, EncoderSoftware,
+		EncoderAV1Software, EncoderAV1NVENC, EncoderAV1QSV}
+	for _, e := range notHEVC {
+		if IsHEVCEncoder(e) {
+			t.Errorf("IsHEVCEncoder(%q) = true, want false", e)
+		}
+	}
+}
+
+// TestIsAV1Encoder covers the same matrix for AV1 — used to gate the
+// av01 tag and the fMP4 segment format.
+func TestIsAV1Encoder(t *testing.T) {
+	av1 := []Encoder{EncoderAV1Software, EncoderAV1NVENC, EncoderAV1QSV}
+	for _, e := range av1 {
+		if !IsAV1Encoder(e) {
+			t.Errorf("IsAV1Encoder(%q) = false, want true", e)
+		}
+	}
+	if IsAV1Encoder(EncoderHEVCNVENC) {
+		t.Error("HEVC encoder must not register as AV1")
+	}
+}
+
+// TestBuildHLS_HEVCQSV_FMP4 verifies the new HEVC encoders trigger
+// the fMP4 segment format + hvc1 tag, not the default mpegts.
+func TestBuildHLS_HEVCQSV_FMP4(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderHEVCQSV,
+		Width:         3840,
+		Height:        2160,
+		BitrateKbps:   12000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-c:v hevc_qsv") {
+		t.Errorf("expected -c:v hevc_qsv, got: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("HEVC must use fMP4 segments: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tag:v hvc1") {
+		t.Errorf("HEVC must carry hvc1 tag: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-profile:v main") {
+		t.Errorf("HEVC QSV must set Main profile: %s", argStr)
+	}
+}
+
+// TestBuildHLS_AV1Software_FMP4 verifies AV1 picks the av01 tag and
+// fMP4 segments. SVT-AV1 preset 8 should be present (live-stream
+// sweet spot per the SVT maintainer guidance).
+func TestBuildHLS_AV1Software_FMP4(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderAV1Software,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   3000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-c:v libsvtav1") {
+		t.Errorf("expected libsvtav1: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("AV1 must use fMP4: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tag:v av01") {
+		t.Errorf("AV1 must carry av01 tag: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-preset 8") {
+		t.Errorf("SVT-AV1 must use preset 8 for live: %s", argStr)
+	}
+}
+
+// TestBuildHLS_HEVCVAAPI_HwUploadFilter confirms the HEVC VAAPI path
+// inherits the same hwupload + scale_vaapi treatment as plain VAAPI
+// — without this the encoder fails fast with "Impossible to convert
+// between the formats supported by the filter graph_0 and h264_vaapi".
+func TestBuildHLS_HEVCVAAPI_HwUploadFilter(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderHEVCVAAPI,
+		IsVAAPI:       true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   4000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "hwupload") {
+		t.Errorf("HEVC VAAPI must add hwupload filter: %s", argStr)
+	}
+	if !strings.Contains(argStr, "scale_vaapi") {
+		t.Errorf("HEVC VAAPI must use scale_vaapi: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-vaapi_device") {
+		t.Errorf("HEVC VAAPI must init vaapi device: %s", argStr)
+	}
+}
+
 func TestBuildHLS_AMF_Flags(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath:     "/media/movie.mkv",
