@@ -193,7 +193,7 @@
 | Direct play without auth header| ✅ | ✅ | ✅ | ✅ | Artwork + capability tokens |
 | CDN / remote-access relay      | ❌ | ✅ | 💎 | ❌ | Plex Relay is free bandwidth through Plex |
 | IPv6                           | ✅ | ✅ | ✅ | ✅ | |
-| HTTPS termination (built-in)   | ❌ | ✅ | ✅ | ✅ | OnScreen expects reverse-proxy (Caddy/nginx) in front |
+| HTTPS termination (built-in)   | ✅ | ✅ | ✅ | ✅ | OnScreen: operator-provided PEM via `TLS_CERT_FILE`/`TLS_KEY_FILE`; reverse proxy still recommended for ACME auto-renew |
 
 ---
 
@@ -298,7 +298,6 @@
 - **No podcast RSS subscriptions** — local files work, feed-driven auto-download is v2.1.
 - **No Tidal / Qobuz integration** for music streaming.
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
-- **No in-built HTTPS** — expects a reverse proxy in front.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
 
 ## v2 Closed (since the prior snapshot)
@@ -316,6 +315,7 @@
 - ✅ Schedules Direct as a second EPG source (token auth, batched fetch, callsign auto-match)
 - ✅ Gapless music playback (dual `<audio>` preload rotation)
 - ✅ SAML 2.0 SP-initiated SSO (JIT provisioning, admin-group sync, SP keypair auto-generate)
+- ✅ Built-in HTTPS (operator-provided PEM via `TLS_CERT_FILE`/`TLS_KEY_FILE`)
 
 ## Non-Differentiators (All Four Roughly Equal)
 

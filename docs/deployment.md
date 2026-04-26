@@ -44,6 +44,8 @@
 | `METRICS_ADDR` | `:7071` | Address for the Prometheus metrics endpoint |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `RETAIN_MONTHS` | `24` | How many months of watch history to retain |
+| `TLS_CERT_FILE` | (none) | PEM-encoded certificate chain. When set together with `TLS_KEY_FILE`, the server serves HTTPS directly. See [Built-in HTTPS](#built-in-https). |
+| `TLS_KEY_FILE` | (none) | PEM-encoded private key. Must be paired with `TLS_CERT_FILE`; setting only one is a startup error. |
 
 ### Worker
 
@@ -492,9 +494,32 @@ Current migrations:
 
 ---
 
+## Built-in HTTPS
+
+For deployments that don't want a reverse proxy in front (single-host installs, intranets, dev/test, or hosts where you already manage certs another way), the server can terminate TLS itself.
+
+Set both `TLS_CERT_FILE` and `TLS_KEY_FILE` to PEM-encoded files readable by the server process:
+
+```bash
+TLS_CERT_FILE=/etc/onscreen/tls/fullchain.pem
+TLS_KEY_FILE=/etc/onscreen/tls/privkey.pem
+```
+
+When both are set the server uses `ListenAndServeTLS` on `LISTEN_ADDR` (commonly retargeted to `:443`). Setting only one is a startup error so you don't accidentally deploy thinking HTTPS is on.
+
+Where the certs come from is your call:
+
+- **mkcert** — quick local CA for LAN deployments and dev.
+- **Corporate / private CA** — drop the issued chain + key on the host.
+- **Let's Encrypt** — run [certbot](https://certbot.eff.org/) on the host (e.g. `certbot certonly --standalone` or DNS-01) and point the env vars at the issued files. The server does **not** auto-renew or reload — restart on cert renewal, or run a reverse proxy (next section) which handles renewal natively.
+
+If you need automated renewal, ACME, or want to share TLS termination with other services, use a reverse proxy (Caddy is the simplest path).
+
+---
+
 ## Reverse Proxy (nginx)
 
-OnScreen listens on port 7070. In production, put it behind a reverse proxy with TLS termination.
+OnScreen listens on port 7070. In production, put it behind a reverse proxy with TLS termination — or use [built-in HTTPS](#built-in-https) for simpler deployments.
 
 ```nginx
 upstream onscreen {

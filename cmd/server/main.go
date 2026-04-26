@@ -104,7 +104,11 @@ func run() error {
 	// a sensible default before an admin sets the public URL.
 	baseURL := generalCfg.BaseURL
 	if baseURL == "" {
-		baseURL = "http://localhost" + cfg.ListenAddr
+		scheme := "http"
+		if cfg.TLSEnabled() {
+			scheme = "https"
+		}
+		baseURL = scheme + "://localhost" + cfg.ListenAddr
 	}
 	corsAllowedOrigins := generalCfg.CORSAllowedOrigins
 
@@ -880,7 +884,14 @@ func run() error {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		logger.Info("api server listening", "addr", cfg.ListenAddr)
+		if cfg.TLSEnabled() {
+			logger.Info("api server listening", "addr", cfg.ListenAddr, "tls", true, "cert", cfg.TLSCertFile)
+			if err := apiServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("api server (tls): %w", err)
+			}
+			return nil
+		}
+		logger.Info("api server listening", "addr", cfg.ListenAddr, "tls", false)
 		if err := apiServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("api server: %w", err)
 		}

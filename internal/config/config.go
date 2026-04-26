@@ -42,6 +42,17 @@ type Config struct {
 	MetricsAddr  string `env:"METRICS_ADDR"  envDefault:":7071"`
 	RetainMonths int    `env:"RETAIN_MONTHS" envDefault:"24"`
 
+	// TLS — when both files are set the API server serves HTTPS via
+	// ListenAndServeTLS instead of plain HTTP. Files must be in the
+	// formats Go's crypto/tls accepts (PEM-encoded cert chain + PEM-
+	// encoded private key). Setting only one is a config error and
+	// the server refuses to start so an admin doesn't deploy a
+	// confused half-TLS setup. For Let's Encrypt or fully-managed
+	// HTTPS, run a reverse proxy in front instead — see
+	// docs/deployment.md.
+	TLSCertFile string `env:"TLS_CERT_FILE"`
+	TLSKeyFile  string `env:"TLS_KEY_FILE"`
+
 	// ServerName is the human-friendly name advertised over LAN discovery
 	// and surfaced in capability responses. Defaults to "OnScreen" if unset.
 	ServerName string `env:"SERVER_NAME" envDefault:"OnScreen"`
@@ -152,7 +163,17 @@ func (c *Config) applyDefaults() error {
 	if c.TranscodeNVENCRC == "" {
 		c.TranscodeNVENCRC = "vbr"
 	}
+	// Reject half-set TLS so an admin doesn't deploy thinking HTTPS is on
+	// when only one half of the pair landed in their environment.
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return fmt.Errorf("TLS_CERT_FILE and TLS_KEY_FILE must both be set or both be empty")
+	}
 	return nil
+}
+
+// TLSEnabled reports whether the API server should serve HTTPS.
+func (c *Config) TLSEnabled() bool {
+	return c.TLSCertFile != "" && c.TLSKeyFile != ""
 }
 
 // HotReloadable holds the subset of Config values that can be reloaded via SIGHUP.
