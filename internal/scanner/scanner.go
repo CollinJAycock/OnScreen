@@ -517,6 +517,15 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if abErr != nil {
 			return nil, nil, false, fmt.Errorf("audiobook for %s: %w", path, abErr)
 		}
+	} else if libraryType == "podcast" && isAudiobookFile(path) {
+		// Podcasts: same audio file detection as audiobooks (mp3 + m4a
+		// + others). Folder = show, file = episode. Subscriptions
+		// (RSS auto-download) are v2.1.
+		var pcErr error
+		item, pcErr = s.processPodcast(ctx, libraryID, path, roots)
+		if pcErr != nil {
+			return nil, nil, false, fmt.Errorf("podcast for %s: %w", path, pcErr)
+		}
 	} else if libraryType == "show" {
 		var showErr error
 		item, showErr = s.processShowHierarchy(ctx, libraryID, path)
@@ -837,6 +846,8 @@ func fileTypeForLibrary(libraryType string) string {
 		return "photo"
 	case "audiobook":
 		return "audiobook"
+	case "podcast":
+		return "podcast_episode"
 	default:
 		return "movie"
 	}

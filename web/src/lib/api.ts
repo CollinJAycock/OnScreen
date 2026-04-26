@@ -269,7 +269,7 @@ export interface UserPreferences {
 export interface Library {
   id: string;
   name: string;
-  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook';
+  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast';
   scan_paths: string[];
   agent: string;
   language: string;

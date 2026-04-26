@@ -333,10 +333,10 @@ func validateCreateParams(p CreateLibraryParams) error {
 	}
 	validTypes := map[string]bool{
 		"movie": true, "show": true, "music": true,
-		"photo": true, "dvr": true, "audiobook": true,
+		"photo": true, "dvr": true, "audiobook": true, "podcast": true,
 	}
 	if !validTypes[p.Type] {
-		return &ValidationError{Field: "type", Message: "must be movie, show, music, audiobook, photo, or dvr"}
+		return &ValidationError{Field: "type", Message: "must be movie, show, music, audiobook, podcast, photo, or dvr"}
 	}
 	if len(p.Paths) == 0 {
 		return &ValidationError{Field: "scan_paths", Message: "at least one path required"}
