@@ -88,7 +88,7 @@
 | ReplayGain track + album       | ✅ | ⚠️ | ✅ | ✅ | Plex uses its own loudness normalization |
 | MusicBrainz ID exposure        | ✅ | ❌ | ⚠️ | ✅ | OnScreen: all 5 MB ID types surfaced |
 | Bit-perfect playback           | ❌ | ❌ | ❌ | ❌ | None do this today; all pipe through transcode path |
-| Gapless playback               | ❌ | ✅ | ✅ | ✅ | |
+| Gapless playback               | ✅ | ✅ | ✅ | ✅ | OnScreen: dual-`<audio>` preload rotation (commit `55612c8`); Chrome/Firefox sub-frame, Safari per-its-usual |
 | DSD (DoP) support              | ❌ | ❌ | ❌ | ❌ | |
 | Release type (Album/EP/Single) | ✅ | ⚠️ | ✅ | ✅ | |
 | Original release year          | ✅ | ✅ | ✅ | ✅ | |
@@ -171,7 +171,7 @@
 | M3U / IPTV                     | ✅ | 💎 | 💎 | ✅ | |
 | USB DVB tuners (DVB-T/S/C)     | ❌ | 💎 | 💎 | ✅ | |
 | XMLTV guide                    | ✅ | 💎 | 💎 | ✅ | |
-| Schedules Direct guide         | ⚠️ | 💎 | 💎 | ✅ | OnScreen: schema ready, fetcher in progress |
+| Schedules Direct guide         | ✅ | 💎 | 💎 | ✅ | OnScreen: full client + auto-match by callsign (commit `16908c8`) |
 | Live HLS stream-copy           | ✅ | 💎 | 💎 | ✅ | |
 | Channel guide grid UI (server-driven) | ✅ | 💎 | 💎 | ✅ | |
 | Scheduled recording            | ✅ | 💎 | 💎 | ✅ | OnScreen: matcher fires on cron, capture worker spawns ffmpeg, retention purge daily |
@@ -298,11 +298,9 @@
 - **No podcast RSS subscriptions** — local files work, feed-driven auto-download is v2.1.
 - **No Tidal / Qobuz integration** for music streaming.
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
-- **No Schedules Direct EPG fetcher** (XMLTV works; SD on the v2.1 list).
 - **No in-built HTTPS** — expects a reverse proxy in front.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
 - **No SAML**.
-- **No gapless music playback**.
 
 ## v2 Closed (since the prior snapshot)
 
@@ -316,6 +314,8 @@
 - ✅ Subtitle burn-in (software-encode path)
 - ✅ AV1 encode (SVT-AV1 SW + AV1 NVENC + AV1 QSV constants — beta hardware validation pending)
 - ✅ HEVC encode on QSV / VAAPI / AMF (beta hardware validation pending)
+- ✅ Schedules Direct as a second EPG source (token auth, batched fetch, callsign auto-match)
+- ✅ Gapless music playback (dual `<audio>` preload rotation)
 
 ## Non-Differentiators (All Four Roughly Equal)
 
