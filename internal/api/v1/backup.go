@@ -129,7 +129,7 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 			"stderr", strings.TrimSpace(stderr.String()),
 		)
 		respond.Error(w, r, http.StatusInternalServerError, "PG_DUMP_FAILED",
-			"pg_dump failed: "+strings.TrimSpace(stderr.String()))
+			"pg_dump failed: "+h.scrubDSN(strings.TrimSpace(stderr.String())))
 		return
 	}
 
@@ -311,12 +311,12 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, map[string]any{
 		"filename":       hdr.Filename,
 		"size":           hdr.Size,
-		"exit_error":     errString(runErr),
-		"stderr":         stderr.String(),
+		"exit_error":     h.scrubDSN(errString(runErr)),
+		"stderr":         h.scrubDSN(stderr.String()),
 		"dump_version":   dumpVersion,
 		"server_version": h.expectedVersion,
 		"migrated":       migrated,
-		"migrate_error":  errString(migrateErr),
+		"migrate_error":  h.scrubDSN(errString(migrateErr)),
 		"forced":         force,
 	})
 }
@@ -326,6 +326,19 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// scrubDSN replaces every occurrence of the DATABASE_URL with a placeholder.
+// pg_dump / pg_restore echo the connection string in error messages, and we
+// stream stderr back to the admin client over JSON. The admin can already
+// read the env var, but rendering the password into the browser response
+// (and from there into client logs / error trackers / screenshots) is an
+// avoidable disclosure.
+func (h *BackupHandler) scrubDSN(s string) string {
+	if h.databaseURL == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, h.databaseURL, "<DATABASE_URL>")
 }
 
 // extractDumpVersion runs pg_restore in data-only mode against the archive

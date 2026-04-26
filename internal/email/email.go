@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -67,10 +68,22 @@ func (s *Sender) Enabled(ctx context.Context) bool {
 
 // Send sends an email with the given subject and HTML body to the recipients.
 // Returns ErrNotConfigured when SMTP is off or incomplete.
+//
+// Each recipient is parsed with net/mail.ParseAddress before being sent
+// to the server. Go's net/smtp Rcpt method substitutes the address into
+// the SMTP RCPT TO command without escaping, so a malformed address
+// containing CRLF could otherwise inject arbitrary SMTP commands.
+// ParseAddress also catches admin typos at the API layer rather than at
+// the SMTP server.
 func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string) error {
 	cfg := s.config(ctx)
 	if !cfg.Enabled || !cfg.complete() {
 		return ErrNotConfigured
+	}
+	for _, addr := range to {
+		if _, err := mail.ParseAddress(addr); err != nil {
+			return fmt.Errorf("email: invalid recipient %q: %w", addr, err)
+		}
 	}
 
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))

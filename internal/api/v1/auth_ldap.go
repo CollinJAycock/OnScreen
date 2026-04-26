@@ -330,17 +330,16 @@ func (DefaultLDAPDialer) Dial(cfg settings.LDAPConfig) (LDAPConn, error) {
 	url := scheme + "://" + cfg.Host
 
 	// SSRF guard: LDAP is a typical corporate-LAN service, so we
-	// permit RFC1918/loopback/link-local targets (that's where real
-	// LDAP servers live). We still block 0.0.0.0/multicast and — when
-	// the host resolves — the address has to successfully parse. The
-	// real defense here is "don't let a hijacked admin aim this at
-	// 169.254.169.254 or an internal-only app"; the metadata endpoint
-	// is link-local, which LocalDevice explicitly allows. For full
-	// protection an operator-maintained host allowlist would be the
-	// next step — deferred until multi-tenant admin becomes a thing.
+	// permit RFC1918 + loopback (that's where real LDAP servers live).
+	// Link-local is NOT allowed — the canonical link-local address an
+	// attacker would target is 169.254.169.254, the AWS/GCP/Azure
+	// metadata endpoint that returns IAM credentials. Real LDAP
+	// servers don't live on link-local; if an operator has one that
+	// does, they can run a reverse proxy in front. 0.0.0.0/multicast
+	// stay blocked by the default policy.
 	var opts []ldap.DialOpt
 	opts = append(opts, ldap.DialWithDialer(safehttp.NewDialer(safehttp.DialPolicy{
-		AllowPrivate: true, AllowLoopback: true, AllowLinkLocal: true,
+		AllowPrivate: true, AllowLoopback: true,
 	})))
 	if cfg.UseLDAPS || cfg.StartTLS {
 		// #nosec G402 — admin opt-in for self-signed dev certs only.
