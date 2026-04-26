@@ -10,7 +10,9 @@
 - ❌ Not supported
 - ❓ Unverified / depends on configuration
 
-**Snapshot date:** 2026-04-24. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
+**Snapshot date:** 2026-04-26. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
+
+> **v2 in flight.** Cells marked ✅ in the last few weeks include items shipped during the v2 push: music videos, audiobooks (flat MVP), Cover Art Archive fallback, Kodi NFO import, lyrics end-to-end, DVR retention purge. See [v2-roadmap.md](v2-roadmap.md) for what's still open.
 
 ---
 
@@ -23,11 +25,11 @@
 | Music (artists/albums/tracks) | ✅ | ✅ | ✅ | ✅ | |
 | Photos                     | ✅ | ✅ | ✅ | ✅ | OnScreen: EXIF + map + timeline |
 | Live TV                    | ✅ | 💎 | 💎 | ✅ | Plex/Emby gate behind paid tier |
-| DVR (scheduled recording)  | ⚠️ | 💎 | 💎 | ✅ | OnScreen: schema + scheduler in place; UI in progress |
-| Audiobooks                 | ❌ | ✅ | ✅ | ✅ | |
+| DVR (scheduled recording)  | ✅ | 💎 | 💎 | ✅ | OnScreen: matcher + capture + retention purge wired (commit `246027b`) |
+| Audiobooks                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: flat one-file-per-book MVP (commit `933c1f0`); author/series hierarchy is v2.1 |
 | Books / comics             | ❌ | ❌ | ⚠️ | ⚠️ | Jellyfin + Emby: basic comic/book scanning |
 | Podcasts                   | ❌ | ⚠️ | ❌ | 🧩 | Plex had podcasts (discontinued 2024); Jellyfin has a plugin |
-| Music videos               | ❌ | ✅ | ✅ | ✅ | |
+| Music videos               | ✅ | ✅ | ✅ | ✅ | OnScreen: artist children w/ 16:9 thumbs (commit `3319bd6`) |
 | Home videos (separate type)| ❌ | ✅ | ✅ | ✅ | OnScreen ingests as untyped movies |
 
 ---
@@ -67,9 +69,9 @@
 | Fanart.tv                       | ✅ | ✅ | ✅ | ✅ | |
 | MusicBrainz                     | ✅ | ✅ | ✅ | ✅ | OnScreen: IDs from tags only, no live API |
 | TheAudioDB                      | ✅ | ⚠️ | ✅ | ✅ | Plex uses its own music agent (Gracenote-derived) |
-| Cover Art Archive               | ❌ | ❌ | ✅ | ✅ | Roadmap for OnScreen |
+| Cover Art Archive               | ✅ | ❌ | ✅ | ✅ | OnScreen: chains after TheAudioDB via MusicBrainz IDs (commit `43017e2`) |
 | OpenSubtitles (metadata hashing)| ❌ | ✅ | ✅ | ✅ | |
-| Local NFO file import           | ❌ | ✅ | ✅ | ✅ | Kodi-compatible NFO sidecars |
+| Local NFO file import           | ✅ | ✅ | ✅ | ✅ | OnScreen: movie/tvshow/episodedetails — overrides TMDB on the final write (commit `21738b3`) |
 | Disk cover art (cover.jpg etc.) | ✅ | ✅ | ✅ | ✅ | OnScreen shipped 2026-04-24 (commit bc0e9c7) |
 | Embedded tag art (ID3/FLAC/MP4) | ✅ | ✅ | ✅ | ✅ | |
 
@@ -92,7 +94,7 @@
 | Original release year          | ✅ | ✅ | ✅ | ✅ | |
 | Compilation flag               | ✅ | ✅ | ✅ | ✅ | |
 | Collab / featured artists      | ⚠️ | ✅ | ✅ | ✅ | OnScreen: two-sided match but no dedicated collab entity |
-| Lyrics (synced/unsynced)       | ❌ | ✅ | ✅ | ✅ | |
+| Lyrics (synced/unsynced)       | ✅ | ✅ | ✅ | ✅ | OnScreen: embedded USLT + .lrc sidecar + LRCLIB fallback (commits `333a55e`, `67524d0`) |
 | Tidal / Qobuz integration      | ❌ | ✅ | ❌ | ❌ | Plex-exclusive via Plex Pass |
 | SoundCloud / YouTube Music     | ❌ | ❌ | ❌ | ❌ | |
 
@@ -172,10 +174,10 @@
 | Schedules Direct guide         | ⚠️ | 💎 | 💎 | ✅ | OnScreen: schema ready, fetcher in progress |
 | Live HLS stream-copy           | ✅ | 💎 | 💎 | ✅ | |
 | Channel guide grid UI (server-driven) | ✅ | 💎 | 💎 | ✅ | |
-| Scheduled recording            | ⚠️ | 💎 | 💎 | ✅ | Phase B |
-| Series recording rules         | ❌ | 💎 | 💎 | ✅ | |
+| Scheduled recording            | ✅ | 💎 | 💎 | ✅ | OnScreen: matcher fires on cron, capture worker spawns ffmpeg, retention purge daily |
+| Series recording rules         | ✅ | 💎 | 💎 | ✅ | OnScreen: `series` schedule type with title_match + new_only |
 | Commercial detection/skip      | ❌ | 💎 | 💎 | 🧩 | |
-| Recording conflicts UI         | ❌ | 💎 | 💎 | ✅ | |
+| Recording conflicts UI         | ⚠️ | 💎 | 💎 | ✅ | OnScreen: backend conflict detection logs + flags; UI surface is minimal |
 
 ---
 
@@ -288,21 +290,29 @@
 - **Requests built in**: the search page surfaces TMDB discover + request inline; competitors require Overseerr/Ombi/Jellyseerr.
 - **Env-var config (12-factor) + hot reload via SIGHUP**: fits container orchestrators; competitors ship XML/JSON config files.
 - **Secret encryption at rest** for webhooks and plugin credentials (AES-256-GCM).
+- **NFO + Cover Art Archive fallback chain**: NFO overrides TMDB on the final write; CAA fills MusicBrainz-keyed album art that TheAudioDB doesn't have. Plex doesn't do CAA at all.
 
-## Where OnScreen Trails (as of 2026-04-24)
+## Where OnScreen Trails (as of 2026-04-26)
 
-- **No audiobooks / books / podcasts / music videos** as distinct media types.
-- **No Tidal / Qobuz / lyrics integrations** for music.
+- **No books / comics / podcasts** as distinct media types (audiobooks shipped flat MVP; richer hierarchy in v2.1).
+- **No Tidal / Qobuz integration** for music streaming.
 - **No subtitle burn-in** (always extracted to WebVTT for client-side render; some TVs can't handle external VTT).
 - **No HEVC hardware encode on QSV/VAAPI/AMF** — NVENC only.
 - **No AV1 encode**.
-- **DVR scheduling UI + Schedules Direct EPG** still in progress.
-- **No NFO sidecar import**; Kodi users have to rescan via agents.
-- **No Cover Art Archive fallback** for music art (TheAudioDB only).
+- **No Schedules Direct EPG fetcher** (XMLTV works; SD on the v2.1 list).
 - **No in-built HTTPS** — expects a reverse proxy in front.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
 - **No SAML**.
 - **No gapless music playback**.
+
+## v2 Closed (since the prior snapshot)
+
+- ✅ Music videos as a distinct type (artist children, 16:9 thumbnails)
+- ✅ Audiobooks as a library type (flat MVP)
+- ✅ Lyrics end-to-end (USLT + .lrc + LRCLIB)
+- ✅ Kodi NFO sidecar import (movie / tvshow / episodedetails)
+- ✅ Cover Art Archive fallback for album art
+- ✅ DVR retention purge (closes the matcher → capture → cleanup loop)
 
 ## Non-Differentiators (All Four Roughly Equal)
 
