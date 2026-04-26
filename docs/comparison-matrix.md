@@ -87,7 +87,7 @@
 | Hi-res badge (>44.1kHz/16-bit) | ✅ | ⚠️ | ❌ | ⚠️ | OnScreen: explicit UI badge |
 | ReplayGain track + album       | ✅ | ⚠️ | ✅ | ✅ | Plex uses its own loudness normalization |
 | MusicBrainz ID exposure        | ✅ | ❌ | ⚠️ | ✅ | OnScreen: all 5 MB ID types surfaced |
-| Bit-perfect playback           | ❌ | ❌ | ❌ | ❌ | None do this today; all pipe through transcode path |
+| Bit-perfect playback           | ❌ | ✅ | ✅ | ⚠️ | Browsers force everything through the OS mixer (resampled to system rate); requires a native client with WASAPI-exclusive / CoreAudio hog / ALSA `hw:`. Plexamp and Emby Theater ship this; Jellyfin gets it via 3rd-party clients (Finamp, JMP). OnScreen is web-only today — lands with the native client phase. |
 | Gapless playback               | ✅ | ✅ | ✅ | ✅ | OnScreen: dual-`<audio>` preload rotation (commit `55612c8`); Chrome/Firefox sub-frame, Safari per-its-usual |
 | DSD (DoP) support              | ❌ | ❌ | ❌ | ❌ | |
 | Release type (Album/EP/Single) | ✅ | ⚠️ | ✅ | ✅ | |
@@ -298,6 +298,7 @@
 - **No Tidal / Qobuz integration** for music streaming.
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
+- **No bit-perfect playback** — fundamentally a native-client feature (browsers force OS-mixer resampling). Lands when WASAPI-exclusive / CoreAudio-hog / ALSA `hw:` paths exist in the OnScreen native client. Server side already serves the file byte-for-byte; the gap is the player.
 
 ## v2 Closed (since the prior snapshot)
 
