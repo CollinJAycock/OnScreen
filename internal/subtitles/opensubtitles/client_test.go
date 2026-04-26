@@ -14,11 +14,14 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// newTestClient returns a Client whose baseURL points at the given test server
-// and whose rate limiter is effectively disabled so tests don't sleep.
-func newTestClient(apiKey, username, password, base string) *Client {
+// newTestClient returns a Client wired to the given httptest server. The
+// server's URL is set as the API base, the server's *http.Client (which
+// bypasses safehttp's loopback rejection) replaces the production client,
+// and the rate limiter is unbounded so tests don't sleep.
+func newTestClient(apiKey, username, password string, srv *httptest.Server) *Client {
 	return New(apiKey, username, password, "test-ua").
-		WithBaseURL(base).
+		WithBaseURL(srv.URL).
+		WithHTTPClient(srv.Client()).
 		WithLimiter(rate.NewLimiter(rate.Inf, 0))
 }
 
@@ -58,7 +61,7 @@ func TestSearchBuildsQueryAndParsesResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("k1", "", "", srv.URL)
+	c := newTestClient("k1", "", "", srv)
 	results, err := c.Search(context.Background(), SearchOpts{
 		Query:     "The Movie",
 		Year:      2020,
@@ -137,7 +140,7 @@ func TestSearch429TripsCircuit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("k", "", "", srv.URL)
+	c := newTestClient("k", "", "", srv)
 	if _, err := c.Search(context.Background(), SearchOpts{Query: "x"}); err == nil {
 		t.Fatal("expected error on 429")
 	}
@@ -184,7 +187,7 @@ func TestDownloadSendsBearerAfterLogin(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("k", "bob", "hunter2", srv.URL)
+	c := newTestClient("k", "bob", "hunter2", srv)
 	info, err := c.Download(context.Background(), 42)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
@@ -217,7 +220,7 @@ func TestDownload401ClearsTokenAndTripsCircuit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("k", "u", "p", srv.URL)
+	c := newTestClient("k", "u", "p", srv)
 	if _, err := c.Download(context.Background(), 1); err == nil {
 		t.Fatal("expected 401 to bubble up as error")
 	}
@@ -242,7 +245,7 @@ func TestFetchFileRespectsSizeLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("k", "", "", srv.URL)
+	c := newTestClient("k", "", "", srv)
 	body, err := c.FetchFile(context.Background(), srv.URL+"/sub.srt")
 	if err != nil {
 		t.Fatalf("FetchFile: %v", err)
@@ -258,7 +261,7 @@ func TestFetchFileSurfacesNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("k", "", "", srv.URL)
+	c := newTestClient("k", "", "", srv)
 	if _, err := c.FetchFile(context.Background(), srv.URL+"/x"); err == nil {
 		t.Fatal("expected error on 410 response")
 	}

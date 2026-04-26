@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 const (
@@ -63,12 +65,17 @@ func New(apiKey, username, password, userAgent string) *Client {
 		userAgent = defaultUA
 	}
 	return &Client{
-		apiKey:     apiKey,
-		username:   username,
-		password:   password,
-		userAgent:  userAgent,
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		apiKey:    apiKey,
+		username:  username,
+		password:  password,
+		userAgent: userAgent,
+		baseURL:   baseURL,
+		// safehttp gates every dial post-resolution against the
+		// loopback / RFC1918 / link-local / metadata-service ranges.
+		// FetchFile downloads from a URL OpenSubtitles itself returns,
+		// so a compromised or malicious upstream could otherwise pivot
+		// the fetch into the operator's internal network.
+		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 15*time.Second),
 		// Tests can bypass the limiter's 1 req/s default via WithLimiter.
 		limiter: rate.NewLimiter(rate.Limit(1), 2),
 	}
@@ -78,6 +85,14 @@ func New(apiKey, username, password, userAgent string) *Client {
 // should use the default which points at api.opensubtitles.com.
 func (c *Client) WithBaseURL(u string) *Client {
 	c.baseURL = u
+	return c
+}
+
+// WithHTTPClient overrides the HTTP client. Intended for tests that hit
+// httptest.NewServer (loopback, otherwise blocked by safehttp); production
+// callers should use the default New constructor.
+func (c *Client) WithHTTPClient(h *http.Client) *Client {
+	c.httpClient = h
 	return c
 }
 

@@ -22,6 +22,8 @@ import (
 	"golang.org/x/image/draw"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // Manager downloads and caches artwork (ADR-006).
@@ -30,12 +32,25 @@ type Manager struct {
 	httpClient *http.Client
 }
 
-// New creates an artwork Manager.
+// New creates an artwork Manager. The default HTTP client uses
+// safehttp's policy so a malicious or compromised metadata source
+// (TMDB, Cover Art Archive, etc.) can't return URLs that pivot the
+// fetch into the operator's internal network — every dial is gated
+// post-resolution against the loopback / RFC1918 / link-local /
+// metadata-service ranges.
 func New(cachePath string) *Manager {
 	return &Manager{
 		cachePath:  cachePath,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second),
 	}
+}
+
+// WithHTTPClient overrides the HTTP client. Intended for tests that
+// hit a httptest.NewServer (loopback, otherwise blocked by safehttp);
+// production callers should use the default New constructor.
+func (m *Manager) WithHTTPClient(c *http.Client) *Manager {
+	m.httpClient = c
+	return m
 }
 
 // DownloadPoster downloads a poster image into absDir/poster.jpg.

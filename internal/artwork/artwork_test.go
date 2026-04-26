@@ -52,7 +52,7 @@ func TestDownloadPoster_WritesFileAndNormalizesPath(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	m := New(t.TempDir())
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
 
 	got, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, dir)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestDownload_SkipsRedownloadWhenFileExists(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	m := New(t.TempDir())
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
 
 	if _, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, dir); err != nil {
 		t.Fatalf("first: %v", err)
@@ -108,7 +108,7 @@ func TestReplacePoster_OverwritesExistingFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(t.TempDir())
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
 	if _, err := m.ReplacePoster(context.Background(), id, srv.URL, dir); err != nil {
 		t.Fatalf("ReplacePoster: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestReplacePoster_ConcurrentAlbumsDontCollide(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(t.TempDir())
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
 	idA := uuid.New()
 	idB := uuid.New()
 
@@ -173,7 +173,7 @@ func TestDownload_FailsOnNon200(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	m := New(t.TempDir())
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
 	if _, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, dir); err == nil {
 		t.Errorf("expected error on 404, got nil")
 	}
@@ -230,7 +230,7 @@ func TestDownload_50MBCap(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	m := New(t.TempDir())
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
 	if _, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, dir); err != nil {
 		t.Fatalf("DownloadPoster: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestDownloadArtistPoster_UsesIDInFilename(t *testing.T) {
 
 	dir := t.TempDir()
 	id := uuid.New()
-	m := New(t.TempDir())
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
 	got, err := m.DownloadArtistPoster(context.Background(), id, srv.URL, dir)
 	if err != nil {
 		t.Fatalf("DownloadArtistPoster: %v", err)
