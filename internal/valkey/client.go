@@ -77,6 +77,24 @@ func (c *Client) Expire(ctx context.Context, key string, ttl time.Duration) erro
 	return c.rdb.Expire(ctx, key, ttl).Err()
 }
 
+// SAdd adds members to a set. Used by the segment-token manager to maintain a
+// user → tokens index so revocation on password reset / admin demote can wipe
+// every outstanding token for a user.
+func (c *Client) SAdd(ctx context.Context, key string, members ...any) error {
+	return c.rdb.SAdd(ctx, key, members...).Err()
+}
+
+// SRem removes members from a set.
+func (c *Client) SRem(ctx context.Context, key string, members ...any) error {
+	return c.rdb.SRem(ctx, key, members...).Err()
+}
+
+// SMembers returns all members of a set. Returns an empty slice (not an error)
+// when the key doesn't exist.
+func (c *Client) SMembers(ctx context.Context, key string) ([]string, error) {
+	return c.rdb.SMembers(ctx, key).Result()
+}
+
 // Scan iterates over keys matching pattern using cursor-based SCAN (non-blocking).
 // This is O(1) per call instead of the O(n) KEYS command which blocks the server.
 func (c *Client) Scan(ctx context.Context, pattern string) ([]string, error) {

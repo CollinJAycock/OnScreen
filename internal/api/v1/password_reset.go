@@ -46,15 +46,25 @@ type PRToken struct {
 
 // PasswordResetHandler handles forgot password / reset password flows.
 type PasswordResetHandler struct {
-	db      PasswordResetDB
-	sender  *email.Sender // always non-nil; live SMTP state via sender.Enabled(ctx)
-	baseURL string
-	logger  *slog.Logger
+	db        PasswordResetDB
+	sender    *email.Sender // always non-nil; live SMTP state via sender.Enabled(ctx)
+	baseURL   string
+	logger    *slog.Logger
+	segTokens SegmentTokenRevoker // optional; nil means HLS tokens age out via TTL
 }
 
 // NewPasswordResetHandler creates a PasswordResetHandler.
 func NewPasswordResetHandler(db PasswordResetDB, sender *email.Sender, baseURL string, logger *slog.Logger) *PasswordResetHandler {
 	return &PasswordResetHandler{db: db, sender: sender, baseURL: baseURL, logger: logger}
+}
+
+// WithSegmentTokenRevoker attaches the HLS segment-token revoker so a
+// successful password reset also wipes in-flight playback credentials.
+// Without it, an attacker holding a stolen segment token keeps streaming
+// for up to 4h after the legitimate user resets their password.
+func (h *PasswordResetHandler) WithSegmentTokenRevoker(r SegmentTokenRevoker) *PasswordResetHandler {
+	h.segTokens = r
+	return h
 }
 
 // Enabled returns whether the forgot password flow is available.
@@ -171,6 +181,14 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		h.logger.ErrorContext(r.Context(), "password reset: delete sessions", "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	if h.segTokens != nil {
+		if err := h.segTokens.RevokeAllForUser(r.Context(), token.UserID); err != nil {
+			// Log but don't fail — the password is already changed and the
+			// PASETO/refresh paths are revoked. Segment tokens still age
+			// out on their own 4h TTL.
+			h.logger.WarnContext(r.Context(), "password reset: revoke segment tokens", "err", err)
+		}
 	}
 
 	if err := h.db.MarkResetTokenUsed(r.Context(), token.ID); err != nil {

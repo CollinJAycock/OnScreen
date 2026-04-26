@@ -165,17 +165,15 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mirror OIDC: set the access token cookie + redirect to the SPA
-	// home, which picks up the cookie and finishes the session bootstrap.
-	http.SetCookie(w, &http.Cookie{
-		Name:     "onscreen_access",
-		Value:    tokens.AccessToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   strings.HasPrefix(h.baseURL, "https://"),
-		SameSite: http.SameSiteLaxMode,
-		Expires:  tokens.ExpiresAt,
-	})
+	// Mirror OIDC: set both the access + refresh cookies via the shared
+	// helper so the cookie names (onscreen_at / onscreen_rt), path scoping,
+	// SameSite mode, and Secure-flag derivation match every other auth
+	// path. The earlier hand-rolled cookie used the wrong name and the
+	// auth middleware never saw it — SAML logins appeared to succeed but
+	// every subsequent request came back unauthenticated. The hand-rolled
+	// version also discarded the refresh token, so even with the correct
+	// name a SAML user would be evicted after the 1h access TTL.
+	setAuthCookies(w, r, tokens)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 

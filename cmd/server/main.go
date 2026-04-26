@@ -384,7 +384,8 @@ func run() error {
 		WithDB(gen.New(rwPool)).
 		WithTokenMaker(tokenMaker, logger).
 		WithAudit(auditLogger).
-		WithLibraryAccess(&userLibraryAccessAdapter{lib: libSvc, q: gen.New(roPool)})
+		WithLibraryAccess(&userLibraryAccessAdapter{lib: libSvc, q: gen.New(roPool)}).
+		WithSegmentTokenRevoker(segTokenMgr)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
@@ -652,7 +653,8 @@ func run() error {
 
 	emailHandler := v1.NewEmailHandler(emailSender, logger)
 	passwordResetDB := &passwordResetAdapter{q: gen.New(rwPool)}
-	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, baseURL, logger)
+	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, baseURL, logger).
+		WithSegmentTokenRevoker(segTokenMgr)
 	inviteDB := &inviteAdapter{q: gen.New(rwPool)}
 	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, baseURL, logger)
 

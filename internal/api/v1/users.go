@@ -92,13 +92,22 @@ type UserLibraryAccessEntry struct {
 	Enabled   bool      `json:"enabled"`
 }
 
+// SegmentTokenRevoker wipes every outstanding HLS segment token for a
+// user. Wired into credential-rotation paths (password reset, admin
+// demote) so an active playback can't outlive the access-token
+// revocation by up to 4h. Optional — nil means tokens age out via TTL.
+type SegmentTokenRevoker interface {
+	RevokeAllForUser(ctx context.Context, userID uuid.UUID) error
+}
+
 // UserHandler handles /api/v1/users endpoints.
 type UserHandler struct {
-	users    UserService
-	db       UserDB
-	tokens   *auth.TokenMaker
-	logger   *slog.Logger
-	audit    *audit.Logger
+	users     UserService
+	db        UserDB
+	tokens    *auth.TokenMaker
+	segTokens SegmentTokenRevoker
+	logger    *slog.Logger
+	audit     *audit.Logger
 	libAccess UserLibraryAccessService
 }
 
@@ -130,6 +139,13 @@ func (h *UserHandler) WithTokenMaker(tokens *auth.TokenMaker, logger *slog.Logge
 // library grant endpoints.
 func (h *UserHandler) WithLibraryAccess(svc UserLibraryAccessService) *UserHandler {
 	h.libAccess = svc
+	return h
+}
+
+// WithSegmentTokenRevoker attaches the HLS segment-token revoker so password
+// changes and admin demotes also wipe in-flight playback credentials.
+func (h *UserHandler) WithSegmentTokenRevoker(r SegmentTokenRevoker) *UserHandler {
+	h.segTokens = r
 	return h
 }
 
@@ -342,6 +358,16 @@ func (h *UserHandler) SetAdmin(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
+	// HLS segment tokens live in Valkey with their own 4h TTL and don't
+	// participate in session_epoch checks (HLS.js can't carry headers, so
+	// the carrier is a query-string capability). Revoke them here too —
+	// a demoted admin shouldn't keep streaming for hours.
+	if h.segTokens != nil {
+		if err := h.segTokens.RevokeAllForUser(r.Context(), targetID); err != nil && h.logger != nil {
+			h.logger.WarnContext(r.Context(), "revoke segment tokens after role change",
+				"target_id", targetID, "err", err)
+		}
+	}
 	if h.audit != nil {
 		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRoleChange, targetID.String(), map[string]any{"is_admin": *body.IsAdmin}, audit.ClientIP(r))
 	}
@@ -399,6 +425,12 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
 		respond.InternalError(w, r)
 		return
+	}
+	if h.segTokens != nil {
+		if err := h.segTokens.RevokeAllForUser(r.Context(), targetID); err != nil && h.logger != nil {
+			h.logger.WarnContext(r.Context(), "revoke segment tokens after admin password reset",
+				"target_id", targetID, "err", err)
+		}
 	}
 	claims := middleware.ClaimsFromContext(r.Context())
 	if h.audit != nil && claims != nil {
