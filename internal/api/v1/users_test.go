@@ -76,7 +76,8 @@ func (m *mockUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) {
 func (m *mockUserDB) DeleteUser(_ context.Context, _ uuid.UUID) error {
 	return m.deleteUserErr
 }
-func (m *mockUserDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockUserDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error      { return nil }
+func (m *mockUserDB) DeleteSessionsForUser(_ context.Context, _ uuid.UUID) error { return nil }
 
 func (m *mockUserDB) SetUserAdmin(_ context.Context, _ gen.SetUserAdminParams) error {
 	return m.setAdminErr

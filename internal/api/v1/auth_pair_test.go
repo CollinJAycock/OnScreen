@@ -135,7 +135,7 @@ func TestPair_Poll_Pending(t *testing.T) {
 	dev, _ := decodePairData(t, rec.Body.Bytes())["device_token"].(string)
 
 	rec = httptest.NewRecorder()
-	h.Poll(rec, httptest.NewRequest("GET", "/api/v1/auth/pair/poll?device_token="+dev, nil))
+	h.Poll(rec, pollRequest(dev))
 	if rec.Code != http.StatusAccepted {
 		t.Errorf("status: got %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
@@ -153,10 +153,21 @@ func TestPair_Poll_MissingToken(t *testing.T) {
 func TestPair_Poll_UnknownToken(t *testing.T) {
 	h := newPairHandler(newMemPairStore(), nil)
 	rec := httptest.NewRecorder()
-	h.Poll(rec, httptest.NewRequest("GET", "/api/v1/auth/pair/poll?device_token=nope", nil))
+	h.Poll(rec, pollRequest("nope"))
 	if rec.Code != http.StatusGone {
 		t.Errorf("status: got %d, want 410", rec.Code)
 	}
+}
+
+// pollRequest builds a poll request that carries the device token via
+// the Authorization header — the only accepted carrier after the
+// `?device_token=` query fallback was removed for log-leak hygiene.
+func pollRequest(dev string) *http.Request {
+	req := httptest.NewRequest("GET", "/api/v1/auth/pair/poll", nil)
+	if dev != "" {
+		req.Header.Set("Authorization", "Bearer "+dev)
+	}
+	return req
 }
 
 // ── Claim → Poll happy path ───────────────────────────────────────────────────
@@ -194,7 +205,7 @@ func TestPair_ClaimThenPoll_IssuesTokens(t *testing.T) {
 
 	// Step 3: device polls and receives tokens.
 	rec = httptest.NewRecorder()
-	h.Poll(rec, httptest.NewRequest("GET", "/api/v1/auth/pair/poll?device_token="+dev, nil))
+	h.Poll(rec, pollRequest(dev))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -208,7 +219,7 @@ func TestPair_ClaimThenPoll_IssuesTokens(t *testing.T) {
 
 	// Step 4: second poll should be Gone — record is one-shot.
 	rec = httptest.NewRecorder()
-	h.Poll(rec, httptest.NewRequest("GET", "/api/v1/auth/pair/poll?device_token="+dev, nil))
+	h.Poll(rec, pollRequest(dev))
 	if rec.Code != http.StatusGone {
 		t.Errorf("repeat poll status: got %d, want 410", rec.Code)
 	}
@@ -301,18 +312,20 @@ func TestRandomPIN_FormatAndDistribution(t *testing.T) {
 	}
 }
 
-func TestExtractDeviceToken_PrefersAuthorizationHeader(t *testing.T) {
-	req := httptest.NewRequest("GET", "/poll?device_token=from-query", nil)
+func TestExtractDeviceToken_ReadsBearerHeader(t *testing.T) {
+	req := httptest.NewRequest("GET", "/poll", nil)
 	req.Header.Set("Authorization", "Bearer from-header")
 	if got := extractDeviceToken(req); got != "from-header" {
-		t.Errorf("header should win over query; got %q", got)
+		t.Errorf("expected from-header, got %q", got)
 	}
 }
 
-func TestExtractDeviceToken_FallsBackToQuery(t *testing.T) {
+func TestExtractDeviceToken_IgnoresQueryParam(t *testing.T) {
+	// Query-string carry was removed for log-leak hygiene. Tokens passed
+	// in the URL must NOT authenticate.
 	req := httptest.NewRequest("GET", "/poll?device_token=from-query", nil)
-	if got := extractDeviceToken(req); got != "from-query" {
-		t.Errorf("expected query fallback, got %q", got)
+	if got := extractDeviceToken(req); got != "" {
+		t.Errorf("query param must not authenticate, got %q", got)
 	}
 }
 
@@ -324,10 +337,10 @@ func TestExtractDeviceToken_EmptyWhenNeitherPresent(t *testing.T) {
 }
 
 func TestExtractDeviceToken_IgnoresNonBearerAuthorization(t *testing.T) {
-	req := httptest.NewRequest("GET", "/poll?device_token=from-query", nil)
+	req := httptest.NewRequest("GET", "/poll", nil)
 	req.Header.Set("Authorization", "Basic user:pass")
-	if got := extractDeviceToken(req); got != "from-query" {
-		t.Errorf("non-Bearer auth should fall through to query, got %q", got)
+	if got := extractDeviceToken(req); got != "" {
+		t.Errorf("non-Bearer auth must not authenticate, got %q", got)
 	}
 }
 

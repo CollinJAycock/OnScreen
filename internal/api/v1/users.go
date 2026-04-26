@@ -57,6 +57,7 @@ type UserDB interface {
 	DeleteUser(ctx context.Context, id uuid.UUID) error
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
 	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
+	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
 	CountAdmins(ctx context.Context) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) error
 	ListManagedProfiles(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListManagedProfilesRow, error)
@@ -318,19 +319,28 @@ func (h *UserHandler) SetAdmin(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	// Invalidate the target's outstanding access tokens. The DB update
-	// above takes effect for new tokens via IssueAccessToken; this
-	// ensures already-issued tokens stop working within the next
-	// request round trip rather than waiting out the 1h TTL.
+	// Invalidate the target's outstanding credentials. The DB update
+	// above takes effect for new tokens via IssueAccessToken; the calls
+	// below revoke already-issued tokens (PASETO via session_epoch,
+	// refresh tokens via the sessions table) so a demoted admin can't
+	// keep using their session for up to an hour while the access token
+	// rides out its TTL. Fail the request on error — leaving the role
+	// changed but the old tokens live is the worst possible state.
 	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
-		// Non-fatal: role change already applied; we log but don't
-		// fail the request. In practice the next successful request
-		// from the target will roll the epoch forward — this path is
-		// only about shortening the window.
 		if h.logger != nil {
-			h.logger.WarnContext(r.Context(), "bump session epoch after role change",
+			h.logger.ErrorContext(r.Context(), "bump session epoch after role change",
 				"target_id", targetID, "err", err)
 		}
+		respond.InternalError(w, r)
+		return
+	}
+	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "delete sessions after role change",
+				"target_id", targetID, "err", err)
+		}
+		respond.InternalError(w, r)
+		return
 	}
 	if h.audit != nil {
 		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRoleChange, targetID.String(), map[string]any{"is_admin": *body.IsAdmin}, audit.ClientIP(r))
@@ -358,8 +368,8 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid request body")
 		return
 	}
-	if len(body.Password) < 8 {
-		respond.BadRequest(w, r, "password must be at least 8 characters")
+	if err := ValidatePassword(body.Password); err != nil {
+		respond.BadRequest(w, r, err.Error())
 		return
 	}
 
@@ -373,6 +383,20 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		ID:           targetID,
 		PasswordHash: &hashStr,
 	}); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	// Invalidate every existing session for the target user. The password
+	// change is the user's "I'm compromised, kick everyone out" lever — if
+	// we leave the existing PASETO access tokens (1h TTL) and refresh
+	// tokens (30d) in place, an attacker who already grabbed a session
+	// keeps it. Bumping the epoch revokes outstanding access tokens
+	// immediately; deleting refresh-token rows revokes the refresh path.
+	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
 		respond.InternalError(w, r)
 		return
 	}

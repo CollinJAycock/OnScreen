@@ -25,6 +25,9 @@ RETURNING id, user_id, token_hash, client_id, client_name, device_id, platform,
 -- name: DeleteSession :exec
 DELETE FROM sessions WHERE id = $1;
 
+-- name: DeleteSessionsForUser :exec
+DELETE FROM sessions WHERE user_id = $1;
+
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at <= NOW();
 

@@ -126,18 +126,18 @@ func (h *TrickplayHandler) Generate(w http.ResponseWriter, r *http.Request) {
 // bad path component can't escape the item's directory.
 var trickplayFilePattern = regexp.MustCompile(`^(index\.vtt|sprite_\d{3}\.jpg)$`)
 
-// ServeFile handles GET /trickplay/{id}/{file}. No auth — mirrors the
-// artwork endpoint so <video><track> and <img> tags can load without
-// credentials. The filename is whitelisted to index.vtt or sprite_NNN.jpg.
+// ServeFile handles GET /trickplay/{id}/{file}. Requires auth + library
+// ACL — sprites can leak adult-library thumbnails into a kids-restricted
+// session if served openly. The route is wrapped in Auth_mw.Required by
+// the router; this handler additionally enforces the per-library ACL.
+// The filename is whitelisted to index.vtt or sprite_NNN.jpg.
 func (h *TrickplayHandler) ServeFile(w http.ResponseWriter, r *http.Request) {
 	if h.svc == nil {
 		http.NotFound(w, r)
 		return
 	}
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		http.NotFound(w, r)
+	id, ok := h.requireItemAccess(w, r)
+	if !ok {
 		return
 	}
 	name := chi.URLParam(r, "file")

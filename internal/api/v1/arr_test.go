@@ -36,12 +36,11 @@ func (m *mockArrLibs) TriggerDirectoryScan(_ context.Context, _ uuid.UUID, dir s
 func arrRequest(t *testing.T, h *ArrHandler, apikey string, payload any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(payload)
-	url := "/api/v1/arr/webhook"
-	if apikey != "" {
-		url += "?apikey=" + apikey
-	}
-	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/arr/webhook", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if apikey != "" {
+		req.Header.Set("X-Api-Key", apikey)
+	}
 	rec := httptest.NewRecorder()
 	h.Webhook(rec, req)
 	return rec

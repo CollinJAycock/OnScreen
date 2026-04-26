@@ -42,6 +42,16 @@ type mockPasswordResetDB struct {
 	updatePwCalled bool
 	updatePwHash   string
 	updatePwUserID uuid.UUID
+
+	// BumpSessionEpoch + DeleteSessionsForUser — together revoke every
+	// outstanding credential after a successful password reset.
+	bumpEpochErr    error
+	bumpEpochCalled bool
+	bumpEpochUserID uuid.UUID
+
+	deleteSessionsErr    error
+	deleteSessionsCalled bool
+	deleteSessionsUserID uuid.UUID
 }
 
 func (m *mockPasswordResetDB) GetUserByEmail(_ context.Context, _ *string) (PRUser, error) {
@@ -67,6 +77,18 @@ func (m *mockPasswordResetDB) UpdatePassword(_ context.Context, userID uuid.UUID
 	m.updatePwUserID = userID
 	m.updatePwHash = hash
 	return m.updatePwErr
+}
+
+func (m *mockPasswordResetDB) BumpSessionEpoch(_ context.Context, userID uuid.UUID) error {
+	m.bumpEpochCalled = true
+	m.bumpEpochUserID = userID
+	return m.bumpEpochErr
+}
+
+func (m *mockPasswordResetDB) DeleteSessionsForUser(_ context.Context, userID uuid.UUID) error {
+	m.deleteSessionsCalled = true
+	m.deleteSessionsUserID = userID
+	return m.deleteSessionsErr
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

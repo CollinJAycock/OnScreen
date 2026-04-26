@@ -24,6 +24,11 @@ type PasswordResetDB interface {
 	GetResetToken(ctx context.Context, tokenHash string) (PRToken, error)
 	MarkResetTokenUsed(ctx context.Context, id uuid.UUID) error
 	UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error
+	// BumpSessionEpoch + DeleteSessionsForUser together revoke all
+	// outstanding credentials for the user — see ResetPassword for why
+	// we call them after a successful password update.
+	BumpSessionEpoch(ctx context.Context, userID uuid.UUID) error
+	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // PRUser is the minimal user info needed for password reset.
@@ -122,8 +127,8 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		respond.BadRequest(w, r, "token and password are required")
 		return
 	}
-	if len(body.Password) < 12 {
-		respond.BadRequest(w, r, "password must be at least 12 characters")
+	if err := ValidatePassword(body.Password); err != nil {
+		respond.BadRequest(w, r, err.Error())
 		return
 	}
 
@@ -147,6 +152,23 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 
 	if err := h.db.UpdatePassword(r.Context(), token.UserID, string(pwHash)); err != nil {
 		h.logger.ErrorContext(r.Context(), "password reset: update password", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	// Cut every existing credential for the user. The whole point of
+	// "forgot password" is recovery from compromise — leaving the old
+	// PASETO access tokens (1h TTL) and refresh tokens (30d) live would
+	// hand the attacker a continued session even after the legitimate
+	// owner reset. Bump the epoch (revokes access tokens) AND wipe the
+	// sessions table (revokes the refresh path).
+	if err := h.db.BumpSessionEpoch(r.Context(), token.UserID); err != nil {
+		h.logger.ErrorContext(r.Context(), "password reset: bump session epoch", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if err := h.db.DeleteSessionsForUser(r.Context(), token.UserID); err != nil {
+		h.logger.ErrorContext(r.Context(), "password reset: delete sessions", "err", err)
 		respond.InternalError(w, r)
 		return
 	}

@@ -315,34 +315,37 @@
           <div class="field">
             <label>Radarr Webhook URL</label>
             <div class="url-box">
-              <code class="webhook-url">{arrWebhookUrl}&source=radarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '&source=radarr'); toast.success('Copied'); }}>Copy</button>
+              <code class="webhook-url">{arrWebhookUrl}?source=radarr</code>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=radarr'); toast.success('Copied'); }}>Copy</button>
             </div>
             <div class="hint">
               In Radarr: <strong>Settings &gt; Connect &gt; + &gt; Webhook</strong>.
-              Set URL to the above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>.
+              Set the URL above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>,
+              and add a custom header <code>X-Api-Key</code> with your API key.
             </div>
           </div>
           <div class="field">
             <label>Sonarr Webhook URL</label>
             <div class="url-box">
-              <code class="webhook-url">{arrWebhookUrl}&source=sonarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '&source=sonarr'); toast.success('Copied'); }}>Copy</button>
+              <code class="webhook-url">{arrWebhookUrl}?source=sonarr</code>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=sonarr'); toast.success('Copied'); }}>Copy</button>
             </div>
             <div class="hint">
               In Sonarr: <strong>Settings &gt; Connect &gt; + &gt; Webhook</strong>.
-              Set URL to the above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>.
+              Set the URL above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>,
+              and add a custom header <code>X-Api-Key</code> with your API key.
             </div>
           </div>
           <div class="field">
             <label>Lidarr Webhook URL</label>
             <div class="url-box">
-              <code class="webhook-url">{arrWebhookUrl}&source=lidarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '&source=lidarr'); toast.success('Copied'); }}>Copy</button>
+              <code class="webhook-url">{arrWebhookUrl}?source=lidarr</code>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=lidarr'); toast.success('Copied'); }}>Copy</button>
             </div>
             <div class="hint">
               In Lidarr: <strong>Settings &gt; Connect &gt; + &gt; Webhook</strong>.
-              Set URL to the above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>.
+              Set the URL above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>,
+              and add a custom header <code>X-Api-Key</code> with your API key.
             </div>
           </div>
         {/if}

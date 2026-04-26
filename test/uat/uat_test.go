@@ -397,6 +397,9 @@ func (s *stubUserDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
+func (s *stubUserDB) DeleteSessionsForUser(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
 func (s *stubUserDB) getEpoch(id uuid.UUID) int64 {
 	if s.epochs == nil {
 		return 0

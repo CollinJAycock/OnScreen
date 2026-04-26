@@ -337,13 +337,16 @@ func TestTrickplay_ServeFile_NilService(t *testing.T) {
 }
 
 func TestTrickplay_ServeFile_BadUUID(t *testing.T) {
+	// ServeFile now goes through requireItemAccess (same path Status and
+	// Generate use), which surfaces a 400 for malformed UUIDs to match
+	// the rest of the trickplay handlers.
 	svc := &fakeTrickplayService{itemDir: t.TempDir()}
 	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
-	req := tpReq(http.MethodGet, "/", nil, "not-a-uuid", "index.vtt")
+	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, "not-a-uuid", "index.vtt")
 	rec := httptest.NewRecorder()
 	h.ServeFile(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("got %d, want 404", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", rec.Code)
 	}
 }
 

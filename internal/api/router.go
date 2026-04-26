@@ -209,11 +209,16 @@ func NewRouter(h *Handlers) http.Handler {
 	}
 
 	// ── Trickplay file server ────────────────────────────────────────────────
-	// Serves sprite_NNN.jpg + index.vtt from the trickplay cache dir. No auth
-	// so <video><track> loads without credentials, matching /artwork/*. The
-	// handler whitelists filenames to block path traversal.
+	// Serves sprite_NNN.jpg + index.vtt from the trickplay cache dir. Auth
+	// required + per-library ACL enforced inside the handler — sprites can
+	// leak adult-library thumbnails into a kids-restricted session otherwise.
+	// Filenames are regex-whitelisted (index.vtt | sprite_NNN.jpg) to block
+	// path traversal.
 	if h.Trickplay != nil {
-		r.Get("/trickplay/{id}/{file}", h.Trickplay.ServeFile)
+		r.Group(func(r chi.Router) {
+			r.Use(h.Auth_mw.Required)
+			r.Get("/trickplay/{id}/{file}", h.Trickplay.ServeFile)
+		})
 	}
 
 	// ── Arr notification webhook (API-key auth, outside user auth) ───────────

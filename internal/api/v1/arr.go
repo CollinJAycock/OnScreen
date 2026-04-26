@@ -162,21 +162,21 @@ func (h *ArrHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, map[string]string{"status": "scan_triggered", "directory": dir})
 }
 
-// authenticate checks the API key from query param or header.
+// authenticate checks the API key from the X-Api-Key header.
+//
+// Header-only — query-string secrets land in nginx access logs, browser
+// history, referer headers, and OTel span attributes. Sonarr / Radarr /
+// Lidarr all support custom headers in their notification connection
+// settings; configure the webhook to send `X-Api-Key: <key>`.
 func (h *ArrHandler) authenticate(r *http.Request) bool {
 	expected := h.settings.ArrAPIKey(r.Context())
 	if expected == "" {
 		return false // no key configured — reject all
 	}
-
-	provided := r.URL.Query().Get("apikey")
-	if provided == "" {
-		provided = r.Header.Get("X-Api-Key")
-	}
+	provided := r.Header.Get("X-Api-Key")
 	if provided == "" {
 		return false
 	}
-
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
 }
 

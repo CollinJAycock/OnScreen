@@ -132,8 +132,8 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "token, username, and password are required")
 		return
 	}
-	if len(body.Password) < 12 {
-		respond.BadRequest(w, r, "password must be at least 12 characters")
+	if err := ValidatePassword(body.Password); err != nil {
+		respond.BadRequest(w, r, err.Error())
 		return
 	}
 

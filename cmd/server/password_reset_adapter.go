@@ -54,3 +54,11 @@ func (a *passwordResetAdapter) UpdatePassword(ctx context.Context, userID uuid.U
 		PasswordHash: &passwordHash,
 	})
 }
+
+func (a *passwordResetAdapter) BumpSessionEpoch(ctx context.Context, userID uuid.UUID) error {
+	return a.q.BumpSessionEpoch(ctx, userID)
+}
+
+func (a *passwordResetAdapter) DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error {
+	return a.q.DeleteSessionsForUser(ctx, userID)
+}

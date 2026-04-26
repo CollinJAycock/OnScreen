@@ -135,11 +135,11 @@ func (h *PairHandler) CreateCode(w http.ResponseWriter, r *http.Request) {
 
 // Poll handles GET /api/v1/auth/pair/poll.
 //
-// The device_token is passed via `Authorization: Bearer <token>` — NOT
-// as a query param — so it never appears in reverse-proxy access logs,
-// CDN caches, or browser history. Falls back to reading
-// `?device_token=...` for clients that haven't migrated yet (we will
-// remove the fallback before the native clients ship).
+// The device_token is passed via `Authorization: Bearer <token>` — and
+// only via the header — so it never appears in reverse-proxy access
+// logs, CDN caches, browser history, referer headers, or OTel span
+// attributes. The earlier `?device_token=...` query fallback was
+// removed for log-leak hygiene.
 //
 // No user auth required; the device_token itself is the one-shot
 // credential. Returns 202 while pending, 200 with TokenPair once
@@ -291,17 +291,18 @@ func randomPIN() (string, error) {
 	}
 }
 
-// extractDeviceToken pulls the one-shot device credential from either
-// the Authorization header (preferred: not logged by proxies, not
-// cached by CDNs, not exposed in browser history) or — as a transient
-// backward-compat path — the `?device_token=...` query param. Clients
-// should move to the header form; the query fallback will be removed
-// before client dev ships.
+// extractDeviceToken pulls the one-shot device credential from the
+// Authorization header. Header-only — query-string secrets land in
+// nginx access logs, browser history, referer headers, and OTel span
+// attributes, and a pair token is exactly the kind of high-value
+// short-lived credential that survives long enough in those sinks to
+// matter.
 func extractDeviceToken(r *http.Request) string {
-	if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(bearer, "Bearer "))
+	bearer := r.Header.Get("Authorization")
+	if !strings.HasPrefix(bearer, "Bearer ") {
+		return ""
 	}
-	return strings.TrimSpace(r.URL.Query().Get("device_token"))
+	return strings.TrimSpace(strings.TrimPrefix(bearer, "Bearer "))
 }
 
 // validPIN reports whether s is exactly six ASCII digits.

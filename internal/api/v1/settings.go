@@ -503,12 +503,16 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build the webhook URL from the request so the admin can copy it into arr apps.
+	// Build the webhook URL from the request so the admin can copy it
+	// into arr apps. The API key is sent via the X-Api-Key header (configure
+	// it under the connection's "Custom Headers" in Sonarr/Radarr/Lidarr) —
+	// query-string keys leak into access logs / browser history / referer.
 	scheme := "http"
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	webhookURL := scheme + "://" + r.Host + "/api/v1/arr/webhook?apikey=" + arrKey
+	webhookURL := scheme + "://" + r.Host + "/api/v1/arr/webhook"
+	_ = arrKey // returned in the response below; the admin pastes it into the X-Api-Key custom header
 
 	respond.Success(w, r, settingsResponse{
 		TMDBAPIKey:        maskAPIKey(h.svc.TMDBAPIKey(ctx)),
