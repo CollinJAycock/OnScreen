@@ -12,7 +12,7 @@
 
 **Snapshot date:** 2026-04-26. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
 
-> **v2 in flight.** Cells marked ✅ in the last few weeks include items shipped during the v2 push: music videos, audiobooks (flat MVP), Cover Art Archive fallback, Kodi NFO import, lyrics end-to-end, DVR retention purge. See [v2-roadmap.md](v2-roadmap.md) for what's still open.
+> **v2 in flight.** Cells marked ✅ in the last few weeks include items shipped during the v2 push: music videos, audiobooks (flat MVP), podcasts (local-files MVP), Cover Art Archive fallback, Kodi NFO import, lyrics end-to-end, DVR retention purge, subtitle burn-in, AV1 encode, HEVC on QSV/VAAPI/AMF. See [v2-roadmap.md](v2-roadmap.md) for what's still open.
 
 ---
 
@@ -28,7 +28,7 @@
 | DVR (scheduled recording)  | ✅ | 💎 | 💎 | ✅ | OnScreen: matcher + capture + retention purge wired (commit `246027b`) |
 | Audiobooks                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: flat one-file-per-book MVP (commit `933c1f0`); author/series hierarchy is v2.1 |
 | Books / comics             | ❌ | ❌ | ⚠️ | ⚠️ | Jellyfin + Emby: basic comic/book scanning |
-| Podcasts                   | ❌ | ⚠️ | ❌ | 🧩 | Plex had podcasts (discontinued 2024); Jellyfin has a plugin |
+| Podcasts                   | ⚠️ | ⚠️ | ❌ | 🧩 | OnScreen: local files (commit `a8812ad`); RSS subscriptions are v2.1 |
 | Music videos               | ✅ | ✅ | ✅ | ✅ | OnScreen: artist children w/ 16:9 thumbs (commit `3319bd6`) |
 | Home videos (separate type)| ❌ | ✅ | ✅ | ✅ | OnScreen ingests as untyped movies |
 
@@ -46,11 +46,11 @@
 | H.264 encode (VideoToolbox)    | ❌ | 💎 | 💎 | ✅ | macOS/Apple Silicon only |
 | HEVC encode (NVENC)            | ✅ | 💎 | 💎 | ✅ | |
 | HEVC encode (software)         | ✅ | 💎 | 💎 | ✅ | libx265 |
-| HEVC encode (QSV/VAAPI/AMF)    | ❌ | 💎 | 💎 | ✅ | Jellyfin-ffmpeg has broader HEVC hw reach |
-| AV1 encode                     | ❌ | 💎 | 💎 | ⚠️ | Jellyfin: via jellyfin-ffmpeg, experimental |
+| HEVC encode (QSV/VAAPI/AMF)    | ⚠️ | 💎 | 💎 | ✅ | OnScreen: encoder paths added (commit `652b87e`); awaiting hardware validation on the beta |
+| AV1 encode                     | ⚠️ | 💎 | 💎 | ⚠️ | OnScreen: SVT-AV1 SW + AV1 NVENC + AV1 QSV paths (commit `652b87e`); SVT-AV1 preset 8 for live |
 | HDR → SDR tone mapping (GPU)   | ✅ | 💎 | 💎 | ✅ | OnScreen: tonemap_cuda → tonemap_opencl → zscale fallback ladder |
 | 10-bit HEVC source handling    | ✅ | ✅ | ✅ | ✅ | |
-| Subtitle burn-in                | ❌ | ✅ | ✅ | ✅ | OnScreen extracts to WebVTT for client-side rendering |
+| Subtitle burn-in                | ✅ | ✅ | ✅ | ✅ | OnScreen: software-encode only (commit `652b87e`); HW path skipped to preserve GPU throughput |
 | Remux (stream-copy video)       | ✅ | ✅ | ✅ | ✅ | |
 | Direct play decision engine     | ✅ | ✅ | ✅ | ✅ | |
 | Multi-audio track selection     | ✅ | ✅ | ✅ | ✅ | |
@@ -294,11 +294,10 @@
 
 ## Where OnScreen Trails (as of 2026-04-26)
 
-- **No books / comics / podcasts** as distinct media types (audiobooks shipped flat MVP; richer hierarchy in v2.1).
+- **No books / comics** as distinct media types.
+- **No podcast RSS subscriptions** — local files work, feed-driven auto-download is v2.1.
 - **No Tidal / Qobuz integration** for music streaming.
-- **No subtitle burn-in** (always extracted to WebVTT for client-side render; some TVs can't handle external VTT).
-- **No HEVC hardware encode on QSV/VAAPI/AMF** — NVENC only.
-- **No AV1 encode**.
+- **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
 - **No Schedules Direct EPG fetcher** (XMLTV works; SD on the v2.1 list).
 - **No in-built HTTPS** — expects a reverse proxy in front.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
@@ -309,10 +308,14 @@
 
 - ✅ Music videos as a distinct type (artist children, 16:9 thumbnails)
 - ✅ Audiobooks as a library type (flat MVP)
+- ✅ Podcasts as a library type (local-files MVP; RSS subscriptions deferred to v2.1)
 - ✅ Lyrics end-to-end (USLT + .lrc + LRCLIB)
 - ✅ Kodi NFO sidecar import (movie / tvshow / episodedetails)
 - ✅ Cover Art Archive fallback for album art
 - ✅ DVR retention purge (closes the matcher → capture → cleanup loop)
+- ✅ Subtitle burn-in (software-encode path)
+- ✅ AV1 encode (SVT-AV1 SW + AV1 NVENC + AV1 QSV constants — beta hardware validation pending)
+- ✅ HEVC encode on QSV / VAAPI / AMF (beta hardware validation pending)
 
 ## Non-Differentiators (All Four Roughly Equal)
 
