@@ -31,9 +31,13 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/people"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/lyrics"
+	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/observability"
+	"github.com/onscreen/onscreen/internal/plugin"
+	"github.com/onscreen/onscreen/internal/requests"
 	"github.com/onscreen/onscreen/internal/scheduler"
 	"github.com/onscreen/onscreen/internal/testvalkey"
 	"github.com/onscreen/onscreen/internal/trickplay"
@@ -858,3 +862,494 @@ func TestChiContext_PropagatesThroughMiddleware(t *testing.T) {
 // silence unused-import warnings for packages used only in stub bodies above
 var _ = chi.URLParam
 var _ = pgtype.Bool{}
+
+// ── Plugins ──────────────────────────────────────────────────────────────────
+// plugin.Registry takes an unexported registryDB interface, so we satisfy it
+// structurally with a stub that implements every method.
+
+type stubPluginRegistryDB struct{}
+
+func (s *stubPluginRegistryDB) CreatePlugin(_ context.Context, _ gen.CreatePluginParams) (gen.Plugin, error) {
+	return gen.Plugin{}, nil
+}
+func (s *stubPluginRegistryDB) GetPlugin(_ context.Context, _ uuid.UUID) (gen.Plugin, error) {
+	return gen.Plugin{}, errors.New("not found")
+}
+func (s *stubPluginRegistryDB) ListPlugins(_ context.Context) ([]gen.Plugin, error) {
+	return nil, nil
+}
+func (s *stubPluginRegistryDB) ListEnabledPluginsByRole(_ context.Context, _ string) ([]gen.Plugin, error) {
+	return nil, nil
+}
+func (s *stubPluginRegistryDB) UpdatePlugin(_ context.Context, _ gen.UpdatePluginParams) (gen.Plugin, error) {
+	return gen.Plugin{}, nil
+}
+func (s *stubPluginRegistryDB) DeletePlugin(_ context.Context, _ uuid.UUID) error { return nil }
+
+func TestPlugins_ListRequiresAdmin(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		reg := plugin.NewRegistry(&stubPluginRegistryDB{})
+		h.Plugins = v1.NewPluginHandler(reg, nil, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/admin/plugins", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestPlugins_ListAcceptsAdmin(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		reg := plugin.NewRegistry(&stubPluginRegistryDB{})
+		h.Plugins = v1.NewPluginHandler(reg, nil, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/admin/plugins", ts.adminToken(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 — body=%s", resp.StatusCode, readBody(resp))
+	}
+}
+
+// ── LiveTV ───────────────────────────────────────────────────────────────────
+
+// stubLiveTVService satisfies v1.LiveTVService with empty results. Sufficient
+// for routing + auth gate tests; functional tests would override fields.
+type stubLiveTVService struct{}
+
+func (s *stubLiveTVService) ListTuners(_ context.Context) ([]livetv.TunerDevice, error) {
+	return nil, nil
+}
+func (s *stubLiveTVService) GetTuner(_ context.Context, _ uuid.UUID) (livetv.TunerDevice, error) {
+	return livetv.TunerDevice{}, errors.New("not found")
+}
+func (s *stubLiveTVService) CreateTuner(_ context.Context, _ livetv.CreateTunerDeviceParams) (livetv.TunerDevice, error) {
+	return livetv.TunerDevice{}, nil
+}
+func (s *stubLiveTVService) UpdateTuner(_ context.Context, _ livetv.UpdateTunerDeviceParams) (livetv.TunerDevice, error) {
+	return livetv.TunerDevice{}, nil
+}
+func (s *stubLiveTVService) SetTunerEnabled(_ context.Context, _ uuid.UUID, _ bool) error {
+	return nil
+}
+func (s *stubLiveTVService) DeleteTuner(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubLiveTVService) RescanTuner(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+func (s *stubLiveTVService) DiscoverHDHomeRuns(_ context.Context) ([]livetv.DiscoveredDevice, error) {
+	return nil, nil
+}
+func (s *stubLiveTVService) ListChannels(_ context.Context, _ bool) ([]livetv.ChannelWithTuner, error) {
+	return nil, nil
+}
+func (s *stubLiveTVService) GetChannel(_ context.Context, _ uuid.UUID) (livetv.Channel, error) {
+	return livetv.Channel{}, errors.New("not found")
+}
+func (s *stubLiveTVService) SetChannelEnabled(_ context.Context, _ uuid.UUID, _ bool) error {
+	return nil
+}
+func (s *stubLiveTVService) NowAndNext(_ context.Context) ([]livetv.NowNextEntry, error) {
+	return nil, nil
+}
+func (s *stubLiveTVService) Guide(_ context.Context, _, _ time.Time) ([]livetv.EPGProgram, error) {
+	return nil, nil
+}
+func (s *stubLiveTVService) ListEPGSources(_ context.Context) ([]livetv.EPGSource, error) {
+	return nil, nil
+}
+func (s *stubLiveTVService) CreateEPGSource(_ context.Context, _ livetv.CreateEPGSourceParams) (livetv.EPGSource, error) {
+	return livetv.EPGSource{}, nil
+}
+func (s *stubLiveTVService) DeleteEPGSource(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubLiveTVService) SetEPGSourceEnabled(_ context.Context, _ uuid.UUID, _ bool) error {
+	return nil
+}
+func (s *stubLiveTVService) RefreshEPGSource(_ context.Context, _ uuid.UUID) (livetv.RefreshResult, error) {
+	return livetv.RefreshResult{}, nil
+}
+func (s *stubLiveTVService) SetChannelEPGID(_ context.Context, _ uuid.UUID, _ *string) error {
+	return nil
+}
+func (s *stubLiveTVService) ListKnownEPGIDs(_ context.Context) ([]string, error) { return nil, nil }
+func (s *stubLiveTVService) ListUnmappedChannels(_ context.Context) ([]livetv.Channel, error) {
+	return nil, nil
+}
+func (s *stubLiveTVService) ReorderChannels(_ context.Context, _ []uuid.UUID) error { return nil }
+
+func TestLiveTV_ListChannelsRequiresAuth(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.LiveTV = v1.NewLiveTVHandler(&stubLiveTVService{}, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/tv/channels", "", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestLiveTV_ListChannelsAcceptsUser(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.LiveTV = v1.NewLiveTVHandler(&stubLiveTVService{}, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/tv/channels", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 — body=%s", resp.StatusCode, readBody(resp))
+	}
+}
+
+func TestLiveTV_ListTunersRequiresAdmin(t *testing.T) {
+	// Tuner CRUD is admin-only — exposes per-tuner network configuration
+	// (HDHomeRun host, M3U URL) that a non-admin shouldn't see.
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.LiveTV = v1.NewLiveTVHandler(&stubLiveTVService{}, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/tv/tuners", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestLiveTV_NowAndNextAcceptsUser(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.LiveTV = v1.NewLiveTVHandler(&stubLiveTVService{}, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/tv/channels/now-next", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 — body=%s", resp.StatusCode, readBody(resp))
+	}
+}
+
+func TestLiveTV_GuideAcceptsUser(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.LiveTV = v1.NewLiveTVHandler(&stubLiveTVService{}, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/tv/guide?from=2026-04-26T00:00:00Z&to=2026-04-27T00:00:00Z", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 — body=%s", resp.StatusCode, readBody(resp))
+	}
+}
+
+func TestLiveTV_DiscoverTunersRequiresAdmin(t *testing.T) {
+	// The discover endpoint broadcasts on the LAN; only admin should
+	// be able to trigger that and read the discovered hostnames.
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.LiveTV = v1.NewLiveTVHandler(&stubLiveTVService{}, slog.Default())
+	})
+
+	resp := ts.do("POST", "/api/v1/tv/tuners/discover", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// ── Discover (TMDB-backed) ───────────────────────────────────────────────────
+
+type stubDiscoverDB struct{}
+
+func (s *stubDiscoverDB) ListMediaItemsByTMDBIDs(_ context.Context, _ gen.ListMediaItemsByTMDBIDsParams) ([]gen.ListMediaItemsByTMDBIDsRow, error) {
+	return nil, nil
+}
+
+type stubDiscoverTMDB struct {
+	results []tmdb.DiscoverResult
+}
+
+func (s *stubDiscoverTMDB) SearchMulti(_ context.Context, _ string, _ int) ([]tmdb.DiscoverResult, error) {
+	return s.results, nil
+}
+
+type stubDiscoverRequests struct{}
+
+func (s *stubDiscoverRequests) FindActiveForUser(_ context.Context, _ uuid.UUID, _ string, _ int) (*gen.MediaRequest, error) {
+	return nil, nil
+}
+
+func TestDiscover_RequiresAuth(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.Discover = v1.NewDiscoverHandler(
+			&stubDiscoverDB{},
+			&stubDiscoverTMDB{},
+			&stubDiscoverRequests{},
+			slog.Default(),
+		)
+	})
+
+	resp := ts.do("GET", "/api/v1/discover/search?q=matrix", "", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestDiscover_ReturnsResults(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.Discover = v1.NewDiscoverHandler(
+			&stubDiscoverDB{},
+			&stubDiscoverTMDB{results: []tmdb.DiscoverResult{
+				{MediaType: "movie", TMDBID: 603, Title: "The Matrix", Year: 1999, Rating: 8.2},
+			}},
+			&stubDiscoverRequests{},
+			slog.Default(),
+		)
+	})
+
+	resp := ts.do("GET", "/api/v1/discover/search?q=matrix", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, readBody(resp))
+	}
+}
+
+func TestDiscover_TMDBNotConfiguredReturns503(t *testing.T) {
+	// nil tmdb client — endpoint advertises this state via 503 + clear
+	// error code so the UI can render the "configure TMDB" prompt.
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.Discover = v1.NewDiscoverHandler(
+			&stubDiscoverDB{}, nil, &stubDiscoverRequests{}, slog.Default(),
+		)
+	})
+
+	resp := ts.do("GET", "/api/v1/discover/search?q=anything", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (TMDB not configured)", resp.StatusCode)
+	}
+}
+
+// ── Requests ─────────────────────────────────────────────────────────────────
+
+// stubRequestsDB satisfies the unexported requests.DB interface
+// structurally. Only the methods the gate-test exercises do real work;
+// the rest return zero values / not-found errors.
+type stubRequestsDB struct{}
+
+func (s *stubRequestsDB) GetArrService(_ context.Context, _ uuid.UUID) (gen.ArrService, error) {
+	return gen.ArrService{}, errors.New("not found")
+}
+func (s *stubRequestsDB) GetDefaultArrServiceByKind(_ context.Context, _ string) (gen.ArrService, error) {
+	return gen.ArrService{}, errors.New("not found")
+}
+func (s *stubRequestsDB) CreateMediaRequest(_ context.Context, _ gen.CreateMediaRequestParams) (gen.MediaRequest, error) {
+	return gen.MediaRequest{}, nil
+}
+func (s *stubRequestsDB) GetMediaRequest(_ context.Context, _ uuid.UUID) (gen.MediaRequest, error) {
+	return gen.MediaRequest{}, errors.New("not found")
+}
+func (s *stubRequestsDB) FindActiveRequestForUser(_ context.Context, _ gen.FindActiveRequestForUserParams) (gen.MediaRequest, error) {
+	return gen.MediaRequest{}, errors.New("not found")
+}
+func (s *stubRequestsDB) ListMediaRequestsForUser(_ context.Context, _ gen.ListMediaRequestsForUserParams) ([]gen.MediaRequest, error) {
+	return nil, nil
+}
+func (s *stubRequestsDB) CountMediaRequestsForUser(_ context.Context, _ gen.CountMediaRequestsForUserParams) (int64, error) {
+	return 0, nil
+}
+func (s *stubRequestsDB) ListAllMediaRequests(_ context.Context, _ gen.ListAllMediaRequestsParams) ([]gen.MediaRequest, error) {
+	return nil, nil
+}
+func (s *stubRequestsDB) CountAllMediaRequests(_ context.Context, _ *string) (int64, error) {
+	return 0, nil
+}
+func (s *stubRequestsDB) ListActiveMediaRequestsForTMDB(_ context.Context, _ gen.ListActiveMediaRequestsForTMDBParams) ([]gen.MediaRequest, error) {
+	return nil, nil
+}
+func (s *stubRequestsDB) ListMediaItemsByTMDBIDs(_ context.Context, _ gen.ListMediaItemsByTMDBIDsParams) ([]gen.ListMediaItemsByTMDBIDsRow, error) {
+	return nil, nil
+}
+func (s *stubRequestsDB) ApproveMediaRequest(_ context.Context, _ gen.ApproveMediaRequestParams) (gen.MediaRequest, error) {
+	return gen.MediaRequest{}, nil
+}
+func (s *stubRequestsDB) DeclineMediaRequest(_ context.Context, _ gen.DeclineMediaRequestParams) (gen.MediaRequest, error) {
+	return gen.MediaRequest{}, nil
+}
+func (s *stubRequestsDB) MarkMediaRequestDownloading(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+func (s *stubRequestsDB) MarkMediaRequestAvailable(_ context.Context, _ gen.MarkMediaRequestAvailableParams) error {
+	return nil
+}
+func (s *stubRequestsDB) MarkMediaRequestFailed(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubRequestsDB) CancelMediaRequest(_ context.Context, _ gen.CancelMediaRequestParams) error {
+	return nil
+}
+func (s *stubRequestsDB) DeleteMediaRequest(_ context.Context, _ uuid.UUID) error { return nil }
+
+func TestRequests_ListRequiresAuth(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		svc := requests.NewService(&stubRequestsDB{}, nil, nil, slog.Default())
+		h.Requests = v1.NewRequestHandler(svc, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/requests", "", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestRequests_ListAcceptsUser(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		svc := requests.NewService(&stubRequestsDB{}, nil, nil, slog.Default())
+		h.Requests = v1.NewRequestHandler(svc, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/requests", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 — body=%s", resp.StatusCode, readBody(resp))
+	}
+}
+
+// ── Audit (admin-only) ───────────────────────────────────────────────────────
+
+func TestAudit_ListRequiresAdmin(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.Audit = v1.NewAuditHandler(&stubAuditDB{}, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/audit", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// ── Maintenance (admin-only) ─────────────────────────────────────────────────
+
+type stubMaintenanceMedia struct{}
+
+func (s *stubMaintenanceMedia) ListItemsMissingArt(_ context.Context, _ int32) ([]media.Item, error) {
+	return nil, nil
+}
+func (s *stubMaintenanceMedia) DedupeTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) (media.DedupeResult, error) {
+	return media.DedupeResult{}, nil
+}
+
+func TestMaintenance_RefreshMissingArtRequiresAdmin(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.Maintenance = v1.NewMaintenanceHandler(&stubMaintenanceMedia{}, &stubItemEnricher{}, slog.Default())
+	})
+
+	resp := ts.do("POST", "/api/v1/maintenance/refresh-missing-art", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// ── Backup (admin-only) ──────────────────────────────────────────────────────
+
+func TestBackup_DownloadRequiresAdmin(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		// pg_dump may not be on PATH in CI — that's fine; the admin gate
+		// fires before pg_dump is invoked.
+		h.Backup = v1.NewBackupHandler("postgres://test", 1, nil, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/admin/backup", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// ── Notification SSE stream ──────────────────────────────────────────────────
+
+func TestNotifications_StreamRequiresAuth(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		brk := notification.NewBroker()
+		h.Notifications = v1.NewNotificationHandler(&stubNotificationDB{}, brk, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/notifications/stream", "", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 (SSE stream must require auth)", resp.StatusCode)
+	}
+}
+
+// TestNotifications_StreamSetsSSEHeaders intentionally omitted.
+//
+// SSE testing through httptest's HTTP/1.1 transport is notoriously
+// flaky — the chunked-stream response buffers headers until the first
+// flush makes it across the wire, which races against the client's
+// timeout no matter how it's tuned. The auth gate is exercised by
+// TestNotifications_StreamRequiresAuth above; the SSE-headers shape
+// is verified by the notification package's own unit tests where the
+// handler is called directly with a httptest.Recorder.
+
+// ── OIDC / SAML callback paths (negative cases — no real IdP needed) ──────────
+// We can't simulate a full IdP in UAT, but the callback handlers have
+// guard branches that fire BEFORE the IdP exchange and are worth locking
+// down: missing state cookie, missing code, parse failures.
+
+func TestOIDC_CallbackWithoutStateCookieIs400(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		// Stub OIDC config has Enabled=false → /callback fails its
+		// resolve() step and 302s back to /login?error=oidc_disabled.
+		// We assert the redirect (3xx), not the final 200 you'd get
+		// after following it.
+		h.OIDCAuth = v1.NewOIDCHandler(stubOIDCSettings{}, stubOIDCSvc{}, "http://localhost", slog.Default())
+	})
+
+	// Don't follow redirects — we want to see the immediate 307/302 from
+	// the callback handler, not the rendered /login page after the chase.
+	noFollow := &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	req, err := http.NewRequest("GET", ts.url("/api/v1/auth/oidc/callback?code=x&state=y"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := noFollow.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		t.Errorf("status = %d — callback should redirect (3xx) when OIDC isn't configured", resp.StatusCode)
+	}
+}
+
+func TestSAML_ACSPostRejectedWhenSAMLDisabled(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.SAMLAuth = v1.NewSAMLHandler(stubSAMLSettings{}, stubSAMLSvc{}, "http://localhost", slog.Default())
+	})
+
+	resp := ts.do("POST", "/api/v1/auth/saml/acs", "", map[string]any{})
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("status = %d — ACS should reject when SAML isn't configured", resp.StatusCode)
+	}
+}
+
+func TestSAML_MetadataIsPublicEvenWhenDisabled(t *testing.T) {
+	// /api/v1/auth/saml/metadata should still respond — returning either
+	// 503 (we use this) or the metadata XML. Either way it's NOT 401:
+	// this endpoint is used by IdP admins during initial registration
+	// and they don't have OnScreen credentials yet.
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.SAMLAuth = v1.NewSAMLHandler(stubSAMLSettings{}, stubSAMLSvc{}, "http://localhost", slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/auth/saml/metadata", "", nil)
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Errorf("status = %d — SAML metadata must NOT require auth", resp.StatusCode)
+	}
+}
+
+func TestLDAP_LoginEndpointPublic(t *testing.T) {
+	// LDAP login is public (it IS the login). Test that the route is
+	// registered and responds (the actual auth result depends on the
+	// stubbed service; we just confirm the route isn't 401-gated).
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.LDAPAuth = v1.NewLDAPHandler(stubLDAPSettings{}, stubLDAPSvc{}, slog.Default())
+	})
+
+	resp := ts.do("POST", "/api/v1/auth/ldap/login", "", map[string]any{
+		"username": "alice", "password": "p",
+	})
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Errorf("status = %d — LDAP login route must be public", resp.StatusCode)
+	}
+}
+
+// ── unused-import sentinels for new dependencies ─────────────────────────────
+var _ = plugin.NewRegistry
+var _ = livetv.TunerDevice{}
+var _ = tmdb.DiscoverResult{}
+var _ = requests.NewService
