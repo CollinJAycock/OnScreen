@@ -127,7 +127,7 @@
 | LDAP                           | ✅ | ❌ | 💎 | 🧩 | Jellyfin LDAP is a plugin |
 | OAuth (Google/GitHub/Discord)  | ✅ | ❌ | ❌ | 🧩 | |
 | OIDC (generic)                 | ✅ | ❌ | 💎 | 🧩 | |
-| SAML                           | ❌ | ❌ | 💎 | 🧩 | |
+| SAML                           | ✅ | ❌ | 💎 | 🧩 | OnScreen: SP-initiated flow + JIT provisioning + admin-group sync (commit `af96edb`) |
 | Plex.tv SSO (accept Plex tokens)| ❌ | ✅ | ❌ | ❌ | |
 | Multi-user                     | ✅ | ✅ | ✅ | ✅ | |
 | Managed user profiles (PIN)    | ✅ | 💎 | ✅ | ❌ | OnScreen: up to 6 profiles per user with PIN |
@@ -300,7 +300,6 @@
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
 - **No in-built HTTPS** — expects a reverse proxy in front.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
-- **No SAML**.
 
 ## v2 Closed (since the prior snapshot)
 
@@ -316,6 +315,7 @@
 - ✅ HEVC encode on QSV / VAAPI / AMF (beta hardware validation pending)
 - ✅ Schedules Direct as a second EPG source (token auth, batched fetch, callsign auto-match)
 - ✅ Gapless music playback (dual `<audio>` preload rotation)
+- ✅ SAML 2.0 SP-initiated SSO (JIT provisioning, admin-group sync, SP keypair auto-generate)
 
 ## Non-Differentiators (All Four Roughly Equal)
 
