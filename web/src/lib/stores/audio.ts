@@ -147,8 +147,42 @@ function createAudioStore() {
 
     clear() {
       set(initial);
+    },
+
+    // peekNext returns the track that next() would advance to, WITHOUT
+    // mutating state. Used by the player to pre-load the upcoming
+    // track in a second <audio> element so the inter-track gap on
+    // album playback is sub-frame instead of the ~250 ms a fresh
+    // src= + codec init costs. Returns null when there's no next
+    // (end of queue, repeat=off, no queue, etc.).
+    peekNext(): AudioTrack | null {
+      const s = get({ subscribe });
+      const next = peekAdvance(s, 1);
+      return next === -1 ? null : (s.queue[next] ?? null);
     }
   };
+}
+
+// peekAdvance mirrors advance() but returns just the next index, no
+// mutation. -1 means "no next track." Lives separately from
+// advance() so the two paths are visually distinct in review and
+// can drift independently if shuffle/repeat semantics ever diverge.
+function peekAdvance(s: AudioState, delta: 1 | -1): number {
+  if (s.queue.length === 0) return -1;
+  if (s.repeat === 'one') return s.index;
+  if (s.shuffle) {
+    const nextPos = s.shufflePos + delta;
+    if (nextPos >= 0 && nextPos < s.shuffleOrder.length) return s.shuffleOrder[nextPos];
+    if (s.repeat === 'all') {
+      const wrapped = ((nextPos % s.queue.length) + s.queue.length) % s.queue.length;
+      return s.shuffleOrder[wrapped];
+    }
+    return -1;
+  }
+  const next = s.index + delta;
+  if (next >= 0 && next < s.queue.length) return next;
+  if (s.repeat === 'all') return ((next % s.queue.length) + s.queue.length) % s.queue.length;
+  return -1;
 }
 
 function nextRepeat(r: RepeatMode): RepeatMode {
@@ -205,3 +239,14 @@ export const audio = createAudioStore();
 export const currentTrack = derived(audio, ($a) =>
   $a.index >= 0 && $a.index < $a.queue.length ? $a.queue[$a.index] : null
 );
+
+// nextTrack mirrors peekNext() reactively — used by the player to
+// keep a second <audio> element preloaded for gapless transitions.
+// Recomputes whenever queue/index/shuffle/repeat changes; the player
+// only swaps src on the preload element when this value differs from
+// what's already loaded there.
+export const nextTrack = derived(audio, ($a) => {
+  if ($a.queue.length === 0 || $a.index < 0) return null;
+  const idx = peekAdvance($a, 1);
+  return idx === -1 ? null : ($a.queue[idx] ?? null);
+});

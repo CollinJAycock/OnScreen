@@ -1,10 +1,27 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
+  import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
   import { itemApi } from '$lib/api';
 
-  let audioEl: HTMLAudioElement;
+  // Two audio elements rotated for gapless playback. `audioElA` and
+  // `audioElB` swap roles every track: when one is "active" (playing
+  // the current track), the other is "preload" (idle, with the next
+  // track's bytes already in the browser cache + codec init done).
+  // On `ended` we swap roles synchronously — sub-frame transition
+  // instead of the ~250 ms a fresh src= + decode-init costs.
+  let audioElA: HTMLAudioElement;
+  let audioElB: HTMLAudioElement;
+  let activeIsA = true;
+
+  // Helper accessors instead of reactive `$:` aliases — Svelte's
+  // dependency tracker would see `audioEl` mutations elsewhere in
+  // the file (audioEl.src = ...) and flag a cycle. Plain functions
+  // sidestep the reactivity entirely.
+  function activeEl(): HTMLAudioElement { return activeIsA ? audioElA : audioElB; }
+  function preloadEl(): HTMLAudioElement { return activeIsA ? audioElB : audioElA; }
+
   let loadedSrc = '';
+  let preloadSrc = '';
   let durationMS = 0;
   let positionMS = 0;
   let scrubbing = false;
@@ -13,6 +30,7 @@
   let muted = false;
 
   let track: AudioTrack | null = null;
+  let upcoming: AudioTrack | null = null;
   let playing = false;
   let shuffle = false;
   let repeat: 'off' | 'one' | 'all' = 'off';
@@ -46,6 +64,9 @@
     lastReportedMS = 0;
     lastReportedID = '';
   });
+  const unsubN = nextTrack.subscribe((n) => {
+    upcoming = n;
+  });
 
   async function report(state: 'playing' | 'paused' | 'stopped') {
     if (!track) return;
@@ -67,37 +88,87 @@
     if (m === '1') muted = true;
   });
 
-  onDestroy(() => { unsubA(); unsubT(); });
+  onDestroy(() => { unsubA(); unsubT(); unsubN(); });
 
   // Swap source when track changes; set src='' when track cleared.
-  $: if (audioEl && track) {
+  // Two paths: (1) the new track is what the preload element already
+  // has buffered → flip activeIsA, no fresh src= load; (2) it's not
+  // (user picked a different track manually, no preload happened in
+  // time, etc.) → fall back to loading on the active element.
+  $: if (audioElA && audioElB && track) {
     const desired = `/media/stream/${track.fileId}`;
     if (loadedSrc !== desired) {
-      loadedSrc = desired;
-      audioEl.src = desired;
-      audioEl.currentTime = 0;
-      positionMS = 0;
-      durationMS = (track.durationMS ?? 0);
-      // Autoplay attempts respect the playing flag — handled in the next reactive block.
+      if (preloadSrc === desired) {
+        // Gapless path: the next-track element is already primed —
+        // flip roles and play. The browser's already done codec init
+        // and (usually) buffered the head of the file, so the swap
+        // is sub-frame audible-wise.
+        activeIsA = !activeIsA;
+        loadedSrc = desired;
+        preloadSrc = '';
+        // The newly-active element keeps whatever currentTime it had
+        // (typically 0 since it was idle). Reset position display.
+        positionMS = 0;
+        durationMS = (track.durationMS ?? 0);
+      } else {
+        // Cold path: src= load on the active element. Same code as
+        // before this change — gapless only kicks in for natural
+        // queue advancement.
+        loadedSrc = desired;
+        const el = activeEl();
+        el.src = desired;
+        el.currentTime = 0;
+        positionMS = 0;
+        durationMS = (track.durationMS ?? 0);
+      }
     }
-  } else if (audioEl && !track && loadedSrc !== '') {
+  } else if (audioElA && audioElB && !track && loadedSrc !== '') {
     loadedSrc = '';
-    audioEl.removeAttribute('src');
-    audioEl.load();
+    const el = activeEl();
+    el.removeAttribute('src');
+    el.load();
+  }
+
+  // Keep the preload element pointed at the next track. Skipped when
+  // upcoming === current (repeat=one) — would just hammer the same
+  // file pointlessly. Re-runs whenever the queue changes shape so
+  // toggling shuffle / appending / reordering gets reflected.
+  $: if (audioElA && audioElB && upcoming && track && upcoming.id !== track.id) {
+    const desired = `/media/stream/${upcoming.fileId}`;
+    if (preloadSrc !== desired) {
+      preloadSrc = desired;
+      const el = preloadEl();
+      el.src = desired;
+      el.currentTime = 0;
+      // load() forces the browser to start fetching + codec init now
+      // rather than waiting for the first play() call. preload="auto"
+      // would do this implicitly but isn't reliable across browsers
+      // when the element is currently muted/silent.
+      el.load();
+    }
+  } else if (audioElA && audioElB && !upcoming && preloadSrc !== '') {
+    preloadSrc = '';
+    const el = preloadEl();
+    el.removeAttribute('src');
+    el.load();
   }
 
   // Mirror playing flag to the element. Browser autoplay policies may reject;
   // catch and pause the store so the UI matches reality.
-  $: if (audioEl && loadedSrc) {
-    if (playing && audioEl.paused) {
-      audioEl.play().catch(() => audio.pause());
-    } else if (!playing && !audioEl.paused) {
-      audioEl.pause();
+  $: if (audioElA && audioElB && loadedSrc) {
+    const el = activeEl();
+    if (playing && el.paused) {
+      el.play().catch(() => audio.pause());
+    } else if (!playing && !el.paused) {
+      el.pause();
     }
   }
 
-  $: if (audioEl) {
-    audioEl.volume = muted ? 0 : volume;
+  $: if (audioElA && audioElB) {
+    activeEl().volume = muted ? 0 : volume;
+    // Mute the preload element so its buffering/codec-init never
+    // produces audible output if the browser sneaks ahead.
+    preloadEl().volume = 0;
   }
 
   function persistVolume() {
@@ -108,8 +179,10 @@
   }
 
   function onTimeUpdate() {
-    if (!audioEl || scrubbing) return;
-    positionMS = Math.round(audioEl.currentTime * 1000);
+    if (scrubbing) return;
+    const el = activeEl();
+    if (!el) return;
+    positionMS = Math.round(el.currentTime * 1000);
     audio.setPosition(positionMS);
     // Periodic playing-state scrobble so resume position survives reload.
     if (playing && track && (track.id !== lastReportedID || Math.abs(positionMS - lastReportedMS) >= 10000)) {
@@ -118,9 +191,10 @@
   }
 
   function onLoadedMeta() {
-    if (!audioEl) return;
-    if (Number.isFinite(audioEl.duration) && audioEl.duration > 0) {
-      durationMS = Math.round(audioEl.duration * 1000);
+    const el = activeEl();
+    if (!el) return;
+    if (Number.isFinite(el.duration) && el.duration > 0) {
+      durationMS = Math.round(el.duration * 1000);
     }
   }
 
@@ -149,8 +223,9 @@
     positionMS = scrubMS;
   }
   function commitScrub() {
-    if (audioEl && Number.isFinite(scrubMS)) {
-      audioEl.currentTime = scrubMS / 1000;
+    const el = activeEl();
+    if (el && Number.isFinite(scrubMS)) {
+      el.currentTime = scrubMS / 1000;
       audio.setPosition(scrubMS);
       // Report the new position so resume picks up where the user dropped the thumb.
       if (track) void report(playing ? 'playing' : 'paused');
@@ -179,13 +254,25 @@
   }
 </script>
 
-<!-- The audio element is always present so quick state changes don't recreate it. -->
+<!-- Two audio elements rotated for gapless transitions. The "active"
+     one (whichever activeIsA points at) carries the timeupdate /
+     ended / error handlers; the "preload" one just buffers the next
+     track. Roles flip on track change; we wire handlers to BOTH
+     elements so they always fire on whichever is currently active. -->
 <audio
-  bind:this={audioEl}
-  on:timeupdate={onTimeUpdate}
-  on:loadedmetadata={onLoadedMeta}
-  on:ended={onEnded}
-  on:error={onAudioError}
+  bind:this={audioElA}
+  on:timeupdate={() => activeIsA && onTimeUpdate()}
+  on:loadedmetadata={() => activeIsA && onLoadedMeta()}
+  on:ended={() => activeIsA && onEnded()}
+  on:error={() => activeIsA && onAudioError()}
+  preload="auto"
+></audio>
+<audio
+  bind:this={audioElB}
+  on:timeupdate={() => !activeIsA && onTimeUpdate()}
+  on:loadedmetadata={() => !activeIsA && onLoadedMeta()}
+  on:ended={() => !activeIsA && onEnded()}
+  on:error={() => !activeIsA && onAudioError()}
   preload="auto"
 ></audio>
 
