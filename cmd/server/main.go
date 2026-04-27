@@ -667,7 +667,15 @@ func run() error {
 	oidcSvc := v1.NewOIDCAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
 	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, baseURL, logger)
 	samlSvc := v1.NewSAMLAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
-	samlAuthHandler := v1.NewSAMLHandler(settingsSvc, samlSvc, baseURL, logger)
+	// HA-aware SAML request tracker — Valkey-backed so an AuthnRequest
+	// minted on one OnScreen instance can be validated by an ACS
+	// callback that hits a different instance behind a load balancer.
+	// v2.1 Track A item 2. Single-instance dev still works either
+	// way; using the Valkey tracker unconditionally keeps the prod
+	// shape identical and removes the "works locally, breaks in HA"
+	// surprise.
+	samlAuthHandler := v1.NewSAMLHandler(settingsSvc, samlSvc, baseURL, logger).
+		WithRequestTracker(v1.NewValkeySAMLRequestTracker(valkeyClient))
 	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger)
 	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger)
 

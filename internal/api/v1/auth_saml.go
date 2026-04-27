@@ -83,16 +83,33 @@ type SAMLHandler struct {
 	baseURL string
 	logger  *slog.Logger
 
-	mu        sync.RWMutex
-	cached    settings.SAMLConfig // last-built config (cache key)
-	mw        *samlsp.Middleware  // lazily built per-config-change
-	idPMeta   *saml.EntityDescriptor
+	// tracker overrides the in-memory RequestTracker built lazily in
+	// buildMiddleware. cmd/server installs a Valkey-backed tracker
+	// here when running in HA mode so AuthnRequest issued on one
+	// instance can be validated by an ACS callback on another. Nil
+	// means "use the default in-memory tracker" — fine for
+	// single-instance dev / home installs.
+	tracker samlsp.RequestTracker
+
+	mu      sync.RWMutex
+	cached  settings.SAMLConfig // last-built config (cache key)
+	mw      *samlsp.Middleware  // lazily built per-config-change
+	idPMeta *saml.EntityDescriptor
 }
 
 // NewSAMLHandler creates a SAMLHandler. baseURL is the public URL used
 // to construct the ACS + metadata endpoints (e.g. "https://onscreen.example.com").
 func NewSAMLHandler(cfgSrc SAMLSettingsReader, svc SAMLAuthService, baseURL string, logger *slog.Logger) *SAMLHandler {
 	return &SAMLHandler{cfgSrc: cfgSrc, svc: svc, baseURL: baseURL, logger: logger}
+}
+
+// WithRequestTracker installs a custom samlsp.RequestTracker in place
+// of the default in-memory implementation. Used by cmd/server to wire
+// the Valkey-backed tracker for HA deployments. Returns the receiver
+// so it composes with the existing builder pattern.
+func (h *SAMLHandler) WithRequestTracker(t samlsp.RequestTracker) *SAMLHandler {
+	h.tracker = t
+	return h
 }
 
 // Enabled returns whether SAML SSO is configured. UI uses this to
@@ -267,7 +284,7 @@ func (h *SAMLHandler) middleware(ctx context.Context) (*samlsp.Middleware, error
 		return h.mw, nil
 	}
 
-	mw, idpMeta, err := buildSAMLMiddleware(ctx, cfg, h.baseURL)
+	mw, idpMeta, err := buildSAMLMiddleware(ctx, cfg, h.baseURL, h.tracker)
 	if err != nil {
 		return nil, err
 	}
@@ -279,8 +296,11 @@ func (h *SAMLHandler) middleware(ctx context.Context) (*samlsp.Middleware, error
 
 // buildSAMLMiddleware constructs a samlsp.Middleware from a SAMLConfig
 // and the SP base URL. Fetches IdP metadata, parses the SP cert/key,
-// and wires the ACS endpoint at /api/v1/auth/saml/acs.
-func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL string) (*samlsp.Middleware, *saml.EntityDescriptor, error) {
+// and wires the ACS endpoint at /api/v1/auth/saml/acs. The optional
+// tracker swaps in a non-default RequestTracker (e.g. the Valkey-
+// backed one for HA installs) — pass nil to fall back to the
+// memory-tracker default.
+func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL string, tracker samlsp.RequestTracker) (*samlsp.Middleware, *saml.EntityDescriptor, error) {
 	if cfg.SPCertificatePEM == "" || cfg.SPPrivateKeyPEM == "" {
 		return nil, nil, errors.New("saml: SP certificate + private key required (auto-generate via SetSAML)")
 	}
@@ -340,13 +360,20 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 	// embedded) and redirect-binding (Signature/SigAlg query param)
 	// signing.
 	mw.ServiceProvider.SignatureMethod = dsig.RSASHA256SignatureMethod
-	// Replace the default cookie-backed RequestTracker with an in-memory
-	// one keyed by RelayState. The cookie tracker breaks on local
-	// cross-port HTTP testing because Chromium drops SameSite=Lax cookies
-	// on the IdP's cross-site POST-back. RelayState is echoed by every
-	// IdP and survives the round-trip independent of cookies. See
-	// auth_saml_tracker.go for the full reasoning.
-	mw.RequestTracker = newMemorySAMLRequestTracker()
+	// Replace the default cookie-backed RequestTracker with the
+	// configured (or default in-memory) one keyed by RelayState. The
+	// cookie tracker breaks on local cross-port HTTP testing because
+	// Chromium drops SameSite=Lax cookies on the IdP's cross-site
+	// POST-back. RelayState is echoed by every IdP and survives the
+	// round-trip independent of cookies. See auth_saml_tracker.go
+	// for the full reasoning. cmd/server can swap in a Valkey-backed
+	// tracker via WithRequestTracker for HA installs (v2.1 Track A
+	// item 2); nil falls back to single-instance memory.
+	if tracker != nil {
+		mw.RequestTracker = tracker
+	} else {
+		mw.RequestTracker = newMemorySAMLRequestTracker()
+	}
 	return mw, idpMeta, nil
 }
 
