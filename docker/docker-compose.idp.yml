@@ -1,0 +1,59 @@
+# Auth-provider test stack — for the "Auth providers" rows of
+# docs/manual-test-plan.md when you don't have real Keycloak/AD on hand.
+#
+# Spin up:
+#   docker compose -f docker/docker-compose.idp.yml up -d
+#
+# Tear down:
+#   docker compose -f docker/docker-compose.idp.yml down -v
+#
+# All ports bind to 127.0.0.1 so nothing leaks past the dev box. OnScreen
+# itself is NOT in this file — start it via `make dev` or the main
+# docker-compose.yml and point its SSO settings at the URLs below.
+#
+# Default credentials (DEV ONLY — do not lift verbatim into a real config):
+#   Keycloak admin    :  admin / admin               (http://localhost:8080)
+#   lldap admin       :  admin / testpass            (http://localhost:17170)
+#   Mailpit web UI    :  no auth                     (http://localhost:8025)
+#
+# See docs/auth-test-stack.md for the per-provider OnScreen settings and
+# the click-through to create a Keycloak client + LDAP user.
+
+name: onscreen-idp-test
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /realms/master HTTP/1.0\\r\\n\\r\\n' >&3; head -1 <&3 | grep -q '200\\|302'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # lldap — Rust-based modern LDAP server with a friendly admin UI. Avoids
+  # the OpenLDAP/389-ds setup pain. Schema is fixed but covers everything
+  # OnScreen's LDAP path needs (uid, mail, displayName, memberOf).
+  lldap:
+    image: lldap/lldap:stable
+    environment:
+      LLDAP_LDAP_BASE_DN: "dc=test,dc=onscreen,dc=local"
+      LLDAP_JWT_SECRET: "dev-only-jwt-secret-change-me"
+      LLDAP_LDAP_USER_PASS: "testpass"
+    ports:
+      - "127.0.0.1:3890:3890"   # LDAP plain
+      - "127.0.0.1:17170:17170" # admin web UI
+
+  # Mailpit — SMTP server + web UI. Catches every outgoing email so the
+  # forgot-password / "Send Test Email" flows can verify the message
+  # actually got built and dispatched without sending real mail.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:1025:1025"  # SMTP
+      - "127.0.0.1:8025:8025"  # web UI
