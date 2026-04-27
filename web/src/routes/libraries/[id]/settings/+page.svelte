@@ -24,6 +24,7 @@
   let language = 'en';
   let scanIntervalMinutes = 60;
   let isPrivate = false;
+  let autoGrantNewUsers = false;
 
   let mounted = false;
   let prevId = '';
@@ -63,6 +64,7 @@
       language = library.language;
       scanIntervalMinutes = library.scan_interval_minutes ?? 60;
       isPrivate = library.is_private ?? false;
+      autoGrantNewUsers = library.auto_grant_new_users ?? false;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally { loading = false; }
@@ -79,7 +81,17 @@
     if (!scanPaths.length) { error = 'At least one scan path is required'; return; }
     saving = true;
     try {
-      library = await libraryApi.update(id, { name: name.trim(), scan_paths: scanPaths, agent, language, scan_interval_minutes: scanIntervalMinutes, is_private: isPrivate });
+      library = await libraryApi.update(id, {
+        name: name.trim(),
+        scan_paths: scanPaths,
+        agent,
+        language,
+        scan_interval_minutes: scanIntervalMinutes,
+        is_private: isPrivate,
+        // The backend silently drops this on public libraries, but we
+        // also clear the local toggle so the UI doesn't lie about state.
+        auto_grant_new_users: isPrivate && autoGrantNewUsers,
+      });
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
     } catch (e: unknown) {
@@ -229,6 +241,20 @@
             </span>
           </span>
         </label>
+        {#if isPrivate}
+          <label class="check-row sub">
+            <input type="checkbox" bind:checked={autoGrantNewUsers} />
+            <span>
+              <span class="check-title">Auto-grant new users</span>
+              <span class="check-help">
+                Newly-created accounts (invite, OIDC/SAML/LDAP sign-in)
+                are automatically granted access to this library — useful
+                on all-private installs to avoid first sign-in landing on
+                a barren home page.
+              </span>
+            </span>
+          </label>
+        {/if}
       </section>
 
       <div class="form-foot">
@@ -332,6 +358,7 @@
     cursor: pointer; padding: 0.4rem 0;
   }
   .check-row input[type="checkbox"] { margin-top: 0.2rem; flex-shrink: 0; }
+  .check-row.sub { margin-top: 0.5rem; padding-left: 1.4rem; border-left: 2px solid var(--border); margin-left: 0.4rem; }
   .check-row > span { display: flex; flex-direction: column; gap: 0.2rem; }
   .check-title { font-size: 0.85rem; font-weight: 500; color: var(--text-primary); }
   .check-help { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }

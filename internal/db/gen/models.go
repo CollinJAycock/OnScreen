@@ -178,6 +178,7 @@ type Library struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
 	IsPrivate               bool               `json:"is_private"`
+	AutoGrantNewUsers       bool               `json:"auto_grant_new_users"`
 }
 
 type LibraryAccess struct {

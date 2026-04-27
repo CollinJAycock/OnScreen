@@ -30,6 +30,25 @@ INSERT INTO library_access (user_id, library_id)
 VALUES ($1, $2)
 ON CONFLICT DO NOTHING;
 
+-- name: GrantAutoLibrariesToUser :exec
+-- Bulk-grants every library flagged auto_grant_new_users to the given
+-- user. Called from every user-creation path (admin Create, invite
+-- accept, OIDC/SAML/LDAP auto-create) so a fresh account on an
+-- all-private install doesn't land on a barren home page.
+--
+-- ON CONFLICT DO NOTHING — safe to re-run for an existing user (e.g.
+-- if an admin enables the flag and wants to backfill via the manual
+-- Tasks UI in v2.x). auto_grant_new_users on public libraries is a
+-- no-op visibility-wise, but we still insert the row for symmetry —
+-- if the admin flips is_private=true later the existing grants
+-- preserve the user's access.
+INSERT INTO library_access (user_id, library_id)
+SELECT $1, l.id
+FROM libraries l
+WHERE l.auto_grant_new_users = true
+  AND l.deleted_at IS NULL
+ON CONFLICT DO NOTHING;
+
 -- name: RevokeLibraryAccess :exec
 DELETE FROM library_access
 WHERE user_id = $1 AND library_id = $2;

@@ -89,6 +89,7 @@ func (m *mockQuerier) SoftDeleteLibrary(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 func (m *mockQuerier) SoftDeleteMediaItemsByLibrary(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockQuerier) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error      { return nil }
 func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                    { return nil }
 func (m *mockQuerier) MarkLibraryScanCompleted(_ context.Context, _ uuid.UUID) error      { return nil }
 func (m *mockQuerier) MarkLibraryMetadataRefreshed(_ context.Context, _ uuid.UUID) error  { return nil }

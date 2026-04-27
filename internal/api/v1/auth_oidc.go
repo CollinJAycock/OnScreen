@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
 
@@ -50,6 +51,11 @@ type OIDCOAuthDB interface {
 	CreateOIDCUser(ctx context.Context, arg gen.CreateOIDCUserParams) (gen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	// GrantAutoLibrariesToUser inserts library_access rows for every
+	// library flagged auto_grant_new_users — called after auto-provisioning
+	// an OIDC user so they don't land on a barren home page on all-private
+	// installs.
+	GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // ── handler ─────────────────────────────────────────────────────────────────
@@ -477,6 +483,13 @@ func (s *oidcAuthService) LoginOrCreateOIDCUser(ctx context.Context, p OIDCProfi
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create oidc user: %w", err)
+	}
+	if !isAdmin {
+		// Non-fatal: a freshly-provisioned non-admin should default into the
+		// admin-chosen library set so first sign-in isn't a barren home page.
+		if err := s.db.GrantAutoLibrariesToUser(ctx, user.ID); err != nil {
+			s.logger.Warn("oidc: auto-grant libraries", "user_id", user.ID, "err", err)
+		}
 	}
 	return s.issueTokens(ctx, user)
 }

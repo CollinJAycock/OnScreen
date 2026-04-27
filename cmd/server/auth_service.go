@@ -25,6 +25,11 @@ type authQuerier interface {
 	GetUserByUsername(ctx context.Context, username string) (gen.User, error)
 	CreateUser(ctx context.Context, arg gen.CreateUserParams) (gen.User, error)
 	CreateFirstAdmin(ctx context.Context, arg gen.CreateFirstAdminParams) (gen.User, error)
+	// GrantAutoLibrariesToUser inserts library_access rows for every
+	// library flagged auto_grant_new_users. Called from CreateUser so
+	// fresh accounts on all-private installs default into the
+	// admin-chosen library set instead of seeing nothing.
+	GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error
 	CreateSession(ctx context.Context, arg gen.CreateSessionParams) (gen.Session, error)
 	GetSessionByTokenHash(ctx context.Context, tokenHash string) (gen.Session, error)
 	RotateSession(ctx context.Context, arg gen.RotateSessionParams) (gen.Session, error)
@@ -99,6 +104,15 @@ func (s *authService) CreateUser(ctx context.Context, username, email, password 
 			return nil, v1.ErrUserExists
 		}
 		return nil, fmt.Errorf("create user: %w", err)
+	}
+	// Auto-grant: gives the new account access to every library the
+	// admin flagged for default access. Logged-but-not-fatal — a missing
+	// grant degrades UX (empty home page) but doesn't break account
+	// creation, and admins can backfill manually via /settings/users.
+	if !isAdmin {
+		if err := s.db.GrantAutoLibrariesToUser(ctx, user.ID); err != nil {
+			s.logger.WarnContext(ctx, "auto-grant libraries", "user_id", user.ID, "err", err)
+		}
 	}
 	return &v1.UserInfo{ID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin}, nil
 }

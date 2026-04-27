@@ -216,6 +216,10 @@ func (f *fakeSAMLDB) SetUserAdmin(_ context.Context, p gen.SetUserAdminParams) e
 	return nil
 }
 
+func (f *fakeSAMLDB) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
 func fakeIssuer(_ context.Context, u gen.User) (*TokenPair, error) {
 	return &TokenPair{
 		AccessToken:  "token-" + u.ID.String(),

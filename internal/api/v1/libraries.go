@@ -35,9 +35,14 @@ type LibraryResponse struct {
 	// can see this library; true requires an explicit row in
 	// library_access. v2.1 addition; default false preserves the v2.0
 	// "everyone with auth sees everything" behaviour on existing rows.
-	IsPrivate bool   `json:"is_private"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	IsPrivate bool `json:"is_private"`
+	// AutoGrantNewUsers: when true, every newly-created user (invite,
+	// OIDC/SAML/LDAP JIT, admin Create) is automatically granted
+	// access. Only meaningful when IsPrivate=true; the frontend hides
+	// the toggle on public libraries since the grant is a no-op.
+	AutoGrantNewUsers bool   `json:"auto_grant_new_users"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
 }
 
 func toLibraryResponse(lib *library.Library) LibraryResponse {
@@ -46,15 +51,16 @@ func toLibraryResponse(lib *library.Library) LibraryResponse {
 		paths = []string{}
 	}
 	r := LibraryResponse{
-		ID:        lib.ID.String(),
-		Name:      lib.Name,
-		Type:      lib.Type,
-		ScanPaths: paths,
-		Agent:     lib.Agent,
-		Language:  lib.Lang,
-		IsPrivate: lib.IsPrivate,
-		CreatedAt: lib.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: lib.UpdatedAt.Format(time.RFC3339),
+		ID:                lib.ID.String(),
+		Name:              lib.Name,
+		Type:              lib.Type,
+		ScanPaths:         paths,
+		Agent:             lib.Agent,
+		Language:          lib.Lang,
+		IsPrivate:         lib.IsPrivate,
+		AutoGrantNewUsers: lib.AutoGrantNewUsers,
+		CreatedAt:         lib.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         lib.UpdatedAt.Format(time.RFC3339),
 	}
 	if lib.ScanInterval != nil {
 		mins := int(lib.ScanInterval.Minutes())
@@ -211,6 +217,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ScanInterval            time.Duration `json:"scan_interval_ns"`
 		MetadataRefreshInterval time.Duration `json:"metadata_refresh_interval_ns"`
 		IsPrivate               bool          `json:"is_private"`
+		AutoGrantNewUsers       bool          `json:"auto_grant_new_users"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -245,6 +252,12 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		body.MetadataRefreshInterval = 7 * 24 * time.Hour
 	}
 
+	// auto_grant_new_users only matters on private libraries — it's a
+	// no-op on public ones (every user already sees them). Silently
+	// drop the flag on public libraries so admin tooling can send the
+	// pair without us writing meaningless rows.
+	autoGrant := body.AutoGrantNewUsers && body.IsPrivate
+
 	lib, err := h.svc.Create(r.Context(), library.CreateLibraryParams{
 		Name:                    body.Name,
 		Type:                    body.Type,
@@ -254,6 +267,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ScanInterval:            body.ScanInterval,
 		MetadataRefreshInterval: body.MetadataRefreshInterval,
 		IsPrivate:               body.IsPrivate,
+		AutoGrantNewUsers:       autoGrant,
 	})
 	if err != nil {
 		var ve *library.ValidationError
@@ -286,7 +300,8 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MetadataRefreshInterval time.Duration `json:"metadata_refresh_interval_ns"`
 		// Pointer for PATCH semantics: omitting the key keeps the
 		// current value, sending true/false flips it.
-		IsPrivate *bool `json:"is_private,omitempty"`
+		IsPrivate         *bool `json:"is_private,omitempty"`
+		AutoGrantNewUsers *bool `json:"auto_grant_new_users,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -307,6 +322,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ScanInterval:            scanInterval,
 		MetadataRefreshInterval: body.MetadataRefreshInterval,
 		IsPrivate:               body.IsPrivate,
+		AutoGrantNewUsers:       body.AutoGrantNewUsers,
 	})
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {

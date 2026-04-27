@@ -55,6 +55,10 @@ func (a *libraryAdapter) HasLibraryAccess(ctx context.Context, userID, libraryID
 	return a.q.HasLibraryAccess(ctx, gen.HasLibraryAccessParams{UserID: userID, LibraryID: libraryID})
 }
 
+func (a *libraryAdapter) GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error {
+	return a.q.GrantAutoLibrariesToUser(ctx, userID)
+}
+
 func (a *libraryAdapter) GrantLibraryAccess(ctx context.Context, userID, libraryID uuid.UUID) error {
 	return a.q.GrantLibraryAccess(ctx, gen.GrantLibraryAccessParams{UserID: userID, LibraryID: libraryID})
 }

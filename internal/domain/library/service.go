@@ -36,6 +36,13 @@ type Library struct {
 	// effectively private.
 	IsPrivate bool
 
+	// AutoGrantNewUsers controls whether new accounts get this library
+	// in their grants on creation. Only meaningful for IsPrivate=true
+	// libraries — public libraries are visible without grants. The UI
+	// gates the toggle on IsPrivate=true; setting it on a public
+	// library is a no-op functionally.
+	AutoGrantNewUsers bool
+
 	ScanInterval            *time.Duration
 	ScanLastCompletedAt     *time.Time
 	MetadataRefreshInterval *time.Duration
@@ -56,6 +63,11 @@ type CreateLibraryParams struct {
 	ScanInterval            time.Duration
 	MetadataRefreshInterval time.Duration
 	IsPrivate               bool
+	// AutoGrantNewUsers can only be set on IsPrivate=true libraries via
+	// the API path's validation; storing it on public libraries is
+	// harmless but the UI hides the toggle, so this field is typically
+	// only meaningful when IsPrivate is also true.
+	AutoGrantNewUsers bool
 }
 
 // UpdateLibraryParams holds the fields that can be updated.
@@ -67,7 +79,10 @@ type UpdateLibraryParams struct {
 	Lang                    string
 	ScanInterval            time.Duration
 	MetadataRefreshInterval time.Duration
-	IsPrivate               *bool // pointer for PATCH semantics: nil = unchanged
+	// Pointer fields = PATCH semantics: nil preserves the current value,
+	// non-nil flips it.
+	IsPrivate         *bool
+	AutoGrantNewUsers *bool
 }
 
 // Querier is the subset of gen.Querier that this service needs.
@@ -92,6 +107,7 @@ type Querier interface {
 	ListAllowedLibraryIDsForUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 	HasLibraryAccess(ctx context.Context, userID, libraryID uuid.UUID) (bool, error)
 	GrantLibraryAccess(ctx context.Context, userID, libraryID uuid.UUID) error
+	GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error
 	RevokeAllLibraryAccessForUser(ctx context.Context, userID uuid.UUID) error
 }
 
@@ -161,6 +177,19 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, isAdmin boo
 		}
 	}
 	return filtered, nil
+}
+
+// GrantAutoLibrariesToUser inserts library_access rows for every library
+// flagged auto_grant_new_users. Called from every user-creation path
+// (admin Create, invite accept, OIDC/SAML/LDAP auto-create) so a fresh
+// account on an all-private install doesn't land on a barren home page.
+//
+// Errors here are logged but should not fail the user-creation
+// transaction at the call site — a missing grant is a UX inconvenience,
+// not a security regression (default is no access, which is safe).
+// Callers decide their own error policy.
+func (s *Service) GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error {
+	return s.rw.GrantAutoLibrariesToUser(ctx, userID)
 }
 
 // AllowedLibraryIDs returns a set of library IDs the user can access, or nil

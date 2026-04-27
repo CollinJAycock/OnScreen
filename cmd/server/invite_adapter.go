@@ -82,3 +82,7 @@ func (a *inviteAdapter) CreateUser(ctx context.Context, username string, email *
 	}
 	return user.ID, nil
 }
+
+func (a *inviteAdapter) GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error {
+	return a.q.GrantAutoLibrariesToUser(ctx, userID)
+}

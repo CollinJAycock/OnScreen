@@ -27,6 +27,10 @@ type InviteDB interface {
 	ListInviteTokens(ctx context.Context) ([]InviteTokenSummaryRow, error)
 	DeleteInviteToken(ctx context.Context, id uuid.UUID) error
 	CreateUser(ctx context.Context, username string, email *string, passwordHash string) (uuid.UUID, error)
+	// GrantAutoLibrariesToUser inserts library_access rows for every
+	// library flagged auto_grant_new_users. Called after CreateUser
+	// so accepted invites default into the admin-chosen library set.
+	GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // InviteTokenRow is the data returned when looking up an invite token.
@@ -160,6 +164,11 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "invite: create user", "err", err)
 		respond.BadRequest(w, r, "Could not create account — username may already be taken")
 		return
+	}
+
+	if err := h.db.GrantAutoLibrariesToUser(r.Context(), userID); err != nil {
+		// Non-fatal — user can still see public libraries; admin can grant manually.
+		h.logger.WarnContext(r.Context(), "invite: auto-grant libraries", "user_id", userID, "err", err)
 	}
 
 	if err := h.db.MarkInviteTokenUsed(r.Context(), token.ID, userID); err != nil {

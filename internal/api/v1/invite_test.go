@@ -46,6 +46,10 @@ type mockInviteDB struct {
 	createUserCalled bool
 	createdUserID    uuid.UUID
 	createdUsername  string
+
+	grantAutoCalled bool
+	grantAutoUserID uuid.UUID
+	grantAutoErr    error
 }
 
 func (m *mockInviteDB) CreateInviteToken(_ context.Context, _ uuid.UUID, tokenHash string, e *string, expiresAt time.Time) (uuid.UUID, error) {
@@ -91,6 +95,12 @@ func (m *mockInviteDB) CreateUser(_ context.Context, username string, _ *string,
 		m.createdUserID = uuid.New()
 	}
 	return m.createdUserID, nil
+}
+
+func (m *mockInviteDB) GrantAutoLibrariesToUser(_ context.Context, userID uuid.UUID) error {
+	m.grantAutoCalled = true
+	m.grantAutoUserID = userID
+	return m.grantAutoErr
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -272,6 +282,36 @@ func TestInvite_Accept_Success_MarksTokenUsed(t *testing.T) {
 	}
 	if !db.markUsedCalled {
 		t.Error("expected MarkInviteTokenUsed to be called — single-use enforcement")
+	}
+	if !db.grantAutoCalled {
+		t.Error("expected GrantAutoLibrariesToUser to be called so accepted invites default into auto-grant libraries")
+	}
+	if db.grantAutoUserID != db.createdUserID {
+		t.Errorf("grant target: got %s, want %s (the just-created user)", db.grantAutoUserID, db.createdUserID)
+	}
+}
+
+func TestInvite_Accept_AutoGrantFailureIsNonFatal(t *testing.T) {
+	// A failure to auto-grant must not block the user from completing
+	// signup — the admin can still grant access manually.
+	db := &mockInviteDB{
+		getToken:     InviteTokenRow{ID: uuid.New()},
+		grantAutoErr: errors.New("grant kaboom"),
+	}
+	h := newInviteHandler(db)
+
+	body := `{"token":"rawtokenhex","username":"newuser","password":"hunter22secure"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/invites/accept", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.Accept(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 — auto-grant failure must be non-fatal; body=%s", rec.Code, rec.Body.String())
+	}
+	if !db.markUsedCalled {
+		t.Error("token must still be marked used even when auto-grant fails")
 	}
 }
 

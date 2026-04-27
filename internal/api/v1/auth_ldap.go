@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
@@ -50,6 +51,11 @@ type LDAPOAuthDB interface {
 	CreateLDAPUser(ctx context.Context, arg gen.CreateLDAPUserParams) (gen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	// GrantAutoLibrariesToUser inserts library_access rows for every
+	// library flagged auto_grant_new_users — called after auto-provisioning
+	// an LDAP user so they don't land on a barren home page on all-private
+	// installs.
+	GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // ── handler ─────────────────────────────────────────────────────────────────
@@ -303,6 +309,13 @@ func (s *ldapAuthService) loginOrCreate(ctx context.Context, dn, username, email
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create ldap user: %w", err)
+	}
+	if !createAdmin {
+		// Non-fatal: a freshly-provisioned non-admin should default into the
+		// admin-chosen library set so first sign-in isn't a barren home page.
+		if err := s.db.GrantAutoLibrariesToUser(ctx, user.ID); err != nil {
+			s.logger.Warn("ldap: auto-grant libraries", "user_id", user.ID, "err", err)
+		}
 	}
 	return s.issueTokens(ctx, user)
 }

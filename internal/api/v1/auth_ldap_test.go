@@ -217,6 +217,9 @@ func (m *mockLDAPDB) SetUserAdmin(_ context.Context, p gen.SetUserAdminParams) e
 	m.adminSets = append(m.adminSets, p)
 	return nil
 }
+func (m *mockLDAPDB) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
 
 func validLDAPCfg() settings.LDAPConfig {
 	return settings.LDAPConfig{

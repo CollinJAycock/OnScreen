@@ -2,7 +2,7 @@
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
 FROM libraries
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -10,19 +10,20 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
 FROM libraries
 WHERE deleted_at IS NULL
 ORDER BY name;
 
 -- name: CreateLibrary :one
 INSERT INTO libraries (name, type, scan_paths, agent, language,
-                       scan_interval, metadata_refresh_interval, is_private)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                       scan_interval, metadata_refresh_interval,
+                       is_private, auto_grant_new_users)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
-          created_at, updated_at, deleted_at, is_private;
+          created_at, updated_at, deleted_at, is_private, auto_grant_new_users;
 
 -- name: UpdateLibrary :one
 -- is_private uses COALESCE so admins can update other fields without
@@ -36,12 +37,13 @@ SET name                      = $2,
     scan_interval             = $6,
     metadata_refresh_interval = $7,
     is_private                = COALESCE(sqlc.narg('is_private')::bool, is_private),
+    auto_grant_new_users      = COALESCE(sqlc.narg('auto_grant_new_users')::bool, auto_grant_new_users),
     updated_at                = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
-          created_at, updated_at, deleted_at, is_private;
+          created_at, updated_at, deleted_at, is_private, auto_grant_new_users;
 
 -- name: SoftDeleteLibrary :exec
 UPDATE libraries SET deleted_at = NOW(), updated_at = NOW()
@@ -61,7 +63,7 @@ WHERE id = $1;
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
 FROM libraries
 WHERE deleted_at IS NULL
   AND scan_interval IS NOT NULL
@@ -72,7 +74,7 @@ WHERE deleted_at IS NULL
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
 FROM libraries
 WHERE deleted_at IS NULL
   AND metadata_refresh_interval IS NOT NULL

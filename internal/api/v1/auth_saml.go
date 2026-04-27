@@ -21,6 +21,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	dsig "github.com/russellhaering/goxmldsig"
 
@@ -63,6 +64,11 @@ type SAMLOAuthDB interface {
 	CreateSAMLUser(ctx context.Context, arg gen.CreateSAMLUserParams) (gen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	// GrantAutoLibrariesToUser inserts library_access rows for every
+	// library flagged auto_grant_new_users — called after auto-provisioning
+	// a SAML user so they don't land on a barren home page on all-private
+	// installs.
+	GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // ── handler ─────────────────────────────────────────────────────────────────
@@ -522,6 +528,13 @@ func (s *samlAuthService) LoginOrCreateSAMLUser(ctx context.Context, p SAMLProfi
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create saml user: %w", err)
+	}
+	if !isAdmin {
+		// Non-fatal: a freshly-provisioned non-admin should default into the
+		// admin-chosen library set so first sign-in isn't a barren home page.
+		if err := s.db.GrantAutoLibrariesToUser(ctx, user.ID); err != nil {
+			s.logger.Warn("saml: auto-grant libraries", "user_id", user.ID, "err", err)
+		}
 	}
 	return s.issueTokens(ctx, user)
 }

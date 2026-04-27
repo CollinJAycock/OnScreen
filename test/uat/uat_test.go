@@ -328,6 +328,15 @@ func (s *stubHubDB) ListContinueWatching(_ context.Context, _ gen.ListContinueWa
 func (s *stubHubDB) ListRecentlyAdded(_ context.Context, _ gen.ListRecentlyAddedParams) ([]gen.ListRecentlyAddedRow, error) {
 	return s.raRows, nil
 }
+func (s *stubHubDB) ListCooccurrentItems(_ context.Context, _ gen.ListCooccurrentItemsParams) ([]gen.ListCooccurrentItemsRow, error) {
+	return nil, nil
+}
+func (s *stubHubDB) ListSeedItemsForUser(_ context.Context, _ gen.ListSeedItemsForUserParams) ([]gen.ListSeedItemsForUserRow, error) {
+	return nil, nil
+}
+func (s *stubHubDB) ListTrending(_ context.Context, _ gen.ListTrendingParams) ([]gen.ListTrendingRow, error) {
+	return nil, nil
+}
 
 // stubSearchDB implements v1.SearchDB.
 type stubSearchDB struct{}

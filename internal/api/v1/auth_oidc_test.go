@@ -236,6 +236,9 @@ func (m *mockOIDCDB) SetUserAdmin(_ context.Context, p gen.SetUserAdminParams) e
 	m.adminSets = append(m.adminSets, p)
 	return nil
 }
+func (m *mockOIDCDB) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
 
 func TestOIDCService_ExistingSubjectLogsIn(t *testing.T) {
 	uid := uuid.New()

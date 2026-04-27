@@ -279,6 +279,11 @@ export interface Library {
   // can see it); true = private (requires an explicit grant in the
   // library_access table). Admins bypass this check entirely.
   is_private: boolean;
+  // When true, every newly-created user (invite, OIDC/SAML/LDAP JIT
+  // auto-create) is automatically granted access. Only meaningful on
+  // private libraries — the settings UI hides the toggle for public
+  // libraries since the grant is a no-op.
+  auto_grant_new_users: boolean;
   created_at: string;
   updated_at: string;
 }

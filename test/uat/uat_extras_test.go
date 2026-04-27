@@ -246,6 +246,8 @@ func (s *stubSettingsService) OIDC(_ context.Context) settings.OIDCConfig       
 func (s *stubSettingsService) SetOIDC(_ context.Context, _ settings.OIDCConfig) error { return nil }
 func (s *stubSettingsService) LDAP(_ context.Context) settings.LDAPConfig         { return settings.LDAPConfig{} }
 func (s *stubSettingsService) SetLDAP(_ context.Context, _ settings.LDAPConfig) error { return nil }
+func (s *stubSettingsService) SAML(_ context.Context) settings.SAMLConfig         { return settings.SAMLConfig{} }
+func (s *stubSettingsService) SetSAML(_ context.Context, _ settings.SAMLConfig) error { return nil }
 func (s *stubSettingsService) SMTP(_ context.Context) settings.SMTPConfig         { return settings.SMTPConfig{} }
 func (s *stubSettingsService) SetSMTP(_ context.Context, _ settings.SMTPConfig) error { return nil }
 func (s *stubSettingsService) OTel(_ context.Context) settings.OTelConfig         { return settings.OTelConfig{} }
@@ -275,6 +277,9 @@ func (s *stubInviteDB) ListInviteTokens(_ context.Context) ([]v1.InviteTokenSumm
 func (s *stubInviteDB) DeleteInviteToken(_ context.Context, _ uuid.UUID) error { return nil }
 func (s *stubInviteDB) CreateUser(_ context.Context, _ string, _ *string, _ string) (uuid.UUID, error) {
 	return uuid.New(), nil
+}
+func (s *stubInviteDB) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error {
+	return nil
 }
 
 // stubAuditDBExtras satisfies v1.auditQuerier (the admin-gate test only needs
