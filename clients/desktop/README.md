@@ -136,14 +136,20 @@ following implications operators need to know:
   `/native/audio-test` lists devices and plays a sine-wave test
   tone per device — proves the engine path works on your
   hardware before the FLAC streaming pipeline lands on top.
+- **FLAC streaming engine**: `audio_play_url(url, bearer, device)`
+  — `ureq` GET with `Authorization: Bearer …`, `claxon` decoder
+  on a dedicated thread, lock-free `ringbuf` SPSC between decoder
+  and cpal's realtime callback. Opens the cpal stream at the
+  FLAC's native sample rate + bit depth (16-bit → I16 stream,
+  ≥17-bit → I32 stream carrying 24-bit-in-32) — the bit-perfect
+  contract. `audio_state` reports current playback shape (rate,
+  depth, channels, source URL); `stop_audio` drops the stream +
+  signals the decoder thread to exit. Diagnostic page at
+  `/native/audio-test` includes a "Play FLAC URL" form so the
+  full pipeline is testable against any URL on your server.
 
 ## What's not done yet
 
-- **FLAC streaming + decode** — the actual bit-perfect path. Needs
-  a `claxon` decoder thread + `ringbuf` between decoder and
-  cpal's realtime callback + HTTP fetch with bearer (probably via
-  `ureq` to keep deps tight). This is the next commit on top of
-  the cpal foundation.
 - **Exclusive-mode toggle**: WASAPI exclusive on Windows
   (`cpal::SupportedStreamConfig::buffer_size`-driven), CoreAudio
   per-stream nominal-rate switching on macOS, ALSA `hw:` device

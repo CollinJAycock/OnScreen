@@ -130,10 +130,60 @@ export async function playTestTone(
   });
 }
 
-/** Stops any currently-playing tone (or, eventually, the live FLAC
- *  stream) by dropping the cpal Stream the engine holds. */
+/** Stops any currently-playing tone or FLAC stream by dropping
+ *  the cpal Stream + signalling the decoder thread to exit. */
 export async function stopAudio(): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('stop_audio');
+}
+
+/** Snapshot of what the native engine is doing right now. `playing`
+ *  is the only field guaranteed to be present; the others are null
+ *  while the engine is idle. */
+export type PlaybackStatus = {
+  playing: boolean;
+  source_url: string | null;
+  sample_rate_hz: number | null;
+  bit_depth: number | null;
+  channels: number | null;
+};
+
+/** Reports the engine's current playback shape. UI uses this to
+ *  render "Playing 96 kHz / 24-bit on Topping E30" badges and to
+ *  re-sync after a transport that happened outside the UI (e.g.
+ *  media keys, future). */
+export async function audioState(): Promise<PlaybackStatus> {
+  if (!isTauri()) {
+    return { playing: false, source_url: null, sample_rate_hz: null, bit_depth: null, channels: null };
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke<PlaybackStatus>('audio_state');
+}
+
+/** Streams a FLAC file from the OnScreen server through the native
+ *  engine. `bearerToken` is sent as `Authorization: Bearer …` so the
+ *  server's auth middleware accepts the request. Replaces any
+ *  currently-playing track. Returns the engine's status snapshot
+ *  after playback has *started* (cpal stream running, decoder thread
+ *  producing samples) — errors thrown synchronously cover the
+ *  pre-audio failure paths (HTTP 4xx/5xx, FLAC parse, device pick).
+ *
+ *  Currently FLAC-only. Other formats (MP3, ALAC, transcoded HLS)
+ *  fall through to the existing `<audio>` element in the webview.
+ */
+export async function audioPlayUrl(
+  url: string,
+  bearerToken: string | null,
+  device: string | null,
+): Promise<PlaybackStatus> {
+  if (!isTauri()) {
+    throw new Error('audioPlayUrl is only meaningful inside the native client');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke<PlaybackStatus>('audio_play_url', {
+    url,
+    bearerToken,
+    deviceName: device,
+  });
 }

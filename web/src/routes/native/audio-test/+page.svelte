@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { isTauri, listAudioDevices, playTestTone, stopAudio, type AudioDevice } from '$lib/native';
+  import {
+    isTauri, listAudioDevices, playTestTone, stopAudio,
+    audioPlayUrl, audioState,
+    type AudioDevice, type PlaybackStatus,
+  } from '$lib/native';
 
   let loading = true;
   let devices: AudioDevice[] = [];
@@ -8,6 +12,14 @@
   let frequency = 440;
   let durationMs = 2000;
   let busy: string | null = null;
+
+  // FLAC streaming form state.
+  let flacUrl = '';
+  let flacBearer = '';
+  let flacDevice = '';
+  let flacError = '';
+  let flacBusy = false;
+  let lastStatus: PlaybackStatus | null = null;
 
   onMount(async () => {
     if (!isTauri()) {
@@ -44,6 +56,25 @@
   async function stopAll() {
     await stopAudio();
     busy = null;
+    flacBusy = false;
+    lastStatus = await audioState();
+  }
+
+  async function playFlac() {
+    flacError = '';
+    if (!flacUrl.trim()) { flacError = 'URL required'; return; }
+    flacBusy = true;
+    try {
+      lastStatus = await audioPlayUrl(
+        flacUrl.trim(),
+        flacBearer.trim() || null,
+        flacDevice || null,
+      );
+    } catch (e: unknown) {
+      flacError = e instanceof Error ? e.message : String(e);
+    } finally {
+      flacBusy = false;
+    }
   }
 </script>
 
@@ -78,6 +109,52 @@
       <button type="button" class="stop" on:click={stopAll}>Stop</button>
     </section>
 
+    <section class="flac-stream">
+      <h2>FLAC streaming</h2>
+      <p class="muted">
+        Streams a FLAC file from any URL through the engine end-to-end —
+        HTTP fetch → claxon decode → cpal at the file's native rate. Use
+        <code>/media/files/&lt;file_id&gt;</code> against your server to test
+        with real library content; supply the bearer token from
+        <code>localStorage.onscreen_user</code> after a successful login.
+      </p>
+      <div class="flac-row">
+        <label>
+          FLAC URL
+          <input type="url" bind:value={flacUrl} placeholder="https://onscreen.example.com/media/files/<id>" />
+        </label>
+      </div>
+      <div class="flac-row">
+        <label>
+          Bearer token (optional)
+          <input type="password" bind:value={flacBearer} placeholder="paste access_token from /auth/login response" />
+        </label>
+        <label class="flac-device">
+          Output device
+          <select bind:value={flacDevice}>
+            <option value="">(default)</option>
+            {#each devices as d (d.name)}
+              {#if d.default_output_summary}
+                <option value={d.name}>{d.name}</option>
+              {/if}
+            {/each}
+          </select>
+        </label>
+      </div>
+      {#if flacError}
+        <div class="error-bar">{flacError}</div>
+      {/if}
+      {#if lastStatus?.playing && lastStatus.source_url?.startsWith('http')}
+        <div class="status-bar">
+          Playing · {lastStatus.bit_depth}-bit · {lastStatus.sample_rate_hz} Hz · {lastStatus.channels} ch
+        </div>
+      {/if}
+      <button type="button" class="play wide" disabled={flacBusy} on:click={playFlac}>
+        {flacBusy ? 'Connecting…' : 'Play FLAC URL'}
+      </button>
+    </section>
+
+    <h2 class="devices-heading">Output devices</h2>
     <ul class="devices">
       {#each devices as d (d.name)}
         <li>
@@ -149,4 +226,27 @@
     padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.25rem;
   }
   .muted { color: var(--text-muted); font-size: 0.85rem; }
+
+  .flac-stream {
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.25rem; margin-bottom: 1.75rem;
+    display: flex; flex-direction: column; gap: 0.75rem;
+  }
+  .flac-stream h2 { margin: 0; font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+  .flac-stream code { background: var(--bg-hover); padding: 0.05rem 0.3rem; border-radius: 4px; font-size: 0.78rem; }
+  .flac-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .flac-row label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.72rem; color: var(--text-muted); flex: 1; min-width: 220px; }
+  .flac-row input, .flac-row select {
+    background: var(--bg-hover); border: 1px solid var(--border-strong);
+    border-radius: 7px; padding: 0.42rem 0.7rem; color: var(--text-primary); font-size: 0.85rem;
+  }
+  .flac-row input:focus, .flac-row select:focus { outline: none; border-color: var(--accent); }
+  .flac-device { max-width: 260px; }
+  .play.wide { width: 100%; padding: 0.55rem 0.85rem; }
+  .status-bar {
+    background: var(--accent-bg); color: var(--accent-text);
+    padding: 0.5rem 0.8rem; border-radius: 7px; font-size: 0.78rem; font-weight: 600;
+    font-family: monospace;
+  }
+  .devices-heading { font-size: 1rem; font-weight: 700; color: var(--text-primary); margin: 0 0 0.75rem; }
 </style>

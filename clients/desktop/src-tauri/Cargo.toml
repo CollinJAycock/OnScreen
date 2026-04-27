@@ -34,11 +34,21 @@ url = "2"
 # backends (WASAPI on Windows, CoreAudio on macOS, ALSA on Linux),
 # which is what the audiophile pillar needs — `<audio>` in the
 # webview routes through the OS mixer and resamples even FLAC.
-# Decoder lands when the streaming path lands; for the v2.1 cpal
-# foundation this commit ships device enumeration + a test-tone
-# command so the engine path is provably reachable on the user's
-# hardware before we layer FLAC + transport on top.
 cpal = "0.16"
+# claxon — pure-Rust FLAC decoder. No native deps, no licensing
+# friction. Decode runs on a background thread; samples land in a
+# ringbuf the realtime cpal callback drains.
+claxon = "0.4"
+# Lock-free single-producer single-consumer ring buffer. The
+# realtime audio callback can't take a Mutex (blocking inside
+# the callback drops samples = audible glitch) — ringbuf's
+# atomics are the safe primitive.
+ringbuf = "0.4"
+# ureq — blocking HTTP client. Pulled in over reqwest because we
+# don't need a tokio runtime for the audio path: one decoder
+# thread, one streaming response, blocking reads are exactly
+# right. Bearer auth via ureq's `set` API.
+ureq = "2"
 
 [features]
 # Default to nothing — opt into custom-protocol for production builds
