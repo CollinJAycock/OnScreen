@@ -180,6 +180,7 @@ export const authApi = {
   logout: () => api.post('/auth/logout'),
   oidcEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/oidc/enabled'),
   ldapEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/ldap/enabled'),
+  samlEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/saml/enabled'),
   ldapLogin: (username: string, password: string) =>
     api.post<TokenPair>('/auth/ldap/login', { username, password }),
   forgotPasswordEnabled: () => api.get<{ enabled: boolean }>('/auth/forgot-password/enabled'),
