@@ -149,37 +149,53 @@ Trigger a build manually from the Actions tab → "Desktop client"
 artefacts (`onscreen-desktop-Windows`, `onscreen-desktop-macOS`,
 `onscreen-desktop-Linux`) for 14 days.
 
-## CORS — required server-side allow-list entry
+## Server URL — what to put in the setup screen
 
-The Tauri webview's origin is **cross-origin** to your OnScreen
-server, so the server must allow it via CORS. Symptom when
-missing: login (or any API call) fails with `TypeError: Failed
-to fetch`. The browser's Network tab inside the Tauri webview
-(F12) shows the preflight OPTIONS request returning without an
-`Access-Control-Allow-Origin` header.
+Two completely different cases depending on whether you're running
+dev or a built installer:
 
-**Origins to allow** (per platform):
+### Dev mode (`dev.ps1` / `make client-dev`)
 
-| Platform | Webview origin |
+Tauri loads the **Vite dev server** at `http://localhost:5173`,
+not the Go server directly. Vite has a proxy that forwards
+`/api`, `/media`, `/health`, `/artwork` to `http://localhost:7070`
+transparently — same-origin from the webview's POV, no CORS in
+play.
+
+**In the setup screen, enter:** `http://localhost:5173`
+(NOT `http://localhost:7070` — that bypasses the proxy and forces
+the server-side CORS dance below for no reason.)
+
+### Production / installer (`build.ps1` / `make client-build`)
+
+The bundled webview loads from the embedded frontend, presenting
+its own origin to your server. No proxy — every API call is
+genuinely cross-origin.
+
+**In the setup screen, enter your real server URL:**
+`https://onscreen.example.com` or `http://192.168.1.50:7070`.
+
+**On the server, add the Tauri webview origin to CORS** via the
+web UI's **Settings → General → CORS Allowed Origins**:
+
+| Platform | Webview origin to add |
 |---|---|
 | Windows (WebView2) | `http://tauri.localhost` |
 | macOS (WKWebView)  | `tauri://localhost` |
 | Linux (WebKitGTK)  | `tauri://localhost` |
 
-**Add them to your server**: open the OnScreen web UI in a
-browser, go to **Settings → General → CORS Allowed Origins**, paste
-the comma-separated list, save. The CORS middleware re-reads on
-the next request — no server restart needed.
+The middleware re-reads on the next request — no server restart
+needed. If unsure of the exact origin, hit **F12** in the Tauri
+client, retry the failing request, copy the `Origin` header
+verbatim.
 
-If unsure of the exact origin, hit **F12** in the Tauri client to
-open DevTools, retry the failing request, and copy the `Origin`
-header verbatim from the request log.
+### Auth model
 
-**Auth model:** the api.ts wrapper sends bearer tokens (not
-cookies) when running inside Tauri, so the server doesn't need to
-opt into credentialled CORS — `credentials: 'omit'` keeps the
-preflight simple. Plain-http localhost servers work without the
-HTTPS / SameSite=None dance cookies would require.
+The api.ts wrapper sends bearer tokens (not cookies) when running
+inside Tauri, so the server doesn't need to opt into credentialled
+CORS — `credentials: 'omit'` keeps the preflight simple.
+Plain-http localhost servers work without the HTTPS /
+SameSite=None dance cookies would require.
 
 ## What's done
 
