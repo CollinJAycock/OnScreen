@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { settingsApi } from '$lib/api';
-  import type { OIDCSettings, LDAPSettings } from '$lib/api';
+  import type { OIDCSettings, LDAPSettings, SAMLSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
   let savingOIDC = false;
   let savingLDAP = false;
+  let savingSAML = false;
   let error = '';
 
   let oidc: OIDCSettings = {
@@ -23,6 +24,13 @@
   };
   let ldapPasswordMasked = false;
 
+  let saml: SAMLSettings = {
+    enabled: false, display_name: '', idp_metadata_url: '', entity_id: '',
+    sp_certificate_pem: '', sp_private_key_pem: '',
+    email_attribute: '', username_attribute: '', groups_attribute: '', admin_group: ''
+  };
+  let samlPrivateKeyMasked = false;
+
   onMount(async () => {
     try {
       const s = await settingsApi.get();
@@ -33,6 +41,10 @@
       if (s.ldap) {
         ldap = { ...s.ldap };
         ldapPasswordMasked = ldap.bind_password === '****';
+      }
+      if (s.saml) {
+        saml = { ...s.saml };
+        samlPrivateKeyMasked = saml.sp_private_key_pem === '****';
       }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load settings';
@@ -100,6 +112,38 @@
       toast.error(e instanceof Error ? e.message : 'Save failed');
     } finally {
       savingLDAP = false;
+    }
+  }
+
+  async function saveSAML() {
+    savingSAML = true;
+    try {
+      const payload: Record<string, unknown> = {
+        enabled: saml.enabled,
+        display_name: saml.display_name,
+        idp_metadata_url: saml.idp_metadata_url,
+        entity_id: saml.entity_id,
+        sp_certificate_pem: saml.sp_certificate_pem,
+        email_attribute: saml.email_attribute,
+        username_attribute: saml.username_attribute,
+        groups_attribute: saml.groups_attribute,
+        admin_group: saml.admin_group,
+      };
+      // Only send the SP private key when the admin actually edited it —
+      // mirrors the OIDC client-secret pattern. Sending "****" would be
+      // dropped server-side anyway, but skipping keeps the payload clean.
+      if (!samlPrivateKeyMasked || saml.sp_private_key_pem !== '****') {
+        payload.sp_private_key_pem = saml.sp_private_key_pem;
+      }
+      await settingsApi.update({ saml: payload } as never);
+      toast.success('SAML settings saved');
+      const s = await settingsApi.get();
+      saml = { ...s.saml };
+      samlPrivateKeyMasked = saml.sp_private_key_pem === '****';
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      savingSAML = false;
     }
   }
 </script>
@@ -254,6 +298,76 @@
 
       <button class="btn btn-primary" disabled={savingLDAP} on:click={saveLDAP}>
         {savingLDAP ? 'Saving…' : 'Save LDAP settings'}
+      </button>
+    </section>
+
+    <section>
+      <header>
+        <h2>SAML 2.0</h2>
+        <p class="hint">
+          SP-initiated SSO via the IdP's metadata URL (Okta, Azure AD, ADFS,
+          OneLogin, Authentik, Keycloak). Register the SP at
+          <code>{location.origin}/api/v1/auth/saml/metadata</code> on your IdP
+          (or upload that XML if your IdP doesn't fetch by URL). The SP keypair
+          is auto-generated on first save when left blank.
+        </p>
+      </header>
+
+      <label class="check">
+        <input type="checkbox" bind:checked={saml.enabled} />
+        <span>Enable SAML sign-in</span>
+      </label>
+
+      <div class="grid">
+        <label>
+          Display name
+          <input type="text" bind:value={saml.display_name} placeholder="Company SSO" />
+        </label>
+        <label>
+          IdP metadata URL
+          <input type="url" bind:value={saml.idp_metadata_url} placeholder="https://idp.example.com/realms/onscreen-test/protocol/saml/descriptor" />
+        </label>
+        <label class="full">
+          SP entity ID (advanced — defaults to {location.origin}/api/v1/auth/saml/metadata)
+          <input type="text" bind:value={saml.entity_id} placeholder={`${location.origin}/api/v1/auth/saml/metadata`} />
+        </label>
+        <label>
+          Email attribute
+          <input type="text" bind:value={saml.email_attribute} placeholder="email or http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress" />
+        </label>
+        <label>
+          Username attribute
+          <input type="text" bind:value={saml.username_attribute} placeholder="username (defaults to email-prefix)" />
+        </label>
+        <label>
+          Groups attribute
+          <input type="text" bind:value={saml.groups_attribute} placeholder="groups" />
+        </label>
+        <label>
+          Admin group
+          <input type="text" bind:value={saml.admin_group} placeholder="onscreen-admins" />
+        </label>
+        <label class="full">
+          SP certificate (PEM — advanced; auto-generated when blank)
+          <textarea
+            rows="4"
+            bind:value={saml.sp_certificate_pem}
+            placeholder="-----BEGIN CERTIFICATE-----&#10;…&#10;-----END CERTIFICATE-----"
+          ></textarea>
+        </label>
+        <label class="full">
+          SP private key (PEM — advanced; auto-generated when blank)
+          <textarea
+            rows="4"
+            bind:value={saml.sp_private_key_pem}
+            on:input={() => { samlPrivateKeyMasked = false; }}
+            placeholder={samlPrivateKeyMasked ? 'unchanged' : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----'}
+          ></textarea>
+        </label>
+      </div>
+
+      <button class="btn btn-primary" disabled={savingSAML} on:click={saveSAML}>
+        {savingSAML ? 'Saving…' : 'Save SAML settings'}
       </button>
     </section>
   </div>

@@ -40,6 +40,8 @@ type SettingsServiceIface interface {
 	SetOIDC(ctx context.Context, cfg settings.OIDCConfig) error
 	LDAP(ctx context.Context) settings.LDAPConfig
 	SetLDAP(ctx context.Context, cfg settings.LDAPConfig) error
+	SAML(ctx context.Context) settings.SAMLConfig
+	SetSAML(ctx context.Context, cfg settings.SAMLConfig) error
 	SMTP(ctx context.Context) settings.SMTPConfig
 	SetSMTP(ctx context.Context, cfg settings.SMTPConfig) error
 	OTel(ctx context.Context) settings.OTelConfig
@@ -308,6 +310,7 @@ type settingsResponse struct {
 	OpenSubtitles     openSubtitlesSettingDTO `json:"opensubtitles"`
 	OIDC              oidcSettingDTO          `json:"oidc"`
 	LDAP              ldapSettingDTO          `json:"ldap"`
+	SAML              samlSettingDTO          `json:"saml"`
 	SMTP              smtpSettingDTO          `json:"smtp"`
 	OTel              otelSettingDTO          `json:"otel"`
 	General           generalSettingDTO       `json:"general"`
@@ -447,6 +450,41 @@ func toLDAPDTO(cfg settings.LDAPConfig) ldapSettingDTO {
 	}
 }
 
+// samlSettingDTO masks the SP private key (and IdP-supplied secret if any)
+// before returning the config to the client. The certificate stays plain
+// because admins copy-paste it into IdP registration UIs.
+type samlSettingDTO struct {
+	Enabled           bool   `json:"enabled"`
+	DisplayName       string `json:"display_name"`
+	IdPMetadataURL    string `json:"idp_metadata_url"`
+	EntityID          string `json:"entity_id"`
+	SPCertificatePEM  string `json:"sp_certificate_pem"`
+	SPPrivateKeyPEM   string `json:"sp_private_key_pem"` // "****" if set, "" if empty
+	EmailAttribute    string `json:"email_attribute"`
+	UsernameAttribute string `json:"username_attribute"`
+	GroupsAttribute   string `json:"groups_attribute"`
+	AdminGroup        string `json:"admin_group"`
+}
+
+func toSAMLDTO(cfg settings.SAMLConfig) samlSettingDTO {
+	pk := ""
+	if cfg.SPPrivateKeyPEM != "" {
+		pk = "****"
+	}
+	return samlSettingDTO{
+		Enabled:           cfg.Enabled,
+		DisplayName:       cfg.DisplayName,
+		IdPMetadataURL:    cfg.IdPMetadataURL,
+		EntityID:          cfg.EntityID,
+		SPCertificatePEM:  cfg.SPCertificatePEM,
+		SPPrivateKeyPEM:   pk,
+		EmailAttribute:    cfg.EmailAttribute,
+		UsernameAttribute: cfg.UsernameAttribute,
+		GroupsAttribute:   cfg.GroupsAttribute,
+		AdminGroup:        cfg.AdminGroup,
+	}
+}
+
 // openSubtitlesSettingDTO masks the API key and password before returning the
 // config to the client — secrets should never leave the server in plaintext.
 type openSubtitlesSettingDTO struct {
@@ -524,6 +562,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		OpenSubtitles:     toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
 		OIDC:              toOIDCDTO(h.svc.OIDC(ctx)),
 		LDAP:              toLDAPDTO(h.svc.LDAP(ctx)),
+		SAML:              toSAMLDTO(h.svc.SAML(ctx)),
 		SMTP:              toSMTPDTO(h.svc.SMTP(ctx)),
 		OTel:              toOTelDTO(h.svc.OTel(ctx)),
 		General:           toGeneralDTO(h.svc.General(ctx)),
@@ -571,6 +610,18 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			EmailAttr      *string `json:"email_attr"`
 			AdminGroupDN   *string `json:"admin_group_dn"`
 		} `json:"ldap"`
+		SAML *struct {
+			Enabled           *bool   `json:"enabled"`
+			DisplayName       *string `json:"display_name"`
+			IdPMetadataURL    *string `json:"idp_metadata_url"`
+			EntityID          *string `json:"entity_id"`
+			SPCertificatePEM  *string `json:"sp_certificate_pem"`
+			SPPrivateKeyPEM   *string `json:"sp_private_key_pem"`
+			EmailAttribute    *string `json:"email_attribute"`
+			UsernameAttribute *string `json:"username_attribute"`
+			GroupsAttribute   *string `json:"groups_attribute"`
+			AdminGroup        *string `json:"admin_group"`
+		} `json:"saml"`
 		SMTP *struct {
 			Enabled  *bool   `json:"enabled"`
 			Host     *string `json:"host"`
@@ -738,6 +789,66 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.SAML != nil {
+		// Read-modify-write so toggling enabled or rotating one field
+		// doesn't clobber the SP keypair (which the IdP has registered
+		// against and that an admin would have to re-publish if lost).
+		cur := h.svc.SAML(ctx)
+		if body.SAML.Enabled != nil {
+			cur.Enabled = *body.SAML.Enabled
+		}
+		if body.SAML.DisplayName != nil {
+			cur.DisplayName = *body.SAML.DisplayName
+		}
+		if body.SAML.IdPMetadataURL != nil {
+			cur.IdPMetadataURL = *body.SAML.IdPMetadataURL
+		}
+		if body.SAML.EntityID != nil {
+			cur.EntityID = *body.SAML.EntityID
+		}
+		if body.SAML.SPCertificatePEM != nil {
+			cur.SPCertificatePEM = *body.SAML.SPCertificatePEM
+		}
+		if body.SAML.SPPrivateKeyPEM != nil && *body.SAML.SPPrivateKeyPEM != "****" {
+			cur.SPPrivateKeyPEM = *body.SAML.SPPrivateKeyPEM
+		}
+		if body.SAML.EmailAttribute != nil {
+			cur.EmailAttribute = *body.SAML.EmailAttribute
+		}
+		if body.SAML.UsernameAttribute != nil {
+			cur.UsernameAttribute = *body.SAML.UsernameAttribute
+		}
+		if body.SAML.GroupsAttribute != nil {
+			cur.GroupsAttribute = *body.SAML.GroupsAttribute
+		}
+		if body.SAML.AdminGroup != nil {
+			cur.AdminGroup = *body.SAML.AdminGroup
+		}
+		// Auto-generate SP keypair on first enable so the admin doesn't
+		// have to know how to invoke openssl. Skip when the admin has
+		// already supplied one (cert OR key non-empty), and skip when
+		// disabling — generating a keypair just to immediately set
+		// Enabled=false would surprise.
+		if cur.Enabled && cur.SPCertificatePEM == "" && cur.SPPrivateKeyPEM == "" {
+			seed := cur.EntityID
+			if seed == "" {
+				seed = "onscreen"
+			}
+			if cert, key, err := GenerateSPKeyPair(seed); err == nil {
+				cur.SPCertificatePEM = cert
+				cur.SPPrivateKeyPEM = key
+			} else {
+				h.logger.ErrorContext(ctx, "saml: auto-generate SP keypair", "err", err)
+				respond.InternalError(w, r)
+				return
+			}
+		}
+		if err := h.svc.SetSAML(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "saml", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
 	if body.SMTP != nil {
 		cur := h.svc.SMTP(ctx)
 		if body.SMTP.Enabled != nil {
@@ -826,6 +937,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.LDAP != nil {
 			detail["ldap"] = "changed"
+		}
+		if body.SAML != nil {
+			detail["saml"] = "changed"
 		}
 		if body.SMTP != nil {
 			detail["smtp"] = "changed"

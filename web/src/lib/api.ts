@@ -371,6 +371,19 @@ export interface LDAPSettings {
   admin_group_dn: string;
 }
 
+export interface SAMLSettings {
+  enabled: boolean;
+  display_name: string;
+  idp_metadata_url: string;
+  entity_id: string;
+  sp_certificate_pem: string;
+  sp_private_key_pem: string; // "****" if set, "" if empty
+  email_attribute: string;
+  username_attribute: string;
+  groups_attribute: string;
+  admin_group: string;
+}
+
 export interface SMTPSettings {
   enabled: boolean;
   host: string;
@@ -403,6 +416,7 @@ export interface ServerSettings {
   opensubtitles: OpenSubtitlesSettings;
   oidc: OIDCSettings;
   ldap: LDAPSettings;
+  saml: SAMLSettings;
   smtp: SMTPSettings;
   otel: OTelSettings;
   general: GeneralSettings;
