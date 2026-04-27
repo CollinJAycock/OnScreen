@@ -1366,6 +1366,17 @@
     trickplayCues = [];
     trickplayBaseURL = `/trickplay/${itemId}/`;
     try {
+      // Probe the status endpoint first so we don't 404 the static
+      // /trickplay/{id}/index.vtt path on items that simply haven't
+      // had thumbnails generated yet. Otherwise every videos-without-
+      // trickplay session prints a console error and CSP-noise on the
+      // beta deployment, even though the player handles the miss
+      // gracefully — see the live console report on adf2810d.
+      const status = await fetch(`/api/v1/items/${itemId}/trickplay`);
+      if (!status.ok) return;
+      const env = await status.json();
+      if (env?.data?.status !== 'done') return;
+
       const r = await fetch(trickplayBaseURL + 'index.vtt');
       if (!r.ok) return;
       const text = await r.text();

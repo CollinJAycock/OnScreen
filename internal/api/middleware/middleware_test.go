@@ -301,16 +301,18 @@ func TestSecurityHeaders_CSP(t *testing.T) {
 		t.Fatal("Content-Security-Policy header missing")
 	}
 
-	// Verify key directives are present.
-	requiredDirectives := []string{
+	// Verify key directives are present. script-src and connect-src use
+	// substring match because they carry an allow-list of external hosts
+	// that grows over time (Cloudflare Insights, etc.) — the test should
+	// not have to know every entry.
+	exactDirectives := []string{
 		"default-src 'self'",
-		"script-src 'self' 'unsafe-inline'",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: https:",
 		"media-src 'self' blob:",
 		"frame-ancestors 'none'",
 	}
-	for _, d := range requiredDirectives {
+	for _, d := range exactDirectives {
 		found := false
 		for _, part := range splitCSP(csp) {
 			if part == d {
@@ -321,6 +323,37 @@ func TestSecurityHeaders_CSP(t *testing.T) {
 		if !found {
 			t.Errorf("CSP missing directive %q in %q", d, csp)
 		}
+	}
+
+	// Substring checks — these directives carry expanding allow-lists.
+	containsChecks := []string{
+		"script-src 'self' 'unsafe-inline'",
+		"connect-src 'self'",
+	}
+	for _, sub := range containsChecks {
+		if !strings.Contains(csp, sub) {
+			t.Errorf("CSP missing prefix %q in %q", sub, csp)
+		}
+	}
+}
+
+func TestSecurityHeaders_CSPAllowsCloudflareInsights(t *testing.T) {
+	// Regression guard: Cloudflare proxies (which the beta deployment
+	// runs behind) auto-inject the Web Analytics beacon from
+	// static.cloudflareinsights.com. Blocking it surfaced as a console
+	// CSP violation on the live site.
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "https://static.cloudflareinsights.com") {
+		t.Errorf("script-src should allow Cloudflare Insights beacon — CSP = %q", csp)
+	}
+	if !strings.Contains(csp, "https://cloudflareinsights.com") {
+		t.Errorf("connect-src should allow Cloudflare Insights POST — CSP = %q", csp)
 	}
 }
 
