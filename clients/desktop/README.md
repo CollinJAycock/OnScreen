@@ -219,13 +219,41 @@ SameSite=None dance cookies would require.
   FLAC's native sample rate + bit depth (16-bit → I16 stream,
   ≥17-bit → I32 stream carrying 24-bit-in-32) — the bit-perfect
   contract. `audio_state` reports current playback shape (rate,
-  depth, channels, source URL); `stop_audio` drops the stream +
-  signals the decoder thread to exit. Diagnostic page at
-  `/native/audio-test` includes a "Play FLAC URL" form so the
-  full pipeline is testable against any URL on your server.
+  depth, channels, source URL, position, ended); `stop_audio`
+  drops the stream + signals the decoder thread to exit. Pause /
+  resume via `audio_pause` / `audio_resume` — cpal callback
+  writes silence rather than draining the ringbuf, so the
+  decoder backpressures itself naturally and no extra CPU burns
+  during a pause. Diagnostic page at `/native/audio-test`
+  includes a "Play FLAC URL" form so the full pipeline is
+  testable against any URL on your server.
+- **Music player wiring** (Phase 1 + 2): the AudioPlayer the
+  rest of the app uses now routes through the native engine
+  when the user opts in via `/native/server` *and* the app is
+  running inside Tauri. Track-change kicks off `audio_play_url`,
+  pause/resume sync via the same flag the `<audio>` path
+  watches, position polling runs at 250 ms (same cadence as
+  `<audio>` `timeupdate`) and updates the store, EOS triggers
+  `audio.next()` for auto-advance. Engine errors (most likely
+  non-FLAC source) flip the preference back off so `<audio>`
+  takes over on the next track change.
 
 ## What's not done yet
 
+- **Seek under native engine**: scrubbing the seek bar does
+  nothing while native playback is active. The engine has no
+  `seek_to(position_ms)` yet — would need claxon + HTTP-range
+  seeks (FLAC's frame-header structure means we either consult
+  the seek table from the metadata block or scan forward; both
+  are nontrivial against a streaming HTTP source).
+- **Gapless preload**: there's a brief silence between tracks
+  while the new `audio_play_url` HTTP fetch + claxon header
+  parse runs (~200-500 ms). Closing this needs a second
+  decoder slot in the engine (`PreloadSlot` parallel to
+  `ActivePlayback`) + a new `audio_preload_url` IPC + an
+  `audio_play_url` fast-path that promotes a matching preload
+  rather than cold-starting. Frontend would optimistically
+  preload `nextTrack` whenever it changes.
 - **Exclusive-mode toggle**: WASAPI exclusive on Windows
   (`cpal::SupportedStreamConfig::buffer_size`-driven), CoreAudio
   per-stream nominal-rate switching on macOS, ALSA `hw:` device
