@@ -526,6 +526,16 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if pcErr != nil {
 			return nil, nil, false, fmt.Errorf("podcast for %s: %w", path, pcErr)
 		}
+	} else if libraryType == "home_video" && isVideoFile(path) {
+		// Home videos: personal footage with no external metadata
+		// agent. Date taken comes from file mtime → populates
+		// originally_available_at so the library page can sort by
+		// recording date (not scan date).
+		var hvErr error
+		item, hvErr = s.processHomeVideo(ctx, libraryID, path, info.ModTime())
+		if hvErr != nil {
+			return nil, nil, false, fmt.Errorf("home video for %s: %w", path, hvErr)
+		}
 	} else if libraryType == "show" {
 		var showErr error
 		item, showErr = s.processShowHierarchy(ctx, libraryID, path)

@@ -88,6 +88,40 @@
 
   $: isPhotoLibrary = library?.type === 'photo';
   $: isMusicLibrary = library?.type === 'music';
+  $: isHomeVideoLibrary = library?.type === 'home_video';
+
+  // Date-grouped buckets for home-video libraries: [{ key, label, items }].
+  // Group key is "YYYY-MM" so chronological sort just works on the key;
+  // label is the human-friendly "April 2024" form for the section header.
+  // Items missing taken_at land in an "Undated" bucket so they're still
+  // visible (no silent dropping).
+  $: dateBuckets = (() => {
+    if (!isHomeVideoLibrary) return [] as Array<{ key: string; label: string; items: MediaItem[] }>;
+    const map = new Map<string, MediaItem[]>();
+    for (const it of filtered) {
+      let key = '0000-00';
+      if (it.taken_at) {
+        const d = new Date(it.taken_at);
+        if (!isNaN(d.getTime())) {
+          key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+        }
+      }
+      const arr = map.get(key) ?? [];
+      arr.push(it);
+      map.set(key, arr);
+    }
+    const fmt = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    return [...map.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0])) // newest first
+      .map(([key, items]) => {
+        let label = 'Undated';
+        if (key !== '0000-00') {
+          const [y, m] = key.split('-').map(Number);
+          label = fmt.format(new Date(Date.UTC(y, m - 1, 1)));
+        }
+        return { key, label, items };
+      });
+  })();
 
   // Top-level items in a music library are artists; in show libraries, shows;
   // in photo libraries, photos; in podcast libraries, the podcast show. Each
@@ -174,8 +208,11 @@
   async function loadLibrary() {
     try {
       library = await libraryApi.get(id);
-      // Photo libraries sort by date taken by default; user can still override.
-      if (library?.type === 'photo' && !sortDefaulted) {
+      // Photo + home-video libraries sort by date taken by default —
+      // alphabetic title is hostile when items are date-stamped events
+      // ("2024-04-15 - Hike" wouldn't sort by recency without this).
+      // User can still override via the sort menu.
+      if ((library?.type === 'photo' || library?.type === 'home_video') && !sortDefaulted) {
         sortField = 'taken_at';
         sortAsc = false;
         sortDefaulted = true;
@@ -411,6 +448,38 @@
         </div>
       </section>
     {/if}
+    {#if isHomeVideoLibrary}
+      <!-- Home-video libraries render as a chronologically-bucketed
+           grid (one section per month) instead of one big alphabetic
+           grid. Items within a bucket keep the user-selected sort. -->
+      {#each dateBuckets as bucket (bucket.key)}
+        <h2 class="bucket-title">{bucket.label}</h2>
+        <div class="grid bucket-grid">
+          {#each bucket.items as item (item.id)}
+            <a class="item" href={itemHref(item)} tabindex="0">
+              <div class="poster">
+                {#if item.poster_path}
+                  <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
+                       srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w"
+                       sizes="(max-width: 768px) 100px, 180px"
+                       alt={item.title} loading="lazy" />
+                {:else}
+                  <div class="poster-blank"><span>▶</span></div>
+                {/if}
+                <div class="poster-overlay">
+                  <div class="play-icon">▶</div>
+                  <div class="overlay-title">{item.title}</div>
+                  <div class="overlay-meta">
+                    {#if item.taken_at}{new Date(item.taken_at).toLocaleDateString()}{/if}
+                    {#if item.duration_ms} · {dur(item.duration_ms)}{/if}
+                  </div>
+                </div>
+              </div>
+            </a>
+          {/each}
+        </div>
+      {/each}
+    {:else}
     <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary}>
       {#each filtered as item (item.id)}
         <a class="item" class:circle-poster={isMusicLibrary} href={itemHref(item)} tabindex="0">
@@ -471,6 +540,7 @@
         {/each}
       {/if}
     </div>
+    {/if}
 
     {#if hasMore}
       <div class="scroll-sentinel" use:infiniteScroll></div>
@@ -814,6 +884,13 @@
     animation: shimmer 1.4s infinite;
   }
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  .bucket-title {
+    font-size: 0.95rem; font-weight: 600; color: var(--text-secondary);
+    margin: 1.5rem 0 0.6rem; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .bucket-title:first-child { margin-top: 0; }
+  .bucket-grid { margin-bottom: 0.5rem; }
 
   .mv-shelf { margin: 0 0 2rem; }
   .mv-shelf-title {

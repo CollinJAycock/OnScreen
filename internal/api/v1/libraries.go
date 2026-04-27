@@ -84,9 +84,14 @@ type MediaItemResponse struct {
 	// to avoid a migration just for one column — see audiobookscan.go).
 	// v2.1 surfaces it so the library grid can show "by Author" under
 	// the audiobook title without a second API round-trip.
-	OriginalTitle *string   `json:"original_title,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     int64     `json:"updated_at"`
+	OriginalTitle *string `json:"original_title,omitempty"`
+	// TakenAt mirrors media_items.originally_available_at — for photos
+	// it's EXIF DateTimeOriginal, for home videos it's file mtime, for
+	// movies/episodes it's the TMDB release date. Lets the library
+	// page render date-grouped headers without a second round-trip.
+	TakenAt   *time.Time `json:"taken_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt int64      `json:"updated_at"`
 }
 
 // LibraryServiceIface defines the domain operations the handler needs.
@@ -512,6 +517,7 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Genres:        item.Genres,
 			PosterPath:    item.PosterPath,
 			OriginalTitle: item.OriginalTitle,
+			TakenAt:       item.OriginallyAvailableAt,
 			CreatedAt:     item.CreatedAt,
 			UpdatedAt:     item.UpdatedAt.UnixMilli(),
 		}
@@ -675,6 +681,8 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 		case "podcast", "podcast_episode":
 			return true
 		}
+	case "home_video":
+		return itemType == "home_video"
 	case "dvr":
 		return itemType == "dvr"
 	}

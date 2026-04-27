@@ -270,7 +270,7 @@ export interface UserPreferences {
 export interface Library {
   id: string;
   name: string;
-  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast';
+  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video';
   scan_paths: string[];
   agent: string;
   language: string;
@@ -309,6 +309,10 @@ export interface MediaItem {
   // a migration just for one column). Surfaced in the library grid
   // when the item is an audiobook.
   original_title?: string;
+  // Date taken / released. EXIF DateTimeOriginal for photos, file
+  // mtime for home videos, TMDB release date for movies/episodes.
+  // Drives the date-grouped grid on home video and photo libraries.
+  taken_at?: string;
   created_at: string;
   updated_at: string;
 }
