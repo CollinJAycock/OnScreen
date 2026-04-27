@@ -347,6 +347,46 @@ func TestStop_Unauthorized(t *testing.T) {
 	}
 }
 
+// ── transcodeStartResponse JSON shape ────────────────────────────────────────
+
+func TestTranscodeStartResponse_OmitsManifestURLForTSSession(t *testing.T) {
+	// MPEG-TS sessions can't be described by a DASH manifest; the
+	// field must use omitempty so clients don't see a stale URL that
+	// 415s on fetch. The opposite branch (manifest_url present) is
+	// covered structurally by ManifestMPD's own tests — this just
+	// pins the omission contract since omitempty is silent if the
+	// tag is wrong.
+	resp := transcodeStartResponse{
+		SessionID:   "s-1",
+		PlaylistURL: "/api/v1/transcode/sessions/s-1/playlist.m3u8?token=t",
+		Token:       "t",
+		// ManifestURL deliberately empty
+	}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(body, []byte("manifest_url")) {
+		t.Errorf("manifest_url must be omitted when empty (json:omitempty); got %s", string(body))
+	}
+}
+
+func TestTranscodeStartResponse_EmitsManifestURLForFMP4Session(t *testing.T) {
+	resp := transcodeStartResponse{
+		SessionID:   "s-1",
+		PlaylistURL: "/api/v1/transcode/sessions/s-1/playlist.m3u8?token=t",
+		ManifestURL: "/api/v1/transcode/sessions/s-1/manifest.mpd?token=t",
+		Token:       "t",
+	}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(body, []byte(`"manifest_url":"/api/v1/transcode/sessions/s-1/manifest.mpd?token=t"`)) {
+		t.Errorf("manifest_url should be serialized verbatim when set; got %s", string(body))
+	}
+}
+
 // ── ManifestMPD (DASH) ───────────────────────────────────────────────────────
 
 // manifestMPDRequest builds a GET for the DASH manifest endpoint with

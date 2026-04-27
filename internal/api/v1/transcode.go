@@ -108,6 +108,12 @@ type transcodeStartRequest struct {
 type transcodeStartResponse struct {
 	SessionID   string `json:"session_id"`
 	PlaylistURL string `json:"playlist_url"`
+	// ManifestURL is the DASH MPD endpoint for sessions that produce
+	// fMP4 segments (HEVC and AV1 today). Empty for MPEG-TS sessions
+	// since the DASH muxer can't describe TS segments. Native clients
+	// and DASH-preferring smart-TV apps consume this directly; the
+	// browser still uses PlaylistURL via hls.js. v2.1 Track H.
+	ManifestURL string `json:"manifest_url,omitempty"`
 	Token       string `json:"token"`
 	// StartOffsetSec is the content position the stream content begins
 	// at (keyframe-aligned). May be earlier than the requested
@@ -420,10 +426,19 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	playlistURL := fmt.Sprintf("/api/v1/transcode/sessions/%s/playlist.m3u8?token=%s",
 		sessionID, segTok)
+	// fMP4 sessions also expose a parallel DASH manifest at the same
+	// segment ladder. MPEG-TS sessions can't be described by DASH so
+	// the field stays empty for those — clients fall back to HLS.
+	var manifestURL string
+	if preferHEVC {
+		manifestURL = fmt.Sprintf("/api/v1/transcode/sessions/%s/manifest.mpd?token=%s",
+			sessionID, segTok)
+	}
 
 	respond.Success(w, r, transcodeStartResponse{
 		SessionID:       sessionID,
 		PlaylistURL:     playlistURL,
+		ManifestURL:     manifestURL,
 		Token:           segTok,
 		StartOffsetSec:  startOffsetSec,
 		Seg0AudioGapSec: seg0AudioGap,
