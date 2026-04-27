@@ -90,11 +90,14 @@
   $: isMusicLibrary = library?.type === 'music';
 
   // Top-level items in a music library are artists; in show libraries, shows;
-  // in photo libraries, photos. Each routes to a different detail view.
+  // in photo libraries, photos; in podcast libraries, the podcast show. Each
+  // routes to a different detail view; everything else falls back to the
+  // watch page (which itself bounces movie/episode-shaped types).
   function itemHref(item: MediaItem): string {
     if (item.type === 'artist') return `/artists/${item.id}`;
     if (item.type === 'album') return `/albums/${item.id}`;
     if (item.type === 'photo') return `/photos/${item.id}`;
+    if (item.type === 'podcast') return `/podcasts/${item.id}`;
     return `/watch/${item.id}`;
   }
 
