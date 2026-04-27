@@ -15,6 +15,7 @@ Thanks for your interest in contributing to OnScreen. This guide covers everythi
 | goose | v3 | Database migrations |
 | golangci-lint | Latest | Go linting |
 | GitHub CLI (`gh`) | 2.50+ | Cuts the release form down to one command (`gh release create`), fetches PR comments inline (`gh api …`), drives Dependabot triage. Install: `winget install GitHub.cli` (Windows), `brew install gh` (macOS), [`docs.github.com/en/github-cli/github-cli/quickstart`](https://docs.github.com/en/github-cli/github-cli/quickstart) (Linux). Run `gh auth login` once after install. |
+| Rust + Tauri CLI | 1.75+ / 2.x | **Only needed for desktop client work** (`clients/desktop/`). `rustup install stable && cargo install tauri-cli --locked --version "^2.0"`. Linux builds also need `webkit2gtk-4.1`, `librsvg2-dev`, `build-essential`, `libssl-dev`. See [clients/desktop/README.md](clients/desktop/README.md) for the full dev/build/CI pipeline. |
 
 ## Dev Setup
 

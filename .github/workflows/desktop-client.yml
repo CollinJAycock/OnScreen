@@ -1,0 +1,84 @@
+name: Desktop client
+
+# Tauri builds are slow (~5-10 min per platform on a cold cache),
+# so this workflow runs on demand and on tag push, never on every
+# PR. The Rust + frontend smoke tests in ci.yml already catch
+# code-level regressions on PRs; this workflow exists to produce
+# real installers.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    name: ${{ matrix.os-name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            os-name: Windows
+            artifact-glob: 'clients/desktop/src-tauri/target/release/bundle/{msi,nsis}/*'
+          - os: macos-latest
+            os-name: macOS
+            artifact-glob: 'clients/desktop/src-tauri/target/release/bundle/{dmg,macos}/*'
+          - os: ubuntu-latest
+            os-name: Linux
+            artifact-glob: 'clients/desktop/src-tauri/target/release/bundle/{appimage,deb}/*'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        # Tauri 2 needs webkit2gtk-4.1 + the GLib stack + libsoup3.
+        # libayatana-appindicator covers the system-tray plugin
+        # we'll add later — pulling it now keeps the cache warm
+        # for that work without a second image rebuild.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            build-essential
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Cache cargo registry + the desktop client's target dir. cpal +
+      # claxon + ureq + tauri together pull ~300+ crates; the cache
+      # cuts cold builds from ~10 min to ~90 s on cache hits.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/desktop/src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked --version "^2.0"
+
+      - name: Build SvelteKit frontend
+        run: |
+          cd web
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Build Tauri bundle
+        working-directory: clients/desktop/src-tauri
+        run: cargo tauri build
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: onscreen-desktop-${{ matrix.os-name }}
+          path: ${{ matrix.artifact-glob }}
+          if-no-files-found: error
+          retention-days: 14

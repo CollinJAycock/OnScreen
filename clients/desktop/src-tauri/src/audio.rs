@@ -30,7 +30,7 @@
 // replay-gain.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Sample, SampleFormat, SizedSample};
+use cpal::{SampleFormat, SizedSample};
 use ringbuf::traits::*;
 use ringbuf::HeapRb;
 use serde::Serialize;

@@ -11,7 +11,7 @@ VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo
 BUILD_TIME   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS      := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help
+.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build
 
 ## all: build everything (frontend + server + worker)
 all: build
@@ -136,6 +136,44 @@ deploy: frontend
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf web/dist web/.svelte-kit internal/webui/dist
+	rm -rf clients/desktop/src-tauri/target
+
+# ── Desktop client (Tauri 2) ───────────────────────────────────────────────
+# Build pipeline for clients/desktop. First run on a new machine
+# needs `make client-deps` to install the Tauri CLI; subsequent
+# `client-check` / `client-dev` / `client-build` calls assume it's
+# present.
+
+CLIENT_DESKTOP_DIR := clients/desktop/src-tauri
+
+## client-deps: install the Tauri 2 CLI globally (one-time per dev box)
+client-deps:
+	cargo install tauri-cli --locked --version "^2.0"
+
+## client-check: cargo check the desktop client (~30s after first cache fill)
+## Fast smoke test that proves the Rust + cpal + claxon + ureq stack
+## compiles without going through a full bundle. Run this first when
+## you don't trust a Rust change.
+client-check:
+	cd $(CLIENT_DESKTOP_DIR) && cargo check
+
+## client-dev: launch the desktop client pointing at the Vite dev server
+## Starts Vite in the background (web/dev mode at :5173) and runs
+## tauri dev so the webview hot-reloads on Svelte changes. Tauri config
+## already points devUrl at :5173 — this target just orchestrates the
+## two processes and tears Vite down on exit so you don't have to.
+client-dev:
+	cd web && npm run dev & VITE_PID=$$!; \
+	trap "kill $$VITE_PID 2>/dev/null" EXIT; \
+	cd $(CLIENT_DESKTOP_DIR) && cargo tauri dev; \
+	kill $$VITE_PID 2>/dev/null
+
+## client-build: produce the platform installer in target/release/bundle
+## On first run after a clean checkout the cargo step downloads ~300+
+## crates and takes 5-10 minutes; subsequent builds with a warm cache
+## land in 30-90 seconds. Output paths printed by tauri at the end.
+client-build: frontend
+	cd $(CLIENT_DESKTOP_DIR) && cargo tauri build
 
 ## help: display this help
 help:

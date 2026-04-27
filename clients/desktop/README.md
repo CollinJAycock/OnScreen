@@ -76,28 +76,78 @@ code so the same bundle still serves the browser.
 
 ## Dev workflow
 
-```bash
-# Build the SvelteKit frontend once (or run web's vite dev in another terminal)
-make -C ../.. web                       # builds web/dist
-# OR for live-reload dev:
-npm --prefix ../../web run dev          # leaves http://localhost:5173 up
+The repo has wrappers for both `make` (Linux/macOS) and PowerShell
+(Windows) so a single command runs Vite + Tauri together and tears
+both down on exit. First-time setup needs the Tauri CLI:
 
-# Then the Tauri shell:
-cd src-tauri
-cargo tauri dev                         # picks up devUrl per tauri.conf.json
+```bash
+cargo install tauri-cli --locked --version "^2.0"     # one-time per box
+# or `make client-deps` from the repo root
 ```
+
+Then:
+
+```bash
+# From repo root — runs Vite dev server + tauri dev together
+make client-dev
+
+# Windows equivalent
+cd clients\desktop
+.\dev.ps1
+```
+
+Either path leaves Vite on http://localhost:5173 and opens the
+Tauri webview pointing at it. Save a Svelte file → webview
+hot-reloads. Ctrl+C in the terminal stops Tauri; the wrapper
+sweeps the Vite child process so the dev port doesn't stay bound.
+
+The lower-level commands work too if you want to drive the two
+processes manually:
+
+```bash
+npm --prefix web run dev                # one terminal
+cd clients/desktop/src-tauri && cargo tauri dev   # another
+```
+
+## Smoke check (no full build)
+
+```bash
+make client-check        # cargo check, ~30s after first cache fill
+```
+
+Catches Rust-level regressions in audio.rs / lib.rs before paying
+for the full Tauri bundle. Use this when you don't trust a Rust
+change.
 
 ## Build a release
 
 ```bash
-npm --prefix ../../web run build        # produces web/dist
-cd src-tauri && cargo tauri build       # produces native installer per platform
+make client-build        # builds web → cargo tauri build
+# or on Windows:
+cd clients\desktop && .\build.ps1
 ```
 
-Output:
+Output (per platform):
 - Windows: `src-tauri/target/release/bundle/{msi,nsis}/OnScreen_<v>_x64.{msi,exe}`
 - macOS: `src-tauri/target/release/bundle/{dmg,macos}/OnScreen.{dmg,app}`
 - Linux: `src-tauri/target/release/bundle/{appimage,deb}/onscreen-<v>.{AppImage,deb}`
+
+First build after a clean checkout pulls ~300+ crates and takes
+5-10 minutes; subsequent builds with a warm cache land in 30-90s.
+
+## CI builds
+
+`.github/workflows/desktop-client.yml` builds installers on
+Windows / macOS / Linux for every tag push (`v*`) and on manual
+`workflow_dispatch`. PRs deliberately don't trigger this workflow
+because Tauri builds are slow — the regular `ci.yml` covers
+code-level regressions on every PR; this one exists to produce
+real installers without burning CI minutes on every commit.
+
+Trigger a build manually from the Actions tab → "Desktop client"
+→ "Run workflow", or push a `v*` tag. Installers land as workflow
+artefacts (`onscreen-desktop-Windows`, `onscreen-desktop-macOS`,
+`onscreen-desktop-Linux`) for 14 days.
 
 ## CORS / auth caveats for cross-origin native runs
 

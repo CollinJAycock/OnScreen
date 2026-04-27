@@ -10,7 +10,7 @@
 mod audio;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 /// Returned by `get_app_version` so the frontend can branch on
