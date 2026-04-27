@@ -36,6 +36,7 @@ type mockSettingsService struct {
 	setFleetCall *settings.WorkerFleetConfig // captures last SetWorkerFleet call
 	oidc         settings.OIDCConfig
 	ldap         settings.LDAPConfig
+	saml         settings.SAMLConfig
 	smtp         settings.SMTPConfig
 	otel         settings.OTelConfig
 	general      settings.GeneralConfig
@@ -113,6 +114,16 @@ func (m *mockSettingsService) SetLDAP(_ context.Context, cfg settings.LDAPConfig
 		return m.setErr
 	}
 	m.ldap = cfg
+	return nil
+}
+func (m *mockSettingsService) SAML(_ context.Context) settings.SAMLConfig {
+	return m.saml
+}
+func (m *mockSettingsService) SetSAML(_ context.Context, cfg settings.SAMLConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.saml = cfg
 	return nil
 }
 func (m *mockSettingsService) SMTP(_ context.Context) settings.SMTPConfig {
@@ -230,6 +241,113 @@ func TestSettings_Update_ServiceError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
+}
+
+// TestSettings_Update_SAMLRoundTrip covers the new SAML admin surface
+// (settings DTO field + Update handler block). Exercises the four
+// behaviors the form depends on:
+//   1. Fields are accepted and persisted.
+//   2. The "****" private-key sentinel is not written back over the
+//      stored value (so toggling Enabled doesn't wipe the SP key).
+//   3. Auto-generation of SP keypair on first Enable when not supplied.
+//   4. Mask round-trip — GET returns "****" for the stored private key.
+func TestSettings_Update_SAMLRoundTrip(t *testing.T) {
+	t.Run("persists supplied SAML fields", func(t *testing.T) {
+		svc := &mockSettingsService{}
+		h := newSettingsHandler(svc)
+		body := `{"saml":{"enabled":true,"display_name":"Company SSO","idp_metadata_url":"https://idp.example/metadata","sp_certificate_pem":"CERT-PEM","sp_private_key_pem":"KEY-PEM","email_attribute":"email","admin_group":"admins"}}`
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+		h.Update(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+		}
+		if !svc.saml.Enabled {
+			t.Errorf("Enabled not persisted: %+v", svc.saml)
+		}
+		if svc.saml.IdPMetadataURL != "https://idp.example/metadata" {
+			t.Errorf("IdPMetadataURL: got %q", svc.saml.IdPMetadataURL)
+		}
+		if svc.saml.SPCertificatePEM != "CERT-PEM" {
+			t.Errorf("SPCertificatePEM: got %q", svc.saml.SPCertificatePEM)
+		}
+		if svc.saml.SPPrivateKeyPEM != "KEY-PEM" {
+			t.Errorf("SPPrivateKeyPEM: got %q", svc.saml.SPPrivateKeyPEM)
+		}
+	})
+
+	t.Run("**** sentinel preserves stored private key", func(t *testing.T) {
+		svc := &mockSettingsService{
+			saml: settings.SAMLConfig{
+				Enabled:          true,
+				SPCertificatePEM: "STORED-CERT",
+				SPPrivateKeyPEM:  "STORED-KEY",
+			},
+		}
+		h := newSettingsHandler(svc)
+		body := `{"saml":{"display_name":"renamed","sp_private_key_pem":"****"}}`
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+		h.Update(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		if svc.saml.SPPrivateKeyPEM != "STORED-KEY" {
+			t.Errorf("private key clobbered by **** sentinel: %q", svc.saml.SPPrivateKeyPEM)
+		}
+		if svc.saml.DisplayName != "renamed" {
+			t.Errorf("DisplayName: got %q", svc.saml.DisplayName)
+		}
+	})
+
+	t.Run("auto-generates SP keypair when enabled with empty cert+key", func(t *testing.T) {
+		svc := &mockSettingsService{}
+		h := newSettingsHandler(svc)
+		body := `{"saml":{"enabled":true,"idp_metadata_url":"https://idp.example/metadata"}}`
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+		h.Update(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		if !strings.Contains(svc.saml.SPCertificatePEM, "BEGIN CERTIFICATE") {
+			t.Errorf("SP certificate not auto-generated: %q", svc.saml.SPCertificatePEM)
+		}
+		if !strings.Contains(svc.saml.SPPrivateKeyPEM, "BEGIN PRIVATE KEY") {
+			t.Errorf("SP private key not auto-generated: %q", svc.saml.SPPrivateKeyPEM)
+		}
+	})
+
+	t.Run("Get masks the stored private key", func(t *testing.T) {
+		svc := &mockSettingsService{
+			saml: settings.SAMLConfig{
+				Enabled:          true,
+				SPCertificatePEM: "PUBLIC-CERT",
+				SPPrivateKeyPEM:  "SECRET-KEY",
+			},
+		}
+		h := newSettingsHandler(svc)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/", nil)
+		h.Get(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		var resp struct {
+			Data struct {
+				SAML samlSettingDTO `json:"saml"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.Data.SAML.SPPrivateKeyPEM != "****" {
+			t.Errorf("private key not masked: %q", resp.Data.SAML.SPPrivateKeyPEM)
+		}
+		if resp.Data.SAML.SPCertificatePEM != "PUBLIC-CERT" {
+			t.Errorf("certificate should not be masked: %q", resp.Data.SAML.SPCertificatePEM)
+		}
+	})
 }
 
 func TestSettings_Update_OnlyTVDBKey(t *testing.T) {
