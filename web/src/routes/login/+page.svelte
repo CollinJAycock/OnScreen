@@ -11,6 +11,8 @@
   let oidcDisplayName = 'SSO';
   let ldapEnabled = false;
   let ldapDisplayName = 'LDAP';
+  let samlEnabled = false;
+  let samlDisplayName = 'SAML';
   let useLdap = false; // toggle the password form to LDAP mode
   let setupRequired = false;
   let forgotEnabled = false;
@@ -30,12 +32,14 @@
     const oauthError = params.get('error');
     if (oauthError === 'oidc_denied') error = 'Sign-in was cancelled.';
     else if (oauthError === 'oidc_disabled') error = 'OIDC sign-in is not configured.';
+    else if (oauthError === 'saml_disabled') error = 'SAML sign-in is not configured.';
     else if (oauthError === 'email_unverified') error = 'Your email is not verified.';
     else if (oauthError?.endsWith('_failed')) error = 'Sign-in failed. Please try again.';
 
-    const [oidc, ldap, forgot] = await Promise.allSettled([
+    const [oidc, ldap, saml, forgot] = await Promise.allSettled([
       authApi.oidcEnabled(),
       authApi.ldapEnabled(),
+      authApi.samlEnabled(),
       authApi.forgotPasswordEnabled()
     ]);
     if (oidc.status === 'fulfilled') {
@@ -45,6 +49,10 @@
     if (ldap.status === 'fulfilled') {
       ldapEnabled = ldap.value.enabled;
       ldapDisplayName = ldap.value.display_name || 'LDAP';
+    }
+    if (saml.status === 'fulfilled') {
+      samlEnabled = saml.value.enabled;
+      samlDisplayName = saml.value.display_name || 'SAML';
     }
     if (forgot.status === 'fulfilled') forgotEnabled = forgot.value.enabled;
   });
@@ -106,15 +114,25 @@
       {/if}
     </form>
 
-    {#if oidcEnabled}
+    {#if oidcEnabled || samlEnabled}
       <div class="divider"><span>or continue with</span></div>
       <div class="sso-buttons">
-        <button class="sso-btn" on:click={() => window.location.href = '/api/v1/auth/oidc'}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-            <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 4h2v8h-2V6zm0 10h2v2h-2v-2z"/>
-          </svg>
-          {oidcDisplayName}
-        </button>
+        {#if oidcEnabled}
+          <button class="sso-btn" on:click={() => window.location.href = '/api/v1/auth/oidc'}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+              <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 4h2v8h-2V6zm0 10h2v2h-2v-2z"/>
+            </svg>
+            {oidcDisplayName}
+          </button>
+        {/if}
+        {#if samlEnabled}
+          <button class="sso-btn" on:click={() => window.location.href = '/api/v1/auth/saml'}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+              <path d="M12 1a4 4 0 00-4 4v3H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2h-2V5a4 4 0 00-4-4zm-2 7V5a2 2 0 014 0v3h-4z"/>
+            </svg>
+            {samlDisplayName}
+          </button>
+        {/if}
       </div>
     {/if}
 

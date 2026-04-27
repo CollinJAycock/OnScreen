@@ -11,6 +11,7 @@ vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 const mockSetupStatus = vi.hoisted(() => vi.fn());
 const mockOidcEnabled = vi.hoisted(() => vi.fn());
 const mockLdapEnabled = vi.hoisted(() => vi.fn());
+const mockSamlEnabled = vi.hoisted(() => vi.fn());
 const mockForgotEnabled = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/api', () => ({
@@ -19,6 +20,7 @@ vi.mock('$lib/api', () => ({
     setupStatus: mockSetupStatus,
     oidcEnabled: mockOidcEnabled,
     ldapEnabled: mockLdapEnabled,
+    samlEnabled: mockSamlEnabled,
     forgotPasswordEnabled: mockForgotEnabled,
   },
   api: { setUser: mockSetUser }
@@ -31,6 +33,7 @@ describe('Login page', () => {
     mockSetupStatus.mockResolvedValue({ setup_required: false });
     mockOidcEnabled.mockResolvedValue({ enabled: false, display_name: '' });
     mockLdapEnabled.mockResolvedValue({ enabled: false, display_name: '' });
+    mockSamlEnabled.mockResolvedValue({ enabled: false, display_name: '' });
     mockForgotEnabled.mockResolvedValue({ enabled: false });
   });
 
@@ -112,5 +115,23 @@ describe('Login page', () => {
     await fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form')!);
     await waitFor(() => screen.getByText('bad'));
     expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  // Regression guard for the bug where SAML was configured server-side
+  // (admin form, /auth/saml/enabled returning true) but the login page
+  // never queried it — leaving users with no way to start the flow.
+  it('renders the SAML button when /auth/saml/enabled returns enabled', async () => {
+    mockSamlEnabled.mockResolvedValue({ enabled: true, display_name: 'Company SAML' });
+    render(Page);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /company saml/i })).toBeInTheDocument(),
+    );
+  });
+
+  it('does not render the SAML button when disabled', async () => {
+    render(Page);
+    // Wait for the enabled-fetches to settle, then assert no SAML button.
+    await waitFor(() => expect(mockSamlEnabled).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /saml/i })).toBeNull();
   });
 });
