@@ -275,6 +275,10 @@ export interface Library {
   agent: string;
   language: string;
   scan_interval_minutes?: number;
+  // Visibility flag (v2.1+). false = public (every authenticated user
+  // can see it); true = private (requires an explicit grant in the
+  // library_access table). Admins bypass this check entirely.
+  is_private: boolean;
   created_at: string;
   updated_at: string;
 }

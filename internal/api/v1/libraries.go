@@ -31,8 +31,13 @@ type LibraryResponse struct {
 	Agent               string   `json:"agent"`
 	Language            string   `json:"language"`
 	ScanIntervalMinutes *int     `json:"scan_interval_minutes,omitempty"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
+	// IsPrivate gates visibility: false means every authenticated user
+	// can see this library; true requires an explicit row in
+	// library_access. v2.1 addition; default false preserves the v2.0
+	// "everyone with auth sees everything" behaviour on existing rows.
+	IsPrivate bool   `json:"is_private"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func toLibraryResponse(lib *library.Library) LibraryResponse {
@@ -47,6 +52,7 @@ func toLibraryResponse(lib *library.Library) LibraryResponse {
 		ScanPaths: paths,
 		Agent:     lib.Agent,
 		Language:  lib.Lang,
+		IsPrivate: lib.IsPrivate,
 		CreatedAt: lib.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: lib.UpdatedAt.Format(time.RFC3339),
 	}
@@ -204,6 +210,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Language                string        `json:"language"`
 		ScanInterval            time.Duration `json:"scan_interval_ns"`
 		MetadataRefreshInterval time.Duration `json:"metadata_refresh_interval_ns"`
+		IsPrivate               bool          `json:"is_private"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -246,6 +253,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Lang:                    body.Language,
 		ScanInterval:            body.ScanInterval,
 		MetadataRefreshInterval: body.MetadataRefreshInterval,
+		IsPrivate:               body.IsPrivate,
 	})
 	if err != nil {
 		var ve *library.ValidationError
@@ -276,6 +284,9 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ScanIntervalMinutes     *int          `json:"scan_interval_minutes"`
 		ScanInterval            time.Duration `json:"scan_interval_ns"`
 		MetadataRefreshInterval time.Duration `json:"metadata_refresh_interval_ns"`
+		// Pointer for PATCH semantics: omitting the key keeps the
+		// current value, sending true/false flips it.
+		IsPrivate *bool `json:"is_private,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -295,6 +306,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Lang:                    body.Language,
 		ScanInterval:            scanInterval,
 		MetadataRefreshInterval: body.MetadataRefreshInterval,
+		IsPrivate:               body.IsPrivate,
 	})
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {

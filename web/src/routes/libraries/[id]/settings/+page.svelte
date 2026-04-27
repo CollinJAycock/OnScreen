@@ -23,6 +23,7 @@
   let agent = 'tmdb';
   let language = 'en';
   let scanIntervalMinutes = 60;
+  let isPrivate = false;
 
   let mounted = false;
   let prevId = '';
@@ -61,6 +62,7 @@
       agent = library.agent;
       language = library.language;
       scanIntervalMinutes = library.scan_interval_minutes ?? 60;
+      isPrivate = library.is_private ?? false;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally { loading = false; }
@@ -77,7 +79,7 @@
     if (!scanPaths.length) { error = 'At least one scan path is required'; return; }
     saving = true;
     try {
-      library = await libraryApi.update(id, { name: name.trim(), scan_paths: scanPaths, agent, language, scan_interval_minutes: scanIntervalMinutes });
+      library = await libraryApi.update(id, { name: name.trim(), scan_paths: scanPaths, agent, language, scan_interval_minutes: scanIntervalMinutes, is_private: isPrivate });
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
     } catch (e: unknown) {
@@ -214,6 +216,21 @@
         </div>
       </section>
 
+      <section>
+        <div class="sec-label">Visibility</div>
+        <label class="check-row">
+          <input type="checkbox" bind:checked={isPrivate} />
+          <span>
+            <span class="check-title">Private library</span>
+            <span class="check-help">
+              When on, only users explicitly granted access in
+              <a href="/settings/users">Users</a> can see this library.
+              When off, every authenticated user can see it.
+            </span>
+          </span>
+        </label>
+      </section>
+
       <div class="form-foot">
         <a href="/libraries/{id}" class="btn-ghost">Cancel</a>
         <button type="submit" class="btn-save" disabled={saving}>
@@ -310,6 +327,15 @@
 
   .field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.65rem; }
   .field:last-child { margin-bottom: 0; }
+  .check-row {
+    display: flex; align-items: flex-start; gap: 0.6rem;
+    cursor: pointer; padding: 0.4rem 0;
+  }
+  .check-row input[type="checkbox"] { margin-top: 0.2rem; flex-shrink: 0; }
+  .check-row > span { display: flex; flex-direction: column; gap: 0.2rem; }
+  .check-title { font-size: 0.85rem; font-weight: 500; color: var(--text-primary); }
+  .check-help { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
+  .check-help a { color: var(--accent); text-decoration: none; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
   label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
 

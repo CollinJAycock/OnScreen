@@ -130,6 +130,7 @@ func genLibToLib(g gen.Library) library.Library {
 		Paths:                   g.ScanPaths,
 		Agent:                   g.Agent,
 		Lang:                    g.Language,
+		IsPrivate:               g.IsPrivate,
 		ScanInterval:            durationToPtr(g.ScanInterval),
 		ScanLastCompletedAt:     pgtimeTZ(g.ScanLastCompletedAt),
 		MetadataRefreshInterval: durationToPtr(g.MetadataRefreshInterval),
@@ -149,6 +150,7 @@ func libCreateParamsToGen(p library.CreateLibraryParams) gen.CreateLibraryParams
 		Language:                p.Lang,
 		ScanInterval:            p.ScanInterval,
 		MetadataRefreshInterval: p.MetadataRefreshInterval,
+		IsPrivate:               p.IsPrivate,
 	}
 }
 
@@ -161,6 +163,7 @@ func libUpdateParamsToGen(p library.UpdateLibraryParams) gen.UpdateLibraryParams
 		Language:                p.Lang,
 		ScanInterval:            p.ScanInterval,
 		MetadataRefreshInterval: p.MetadataRefreshInterval,
+		IsPrivate:               p.IsPrivate,
 	}
 }
 

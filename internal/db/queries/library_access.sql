@@ -7,11 +7,21 @@ FROM library_access
 WHERE user_id = $1;
 
 -- name: HasLibraryAccess :one
--- Cheap single-row existence check used by handlers that take a library_id
--- or item_id. Callers should skip for admins.
+-- Cheap single-row check used by handlers that take a library_id or
+-- item_id. Callers should skip for admins.
+--
+-- v2.1 semantics: a user can access a library when *either* the
+-- library is public (is_private = false, the v2.0 default) *or* the
+-- user has an explicit grant in library_access. Public-by-default
+-- preserves backward compatibility on existing installs where no
+-- libraries were marked private.
 SELECT EXISTS(
-    SELECT 1 FROM library_access
-    WHERE user_id = $1 AND library_id = $2
+    SELECT 1 FROM libraries l
+    LEFT JOIN library_access la
+        ON la.library_id = l.id AND la.user_id = sqlc.arg('user_id')
+    WHERE l.id = sqlc.arg('library_id')
+      AND l.deleted_at IS NULL
+      AND (l.is_private = false OR la.library_id IS NOT NULL)
 ) AS allowed;
 
 -- name: GrantLibraryAccess :exec
@@ -29,9 +39,18 @@ WHERE user_id = $1 AND library_id = $2;
 DELETE FROM library_access WHERE user_id = $1;
 
 -- name: ListAllowedLibraryIDsForUser :many
--- Returns only library IDs the user can see, joined against libraries so
--- soft-deleted rows are excluded. Used by list endpoints that filter.
-SELECT la.library_id
-FROM library_access la
-JOIN libraries l ON l.id = la.library_id
-WHERE la.user_id = $1 AND l.deleted_at IS NULL;
+-- Returns library IDs the user can see — the v2.1 model is the union
+-- of (public libraries) and (libraries the user has been explicitly
+-- granted). Public-by-default preserves the v2.0 behaviour where any
+-- user with auth could see any library; private libraries require an
+-- explicit grant in library_access.
+--
+-- DISTINCT because a library could match both branches when an admin
+-- toggles is_private=false on a library that previously had grants
+-- recorded — we don't want duplicate IDs in the caller's set.
+SELECT DISTINCT l.id AS library_id
+FROM libraries l
+LEFT JOIN library_access la
+    ON la.library_id = l.id AND la.user_id = $1
+WHERE l.deleted_at IS NULL
+  AND (l.is_private = false OR la.library_id IS NOT NULL);

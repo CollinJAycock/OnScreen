@@ -24,10 +24,17 @@ var (
 type Library struct {
 	ID    uuid.UUID
 	Name  string
-	Type  string // "movie" | "show" | "music" | "photo"
+	Type  string // "movie" | "show" | "music" | "photo" | ...
 	Paths []string
 	Agent string
 	Lang  string
+
+	// IsPrivate gates library visibility. false (the default) means
+	// every authenticated user can see it; true requires an explicit
+	// row in library_access for each user. v2.1 addition — public-by-
+	// default preserves v2.0 behaviour where no libraries were
+	// effectively private.
+	IsPrivate bool
 
 	ScanInterval            *time.Duration
 	ScanLastCompletedAt     *time.Time
@@ -48,6 +55,7 @@ type CreateLibraryParams struct {
 	Lang                    string
 	ScanInterval            time.Duration
 	MetadataRefreshInterval time.Duration
+	IsPrivate               bool
 }
 
 // UpdateLibraryParams holds the fields that can be updated.
@@ -59,6 +67,7 @@ type UpdateLibraryParams struct {
 	Lang                    string
 	ScanInterval            time.Duration
 	MetadataRefreshInterval time.Duration
+	IsPrivate               *bool // pointer for PATCH semantics: nil = unchanged
 }
 
 // Querier is the subset of gen.Querier that this service needs.
