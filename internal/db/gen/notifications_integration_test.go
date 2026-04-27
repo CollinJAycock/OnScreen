@@ -45,7 +45,7 @@ func TestNotifications_Integration_CreateAndCount(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		createNotif(t, q, user, "scan.complete", "Scan done")
+		createNotif(t, q, user, "scan_complete", "Scan done")
 	}
 
 	got, err := q.CountUnreadNotifications(ctx, user)
@@ -66,9 +66,9 @@ func TestNotifications_Integration_MarkOneAsReadDoesntAffectOthers(t *testing.T)
 	ctx := context.Background()
 
 	user := seedUser(ctx, t, q, "notif-mark-"+uuid.New().String()[:8])
-	n1 := createNotif(t, q, user, "x", "one")
-	n2 := createNotif(t, q, user, "x", "two")
-	n3 := createNotif(t, q, user, "x", "three")
+	n1 := createNotif(t, q, user, "system", "one")
+	n2 := createNotif(t, q, user, "system", "two")
+	n3 := createNotif(t, q, user, "system", "three")
 
 	if err := q.MarkNotificationRead(ctx, gen.MarkNotificationReadParams{
 		ID: n2.ID, UserID: user,
@@ -117,8 +117,8 @@ func TestNotifications_Integration_MarkAllReadIsUserScoped(t *testing.T) {
 	alice := seedUser(ctx, t, q, "notif-alice-"+uuid.New().String()[:8])
 	bob := seedUser(ctx, t, q, "notif-bob-"+uuid.New().String()[:8])
 
-	createNotif(t, q, alice, "x", "alice msg")
-	createNotif(t, q, bob, "x", "bob msg")
+	createNotif(t, q, alice, "system", "alice msg")
+	createNotif(t, q, bob, "system", "bob msg")
 
 	if err := q.MarkAllNotificationsRead(ctx, alice); err != nil {
 		t.Fatalf("MarkAllNotificationsRead: %v", err)
@@ -143,9 +143,9 @@ func TestNotifications_Integration_ListIsUserScoped(t *testing.T) {
 	alice := seedUser(ctx, t, q, "notif-lst-a-"+uuid.New().String()[:8])
 	bob := seedUser(ctx, t, q, "notif-lst-b-"+uuid.New().String()[:8])
 
-	createNotif(t, q, alice, "x", "alice 1")
-	createNotif(t, q, alice, "x", "alice 2")
-	createNotif(t, q, bob, "x", "bob 1")
+	createNotif(t, q, alice, "system", "alice 1")
+	createNotif(t, q, alice, "system", "alice 2")
+	createNotif(t, q, bob, "system", "bob 1")
 
 	rows, err := q.ListNotifications(ctx, gen.ListNotificationsParams{
 		UserID: alice, Limit: 100, Offset: 0,

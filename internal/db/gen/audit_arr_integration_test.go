@@ -99,12 +99,15 @@ func TestAudit_Integration_ListIsNewestFirst(t *testing.T) {
 
 func newArrService(name, kind string, isDefault, enabled bool) gen.CreateArrServiceParams {
 	return gen.CreateArrServiceParams{
-		Name:      name,
-		Kind:      kind,
-		BaseUrl:   "https://" + kind + ".example.com",
-		ApiKey:    "k-" + uuid.New().String(),
-		IsDefault: isDefault,
-		Enabled:   enabled,
+		Name:    name,
+		Kind:    kind,
+		BaseUrl: "https://" + kind + ".example.com",
+		ApiKey:  "k-" + uuid.New().String(),
+		// default_tags is JSONB NOT NULL DEFAULT '[]' in 00038_requests.sql.
+		// Sqlc requires non-nil; "[]" matches the DEFAULT shape.
+		DefaultTags: []byte("[]"),
+		IsDefault:   isDefault,
+		Enabled:     enabled,
 	}
 }
 

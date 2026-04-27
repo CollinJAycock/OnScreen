@@ -22,9 +22,10 @@ import (
 func newPluginParams(name string, allowedHosts []string, enabled bool) gen.CreatePluginParams {
 	hosts, _ := json.Marshal(allowedHosts)
 	return gen.CreatePluginParams{
-		Name:         name,
-		Role:         "notification",
-		Transport:    "streamable_http",
+		Name: name,
+		Role: "notification",
+		// transport is constrained to 'http' in 00036_plugins.sql.
+		Transport:    "http",
 		EndpointUrl:  "https://" + name + ".example.com/mcp",
 		AllowedHosts: hosts,
 		Enabled:      enabled,
@@ -124,8 +125,9 @@ func TestPlugins_Integration_ListEnabledByRoleFiltersByRole(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	modParams := newPluginParams("role-mod-"+uuid.New().String()[:6], nil, true)
-	modParams.Role = "moderation"
+	modParams := newPluginParams("role-meta-"+uuid.New().String()[:6], nil, true)
+	// Allowed roles are 'notification', 'metadata', 'task' (00036_plugins.sql).
+	modParams.Role = "metadata"
 	mod, err := q.CreatePlugin(ctx, modParams)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +150,7 @@ func TestPlugins_Integration_ListEnabledByRoleFiltersByRole(t *testing.T) {
 		t.Error("notification plugin should appear")
 	}
 	if sawMod {
-		t.Error("moderation plugin must NOT appear — wrong role")
+		t.Error("metadata plugin must NOT appear in notification-role list")
 	}
 }
 

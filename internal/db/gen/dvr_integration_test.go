@@ -10,11 +10,13 @@ package gen_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/testdb"
@@ -40,6 +42,26 @@ func seedTunerChannel(t *testing.T, q *gen.Queries, name string) uuid.UUID {
 		t.Fatalf("UpsertChannel: %v", err)
 	}
 	return ch.ID
+}
+
+// seedEPGProgram inserts a single EPG row on the given channel and
+// returns its ID. recordings.program_id has a FK on epg_programs(id);
+// without a real row the upsert fails on insert.
+//
+// The generated UpsertEPGProgram returns only error (not the row ID), so
+// we hit the table directly with INSERT...RETURNING id.
+func seedEPGProgram(t *testing.T, pool *pgxpool.Pool, channelID uuid.UUID, sourceID string, starts, ends time.Time) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO epg_programs (channel_id, source_program_id, title, starts_at, ends_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id
+	`, channelID, sourceID, "Test Program", starts, ends).Scan(&id)
+	if err != nil {
+		t.Fatalf("seedEPGProgram: %v", err)
+	}
+	return id
 }
 
 // TestDVR_Integration_ScheduleCRUDRoundTrip — every field set on
@@ -113,13 +135,21 @@ func TestDVR_Integration_ListEnabledSchedulesSkipsDisabled(t *testing.T) {
 	user := seedUser(ctx, t, q, "dvr-le-"+uuid.New().String()[:8])
 	chID := seedTunerChannel(t, q, "dvr-le-tuner-"+uuid.New().String()[:6])
 
-	on, _ := q.CreateSchedule(ctx, gen.CreateScheduleParams{
-		UserID: user, Type: "channel", ChannelID: pgtype.UUID{Bytes: chID, Valid: true},
+	on, err := q.CreateSchedule(ctx, gen.CreateScheduleParams{
+		UserID: user, Type: "channel_block", ChannelID: pgtype.UUID{Bytes: chID, Valid: true},
 	})
-	off, _ := q.CreateSchedule(ctx, gen.CreateScheduleParams{
-		UserID: user, Type: "channel", ChannelID: pgtype.UUID{Bytes: chID, Valid: true},
+	if err != nil {
+		t.Fatalf("CreateSchedule (on): %v", err)
+	}
+	off, err := q.CreateSchedule(ctx, gen.CreateScheduleParams{
+		UserID: user, Type: "channel_block", ChannelID: pgtype.UUID{Bytes: chID, Valid: true},
 	})
-	_ = q.SetScheduleEnabled(ctx, gen.SetScheduleEnabledParams{ID: off.ID, Enabled: false})
+	if err != nil {
+		t.Fatalf("CreateSchedule (off): %v", err)
+	}
+	if err := q.SetScheduleEnabled(ctx, gen.SetScheduleEnabledParams{ID: off.ID, Enabled: false}); err != nil {
+		t.Fatalf("SetScheduleEnabled: %v", err)
+	}
 
 	rows, err := q.ListEnabledSchedules(ctx)
 	if err != nil {
@@ -154,10 +184,11 @@ func TestDVR_Integration_UpsertRecordingIsIdempotent(t *testing.T) {
 
 	user := seedUser(ctx, t, q, "dvr-up-"+uuid.New().String()[:8])
 	chID := seedTunerChannel(t, q, "dvr-up-tuner-"+uuid.New().String()[:6])
-	programID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 
 	starts := pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}
 	ends := pgtype.Timestamptz{Time: time.Now().Add(2 * time.Hour), Valid: true}
+	progID := seedEPGProgram(t, pool, chID, "EP-up-"+uuid.New().String()[:6], starts.Time, ends.Time)
+	programID := pgtype.UUID{Bytes: progID, Valid: true}
 	r1, err := q.UpsertRecording(ctx, gen.UpsertRecordingParams{
 		UserID: user, ChannelID: chID, ProgramID: programID,
 		Title: "v1", StartsAt: starts, EndsAt: ends,
@@ -193,12 +224,15 @@ func TestDVR_Integration_RecordingStatusTransitions(t *testing.T) {
 
 	user := seedUser(ctx, t, q, "dvr-trans-"+uuid.New().String()[:8])
 	chID := seedTunerChannel(t, q, "dvr-trans-tuner-"+uuid.New().String()[:6])
+	starts := time.Now()
+	ends := starts.Add(time.Hour)
+	progID := seedEPGProgram(t, pool, chID, "EP-trans-"+uuid.New().String()[:6], starts, ends)
 	r, err := q.UpsertRecording(ctx, gen.UpsertRecordingParams{
 		UserID: user, ChannelID: chID,
-		ProgramID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProgramID: pgtype.UUID{Bytes: progID, Valid: true},
 		Title:     "Show",
-		StartsAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		EndsAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		StartsAt:  pgtype.Timestamptz{Time: starts, Valid: true},
+		EndsAt:    pgtype.Timestamptz{Time: ends, Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -233,8 +267,11 @@ func TestDVR_Integration_RecordingStatusTransitions(t *testing.T) {
 		t.Error("recording missing from ListActiveRecordings while in 'recording' state")
 	}
 
-	// Complete with media_items link.
-	itemID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	// Complete with media_items link. recordings.item_id has a FK on
+	// media_items so we need a real row, not a synthetic uuid.
+	lib := seedLibrary(ctx, t, q, "dvr-trans-lib-"+uuid.New().String()[:8])
+	mediaID := seedMediaItem(ctx, t, q, lib, "Recorded Show")
+	itemID := pgtype.UUID{Bytes: mediaID, Valid: true}
 	if err := q.SetRecordingCompleted(ctx, gen.SetRecordingCompletedParams{
 		ID: r.ID, ItemID: itemID,
 	}); err != nil {
@@ -268,21 +305,33 @@ func TestDVR_Integration_ListDueRecordingsTimeBound(t *testing.T) {
 	chID := seedTunerChannel(t, q, "dvr-due-tuner-"+uuid.New().String()[:6])
 
 	// Soon — should appear at the 1h cutoff.
-	soon, _ := q.UpsertRecording(ctx, gen.UpsertRecordingParams{
+	soonStart := time.Now().Add(10 * time.Minute)
+	soonEnd := time.Now().Add(time.Hour)
+	soonProg := seedEPGProgram(t, pool, chID, "EP-soon-"+uuid.New().String()[:6], soonStart, soonEnd)
+	soon, err := q.UpsertRecording(ctx, gen.UpsertRecordingParams{
 		UserID: user, ChannelID: chID,
-		ProgramID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProgramID: pgtype.UUID{Bytes: soonProg, Valid: true},
 		Title:     "Soon",
-		StartsAt:  pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
-		EndsAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		StartsAt:  pgtype.Timestamptz{Time: soonStart, Valid: true},
+		EndsAt:    pgtype.Timestamptz{Time: soonEnd, Valid: true},
 	})
+	if err != nil {
+		t.Fatalf("UpsertRecording (soon): %v", err)
+	}
 	// Later — should NOT appear.
-	later, _ := q.UpsertRecording(ctx, gen.UpsertRecordingParams{
+	laterStart := time.Now().Add(3 * time.Hour)
+	laterEnd := time.Now().Add(4 * time.Hour)
+	laterProg := seedEPGProgram(t, pool, chID, "EP-later-"+uuid.New().String()[:6], laterStart, laterEnd)
+	later, err := q.UpsertRecording(ctx, gen.UpsertRecordingParams{
 		UserID: user, ChannelID: chID,
-		ProgramID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProgramID: pgtype.UUID{Bytes: laterProg, Valid: true},
 		Title:     "Later",
-		StartsAt:  pgtype.Timestamptz{Time: time.Now().Add(3 * time.Hour), Valid: true},
-		EndsAt:    pgtype.Timestamptz{Time: time.Now().Add(4 * time.Hour), Valid: true},
+		StartsAt:  pgtype.Timestamptz{Time: laterStart, Valid: true},
+		EndsAt:    pgtype.Timestamptz{Time: laterEnd, Valid: true},
 	})
+	if err != nil {
+		t.Fatalf("UpsertRecording (later): %v", err)
+	}
 
 	due, err := q.ListDueRecordings(ctx, pgtype.Timestamptz{
 		Time: time.Now().Add(time.Hour), Valid: true,
@@ -317,14 +366,21 @@ func TestDVR_Integration_ListRecordingsForUserStatusFilter(t *testing.T) {
 	user := seedUser(ctx, t, q, "dvr-stat-"+uuid.New().String()[:8])
 	chID := seedTunerChannel(t, q, "dvr-stat-tuner-"+uuid.New().String()[:6])
 
+	starts := time.Now()
+	ends := starts.Add(time.Hour)
 	for i := 0; i < 3; i++ {
-		_, _ = q.UpsertRecording(ctx, gen.UpsertRecordingParams{
+		progID := seedEPGProgram(t, pool, chID,
+			fmt.Sprintf("EP-stat-%d-%s", i, uuid.New().String()[:6]),
+			starts, ends)
+		if _, err := q.UpsertRecording(ctx, gen.UpsertRecordingParams{
 			UserID: user, ChannelID: chID,
-			ProgramID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			ProgramID: pgtype.UUID{Bytes: progID, Valid: true},
 			Title:     "row",
-			StartsAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			EndsAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-		})
+			StartsAt:  pgtype.Timestamptz{Time: starts, Valid: true},
+			EndsAt:    pgtype.Timestamptz{Time: ends, Valid: true},
+		}); err != nil {
+			t.Fatalf("UpsertRecording (row %d): %v", i, err)
+		}
 	}
 
 	// Without filter — get all 3.
