@@ -27,6 +27,9 @@ type mockHubDB struct {
 
 	raRows []gen.ListRecentlyAddedRow
 	raErr  error
+
+	trRows []gen.ListTrendingRow
+	trErr  error
 }
 
 func (m *mockHubDB) ListContinueWatching(_ context.Context, _ gen.ListContinueWatchingParams) ([]gen.ListContinueWatchingRow, error) {
@@ -41,6 +44,13 @@ func (m *mockHubDB) ListRecentlyAdded(_ context.Context, _ gen.ListRecentlyAdded
 		return nil, m.raErr
 	}
 	return m.raRows, nil
+}
+
+func (m *mockHubDB) ListTrending(_ context.Context, _ gen.ListTrendingParams) ([]gen.ListTrendingRow, error) {
+	if m.trErr != nil {
+		return nil, m.trErr
+	}
+	return m.trRows, nil
 }
 
 func newHubHandler(db *mockHubDB) *HubHandler {
@@ -110,6 +120,116 @@ func TestHub_Get_Success(t *testing.T) {
 	if resp.Data.RecentlyAdded[0].Title != "The Matrix" {
 		t.Errorf("ra title: got %q, want %q", resp.Data.RecentlyAdded[0].Title, "The Matrix")
 	}
+}
+
+// TestHub_Get_Trending covers the v2.1 trending row — every-user-same
+// "what others are watching" surface aggregated from watch_events. The
+// handler's job is to (1) cap output at 12, (2) filter by library
+// access, (3) tolerate a ListTrending error without nuking the rest of
+// the hub.
+func TestHub_Get_Trending(t *testing.T) {
+	t.Run("populates trending row from ListTrending", func(t *testing.T) {
+		year := int32(1999)
+		db := &mockHubDB{
+			trRows: []gen.ListTrendingRow{
+				{ID: uuid.New(), LibraryID: uuid.New(), Title: "The Matrix", Type: "movie", Year: &year, UpdatedAt: pgtype.Timestamptz{Valid: false}},
+				{ID: uuid.New(), LibraryID: uuid.New(), Title: "Fight Club", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}},
+			},
+		}
+		h := newHubHandler(db)
+		rec := httptest.NewRecorder()
+		req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+		h.Get(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		var resp struct {
+			Data HubResponse `json:"data"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if len(resp.Data.Trending) != 2 {
+			t.Errorf("trending: got %d, want 2", len(resp.Data.Trending))
+		}
+	})
+
+	t.Run("caps trending at 12 even when ListTrending returns more", func(t *testing.T) {
+		var rows []gen.ListTrendingRow
+		for i := 0; i < 30; i++ {
+			rows = append(rows, gen.ListTrendingRow{
+				ID:        uuid.New(),
+				LibraryID: uuid.New(),
+				Title:     "X",
+				Type:      "movie",
+				UpdatedAt: pgtype.Timestamptz{Valid: false},
+			})
+		}
+		db := &mockHubDB{trRows: rows}
+		h := newHubHandler(db)
+		rec := httptest.NewRecorder()
+		req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+		h.Get(rec, req)
+		var resp struct {
+			Data HubResponse `json:"data"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if len(resp.Data.Trending) != 12 {
+			t.Errorf("trending cap: got %d, want 12", len(resp.Data.Trending))
+		}
+	})
+
+	t.Run("ListTrending error returns empty trending without nuking the hub", func(t *testing.T) {
+		db := &mockHubDB{
+			cwRows: []gen.ListContinueWatchingRow{{ID: uuid.New(), LibraryID: uuid.New(), Title: "Inception", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}}},
+			trErr:  errors.New("trending query failed"),
+		}
+		h := newHubHandler(db)
+		rec := httptest.NewRecorder()
+		req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+		h.Get(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		var resp struct {
+			Data HubResponse `json:"data"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if len(resp.Data.Trending) != 0 {
+			t.Errorf("trending should be empty on error, got %d", len(resp.Data.Trending))
+		}
+		if len(resp.Data.ContinueWatching) != 1 {
+			t.Errorf("continue_watching should still populate when trending errors, got %d", len(resp.Data.ContinueWatching))
+		}
+	})
+
+	t.Run("library access filters out non-allowed trending items", func(t *testing.T) {
+		allowedLib := uuid.New()
+		blockedLib := uuid.New()
+		db := &mockHubDB{
+			trRows: []gen.ListTrendingRow{
+				{ID: uuid.New(), LibraryID: allowedLib, Title: "Allowed", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}},
+				{ID: uuid.New(), LibraryID: blockedLib, Title: "Blocked", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}},
+				{ID: uuid.New(), LibraryID: allowedLib, Title: "Allowed 2", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}},
+			},
+		}
+		h := newHubHandler(db).WithLibraryAccess(&stubLibraryAccessChecker{
+			allowed: map[uuid.UUID]struct{}{allowedLib: {}},
+		})
+		rec := httptest.NewRecorder()
+		req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+		h.Get(rec, req)
+		var resp struct {
+			Data HubResponse `json:"data"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if len(resp.Data.Trending) != 2 {
+			t.Errorf("trending after lib filter: got %d, want 2 (Blocked dropped)", len(resp.Data.Trending))
+		}
+		for _, it := range resp.Data.Trending {
+			if it.Title == "Blocked" {
+				t.Errorf("Blocked item leaked through library access filter")
+			}
+		}
+	})
 }
 
 func TestHub_Get_EmptySections(t *testing.T) {

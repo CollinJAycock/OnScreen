@@ -3393,6 +3393,91 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 	return items, nil
 }
 
+const listTrending = `-- name: ListTrending :many
+SELECT m.id, m.library_id, m.type, m.title,
+       m.year, m.poster_path, m.fanart_path, m.thumb_path,
+       m.duration_ms, m.updated_at,
+       COUNT(DISTINCT we.user_id) AS unique_viewers,
+       COUNT(*) AS total_events
+FROM media_items m
+JOIN watch_events we ON we.media_id = m.id
+WHERE m.deleted_at IS NULL
+  AND m.type IN ('movie', 'episode')
+  AND we.event_type IN ('play', 'scrobble', 'stop')
+  AND we.occurred_at >= NOW() - make_interval(days => $1::int)
+  AND ($2::int IS NULL OR content_rating_rank(m.content_rating) <= $2)
+GROUP BY m.id
+ORDER BY unique_viewers DESC, total_events DESC, m.updated_at DESC
+LIMIT $3::int
+`
+
+type ListTrendingParams struct {
+	WindowDays    int32  `json:"window_days"`
+	MaxRatingRank *int32 `json:"max_rating_rank"`
+	ResultLimit   int32  `json:"result_limit"`
+}
+
+type ListTrendingRow struct {
+	ID            uuid.UUID          `json:"id"`
+	LibraryID     uuid.UUID          `json:"library_id"`
+	Type          string             `json:"type"`
+	Title         string             `json:"title"`
+	Year          *int32             `json:"year"`
+	PosterPath    *string            `json:"poster_path"`
+	FanartPath    *string            `json:"fanart_path"`
+	ThumbPath     *string            `json:"thumb_path"`
+	DurationMs    *int64             `json:"duration_ms"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	UniqueViewers int64              `json:"unique_viewers"`
+	TotalEvents   int64              `json:"total_events"`
+}
+
+// Top-N items watched across all users within a rolling window. Counts
+// distinct users per item so one binge-watcher can't dominate the row;
+// ties broken by total event count. Filters mirror ContinueWatching:
+// only playable types (movie / episode), only items still present
+// (deleted_at IS NULL), parental rating ceiling enforced.
+//
+// The trending row is global (not per-user) — same content shown to
+// every user. Library access is filtered out in the handler since
+// the query doesn't know the caller's grant set.
+//
+// Window is passed as an integer day count (typed via int4) so
+// callers can swap 7 / 30 / 365 without a query rewrite. make_interval
+// gives postgres the typed interval the comparison needs.
+func (q *Queries) ListTrending(ctx context.Context, arg ListTrendingParams) ([]ListTrendingRow, error) {
+	rows, err := q.db.Query(ctx, listTrending, arg.WindowDays, arg.MaxRatingRank, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTrendingRow{}
+	for rows.Next() {
+		var i ListTrendingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.Year,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.DurationMs,
+			&i.UpdatedAt,
+			&i.UniqueViewers,
+			&i.TotalEvents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listYearsWithCounts = `-- name: ListYearsWithCounts :many
 SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items

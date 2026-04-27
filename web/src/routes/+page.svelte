@@ -7,6 +7,7 @@
   let libraries: Library[] = [];
   let continueWatching: HubItem[] = [];
   let recentlyAddedByLibrary: HubLibraryRow[] = [];
+  let trending: HubItem[] = [];
   let loading = true;
   let error = '';
   let confirmDelete: Library | null = null;
@@ -40,6 +41,7 @@
       const hub = await hubApi.get();
       continueWatching = hub.continue_watching;
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
+      trending = hub.trending ?? [];
     } catch { /* silently skip — next poll will retry */ }
   }
 
@@ -50,6 +52,7 @@
       libraries = libs;
       continueWatching = hub.continue_watching;
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
+      trending = hub.trending ?? [];
     }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load'; }
     finally { loading = false; }
@@ -156,6 +159,32 @@
               <div class="hub-progress">
                 <div class="hub-progress-bar" style="width:{progressPct(item)}%"></div>
               </div>
+              <div class="hub-label">{item.title}</div>
+              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
+            </a>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    <!-- Trending — what others are watching across the library this week. -->
+    {#if trending.length > 0}
+      <section class="hub-section">
+        <h2 class="hub-title">Trending this week</h2>
+        <div class="hub-scroll">
+          {#each trending as item (item.id)}
+            {@const art = item.poster_path ?? item.thumb_path}
+            <a class="hub-card" href={hubHref(item)}>
+              {#if art}
+                <img src="/artwork/{encodeURI(art)}?v={item.updated_at}&w=300"
+                     srcset="/artwork/{encodeURI(art)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(art)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(art)}?v={item.updated_at}&w=450 450w"
+                     sizes="(max-width: 768px) 130px, 220px"
+                     alt={item.title} loading="lazy" />
+              {:else}
+                <div class="hub-poster-blank">
+                  <span>{item.title[0]?.toUpperCase()}</span>
+                </div>
+              {/if}
               <div class="hub-label">{item.title}</div>
               {#if item.year}<div class="hub-year">{item.year}</div>{/if}
             </a>

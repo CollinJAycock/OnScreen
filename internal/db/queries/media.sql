@@ -770,6 +770,36 @@ WHERE ws.user_id = $1
 ORDER BY ws.last_watched_at DESC
 LIMIT $2;
 
+-- name: ListTrending :many
+-- Top-N items watched across all users within a rolling window. Counts
+-- distinct users per item so one binge-watcher can't dominate the row;
+-- ties broken by total event count. Filters mirror ContinueWatching:
+-- only playable types (movie / episode), only items still present
+-- (deleted_at IS NULL), parental rating ceiling enforced.
+--
+-- The trending row is global (not per-user) — same content shown to
+-- every user. Library access is filtered out in the handler since
+-- the query doesn't know the caller's grant set.
+--
+-- Window is passed as an integer day count (typed via int4) so
+-- callers can swap 7 / 30 / 365 without a query rewrite. make_interval
+-- gives postgres the typed interval the comparison needs.
+SELECT m.id, m.library_id, m.type, m.title,
+       m.year, m.poster_path, m.fanart_path, m.thumb_path,
+       m.duration_ms, m.updated_at,
+       COUNT(DISTINCT we.user_id) AS unique_viewers,
+       COUNT(*) AS total_events
+FROM media_items m
+JOIN watch_events we ON we.media_id = m.id
+WHERE m.deleted_at IS NULL
+  AND m.type IN ('movie', 'episode')
+  AND we.event_type IN ('play', 'scrobble', 'stop')
+  AND we.occurred_at >= NOW() - make_interval(days => sqlc.arg('window_days')::int)
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+GROUP BY m.id
+ORDER BY unique_viewers DESC, total_events DESC, m.updated_at DESC
+LIMIT sqlc.arg('result_limit')::int;
+
 -- ── Media Files ───────────────────────────────────────────────────────────────
 
 -- name: GetMediaFile :one

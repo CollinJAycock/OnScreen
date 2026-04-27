@@ -1270,6 +1270,10 @@ export interface HubData {
   continue_watching: HubItem[];
   recently_added: HubItem[];
   recently_added_by_library: HubLibraryRow[];
+  // Global "what others are watching" row aggregated from watch_events
+  // over the last 7 days. Same content for every user (no
+  // personalisation), filtered to library access + parental ceiling.
+  trending: HubItem[];
 }
 
 export const hubApi = {

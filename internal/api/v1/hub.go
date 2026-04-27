@@ -21,6 +21,7 @@ import (
 type HubDB interface {
 	ListContinueWatching(ctx context.Context, arg gen.ListContinueWatchingParams) ([]gen.ListContinueWatchingRow, error)
 	ListRecentlyAdded(ctx context.Context, arg gen.ListRecentlyAddedParams) ([]gen.ListRecentlyAddedRow, error)
+	ListTrending(ctx context.Context, arg gen.ListTrendingParams) ([]gen.ListTrendingRow, error)
 }
 
 // HubLibraryLister returns the libraries the home page should surface
@@ -65,6 +66,7 @@ type HubResponse struct {
 	ContinueWatching []HubItem       `json:"continue_watching"`
 	RecentlyAdded    []HubItem       `json:"recently_added"`
 	ByLibrary        []HubLibraryRow `json:"recently_added_by_library"`
+	Trending         []HubItem       `json:"trending"`
 }
 
 // HubLibraryRow is one "Recently added to <library>" strip on the home
@@ -103,6 +105,7 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ContinueWatching: []HubItem{},
 		RecentlyAdded:    []HubItem{},
 		ByLibrary:        []HubLibraryRow{},
+		Trending:         []HubItem{},
 	}
 
 	// Convert max content rating from claims to a rank for SQL filtering.
@@ -200,6 +203,40 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Queries run in parallel because they're independent PK-indexed reads.
 	if h.libs != nil {
 		out.ByLibrary = h.perLibraryRecentlyAdded(r.Context(), libAllowed, maxRank)
+	}
+
+	// Trending — global "what others are watching" row over the last 7
+	// days. Same content for every user (no personalisation), filtered
+	// down by the caller's library access + parental ceiling. 30 raw
+	// rows so the post-access-filter result still has 12+ candidates
+	// even for a heavily-restricted user.
+	trRows, err := h.db.ListTrending(r.Context(), gen.ListTrendingParams{
+		WindowDays:    7,
+		MaxRatingRank: maxRank,
+		ResultLimit:   30,
+	})
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "hub: trending", "err", err)
+	} else {
+		for _, row := range trRows {
+			if !libAllowed(row.LibraryID) {
+				continue
+			}
+			out.Trending = append(out.Trending, HubItem{
+				ID:         row.ID.String(),
+				Title:      row.Title,
+				Type:       row.Type,
+				Year:       intPtrFrom32(row.Year),
+				PosterPath: row.PosterPath,
+				FanartPath: row.FanartPath,
+				ThumbPath:  row.ThumbPath,
+				DurationMS: row.DurationMs,
+				UpdatedAt:  row.UpdatedAt.Time.UnixMilli(),
+			})
+			if len(out.Trending) >= 12 {
+				break
+			}
+		}
 	}
 
 	respond.Success(w, r, out)
