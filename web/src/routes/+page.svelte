@@ -14,7 +14,21 @@
   let pollTimer: ReturnType<typeof setInterval>;
 
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    // SSO/SAML/OIDC callback redirects land here with a marker query
+    // param. The layout's onMount races this gate to bootstrap the
+    // user from /api/v1/auth/refresh — wait briefly so we don't bounce
+    // a freshly signed-in user back to /login. Other pages don't need
+    // this because every SSO callback redirects to / (this file).
+    if (!localStorage.getItem('onscreen_user')) {
+      const hasAuthMarker = /(google|oidc|saml)_auth=1/.test(window.location.search);
+      if (hasAuthMarker) {
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          if (localStorage.getItem('onscreen_user')) break;
+        }
+      }
+      if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    }
     await load();
     pollTimer = setInterval(refreshHub, 30_000);
   });

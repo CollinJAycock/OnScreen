@@ -48,8 +48,18 @@
     } catch (e) { console.warn('setup status check failed', e); }
     checking = false;
 
-    // Handle Google OAuth callback — cookies are set, populate localStorage.
-    if ($page.url.searchParams.get('google_auth') === '1') {
+    // Auth-callback bootstrap: every SSO/SAML/OIDC handler sets httpOnly
+    // auth cookies on the redirect, but the SPA's per-route auth gate
+    // checks localStorage.onscreen_user (which can't be written from a
+    // server response). On marker query params we hit /auth/refresh,
+    // which validates the cookie and returns the user info we need.
+    // Without this, the user signs in upstream, lands on /, the gate
+    // sees no localStorage user, and bounces to /login — silent loop.
+    const authCallbackMarker =
+      $page.url.searchParams.get('google_auth') === '1' ||
+      $page.url.searchParams.get('oidc_auth') === '1' ||
+      $page.url.searchParams.get('saml_auth') === '1';
+    if (authCallbackMarker) {
       try {
         const resp = await fetch('/api/v1/auth/refresh', {
           method: 'POST',
@@ -65,10 +75,12 @@
           initNotifications();
         }
       } catch {}
-      // Strip the query param.
+      // Strip every known marker so refresh doesn't re-trigger the loop.
       const url = new URL(window.location.href);
       url.searchParams.delete('google_auth');
-      window.history.replaceState({}, '', url.pathname);
+      url.searchParams.delete('oidc_auth');
+      url.searchParams.delete('saml_auth');
+      window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
     }
 
     // Load current user info

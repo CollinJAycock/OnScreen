@@ -174,7 +174,11 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	// version also discarded the refresh token, so even with the correct
 	// name a SAML user would be evicted after the 1h access TTL.
 	setAuthCookies(w, r, tokens)
-	http.Redirect(w, r, "/", http.StatusFound)
+	// Marker query param so the SPA's layout knows to bootstrap user info
+	// from /api/v1/auth/refresh on first load — without it, the auth gate
+	// at every page checks localStorage.onscreen_user, finds nothing
+	// (cookies are httpOnly), and bounces to /login.
+	http.Redirect(w, r, "/?saml_auth=1", http.StatusFound)
 }
 
 // Metadata serves the SP metadata XML the IdP admin uses to register

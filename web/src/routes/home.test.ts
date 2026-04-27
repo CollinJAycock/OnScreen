@@ -33,6 +33,54 @@ describe('Home page', () => {
       render(Page);
       expect(mockGoto).toHaveBeenCalledWith('/login');
     });
+
+    // Regression guard: every SSO/SAML/OIDC callback redirects to "/?{x}_auth=1"
+    // and the layout's onMount races the page's auth gate to bootstrap
+    // localStorage from /api/v1/auth/refresh. If the gate fires synchronously
+    // before localStorage is populated, the user gets bounced to /login
+    // even though they just successfully signed in upstream.
+    it.each([['oidc_auth'], ['saml_auth'], ['google_auth']])(
+      'waits for localStorage hydration when ?%s=1 marker is present',
+      async (marker) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set(marker, '1');
+        window.history.replaceState({}, '', url.toString());
+        try {
+          mockListLibraries.mockResolvedValue([]);
+          mockHubGet.mockResolvedValue({ continue_watching: [], recently_added: [] });
+
+          render(Page);
+          // Simulate the layout's bootstrap landing during the poll window.
+          setTimeout(() => {
+            localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'sso-user' }));
+          }, 250);
+
+          // Give the home-page poll loop time to detect the hydration.
+          await new Promise((r) => setTimeout(r, 600));
+          expect(mockGoto).not.toHaveBeenCalledWith('/login');
+        } finally {
+          url.searchParams.delete(marker);
+          window.history.replaceState({}, '', url.pathname);
+        }
+      },
+    );
+
+    it('still redirects when marker present but layout never hydrates', async () => {
+      const url = new URL(window.location.href);
+      url.searchParams.set('oidc_auth', '1');
+      window.history.replaceState({}, '', url.toString());
+      try {
+        render(Page);
+        // Poll window is 30 × 100ms = 3s. Allow generous slack for the
+        // happy-dom/vitest scheduler so the assertion isn't flaky.
+        await waitFor(() => expect(mockGoto).toHaveBeenCalledWith('/login'), {
+          timeout: 5000,
+        });
+      } finally {
+        url.searchParams.delete('oidc_auth');
+        window.history.replaceState({}, '', url.pathname);
+      }
+    }, 7000);
   });
 
   describe('authenticated', () => {
