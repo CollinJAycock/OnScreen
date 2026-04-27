@@ -43,6 +43,10 @@ type mockPlaylistDB struct {
 	deleteErr error
 	deleteArg uuid.UUID
 
+	smartItems []gen.ListMediaItemsForSmartPlaylistRow
+	smartErr   error
+	smartArg   gen.ListMediaItemsForSmartPlaylistParams
+
 	listItems    []gen.ListCollectionItemsRow
 	listItemsErr error
 
@@ -91,6 +95,14 @@ func (m *mockPlaylistDB) RemoveCollectionItem(_ context.Context, arg gen.RemoveC
 func (m *mockPlaylistDB) ReorderPlaylistItems(_ context.Context, arg gen.ReorderPlaylistItemsParams) error {
 	m.reorderArg = arg
 	return m.reorderErr
+}
+
+// Smart-playlist evaluator hook. Tests that don't exercise the smart
+// path (the v2.0 majority) leave smartItems nil and get an empty slice
+// back, which the handler renders as an empty playlist.
+func (m *mockPlaylistDB) ListMediaItemsForSmartPlaylist(_ context.Context, arg gen.ListMediaItemsForSmartPlaylistParams) ([]gen.ListMediaItemsForSmartPlaylistRow, error) {
+	m.smartArg = arg
+	return m.smartItems, m.smartErr
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

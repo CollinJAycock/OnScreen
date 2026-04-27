@@ -13,12 +13,17 @@ import (
 )
 
 const listMyPlaylists = `-- name: ListMyPlaylists :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 FROM collections
-WHERE user_id = $1 AND type = 'playlist'
+WHERE user_id = $1 AND type IN ('playlist', 'smart_playlist')
 ORDER BY updated_at DESC, name
 `
 
+// Both static playlists (type='playlist', items in collection_items)
+// and smart playlists (type='smart_playlist', items resolved from
+// the rules JSONB at query time) — surface them in the same list so
+// the user sees all of theirs in one place. The handler renders the
+// smart-vs-static distinction via the type field.
 func (q *Queries) ListMyPlaylists(ctx context.Context, userID pgtype.UUID) ([]Collection, error) {
 	rows, err := q.db.Query(ctx, listMyPlaylists, userID)
 	if err != nil {
@@ -39,6 +44,7 @@ func (q *Queries) ListMyPlaylists(ctx context.Context, userID pgtype.UUID) ([]Co
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Rules,
 		); err != nil {
 			return nil, err
 		}

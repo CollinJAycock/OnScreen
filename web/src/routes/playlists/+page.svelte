@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { playlistApi, type Playlist } from '$lib/api';
+  import { playlistApi, type Playlist, type SmartPlaylistRules } from '$lib/api';
 
   let playlists: Playlist[] = [];
   let loading = true;
@@ -10,6 +10,11 @@
   let showCreate = false;
   let newName = '';
   let newDescription = '';
+  // Smart-playlist mode: when toggled on, the rules JSON gets posted
+  // alongside name/description and the server creates type='smart_playlist'.
+  // v2.1 Stage 1 ships JSON-as-text — visual rule builder is v2.2 polish.
+  let smartMode = false;
+  let smartRulesJSON = '{\n  "types": ["movie"],\n  "year_min": 2015,\n  "rating_min": 7.0,\n  "limit": 50\n}';
   let creating = false;
 
   onMount(async () => {
@@ -27,10 +32,22 @@
   async function createPlaylist() {
     if (!newName.trim()) return;
     creating = true;
+    error = '';
     try {
-      await playlistApi.create(newName.trim(), newDescription.trim() || undefined);
+      let rules: SmartPlaylistRules | undefined;
+      if (smartMode) {
+        try {
+          rules = JSON.parse(smartRulesJSON) as SmartPlaylistRules;
+        } catch {
+          error = 'Smart playlist rules are not valid JSON';
+          creating = false;
+          return;
+        }
+      }
+      await playlistApi.create(newName.trim(), newDescription.trim() || undefined, rules);
       newName = '';
       newDescription = '';
+      smartMode = false;
       showCreate = false;
       await load();
     } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
@@ -64,8 +81,27 @@
     <form class="create-form" on:submit|preventDefault={createPlaylist}>
       <input bind:value={newName} placeholder="Playlist name" autofocus />
       <input bind:value={newDescription} placeholder="Description (optional)" />
-      <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>Create</button>
-      <button type="button" class="btn-cancel" on:click={() => (showCreate = false)}>Cancel</button>
+      <label class="smart-toggle">
+        <input type="checkbox" bind:checked={smartMode} />
+        <span>Smart playlist (rule-based)</span>
+      </label>
+      {#if smartMode}
+        <textarea
+          class="rules-input"
+          bind:value={smartRulesJSON}
+          rows="8"
+          spellcheck="false"
+          placeholder="JSON rules: types, genres, year_min, year_max, rating_min, limit"
+        ></textarea>
+        <p class="smart-hint">
+          Items are resolved at query time, so newly-imported matches show up automatically.
+          Visual rule builder is v2.2; for now the JSON above is the source of truth.
+        </p>
+      {/if}
+      <div class="form-row">
+        <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>Create</button>
+        <button type="button" class="btn-cancel" on:click={() => (showCreate = false)}>Cancel</button>
+      </div>
     </form>
   {/if}
 
@@ -80,8 +116,11 @@
     <div class="grid">
       {#each playlists as pl (pl.id)}
         <a class="card" href="/playlists/{pl.id}">
-          <div class="card-icon">&#9835;</div>
-          <div class="card-name">{pl.name}</div>
+          <div class="card-icon">{pl.type === 'smart_playlist' ? '⚡' : '♫'}</div>
+          <div class="card-name">
+            {pl.name}
+            {#if pl.type === 'smart_playlist'}<span class="smart-badge">Smart</span>{/if}
+          </div>
           {#if pl.description}<div class="card-desc">{pl.description}</div>{/if}
           <div class="card-meta">Updated {fmtDate(pl.updated_at)}</div>
           <button
@@ -113,7 +152,47 @@
   }
   .btn-create:hover { background: rgba(124,106,247,0.2); }
 
-  .create-form { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  .create-form {
+    display: flex; flex-direction: column; gap: 0.5rem;
+    margin-bottom: 1.5rem; padding: 1rem;
+    background: var(--surface); border-radius: 8px;
+    max-width: 600px;
+  }
+  .form-row { display: flex; gap: 0.5rem; }
+  .smart-toggle {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-size: 0.85rem; color: var(--text-secondary);
+    margin-top: 0.25rem;
+    cursor: pointer;
+  }
+  .rules-input {
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 0.8rem;
+    padding: 0.6rem 0.8rem;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    resize: vertical;
+  }
+  .rules-input:focus { outline: none; border-color: var(--accent); }
+  .smart-hint {
+    font-size: 0.75rem; color: var(--text-muted);
+    margin: 0; line-height: 1.4;
+  }
+  .smart-badge {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.4rem;
+    background: var(--accent);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    border-radius: 999px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
   .create-form input {
     background: var(--bg-hover);
     border: 1px solid var(--border-strong);

@@ -3045,6 +3045,135 @@ func (q *Queries) ListMediaItemsByYearDesc(ctx context.Context, arg ListMediaIte
 	return items, nil
 }
 
+const listMediaItemsForSmartPlaylist = `-- name: ListMediaItemsForSmartPlaylist :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = ANY($1::uuid[])
+  AND type = ANY($2::text[])
+  AND deleted_at IS NULL
+  AND ($3::text IS NULL OR $3 = ANY(genres))
+  AND ($4::int IS NULL OR year >= $4)
+  AND ($5::int IS NULL OR year <= $5)
+  AND ($6::numeric IS NULL OR rating >= $6)
+  AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
+ORDER BY sort_title
+LIMIT $8::int
+`
+
+type ListMediaItemsForSmartPlaylistParams struct {
+	LibraryIds    []uuid.UUID    `json:"library_ids"`
+	Types         []string       `json:"types"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
+	ResultLimit   int32          `json:"result_limit"`
+}
+
+type ListMediaItemsForSmartPlaylistRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Cross-library filter for smart playlists (collections.type =
+// 'smart_playlist'). Same filter shape as ListMediaItemsFiltered but
+// without the library scope and with the type as an array (so a single
+// smart playlist can mix movies + episodes — an obvious "watch
+// everything from director X" use case otherwise impossible).
+//
+// The handler enforces library ACL above this query (passes the
+// user's accessible library_ids as the array). Sort is fixed to
+// title for v2.1 Stage 1 — multi-sort variants land alongside the
+// visual rule builder in v2.2 once the grammar's stable.
+func (q *Queries) ListMediaItemsForSmartPlaylist(ctx context.Context, arg ListMediaItemsForSmartPlaylistParams) ([]ListMediaItemsForSmartPlaylistRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemsForSmartPlaylist,
+		arg.LibraryIds,
+		arg.Types,
+		arg.Genre,
+		arg.YearMin,
+		arg.YearMax,
+		arg.RatingMin,
+		arg.MaxRatingRank,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemsForSmartPlaylistRow{}
+	for rows.Next() {
+		var i ListMediaItemsForSmartPlaylistRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMediaItemsMissingArt = `-- name: ListMediaItemsMissingArt :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,

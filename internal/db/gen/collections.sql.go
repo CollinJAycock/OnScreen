@@ -50,9 +50,9 @@ func (q *Queries) CountItemsByGenre(ctx context.Context, genres []string) (int64
 }
 
 const createCollection = `-- name: CreateCollection :one
-INSERT INTO collections (user_id, name, description, type, genre)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+INSERT INTO collections (user_id, name, description, type, genre, rules)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 `
 
 type CreateCollectionParams struct {
@@ -61,8 +61,12 @@ type CreateCollectionParams struct {
 	Description *string     `json:"description"`
 	Type        string      `json:"type"`
 	Genre       *string     `json:"genre"`
+	Rules       []byte      `json:"rules"`
 }
 
+// v2.1 added the `rules` JSONB column for smart playlists. Static
+// collections / playlists pass NULL; smart_playlist rows store the
+// filter shape that resolves at query time.
 func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error) {
 	row := q.db.QueryRow(ctx, createCollection,
 		arg.UserID,
@@ -70,6 +74,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		arg.Description,
 		arg.Type,
 		arg.Genre,
+		arg.Rules,
 	)
 	var i Collection
 	err := row.Scan(
@@ -83,6 +88,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Rules,
 	)
 	return i, err
 }
@@ -97,7 +103,7 @@ func (q *Queries) DeleteCollection(ctx context.Context, id uuid.UUID) error {
 }
 
 const getCollection = `-- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 FROM collections WHERE id = $1
 `
 
@@ -115,12 +121,13 @@ func (q *Queries) GetCollection(ctx context.Context, id uuid.UUID) (Collection, 
 		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Rules,
 	)
 	return i, err
 }
 
 const listAutoGenreCollections = `-- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name
@@ -146,6 +153,7 @@ func (q *Queries) ListAutoGenreCollections(ctx context.Context) ([]Collection, e
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Rules,
 		); err != nil {
 			return nil, err
 		}
@@ -219,7 +227,7 @@ func (q *Queries) ListCollectionItems(ctx context.Context, collectionID uuid.UUI
 }
 
 const listCollections = `-- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 FROM collections
 WHERE user_id IS NULL OR user_id = $1
 ORDER BY sort_order, name
@@ -245,6 +253,7 @@ func (q *Queries) ListCollections(ctx context.Context, userID pgtype.UUID) ([]Co
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Rules,
 		); err != nil {
 			return nil, err
 		}
@@ -333,7 +342,7 @@ func (q *Queries) RemoveCollectionItem(ctx context.Context, arg RemoveCollection
 const updateCollection = `-- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 `
 
 type UpdateCollectionParams struct {
@@ -356,6 +365,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Rules,
 	)
 	return i, err
 }
@@ -367,9 +377,22 @@ ON CONFLICT DO NOTHING
 RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
 `
 
-func (q *Queries) UpsertAutoGenreCollection(ctx context.Context, name string) (Collection, error) {
+type UpsertAutoGenreCollectionRow struct {
+	ID          uuid.UUID          `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Name        string             `json:"name"`
+	Description *string            `json:"description"`
+	Type        string             `json:"type"`
+	Genre       *string            `json:"genre"`
+	PosterPath  *string            `json:"poster_path"`
+	SortOrder   int32              `json:"sort_order"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpsertAutoGenreCollection(ctx context.Context, name string) (UpsertAutoGenreCollectionRow, error) {
 	row := q.db.QueryRow(ctx, upsertAutoGenreCollection, name)
-	var i Collection
+	var i UpsertAutoGenreCollectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,

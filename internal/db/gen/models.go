@@ -66,6 +66,7 @@ type Collection struct {
 	SortOrder   int32              `json:"sort_order"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Rules       []byte             `json:"rules"`
 }
 
 type CollectionItem struct {

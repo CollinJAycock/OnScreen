@@ -818,8 +818,23 @@ export interface Playlist {
   id: string;
   name: string;
   description?: string;
+  // 'playlist' (static, items in collection_items) or 'smart_playlist'
+  // (rules-evaluated, items resolved at query time). The frontend
+  // branches on this to surface a "Smart" badge and gate the manual
+  // add/remove buttons.
+  type: 'playlist' | 'smart_playlist';
+  rules?: SmartPlaylistRules;
   created_at: string;
   updated_at: string;
+}
+
+export interface SmartPlaylistRules {
+  types?: string[];
+  genres?: string[];
+  year_min?: number;
+  year_max?: number;
+  rating_min?: number;
+  limit?: number;
 }
 
 export interface PlaylistItem {
@@ -835,8 +850,8 @@ export interface PlaylistItem {
 
 export const playlistApi = {
   list: () => api.get<Playlist[]>('/playlists'),
-  create: (name: string, description?: string) =>
-    api.post<Playlist>('/playlists', { name, description }),
+  create: (name: string, description?: string, rules?: SmartPlaylistRules) =>
+    api.post<Playlist>('/playlists', rules ? { name, description, rules } : { name, description }),
   update: (id: string, name: string, description?: string) =>
     api.patch<Playlist>(`/playlists/${id}`, { name, description }),
   delete: (id: string) => api.delete(`/playlists/${id}`),

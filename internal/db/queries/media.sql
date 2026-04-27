@@ -770,6 +770,34 @@ WHERE ws.user_id = $1
 ORDER BY ws.last_watched_at DESC
 LIMIT $2;
 
+-- name: ListMediaItemsForSmartPlaylist :many
+-- Cross-library filter for smart playlists (collections.type =
+-- 'smart_playlist'). Same filter shape as ListMediaItemsFiltered but
+-- without the library scope and with the type as an array (so a single
+-- smart playlist can mix movies + episodes — an obvious "watch
+-- everything from director X" use case otherwise impossible).
+--
+-- The handler enforces library ACL above this query (passes the
+-- user's accessible library_ids as the array). Sort is fixed to
+-- title for v2.1 Stage 1 — multi-sort variants land alongside the
+-- visual rule builder in v2.2 once the grammar's stable.
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE library_id = ANY(sqlc.arg('library_ids')::uuid[])
+  AND type = ANY(sqlc.arg('types')::text[])
+  AND deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+ORDER BY sort_title
+LIMIT sqlc.arg('result_limit')::int;
+
 -- name: ListTrending :many
 -- Top-N items watched across all users within a rolling window. Counts
 -- distinct users per item so one binge-watcher can't dominate the row;

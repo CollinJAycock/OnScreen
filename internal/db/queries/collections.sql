@@ -1,22 +1,25 @@
 -- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 FROM collections
 WHERE user_id IS NULL OR user_id = sqlc.narg('user_id')
 ORDER BY sort_order, name;
 
 -- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 FROM collections WHERE id = $1;
 
 -- name: CreateCollection :one
-INSERT INTO collections (user_id, name, description, type, genre)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at;
+-- v2.1 added the `rules` JSONB column for smart playlists. Static
+-- collections / playlists pass NULL; smart_playlist rows store the
+-- filter shape that resolves at query time.
+INSERT INTO collections (user_id, name, description, type, genre, rules)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules;
 
 -- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules;
 
 -- name: DeleteCollection :exec
 DELETE FROM collections WHERE id = $1;
@@ -64,7 +67,7 @@ ON CONFLICT DO NOTHING
 RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at;
 
 -- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name;
