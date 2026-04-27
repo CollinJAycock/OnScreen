@@ -102,7 +102,7 @@ For each row, hit play and confirm: video starts <5s, audio sync, seek works, no
 - [ ] Series rule: schedule "new only" on a daily show — only new episodes record, reruns skipped
 
 ### Auth providers — real IdP integration
-*Enabled-flag and discovery endpoints are unit-tested ([uat_extras_test.go](test/uat/uat_extras_test.go) — TestOIDCEnabled / TestSAMLEnabled / TestLDAPEnabled / TestSAML_MetadataIsPublic). These cases need real upstream services that automation can't simulate.*
+*Enabled-flag and discovery endpoints are unit-tested ([uat_extras_test.go](test/uat/uat_extras_test.go) — TestOIDCEnabled / TestSAMLEnabled / TestLDAPEnabled / TestSAML_MetadataIsPublic). These cases need real upstream services that automation can't simulate. For local Windows/dev testing without real Google/GitHub/Authentik, see [docs/auth-test-stack.md](auth-test-stack.md) — Keycloak (OIDC + SAML), lldap (LDAP), Mailpit (SMTP) all in one `docker compose` invocation.*
 
 - [ ] Google OAuth: sign in from incognito, account auto-created (or linked to matching email)
 - [ ] GitHub OAuth: same
