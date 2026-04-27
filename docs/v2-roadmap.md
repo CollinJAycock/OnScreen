@@ -104,6 +104,7 @@ If v2 scope needs trimming, these are the safest to push:
 2. **Tidal / Qobuz full integration** — scope to "metadata supplement" for v2; full streaming in v2.1
 3. **SAML** — OIDC covers the common cases; SAML is a corporate checkbox
 4. **AV1 hw encode** — RTX 40-series + Intel ARC only; small current install base
+5. **Async OCR endpoint** — discovered during 2026-04-27 beta soak. The synchronous `POST /items/{id}/subtitles/ocr` binds tesseract to `r.Context()`, so any reverse proxy with a sub-multi-minute response timeout (Cloudflare Tunnel free tier is 100s) kills the subprocess and produces zero output. Feature-length PGS tracks regularly exceed 100s. Convert to job-queued: POST returns 202 + job_id, `GET /subtitles/ocr/{jobId}` polls, OCR runs in a server-lifetime goroutine via `context.Background()`. Watch-page UI polls instead of awaiting. The scheduler-based `ocr_subtitles` backfill already does this correctly; same pattern exposed per-stream. **Workaround for v2.0 deployments behind reverse proxies:** trigger the scheduler `ocr_subtitles` task instead of clicking the per-stream OCR button in the UI.
 
 ---
 
