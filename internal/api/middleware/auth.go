@@ -156,6 +156,83 @@ func ClaimsFromContext(ctx context.Context) *auth.Claims {
 	return v
 }
 
+// ImpersonationLookup loads the fields the view-as middleware needs to
+// synthesize a target user's claims. Returns ErrUserNotFound when the
+// row is gone — the middleware maps that to 404 so admins can't probe
+// for live user IDs.
+type ImpersonationLookup interface {
+	GetUserForImpersonation(ctx context.Context, userID uuid.UUID) (ImpersonatedUser, error)
+}
+
+// ImpersonatedUser carries the subset of users.* the view-as
+// middleware substitutes into the request claims.
+type ImpersonatedUser struct {
+	ID               uuid.UUID
+	Username         string
+	IsAdmin          bool
+	MaxContentRating string
+}
+
+// ViewAs returns a middleware that, when an admin appends
+// `?view_as=<uuid>` to a GET request, swaps the auth claims for the
+// target user's so every downstream handler executes the same DB
+// queries with the same content-rating ceiling and library access
+// the target would see. Verifies the policy stack end-to-end without
+// having to PIN-switch.
+//
+// Read-only by design: any non-GET request that carries the param
+// returns 403, so an admin can't accidentally write while
+// impersonating (and clients that auto-append the param to every
+// fetch don't break write paths). The original claims are *not*
+// preserved on the context — handlers see exactly what the target
+// would see, including admin handlers refusing because the target
+// lacks the role.
+//
+// When the param is absent the middleware is a pass-through; safe to
+// mount unconditionally on any router that already runs Required.
+func (a *Authenticator) ViewAs(lookup ImpersonationLookup) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw := r.URL.Query().Get("view_as")
+			if raw == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Block on non-GET so a client that adds the param to every
+			// request can't accidentally mutate state as the target.
+			if r.Method != http.MethodGet {
+				http.Error(w, "view_as is only supported on GET requests", http.StatusForbidden)
+				return
+			}
+			caller := ClaimsFromContext(r.Context())
+			if caller == nil || !caller.IsAdmin {
+				http.Error(w, "view_as requires admin", http.StatusForbidden)
+				return
+			}
+			targetID, err := uuid.Parse(raw)
+			if err != nil {
+				http.Error(w, "view_as: invalid uuid", http.StatusBadRequest)
+				return
+			}
+			target, err := lookup.GetUserForImpersonation(r.Context(), targetID)
+			if err != nil {
+				if errors.Is(err, ErrUserNotFound) {
+					http.NotFound(w, r)
+					return
+				}
+				http.Error(w, "view_as: lookup failed", http.StatusInternalServerError)
+				return
+			}
+			synth := *caller // copy so we don't mutate the cached claims
+			synth.UserID = target.ID
+			synth.Username = target.Username
+			synth.IsAdmin = target.IsAdmin
+			synth.MaxContentRating = target.MaxContentRating
+			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), &synth)))
+		})
+	}
+}
+
 // WithClaims returns a copy of ctx with the given claims attached.
 // Used by tests and server-to-server handlers that construct contexts directly.
 func WithClaims(ctx context.Context, claims *auth.Claims) context.Context {

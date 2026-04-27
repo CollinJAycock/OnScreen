@@ -213,6 +213,16 @@ SET max_content_rating = $2,
     updated_at = NOW()
 WHERE id = $1;
 
+-- name: GetUserForImpersonation :one
+-- Narrow lookup the view-as middleware uses to synthesize the
+-- target user's claims. Reading only the fields that affect policy
+-- (id, username, is_admin, max_content_rating) keeps the
+-- impersonation footprint small — adding a column to users doesn't
+-- silently change what an admin can "see as".
+SELECT id, username, is_admin, max_content_rating
+FROM users
+WHERE id = $1;
+
 -- name: SetProfileInheritLibraryAccess :execrows
 -- Toggles whether a managed profile inherits the parent's library
 -- grants (true) or uses its own library_access rows (false). v2.1

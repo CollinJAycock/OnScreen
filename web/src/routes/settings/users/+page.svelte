@@ -176,6 +176,15 @@
     return currentUser?.user_id === user.id;
   }
 
+  function viewAsUser(user: User) {
+    // Set the per-tab impersonation flag, then full-reload to home so
+    // every cached page state re-fetches under the target's claims and
+    // the layout's banner picks up the new sessionStorage value on
+    // mount.
+    api.setViewAs({ id: user.id, username: user.username });
+    window.location.href = '/';
+  }
+
   async function openLibraries(user: User) {
     librariesTarget = user;
     librariesLoading = true;
@@ -361,6 +370,13 @@
                     on:click={() => openLibraries(user)}
                     title="Manage library access"
                   >Libraries</button>
+                {/if}
+                {#if !isSelf(user)}
+                  <button
+                    class="btn-view-as"
+                    on:click={() => viewAsUser(user)}
+                    title="Render the UI exactly as this user would see it (read-only)"
+                  >View as</button>
                 {/if}
                 <button
                   class="btn-reset"
@@ -653,6 +669,13 @@
     cursor: pointer; transition: all 0.15s;
   }
   .btn-libraries:hover { background: rgba(94,189,255,0.1); border-color: rgba(94,189,255,0.4); }
+  .btn-view-as {
+    padding: 0.3rem 0.6rem; background: none;
+    border: 1px solid rgba(245,158,11,0.3); border-radius: 6px;
+    color: #f59e0b; font-size: 0.72rem; font-weight: 500;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn-view-as:hover { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.5); }
 
   .library-list {
     list-style: none; margin: 0 0 1rem; padding: 0;

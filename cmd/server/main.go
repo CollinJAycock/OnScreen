@@ -822,6 +822,7 @@ func run() error {
 		Logger:             logger,
 		Metrics:            metrics,
 		Auth_mw:            authMiddleware,
+		Impersonate:        &impersonationAdapter{q: gen.New(rwPool)},
 		RateLimiter:        rateLimiter,
 		CORSAllowedOrigins: corsAllowedOrigins,
 	}

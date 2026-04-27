@@ -25,6 +25,19 @@
     $p.url.pathname === '/login' || $p.url.pathname.startsWith('/setup')
   );
 
+  // Admin "view as" impersonation state — per-tab via sessionStorage.
+  // Refreshed on every route change so closing the tab or hitting Exit
+  // immediately drops the banner.
+  let viewAsTarget: { id: string; username: string } | null = null;
+  $: if ($page) viewAsTarget = api.getViewAs();
+
+  function exitViewAs() {
+    api.setViewAs(null);
+    // Hard reload so every cached fetch (hub rows, libraries list)
+    // re-fires without view_as and the UI snaps back to the admin view.
+    window.location.reload();
+  }
+
   // User switcher state
   let currentUsername = '';
   let isAdmin = false;
@@ -292,7 +305,18 @@
       </div>
     </aside>
 
-    <main class="main" class:has-audio={hasAudio}>
+    <main class="main" class:has-audio={hasAudio} class:has-impersonation={viewAsTarget !== null}>
+      {#if viewAsTarget}
+        <div class="impersonation-banner" role="status">
+          <span class="impersonation-label">
+            Viewing as <strong>{viewAsTarget.username}</strong> — read-only;
+            mutations and admin tools are disabled while impersonating.
+          </span>
+          <button type="button" class="impersonation-exit" on:click={exitViewAs}>
+            Exit view-as
+          </button>
+        </div>
+      {/if}
       <slot />
     </main>
     <AudioPlayer />
@@ -573,6 +597,25 @@
     background: var(--bg-primary);
   }
   .main.has-audio { padding-bottom: 76px; }
+
+  .impersonation-banner {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; padding: 0.55rem 1rem;
+    background: linear-gradient(90deg, #f59e0b 0%, #f97316 100%);
+    color: #1a1a1a; font-size: 0.78rem; font-weight: 600;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  .impersonation-label { line-height: 1.3; }
+  .impersonation-label strong { font-weight: 800; }
+  .impersonation-exit {
+    flex-shrink: 0; padding: 0.3rem 0.7rem;
+    background: rgba(0, 0, 0, 0.18); border: 1px solid rgba(0, 0, 0, 0.28);
+    border-radius: 6px; color: #1a1a1a; font-size: 0.74rem; font-weight: 700;
+    cursor: pointer; transition: background 0.12s;
+  }
+  .impersonation-exit:hover { background: rgba(0, 0, 0, 0.28); }
 
   /* User switcher overlay */
   .switcher-backdrop {

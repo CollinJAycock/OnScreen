@@ -49,6 +49,21 @@ export class ApiClient {
   }
 
   /**
+   * Per-tab admin "view as" override. When set in sessionStorage, every
+   * GET request gets `view_as=<userId>` appended so the server's
+   * impersonation middleware substitutes the target user's claims.
+   * Per-tab (sessionStorage) — admin's own tabs aren't affected, and
+   * closing the impersonating tab clears the override.
+   */
+  private withViewAs(method: string, path: string): string {
+    if (method !== 'GET' || typeof sessionStorage === 'undefined') return path;
+    const targetId = sessionStorage.getItem('onscreen_view_as');
+    if (!targetId) return path;
+    const sep = path.includes('?') ? '&' : '?';
+    return `${path}${sep}view_as=${encodeURIComponent(targetId)}`;
+  }
+
+  /**
    * Shared 401-retry wrapper.  Calls `doFetch` to get the response, then
    * `parseResponse` to turn it into the caller's desired shape.  On a 401
    * it attempts a single silent token refresh before redirecting to login.
@@ -89,9 +104,10 @@ export class ApiClient {
     path: string,
     body?: unknown,
   ): Promise<T> {
+    const finalPath = this.withViewAs(method, path);
     return this.requestWithRetry(
-      path,
-      () => fetch(BASE + path, {
+      finalPath,
+      () => fetch(BASE + finalPath, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -110,9 +126,10 @@ export class ApiClient {
   }
 
   async requestList<T>(path: string): Promise<{ items: T[]; total: number }> {
+    const finalPath = this.withViewAs('GET', path);
     return this.requestWithRetry(
-      path,
-      () => fetch(BASE + path, {
+      finalPath,
+      () => fetch(BASE + finalPath, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin'
@@ -156,6 +173,32 @@ export class ApiClient {
   patch = <T>(path: string, body?: unknown) => this.request<T>('PATCH', path, body);
   del = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
   delete = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
+
+  /**
+   * Start or stop the per-tab impersonation override. Pass a UserMeta
+   * to begin viewing as that user (banner appears, every GET request
+   * carries view_as); pass null to clear and return to the admin's
+   * own view. Per-tab via sessionStorage so other tabs are unaffected.
+   */
+  setViewAs(target: { id: string; username: string } | null) {
+    if (typeof sessionStorage === 'undefined') return;
+    if (target) {
+      sessionStorage.setItem('onscreen_view_as', target.id);
+      sessionStorage.setItem('onscreen_view_as_name', target.username);
+    } else {
+      sessionStorage.removeItem('onscreen_view_as');
+      sessionStorage.removeItem('onscreen_view_as_name');
+    }
+  }
+
+  /** Returns the currently impersonated user's id+name, or null. */
+  getViewAs(): { id: string; username: string } | null {
+    if (typeof sessionStorage === 'undefined') return null;
+    const id = sessionStorage.getItem('onscreen_view_as');
+    const username = sessionStorage.getItem('onscreen_view_as_name');
+    if (!id || !username) return null;
+    return { id, username };
+  }
 }
 
 export const api = new ApiClient();

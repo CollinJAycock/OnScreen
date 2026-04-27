@@ -85,7 +85,13 @@ type Handlers struct {
 	Logger          *slog.Logger
 	Metrics         *observability.Metrics
 	Auth_mw         *middleware.Authenticator
-	RateLimiter     *valkey.RateLimiter
+	// Impersonate is the lookup the view-as middleware uses to swap an
+	// admin's claims for a target user's on read-only requests. Nil
+	// disables the feature (the middleware degrades to a pass-through
+	// since it short-circuits on missing param anyway, but skipping
+	// the Use() call avoids the dead lookup wiring on dev setups).
+	Impersonate middleware.ImpersonationLookup
+	RateLimiter *valkey.RateLimiter
 	// CORSAllowedOrigins enables cross-origin API access (TV app, third-party
 	// native clients). Empty disables CORS — same-origin only.
 	CORSAllowedOrigins []string
@@ -302,6 +308,13 @@ func NewRouter(h *Handlers) http.Handler {
 		// Authenticated API — require valid token, rate limit by session.
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth_mw.Required)
+			// view_as runs after Required so claims are populated, and
+			// before any handler so the substitution is invisible to
+			// downstream code (handlers see exactly what the target
+			// user would see).
+			if h.Impersonate != nil {
+				r.Use(h.Auth_mw.ViewAs(h.Impersonate))
+			}
 			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
 				middleware.SessionKey("ratelimit:session")))
 

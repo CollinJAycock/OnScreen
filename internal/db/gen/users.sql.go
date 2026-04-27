@@ -969,6 +969,36 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 	return i, err
 }
 
+const getUserForImpersonation = `-- name: GetUserForImpersonation :one
+SELECT id, username, is_admin, max_content_rating
+FROM users
+WHERE id = $1
+`
+
+type GetUserForImpersonationRow struct {
+	ID               uuid.UUID `json:"id"`
+	Username         string    `json:"username"`
+	IsAdmin          bool      `json:"is_admin"`
+	MaxContentRating *string   `json:"max_content_rating"`
+}
+
+// Narrow lookup the view-as middleware uses to synthesize the
+// target user's claims. Reading only the fields that affect policy
+// (id, username, is_admin, max_content_rating) keeps the
+// impersonation footprint small — adding a column to users doesn't
+// silently change what an admin can "see as".
+func (q *Queries) GetUserForImpersonation(ctx context.Context, id uuid.UUID) (GetUserForImpersonationRow, error) {
+	row := q.db.QueryRow(ctx, getUserForImpersonation, id)
+	var i GetUserForImpersonationRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.IsAdmin,
+		&i.MaxContentRating,
+	)
+	return i, err
+}
+
 const getUserPreferences = `-- name: GetUserPreferences :one
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,

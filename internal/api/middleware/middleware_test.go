@@ -421,3 +421,138 @@ func TestWithClaims(t *testing.T) {
 		t.Errorf("WithClaims roundtrip failed: got %v", got)
 	}
 }
+
+// ── ViewAs (admin impersonation) ────────────────────────────────────────────
+
+type stubImpersonationLookup struct {
+	user ImpersonatedUser
+	err  error
+}
+
+func (s stubImpersonationLookup) GetUserForImpersonation(_ context.Context, _ uuid.UUID) (ImpersonatedUser, error) {
+	return s.user, s.err
+}
+
+func TestViewAs_NoParam_PassesThrough(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	target := ImpersonatedUser{ID: uuid.New(), Username: "kid", IsAdmin: false, MaxContentRating: "PG"}
+	mw := a.ViewAs(stubImpersonationLookup{user: target})
+
+	var seen *auth.Claims
+	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = ClaimsFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/hub", nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestToken(t, tm, true))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rec.Code)
+	}
+	if seen == nil || seen.Username == "kid" {
+		t.Error("no view_as param: claims must be unchanged (admin sees their own claims)")
+	}
+}
+
+func TestViewAs_AdminSwapsClaims(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	target := ImpersonatedUser{ID: uuid.New(), Username: "kid", IsAdmin: false, MaxContentRating: "PG"}
+	mw := a.ViewAs(stubImpersonationLookup{user: target})
+
+	var seen *auth.Claims
+	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = ClaimsFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/hub?view_as="+target.ID.String(), nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestToken(t, tm, true))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if seen == nil {
+		t.Fatal("expected handler to be called with substituted claims")
+	}
+	if seen.UserID != target.ID {
+		t.Errorf("UserID: got %s, want %s — handler must see target's id, not admin's", seen.UserID, target.ID)
+	}
+	if seen.Username != "kid" {
+		t.Errorf("Username: got %q, want %q", seen.Username, "kid")
+	}
+	if seen.IsAdmin {
+		t.Error("IsAdmin: admin must drop their role while impersonating a non-admin so admin-only handlers refuse")
+	}
+	if seen.MaxContentRating != "PG" {
+		t.Errorf("MaxContentRating: got %q, want PG — content-rating gate must follow the target", seen.MaxContentRating)
+	}
+}
+
+func TestViewAs_NonAdminCallerIsForbidden(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	target := ImpersonatedUser{ID: uuid.New(), Username: "kid"}
+	mw := a.ViewAs(stubImpersonationLookup{user: target})
+
+	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called when non-admin tries to view_as")
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/hub?view_as="+target.ID.String(), nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestToken(t, tm, false))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin: got %d, want 403 — view_as must require admin", rec.Code)
+	}
+}
+
+func TestViewAs_NonGETIsForbidden(t *testing.T) {
+	// view_as on a write request would let an admin accidentally
+	// (or maliciously) mutate state as a target user. The middleware
+	// must refuse non-GET regardless of admin status.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	target := ImpersonatedUser{ID: uuid.New(), Username: "kid"}
+	mw := a.ViewAs(stubImpersonationLookup{user: target})
+
+	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called for POST + view_as")
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/favorites?view_as="+target.ID.String(), nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestToken(t, tm, true))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("POST with view_as: got %d, want 403", rec.Code)
+	}
+}
+
+func TestViewAs_UnknownTargetIs404(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	mw := a.ViewAs(stubImpersonationLookup{err: ErrUserNotFound})
+
+	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called for unknown target")
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/hub?view_as="+uuid.New().String(), nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestToken(t, tm, true))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown target: got %d, want 404 — admins must not be able to probe live user IDs", rec.Code)
+	}
+}
