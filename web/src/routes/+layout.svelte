@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { api, authApi, userApi } from '$lib/api';
+  import { api, authApi, userApi, setApiBase } from '$lib/api';
   import type { SwitchableUser } from '$lib/api';
+  import { isTauri, getServerUrl, setServerUrl } from '$lib/native';
   import { derived } from 'svelte/store';
   import Logo from '$lib/components/Logo.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
@@ -20,6 +21,14 @@
   theme.subscribe(v => { currentTheme = v; });
 
   let checking = true;
+
+  // Tauri-only first-run state. Stays false in the browser since
+  // isTauri() short-circuits on module load. When true the layout
+  // renders the server-URL setup screen instead of the auth flow.
+  let needsServerUrl = false;
+  let serverUrlInput = '';
+  let serverUrlError = '';
+  let serverUrlSaving = false;
 
   const isAuthPage = derived(page, $p =>
     $p.url.pathname === '/login' || $p.url.pathname.startsWith('/setup')
@@ -51,6 +60,21 @@
 
   onMount(async () => {
     theme.init();
+
+    // Tauri first-run gate: every API call needs a server URL. If
+    // the user hasn't picked one, render the setup screen and skip
+    // the rest of bootstrap until they do. Same-origin browser
+    // builds skip this entirely (isTauri() returns false).
+    if (isTauri()) {
+      const stored = await getServerUrl();
+      if (!stored) {
+        needsServerUrl = true;
+        checking = false;
+        return;
+      }
+      setApiBase(stored.replace(/\/$/, '') + '/api/v1');
+    }
+
     try {
       const status = await authApi.setupStatus();
       if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
@@ -171,6 +195,26 @@
     if (notifOpen) notifOpen = false;
   }
 
+  async function saveServerUrl() {
+    serverUrlError = '';
+    if (!serverUrlInput.trim()) {
+      serverUrlError = 'Enter your OnScreen server URL';
+      return;
+    }
+    serverUrlSaving = true;
+    try {
+      await setServerUrl(serverUrlInput.trim());
+      // Hard reload — the cached fetch wrapper has already pointed
+      // at the wrong base; reloading is cheaper than re-wiring every
+      // module and clears any half-cached state from the no-server
+      // pre-setup state.
+      window.location.reload();
+    } catch (e: unknown) {
+      serverUrlError = e instanceof Error ? e.message : String(e);
+      serverUrlSaving = false;
+    }
+  }
+
   $: path = $page.url.pathname;
 
   // Re-read user info on every navigation so isAdmin updates after login.
@@ -191,6 +235,37 @@
 {#if checking}
   <div class="splash">
     <Logo size="lg" wordmark={false} />
+  </div>
+{:else if needsServerUrl}
+  <!-- Tauri first-run: pick the OnScreen server URL before anything else. -->
+  <div class="server-setup">
+    <div class="server-setup-card">
+      <Logo size="lg" />
+      <h1>Connect to your OnScreen server</h1>
+      <p class="server-setup-help">
+        Enter the URL of your OnScreen server (the one you reach from a browser).
+        Examples: <code>https://onscreen.example.com</code>,
+        <code>http://192.168.1.50:7070</code>, <code>http://localhost:7070</code>.
+      </p>
+      <form on:submit|preventDefault={saveServerUrl}>
+        <input
+          type="url"
+          bind:value={serverUrlInput}
+          placeholder="https://onscreen.example.com"
+          autocomplete="off"
+          required
+        />
+        {#if serverUrlError}
+          <div class="server-setup-error">{serverUrlError}</div>
+        {/if}
+        <button type="submit" disabled={serverUrlSaving}>
+          {serverUrlSaving ? 'Connecting…' : 'Connect'}
+        </button>
+      </form>
+      <p class="server-setup-note">
+        Stored locally on this device. You can change it later in Settings.
+      </p>
+    </div>
   </div>
 {:else if $isAuthPage}
   <slot />
@@ -492,6 +567,47 @@
     animation: pulse 1.8s ease-in-out infinite;
   }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* Tauri first-run server-URL setup. */
+  .server-setup {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--bg-primary); padding: 2rem;
+  }
+  .server-setup-card {
+    width: 100%; max-width: 480px;
+    background: var(--bg-elevated); border: 1px solid var(--border-strong);
+    border-radius: 12px; padding: 2.5rem; box-shadow: 0 24px 48px var(--shadow);
+    display: flex; flex-direction: column; gap: 1rem;
+  }
+  .server-setup-card h1 {
+    font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0;
+  }
+  .server-setup-help, .server-setup-note {
+    font-size: 0.82rem; color: var(--text-muted); line-height: 1.55; margin: 0;
+  }
+  .server-setup-help code {
+    background: var(--bg-hover); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.78rem;
+  }
+  .server-setup-card form { display: flex; flex-direction: column; gap: 0.75rem; }
+  .server-setup-card input {
+    padding: 0.6rem 0.85rem; background: var(--bg-hover);
+    border: 1px solid var(--border-strong); border-radius: 8px;
+    color: var(--text-primary); font-size: 0.92rem;
+  }
+  .server-setup-card input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  .server-setup-error {
+    background: var(--error-bg); color: var(--error);
+    border: 1px solid var(--error-bg);
+    padding: 0.55rem 0.8rem; border-radius: 7px; font-size: 0.8rem;
+  }
+  .server-setup-card button[type="submit"] {
+    padding: 0.6rem 1rem; background: var(--accent); border: none;
+    border-radius: 8px; color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .server-setup-card button[type="submit"]:hover { background: var(--accent-hover); }
+  .server-setup-card button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
+
   .shell { display: flex; height: 100vh; overflow: hidden; }
 
   .sidebar {

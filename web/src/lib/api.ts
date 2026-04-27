@@ -2,9 +2,22 @@
  * OnScreen API client — wraps fetch with httpOnly cookie auth and
  * standard error handling. Tokens live in httpOnly cookies (set by the
  * server); localStorage holds only non-secret user metadata for UI routing.
+ *
+ * Same-origin (`/api/v1`) when served from the Go binary's embedded
+ * webui (browser, default). When running inside the Tauri desktop
+ * client the user picks their server URL at first launch via the
+ * setup gate; that URL is read once on module load and cached.
+ * `setApiBase()` is exposed so the startup flow can refresh BASE
+ * after a URL change without a full reload.
  */
 
-const BASE = '/api/v1';
+let apiBase = '/api/v1';
+
+/** Override the API base — Tauri startup flow calls this with the
+ *  user's configured `<serverUrl>/api/v1` once the URL is known. */
+export function setApiBase(url: string) {
+  apiBase = url;
+}
 
 interface ApiResponse<T> {
   data: T;
@@ -107,10 +120,10 @@ export class ApiClient {
     const finalPath = this.withViewAs(method, path);
     return this.requestWithRetry(
       finalPath,
-      () => fetch(BASE + finalPath, {
+      () => fetch(apiBase + finalPath, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
+        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include',
         body: body ? JSON.stringify(body) : undefined
       }),
       async (resp) => {
@@ -129,10 +142,10 @@ export class ApiClient {
     const finalPath = this.withViewAs('GET', path);
     return this.requestWithRetry(
       finalPath,
-      () => fetch(BASE + finalPath, {
+      () => fetch(apiBase + finalPath, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin'
+        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include'
       }),
       async (resp) => {
         const json = await resp.json();
@@ -149,10 +162,10 @@ export class ApiClient {
   private async tryRefresh(): Promise<boolean> {
     try {
       // Refresh token is in an httpOnly cookie scoped to /api/v1/auth — sent automatically.
-      const resp = await fetch(BASE + '/auth/refresh', {
+      const resp = await fetch(apiBase + '/auth/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin'
+        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include'
       });
       if (!resp.ok) {
         return false;

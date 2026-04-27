@@ -99,10 +99,45 @@ Output:
 - macOS: `src-tauri/target/release/bundle/{dmg,macos}/OnScreen.{dmg,app}`
 - Linux: `src-tauri/target/release/bundle/{appimage,deb}/onscreen-<v>.{AppImage,deb}`
 
+## CORS / auth caveats for cross-origin native runs
+
+The Tauri webview runs at `tauri://localhost` (Linux/Win) or
+`https://tauri.localhost` (Win in some configs); the OnScreen
+server you're connecting to runs at whatever URL the user picked
+in the setup screen. That's a **cross-origin** fetch, with the
+following implications operators need to know:
+
+1. **CORS allow-list** — set `CORS_ALLOWED_ORIGINS` on the
+   OnScreen server to include the Tauri origin(s). The middleware
+   already handles `Access-Control-Allow-Credentials: true` when
+   the origin matches.
+2. **Cookie-based auth needs `SameSite=None; Secure`** — which
+   means HTTPS. A plain `http://localhost:7070` server won't ship
+   cookies cross-origin to the Tauri webview because the cookie
+   spec forbids `Secure` on http. For local dev, run OnScreen
+   under https (use `mkcert` for a trusted localhost cert) or
+   wire bearer-token-only auth (planned follow-up).
+3. **The api.ts wrapper already flips** `credentials: 'same-origin'`
+   to `'include'` automatically when `apiBase` doesn't start with
+   `/` — same-origin browser builds keep the existing behaviour.
+
+## What's done in this scaffold
+
+- Tauri 2 project skeleton (Rust + plugins + capabilities + icons)
+- IPC commands: `get_app_version`, `get_server_url`, `set_server_url`
+  (the latter validates URL is http/https before persisting via
+  tauri-plugin-store)
+- Frontend: `web/src/lib/native.ts` Tauri detection + IPC shims;
+  api.ts honours the configured URL; layout renders a server-URL
+  setup screen on first launch in the native shell
+
 ## What's not done yet
 
-The scaffold gives you a webview pointing at the existing frontend,
-plus one stub Rust command (`get_app_version`) to prove the IPC
-bridge compiles. Everything else from Track E — server URL config
-picker, secure credential storage, `cpal`-based audio engine,
-cross-device watch-history sync — lands in subsequent commits.
+- Secure credential storage (next: tauri-plugin-keychain integration
+  so PASETO refresh tokens survive process restart without
+  re-typing the password)
+- Bearer-token auth path (so plain-http localhost servers work
+  without the cookie/HTTPS dance)
+- `cpal`-based audio engine for bit-perfect playback
+- System tray + media keys + notifications
+- Cross-device watch-history sync

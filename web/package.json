@@ -15,6 +15,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
     "hls.js": "^1.5.15"
   },
   "devDependencies": {
