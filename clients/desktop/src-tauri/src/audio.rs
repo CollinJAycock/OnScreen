@@ -35,7 +35,7 @@ use ringbuf::traits::*;
 use ringbuf::HeapRb;
 use serde::Serialize;
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -87,10 +87,19 @@ pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
 /// the engine has an active source (paused stream still counts as
 /// "playing"); `paused` toggles independently and only matters
 /// when `playing` is true.
+///
+/// `position_ms` is derived from total frames written to the cpal
+/// callback, which is what actually came out of the speakers (close
+/// enough — buffer-induced latency is sub-100ms on every host
+/// we care about). `ended` reports whether the decoder has reached
+/// EOS — the AudioPlayer polls this for auto-advance to the next
+/// queue entry without needing a separate event channel.
 #[derive(Serialize)]
 pub struct PlaybackStatus {
     pub playing: bool,
     pub paused: bool,
+    pub ended: bool,
+    pub position_ms: u64,
     pub source_url: Option<String>,
     pub sample_rate_hz: Option<u32>,
     pub bit_depth: Option<u32>,
@@ -113,6 +122,20 @@ struct ActivePlayback {
     // (it sleeps when full) keeps decode work bounded while paused.
     // Atomic so the realtime callback can read it without a lock.
     paused: Arc<AtomicBool>,
+    // Set true when the decoder thread exits cleanly (claxon
+    // returned None — EOS — rather than the stop_flag firing).
+    // The frontend polls this on audio_state to fire next() in the
+    // queue without needing a separate event channel back from
+    // Rust. The cpal callback may continue writing buffered samples
+    // for a few hundred ms after this flips; that's fine because
+    // the position_ms keeps advancing and the auto-advance only
+    // needs a "track is logically over" signal.
+    ended: Arc<AtomicBool>,
+    // Total frames (samples per channel) written to the cpal
+    // callback. AcquireRelease ordering on the load is enough since
+    // we only need eventual consistency for a UI position display.
+    // Divided by sample_rate_hz on read to get milliseconds.
+    frames_written: Arc<AtomicU64>,
     decoder_handle: Option<JoinHandle<()>>,
     source_url: String,
     sample_rate_hz: u32,
@@ -146,17 +169,31 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
         .lock()
         .map_err(|_| "audio: poisoned engine lock".to_string())?;
     Ok(match &*engine {
-        Some(p) => PlaybackStatus {
-            playing: true,
-            paused: p.paused.load(Ordering::Acquire),
-            source_url: Some(p.source_url.clone()),
-            sample_rate_hz: Some(p.sample_rate_hz),
-            bit_depth: Some(p.bit_depth),
-            channels: Some(p.channels),
-        },
+        Some(p) => {
+            let frames = p.frames_written.load(Ordering::Acquire);
+            // ms = frames * 1000 / rate. Saturating math because a
+            // multi-hour DSD stream at 11.2 MHz would otherwise overflow
+            // the intermediate u64 — cheap insurance even if 99.99% of
+            // FLAC inputs stay under 192 kHz × 24h = 1.6 × 10^10 frames.
+            let position_ms = frames
+                .saturating_mul(1000)
+                / (p.sample_rate_hz.max(1) as u64);
+            PlaybackStatus {
+                playing: true,
+                paused: p.paused.load(Ordering::Acquire),
+                ended: p.ended.load(Ordering::Acquire),
+                position_ms,
+                source_url: Some(p.source_url.clone()),
+                sample_rate_hz: Some(p.sample_rate_hz),
+                bit_depth: Some(p.bit_depth),
+                channels: Some(p.channels),
+            }
+        }
         None => PlaybackStatus {
             playing: false,
             paused: false,
+            ended: false,
+            position_ms: 0,
             source_url: None,
             sample_rate_hz: None,
             bit_depth: None,
@@ -307,6 +344,8 @@ pub fn audio_play_url(
         / 5; // 0.2 s
     let stop_flag = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(false));
+    let ended = Arc::new(AtomicBool::new(false));
+    let frames_written = Arc::new(AtomicU64::new(0));
 
     // ── Build the stream + decoder thread, dispatched on bit depth ──────────
     let (stream, decoder_handle) = if bit_depth <= 16 {
@@ -315,8 +354,11 @@ pub fn audio_play_url(
             &device,
             &stream_config,
             ring_capacity,
+            channels,
             stop_flag.clone(),
             paused.clone(),
+            ended.clone(),
+            frames_written.clone(),
             |s| s as i16,
         )?
     } else {
@@ -325,8 +367,11 @@ pub fn audio_play_url(
             &device,
             &stream_config,
             ring_capacity,
+            channels,
             stop_flag.clone(),
             paused.clone(),
+            ended.clone(),
+            frames_written.clone(),
             // 24-bit-in-32: shift left so the high byte holds the MSB.
             // cpal expects "24 bits packed as 32" with the data in the
             // upper 24 bits and the low 8 zero on most hosts.
@@ -340,6 +385,8 @@ pub fn audio_play_url(
         _stream: stream,
         stop_flag,
         paused,
+        ended,
+        frames_written,
         decoder_handle: Some(decoder_handle),
         source_url: url,
         sample_rate_hz,
@@ -359,13 +406,17 @@ pub fn audio_play_url(
 /// the target type (identity-style for I32, narrow for I16 — claxon
 /// always emits 32-bit-wide samples regardless of the source bit
 /// depth).
+#[allow(clippy::too_many_arguments)]
 fn build_flac_pipeline<T>(
     reader: claxon::FlacReader<Box<dyn Read + Send + 'static>>,
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     capacity: usize,
+    channels: u16,
     stop_flag: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    ended: Arc<AtomicBool>,
+    frames_written: Arc<AtomicU64>,
     convert_sample: fn(i32) -> T,
 ) -> Result<(cpal::Stream, JoinHandle<()>), String>
 where
@@ -377,8 +428,12 @@ where
     // Decoder thread. Pushes one FLAC frame's samples at a time;
     // sleeps when the ring is full so the cpal callback can drain.
     // Exits cleanly when the stream ends (claxon iterator returns
-    // None) or when stop_flag is raised.
+    // None) or when stop_flag is raised. EOS sets the `ended` flag
+    // so the audio_state command can report it; stop_flag exits
+    // without setting `ended` because that's an explicit user stop,
+    // not a track-finished event the auto-advance should react to.
     let stop_flag_dec = stop_flag.clone();
+    let ended_dec = ended.clone();
     let decoder_handle = std::thread::Builder::new()
         .name("onscreen-flac-decoder".into())
         .spawn(move || {
@@ -415,7 +470,13 @@ where
                         eprintln!("audio: FLAC decode error: {e}");
                         return;
                     }
-                    None => return, // EOS
+                    None => {
+                        // EOS — signal so audio_state.ended flips true and
+                        // the AudioPlayer's auto-advance polling can fire
+                        // next() without needing a separate event channel.
+                        ended_dec.store(true, Ordering::Release);
+                        return;
+                    }
                 }
             }
         })
@@ -429,7 +490,14 @@ where
     // freezes its output until resume — no extra CPU during a pause,
     // and no risk of the buffer draining while the user paused for
     // long enough that decoder didn't get scheduled.
+    //
+    // Frame counter advances per-frame (not per-sample) so the
+    // position math doesn't have to divide by `channels` later.
+    // Skipped while paused so the position display freezes at the
+    // current spot rather than ticking forward through silence.
     let paused_cb = paused.clone();
+    let frames_cb = frames_written.clone();
+    let channels_cb = channels as usize;
     let stream = device
         .build_output_stream(
             config,
@@ -440,10 +508,24 @@ where
                     }
                     return;
                 }
+                let mut samples_consumed: u64 = 0;
                 for slot in buf.iter_mut() {
-                    *slot = consumer
-                        .try_pop()
-                        .unwrap_or(T::EQUILIBRIUM);
+                    match consumer.try_pop() {
+                        Some(s) => {
+                            *slot = s;
+                            samples_consumed += 1;
+                        }
+                        None => {
+                            *slot = T::EQUILIBRIUM;
+                            // Underrun (or post-EOS drain) — don't tick
+                            // the frame counter forward; position UI
+                            // should freeze at the last real sample.
+                        }
+                    }
+                }
+                if samples_consumed > 0 && channels_cb > 0 {
+                    let frames = samples_consumed / (channels_cb as u64);
+                    frames_cb.fetch_add(frames, Ordering::Release);
                 }
             },
             |err| eprintln!("audio: stream error: {err}"),
@@ -499,16 +581,21 @@ pub fn play_test_tone(
 
     // Tones run on the same single-slot engine as FLAC playback so
     // a play_url call interrupts a tone (and vice versa). Wrap in a
-    // minimal ActivePlayback with no decoder thread. The paused
-    // flag is kept for symmetry with the FLAC path even though the
-    // tone generator doesn't honor it — pause on a 2-second test
-    // tone makes no sense and the auto-stop fires anyway.
+    // minimal ActivePlayback with no decoder thread. The paused +
+    // ended + frames_written fields are kept for symmetry with the
+    // FLAC path even though the tone generator doesn't honor them
+    // — pause on a 2-second test tone makes no sense and the
+    // auto-stop fires anyway.
     let stop_flag = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(false));
+    let ended = Arc::new(AtomicBool::new(false));
+    let frames_written = Arc::new(AtomicU64::new(0));
     let active = ActivePlayback {
         _stream: stream,
         stop_flag: stop_flag.clone(),
         paused,
+        ended,
+        frames_written,
         decoder_handle: None,
         source_url: format!("tone:{freq}Hz"),
         sample_rate_hz: stream_config.sample_rate.0,

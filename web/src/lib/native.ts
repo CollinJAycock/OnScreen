@@ -149,11 +149,17 @@ export async function stopAudio(): Promise<void> {
 
 /** Snapshot of what the native engine is doing right now.
  *  `playing` is true while a source is loaded (a paused stream is
- *  still "playing" — paused independently). Other fields are null
- *  while the engine is idle. */
+ *  still "playing" — paused independently). `ended` is true when the
+ *  decoder has hit EOS — the AudioPlayer's polling loop watches
+ *  this for auto-advance. `position_ms` is derived from frames
+ *  written to the cpal callback (the actual audible position, not
+ *  decoder progress). Other fields are null while the engine is
+ *  idle. */
 export type PlaybackStatus = {
   playing: boolean;
   paused: boolean;
+  ended: boolean;
+  position_ms: number;
   source_url: string | null;
   sample_rate_hz: number | null;
   bit_depth: number | null;
@@ -166,7 +172,7 @@ export type PlaybackStatus = {
  *  media keys, future). */
 export async function audioState(): Promise<PlaybackStatus> {
   if (!isTauri()) {
-    return { playing: false, paused: false, source_url: null, sample_rate_hz: null, bit_depth: null, channels: null };
+    return { playing: false, paused: false, ended: false, position_ms: 0, source_url: null, sample_rate_hz: null, bit_depth: null, channels: null };
   }
   const { invoke } = await import('@tauri-apps/api/core');
   return await invoke<PlaybackStatus>('audio_state');

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
   import { itemApi, getApiBase, getBearerToken } from '$lib/api';
-  import { isTauri, audioPlayUrl, audioPause, audioResume, stopAudio } from '$lib/native';
+  import { isTauri, audioPlayUrl, audioPause, audioResume, stopAudio, audioState } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
@@ -57,6 +57,11 @@
   // changes, position scrubs, etc.). Mirrors the loadedSrc field
   // used by the <audio> path.
   let nativeLoadedUrl = '';
+  // Polling handle for the engine→UI sync (position display +
+  // auto-advance on EOS). 250 ms is the same cadence the existing
+  // `<audio>` `timeupdate` event fires at — keeps the seek bar
+  // ticking without churning subscribers per frame.
+  let nativePollHandle: ReturnType<typeof setInterval> | null = null;
 
   // Scrobble cadence — report `playing` every 10s so Continue Watching reflects
   // current position without flooding the API. Pause/stop are reported immediately.
@@ -113,12 +118,65 @@
 
   onDestroy(() => {
     unsubA(); unsubT(); unsubN(); unsubE();
+    if (nativePollHandle) clearInterval(nativePollHandle);
     // Stop the native engine on player destroy so it doesn't keep
     // playing after navigation away from a route that owns the
     // AudioPlayer (currently only the root layout owns it, but keep
     // the cleanup safe for future component-scoped reuse).
     if (isTauri()) void stopAudio();
   });
+
+  // Native engine → UI sync. Polls audio_state every 250 ms while
+  // native playback is active so the seek bar ticks and auto-advance
+  // fires on EOS. Skipped when nativeActive is false so we don't
+  // burn an interval timer in browser builds. The poll cadence is
+  // intentionally the same as `<audio>` timeupdate — we want the
+  // two paths to feel identical to the user.
+  function startNativePolling() {
+    if (nativePollHandle) return;
+    nativePollHandle = setInterval(async () => {
+      try {
+        const s = await audioState();
+        if (!s.playing) {
+          // Engine stopped on its own (most likely a play error
+          // before any sample landed). Drop the poll loop and let
+          // the next track-change reactive block start a fresh one.
+          stopNativePolling();
+          return;
+        }
+        // Push position into the store so the seek bar + scrobble
+        // logic see the same number the <audio> path would emit.
+        // Skip while scrubbing so we don't fight the user's drag.
+        if (!scrubbing) {
+          positionMS = s.position_ms;
+          audio.setPosition(positionMS);
+        }
+        if (s.ended) {
+          // Decoder hit EOS. Mark the finished track stopped at full
+          // duration (matches the <audio> onEnded path) and advance.
+          // The advance triggers a track change, which kicks off a
+          // new audioPlayUrl call — by the time the engine sees the
+          // new source, ended is back to false.
+          if (track) {
+            const d = durationMS || (track.durationMS ?? 0);
+            void itemApi.progress(track.id, d, d, 'stopped').catch(() => {});
+          }
+          stopNativePolling();
+          audio.next();
+        }
+      } catch {
+        // IPC failure — most likely the engine is between tracks.
+        // Polling resumes on the next tick.
+      }
+    }, 250);
+  }
+
+  function stopNativePolling() {
+    if (nativePollHandle) {
+      clearInterval(nativePollHandle);
+      nativePollHandle = null;
+    }
+  }
 
   // Native engine routing. Mirrors the <audio> reactive blocks but
   // calls the Rust IPC instead of touching DOM elements. Runs first
@@ -141,8 +199,11 @@
       // The play call is fire-and-forget; engine errors are logged
       // to the console, the user sees the play button stuck on (no
       // position update yet — Phase 2 polling fixes that).
-      void audioPlayUrl(desired, getBearerToken(), null).catch((err) => {
+      void audioPlayUrl(desired, getBearerToken(), null).then(() => {
+        startNativePolling();
+      }).catch((err) => {
         console.warn('native engine play failed:', err);
+        stopNativePolling();
         // On engine failure (most likely: non-FLAC source),
         // disable native for this session so the <audio> fallback
         // takes over on the next track change. User can re-enable
@@ -153,6 +214,7 @@
     }
   } else if (!track && nativeLoadedUrl !== '') {
     nativeLoadedUrl = '';
+    stopNativePolling();
     if (isTauri()) void stopAudio();
   }
 
