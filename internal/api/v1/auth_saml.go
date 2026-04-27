@@ -22,6 +22,7 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
 	"github.com/jackc/pgx/v5"
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
@@ -137,12 +138,48 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	// signature, the audience, the timestamps, and the destination.
 	// Returning a non-nil err means the assertion is untrustworthy
 	// (replay, tampered, expired) and we MUST refuse the login.
-	assertion, err := mw.ServiceProvider.ParseResponse(r, []string{})
+	//
+	// Look up the request ID via the RequestTracker keyed by RelayState
+	// (echoed back by the IdP in the form POST). Without this the
+	// possibleRequestIDs list is empty and ParseResponse rejects every
+	// SP-init response with "InResponseTo does not match expected []".
+	var possibleIDs []string
+	if relay := r.Form.Get("RelayState"); relay != "" {
+		if tr, terr := mw.RequestTracker.GetTrackedRequest(r, relay); terr == nil && tr != nil {
+			possibleIDs = []string{tr.SAMLRequestID}
+		}
+	}
+	assertion, err := mw.ServiceProvider.ParseResponse(r, possibleIDs)
 	if err != nil {
-		h.logger.WarnContext(r.Context(), "saml acs: parse response", "err", err)
+		// *InvalidResponseError.Error() returns "Authentication failed"
+		// by design — it deliberately masks the real reason to avoid
+		// leaking attacker-useful info via user-facing channels. Log
+		// the PrivateErr (and the raw response when available) server-
+		// side so an admin can actually diagnose mismatch IdPs without
+		// flying blind.
+		var detail any = err
+		var ire *saml.InvalidResponseError
+		if errors.As(err, &ire) {
+			detail = ire.PrivateErr
+			h.logger.WarnContext(r.Context(), "saml acs: parse response",
+				"err", detail,
+				"response_xml", ire.Response,
+				"now", ire.Now,
+			)
+		} else {
+			h.logger.WarnContext(r.Context(), "saml acs: parse response", "err", err)
+		}
 		respond.Error(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION",
 			"The SAML assertion could not be verified.")
 		return
+	}
+
+	// Stop tracking the request — single-use prevents replay of a
+	// captured assertion against the same RelayState. crewjam/saml's
+	// own ServeACS does this; we have to mirror it because we call
+	// ParseResponse directly.
+	if relay := r.Form.Get("RelayState"); relay != "" {
+		_ = mw.RequestTracker.StopTrackingRequest(w, r, relay)
 	}
 
 	cfg := h.cfgSrc.SAML(r.Context())
@@ -270,11 +307,15 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
 		Certificate: leaf,
 		IDPMetadata: idpMeta,
-		// Force redirect-binding for SP-initiated SSO — POST binding
-		// works but causes intermediary form-submission UIs in some
-		// browsers, while redirect is silent. ACS still uses POST
-		// (samlsp routes that automatically based on the binding the
-		// IdP advertises).
+		// Sign the AuthnRequest so IdPs that require it (Keycloak's
+		// default "Client signature required = ON", Okta when configured
+		// for "Sign AuthnRequest") accept the flow. Most IdPs reject
+		// unsigned AuthnRequests with "Invalid Requester" when this
+		// toggle is on; the SP keypair is auto-generated on first enable
+		// so admins don't pay any setup cost. Redirect binding signs via
+		// the Signature/SigAlg query params; POST binding embeds the
+		// signature in the XML — crewjam/saml routes that automatically.
+		SignRequest: true,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("saml: build middleware: %w", err)
@@ -285,6 +326,21 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 	mw.ServiceProvider.AcsURL = *acsURL
 	metaURL, _ := url.Parse(baseURL + "/api/v1/auth/saml/metadata")
 	mw.ServiceProvider.MetadataURL = *metaURL
+	// Upgrade signature algorithm from samlsp's RSA-SHA1 default to
+	// RSA-SHA256. Modern IdPs (Keycloak default, Okta, ADFS post-2019)
+	// reject SHA-1 with "Invalid Requester" — and SHA-1 is broadly
+	// deprecated for digital signatures regardless. crewjam/saml uses
+	// the SP's SignatureMethod field for both binding-direct (POST
+	// embedded) and redirect-binding (Signature/SigAlg query param)
+	// signing.
+	mw.ServiceProvider.SignatureMethod = dsig.RSASHA256SignatureMethod
+	// Replace the default cookie-backed RequestTracker with an in-memory
+	// one keyed by RelayState. The cookie tracker breaks on local
+	// cross-port HTTP testing because Chromium drops SameSite=Lax cookies
+	// on the IdP's cross-site POST-back. RelayState is echoed by every
+	// IdP and survives the round-trip independent of cookies. See
+	// auth_saml_tracker.go for the full reasoning.
+	mw.RequestTracker = newMemorySAMLRequestTracker()
 	return mw, idpMeta, nil
 }
 
