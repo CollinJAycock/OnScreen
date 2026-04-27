@@ -10,9 +10,9 @@
 - ❌ Not supported
 - ❓ Unverified / depends on configuration
 
-**Snapshot date:** 2026-04-26. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
+**Snapshot date:** 2026-04-27. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
 
-> **v2 in flight.** Cells marked ✅ in the last few weeks include items shipped during the v2 push: music videos, audiobooks (flat MVP), podcasts (local-files MVP), Cover Art Archive fallback, Kodi NFO import, lyrics end-to-end, DVR retention purge, subtitle burn-in, AV1 encode, HEVC on QSV/VAAPI/AMF. See [v2-roadmap.md](v2-roadmap.md) for what's still open.
+> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, watch-cooccurrence recommendations ("Because you watched X"), trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
 
 ---
 
@@ -27,10 +27,10 @@
 | Live TV                    | ✅ | 💎 | 💎 | ✅ | Plex/Emby gate behind paid tier |
 | DVR (scheduled recording)  | ✅ | 💎 | 💎 | ✅ | OnScreen: matcher + capture + retention purge wired (commit `246027b`) |
 | Audiobooks                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: flat one-file-per-book MVP (commit `933c1f0`); author/series hierarchy is v2.1 |
-| Books / comics             | ❌ | ❌ | ⚠️ | ⚠️ | Jellyfin + Emby: basic comic/book scanning |
-| Podcasts                   | ⚠️ | ⚠️ | ❌ | 🧩 | OnScreen: local files (commit `a8812ad`); RSS subscriptions are v2.1 |
+| Books / comics             | ⚠️ | ❌ | ⚠️ | ⚠️ | OnScreen: CBZ scan + paginated reader shipped in v2.1 (Track B Stage 1); EPUB and CBR explicitly deferred to Stage 2 |
+| Podcasts                   | ⚠️ | ⚠️ | ❌ | 🧩 | OnScreen: local files + episode UI (commit `a8812ad`, v2.1 polish); RSS subscriptions still deferred |
 | Music videos               | ✅ | ✅ | ✅ | ✅ | OnScreen: artist children w/ 16:9 thumbs (commit `3319bd6`) |
-| Home videos (separate type)| ❌ | ✅ | ✅ | ✅ | OnScreen ingests as untyped movies |
+| Home videos (separate type)| ✅ | ✅ | ✅ | ✅ | OnScreen: dedicated `home_video` library + date-grouped library page (v2.1 Track B); reuses `originally_available_at` as "date taken" |
 
 ---
 
@@ -109,10 +109,10 @@
 | Continue watching / On Deck    | ✅ | ✅ | ✅ | ✅ | |
 | Genre browse                   | ✅ | ✅ | ✅ | ✅ | |
 | Collections                    | ✅ | ✅ | ✅ | ✅ | OnScreen: auto-genre + playlist types |
-| Smart playlists (rule-based)   | ❌ | ✅ | ✅ | ✅ | |
-| Recommendations                | ⚠️ | ✅ | ✅ | ✅ | OnScreen: pgvector similarity in-progress (Phase 5) |
-| Trending                       | ❌ | ✅ | ✅ | ✅ | |
-| "Because you watched X"        | ❌ | ✅ | ✅ | ⚠️ | |
+| Smart playlists (rule-based)   | ✅ | ✅ | ✅ | ✅ | OnScreen: JSON rules persisted on `collections.rules`, evaluated at query time so newly-imported items appear without rebuild (v2.1 Track F item 1) |
+| Recommendations                | ✅ | ✅ | ✅ | ✅ | OnScreen: watch-cooccurrence (item-to-item collaborative filtering — Plex's algorithm); replaced the planned pgvector embedding pipeline with pure SQL, no Python sidecar (v2.1 Track F items 2 + 4) |
+| Trending                       | ✅ | ✅ | ✅ | ✅ | OnScreen: rolling-window aggregate over `watch_events` (v2.1 Track F item 3) |
+| "Because you watched X"        | ✅ | ✅ | ✅ | ⚠️ | OnScreen: watch-cooccurrence row tagged with seed item (v2.1 Track F item 4) |
 | TMDB discover in search        | ✅ | ❌ | ❌ | ❌ | OnScreen: Overseerr-style request inline |
 | Requests (self-service)        | ✅ | ❌ | ❌ | ❌ | Competitors need Overseerr/Ombi/Jellyseerr |
 | Plex Discover (external titles)| ❌ | ✅ | ❌ | ❌ | Plex-exclusive |
@@ -132,7 +132,7 @@
 | Multi-user                     | ✅ | ✅ | ✅ | ✅ | |
 | Managed user profiles (PIN)    | ✅ | 💎 | ✅ | ❌ | OnScreen: up to 6 profiles per user with PIN |
 | Parental controls / rating cap | ✅ | 💎 | ✅ | ✅ | OnScreen: rank function filters at query layer |
-| Per-user library visibility    | ⚠️ | ✅ | ✅ | ✅ | OnScreen has LibraryAccessChecker hook but policy still global |
+| Per-user library visibility    | ✅ | ✅ | ✅ | ✅ | OnScreen: per-library `is_private` flag, `auto_grant_new_users` template, per-profile inherit-or-override toggle, content-rating gates closed in playlists/genre/history, admin "view as" tool (v2.1 Track G items 1–5) |
 | Password + PIN (separate)      | ✅ | ❌ | ⚠️ | ❌ | |
 | Refresh tokens w/ rotation     | ✅ | ✅ | ✅ | ✅ | |
 | Session revocation / kill switch| ✅ | ✅ | ✅ | ✅ | |
@@ -186,7 +186,7 @@
 | Feature                        | OnScreen | Plex | Emby | Jellyfin | Notes |
 |--------------------------------|:--:|:--:|:--:|:--:|---|
 | HLS streaming                  | ✅ | ✅ | ✅ | ✅ | |
-| DASH streaming                 | ❌ | ✅ | ✅ | ✅ | |
+| DASH streaming                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: `manifest.mpd` endpoint over the existing fMP4 ladder for HEVC sessions (v2.1 Track H, server side); shaka-player frontend swap + smart-TV test matrix still to ship |
 | Raw file serving + byte-range  | ✅ | ✅ | ✅ | ✅ | |
 | Signed segment URLs            | ✅ | ✅ | ✅ | ✅ | OnScreen: JWT query-param tokens |
 | Range requests (HTTP 206)      | ✅ | ✅ | ✅ | ✅ | |
@@ -292,13 +292,15 @@
 - **Secret encryption at rest** for webhooks and plugin credentials (AES-256-GCM).
 - **NFO + Cover Art Archive fallback chain**: NFO overrides TMDB on the final write; CAA fills MusicBrainz-keyed album art that TheAudioDB doesn't have. Plex doesn't do CAA at all.
 
-## Where OnScreen Trails (as of 2026-04-26)
+## Where OnScreen Trails (as of 2026-04-27)
 
-- **No books / comics** as distinct media types.
+- **EPUB / CBR books** — CBZ scan + reader shipped in v2.1 Stage 1, but the other two formats still need their parsers and explicitly slipped to Stage 2.
 - **No Tidal / Qobuz integration** for music streaming.
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
 - **No bit-perfect playback** — fundamentally a native-client feature (browsers force OS-mixer resampling). Lands when WASAPI-exclusive / CoreAudio-hog / ALSA `hw:` paths exist in the OnScreen native client. Server side already serves the file byte-for-byte; the gap is the player.
+- **DASH on the client side** — `manifest.mpd` ships server-side in v2.1, but the frontend still uses `hls.js`. Smart-TV apps (Tizen, webOS, Roku) that prefer DASH won't see the benefit until the shaka-player swap lands.
+- **Picture-in-picture server signal** — handler/store has no PiP-mode flag yet.
 
 ## v2 Closed (since the prior snapshot)
 
@@ -316,6 +318,14 @@
 - ✅ Gapless music playback (dual `<audio>` preload rotation)
 - ✅ SAML 2.0 SP-initiated SSO (JIT provisioning, admin-group sync, SP keypair auto-generate)
 - ✅ Built-in HTTPS (operator-provided PEM via `TLS_CERT_FILE`/`TLS_KEY_FILE`)
+
+## v2.1 Closed (in flight on `main`)
+
+- ✅ **Track B — Media types**: home_video library + date-grouped page; CBZ books with paginated reader; audiobook author display + chapter-boundary resume; podcast show + episode detail UI
+- ✅ **Track F — Discovery**: smart playlists (rule JSONB, query-time evaluation); trending row (rolling watch_events aggregate); watch-cooccurrence recommendations + "Because you watched X" (item-to-item collaborative filtering, replaced the planned pgvector pipeline)
+- ✅ **Track G — Per-user policy** (5/5): library `is_private` flag with public/private union semantics; `auto_grant_new_users` template wired into invite + OIDC + SAML + LDAP user-creation paths; per-profile inherit-or-override library access; content-rating gates closed in `ListCollectionItems`, `ListItemsByGenre`, `ListWatchHistory`; admin "view as" middleware (read-only, GET-only, IDOR-gated)
+- ✅ **Track H — Streaming format**: server-side DASH `manifest.mpd` endpoint over the existing fMP4 ladder (one segment ladder, two manifests); frontend shaka-player swap still to ship
+- ✅ **Track D — Quality coverage**: `auth-providers.spec.ts` Playwright spec covering OIDC PKCE shape, SAML signed-AuthnRequest (locks the four-layer SAML signing fix behind a regression guard), LDAP end-to-end + negative path
 
 ## Non-Differentiators (All Four Roughly Equal)
 
