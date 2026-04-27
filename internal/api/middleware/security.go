@@ -7,9 +7,19 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	// CSP: allow self-origin scripts & styles (Svelte uses inline styles),
 	// external images (TMDB posters), blob: media (HLS.js), and no framing.
 	// SvelteKit emits inline <script> tags for hydration, so script-src needs 'unsafe-inline'.
-	const csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+	//
+	// static.cloudflareinsights.com / cloudflareinsights.com are allow-listed
+	// because Cloudflare auto-injects the Web Analytics beacon when a site is
+	// proxied through their network. The beacon is anonymous + privacy-
+	// preserving (no cookies, no fingerprinting), and admins running OnScreen
+	// behind Cloudflare Tunnel rely on the resulting traffic graph. Blocking
+	// it surfaced as a console-noise CSP violation on the beta deployment.
+	const csp = "default-src 'self'; " +
+		"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; " +
+		"style-src 'self' 'unsafe-inline'; " +
 		"img-src 'self' data: https:; media-src 'self' blob:; " +
-		"connect-src 'self'; frame-ancestors 'none'"
+		"connect-src 'self' https://cloudflareinsights.com; " +
+		"frame-ancestors 'none'"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
