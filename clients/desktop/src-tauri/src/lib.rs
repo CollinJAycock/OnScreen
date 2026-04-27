@@ -164,6 +164,10 @@ pub fn run() {
             audio::list_audio_devices,
             audio::play_test_tone,
             audio::stop_audio,
+            audio::audio_play_url,
+            audio::audio_state,
+            audio::audio_pause,
+            audio::audio_resume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OnScreen desktop");

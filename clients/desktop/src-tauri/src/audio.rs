@@ -82,11 +82,15 @@ pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
 
 // ── Engine state ─────────────────────────────────────────────────────────────
 
-/// Reported on `audio_state` so the frontend can render "playing /
-/// stopped" without polling individual fields.
+/// Reported on `audio_state` so the frontend can render transport
+/// state without polling individual fields. `playing` is true while
+/// the engine has an active source (paused stream still counts as
+/// "playing"); `paused` toggles independently and only matters
+/// when `playing` is true.
 #[derive(Serialize)]
 pub struct PlaybackStatus {
     pub playing: bool,
+    pub paused: bool,
     pub source_url: Option<String>,
     pub sample_rate_hz: Option<u32>,
     pub bit_depth: Option<u32>,
@@ -103,6 +107,12 @@ struct ActivePlayback {
     // cpal callback drains to silence and ends. Atomic so no lock
     // is needed inside the realtime callback.
     stop_flag: Arc<AtomicBool>,
+    // When true, the cpal callback writes silence (T::EQUILIBRIUM)
+    // instead of pulling from the ringbuf. The decoder thread
+    // doesn't need to check this — natural ringbuf backpressure
+    // (it sleeps when full) keeps decode work bounded while paused.
+    // Atomic so the realtime callback can read it without a lock.
+    paused: Arc<AtomicBool>,
     decoder_handle: Option<JoinHandle<()>>,
     source_url: String,
     sample_rate_hz: u32,
@@ -138,6 +148,7 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
     Ok(match &*engine {
         Some(p) => PlaybackStatus {
             playing: true,
+            paused: p.paused.load(Ordering::Acquire),
             source_url: Some(p.source_url.clone()),
             sample_rate_hz: Some(p.sample_rate_hz),
             bit_depth: Some(p.bit_depth),
@@ -145,6 +156,7 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
         },
         None => PlaybackStatus {
             playing: false,
+            paused: false,
             source_url: None,
             sample_rate_hz: None,
             bit_depth: None,
@@ -158,6 +170,38 @@ pub fn stop_audio() -> Result<(), String> {
     *ENGINE
         .lock()
         .map_err(|_| "audio: poisoned engine lock".to_string())? = None;
+    Ok(())
+}
+
+/// Pauses the active stream by flipping the engine's pause flag —
+/// the realtime cpal callback then writes silence on every tick.
+/// Decoder backpressure handles itself: the ringbuf fills up,
+/// decoder sleeps, no extra CPU burned during a pause.
+///
+/// No-op when nothing is playing (avoids surprising the UI which
+/// might fire pause optimistically before the engine state caught
+/// up with a stop).
+#[tauri::command]
+pub fn audio_pause() -> Result<(), String> {
+    let engine = ENGINE
+        .lock()
+        .map_err(|_| "audio: poisoned engine lock".to_string())?;
+    if let Some(p) = engine.as_ref() {
+        p.paused.store(true, Ordering::Release);
+    }
+    Ok(())
+}
+
+/// Resumes a paused stream. Symmetric with `audio_pause`; same no-op
+/// semantics when nothing is playing.
+#[tauri::command]
+pub fn audio_resume() -> Result<(), String> {
+    let engine = ENGINE
+        .lock()
+        .map_err(|_| "audio: poisoned engine lock".to_string())?;
+    if let Some(p) = engine.as_ref() {
+        p.paused.store(false, Ordering::Release);
+    }
     Ok(())
 }
 
@@ -262,6 +306,7 @@ pub fn audio_play_url(
         .saturating_mul(channels as usize)
         / 5; // 0.2 s
     let stop_flag = Arc::new(AtomicBool::new(false));
+    let paused = Arc::new(AtomicBool::new(false));
 
     // ── Build the stream + decoder thread, dispatched on bit depth ──────────
     let (stream, decoder_handle) = if bit_depth <= 16 {
@@ -271,6 +316,7 @@ pub fn audio_play_url(
             &stream_config,
             ring_capacity,
             stop_flag.clone(),
+            paused.clone(),
             |s| s as i16,
         )?
     } else {
@@ -280,6 +326,7 @@ pub fn audio_play_url(
             &stream_config,
             ring_capacity,
             stop_flag.clone(),
+            paused.clone(),
             // 24-bit-in-32: shift left so the high byte holds the MSB.
             // cpal expects "24 bits packed as 32" with the data in the
             // upper 24 bits and the low 8 zero on most hosts.
@@ -292,6 +339,7 @@ pub fn audio_play_url(
     let active = ActivePlayback {
         _stream: stream,
         stop_flag,
+        paused,
         decoder_handle: Some(decoder_handle),
         source_url: url,
         sample_rate_hz,
@@ -317,6 +365,7 @@ fn build_flac_pipeline<T>(
     config: &cpal::StreamConfig,
     capacity: usize,
     stop_flag: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     convert_sample: fn(i32) -> T,
 ) -> Result<(cpal::Stream, JoinHandle<()>), String>
 where
@@ -375,15 +424,26 @@ where
     // cpal output callback. Realtime — must not block, allocate, or
     // call into Tauri/anything that takes a mutex. ringbuf's pop
     // is wait-free; a buffer underrun (decoder behind) writes
-    // silence rather than stalling the device.
+    // silence rather than stalling the device. When paused, we
+    // skip the ringbuf entirely so the decoder's natural backpressure
+    // freezes its output until resume — no extra CPU during a pause,
+    // and no risk of the buffer draining while the user paused for
+    // long enough that decoder didn't get scheduled.
+    let paused_cb = paused.clone();
     let stream = device
         .build_output_stream(
             config,
             move |buf: &mut [T], _: &cpal::OutputCallbackInfo| {
+                if paused_cb.load(Ordering::Acquire) {
+                    for slot in buf.iter_mut() {
+                        *slot = T::EQUILIBRIUM;
+                    }
+                    return;
+                }
                 for slot in buf.iter_mut() {
                     *slot = consumer
                         .try_pop()
-                        .unwrap_or_else(|| T::EQUILIBRIUM);
+                        .unwrap_or(T::EQUILIBRIUM);
                 }
             },
             |err| eprintln!("audio: stream error: {err}"),
@@ -439,11 +499,16 @@ pub fn play_test_tone(
 
     // Tones run on the same single-slot engine as FLAC playback so
     // a play_url call interrupts a tone (and vice versa). Wrap in a
-    // minimal ActivePlayback with no decoder thread.
+    // minimal ActivePlayback with no decoder thread. The paused
+    // flag is kept for symmetry with the FLAC path even though the
+    // tone generator doesn't honor it — pause on a 2-second test
+    // tone makes no sense and the auto-stop fires anyway.
     let stop_flag = Arc::new(AtomicBool::new(false));
+    let paused = Arc::new(AtomicBool::new(false));
     let active = ActivePlayback {
         _stream: stream,
         stop_flag: stop_flag.clone(),
+        paused,
         decoder_handle: None,
         source_url: format!("tone:{freq}Hz"),
         sample_rate_hz: stream_config.sample_rate.0,

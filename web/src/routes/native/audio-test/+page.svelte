@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import {
     isTauri, listAudioDevices, playTestTone, stopAudio,
-    audioPlayUrl, audioState,
+    audioPlayUrl, audioState, audioPause, audioResume,
     type AudioDevice, type PlaybackStatus,
   } from '$lib/native';
 
@@ -76,6 +76,16 @@
       flacBusy = false;
     }
   }
+
+  async function togglePause() {
+    if (!lastStatus) return;
+    if (lastStatus.paused) {
+      await audioResume();
+    } else {
+      await audioPause();
+    }
+    lastStatus = await audioState();
+  }
 </script>
 
 <svelte:head><title>Audio diagnostic — OnScreen</title></svelte:head>
@@ -146,7 +156,13 @@
       {/if}
       {#if lastStatus?.playing && lastStatus.source_url?.startsWith('http')}
         <div class="status-bar">
-          Playing · {lastStatus.bit_depth}-bit · {lastStatus.sample_rate_hz} Hz · {lastStatus.channels} ch
+          <span>
+            {lastStatus.paused ? 'Paused' : 'Playing'} ·
+            {lastStatus.bit_depth}-bit · {lastStatus.sample_rate_hz} Hz · {lastStatus.channels} ch
+          </span>
+          <button type="button" class="transport" on:click={togglePause}>
+            {lastStatus.paused ? 'Resume' : 'Pause'}
+          </button>
         </div>
       {/if}
       <button type="button" class="play wide" disabled={flacBusy} on:click={playFlac}>
@@ -244,9 +260,18 @@
   .flac-device { max-width: 260px; }
   .play.wide { width: 100%; padding: 0.55rem 0.85rem; }
   .status-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
     background: var(--accent-bg); color: var(--accent-text);
     padding: 0.5rem 0.8rem; border-radius: 7px; font-size: 0.78rem; font-weight: 600;
     font-family: monospace;
   }
+  .transport {
+    padding: 0.3rem 0.7rem; background: rgba(0, 0, 0, 0.18);
+    border: 1px solid rgba(0, 0, 0, 0.28); border-radius: 6px;
+    color: var(--accent-text); font-size: 0.74rem; font-weight: 700;
+    cursor: pointer; transition: background 0.12s;
+    font-family: inherit;
+  }
+  .transport:hover { background: rgba(0, 0, 0, 0.28); }
   .devices-heading { font-size: 1rem; font-weight: 700; color: var(--text-primary); margin: 0 0 0.75rem; }
 </style>

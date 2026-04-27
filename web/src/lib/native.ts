@@ -138,11 +138,13 @@ export async function stopAudio(): Promise<void> {
   await invoke('stop_audio');
 }
 
-/** Snapshot of what the native engine is doing right now. `playing`
- *  is the only field guaranteed to be present; the others are null
+/** Snapshot of what the native engine is doing right now.
+ *  `playing` is true while a source is loaded (a paused stream is
+ *  still "playing" — paused independently). Other fields are null
  *  while the engine is idle. */
 export type PlaybackStatus = {
   playing: boolean;
+  paused: boolean;
   source_url: string | null;
   sample_rate_hz: number | null;
   bit_depth: number | null;
@@ -155,10 +157,26 @@ export type PlaybackStatus = {
  *  media keys, future). */
 export async function audioState(): Promise<PlaybackStatus> {
   if (!isTauri()) {
-    return { playing: false, source_url: null, sample_rate_hz: null, bit_depth: null, channels: null };
+    return { playing: false, paused: false, source_url: null, sample_rate_hz: null, bit_depth: null, channels: null };
   }
   const { invoke } = await import('@tauri-apps/api/core');
   return await invoke<PlaybackStatus>('audio_state');
+}
+
+/** Pauses the active stream. cpal callback writes silence; decoder
+ *  thread back-pressures itself via the ringbuf so no extra CPU
+ *  burns during the pause. No-op when nothing's playing. */
+export async function audioPause(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('audio_pause');
+}
+
+/** Resumes a paused stream. Symmetric with `audioPause`. */
+export async function audioResume(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('audio_resume');
 }
 
 /** Streams a FLAC file from the OnScreen server through the native
