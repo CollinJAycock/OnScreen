@@ -164,11 +164,15 @@
     }
   }
 
+  // activeIsA referenced directly (not via activeEl() helper) so Svelte's
+  // dep tracker re-runs this block on gapless swap. Without that, the
+  // element that was the silent preload buffer becomes active and plays
+  // the next track at volume=0.
   $: if (audioElA && audioElB) {
-    activeEl().volume = muted ? 0 : volume;
-    // Mute the preload element so its buffering/codec-init never
-    // produces audible output if the browser sneaks ahead.
-    preloadEl().volume = 0;
+    const active = activeIsA ? audioElA : audioElB;
+    const preload = activeIsA ? audioElB : audioElA;
+    active.volume = muted ? 0 : volume;
+    preload.volume = 0;
   }
 
   function persistVolume() {
