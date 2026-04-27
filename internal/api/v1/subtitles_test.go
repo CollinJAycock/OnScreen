@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -425,8 +426,46 @@ func TestSubtitles_Download_NoProviderReturns503(t *testing.T) {
 }
 
 // ── OCR ─────────────────────────────────────────────────────────────────────
+//
+// v2.1 converted these endpoints from synchronous to job-queued. The
+// POST returns 202 + a job descriptor immediately and tesseract runs
+// in a server-lifetime goroutine; clients poll GET .../ocr/{jobId} for
+// the terminal state. The conversion exists because the v2.0
+// synchronous path 524'd behind reverse proxies with sub-multi-minute
+// response timeouts (Cloudflare Tunnel free tier = 100 s).
 
-func TestSubtitles_OCR_Success(t *testing.T) {
+// pollOCRJob waits up to 2 s for the job to reach a terminal state.
+// The mock OCRStream returns synchronously, so the goroutine in the
+// handler typically finishes within a few hundred microseconds —
+// 2 s is a generous upper bound that absorbs CI scheduler jitter.
+func pollOCRJob(t *testing.T, h *SubtitleHandler, itemID uuid.UUID, jobID string) ocrJobJSON {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := httptest.NewRecorder()
+		req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{
+			"id": itemID.String(), "jobId": jobID,
+		})
+		h.OCRStatus(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("poll: status %d body=%s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Data ocrJobJSON `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("poll decode: %v body=%s", err, rec.Body.String())
+		}
+		if resp.Data.Status != subtitles.OCRJobRunning {
+			return resp.Data
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for OCR job %s to reach a terminal state", jobID)
+	return ocrJobJSON{}
+}
+
+func TestSubtitles_OCR_AcceptsAndCompletes(t *testing.T) {
 	itemID := uuid.New()
 	fileID := uuid.New()
 	libID := uuid.New()
@@ -455,9 +494,34 @@ func TestSubtitles_OCR_Success(t *testing.T) {
 	req := subReq(http.MethodPost, "/x", body, uuid.New(), map[string]string{"id": itemID.String()})
 	h.OCR(rec, req)
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status: got %d body=%s", rec.Code, rec.Body.String())
+	// POST returns 202 + a running-job descriptor; the actual OCR runs
+	// in a goroutine and is observed via the poll endpoint.
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status: got %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
+	var post struct {
+		Data ocrJobJSON `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &post); err != nil {
+		t.Fatalf("decode POST: %v", err)
+	}
+	if post.Data.Status != subtitles.OCRJobRunning {
+		t.Errorf("expected initial status=running, got %s", post.Data.Status)
+	}
+	if post.Data.JobID == "" {
+		t.Fatalf("POST response missing job_id: %+v", post.Data)
+	}
+
+	// Poll until terminal — should land on completed with the row inline.
+	final := pollOCRJob(t, h, itemID, post.Data.JobID)
+	if final.Status != subtitles.OCRJobCompleted {
+		t.Fatalf("expected completed, got status=%s err=%s", final.Status, final.Error)
+	}
+	if final.Subtitle == nil || final.Subtitle.Source != "ocr" || final.Subtitle.SourceID == nil || *final.Subtitle.SourceID != "stream_2" {
+		t.Errorf("subtitle row not surfaced on completion: %+v", final.Subtitle)
+	}
+
+	// Opts forwarding sanity — same checks the synchronous test did.
 	if svc.ocrOpts.FileID != fileID {
 		t.Errorf("expected file_id forwarded, got %s", svc.ocrOpts.FileID)
 	}
@@ -470,19 +534,9 @@ func TestSubtitles_OCR_Success(t *testing.T) {
 	if svc.ocrOpts.Language != "fr" || svc.ocrOpts.Title != "Forced FR" || !svc.ocrOpts.Forced {
 		t.Errorf("opts not forwarded: %+v", svc.ocrOpts)
 	}
-
-	var resp struct {
-		Data ExternalSubtitleJSON `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Data.Source != "ocr" || resp.Data.SourceID == nil || *resp.Data.SourceID != "stream_2" {
-		t.Errorf("expected source=ocr source_id=stream_2, got %+v", resp.Data)
-	}
 }
 
-func TestSubtitles_OCR_NotConfiguredReturns503(t *testing.T) {
+func TestSubtitles_OCR_NotConfiguredJobFails(t *testing.T) {
 	itemID := uuid.New()
 	fileID := uuid.New()
 	libID := uuid.New()
@@ -499,12 +553,27 @@ func TestSubtitles_OCR_NotConfiguredReturns503(t *testing.T) {
 	req := subReq(http.MethodPost, "/x", body, uuid.New(), map[string]string{"id": itemID.String()})
 	h.OCR(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
+	// 202 even when OCR isn't configured — the job creation succeeds;
+	// the failure surfaces on poll. Frontend can detect this by checking
+	// the system capabilities endpoint before clicking the button.
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var post struct {
+		Data ocrJobJSON `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &post)
+
+	final := pollOCRJob(t, h, itemID, post.Data.JobID)
+	if final.Status != subtitles.OCRJobFailed {
+		t.Fatalf("expected failed, got status=%s", final.Status)
+	}
+	if final.Error == "" {
+		t.Errorf("expected error string surfaced when OCR not configured")
 	}
 }
 
-func TestSubtitles_OCR_EngineErrorReturns502(t *testing.T) {
+func TestSubtitles_OCR_EngineErrorJobFails(t *testing.T) {
 	itemID := uuid.New()
 	fileID := uuid.New()
 	libID := uuid.New()
@@ -520,9 +589,65 @@ func TestSubtitles_OCR_EngineErrorReturns502(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodPost, "/x", body, uuid.New(), map[string]string{"id": itemID.String()})
 	h.OCR(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rec.Code)
+	}
+	var post struct {
+		Data ocrJobJSON `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &post)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d", rec.Code)
+	final := pollOCRJob(t, h, itemID, post.Data.JobID)
+	if final.Status != subtitles.OCRJobFailed {
+		t.Fatalf("expected failed, got %s", final.Status)
+	}
+	if final.Error != "tesseract crashed" {
+		t.Errorf("expected engine error surfaced, got %q", final.Error)
+	}
+}
+
+func TestSubtitles_OCRStatus_UnknownJobReturns404(t *testing.T) {
+	itemID := uuid.New()
+	libID := uuid.New()
+	mm := &mockSubsMedia{
+		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
+	}
+	h := NewSubtitleHandler(&mockSubtitleService{}, mm, slog.Default())
+
+	rec := httptest.NewRecorder()
+	req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{
+		"id": itemID.String(), "jobId": "no-such-job",
+	})
+	h.OCRStatus(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for unknown job id, got %d", rec.Code)
+	}
+}
+
+func TestSubtitles_OCRStatus_LibraryAccessDenied(t *testing.T) {
+	itemID := uuid.New()
+	fileID := uuid.New()
+	libID := uuid.New()
+	otherLibID := uuid.New()
+
+	svc := &mockSubtitleService{ocrRow: gen.ExternalSubtitle{ID: uuid.New(), FileID: fileID}}
+	mm := &mockSubsMedia{
+		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
+		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv"}}},
+	}
+	// Allow access only to a *different* library — POST should be 403.
+	h := NewSubtitleHandler(svc, mm, slog.Default()).
+		WithLibraryAccess(&mockAccess{allow: map[uuid.UUID]struct{}{otherLibID: {}}})
+
+	body, _ := json.Marshal(map[string]any{"file_id": fileID.String(), "stream_index": 2})
+	rec := httptest.NewRecorder()
+	req := subReq(http.MethodPost, "/x", body, uuid.New(), map[string]string{"id": itemID.String()})
+	h.OCR(rec, req)
+	// 404 (not 403) is the deliberate response — same as the rest of the
+	// item endpoints — to avoid leaking existence of items the caller
+	// can't see.
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-allowed library, got %d", rec.Code)
 	}
 }
 

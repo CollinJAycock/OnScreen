@@ -34,15 +34,23 @@ type SubtitleService interface {
 // SubtitleHandler exposes search/download/list endpoints for external subtitles.
 // Library access is enforced via the items the subtitles attach to.
 type SubtitleHandler struct {
-	svc    SubtitleService
-	media  ItemMediaService
-	access LibraryAccessChecker
-	logger *slog.Logger
+	svc      SubtitleService
+	media    ItemMediaService
+	access   LibraryAccessChecker
+	ocrJobs  *subtitles.OCRJobStore
+	logger   *slog.Logger
 }
 
-// NewSubtitleHandler constructs a SubtitleHandler.
+// NewSubtitleHandler constructs a SubtitleHandler. The OCR job store is
+// created internally — it's per-process state with no shared dependency
+// to surface in the constructor signature.
 func NewSubtitleHandler(svc SubtitleService, media ItemMediaService, logger *slog.Logger) *SubtitleHandler {
-	return &SubtitleHandler{svc: svc, media: media, logger: logger}
+	return &SubtitleHandler{
+		svc:     svc,
+		media:   media,
+		ocrJobs: subtitles.NewOCRJobStore(),
+		logger:  logger,
+	}
 }
 
 // WithLibraryAccess wires per-user library filtering.
@@ -239,12 +247,55 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 	respond.Created(w, r, toExternalSubtitleJSON(row))
 }
 
+// ocrJobJSON is the response shape for both the create-job (POST) and
+// poll-job (GET) endpoints. Result is omitempty so a still-running job
+// doesn't carry a null subtitle field; status drives the client's
+// decision to render success vs error vs spinner.
+type ocrJobJSON struct {
+	JobID       string                `json:"job_id"`
+	Status      subtitles.OCRJobStatus `json:"status"`
+	FileID      string                `json:"file_id"`
+	StreamIndex int                   `json:"stream_index"`
+	StartedAt   string                `json:"started_at"`
+	CompletedAt string                `json:"completed_at,omitempty"`
+	Error       string                `json:"error,omitempty"`
+	Subtitle    *ExternalSubtitleJSON `json:"subtitle,omitempty"`
+}
+
+func toOCRJobJSON(job subtitles.OCRJob) ocrJobJSON {
+	out := ocrJobJSON{
+		JobID:       job.ID,
+		Status:      job.Status,
+		FileID:      job.FileID.String(),
+		StreamIndex: job.StreamIndex,
+		StartedAt:   job.StartedAt.UTC().Format("2006-01-02T15:04:05Z"),
+	}
+	if job.CompletedAt != nil {
+		out.CompletedAt = job.CompletedAt.UTC().Format("2006-01-02T15:04:05Z")
+	}
+	if job.Error != "" {
+		out.Error = job.Error
+	}
+	if job.Result != nil {
+		s := toExternalSubtitleJSON(*job.Result)
+		out.Subtitle = &s
+	}
+	return out
+}
+
 // OCR handles POST /api/v1/items/{id}/subtitles/ocr.
 // Body: { file_id, stream_index, language?, title?, forced?, sdh? }
 //
-// Runs the OCR pipeline synchronously — for a typical 90-minute movie this
-// is multi-minute. Caller (UI) should show a spinner and not retry. The
-// resulting external_subtitles row is returned in the response.
+// Returns 202 Accepted with a job descriptor. The OCR pipeline runs
+// in a server-lifetime goroutine using context.Background(), so a
+// client disconnect (e.g. Cloudflare Tunnel free-tier 100 s response
+// timeout, browser tab close, fetch() abort) doesn't kill tesseract.
+// Clients poll GET /api/v1/items/{id}/subtitles/ocr/{jobId} for the
+// terminal state and the resulting external_subtitles row.
+//
+// This is a v2.1 conversion from the synchronous v2.0 endpoint, which
+// 524'd behind any reverse proxy with a sub-multi-minute response
+// timeout for feature-length PGS tracks.
 func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -300,7 +351,18 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := h.svc.OCRStream(r.Context(), subtitles.OCROpts{
+	job, err := h.ocrJobs.Create(fileID, body.StreamIndex)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "ocr: create job", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	// Spawn the OCR work with a server-lifetime context so client
+	// disconnects (Cloudflare 100 s, browser cancel, network blip)
+	// don't kill the tesseract subprocess. The job store is the
+	// single source of truth; the client polls it on its own clock.
+	go h.runOCRJob(job.ID, subtitles.OCROpts{
 		FileID:         fileID,
 		InputPath:      inputPath,
 		AbsStreamIndex: body.StreamIndex,
@@ -309,18 +371,60 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		Forced:         body.Forced,
 		SDH:            body.SDH,
 	})
+
+	respond.Accepted(w, r, toOCRJobJSON(*job))
+}
+
+// runOCRJob is the goroutine that actually runs tesseract and writes
+// the result back to the job store. context.Background() keeps the
+// pipeline alive past the original HTTP request — exactly the bug
+// the v2.1 conversion exists to fix.
+func (h *SubtitleHandler) runOCRJob(jobID string, opts subtitles.OCROpts) {
+	ctx := context.Background()
+	row, err := h.svc.OCRStream(ctx, opts)
 	if err != nil {
-		if errors.Is(err, subtitles.ErrNoOCR) {
-			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{
-				"error": "OCR not available — ffmpeg + tesseract are required on the server",
-			})
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "ocr: run", "id", itemID, "stream", body.StreamIndex, "err", err)
-		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		h.logger.ErrorContext(ctx, "ocr: run", "job_id", jobID, "stream", opts.AbsStreamIndex, "err", err)
+		h.ocrJobs.Fail(jobID, err)
 		return
 	}
-	respond.Created(w, r, toExternalSubtitleJSON(row))
+	h.ocrJobs.Complete(jobID, row)
+	h.logger.InfoContext(ctx, "ocr: complete", "job_id", jobID, "stream", opts.AbsStreamIndex, "subtitle_id", row.ID)
+}
+
+// OCRStatus handles GET /api/v1/items/{id}/subtitles/ocr/{jobId}.
+// Returns the job's current state. Clients poll until status is
+// "completed" or "failed"; "running" means try again in a few seconds.
+//
+// Library access is checked the same way as the POST so a non-admin
+// can't poll a job that wasn't theirs to start. Returns 404 for unknown
+// or expired job ids — same shape regardless of "never existed" vs
+// "evicted by TTL" so the polling client doesn't need to distinguish.
+func (h *SubtitleHandler) OCRStatus(w http.ResponseWriter, r *http.Request) {
+	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkAccess(w, r, item.LibraryID) {
+		return
+	}
+
+	jobID := chi.URLParam(r, "jobId")
+	job, ok := h.ocrJobs.Get(jobID)
+	if !ok {
+		respond.NotFound(w, r)
+		return
+	}
+	respond.Success(w, r, toOCRJobJSON(job))
 }
 
 // Delete handles DELETE /api/v1/items/{id}/subtitles/{subId}.

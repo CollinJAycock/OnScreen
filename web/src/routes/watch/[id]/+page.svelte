@@ -309,27 +309,55 @@
 
   let ocrInFlight: number | null = null;
   let ocrError = '';
+
+  // OCR is job-queued: POST returns 202 + job_id immediately, then we
+  // poll GET .../ocr/{jobId} every 5 s for the terminal state. The
+  // synchronous v2.0 path 524'd behind reverse proxies with sub-
+  // multi-minute response timeouts (Cloudflare Tunnel free tier =
+  // 100 s) for feature-length PGS tracks. 30-minute outer timeout
+  // covers feature-length OCR on slower hosts; the user can close
+  // the modal and the background job still completes — they'll see
+  // the new track on next page load.
   async function ocrSubtitle(streamIndex: number, lang: string) {
     if (!item?.files?.[0]) return;
     ocrInFlight = streamIndex;
     ocrError = '';
     try {
-      const ext = await subtitleApi.ocr(item.id, {
+      const job = await subtitleApi.ocr(item.id, {
         file_id: item.files[0].id,
         stream_index: streamIndex,
         language: lang || undefined,
       });
-      const fresh = await itemApi.get(item.id);
-      item = fresh;
-      const picked = (fresh.files?.[0]?.external_subtitles ?? [])
-        .find(e => e.id === ext.id);
-      if (picked) selectedSubtitle = externalToPicked(picked);
-      showSubtitleMenu = false;
+
+      const deadline = Date.now() + 30 * 60 * 1000;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (Date.now() > deadline) {
+          throw new Error('OCR timed out — the job may still be running on the server. Reload the page in a few minutes to pick up the result.');
+        }
+        await new Promise((r) => setTimeout(r, 5000));
+        const status = await subtitleApi.ocrStatus(item.id, job.job_id);
+        if (status.status === 'failed') {
+          const msg = (status.error || 'OCR failed').toLowerCase();
+          throw new Error(
+            msg.includes('not configured') || msg.includes('not available')
+              ? 'OCR is not installed on this server (ffmpeg + tesseract required).'
+              : status.error || 'OCR failed',
+          );
+        }
+        if (status.status === 'completed' && status.subtitle) {
+          const fresh = await itemApi.get(item.id);
+          item = fresh;
+          const picked = (fresh.files?.[0]?.external_subtitles ?? [])
+            .find((e) => e.id === status.subtitle!.id);
+          if (picked) selectedSubtitle = externalToPicked(picked);
+          showSubtitleMenu = false;
+          break;
+        }
+        // status === 'running' — keep polling
+      }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'OCR failed';
-      ocrError = msg.toLowerCase().includes('not available')
-        ? 'OCR is not installed on this server (ffmpeg + tesseract required).'
-        : msg;
+      ocrError = e instanceof Error ? e.message : 'OCR failed';
     } finally {
       ocrInFlight = null;
     }

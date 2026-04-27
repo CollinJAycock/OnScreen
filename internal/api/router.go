@@ -657,6 +657,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/subtitles/search", h.Subtitles.Search)
 				r.Post("/items/{id}/subtitles/download", h.Subtitles.Download)
 				r.Post("/items/{id}/subtitles/ocr", h.Subtitles.OCR)
+				r.Get("/items/{id}/subtitles/ocr/{jobId}", h.Subtitles.OCRStatus)
 				r.Delete("/items/{id}/subtitles/{subId}", h.Subtitles.Delete)
 			}
 

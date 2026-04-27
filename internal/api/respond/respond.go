@@ -24,6 +24,13 @@ func Created(w http.ResponseWriter, r *http.Request, data any) {
 	JSON(w, r, http.StatusCreated, envelope{"data": data})
 }
 
+// Accepted writes a 202 JSON response with the data envelope. Used by
+// async endpoints (job-queued OCR, etc.) to return a job descriptor
+// immediately while the actual work runs in a server-lifetime goroutine.
+func Accepted(w http.ResponseWriter, r *http.Request, data any) {
+	JSON(w, r, http.StatusAccepted, envelope{"data": data})
+}
+
 // NoContent writes a 204 response with no body.
 func NoContent(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)

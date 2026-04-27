@@ -893,6 +893,11 @@ export const subtitleApi = {
   }) => api.post<ExternalSubtitle>(`/items/${itemId}/subtitles/download`, body),
   remove: (itemId: string, subId: string) =>
     api.delete(`/items/${itemId}/subtitles/${subId}`),
+  // OCR is job-queued in v2.1+: POST returns 202 with a job descriptor,
+  // and clients poll the GET endpoint until status is "completed" or
+  // "failed". The synchronous v2.0 behavior 524'd behind reverse proxies
+  // with sub-multi-minute response timeouts (Cloudflare Tunnel = 100 s)
+  // for feature-length PGS tracks.
   ocr: (itemId: string, body: {
     file_id: string;
     stream_index: number;
@@ -900,8 +905,21 @@ export const subtitleApi = {
     title?: string;
     forced?: boolean;
     sdh?: boolean;
-  }) => api.post<ExternalSubtitle>(`/items/${itemId}/subtitles/ocr`, body),
+  }) => api.post<OCRJob>(`/items/${itemId}/subtitles/ocr`, body),
+  ocrStatus: (itemId: string, jobId: string) =>
+    api.get<OCRJob>(`/items/${itemId}/subtitles/ocr/${jobId}`),
 };
+
+export interface OCRJob {
+  job_id: string;
+  status: 'running' | 'completed' | 'failed';
+  file_id: string;
+  stream_index: number;
+  started_at: string;
+  completed_at?: string;
+  error?: string;
+  subtitle?: ExternalSubtitle;
+}
 
 export const favoritesApi = {
   list: (limit = 100, offset = 0) =>

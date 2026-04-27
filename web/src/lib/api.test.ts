@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ApiClient, authApi, libraryApi, userApi, notificationApi, api } from './api';
+import { ApiClient, authApi, libraryApi, userApi, notificationApi, subtitleApi, api } from './api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -332,6 +332,92 @@ describe('notificationApi', () => {
     await notificationApi.markAllRead();
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/notifications/read-all');
     expect((fetch.mock.calls[0] as [string, RequestInit])[1].method).toBe('POST');
+  });
+});
+
+// ── subtitleApi.ocr (job-queued, v2.1+) ───────────────────────────────────────
+//
+// v2.0 was synchronous (POST returned 201 with the row inline) but 524'd
+// behind reverse proxies with sub-multi-minute response timeouts on
+// feature-length PGS tracks. v2.1 returns 202 + a job descriptor, and
+// clients poll the GET endpoint until status reaches a terminal state.
+
+describe('subtitleApi.ocr', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('POSTs to /items/:id/subtitles/ocr with the job body', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: () =>
+        Promise.resolve({
+          data: { job_id: 'job-1', status: 'running', file_id: 'f', stream_index: 3, started_at: '2026-04-27T13:00:00Z' },
+        }),
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const job = await subtitleApi.ocr('item-1', { file_id: 'f', stream_index: 3, language: 'eng' });
+
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/items/item-1/subtitles/ocr');
+    const init = fetch.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ file_id: 'f', stream_index: 3, language: 'eng' });
+    expect(job.job_id).toBe('job-1');
+    expect(job.status).toBe('running');
+  });
+});
+
+describe('subtitleApi.ocrStatus', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('GETs to /items/:id/subtitles/ocr/:jobId and returns the job', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          data: {
+            job_id: 'job-1',
+            status: 'completed',
+            file_id: 'f',
+            stream_index: 3,
+            started_at: '2026-04-27T13:00:00Z',
+            completed_at: '2026-04-27T13:02:00Z',
+            subtitle: { id: 'sub-1', file_id: 'f', language: 'eng', source: 'ocr', source_id: 'stream_3', forced: false, sdh: false, url: '/u' },
+          },
+        }),
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const status = await subtitleApi.ocrStatus('item-1', 'job-1');
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/items/item-1/subtitles/ocr/job-1');
+    expect((fetch.mock.calls[0] as [string, RequestInit])[1].method).toBe('GET');
+    expect(status.status).toBe('completed');
+    expect(status.subtitle?.id).toBe('sub-1');
+  });
+
+  it('surfaces the error string when the job failed', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          data: {
+            job_id: 'job-2',
+            status: 'failed',
+            file_id: 'f',
+            stream_index: 3,
+            started_at: '2026-04-27T13:00:00Z',
+            completed_at: '2026-04-27T13:00:01Z',
+            error: 'ocr engine not configured',
+          },
+        }),
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const status = await subtitleApi.ocrStatus('item-1', 'job-2');
+    expect(status.status).toBe('failed');
+    expect(status.error).toBe('ocr engine not configured');
   });
 });
 
