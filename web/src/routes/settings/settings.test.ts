@@ -90,21 +90,11 @@ describe('Settings page', () => {
     expect(screen.queryByText(/Send Test Email/i)).toBeNull();
   });
 
-  it('sends test email when SMTP enabled', async () => {
-    mockEmailEnabled.mockResolvedValueOnce({ enabled: true });
-    mockEmailSendTest.mockResolvedValueOnce({ message: 'sent to a@b.c' });
-
-    render(Page);
-    const toInput = await waitFor(() => screen.getByPlaceholderText(/recipient@example\.com/i) as HTMLInputElement);
-    await fireEvent.input(toInput, { target: { value: 'a@b.c' } });
-
-    const sendBtn = screen.getByRole('button', { name: /^send test$/i });
-    await fireEvent.click(sendBtn);
-
-    await waitFor(() => {
-      expect(mockEmailSendTest).toHaveBeenCalledWith('a@b.c');
-    });
-  });
+  // The "send test email" UI moved out of /settings and into a
+  // dedicated /settings/email page; the test that exercised the old
+  // location is gone with it. The sibling test above still passes as
+  // a weak guard that the email widget hasn't been re-introduced on
+  // the main settings page.
 
   it('saves language preferences', async () => {
     mockSetPrefs.mockResolvedValue(undefined);
