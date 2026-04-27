@@ -89,3 +89,51 @@ export async function clearStoredTokens(): Promise<void> {
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('clear_tokens');
 }
+
+// ── Native audio engine ────────────────────────────────────────────────────
+// Foundations only in this layer — device enumeration + a test-tone
+// path that proves the cpal output stack works on the user's box.
+// Full FLAC streaming + bit-perfect transport land in subsequent
+// commits on top of these primitives.
+
+export type AudioDevice = {
+  name: string;
+  is_default: boolean;
+  default_output_summary: string | null;
+};
+
+/** Lists every audio output device cpal can see. Only meaningful in
+ *  Tauri — returns [] in the browser. */
+export async function listAudioDevices(): Promise<AudioDevice[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke<AudioDevice[]>('list_audio_devices');
+}
+
+/** Plays a sine wave on the named device (or the host default when
+ *  null) for `durationMs`. Used by the desktop client's audio
+ *  diagnostic page to verify the output path works end-to-end before
+ *  the user trusts the engine with their library. */
+export async function playTestTone(
+  device: string | null,
+  frequencyHz: number,
+  durationMs: number,
+): Promise<void> {
+  if (!isTauri()) {
+    throw new Error('playTestTone is only meaningful inside the native client');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('play_test_tone', {
+    deviceName: device,
+    frequencyHz,
+    durationMs,
+  });
+}
+
+/** Stops any currently-playing tone (or, eventually, the live FLAC
+ *  stream) by dropping the cpal Stream the engine holds. */
+export async function stopAudio(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('stop_audio');
+}

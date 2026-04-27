@@ -121,23 +121,37 @@ following implications operators need to know:
    to `'include'` automatically when `apiBase` doesn't start with
    `/` — same-origin browser builds keep the existing behaviour.
 
-## What's done in this scaffold
+## What's done
 
-- Tauri 2 project skeleton (Rust + plugins + capabilities + icons)
-- IPC commands: `get_app_version`, `get_server_url`, `set_server_url`
-  (the latter validates URL is http/https before persisting via
-  tauri-plugin-store)
-- Frontend: `web/src/lib/native.ts` Tauri detection + IPC shims;
-  api.ts honours the configured URL; layout renders a server-URL
-  setup screen on first launch in the native shell
+- **Project skeleton**: Tauri 2 + plugins + capabilities + icons.
+- **Server URL config**: first-run picker + `tauri-plugin-store`
+  persistence + `set_server_url` URL validation.
+- **Bearer-token auth**: `get_tokens` / `set_tokens` /
+  `clear_tokens` IPC; `api.ts` carries `Authorization: Bearer` on
+  every request natively, refresh path posts the stored
+  refresh-token in the body so plain-http localhost works without
+  cookies.
+- **cpal foundation**: `list_audio_devices` + `play_test_tone` +
+  `stop_audio` IPC commands. Diagnostic page at
+  `/native/audio-test` lists devices and plays a sine-wave test
+  tone per device — proves the engine path works on your
+  hardware before the FLAC streaming pipeline lands on top.
 
 ## What's not done yet
 
-- Secure credential storage (next: tauri-plugin-keychain integration
-  so PASETO refresh tokens survive process restart without
-  re-typing the password)
-- Bearer-token auth path (so plain-http localhost servers work
-  without the cookie/HTTPS dance)
-- `cpal`-based audio engine for bit-perfect playback
-- System tray + media keys + notifications
-- Cross-device watch-history sync
+- **FLAC streaming + decode** — the actual bit-perfect path. Needs
+  a `claxon` decoder thread + `ringbuf` between decoder and
+  cpal's realtime callback + HTTP fetch with bearer (probably via
+  `ureq` to keep deps tight). This is the next commit on top of
+  the cpal foundation.
+- **Exclusive-mode toggle**: WASAPI exclusive on Windows
+  (`cpal::SupportedStreamConfig::buffer_size`-driven), CoreAudio
+  per-stream nominal-rate switching on macOS, ALSA `hw:` device
+  enumeration on Linux. cpal exposes the hooks; the UI needs to
+  surface the choice.
+- **Secure credential storage** — tauri-plugin-keychain swap so
+  refresh tokens leave the plaintext appdata file. (See lib.rs
+  comment on `KEY_ACCESS_TOKEN` for the threat model.)
+- **System tray + media keys + notifications**
+- **Cross-device watch-history sync** — server side is mostly
+  there; client side needs the sync protocol.

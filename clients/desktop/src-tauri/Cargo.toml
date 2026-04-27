@@ -30,6 +30,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 
+# Native audio engine. cpal exposes the platform's exclusive-mode
+# backends (WASAPI on Windows, CoreAudio on macOS, ALSA on Linux),
+# which is what the audiophile pillar needs — `<audio>` in the
+# webview routes through the OS mixer and resamples even FLAC.
+# Decoder lands when the streaming path lands; for the v2.1 cpal
+# foundation this commit ships device enumeration + a test-tone
+# command so the engine path is provably reachable on the user's
+# hardware before we layer FLAC + transport on top.
+cpal = "0.16"
+
 [features]
 # Default to nothing — opt into custom-protocol for production builds
 # the way Tauri's templates do. The runner enables it automatically

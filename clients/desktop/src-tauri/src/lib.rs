@@ -7,6 +7,8 @@
 //   CoreAudio HOG / ALSA hw:)
 // - System integration (tray, notifications, media keys)
 
+mod audio;
+
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_store::StoreExt;
@@ -159,6 +161,9 @@ pub fn run() {
             get_tokens,
             set_tokens,
             clear_tokens,
+            audio::list_audio_devices,
+            audio::play_test_tone,
+            audio::stop_audio,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OnScreen desktop");
