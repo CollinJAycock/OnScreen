@@ -48,6 +48,7 @@ These are documented in the v2 roadmap as deliberate v2.1 targets, not as gaps:
 - Podcast RSS auto-fetch (out of scope per project memo — OnScreen doesn't download content)
 - Hardware bit-perfect playback (lands with the native client phase)
 - Native client apps (Windows/macOS/Linux/iOS/Android/TV)
+- **Async OCR endpoint** — `POST /items/{id}/subtitles/ocr` is currently synchronous and bound to `r.Context()`, so it 524s behind any reverse proxy with a sub-multi-minute timeout (Cloudflare Tunnel free tier is 100s; tesseract on a feature-length PGS track regularly exceeds that). Convert to a job-queued pattern: POST returns 202 + job_id, `GET /subtitles/ocr/{jobId}` polls status, OCR runs in a server-lifetime goroutine using `context.Background()` so client disconnect doesn't kill the subprocess. Watch-page UI polls instead of awaiting. The scheduler-based `ocr_subtitles` task already runs out-of-band correctly — same pattern, exposed per-stream.
 
 ### Where to find things
 
