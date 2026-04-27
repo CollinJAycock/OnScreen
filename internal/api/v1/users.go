@@ -71,6 +71,7 @@ type UserDB interface {
 	UpdateUserPreferences(ctx context.Context, arg gen.UpdateUserPreferencesParams) error
 	UpdateUserQualityProfile(ctx context.Context, arg gen.UpdateUserQualityProfileParams) error
 	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
+	SetProfileInheritLibraryAccess(ctx context.Context, arg gen.SetProfileInheritLibraryAccessParams) (int64, error)
 }
 
 // UserLibraryAccessService is the subset of the library service needed to
@@ -531,8 +532,14 @@ type profileResponse struct {
 	HasPIN           bool    `json:"has_pin"`
 	CreatedAt        string  `json:"created_at"`
 	MaxContentRating *string `json:"max_content_rating,omitempty"`
-	OwnerID          *string `json:"owner_id,omitempty"`       // admin only
-	OwnerUsername    *string `json:"owner_username,omitempty"` // admin only
+	// InheritLibraryAccess: when true, the profile sees the parent's
+	// library grants (the safe default — admins generally create
+	// profiles for their household). When false, the profile uses its
+	// own library_access rows so admins can narrow per-profile (kid
+	// sees Family Movies only, even though parent has 4K Movies too).
+	InheritLibraryAccess bool    `json:"inherit_library_access"`
+	OwnerID              *string `json:"owner_id,omitempty"`       // admin only
+	OwnerUsername        *string `json:"owner_username,omitempty"` // admin only
 }
 
 // ListProfiles handles GET /api/v1/profiles.
@@ -559,14 +566,15 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 		for i, row := range rows {
 			ownerID := row.OwnerID.String()
 			out[i] = profileResponse{
-				ID:               row.ID.String(),
-				Username:         row.Username,
-				AvatarURL:        row.AvatarUrl,
-				HasPIN:           row.HasPin == true,
-				CreatedAt:        row.CreatedAt.Time.Format(time.RFC3339),
-				MaxContentRating: row.MaxContentRating,
-				OwnerID:          &ownerID,
-				OwnerUsername:    &row.OwnerUsername,
+				ID:                   row.ID.String(),
+				Username:             row.Username,
+				AvatarURL:            row.AvatarUrl,
+				HasPIN:               row.HasPin == true,
+				CreatedAt:            row.CreatedAt.Time.Format(time.RFC3339),
+				MaxContentRating:     row.MaxContentRating,
+				InheritLibraryAccess: row.InheritLibraryAccess,
+				OwnerID:              &ownerID,
+				OwnerUsername:        &row.OwnerUsername,
 			}
 		}
 		respond.Success(w, r, out)
@@ -582,12 +590,13 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 	out := make([]profileResponse, len(rows))
 	for i, row := range rows {
 		out[i] = profileResponse{
-			ID:               row.ID.String(),
-			Username:         row.Username,
-			AvatarURL:        row.AvatarUrl,
-			HasPIN:           row.HasPin == true,
-			CreatedAt:        row.CreatedAt.Time.Format(time.RFC3339),
-			MaxContentRating: row.MaxContentRating,
+			ID:                   row.ID.String(),
+			Username:             row.Username,
+			AvatarURL:            row.AvatarUrl,
+			HasPIN:               row.HasPin == true,
+			CreatedAt:            row.CreatedAt.Time.Format(time.RFC3339),
+			MaxContentRating:     row.MaxContentRating,
+			InheritLibraryAccess: row.InheritLibraryAccess,
 		}
 	}
 	respond.Success(w, r, out)
@@ -959,6 +968,61 @@ func (h *UserHandler) SetUserLibraries(w http.ResponseWriter, r *http.Request) {
 	if h.audit != nil {
 		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRoleChange, targetID.String(),
 			map[string]any{"library_ids": body.LibraryIDs}, audit.ClientIP(r))
+	}
+	respond.NoContent(w)
+}
+
+// SetProfileLibraryInherit handles PUT /api/v1/profiles/{id}/library-inherit.
+// Toggles the inherit_library_access flag on a managed profile. The
+// parent user (owner) and admins can both call it; for non-admins
+// the SQL gates by parent ownership and returns 0 rows on a
+// mismatch, which we surface as 404 — same shape as the rest of the
+// profile endpoints.
+func (h *UserHandler) SetProfileLibraryInherit(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	profileID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid profile id")
+		return
+	}
+	var body struct {
+		Inherit bool `json:"inherit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+
+	// Admins bypass the ownership check; everyone else may only flip
+	// their own profiles' flag (the SQL returns 0 rows on a parent
+	// mismatch, which we map to 404).
+	var ownerArg pgtype.UUID
+	if !claims.IsAdmin {
+		ownerArg = pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}
+	}
+	rows, err := h.db.SetProfileInheritLibraryAccess(r.Context(), gen.SetProfileInheritLibraryAccessParams{
+		Inherit: body.Inherit,
+		ID:      profileID,
+		OwnerID: ownerArg,
+	})
+	if err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "set profile library inherit", "profile_id", profileID, "err", err)
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if rows == 0 {
+		respond.NotFound(w, r)
+		return
 	}
 	respond.NoContent(w)
 }

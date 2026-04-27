@@ -881,6 +881,11 @@ export interface ManagedProfile {
   has_pin: boolean;
   created_at: string;
   max_content_rating?: string | null;
+  // When true (default) the profile sees the parent owner's library
+  // grants. When false the profile uses its own library_access rows
+  // — set explicit grants via userApi.setLibraries(profileId, [...])
+  // to narrow what the profile can see.
+  inherit_library_access: boolean;
 }
 
 export const profileApi = {
@@ -890,6 +895,8 @@ export const profileApi = {
   update: (id: string, username: string, avatar_url?: string) =>
     api.patch<ManagedProfile>(`/profiles/${id}`, { username, avatar_url }),
   delete: (id: string) => api.delete(`/profiles/${id}`),
+  setLibraryInherit: (id: string, inherit: boolean) =>
+    api.put<void>(`/profiles/${id}/library-inherit`, { inherit }),
 };
 
 export const itemApi = {

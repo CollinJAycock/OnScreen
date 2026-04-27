@@ -536,6 +536,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/profiles", h.User.CreateProfile)
 				r.Patch("/profiles/{id}", h.User.UpdateProfile)
 				r.Delete("/profiles/{id}", h.User.DeleteProfile)
+				r.Put("/profiles/{id}/library-inherit", h.User.SetProfileLibraryInherit)
 			}
 
 			// Collections & playlists.

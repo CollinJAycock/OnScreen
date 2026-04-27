@@ -65,6 +65,10 @@ type mockUserDB struct {
 	countAdminsErr error
 
 	updatePasswordErr error
+
+	lastInheritParams *gen.SetProfileInheritLibraryAccessParams
+	inheritRows       int64
+	inheritErr        error
 }
 
 func (m *mockUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) {
@@ -120,6 +124,16 @@ func (m *mockUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPr
 
 func (m *mockUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUserContentRatingParams) error {
 	return nil
+}
+
+// Test plumbing for SetProfileInheritLibraryAccess: tests must opt in
+// to "0 rows, no error" by setting inheritRows=0 explicitly along with
+// inheritErr=nil. The default zero value of inheritRows means tests
+// that don't care will get 0 rows back — fine, since no existing test
+// exercises this method, and the new tests set the field explicitly.
+func (m *mockUserDB) SetProfileInheritLibraryAccess(_ context.Context, p gen.SetProfileInheritLibraryAccessParams) (int64, error) {
+	m.lastInheritParams = &p
+	return m.inheritRows, m.inheritErr
 }
 
 func (m *mockUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUserQualityProfileParams) error {
@@ -939,5 +953,86 @@ func TestUser_SetAdmin_SetUserAdmin_DBError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// ── SetProfileLibraryInherit ──────────────────────────────────────────────────
+
+func TestUser_SetProfileLibraryInherit_AdminBypassesOwnerCheck(t *testing.T) {
+	callerID := uuid.New()
+	profileID := uuid.New()
+	db := &mockUserDB{inheritRows: 1}
+	h := NewUserHandler(&mockUserService{}).WithDB(db)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/profiles/"+profileID.String()+"/library-inherit",
+		strings.NewReader(`{"inherit":false}`))
+	req = adminAuthedRequest(req, callerID)
+	req = usersWithChiParam(req, "id", profileID.String())
+	h.SetProfileLibraryInherit(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if db.lastInheritParams == nil {
+		t.Fatal("expected SetProfileInheritLibraryAccess to be called")
+	}
+	// Admin must NOT pass an owner gate — the SQL must update any
+	// managed profile regardless of who owns it.
+	if db.lastInheritParams.OwnerID.Valid {
+		t.Errorf("admin caller: OwnerID should be nil/invalid")
+	}
+	if db.lastInheritParams.Inherit != false {
+		t.Errorf("Inherit: got %v, want false", db.lastInheritParams.Inherit)
+	}
+}
+
+func TestUser_SetProfileLibraryInherit_NonAdminPassesOwnerGate(t *testing.T) {
+	callerID := uuid.New()
+	profileID := uuid.New()
+	db := &mockUserDB{inheritRows: 1}
+	h := NewUserHandler(&mockUserService{}).WithDB(db)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/profiles/"+profileID.String()+"/library-inherit",
+		strings.NewReader(`{"inherit":true}`))
+	// Build a non-admin request with a known caller user_id — we need
+	// the caller's id to flow through to the OwnerID gate.
+	req = adminAuthedRequest(req, callerID)
+	claims := middleware.ClaimsFromContext(req.Context())
+	claims.IsAdmin = false
+	req = usersWithChiParam(req, "id", profileID.String())
+	h.SetProfileLibraryInherit(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if db.lastInheritParams == nil || !db.lastInheritParams.OwnerID.Valid {
+		t.Fatal("non-admin caller: OwnerID must be set so the SQL gates by parent ownership")
+	}
+	gotOwner := uuid.UUID(db.lastInheritParams.OwnerID.Bytes)
+	if gotOwner != callerID {
+		t.Errorf("OwnerID: got %s, want caller %s", gotOwner, callerID)
+	}
+}
+
+func TestUser_SetProfileLibraryInherit_ZeroRowsIs404(t *testing.T) {
+	// 0 rows from the SQL means "not a managed profile" or "wrong
+	// owner" — the handler must return 404 so callers can't probe
+	// for profile IDs they don't own.
+	callerID := uuid.New()
+	profileID := uuid.New()
+	db := &mockUserDB{inheritRows: 0}
+	h := NewUserHandler(&mockUserService{}).WithDB(db)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/profiles/"+profileID.String()+"/library-inherit",
+		strings.NewReader(`{"inherit":false}`))
+	req = adminAuthedRequest(req, callerID)
+	req = usersWithChiParam(req, "id", profileID.String())
+	h.SetProfileLibraryInherit(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404", rec.Code)
 	}
 }

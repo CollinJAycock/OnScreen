@@ -42,7 +42,8 @@ FROM users
 ORDER BY username;
 
 -- name: ListManagedProfiles :many
-SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at, max_content_rating
+SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at,
+       max_content_rating, inherit_library_access
 FROM users
 WHERE parent_user_id = $1
 ORDER BY username;
@@ -70,7 +71,8 @@ RETURNING id, username, avatar_url, parent_user_id, created_at;
 
 -- name: ListAllManagedProfiles :many
 SELECT u.id, u.username, u.avatar_url, (u.pin IS NOT NULL) AS has_pin, u.created_at,
-       u.parent_user_id AS owner_id, p.username AS owner_username, u.max_content_rating
+       u.parent_user_id AS owner_id, p.username AS owner_username,
+       u.max_content_rating, u.inherit_library_access
 FROM users u
 JOIN users p ON p.id = u.parent_user_id
 ORDER BY p.username, u.username;
@@ -210,6 +212,24 @@ UPDATE users
 SET max_content_rating = $2,
     updated_at = NOW()
 WHERE id = $1;
+
+-- name: SetProfileInheritLibraryAccess :execrows
+-- Toggles whether a managed profile inherits the parent's library
+-- grants (true) or uses its own library_access rows (false). v2.1
+-- Track G item 3 — see HasLibraryAccess for the read-side semantics.
+--
+-- The 'owner_id' arg is a nullable parent gate: pass the caller's
+-- user_id to enforce ownership (returns 0 rows when the caller is
+-- not the parent), pass NULL to bypass the check entirely (admin
+-- callers). Returning rows-affected lets the handler distinguish
+-- "wrong owner / not a managed profile" (0) from success (1).
+UPDATE users
+SET inherit_library_access = sqlc.arg('inherit')::bool,
+    updated_at = NOW()
+WHERE id = sqlc.arg('id')::uuid
+  AND parent_user_id IS NOT NULL
+  AND (sqlc.narg('owner_id')::uuid IS NULL
+       OR parent_user_id = sqlc.narg('owner_id')::uuid);
 
 -- name: BumpSessionEpoch :exec
 -- Invalidates all outstanding PASETO access tokens for a user by bumping

@@ -14,10 +14,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/testdb"
 )
+
+func pgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
 
 func seedLibrary(ctx context.Context, t *testing.T, q *gen.Queries, name string) uuid.UUID {
 	t.Helper()
@@ -206,5 +211,173 @@ func TestLibraryAccess_Integration_RevokeAllForUser(t *testing.T) {
 		t.Fatalf("ListLibraryAccessByUser bystander: %v", err)
 	} else if len(libs) != 1 {
 		t.Errorf("bystander grants were wrongly wiped: got %d", len(libs))
+	}
+}
+
+// TestLibraryAccess_Integration_ProfileInheritsParent proves the v2.1
+// Track G item 3 inheritance default: a managed profile with
+// inherit_library_access=true sees its parent's grants on private
+// libraries even though the profile has zero rows of its own. This is
+// the safe-by-default behaviour that prevents the "barren home page
+// for kid profiles" footgun.
+func TestLibraryAccess_Integration_ProfileInheritsParent(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	parent := seedUser(ctx, t, q, "acl-inh-p-"+uuid.New().String()[:8])
+
+	// Manually create a managed profile (no helper, since the existing
+	// CreateManagedProfile wraps a different Params type).
+	var profile uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO users (username, parent_user_id, is_admin) VALUES ($1, $2, false) RETURNING id`,
+		"acl-inh-c-"+uuid.New().String()[:8], parent,
+	).Scan(&profile); err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
+
+	priv := seedLibrary(ctx, t, q, "acl-inh-priv-"+uuid.New().String()[:8])
+	if _, err := pool.Exec(ctx, `UPDATE libraries SET is_private = true WHERE id = $1`, priv); err != nil {
+		t.Fatalf("mark private: %v", err)
+	}
+
+	// Grant ONLY the parent.
+	if err := q.GrantLibraryAccess(ctx, gen.GrantLibraryAccessParams{
+		UserID: parent, LibraryID: priv,
+	}); err != nil {
+		t.Fatalf("grant parent: %v", err)
+	}
+
+	// Profile inherits by default → must see the parent's grant.
+	ok, err := q.HasLibraryAccess(ctx, gen.HasLibraryAccessParams{UserID: profile, LibraryID: priv})
+	if err != nil {
+		t.Fatalf("HasLibraryAccess profile: %v", err)
+	}
+	if !ok {
+		t.Error("profile with inherit=true must see parent's private library grant")
+	}
+
+	// And ListAllowed for the profile must include the inherited library.
+	ids, err := q.ListAllowedLibraryIDsForUser(ctx, profile)
+	if err != nil {
+		t.Fatalf("ListAllowed profile: %v", err)
+	}
+	found := false
+	for _, id := range ids {
+		if id == priv {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ListAllowed missing inherited library; got %v", ids)
+	}
+}
+
+// TestLibraryAccess_Integration_ProfileNarrowsWhenInheritOff proves
+// the override side: when an admin flips inherit_library_access=false
+// and grants a narrower set, the profile loses access to libraries
+// the parent has but the profile doesn't — even on private libraries.
+// This is the parental-control use case (kid sees Family Movies only
+// even though parent has 4K Movies too).
+func TestLibraryAccess_Integration_ProfileNarrowsWhenInheritOff(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	parent := seedUser(ctx, t, q, "acl-narr-p-"+uuid.New().String()[:8])
+	var profile uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO users (username, parent_user_id, is_admin) VALUES ($1, $2, false) RETURNING id`,
+		"acl-narr-c-"+uuid.New().String()[:8], parent,
+	).Scan(&profile); err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
+
+	family := seedLibrary(ctx, t, q, "acl-narr-fam-"+uuid.New().String()[:8])
+	uhd := seedLibrary(ctx, t, q, "acl-narr-uhd-"+uuid.New().String()[:8])
+	for _, lid := range []uuid.UUID{family, uhd} {
+		if _, err := pool.Exec(ctx, `UPDATE libraries SET is_private = true WHERE id = $1`, lid); err != nil {
+			t.Fatalf("mark private: %v", err)
+		}
+	}
+
+	// Parent gets access to both.
+	for _, lid := range []uuid.UUID{family, uhd} {
+		if err := q.GrantLibraryAccess(ctx, gen.GrantLibraryAccessParams{
+			UserID: parent, LibraryID: lid,
+		}); err != nil {
+			t.Fatalf("grant parent: %v", err)
+		}
+	}
+
+	// Flip inheritance OFF for the profile and grant only Family.
+	rows, err := q.SetProfileInheritLibraryAccess(ctx, gen.SetProfileInheritLibraryAccessParams{
+		Inherit: false, ID: profile,
+	})
+	if err != nil || rows != 1 {
+		t.Fatalf("SetProfileInheritLibraryAccess: rows=%d err=%v", rows, err)
+	}
+	if err := q.GrantLibraryAccess(ctx, gen.GrantLibraryAccessParams{
+		UserID: profile, LibraryID: family,
+	}); err != nil {
+		t.Fatalf("grant profile family: %v", err)
+	}
+
+	// Profile must see Family (own grant) but NOT UHD (would only be
+	// visible via inheritance, which is now off).
+	if ok, err := q.HasLibraryAccess(ctx, gen.HasLibraryAccessParams{UserID: profile, LibraryID: family}); err != nil {
+		t.Fatalf("HasLibraryAccess family: %v", err)
+	} else if !ok {
+		t.Error("profile with explicit grant on Family must see it")
+	}
+	if ok, err := q.HasLibraryAccess(ctx, gen.HasLibraryAccessParams{UserID: profile, LibraryID: uhd}); err != nil {
+		t.Fatalf("HasLibraryAccess uhd: %v", err)
+	} else if ok {
+		t.Error("profile with inherit=false must NOT see parent's UHD grant — narrowing failed")
+	}
+}
+
+// TestLibraryAccess_Integration_SetInheritOwnerGate proves the SQL's
+// owner_id gate: passing a non-parent user_id as owner_id returns 0
+// rows (which the handler maps to 404), preventing IDOR-style writes
+// where one user could flip another user's profile inheritance.
+func TestLibraryAccess_Integration_SetInheritOwnerGate(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	owner := seedUser(ctx, t, q, "acl-gate-o-"+uuid.New().String()[:8])
+	stranger := seedUser(ctx, t, q, "acl-gate-s-"+uuid.New().String()[:8])
+	var profile uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO users (username, parent_user_id, is_admin) VALUES ($1, $2, false) RETURNING id`,
+		"acl-gate-c-"+uuid.New().String()[:8], owner,
+	).Scan(&profile); err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
+
+	// Stranger tries to flip the inherit flag — must affect 0 rows.
+	strangerArg := pgUUID(stranger)
+	rows, err := q.SetProfileInheritLibraryAccess(ctx, gen.SetProfileInheritLibraryAccessParams{
+		Inherit: false, ID: profile, OwnerID: strangerArg,
+	})
+	if err != nil {
+		t.Fatalf("SetProfileInheritLibraryAccess stranger: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("stranger gate: rows=%d, want 0 — IDOR risk", rows)
+	}
+
+	// Real owner succeeds.
+	ownerArg := pgUUID(owner)
+	rows, err = q.SetProfileInheritLibraryAccess(ctx, gen.SetProfileInheritLibraryAccessParams{
+		Inherit: false, ID: profile, OwnerID: ownerArg,
+	})
+	if err != nil {
+		t.Fatalf("SetProfileInheritLibraryAccess owner: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("owner gate: rows=%d, want 1", rows)
 	}
 }

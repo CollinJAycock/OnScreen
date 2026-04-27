@@ -57,7 +57,14 @@ const hasLibraryAccess = `-- name: HasLibraryAccess :one
 SELECT EXISTS(
     SELECT 1 FROM libraries l
     LEFT JOIN library_access la
-        ON la.library_id = l.id AND la.user_id = $1
+        ON la.library_id = l.id AND la.user_id = (
+            SELECT CASE
+                WHEN u.parent_user_id IS NOT NULL AND u.inherit_library_access
+                    THEN u.parent_user_id
+                ELSE u.id
+            END
+            FROM users u WHERE u.id = $1
+        )
     WHERE l.id = $2
       AND l.deleted_at IS NULL
       AND (l.is_private = false OR la.library_id IS NOT NULL)
@@ -74,9 +81,12 @@ type HasLibraryAccessParams struct {
 //
 // v2.1 semantics: a user can access a library when *either* the
 // library is public (is_private = false, the v2.0 default) *or* the
-// user has an explicit grant in library_access. Public-by-default
-// preserves backward compatibility on existing installs where no
-// libraries were marked private.
+// effective owner has an explicit grant in library_access. The
+// *effective owner* is the parent's user_id when the user is a
+// managed profile with inherit_library_access=true, otherwise the
+// user's own id — letting kid profiles inherit their owner's grants
+// by default while still allowing per-profile narrowing when an
+// admin flips the flag off and grants a specific subset.
 func (q *Queries) HasLibraryAccess(ctx context.Context, arg HasLibraryAccessParams) (bool, error) {
 	row := q.db.QueryRow(ctx, hasLibraryAccess, arg.UserID, arg.LibraryID)
 	var allowed bool
@@ -88,22 +98,31 @@ const listAllowedLibraryIDsForUser = `-- name: ListAllowedLibraryIDsForUser :man
 SELECT DISTINCT l.id AS library_id
 FROM libraries l
 LEFT JOIN library_access la
-    ON la.library_id = l.id AND la.user_id = $1
+    ON la.library_id = l.id AND la.user_id = (
+        SELECT CASE
+            WHEN u.parent_user_id IS NOT NULL AND u.inherit_library_access
+                THEN u.parent_user_id
+            ELSE u.id
+        END
+        FROM users u WHERE u.id = $1
+    )
 WHERE l.deleted_at IS NULL
   AND (l.is_private = false OR la.library_id IS NOT NULL)
 `
 
 // Returns library IDs the user can see — the v2.1 model is the union
-// of (public libraries) and (libraries the user has been explicitly
-// granted). Public-by-default preserves the v2.0 behaviour where any
-// user with auth could see any library; private libraries require an
-// explicit grant in library_access.
+// of (public libraries) and (libraries the *effective owner* has been
+// explicitly granted). For managed profiles with
+// inherit_library_access=true the effective owner is the parent;
+// otherwise it's the user themselves. Public-by-default preserves
+// the v2.0 behaviour where any user with auth could see any library;
+// private libraries require an explicit grant in library_access.
 //
 // DISTINCT because a library could match both branches when an admin
 // toggles is_private=false on a library that previously had grants
 // recorded — we don't want duplicate IDs in the caller's set.
-func (q *Queries) ListAllowedLibraryIDsForUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listAllowedLibraryIDsForUser, userID)
+func (q *Queries) ListAllowedLibraryIDsForUser(ctx context.Context, id uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listAllowedLibraryIDsForUser, id)
 	if err != nil {
 		return nil, err
 	}

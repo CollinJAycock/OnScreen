@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, profileApi, userApi, type ManagedProfile } from '$lib/api';
+  import { api, profileApi, userApi, libraryApi, type ManagedProfile, type Library } from '$lib/api';
 
   let profiles: ManagedProfile[] = [];
   let loading = true;
@@ -24,6 +24,16 @@
 
   // Track per-profile content rating
   let profileRatings: Record<string, string> = {};
+
+  // Library-access state: which profile (if any) is currently editing
+  // its library set, the cached library list, and the in-flight grant
+  // selection. Loaded on demand to avoid pulling /libraries on first
+  // page render.
+  let libraries: Library[] = [];
+  let librariesLoaded = false;
+  let editingLibrariesFor: string | null = null;
+  let selectedLibraryIds = new Set<string>();
+  let savingLibraries = false;
 
   const avatars = ['#7c6af7', '#f7836a', '#6af7a7', '#f7d76a', '#6ac5f7', '#f76adb'];
 
@@ -52,6 +62,45 @@
       await userApi.setContentRating(id, rating || null);
       profileRatings[id] = rating;
     } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+  }
+
+  async function setInherit(id: string, inherit: boolean) {
+    try {
+      await profileApi.setLibraryInherit(id, inherit);
+      profiles = profiles.map(p => p.id === id ? { ...p, inherit_library_access: inherit } : p);
+      // When flipping back to inherit, close any open custom-grants editor.
+      if (inherit && editingLibrariesFor === id) editingLibrariesFor = null;
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+  }
+
+  async function openLibraryEditor(id: string) {
+    if (!librariesLoaded) {
+      try {
+        libraries = await libraryApi.list();
+        librariesLoaded = true;
+      } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load libraries'; return; }
+    }
+    try {
+      const grants = await userApi.getLibraries(id);
+      selectedLibraryIds = new Set(grants.filter(g => g.enabled).map(g => g.library_id));
+      editingLibrariesFor = id;
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load grants'; }
+  }
+
+  function toggleLibrary(libId: string) {
+    if (selectedLibraryIds.has(libId)) selectedLibraryIds.delete(libId);
+    else selectedLibraryIds.add(libId);
+    selectedLibraryIds = new Set(selectedLibraryIds);
+  }
+
+  async function saveLibraries() {
+    if (!editingLibrariesFor) return;
+    savingLibraries = true;
+    try {
+      await userApi.setLibraries(editingLibrariesFor, Array.from(selectedLibraryIds));
+      editingLibrariesFor = null;
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to save grants'; }
+    finally { savingLibraries = false; }
   }
 
   async function createProfile() {
@@ -155,6 +204,39 @@
                 {/each}
               </select>
             </div>
+            <div class="lib-row">
+              <label class="rating-label">Library access</label>
+              <select class="rating-select-sm"
+                value={profile.inherit_library_access ? 'inherit' : 'custom'}
+                on:change={(e) => setInherit(profile.id, e.currentTarget.value === 'inherit')}>
+                <option value="inherit">Same as owner</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            {#if !profile.inherit_library_access}
+              {#if editingLibrariesFor === profile.id}
+                <div class="lib-list">
+                  {#each libraries as lib (lib.id)}
+                    <label class="lib-check">
+                      <input type="checkbox"
+                        checked={selectedLibraryIds.has(lib.id)}
+                        on:change={() => toggleLibrary(lib.id)} />
+                      <span>{lib.name}</span>
+                    </label>
+                  {/each}
+                  <div class="lib-actions">
+                    <button type="button" class="btn-sm save"
+                      disabled={savingLibraries} on:click={saveLibraries}>
+                      {savingLibraries ? 'Saving…' : 'Save grants'}
+                    </button>
+                    <button type="button" class="btn-sm" on:click={() => editingLibrariesFor = null}>Cancel</button>
+                  </div>
+                </div>
+              {:else}
+                <button type="button" class="btn-sm pick-libs"
+                  on:click={() => openLibraryEditor(profile.id)}>Pick libraries…</button>
+              {/if}
+            {/if}
             <div class="actions">
               <button class="btn-sm" on:click={() => { editingId = profile.id; editName = profile.username; }}>Edit</button>
               <button class="btn-sm danger" on:click={() => deleteProfile(profile.id)}>Delete</button>
@@ -247,6 +329,21 @@
   .rating-row {
     display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.4rem; margin-top: 0.2rem;
   }
+  .lib-row {
+    display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.4rem;
+  }
+  .lib-list {
+    width: 100%; display: flex; flex-direction: column; gap: 0.25rem;
+    background: var(--bg-hover); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.5rem; margin-bottom: 0.4rem; max-height: 160px; overflow-y: auto;
+  }
+  .lib-check {
+    display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem;
+    color: var(--text-secondary); cursor: pointer;
+  }
+  .lib-check input[type="checkbox"] { margin: 0; }
+  .lib-actions { display: flex; gap: 0.4rem; justify-content: flex-end; padding-top: 0.3rem; }
+  .pick-libs { width: 100%; margin-bottom: 0.4rem; }
   .rating-label { font-size: 0.65rem; color: var(--text-muted); white-space: nowrap; }
   .rating-select-sm {
     background: var(--bg-hover); border: 1px solid var(--border-strong);

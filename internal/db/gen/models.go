@@ -501,6 +501,7 @@ type User struct {
 	SessionEpoch          int64              `json:"session_epoch"`
 	SamlIssuer            *string            `json:"saml_issuer"`
 	SamlSubject           *string            `json:"saml_subject"`
+	InheritLibraryAccess  bool               `json:"inherit_library_access"`
 }
 
 type UserFavorite struct {

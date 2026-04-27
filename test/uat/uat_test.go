@@ -449,6 +449,9 @@ func (s *stubUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUse
 func (s *stubUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUserContentRatingParams) error {
 	return nil
 }
+func (s *stubUserDB) SetProfileInheritLibraryAccess(_ context.Context, _ gen.SetProfileInheritLibraryAccessParams) (int64, error) {
+	return 1, nil
+}
 
 // stubAnalyticsDB implements the analyticsQuerier used by AnalyticsHandler.
 type stubAnalyticsDB struct{}
