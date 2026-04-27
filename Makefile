@@ -11,7 +11,7 @@ VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo
 BUILD_TIME   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS      := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e lint fmt coverage docker docker-up docker-down check clean dev help
+.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help
 
 ## all: build everything (frontend + server + worker)
 all: build
@@ -63,6 +63,17 @@ test-int:
 test-e2e:
 	docker compose -f docker/docker-compose.yml up -d --wait
 	$(GO) test -tags e2e -count=1 -run E2E ./test/e2e/... ; ret=$$?; docker compose -f docker/docker-compose.yml down; exit $$ret
+
+## test-browser: run Playwright browser-driven specs from web/tests/e2e
+## Requires a running OnScreen server reachable at $$BASE_URL (default
+## http://localhost:7070) plus E2E_USERNAME / E2E_PASSWORD for the auth
+## paths and E2E_GAPLESS_ALBUM for the gapless rollover spec. First
+## run only: `make test-browser-install` to download browser engines.
+test-browser:
+	cd web && npx playwright test
+
+test-browser-install:
+	cd web && npx playwright install --with-deps
 
 ## lint: run golangci-lint
 lint:

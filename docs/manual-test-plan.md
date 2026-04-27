@@ -16,6 +16,8 @@ The sections below are smaller than they used to be. As the automated suite grew
 
 Goal: prove the build boots and the golden path works. Stop at first failure.
 
+> Most of Tier 1 is now automated: `make test-browser` runs Playwright specs under [web/tests/e2e/smoke.spec.ts](../web/tests/e2e/smoke.spec.ts) covering boot, health, login, library list, settings load, and console-error sweep across Chromium/Firefox/WebKit. Run that first; the boxes below are the human-only residue.
+
 ### Boot
 - [ ] `docker compose up -d` (or systemd start) returns no errors in 30s
 - [ ] `curl -fsS http://localhost:7070/health/live` → `{"status":"ok"}`
@@ -38,7 +40,7 @@ Goal: prove the build boots and the golden path works. Stop at first failure.
 - [ ] Close tab, reopen, click resume — playback restarts at the correct position
 
 ### Music (if music library present)
-- [ ] Play a song. Play next song. **Listen for a gap** between tracks of a gapless album — there should be none
+- [ ] Play a song. Play next song. **Listen for a gap** between tracks of a gapless album — there should be none *(also automated: [gapless.spec.ts](../web/tests/e2e/gapless.spec.ts) checks volume restoration after rollover and uses an AudioContext analyser tap to confirm non-silent output. The human still listens for the gap itself.)*
 
 ### Admin smoke
 - [ ] Settings page loads, shows current TMDB key (masked)
@@ -178,7 +180,7 @@ For each row, hit play and confirm: video starts <5s, audio sync, seek works, no
 - [ ] Album-artist vs track-artist — compilation album lists "Various Artists" as album artist, individual tracks attributed correctly
 
 ### Security probes (each release that touches auth or new endpoints)
-*Most of these now have automated regression guards (referenced inline). The manual probe re-validates with adversarial creativity that the automation can't replicate.*
+*Most of these now have automated regression guards (referenced inline) plus a live HTTP-level re-probe at [security.spec.ts](../web/tests/e2e/security.spec.ts). Run `make test-browser` first; the rows below are the adversarial-creativity layer the automation can't replicate.*
 
 - [ ] **XSS attempt**: subtitle file with `<script>alert(1)</script>` cue — escaped, no alert *(Svelte autoescape is unit-tested but a crafted cue is the real-world stress test)*
 - [ ] **SQL injection**: search with `'; DROP TABLE users; --` — no error, no damage *(sqlc parameterizes; spot-check)*
