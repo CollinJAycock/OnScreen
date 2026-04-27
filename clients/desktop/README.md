@@ -149,27 +149,37 @@ Trigger a build manually from the Actions tab → "Desktop client"
 artefacts (`onscreen-desktop-Windows`, `onscreen-desktop-macOS`,
 `onscreen-desktop-Linux`) for 14 days.
 
-## CORS / auth caveats for cross-origin native runs
+## CORS — required server-side allow-list entry
 
-The Tauri webview runs at `tauri://localhost` (Linux/Win) or
-`https://tauri.localhost` (Win in some configs); the OnScreen
-server you're connecting to runs at whatever URL the user picked
-in the setup screen. That's a **cross-origin** fetch, with the
-following implications operators need to know:
+The Tauri webview's origin is **cross-origin** to your OnScreen
+server, so the server must allow it via CORS. Symptom when
+missing: login (or any API call) fails with `TypeError: Failed
+to fetch`. The browser's Network tab inside the Tauri webview
+(F12) shows the preflight OPTIONS request returning without an
+`Access-Control-Allow-Origin` header.
 
-1. **CORS allow-list** — set `CORS_ALLOWED_ORIGINS` on the
-   OnScreen server to include the Tauri origin(s). The middleware
-   already handles `Access-Control-Allow-Credentials: true` when
-   the origin matches.
-2. **Cookie-based auth needs `SameSite=None; Secure`** — which
-   means HTTPS. A plain `http://localhost:7070` server won't ship
-   cookies cross-origin to the Tauri webview because the cookie
-   spec forbids `Secure` on http. For local dev, run OnScreen
-   under https (use `mkcert` for a trusted localhost cert) or
-   wire bearer-token-only auth (planned follow-up).
-3. **The api.ts wrapper already flips** `credentials: 'same-origin'`
-   to `'include'` automatically when `apiBase` doesn't start with
-   `/` — same-origin browser builds keep the existing behaviour.
+**Origins to allow** (per platform):
+
+| Platform | Webview origin |
+|---|---|
+| Windows (WebView2) | `http://tauri.localhost` |
+| macOS (WKWebView)  | `tauri://localhost` |
+| Linux (WebKitGTK)  | `tauri://localhost` |
+
+**Add them to your server**: open the OnScreen web UI in a
+browser, go to **Settings → General → CORS Allowed Origins**, paste
+the comma-separated list, save. The CORS middleware re-reads on
+the next request — no server restart needed.
+
+If unsure of the exact origin, hit **F12** in the Tauri client to
+open DevTools, retry the failing request, and copy the `Origin`
+header verbatim from the request log.
+
+**Auth model:** the api.ts wrapper sends bearer tokens (not
+cookies) when running inside Tauri, so the server doesn't need to
+opt into credentialled CORS — `credentials: 'omit'` keeps the
+preflight simple. Plain-http localhost servers work without the
+HTTPS / SameSite=None dance cookies would require.
 
 ## What's done
 

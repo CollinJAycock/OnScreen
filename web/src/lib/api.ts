@@ -48,6 +48,33 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
+/** Pick the right credentials mode for a request.
+ *
+ *  - Same-origin (browser embed): 'same-origin' so cookies attach.
+ *  - Tauri (always cross-origin, always bearer-mode): 'omit'.
+ *    Bearer is in Authorization, no cookies needed, and 'omit'
+ *    avoids the Access-Control-Allow-Credentials class of CORS
+ *    errors entirely — preflight passes against any origin on
+ *    the server's allowlist without the operator having to opt
+ *    into credentialled CORS. Login (which runs before the
+ *    bearer cache is hydrated) gets the same treatment because
+ *    isTauri() is true the whole session.
+ *  - Cross-origin browser (rare — e.g. embedded TV apps):
+ *    'include' for cookie auth; server must echo
+ *    Access-Control-Allow-Credentials: true.
+ */
+function credentialsMode(): RequestCredentials {
+  if (apiBase.startsWith('/')) return 'same-origin';
+  // Lazy require to avoid a static dep on the native helper at
+  // module-load time — keeps the browser bundle clean and
+  // sidesteps any future circularity if native.ts grows api.ts
+  // imports.
+  if (typeof window !== 'undefined' && (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+    return 'omit';
+  }
+  return 'include';
+}
+
 /** Persist new tokens via the Tauri shell, no-op in the browser.
  *  Fire-and-forget — failure to persist is non-fatal because the
  *  in-memory bearer is already updated. */
@@ -166,7 +193,7 @@ export class ApiClient {
       () => fetch(apiBase + finalPath, {
         method,
         headers: authHeaders(),
-        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include',
+        credentials: credentialsMode(),
         body: body ? JSON.stringify(body) : undefined
       }),
       async (resp) => {
@@ -188,7 +215,7 @@ export class ApiClient {
       () => fetch(apiBase + finalPath, {
         method: 'GET',
         headers: authHeaders(),
-        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include'
+        credentials: credentialsMode()
       }),
       async (resp) => {
         const json = await resp.json();
@@ -216,7 +243,7 @@ export class ApiClient {
       const resp = await fetch(apiBase + '/auth/refresh', {
         method: 'POST',
         headers: authHeaders(),
-        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include',
+        credentials: credentialsMode(),
         body: refreshTokenStore ? JSON.stringify(body) : undefined,
       });
       if (!resp.ok) {
