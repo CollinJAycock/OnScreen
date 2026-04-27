@@ -39,6 +39,19 @@ export function setBearerToken(access: string | null, refresh: string | null = n
   refreshTokenStore = refresh;
 }
 
+/** Read the cached bearer token. Used by the native audio engine
+ *  wiring to send Authorization on Rust-initiated HTTP fetches
+ *  (cpal pipeline can't read api.ts internals through fetch since
+ *  it owns its own ureq client). Returns null in browser builds
+ *  where bearer auth isn't used. */
+export function getBearerToken(): string | null { return bearerToken; }
+
+/** Read the configured API base. Used by the native audio engine
+ *  wiring to construct absolute media URLs the Rust-side ureq
+ *  client can fetch directly — same-origin paths from api.ts are
+ *  meaningless to a Rust HTTP client. */
+export function getApiBase(): string { return apiBase; }
+
 /** Build the request headers, attaching Authorization when a bearer
  *  token is cached. Browser builds skip the bearer (cookies cover
  *  auth there). */

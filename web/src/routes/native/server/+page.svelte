@@ -4,6 +4,7 @@
     isTauri, getServerUrl, setServerUrl, clearServerUrl,
     getStoredTokens, clearStoredTokens,
   } from '$lib/native';
+  import { nativeEngine } from '$lib/stores/nativeEngine';
 
   let loading = true;
   let currentUrl: string | null = null;
@@ -97,6 +98,29 @@
     </section>
 
     <section class="card">
+      <h2>Native audio engine</h2>
+      <p class="muted">
+        When enabled, FLAC playback bypasses the browser's
+        <code>&lt;audio&gt;</code> element and goes through the Rust
+        cpal+claxon pipeline — the bit-perfect path. Other formats
+        (MP3, AAC, transcoded sources) still fall back to
+        <code>&lt;audio&gt;</code>; if a non-FLAC URL hits the engine
+        it'll fail to decode and the AudioPlayer logs the error and
+        skips the track.
+      </p>
+      <p class="muted">
+        Phase 1 limitations (will close in subsequent commits):
+        position counter doesn't update during native playback;
+        track doesn't auto-advance at end (use the Next button).
+      </p>
+      <label class="toggle">
+        <input type="checkbox" checked={$nativeEngine}
+          on:change={(e) => nativeEngine.set((e.target as HTMLInputElement).checked)} />
+        <span>Use the native audio engine for FLAC playback</span>
+      </label>
+    </section>
+
+    <section class="card">
       <h2>Disconnect</h2>
       <p class="muted">
         Clears the stored access + refresh tokens and the server URL,
@@ -153,6 +177,12 @@
   }
   .danger:hover { background: rgba(248,113,113,0.25); }
   .danger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .toggle {
+    display: flex; align-items: center; gap: 0.6rem;
+    cursor: pointer; font-size: 0.85rem; color: var(--text-secondary);
+  }
+  .toggle input[type="checkbox"] { width: 1rem; height: 1rem; cursor: pointer; }
 
   .error-bar {
     background: var(--error-bg); border: 1px solid var(--error-bg); color: var(--error);

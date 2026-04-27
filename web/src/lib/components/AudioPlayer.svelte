@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
-  import { itemApi } from '$lib/api';
+  import { itemApi, getApiBase, getBearerToken } from '$lib/api';
+  import { isTauri, audioPlayUrl, audioPause, audioResume, stopAudio } from '$lib/native';
+  import { nativeEngine } from '$lib/stores/nativeEngine';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
   // `audioElB` swap roles every track: when one is "active" (playing
@@ -34,6 +36,27 @@
   let playing = false;
   let shuffle = false;
   let repeat: 'off' | 'one' | 'all' = 'off';
+
+  // Native audio engine routing — when enabled in Tauri, FLAC tracks
+  // bypass <audio> entirely and stream through the Rust cpal+claxon
+  // pipeline. The two paths are mutually exclusive: when nativeActive
+  // is true we never set src on the <audio> elements (they stay
+  // silent), and when false the native engine is stopped so it
+  // doesn't compete with the browser audio.
+  let useNativeEngine = false;
+  const unsubE = nativeEngine.subscribe((v) => { useNativeEngine = v; });
+  // The "is native actually doing the playing right now" flag is
+  // composed of three things: opt-in preference, in Tauri, and a
+  // track is loaded. Cached as a function so the reactive blocks
+  // below can branch on it without repeated lookups.
+  function nativeActive(): boolean {
+    return useNativeEngine && isTauri() && !!track;
+  }
+  // Tracks the URL the engine was last asked to play so we don't
+  // re-call audio_play_url on irrelevant reactive triggers (volume
+  // changes, position scrubs, etc.). Mirrors the loadedSrc field
+  // used by the <audio> path.
+  let nativeLoadedUrl = '';
 
   // Scrobble cadence — report `playing` every 10s so Continue Watching reflects
   // current position without flooding the API. Pause/stop are reported immediately.
@@ -88,14 +111,70 @@
     if (m === '1') muted = true;
   });
 
-  onDestroy(() => { unsubA(); unsubT(); unsubN(); });
+  onDestroy(() => {
+    unsubA(); unsubT(); unsubN(); unsubE();
+    // Stop the native engine on player destroy so it doesn't keep
+    // playing after navigation away from a route that owns the
+    // AudioPlayer (currently only the root layout owns it, but keep
+    // the cleanup safe for future component-scoped reuse).
+    if (isTauri()) void stopAudio();
+  });
+
+  // Native engine routing. Mirrors the <audio> reactive blocks but
+  // calls the Rust IPC instead of touching DOM elements. Runs first
+  // so on a track change we kick off the engine before the <audio>
+  // block decides whether to attach src — and the <audio> block
+  // skips its work entirely when nativeActive() is true.
+  $: if (track && nativeActive()) {
+    // Resolve the absolute URL the Rust ureq client can fetch. The
+    // api.ts apiBase is either same-origin "/api/v1" (browser) or
+    // "<server>/api/v1" (Tauri). For Tauri it's always absolute so
+    // dropping /api/v1 → /media/stream/<id> gives us the right URL.
+    const base = getApiBase().replace(/\/api\/v1\/?$/, '');
+    const desired = `${base}/media/stream/${track.fileId}`;
+    if (nativeLoadedUrl !== desired) {
+      nativeLoadedUrl = desired;
+      positionMS = 0;
+      durationMS = (track.durationMS ?? 0);
+      // Pass the bearer so the engine's HTTP fetch can authenticate
+      // — same auth as the api.ts wrapper uses for everything else.
+      // The play call is fire-and-forget; engine errors are logged
+      // to the console, the user sees the play button stuck on (no
+      // position update yet — Phase 2 polling fixes that).
+      void audioPlayUrl(desired, getBearerToken(), null).catch((err) => {
+        console.warn('native engine play failed:', err);
+        // On engine failure (most likely: non-FLAC source),
+        // disable native for this session so the <audio> fallback
+        // takes over on the next track change. User can re-enable
+        // via /native/server.
+        nativeEngine.set(false);
+        nativeLoadedUrl = '';
+      });
+    }
+  } else if (!track && nativeLoadedUrl !== '') {
+    nativeLoadedUrl = '';
+    if (isTauri()) void stopAudio();
+  }
+
+  // Pause/resume sync for native playback. The <audio> block below
+  // only fires when loadedSrc is set; its no-op path during native
+  // playback is correct. This block handles the native equivalent.
+  $: if (nativeActive() && nativeLoadedUrl) {
+    if (playing) {
+      void audioResume();
+    } else {
+      void audioPause();
+    }
+  }
 
   // Swap source when track changes; set src='' when track cleared.
   // Two paths: (1) the new track is what the preload element already
   // has buffered → flip activeIsA, no fresh src= load; (2) it's not
   // (user picked a different track manually, no preload happened in
   // time, etc.) → fall back to loading on the active element.
-  $: if (audioElA && audioElB && track) {
+  // Skipped entirely when the native engine owns playback — the
+  // <audio> elements stay silent so they don't double-play.
+  $: if (audioElA && audioElB && track && !nativeActive()) {
     const desired = `/media/stream/${track.fileId}`;
     if (loadedSrc !== desired) {
       if (preloadSrc === desired) {
@@ -133,7 +212,9 @@
   // upcoming === current (repeat=one) — would just hammer the same
   // file pointlessly. Re-runs whenever the queue changes shape so
   // toggling shuffle / appending / reordering gets reflected.
-  $: if (audioElA && audioElB && upcoming && track && upcoming.id !== track.id) {
+  // Skipped entirely under native engine — gapless preload there
+  // is the engine's responsibility (next commit on the audio track).
+  $: if (audioElA && audioElB && upcoming && track && upcoming.id !== track.id && !nativeActive()) {
     const desired = `/media/stream/${upcoming.fileId}`;
     if (preloadSrc !== desired) {
       preloadSrc = desired;
@@ -154,8 +235,10 @@
   }
 
   // Mirror playing flag to the element. Browser autoplay policies may reject;
-  // catch and pause the store so the UI matches reality.
-  $: if (audioElA && audioElB && loadedSrc) {
+  // catch and pause the store so the UI matches reality. Skipped when
+  // native engine is active — its own pause/resume sync block above
+  // handles the same flag flip via IPC.
+  $: if (audioElA && audioElB && loadedSrc && !nativeActive()) {
     const el = activeEl();
     if (playing && el.paused) {
       el.play().catch(() => audio.pause());
