@@ -321,10 +321,14 @@
   }
 
   const typeColor: Record<string, string> = {
-    movie: '#60a5fa', show: '#a78bfa', music: '#34d399', photo: '#fb923c'
+    movie: '#60a5fa', show: '#a78bfa', music: '#34d399', photo: '#fb923c',
+    audiobook: '#f59e0b', podcast: '#ec4899',
+    home_video: '#10b981', book: '#8b5cf6', dvr: '#94a3b8',
   };
   const typeLabel: Record<string, string> = {
-    movie: 'Movies', show: 'TV Shows', music: 'Music', photo: 'Photos'
+    movie: 'Movies', show: 'TV Shows', music: 'Music', photo: 'Photos',
+    audiobook: 'Audiobooks', podcast: 'Podcasts',
+    home_video: 'Home Videos', book: 'Books', dvr: 'DVR Recordings',
   };
 </script>
 
