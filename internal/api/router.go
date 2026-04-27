@@ -49,6 +49,7 @@ type Handlers struct {
 	History         *v1.HistoryHandler
 	Items           *v1.ItemHandler
 	Photos          *v1.PhotosHandler
+	Books           *v1.BookHandler
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
@@ -644,6 +645,10 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/photos/map", h.Photos.Map)
 				r.Get("/photos/search", h.Photos.Search)
 				r.Get("/items/{id}/image", h.Photos.Image)
+
+				if h.Books != nil {
+					r.Get("/items/{id}/book/page/{n}", h.Books.Page)
+				}
 			}
 
 			// Trickplay (seekbar thumbnail previews).

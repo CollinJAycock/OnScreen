@@ -132,6 +132,7 @@
     if (item.type === 'album') return `/albums/${item.id}`;
     if (item.type === 'photo') return `/photos/${item.id}`;
     if (item.type === 'podcast') return `/podcasts/${item.id}`;
+    if (item.type === 'book') return `/books/${item.id}`;
     return `/watch/${item.id}`;
   }
 

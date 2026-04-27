@@ -522,6 +522,10 @@ func TestValidItemTypeForLibrary(t *testing.T) {
 		{"home_video", "home_video", true},
 		{"home_video", "movie", false},
 		{"home_video", "music_video", false},
+		// book — single-type
+		{"book", "book", true},
+		{"book", "movie", false},
+		{"book", "audiobook", false},
 		// unknown library
 		{"weird", "anything", false},
 	}

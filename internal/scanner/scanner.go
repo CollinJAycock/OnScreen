@@ -50,6 +50,14 @@ var imageExtensions = map[string]bool{
 	".heic": true, ".avif": true,
 }
 
+// bookExtensions: CBZ today (Stage 1 of v2.1 books). CBR (RAR-based)
+// and EPUB are deferred until we pick the parser deps. Kept separate
+// from validExtensions so it can grow without polluting the
+// movie/music detection paths.
+var bookExtensions = map[string]bool{
+	".cbz": true,
+}
+
 // yearRE matches a 4-digit year, optionally surrounded by parentheses, square
 // brackets, or dots.
 var yearRE = regexp.MustCompile(`[\.\s][\(\[]?(\d{4})[\)\]]?`)
@@ -536,6 +544,15 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if hvErr != nil {
 			return nil, nil, false, fmt.Errorf("home video for %s: %w", path, hvErr)
 		}
+	} else if libraryType == "book" && isBookFile(path) {
+		// Books: CBZ in v2.1 Stage 1 (CBR + EPUB land later). One
+		// file = one row, page count probed via archive/zip and
+		// stashed on duration_ms ("duration" for a book = pages).
+		var bkErr error
+		item, bkErr = s.processBook(ctx, libraryID, path)
+		if bkErr != nil {
+			return nil, nil, false, fmt.Errorf("book for %s: %w", path, bkErr)
+		}
 	} else if libraryType == "show" {
 		var showErr error
 		item, showErr = s.processShowHierarchy(ctx, libraryID, path)
@@ -901,7 +918,14 @@ var losslessExtensions = map[string]bool{
 
 func isMediaFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	return validExtensions[ext] || imageExtensions[ext]
+	return validExtensions[ext] || imageExtensions[ext] || bookExtensions[ext]
+}
+
+// isBookFile flags container formats handled by the book scanner. v2.1
+// Stage 1 is CBZ-only; CBR + EPUB land once their parsers are picked.
+func isBookFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return bookExtensions[ext]
 }
 
 func isImageFile(path string) bool {

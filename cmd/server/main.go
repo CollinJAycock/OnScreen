@@ -491,6 +491,9 @@ func run() error {
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
 
+	booksHandler := v1.NewBookHandler(mediaSvc, logger).
+		WithLibraryAccess(libSvc)
+
 	// ── Live TV ──────────────────────────────────────────────────────────────
 	// Phase A: tuner abstraction + HDHomeRun and M3U drivers; channels list +
 	// now/next display + HLS proxy. DVR scheduling lives in Phase B and slots
@@ -777,6 +780,7 @@ func run() error {
 		History:            historyHandler,
 		Items:              itemHandler,
 		Photos:             photosHandler,
+		Books:              booksHandler,
 		Trickplay:          trickplayHandler,
 		Subtitles:          subtitleHandler,
 		NativeTranscode:    nativeTranscodeHandler,

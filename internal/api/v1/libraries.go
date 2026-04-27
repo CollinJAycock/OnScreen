@@ -683,6 +683,8 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 		}
 	case "home_video":
 		return itemType == "home_video"
+	case "book":
+		return itemType == "book"
 	case "dvr":
 		return itemType == "dvr"
 	}
