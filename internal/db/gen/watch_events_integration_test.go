@@ -48,8 +48,10 @@ func TestWatchEvents_Integration_StateMaterializesAfterRefresh(t *testing.T) {
 	lib := seedLibrary(ctx, t, q, "we-lib-"+uuid.New().String()[:8])
 	item := seedMediaItem(ctx, t, q, lib, "Movie A")
 
-	// Insert a play event at 12345 ms.
-	insertWatch(t, q, user, item, "play", 12345, time.Now())
+	// Insert a stop event at 12345 ms — the watch_state materialized
+	// view filters WHERE event_type IN ('stop', 'scrobble'), so a
+	// 'play' event would not surface in the view at all.
+	insertWatch(t, q, user, item, "stop", 12345, time.Now())
 
 	// Refresh the materialized view so watch_state reflects the event.
 	if err := q.RefreshWatchState(ctx); err != nil {
