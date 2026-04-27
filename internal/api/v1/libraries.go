@@ -460,7 +460,19 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 
 	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Sort != "title" || !fp.SortAsc
 
+	// `?type=` lets callers list a non-root item type within the library —
+	// e.g. ?type=music_video on a music library returns the videos that
+	// hang off artists, not the artists themselves. Each library type
+	// defines its own allow-list to avoid leaking unrelated types via a
+	// crafted query (e.g. asking for ?type=movie on a music library).
 	rootType := rootItemType(lib.Type)
+	if t := q.Get("type"); t != "" {
+		if !validItemTypeForLibrary(lib.Type, t) {
+			respond.BadRequest(w, r, "type "+t+" is not valid for "+lib.Type+" library")
+			return
+		}
+		rootType = t
+	}
 	var items []media.Item
 	var total int64
 	if hasFilter {
@@ -625,4 +637,39 @@ func rootItemType(libraryType string) string {
 	default:
 		return libraryType // "movie" → "movie"
 	}
+}
+
+// validItemTypeForLibrary returns true when itemType is a known child of
+// libraryType's hierarchy. Backs the `?type=` override on the items
+// endpoint — admin/UI clients can ask for a specific child level (music
+// videos within a music library, podcast episodes within a podcast
+// library, etc.) without enumerating an unrelated type via a crafted
+// query.
+func validItemTypeForLibrary(libraryType, itemType string) bool {
+	switch libraryType {
+	case "music":
+		switch itemType {
+		case "artist", "album", "track", "music_video":
+			return true
+		}
+	case "show":
+		switch itemType {
+		case "show", "season", "episode":
+			return true
+		}
+	case "movie":
+		return itemType == "movie"
+	case "photo":
+		return itemType == "photo"
+	case "audiobook":
+		return itemType == "audiobook"
+	case "podcast":
+		switch itemType {
+		case "podcast", "podcast_episode":
+			return true
+		}
+	case "dvr":
+		return itemType == "dvr"
+	}
+	return false
 }

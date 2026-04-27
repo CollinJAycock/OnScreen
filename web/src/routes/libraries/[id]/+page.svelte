@@ -43,6 +43,11 @@
 
   let library: Library | null = null;
   let allItems: MediaItem[] = [];
+  // musicVideos sits alongside the artist grid on a music library
+  // page — videos hang off artists in the schema (no album), so the
+  // library landing page renders them as a separate shelf above the
+  // artists. Empty for any non-music library.
+  let musicVideos: MediaItem[] = [];
   let loadingLib = true;
   let loadingItems = false;
   let scanning = false;
@@ -136,7 +141,7 @@
     readFiltersFromURL();
     // Await library first so we can pick the right default sort before listing.
     await loadLibrary();
-    await Promise.all([loadItems(), loadGenres()]);
+    await Promise.all([loadItems(), loadGenres(), loadMusicVideos()]);
     mounted = true;
   });
 
@@ -145,6 +150,7 @@
   $: if (mounted && id && id !== prevId) {
     prevId = id;
     allItems = [];
+    musicVideos = [];
     offset = 0;
     total = 0;
     hasMore = true;
@@ -158,6 +164,7 @@
     loadLibrary().then(() => {
       loadItems();
       loadGenres();
+      loadMusicVideos();
     });
   }
 
@@ -178,6 +185,22 @@
   async function loadGenres() {
     try { genres = await mediaApi.genres(id); }
     catch { /* non-critical */ }
+  }
+
+  // Music libraries get a separate Music Videos shelf above the artist
+  // grid. Skipped on every other library type — the type-override is
+  // server-validated, so a podcast library would 400 on this call.
+  // Capped at a small batch — if the user has more than 24 music videos
+  // we surface a "View all" affordance and keep the shelf compact.
+  async function loadMusicVideos() {
+    if (library?.type !== 'music') {
+      musicVideos = [];
+      return;
+    }
+    try {
+      const r = await mediaApi.listItems(id, 24, 0, { type: 'music_video', sort: 'title', sort_dir: 'asc' });
+      musicVideos = r.items;
+    } catch { /* non-critical — shelf just won't render */ }
   }
 
   async function loadItems(append = false) {
@@ -361,6 +384,30 @@
       <button class="clear-link" on:click={() => query = ''}>Clear filter</button>
     </div>
   {:else}
+    {#if isMusicLibrary && musicVideos.length > 0}
+      <section class="mv-shelf">
+        <h2 class="mv-shelf-title">Music videos</h2>
+        <div class="mv-row">
+          {#each musicVideos as v (v.id)}
+            <a class="mv-card" href="/watch/{v.id}" title={v.title}>
+              <div class="mv-thumb">
+                {#if v.poster_path}
+                  <img src="/artwork/{encodeURI(v.poster_path)}?v={v.updated_at}&w=320"
+                       alt={v.title} loading="lazy" />
+                {:else}
+                  <div class="mv-thumb-blank">{v.title[0]?.toUpperCase()}</div>
+                {/if}
+                <div class="mv-play">▶</div>
+              </div>
+              <div class="mv-meta">
+                <div class="mv-title">{v.title}</div>
+                {#if v.duration_ms}<div class="mv-dur">{dur(v.duration_ms)}</div>{/if}
+              </div>
+            </a>
+          {/each}
+        </div>
+      </section>
+    {/if}
     <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary}>
       {#each filtered as item (item.id)}
         <a class="item" class:circle-poster={isMusicLibrary} href={itemHref(item)} tabindex="0">
@@ -762,6 +809,39 @@
     animation: shimmer 1.4s infinite;
   }
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  .mv-shelf { margin: 0 0 2rem; }
+  .mv-shelf-title {
+    font-size: 0.95rem; font-weight: 600; color: var(--text-secondary);
+    margin: 0 0 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .mv-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.9rem;
+  }
+  .mv-card { color: inherit; text-decoration: none; min-width: 0; }
+  .mv-thumb {
+    position: relative; aspect-ratio: 16 / 9; border-radius: 6px;
+    overflow: hidden; background: var(--bg-elevated);
+  }
+  .mv-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .mv-thumb-blank {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-muted); font-size: 1.5rem;
+  }
+  .mv-play {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; font-size: 2rem; color: white;
+    background: rgba(0,0,0,0.4); opacity: 0; transition: opacity 0.15s;
+  }
+  .mv-card:hover .mv-play { opacity: 1; }
+  .mv-meta { padding: 0.4rem 0.1rem 0; }
+  .mv-title {
+    font-size: 0.82rem; color: var(--text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mv-dur { font-size: 0.7rem; color: var(--text-muted); }
 
   .empty {
     display: flex; flex-direction: column; align-items: center;

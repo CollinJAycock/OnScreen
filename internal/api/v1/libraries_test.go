@@ -97,9 +97,14 @@ type mockMediaLister struct {
 	listErr  error
 	count    int64
 	countErr error
+	// gotType captures the most recent item type passed to ListItems /
+	// ListItemsFiltered so tests can assert the handler's `?type=`
+	// override actually flowed through to the data layer.
+	gotType string
 }
 
-func (m *mockMediaLister) ListItems(_ context.Context, _ uuid.UUID, _ string, _, _ int32) ([]media.Item, error) {
+func (m *mockMediaLister) ListItems(_ context.Context, _ uuid.UUID, t string, _, _ int32) ([]media.Item, error) {
+	m.gotType = t
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -111,11 +116,12 @@ func (m *mockMediaLister) CountItems(_ context.Context, _ uuid.UUID, _ string) (
 	}
 	return m.count, nil
 }
-func (m *mockMediaLister) ListItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _, _ int32, _ media.FilterParams) ([]media.Item, error) {
-	return m.ListItems(nil, uuid.Nil, "", 0, 0)
+func (m *mockMediaLister) ListItemsFiltered(_ context.Context, _ uuid.UUID, t string, _, _ int32, _ media.FilterParams) ([]media.Item, error) {
+	m.gotType = t
+	return m.items, m.listErr
 }
 func (m *mockMediaLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _ media.FilterParams) (int64, error) {
-	return m.CountItems(nil, uuid.Nil, "")
+	return m.count, m.countErr
 }
 func (m *mockMediaLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
@@ -407,6 +413,120 @@ func TestLibrary_Items_Success(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 	if len(resp.Data) != 1 {
 		t.Errorf("data length: got %d, want 1", len(resp.Data))
+	}
+}
+
+// TestLibrary_Items_TypeOverride covers the v2.1 `?type=` query param
+// that lets callers list a non-root child type within a library — e.g.
+// asking for music_video items from a music library, where the default
+// rootItemType resolves to "artist". Validates the allow-list rejects
+// unrelated types and accepts in-hierarchy ones.
+func TestLibrary_Items_TypeOverride(t *testing.T) {
+	t.Run("music library accepts ?type=music_video", func(t *testing.T) {
+		libID := uuid.New()
+		svc := &mockLibraryService{
+			lib: &library.Library{ID: libID, Name: "Tunes", Type: "music", Agent: "musicbrainz", Lang: "en", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		}
+		ml := &mockMediaLister{
+			items: []media.Item{{ID: uuid.New(), Title: "MV1", Type: "music_video"}},
+			count: 1,
+		}
+		h := newLibHandler(svc).WithMedia(ml)
+
+		rec := httptest.NewRecorder()
+		req := withClaims(withChiParam(httptest.NewRequest("GET", "/?type=music_video", nil), "id", libID.String()))
+		h.Items(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d body=%s", rec.Code, rec.Body.String())
+		}
+		if ml.gotType != "music_video" {
+			t.Errorf("data layer received type=%q, want music_video", ml.gotType)
+		}
+	})
+
+	t.Run("music library rejects ?type=movie", func(t *testing.T) {
+		libID := uuid.New()
+		svc := &mockLibraryService{
+			lib: &library.Library{ID: libID, Name: "Tunes", Type: "music", Agent: "musicbrainz", Lang: "en", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		}
+		h := newLibHandler(svc).WithMedia(&mockMediaLister{})
+
+		rec := httptest.NewRecorder()
+		req := withClaims(withChiParam(httptest.NewRequest("GET", "/?type=movie", nil), "id", libID.String()))
+		h.Items(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for cross-hierarchy type, got %d", rec.Code)
+		}
+	})
+
+	t.Run("default falls back to root item type when ?type= absent", func(t *testing.T) {
+		libID := uuid.New()
+		svc := &mockLibraryService{
+			lib: &library.Library{ID: libID, Name: "Tunes", Type: "music", Agent: "musicbrainz", Lang: "en", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		}
+		ml := &mockMediaLister{
+			items: []media.Item{{ID: uuid.New(), Title: "Some Artist", Type: "artist"}},
+			count: 1,
+		}
+		h := newLibHandler(svc).WithMedia(ml)
+
+		rec := httptest.NewRecorder()
+		req := withClaims(withChiParam(httptest.NewRequest("GET", "/", nil), "id", libID.String()))
+		h.Items(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		if ml.gotType != "artist" {
+			t.Errorf("default music root type: got %q, want artist", ml.gotType)
+		}
+	})
+}
+
+// TestValidItemTypeForLibrary covers the allow-list directly — the
+// handler's BadRequest path is wired to it, but the allow-list itself
+// has more shapes than one HTTP-level test would surface. Worth its
+// own table-driven check.
+func TestValidItemTypeForLibrary(t *testing.T) {
+	cases := []struct {
+		libraryType, itemType string
+		want                  bool
+	}{
+		// music
+		{"music", "artist", true},
+		{"music", "album", true},
+		{"music", "track", true},
+		{"music", "music_video", true},
+		{"music", "movie", false},
+		{"music", "podcast_episode", false},
+		// show
+		{"show", "show", true},
+		{"show", "season", true},
+		{"show", "episode", true},
+		{"show", "music_video", false},
+		// movie
+		{"movie", "movie", true},
+		{"movie", "show", false},
+		// podcast
+		{"podcast", "podcast", true},
+		{"podcast", "podcast_episode", true},
+		{"podcast", "audiobook", false},
+		// audiobook
+		{"audiobook", "audiobook", true},
+		{"audiobook", "track", false},
+		// photo
+		{"photo", "photo", true},
+		{"photo", "movie", false},
+		// unknown library
+		{"weird", "anything", false},
+	}
+	for _, c := range cases {
+		got := validItemTypeForLibrary(c.libraryType, c.itemType)
+		if got != c.want {
+			t.Errorf("validItemTypeForLibrary(%q, %q) = %v, want %v",
+				c.libraryType, c.itemType, got, c.want)
+		}
 	}
 }
 

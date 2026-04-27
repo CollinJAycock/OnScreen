@@ -332,6 +332,11 @@ export interface ListItemsParams {
   year_min?: number;
   year_max?: number;
   rating_min?: number;
+  // Override the library's default root item type. Lets a music library
+  // page list music_video items alongside its artists, a podcast library
+  // list episodes, etc. Validated server-side against an allow-list per
+  // library type.
+  type?: string;
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -530,6 +535,7 @@ export const mediaApi = {
     if (params?.year_min != null) qs.set('year_min', String(params.year_min));
     if (params?.year_max != null) qs.set('year_max', String(params.year_max));
     if (params?.rating_min != null) qs.set('rating_min', String(params.rating_min));
+    if (params?.type) qs.set('type', params.type);
     return api.requestList<MediaItem>(`/libraries/${libraryId}/items?${qs.toString()}`);
   },
   genres: (libraryId: string) =>
