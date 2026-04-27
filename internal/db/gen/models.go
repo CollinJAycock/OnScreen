@@ -155,6 +155,13 @@ type InviteToken struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type ItemCooccurrence struct {
+	ItemA      uuid.UUID          `json:"item_a"`
+	ItemB      uuid.UUID          `json:"item_b"`
+	Score      int32              `json:"score"`
+	ComputedAt pgtype.Timestamptz `json:"computed_at"`
+}
+
 type Library struct {
 	ID                      uuid.UUID          `json:"id"`
 	Name                    string             `json:"name"`

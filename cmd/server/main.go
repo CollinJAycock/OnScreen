@@ -735,6 +735,12 @@ func run() error {
 	// Retention purge runs daily off-peak, deletes recordings past
 	// their schedule's retention_days window + the files on disk.
 	schedRegistry.Register("dvr_retention", scheduler.NewDVRRetentionHandler(dvrSvc))
+	// Cooccurrence rebuild: aggregates watch_events into the
+	// item_cooccurrence table that backs the "Because you watched X"
+	// hub row. Nightly is enough — the row is robust to a day of
+	// stale data; users won't notice the latency.
+	schedRegistry.Register("update_item_cooccurrence",
+		scheduler.NewCooccurrenceHandler(gen.New(rwPool)))
 	// Seed the scheduled_tasks rows our handlers depend on. Idempotent:
 	// admin edits to existing rows are preserved (EnsureSystemTask uses
 	// WHERE NOT EXISTS on task_type), so this is safe on every boot.

@@ -55,6 +55,18 @@ var requiredSystemTasks = []systemTask{
 		cronExpr: "17 3 * * *",
 		enabled:  true,
 	},
+	{
+		name:     "Update item cooccurrence",
+		taskType: "update_item_cooccurrence",
+		// Daily at 3:31am local — same off-peak window as DVR retention,
+		// staggered slightly so the two heaviest nightly jobs don't run
+		// concurrently. The rebuild is a single aggregation query whose
+		// runtime scales with watch_events × user count; for a homelab-
+		// scale install (a few users, thousands of events) it's well
+		// under a minute.
+		cronExpr: "31 3 * * *",
+		enabled:  true,
+	},
 }
 
 // seedSystemTasks inserts any missing required task rows. Idempotent —

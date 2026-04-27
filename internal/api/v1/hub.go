@@ -22,6 +22,8 @@ type HubDB interface {
 	ListContinueWatching(ctx context.Context, arg gen.ListContinueWatchingParams) ([]gen.ListContinueWatchingRow, error)
 	ListRecentlyAdded(ctx context.Context, arg gen.ListRecentlyAddedParams) ([]gen.ListRecentlyAddedRow, error)
 	ListTrending(ctx context.Context, arg gen.ListTrendingParams) ([]gen.ListTrendingRow, error)
+	ListSeedItemsForUser(ctx context.Context, arg gen.ListSeedItemsForUserParams) ([]gen.ListSeedItemsForUserRow, error)
+	ListCooccurrentItems(ctx context.Context, arg gen.ListCooccurrentItemsParams) ([]gen.ListCooccurrentItemsRow, error)
 }
 
 // HubLibraryLister returns the libraries the home page should surface
@@ -63,10 +65,30 @@ func (h *HubHandler) WithLibraries(l HubLibraryLister) *HubHandler {
 
 // HubResponse is the combined home page data.
 type HubResponse struct {
-	ContinueWatching []HubItem       `json:"continue_watching"`
-	RecentlyAdded    []HubItem       `json:"recently_added"`
-	ByLibrary        []HubLibraryRow `json:"recently_added_by_library"`
-	Trending         []HubItem       `json:"trending"`
+	ContinueWatching   []HubItem            `json:"continue_watching"`
+	RecentlyAdded      []HubItem            `json:"recently_added"`
+	ByLibrary          []HubLibraryRow      `json:"recently_added_by_library"`
+	Trending           []HubItem            `json:"trending"`
+	BecauseYouWatched  []BecauseYouWatched  `json:"because_you_watched"`
+}
+
+// BecauseYouWatched is one row of personalised recommendations on the
+// home hub: a seed item the user recently completed plus the top-N
+// items most cooccurrent with it (excluding ones the user has already
+// watched). The frontend renders one row per seed.
+type BecauseYouWatched struct {
+	Seed  HubSeedItem `json:"seed"`
+	Items []HubItem   `json:"items"`
+}
+
+// HubSeedItem is the compact representation of the seed item that
+// labels a "Because you watched X" row.
+type HubSeedItem struct {
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	PosterPath *string `json:"poster_path,omitempty"`
+	ThumbPath  *string `json:"thumb_path,omitempty"`
+	UpdatedAt  int64   `json:"updated_at"`
 }
 
 // HubLibraryRow is one "Recently added to <library>" strip on the home
@@ -102,10 +124,11 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := HubResponse{
-		ContinueWatching: []HubItem{},
-		RecentlyAdded:    []HubItem{},
-		ByLibrary:        []HubLibraryRow{},
-		Trending:         []HubItem{},
+		ContinueWatching:  []HubItem{},
+		RecentlyAdded:     []HubItem{},
+		ByLibrary:         []HubLibraryRow{},
+		Trending:          []HubItem{},
+		BecauseYouWatched: []BecauseYouWatched{},
 	}
 
 	// Convert max content rating from claims to a rank for SQL filtering.
@@ -236,6 +259,67 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 			if len(out.Trending) >= 12 {
 				break
 			}
+		}
+	}
+
+	// Because-you-watched: per-user personalised recommendations.
+	// Seeds = the user's last 3 completed items (more rows would clutter
+	// the hub with similar-looking shelves). Each seed gets up to 8
+	// cooccurrent items, library-access-filtered. Empty for new users
+	// who haven't completed anything — the row simply doesn't render.
+	seeds, err := h.db.ListSeedItemsForUser(r.Context(), gen.ListSeedItemsForUserParams{
+		UserID: claims.UserID,
+		Limit:  3,
+	})
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "hub: byw seeds", "err", err)
+	} else {
+		for _, seed := range seeds {
+			rows, err := h.db.ListCooccurrentItems(r.Context(), gen.ListCooccurrentItemsParams{
+				Seed:          seed.ID,
+				UserID:        claims.UserID,
+				MaxRatingRank: maxRank,
+				ResultLimit:   16, // raw — filtered down to 8 after lib-access
+			})
+			if err != nil {
+				h.logger.WarnContext(r.Context(), "hub: byw lookup", "seed", seed.ID, "err", err)
+				continue
+			}
+			items := make([]HubItem, 0, 8)
+			for _, row := range rows {
+				if !libAllowed(row.LibraryID) {
+					continue
+				}
+				items = append(items, HubItem{
+					ID:         row.ID.String(),
+					Title:      row.Title,
+					Type:       row.Type,
+					Year:       intPtrFrom32(row.Year),
+					PosterPath: row.PosterPath,
+					FanartPath: row.FanartPath,
+					ThumbPath:  row.ThumbPath,
+					DurationMS: row.DurationMs,
+					UpdatedAt:  row.UpdatedAt.Time.UnixMilli(),
+				})
+				if len(items) >= 8 {
+					break
+				}
+			}
+			if len(items) == 0 {
+				// Skip rendering an empty shelf — user hasn't watched
+				// anything cooccurrent yet (fresh install or niche item).
+				continue
+			}
+			out.BecauseYouWatched = append(out.BecauseYouWatched, BecauseYouWatched{
+				Seed: HubSeedItem{
+					ID:         seed.ID.String(),
+					Title:      seed.Title,
+					PosterPath: seed.PosterPath,
+					ThumbPath:  seed.ThumbPath,
+					UpdatedAt:  seed.UpdatedAt.Time.UnixMilli(),
+				},
+				Items: items,
+			})
 		}
 	}
 

@@ -1274,6 +1274,25 @@ export interface HubData {
   // over the last 7 days. Same content for every user (no
   // personalisation), filtered to library access + parental ceiling.
   trending: HubItem[];
+  // Per-user recommendations: for each of the user's most recent
+  // completed items (the seeds), the top items most cooccurrent with
+  // it. One row per seed, rendered as "Because you watched {seed.title}"
+  // on the home hub. Empty array for users who haven't completed
+  // anything yet (the section just doesn't render).
+  because_you_watched: HubBecauseYouWatched[];
+}
+
+export interface HubBecauseYouWatched {
+  seed: HubSeedItem;
+  items: HubItem[];
+}
+
+export interface HubSeedItem {
+  id: string;
+  title: string;
+  poster_path?: string;
+  thumb_path?: string;
+  updated_at: number;
 }
 
 export const hubApi = {
