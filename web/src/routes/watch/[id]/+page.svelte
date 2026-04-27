@@ -1224,8 +1224,27 @@
         duration = videoEl.duration;
       }
       // Resume from last saved position.
+      //
+      // Audiobook special case: snap back to the start of the chapter
+      // that contains the saved offset, instead of dropping the user
+      // mid-sentence. The saved-position scrobble lands on whatever
+      // second the user paused; for movies that's correct, but for
+      // narration the natural rejoin point is the chapter boundary.
+      // No-op when the file has no chapter markers (most movies in
+      // most homes — fine, falls through to per-second resume).
       if (!skipAutoSeek && item && item.view_offset_ms > 0) {
-        const offsetSec = item.view_offset_ms / 1000;
+        let offsetSec = item.view_offset_ms / 1000;
+        if (item.type === 'audiobook' && chapters.length > 0) {
+          const offsetMs = item.view_offset_ms;
+          // Walk chapters in order; the last chapter whose start_ms is
+          // ≤ offset is the one we should rejoin at.
+          let snapMs = 0;
+          for (const ch of chapters) {
+            if (ch.start_ms <= offsetMs) snapMs = ch.start_ms;
+            else break;
+          }
+          offsetSec = snapMs / 1000;
+        }
         if (duration - offsetSec > 30) {
           videoEl.currentTime = offsetSec;
         }

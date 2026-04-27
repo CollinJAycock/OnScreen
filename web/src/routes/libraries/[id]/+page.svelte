@@ -428,7 +428,9 @@
             <div class="poster-overlay">
               {#if !isPhotoLibrary && !isMusicLibrary}<div class="play-icon">▶</div>{/if}
               <div class="overlay-title">{item.title}</div>
-              {#if !isPhotoLibrary && !isMusicLibrary}
+              {#if item.type === 'audiobook' && item.original_title}
+                <div class="overlay-meta">by {item.original_title}{#if item.duration_ms} · {dur(item.duration_ms)}{/if}</div>
+              {:else if !isPhotoLibrary && !isMusicLibrary}
                 <div class="overlay-meta">
                   {#if item.year}{item.year}{/if}
                   {#if item.duration_ms} · {dur(item.duration_ms)}{/if}

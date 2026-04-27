@@ -70,17 +70,23 @@ type MediaItemLister interface {
 
 // MediaItemResponse is the JSON shape for a media item in the v1 API.
 type MediaItemResponse struct {
-	ID         string    `json:"id"`
-	Title      string    `json:"title"`
-	Type       string    `json:"type"`
-	Year       *int      `json:"year,omitempty"`
-	Summary    *string   `json:"summary,omitempty"`
-	Rating     *float64  `json:"rating,omitempty"`
-	DurationMS *int64    `json:"duration_ms,omitempty"`
-	Genres     []string  `json:"genres,omitempty"`
-	PosterPath *string   `json:"poster_path,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  int64     `json:"updated_at"`
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	Type          string    `json:"type"`
+	Year          *int      `json:"year,omitempty"`
+	Summary       *string   `json:"summary,omitempty"`
+	Rating        *float64  `json:"rating,omitempty"`
+	DurationMS    *int64    `json:"duration_ms,omitempty"`
+	Genres        []string  `json:"genres,omitempty"`
+	PosterPath    *string   `json:"poster_path,omitempty"`
+	// OriginalTitle: foreign-language title for movies, author for
+	// audiobooks (the scanner stashes the parsed author here in v2.0
+	// to avoid a migration just for one column — see audiobookscan.go).
+	// v2.1 surfaces it so the library grid can show "by Author" under
+	// the audiobook title without a second API round-trip.
+	OriginalTitle *string   `json:"original_title,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     int64     `json:"updated_at"`
 }
 
 // LibraryServiceIface defines the domain operations the handler needs.
@@ -496,17 +502,18 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 	out := make([]MediaItemResponse, len(items))
 	for i, item := range items {
 		out[i] = MediaItemResponse{
-			ID:         item.ID.String(),
-			Title:      item.Title,
-			Type:       item.Type,
-			Year:       item.Year,
-			Summary:    item.Summary,
-			Rating:     item.Rating,
-			DurationMS: item.DurationMS,
-			Genres:     item.Genres,
-			PosterPath: item.PosterPath,
-			CreatedAt:  item.CreatedAt,
-			UpdatedAt:  item.UpdatedAt.UnixMilli(),
+			ID:            item.ID.String(),
+			Title:         item.Title,
+			Type:          item.Type,
+			Year:          item.Year,
+			Summary:       item.Summary,
+			Rating:        item.Rating,
+			DurationMS:    item.DurationMS,
+			Genres:        item.Genres,
+			PosterPath:    item.PosterPath,
+			OriginalTitle: item.OriginalTitle,
+			CreatedAt:     item.CreatedAt,
+			UpdatedAt:     item.UpdatedAt.UnixMilli(),
 		}
 	}
 	respond.List(w, r, out, total, "")

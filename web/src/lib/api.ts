@@ -291,6 +291,9 @@ export const libraryApi = {
 
 // ── Media Items ───────────────────────────────────────────────────────────────
 
+// MediaItem is the lightweight representation returned by the library
+// items list endpoint. The watch page uses ItemDetail (with files +
+// streams) instead of this shape.
 export interface MediaItem {
   id: string;
   title: string;
@@ -301,6 +304,11 @@ export interface MediaItem {
   duration_ms?: number;
   genres?: string[];
   poster_path?: string;
+  // Foreign-language title for movies; author for audiobooks (the
+  // scanner stashes the parsed audiobook author here in v2.0 to avoid
+  // a migration just for one column). Surfaced in the library grid
+  // when the item is an audiobook.
+  original_title?: string;
   created_at: string;
   updated_at: string;
 }
