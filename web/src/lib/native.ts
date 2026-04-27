@@ -202,6 +202,11 @@ export async function audioResume(): Promise<void> {
  *  producing samples) — errors thrown synchronously cover the
  *  pre-audio failure paths (HTTP 4xx/5xx, FLAC parse, device pick).
  *
+ *  **Gapless fast-path:** if the matching URL was previously prepared
+ *  via [`audioPreloadUrl`], promotion skips the HTTP + FLAC-header
+ *  round-trip — the decoder thread is already producing samples,
+ *  and only the cpal device-activation cost remains.
+ *
  *  Currently FLAC-only. Other formats (MP3, ALAC, transcoded HLS)
  *  fall through to the existing `<audio>` element in the webview.
  */
@@ -219,4 +224,26 @@ export async function audioPlayUrl(
     bearerToken,
     deviceName: device,
   });
+}
+
+/** Optimistically prepare the next track so [`audioPlayUrl`] with
+ *  the same URL completes near-instantly (gapless transition). The
+ *  decoder thread runs in the background filling a ringbuf; idempotent
+ *  per URL — calling repeatedly with the same URL is a no-op after
+ *  the first prepare. Calling with a different URL drops the prior
+ *  preload and starts fresh. Errors silently — preload is a perf
+ *  optimisation, not a correctness requirement, so failures should
+ *  not surface to the user; the play_url cold-start path covers them.
+ */
+export async function audioPreloadUrl(
+  url: string,
+  bearerToken: string | null,
+): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('audio_preload_url', { url, bearerToken });
+  } catch (e) {
+    console.debug('native engine preload failed (non-fatal):', e);
+  }
 }

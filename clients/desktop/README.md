@@ -237,6 +237,17 @@ SameSite=None dance cookies would require.
   `audio.next()` for auto-advance. Engine errors (most likely
   non-FLAC source) flip the preference back off so `<audio>`
   takes over on the next track change.
+- **Gapless preload**: the engine holds a `preload` slot
+  alongside `current`. Frontend optimistically calls
+  `audio_preload_url(nextTrack)` whenever the upcoming track
+  changes; the engine spawns a decoder thread + ringbuf in
+  the background. When the user advances (or auto-advance
+  fires), `audio_play_url` checks for a matching preload and
+  promotes it — skipping the HTTP + claxon header round-trip
+  entirely. Inter-track gap drops from ~200-500 ms (cold start)
+  to whatever the cpal device-activation cost is (~10-20 ms on
+  every host we care about). PreloadConsumer enum type-erases
+  the i16/i32 dispatch so the engine state isn't generic.
 
 ## What's not done yet
 
@@ -246,14 +257,6 @@ SameSite=None dance cookies would require.
   seeks (FLAC's frame-header structure means we either consult
   the seek table from the metadata block or scan forward; both
   are nontrivial against a streaming HTTP source).
-- **Gapless preload**: there's a brief silence between tracks
-  while the new `audio_play_url` HTTP fetch + claxon header
-  parse runs (~200-500 ms). Closing this needs a second
-  decoder slot in the engine (`PreloadSlot` parallel to
-  `ActivePlayback`) + a new `audio_preload_url` IPC + an
-  `audio_play_url` fast-path that promotes a matching preload
-  rather than cold-starting. Frontend would optimistically
-  preload `nextTrack` whenever it changes.
 - **Exclusive-mode toggle**: WASAPI exclusive on Windows
   (`cpal::SupportedStreamConfig::buffer_size`-driven), CoreAudio
   per-stream nominal-rate switching on macOS, ALSA `hw:` device

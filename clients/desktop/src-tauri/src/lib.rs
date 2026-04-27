@@ -179,6 +179,7 @@ pub fn run() {
             audio::play_test_tone,
             audio::stop_audio,
             audio::audio_play_url,
+            audio::audio_preload_url,
             audio::audio_state,
             audio::audio_pause,
             audio::audio_resume,

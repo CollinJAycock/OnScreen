@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
   import { itemApi, getApiBase, getBearerToken } from '$lib/api';
-  import { isTauri, audioPlayUrl, audioPause, audioResume, stopAudio, audioState } from '$lib/native';
+  import { isTauri, audioPlayUrl, audioPreloadUrl, audioPause, audioResume, stopAudio, audioState } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
@@ -227,6 +227,26 @@
     } else {
       void audioPause();
     }
+  }
+
+  // Optimistically preload the next track on the native engine when
+  // upcoming changes — same trigger as the existing <audio> preload
+  // block but going through the engine's audio_preload_url IPC. The
+  // engine spawns a decoder thread + ringbuf so the matching
+  // audio_play_url call (when we advance to this track) skips the
+  // HTTP + claxon round-trip and the gap between tracks shrinks
+  // from ~200-500 ms to whatever cpal's device-activation cost is
+  // (~10-20 ms on every host we care about).
+  let nativePreloadedUrl = '';
+  $: if (nativeActive() && upcoming && track && upcoming.id !== track.id) {
+    const base = getApiBase().replace(/\/api\/v1\/?$/, '');
+    const desired = `${base}/media/stream/${upcoming.fileId}`;
+    if (nativePreloadedUrl !== desired) {
+      nativePreloadedUrl = desired;
+      void audioPreloadUrl(desired, getBearerToken());
+    }
+  } else if (nativeActive() && !upcoming) {
+    nativePreloadedUrl = '';
   }
 
   // Swap source when track changes; set src='' when track cleared.
