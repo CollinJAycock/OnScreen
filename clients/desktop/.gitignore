@@ -1,0 +1,11 @@
+# Rust build output
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Tauri-generated artefacts
+src-tauri/gen/
+src-tauri/.tauri/
+
+# OS
+.DS_Store
+Thumbs.db

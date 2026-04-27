@@ -1,0 +1,36 @@
+[package]
+name = "onscreen-desktop"
+version = "0.1.0"
+description = "OnScreen desktop client"
+authors = ["OnScreen contributors"]
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0"
+
+# Library crate so the Tauri runner can pick it up; main.rs is just
+# the entry-point shim per the Tauri 2 convention.
+[lib]
+name = "onscreen_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri runtime + the small set of plugins this scaffold needs.
+# - tauri          : window + IPC bridge
+# - tauri-plugin-store : persists server URL / credentials between
+#                        runs without rolling our own SQLite — the
+#                        backing JSON file lives in the platform's
+#                        appdata dir so backups + sync work for free.
+tauri = { version = "2", features = [] }
+tauri-plugin-store = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Default to nothing — opt into custom-protocol for production builds
+# the way Tauri's templates do. The runner enables it automatically
+# for `cargo tauri build`; tests/dev mode skip it.
+custom-protocol = ["tauri/custom-protocol"]
