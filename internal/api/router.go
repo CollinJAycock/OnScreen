@@ -147,6 +147,10 @@ func NewRouter(h *Handlers) http.Handler {
 	// not Bearer header, because HLS.js cannot attach arbitrary headers to segment fetches.
 	if h.NativeTranscode != nil {
 		r.Get("/api/v1/transcode/sessions/{sid}/playlist.m3u8", h.NativeTranscode.Playlist)
+		// DASH manifest for the same session, sharing the segment ladder.
+		// fMP4 sessions only — non-fMP4 sessions return 415 with a hint
+		// to fall back to playlist.m3u8.
+		r.Get("/api/v1/transcode/sessions/{sid}/manifest.mpd", h.NativeTranscode.ManifestMPD)
 		r.Get("/api/v1/transcode/sessions/{sid}/seg/{name}", h.NativeTranscode.Segment)
 	}
 

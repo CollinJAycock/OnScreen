@@ -586,6 +586,144 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(rewritten)
 }
 
+// ManifestMPD handles GET /api/v1/transcode/sessions/{sid}/manifest.mpd —
+// the DASH counterpart to Playlist. v2.1 Track C: clients that prefer
+// DASH (most smart-TV apps; some Android players) get an MPD pointing
+// at the same fMP4 segment ladder ffmpeg is already producing for HLS.
+//
+// fMP4 sessions only (HEVCOutput=true). MPEG-TS sessions return 415
+// with a hint to fall back to playlist.m3u8 — DASH cannot reference TS
+// segments. Token gating mirrors Playlist: the segment token is bound
+// to the requested session ID, otherwise an admin who issued a token
+// for session A could read any other session's manifest.
+func (h *NativeTranscodeHandler) ManifestMPD(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := chi.URLParam(r, "sid")
+	token := r.URL.Query().Get("token")
+
+	tokSession, _, err := h.segToken.Validate(ctx, token)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if tokSession != sessionID {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sess, err := h.sessions.Get(ctx, sessionID)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	// DASH cannot describe MPEG-TS segments — only fMP4. Clients that
+	// hit this endpoint on a TS session need to switch to the HLS
+	// playlist; surface the reason rather than returning a broken
+	// manifest.
+	if !sess.HEVCOutput {
+		http.Error(w,
+			"DASH manifest unavailable for this session (MPEG-TS segments); use playlist.m3u8 instead",
+			http.StatusUnsupportedMediaType,
+		)
+		return
+	}
+
+	// Sanitize sessionID — same path-traversal guard the Playlist
+	// handler uses before reading from disk.
+	sessID := filepath.Base(sessionID)
+	sessDir := transcode.SessionDir(sessID)
+
+	// Wait for at least one segment so the MPD has something to point
+	// at. Without this the first GET races ffmpeg's startup and the
+	// returned manifest can list zero segments, which trips up some
+	// DASH players' empty-period handling.
+	deadline := time.Now().Add(60 * time.Second)
+	workerAddr := sess.WorkerAddr
+	for workerAddr == "" && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+		if s, err := h.sessions.Get(ctx, sessionID); err == nil && s.WorkerAddr != "" {
+			workerAddr = s.WorkerAddr
+		}
+	}
+	for time.Now().Before(deadline) {
+		if workerReady(ctx, workerAddr, sessID, "seg00001.m4s", filepath.Join(sessDir, "seg00001.m4s")) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	// Count segments on disk to set MediaPresentationDuration. The
+	// transcode is "live" (still producing) until the session is
+	// closed — there's no closed-session signal yet, so we always
+	// emit type=dynamic and let DASH clients keep polling.
+	segCount := countSessionSegments(sessDir)
+
+	bw := sess.BitrateKbps * 1000
+	if bw == 0 {
+		// Fallback: 8 Mbps is a reasonable default for transcoded HEVC.
+		// Without a sane Bandwidth, ABR-capable clients can't size their
+		// buffers and may stall.
+		bw = 8_000_000
+	}
+
+	// Codec hint: HEVCOutput sessions emit hvc1; AV1 isn't surfaced on
+	// the Session struct yet, so we conservatively pick HEVC. Future
+	// work: add VideoCodec to Session and parse exact RFC 6381 from
+	// the init.mp4 box for stricter clients.
+	videoCodec := "hvc1.1.6.L120.90"
+
+	mpd, err := transcode.BuildMPD(transcode.DASHParams{
+		SessionID:          sessionID,
+		Token:              token,
+		BaseURL:            fmt.Sprintf("/api/v1/transcode/sessions/%s/seg/", sessionID),
+		SegmentDurationSec: transcode.SegmentDuration,
+		SegmentCount:       segCount,
+		Live:               true,
+		VideoCodec:         videoCodec,
+		AudioCodec:         "mp4a.40.2",
+		BandwidthBps:       bw,
+	})
+	if err != nil {
+		h.logger.ErrorContext(ctx, "build mpd", "session_id", sessionID, "err", err)
+		http.Error(w, "manifest build failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/dash+xml")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	_, _ = w.Write(mpd)
+}
+
+// countSessionSegments returns the number of seg*.m4s files currently
+// in the session directory. Used by ManifestMPD to set MPD@Duration
+// for closed sessions and to detect "no segments yet" startup races.
+// Returns 0 on any read error — the caller treats that as "still
+// warming up" and DASH clients will retry on the next manifest poll.
+func countSessionSegments(sessDir string) int {
+	entries, err := os.ReadDir(sessDir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "seg") && strings.HasSuffix(name, ".m4s") {
+			n++
+		}
+	}
+	return n
+}
+
 // Segment handles GET /api/v1/transcode/sessions/{sid}/seg/{name}.
 func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

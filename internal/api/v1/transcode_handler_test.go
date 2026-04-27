@@ -346,3 +346,103 @@ func TestStop_Unauthorized(t *testing.T) {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+// ── ManifestMPD (DASH) ───────────────────────────────────────────────────────
+
+// manifestMPDRequest builds a GET for the DASH manifest endpoint with
+// the supplied (sid, token) query string. Centralised so the rejection
+// tests stay focused on the assertion, not request plumbing.
+func manifestMPDRequest(sid, token string) *http.Request {
+	req := httptest.NewRequest("GET", "/api/v1/transcode/sessions/"+sid+"/manifest.mpd?token="+token, nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sid", sid)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+func TestManifestMPD_NoToken_Unauthorized(t *testing.T) {
+	h, _ := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.ManifestMPD(rec, manifestMPDRequest("some-id", ""))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", rec.Code)
+	}
+}
+
+func TestManifestMPD_TokenForDifferentSession_Unauthorized(t *testing.T) {
+	// Token-binding is the security backstop here: an admin who
+	// receives a token for session A must not be able to read any
+	// other session's manifest by swapping the URL's sid. Mirrors
+	// the same check on the HLS Playlist handler.
+	h, store := newTestHandler(t)
+	ctx := context.Background()
+
+	otherSID := transcode.NewSessionID()
+	otherUser := uuid.New()
+	if err := store.Create(ctx, transcode.Session{ID: otherSID, UserID: otherUser}); err != nil {
+		t.Fatalf("create other session: %v", err)
+	}
+	tok, err := h.segToken.Issue(ctx, otherSID, otherUser)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+
+	// Use the token issued for otherSID against a different sid.
+	rec := httptest.NewRecorder()
+	h.ManifestMPD(rec, manifestMPDRequest("not-the-session", tok))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("cross-session token: got %d, want 401", rec.Code)
+	}
+}
+
+func TestManifestMPD_SessionNotFound_404(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ctx := context.Background()
+
+	// Issue a valid token but never store the session — the validator
+	// is happy (token only proves user/session pairing) but the
+	// session lookup misses, which the handler must surface as 404.
+	sid := transcode.NewSessionID()
+	tok, err := h.segToken.Issue(ctx, sid, uuid.New())
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ManifestMPD(rec, manifestMPDRequest(sid, tok))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing session: got %d, want 404", rec.Code)
+	}
+}
+
+func TestManifestMPD_NonFMP4Session_415(t *testing.T) {
+	// DASH MPDs cannot reference MPEG-TS segments — the muxer requires
+	// fMP4. The handler must return 415 with a hint pointing the caller
+	// at the HLS playlist rather than emit a manifest the client will
+	// fail to load.
+	h, store := newTestHandler(t)
+	ctx := context.Background()
+
+	sid := transcode.NewSessionID()
+	user := uuid.New()
+	if err := store.Create(ctx, transcode.Session{
+		ID:         sid,
+		UserID:     user,
+		HEVCOutput: false, // MPEG-TS path
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	tok, err := h.segToken.Issue(ctx, sid, user)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ManifestMPD(rec, manifestMPDRequest(sid, tok))
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("MPEG-TS session: got %d, want 415", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("playlist.m3u8")) {
+		t.Error("415 body must hint at the HLS fallback so callers know what to do")
+	}
+}
