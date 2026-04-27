@@ -139,7 +139,7 @@ func TestWatchEvents_Integration_HistoryCollapsesDuplicates(t *testing.T) {
 	insertWatch(t, q, user, item, "scrobble", 60000, base)
 
 	rows, err := q.ListWatchHistory(ctx, gen.ListWatchHistoryParams{
-		UserID: user, Limit: 10, Offset: 0,
+		UserID: user, Lim: 10, Off: 0,
 	})
 	if err != nil {
 		t.Fatalf("ListWatchHistory: %v", err)
@@ -167,7 +167,7 @@ func TestWatchEvents_Integration_HistorySplitsAfter30MinGap(t *testing.T) {
 	insertWatch(t, q, user, item, "stop", 90000, base) // 7h later — distinct session
 
 	rows, err := q.ListWatchHistory(ctx, gen.ListWatchHistoryParams{
-		UserID: user, Limit: 10, Offset: 0,
+		UserID: user, Lim: 10, Off: 0,
 	})
 	if err != nil {
 		t.Fatalf("ListWatchHistory: %v", err)

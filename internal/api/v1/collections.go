@@ -23,12 +23,12 @@ type CollectionDB interface {
 	CreateCollection(ctx context.Context, arg gen.CreateCollectionParams) (gen.Collection, error)
 	UpdateCollection(ctx context.Context, arg gen.UpdateCollectionParams) (gen.Collection, error)
 	DeleteCollection(ctx context.Context, id uuid.UUID) error
-	ListCollectionItems(ctx context.Context, collectionID uuid.UUID) ([]gen.ListCollectionItemsRow, error)
+	ListCollectionItems(ctx context.Context, arg gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error)
 	AddCollectionItem(ctx context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error)
 	RemoveCollectionItem(ctx context.Context, arg gen.RemoveCollectionItemParams) error
 	ListAutoGenreCollections(ctx context.Context) ([]gen.Collection, error)
 	ListItemsByGenre(ctx context.Context, arg gen.ListItemsByGenreParams) ([]gen.ListItemsByGenreRow, error)
-	CountItemsByGenre(ctx context.Context, genres []string) (int64, error)
+	CountItemsByGenre(ctx context.Context, arg gen.CountItemsByGenreParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 }
 
@@ -270,8 +270,8 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 
 	// Pre-compute allowed library set. Nil means admin → no filtering.
 	var allowed map[uuid.UUID]struct{}
+	claims := middleware.ClaimsFromContext(r.Context())
 	if h.access != nil {
-		claims := middleware.ClaimsFromContext(r.Context())
 		if claims == nil {
 			respond.Unauthorized(w, r)
 			return
@@ -295,15 +295,27 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 	// Auto-genre collections query media_items directly.
 	if col.Type == "auto_genre" && col.Genre != nil {
 		page := respond.ParsePagination(r, 50, 200)
+		// Inject the caller's content-rating ceiling so kid profiles
+		// don't see R-rated thrillers in the "Action" auto-row.
+		var maxRank *int32
+		if claims != nil {
+			maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+		}
 		rows, err := h.db.ListItemsByGenre(r.Context(), gen.ListItemsByGenreParams{
-			Genres: []string{*col.Genre}, Limit: page.Limit, Offset: page.Offset,
+			Genre:         *col.Genre,
+			Lim:           page.Limit,
+			Off:           page.Offset,
+			MaxRatingRank: maxRank,
 		})
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "list items by genre", "genre", *col.Genre, "err", err)
 			respond.InternalError(w, r)
 			return
 		}
-		total, _ := h.db.CountItemsByGenre(r.Context(), []string{*col.Genre})
+		total, _ := h.db.CountItemsByGenre(r.Context(), gen.CountItemsByGenreParams{
+			Genre:         *col.Genre,
+			MaxRatingRank: maxRank,
+		})
 		out := make([]collectionItemResponse, 0, len(rows))
 		for _, row := range rows {
 			if !libAllowed(row.LibraryID) {
@@ -327,8 +339,17 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Playlist — read from collection_items join.
-	rows, err := h.db.ListCollectionItems(r.Context(), id)
+	// Playlist — read from collection_items join. Inject the caller's
+	// content-rating ceiling so kid profiles don't see R-rated items
+	// in a playlist their parent built.
+	var collMaxRank *int32
+	if claims != nil {
+		collMaxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+	}
+	rows, err := h.db.ListCollectionItems(r.Context(), gen.ListCollectionItemsParams{
+		CollectionID:  id,
+		MaxRatingRank: collMaxRank,
+	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list collection items", "id", id, "err", err)
 		respond.InternalError(w, r)

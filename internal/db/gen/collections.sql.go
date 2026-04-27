@@ -39,11 +39,21 @@ func (q *Queries) AddCollectionItem(ctx context.Context, arg AddCollectionItemPa
 
 const countItemsByGenre = `-- name: CountItemsByGenre :one
 SELECT COUNT(*) FROM media_items
-WHERE deleted_at IS NULL AND $1 = ANY(genres) AND type IN ('movie', 'show')
+WHERE deleted_at IS NULL AND $1::text = ANY(genres) AND type IN ('movie', 'show')
+  AND ($2::int IS NULL
+       OR content_rating_rank(content_rating) <= $2::int)
 `
 
-func (q *Queries) CountItemsByGenre(ctx context.Context, genres []string) (int64, error) {
-	row := q.db.QueryRow(ctx, countItemsByGenre, genres)
+type CountItemsByGenreParams struct {
+	Genre         string `json:"genre"`
+	MaxRatingRank *int32 `json:"max_rating_rank"`
+}
+
+// Mirrors ListItemsByGenre's filter so the paginated total matches
+// the rows the user can actually see — without the same gate the
+// pagination footer would lie ("Page 1 of 12" but only 4 visible).
+func (q *Queries) CountItemsByGenre(ctx context.Context, arg CountItemsByGenreParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countItemsByGenre, arg.Genre, arg.MaxRatingRank)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -177,8 +187,15 @@ JOIN media_items mi ON mi.id = ci.media_item_id
 LEFT JOIN media_items parent ON parent.id = mi.parent_id
 LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
+  AND ($2::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $2::int)
 ORDER BY ci.position
 `
+
+type ListCollectionItemsParams struct {
+	CollectionID  uuid.UUID `json:"collection_id"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
+}
 
 type ListCollectionItemsRow struct {
 	ID         uuid.UUID          `json:"id"`
@@ -194,8 +211,13 @@ type ListCollectionItemsRow struct {
 	AddedAt    pgtype.Timestamptz `json:"added_at"`
 }
 
-func (q *Queries) ListCollectionItems(ctx context.Context, collectionID uuid.UUID) ([]ListCollectionItemsRow, error) {
-	rows, err := q.db.Query(ctx, listCollectionItems, collectionID)
+// v2.1 Track G item 4: optional max_rating_rank gate filters items
+// whose content_rating ranks above the caller's ceiling. NULL ranks
+// (no max set, no rating recorded) pass through — the same lenient
+// semantics used by every other rating-gated query so that
+// as-yet-uncategorised media isn't hidden by accident.
+func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionItemsParams) ([]ListCollectionItemsRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionItems, arg.CollectionID, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}
@@ -269,16 +291,19 @@ const listItemsByGenre = `-- name: ListItemsByGenre :many
 SELECT id, library_id, type, title, sort_title, year, rating, poster_path, duration_ms, created_at
 FROM media_items
 WHERE deleted_at IS NULL
-  AND $1 = ANY(genres)
+  AND $1::text = ANY(genres)
   AND type IN ('movie', 'show')
+  AND ($2::int IS NULL
+       OR content_rating_rank(content_rating) <= $2::int)
 ORDER BY rating DESC NULLS LAST
-LIMIT $2 OFFSET $3
+LIMIT $4::int OFFSET $3::int
 `
 
 type ListItemsByGenreParams struct {
-	Genres []string `json:"genres"`
-	Limit  int32    `json:"limit"`
-	Offset int32    `json:"offset"`
+	Genre         string `json:"genre"`
+	MaxRatingRank *int32 `json:"max_rating_rank"`
+	Off           int32  `json:"off"`
+	Lim           int32  `json:"lim"`
 }
 
 type ListItemsByGenreRow struct {
@@ -294,8 +319,16 @@ type ListItemsByGenreRow struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+// v2.1 Track G item 4: optional max_rating_rank gate. Backs the
+// "More like /Action" auto-genre row on the home hub, which a kid
+// profile would otherwise see populated with R-rated thrillers.
 func (q *Queries) ListItemsByGenre(ctx context.Context, arg ListItemsByGenreParams) ([]ListItemsByGenreRow, error) {
-	rows, err := q.db.Query(ctx, listItemsByGenre, arg.Genres, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, listItemsByGenre,
+		arg.Genre,
+		arg.MaxRatingRank,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -32,7 +32,7 @@ type PlaylistDB interface {
 	CreateCollection(ctx context.Context, arg gen.CreateCollectionParams) (gen.Collection, error)
 	UpdateCollection(ctx context.Context, arg gen.UpdateCollectionParams) (gen.Collection, error)
 	DeleteCollection(ctx context.Context, id uuid.UUID) error
-	ListCollectionItems(ctx context.Context, collectionID uuid.UUID) ([]gen.ListCollectionItemsRow, error)
+	ListCollectionItems(ctx context.Context, arg gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error)
 	AddCollectionItem(ctx context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error)
 	RemoveCollectionItem(ctx context.Context, arg gen.RemoveCollectionItemParams) error
 	ReorderPlaylistItems(ctx context.Context, arg gen.ReorderPlaylistItemsParams) error
@@ -269,7 +269,16 @@ func (h *PlaylistHandler) Items(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.db.ListCollectionItems(r.Context(), id)
+	// Inject the caller's content-rating ceiling so a kid profile can't
+	// see R-rated items in a playlist their parent built.
+	var maxRank *int32
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+	}
+	rows, err := h.db.ListCollectionItems(r.Context(), gen.ListCollectionItemsParams{
+		CollectionID:  id,
+		MaxRatingRank: maxRank,
+	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list playlist items", "id", id, "err", err)
 		respond.InternalError(w, r)

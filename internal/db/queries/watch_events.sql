@@ -34,6 +34,13 @@ LIMIT 10000;
 -- group. This prevents the same playback session from showing multiple times
 -- in the user's history when both an explicit stop and an onDestroy stop fire,
 -- or when external clients emit redundant scrobble events.
+--
+-- v2.1 Track G item 4: optional max_rating_rank gate. Hides items
+-- whose content_rating ranks above the caller's ceiling — important
+-- when an admin lowers a profile's ceiling after the profile has
+-- already accumulated history; the old entries should disappear too,
+-- not just future plays. Same lenient null-passes-through semantics
+-- as the rest of the rating-gated queries.
 WITH events AS (
     SELECT we.id, we.user_id, we.media_id, we.event_type,
            we.position_ms, we.duration_ms, we.client_name, we.client_id,
@@ -43,7 +50,7 @@ WITH events AS (
                ORDER BY we.occurred_at
            ) AS next_at
     FROM watch_events we
-    WHERE we.user_id = $1
+    WHERE we.user_id = sqlc.arg('user_id')::uuid
       AND we.event_type IN ('stop', 'scrobble')
 )
 SELECT e.id, e.user_id, e.media_id, e.event_type,
@@ -54,6 +61,8 @@ SELECT e.id, e.user_id, e.media_id, e.event_type,
        m.thumb_path AS media_thumb
 FROM events e
 JOIN media_items m ON m.id = e.media_id
-WHERE e.next_at IS NULL OR (e.next_at - e.occurred_at) > INTERVAL '30 minutes'
+WHERE (e.next_at IS NULL OR (e.next_at - e.occurred_at) > INTERVAL '30 minutes')
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank')::int)
 ORDER BY e.occurred_at DESC
-LIMIT $2 OFFSET $3;
+LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;

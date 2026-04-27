@@ -78,9 +78,10 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.ListWatchHistory(r.Context(), gen.ListWatchHistoryParams{
-		UserID: claims.UserID,
-		Limit:  limit,
-		Offset: offset,
+		UserID:        claims.UserID,
+		Lim:           limit,
+		Off:           offset,
+		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "history: list", "err", err)
