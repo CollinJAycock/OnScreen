@@ -186,7 +186,7 @@
 | Feature                        | OnScreen | Plex | Emby | Jellyfin | Notes |
 |--------------------------------|:--:|:--:|:--:|:--:|---|
 | HLS streaming                  | ✅ | ✅ | ✅ | ✅ | |
-| DASH streaming                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: `manifest.mpd` endpoint over the existing fMP4 ladder for HEVC sessions (v2.1 Track H, server side); shaka-player frontend swap + smart-TV test matrix still to ship |
+| DASH streaming                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: `manifest.mpd` endpoint over the existing fMP4 ladder for HEVC sessions, plus `manifest_url` surfaced on the session-start response so native clients consume it without URL construction (v2.1 Track H, server side complete); browser shaka-player swap + smart-TV test matrix deferred — real DASH leverage is the smart-TV native-client side (Track E) which goes through the MPD URL directly |
 | Raw file serving + byte-range  | ✅ | ✅ | ✅ | ✅ | |
 | Signed segment URLs            | ✅ | ✅ | ✅ | ✅ | OnScreen: JWT query-param tokens |
 | Range requests (HTTP 206)      | ✅ | ✅ | ✅ | ✅ | |
@@ -250,7 +250,7 @@
 | Cloud storage (S3/GCS direct)  | ❌ | ❌ | ❌ | ❌ | All rely on local/NFS mounts |
 | Config: env vars (12-factor)   | ✅ | ⚠️ | ⚠️ | ⚠️ | Competitors use XML/JSON config files |
 | Built-in backup/restore        | ❌ | ❌ | 💎 | ⚠️ | Jellyfin has user-data export |
-| Horizontal scaling (workers)   | ✅ | ❌ | ❌ | ❌ | |
+| Horizontal scaling (workers)   | ✅ | ❌ | ❌ | ❌ | OnScreen: transcode workers join via Valkey; SAML request tracker is also Valkey-backed (v2.1) so SP-initiated SSO survives load-balanced AuthnRequest → ACS roundtrips across instances |
 
 ---
 
@@ -321,11 +321,12 @@
 
 ## v2.1 Closed (in flight on `main`)
 
+- ✅ **Track A — Bug-shape fixes** (3/3): job-queued OCR endpoint (POST returns 202 + job_id, GET polls — unblocks Cloudflare Tunnel free-tier users hitting 100 s timeouts); Vitest SMTP fixture cleanup; Valkey-backed SAML request tracker (HA-ready — AuthnRequest minted on instance A is validatable by ACS callback on instance B)
 - ✅ **Track B — Media types**: home_video library + date-grouped page; CBZ books with paginated reader; audiobook author display + chapter-boundary resume; podcast show + episode detail UI
 - ✅ **Track F — Discovery**: smart playlists (rule JSONB, query-time evaluation); trending row (rolling watch_events aggregate); watch-cooccurrence recommendations + "Because you watched X" (item-to-item collaborative filtering, replaced the planned pgvector pipeline)
 - ✅ **Track G — Per-user policy** (5/5): library `is_private` flag with public/private union semantics; `auto_grant_new_users` template wired into invite + OIDC + SAML + LDAP user-creation paths; per-profile inherit-or-override library access; content-rating gates closed in `ListCollectionItems`, `ListItemsByGenre`, `ListWatchHistory`; admin "view as" middleware (read-only, GET-only, IDOR-gated)
-- ✅ **Track H — Streaming format**: server-side DASH `manifest.mpd` endpoint over the existing fMP4 ladder (one segment ladder, two manifests); frontend shaka-player swap still to ship
-- ✅ **Track D — Quality coverage**: `auth-providers.spec.ts` Playwright spec covering OIDC PKCE shape, SAML signed-AuthnRequest (locks the four-layer SAML signing fix behind a regression guard), LDAP end-to-end + negative path
+- ✅ **Track H — Streaming format**: server-side DASH `manifest.mpd` endpoint over the existing fMP4 ladder (one segment ladder, two manifests) + `manifest_url` exposed on the session-start response; frontend shaka-player swap intentionally deferred — real DASH leverage is smart-TV native clients (Track E) consuming the URL directly
+- ✅ **Track D — Quality + dev workflow** (3/3): `auth-providers.spec.ts` Playwright spec covering OIDC PKCE shape, SAML signed-AuthnRequest (locks the four-layer SAML signing fix behind a regression guard), LDAP end-to-end + negative path; gh CLI added to CONTRIBUTING.md prereqs (cuts release form to one command); 10-PR Dependabot triage doc grouping the v2.0-tag queue by risk with paste-ready merge commands
 
 ## Non-Differentiators (All Four Roughly Equal)
 
