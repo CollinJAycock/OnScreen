@@ -14,6 +14,7 @@ Thanks for your interest in contributing to OnScreen. This guide covers everythi
 | sqlc | Latest | SQL-to-Go code generation |
 | goose | v3 | Database migrations |
 | golangci-lint | Latest | Go linting |
+| GitHub CLI (`gh`) | 2.50+ | Cuts the release form down to one command (`gh release create`), fetches PR comments inline (`gh api …`), drives Dependabot triage. Install: `winget install GitHub.cli` (Windows), `brew install gh` (macOS), [`docs.github.com/en/github-cli/github-cli/quickstart`](https://docs.github.com/en/github-cli/github-cli/quickstart) (Linux). Run `gh auth login` once after install. |
 
 ## Dev Setup
 
