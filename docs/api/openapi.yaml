@@ -943,7 +943,14 @@ paths:
   /api/v1/items/{id}/subtitles/ocr:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     post:
-      summary: OCR a PGS/VobSub track to text
+      summary: Enqueue an OCR job for a PGS/VobSub track
+      description: |
+        v2.1 Track A. Returns immediately with a job ID; OCR runs in
+        a server-lifetime goroutine. Client polls
+        `/api/v1/items/{id}/subtitles/ocr/{jobId}` for status. Async
+        because OCR can take minutes — synchronous behaviour 524'd
+        behind reverse proxies with sub-multi-minute timeouts
+        (Cloudflare Tunnel free tier = 100 s).
       tags: [Subtitles]
       requestBody:
         required: true
@@ -956,7 +963,45 @@ paths:
                 stream_index: { type: integer }
                 language:     { type: string }
       responses:
-        '202': { description: Job enqueued. }
+        '202':
+          description: Job enqueued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:        { type: string, format: uuid }
+                      status:    { type: string, enum: [pending, running, complete, failed] }
+                      created_at: { type: string, format: date-time }
+
+  /api/v1/items/{id}/subtitles/ocr/{jobId}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: path, name: jobId, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Poll OCR job status (v2.1)
+      tags: [Subtitles]
+      responses:
+        '200':
+          description: Job status. `complete` jobs include the resulting subtitle id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:           { type: string, format: uuid }
+                      status:       { type: string, enum: [pending, running, complete, failed] }
+                      created_at:   { type: string, format: date-time }
+                      completed_at: { type: string, format: date-time, nullable: true }
+                      error:        { type: string, nullable: true }
+                      subtitle_id:  { type: string, format: uuid, nullable: true }
+        '404': { description: Job not found (TTL expired or never enqueued). }
 
   /api/v1/items/{id}/subtitles/{subId}:
     parameters:
@@ -1051,6 +1096,33 @@ paths:
             application/x-mpegURL: {}
         '401': { description: Bad or missing token. }
         '503': { description: Playlist not yet ready or request cancelled. }
+
+  /api/v1/transcode/sessions/{sid}/manifest.mpd:
+    parameters:
+      - { in: path, name: sid, required: true, schema: { type: string } }
+      - { in: query, name: token, required: true, schema: { type: string }, description: 'Segment token from `transcodeStart`. Same token used by playlist.m3u8 — bound to this session ID.' }
+    get:
+      summary: Serve the DASH MPD manifest (v2.1)
+      description: |
+        DASH counterpart to `playlist.m3u8` — references the same
+        init.mp4 + seg*.m4s files. Returns `application/dash+xml`.
+        Native clients (smart-TV apps in particular) consume this
+        directly; browsers continue using the HLS playlist.
+
+        fMP4 sessions only. MPEG-TS sessions return 415 with a hint
+        in the body pointing at `playlist.m3u8` — DASH cannot
+        describe TS segments.
+      tags: [Transcode]
+      security: []
+      responses:
+        '200':
+          description: MPD manifest.
+          content:
+            application/dash+xml: {}
+        '401': { description: Bad or missing token (or token bound to a different session). }
+        '404': { description: Session not found. }
+        '415': { description: Session uses MPEG-TS — fall back to playlist.m3u8. }
+        '503': { description: Manifest not yet ready or request cancelled. }
 
   /api/v1/transcode/sessions/{sid}/seg/{name}:
     parameters:
@@ -1691,6 +1763,33 @@ paths:
       tags: [Users]
       responses:
         '204': { description: Deleted. }
+
+  /api/v1/profiles/{id}/library-inherit:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Toggle a managed profile's library inheritance flag (v2.1)
+      description: |
+        Sets `inherit_library_access` on the profile. When true, the
+        profile sees the parent owner's library grants. When false, it
+        uses its own `library_access` rows — admins then call
+        `PUT /api/v1/users/{id}/libraries` to set the explicit set.
+
+        Auth: parent owner OR admin. The SQL gates by `parent_user_id`
+        when the caller isn't admin and returns 0 rows on a mismatch,
+        which the handler maps to 404 to avoid leaking profile IDs.
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inherit]
+              properties:
+                inherit: { type: boolean }
+      responses:
+        '204': { description: Flag updated. }
+        '404': { description: Profile not owned by caller (or not a managed profile). }
 
   # ── Settings (admin) ───────────────────────────────────────────────────────
   /api/v1/settings:
@@ -2628,6 +2727,20 @@ components:
       in: query
       name: offset
       schema: { type: integer, minimum: 0, default: 0 }
+    ViewAs:
+      in: query
+      name: view_as
+      required: false
+      description: |
+        v2.1 Track G item 5. Admin "view as" — when an admin appends
+        `?view_as=<uuid>` to any GET request the auth middleware swaps
+        the request's claims for the target user's, so handlers see
+        exactly what the target would see (own grants, content-rating
+        ceiling, IsAdmin downgraded). Read-only by design — non-GET
+        requests with the param return 403. Unknown target IDs return
+        404 to prevent ID-probing. Useful for verifying the per-user
+        policy stack end-to-end without PIN-switching.
+      schema: { type: string, format: uuid }
 
   responses:
     BoolEnabled:
@@ -2784,9 +2897,25 @@ components:
       properties:
         id:           { type: string, format: uuid }
         name:         { type: string }
-        type:         { type: string, enum: [movie, show, music, photo, mixed] }
+        type:
+          type: string
+          enum: [movie, show, music, photo, mixed, audiobook, podcast, music_video, home_video, book, dvr]
         scan_paths:   { type: array, items: { type: string } }
         item_count:   { type: integer, format: int64 }
+        is_private:
+          type: boolean
+          description: |
+            v2.1. When false (default) every authenticated user can see
+            this library. When true, access requires an explicit row in
+            `library_access`. Admins always bypass the check.
+        auto_grant_new_users:
+          type: boolean
+          description: |
+            v2.1. When true on a private library, every newly-created
+            non-admin user (invite accept, OIDC/SAML/LDAP JIT
+            provisioning, admin-create) is automatically granted
+            access. No-op on public libraries — the UI hides the
+            toggle there since the grant is meaningless.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:
@@ -2800,13 +2929,27 @@ components:
       required: [name, type, scan_paths]
       properties:
         name:       { type: string }
-        type:       { type: string, enum: [movie, show, music, photo, mixed] }
+        type:
+          type: string
+          enum: [movie, show, music, photo, mixed, audiobook, podcast, music_video, home_video, book, dvr]
         scan_paths: { type: array, items: { type: string } }
+        is_private: { type: boolean, default: false }
+        auto_grant_new_users:
+          type: boolean
+          default: false
+          description: Server silently drops to false on public libraries (is_private=false).
     LibraryUpdate:
       type: object
       properties:
         name:       { type: string }
         scan_paths: { type: array, items: { type: string } }
+        is_private:
+          type: boolean
+          nullable: true
+          description: PATCH semantics — omit to preserve current value, send true/false to flip.
+        auto_grant_new_users:
+          type: boolean
+          nullable: true
     GenreCount:
       type: object
       properties:
@@ -3080,6 +3223,15 @@ components:
       properties:
         session_id:   { type: string }
         playlist_url: { type: string }
+        manifest_url:
+          type: string
+          description: |
+            v2.1 Track H. DASH MPD URL parallel to `playlist_url` for
+            sessions that produce fMP4 segments (HEVC today, AV1 once
+            that path lands). Empty/omitted for MPEG-TS sessions where
+            DASH cannot describe the segments — clients fall back to
+            HLS via `playlist_url`. Native clients (smart-TV apps in
+            particular) consume this directly without URL construction.
         token:        { type: string }
         decision:     { type: string, enum: [direct, transcode] }
 
@@ -3119,6 +3271,18 @@ components:
         id:         { type: string, format: uuid }
         owner_id:   { type: string, format: uuid }
         name:       { type: string }
+        max_content_rating:
+          type: string
+          nullable: true
+          description: Parental ceiling — null/empty means unrestricted.
+        inherit_library_access:
+          type: boolean
+          description: |
+            v2.1 Track G item 3. When true (default), the profile sees
+            its parent owner's library grants. When false, the profile
+            uses its own `library_access` rows so admins can narrow
+            per-profile (kid sees Family Movies only even though parent
+            has 4K Movies too).
         created_at: { type: string, format: date-time }
 
     # ── Collections / Playlists ────────────────────────────────────────────
@@ -3128,6 +3292,20 @@ components:
         id:         { type: string, format: uuid }
         name:       { type: string }
         summary:    { type: string, nullable: true }
+        type:
+          type: string
+          enum: [playlist, smart_playlist, auto_genre]
+          description: v2.1 — `smart_playlist` resolves items at query time from `rules`.
+        rules:
+          type: object
+          nullable: true
+          description: |
+            v2.1 Track F item 1. JSON rule schema for smart playlists
+            ("all 4K HDR movies from 2020+", "songs not played in
+            6 months"). Evaluated at query time so newly-imported
+            items matching the rules appear without a rebuild. Null
+            for static playlists / collections.
+          additionalProperties: true
         item_count: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
