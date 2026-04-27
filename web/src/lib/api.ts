@@ -19,6 +19,49 @@ export function setApiBase(url: string) {
   apiBase = url;
 }
 
+// In-memory bearer cache for the native client. Cookie-based auth
+// doesn't survive cross-origin (Tauri webview → remote OnScreen) on
+// plain-http servers because cookies need SameSite=None;Secure.
+// Bearer over Authorization is the universal path.
+//
+// Mutated by setBearerToken on login/refresh + on startup hydration.
+// Browser builds never set this; the same-origin cookie path keeps
+// working unchanged.
+let bearerToken: string | null = null;
+let refreshTokenStore: string | null = null;
+
+/** Set or clear the in-memory bearer token. The Tauri shell also
+ *  persists it to its store, but this in-memory copy is what the
+ *  fetch wrapper reads on every call so the persistence layer
+ *  isn't on the hot path. */
+export function setBearerToken(access: string | null, refresh: string | null = null) {
+  bearerToken = access;
+  refreshTokenStore = refresh;
+}
+
+/** Build the request headers, attaching Authorization when a bearer
+ *  token is cached. Browser builds skip the bearer (cookies cover
+ *  auth there). */
+function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (bearerToken) h.Authorization = `Bearer ${bearerToken}`;
+  return h;
+}
+
+/** Persist new tokens via the Tauri shell, no-op in the browser.
+ *  Fire-and-forget — failure to persist is non-fatal because the
+ *  in-memory bearer is already updated. */
+async function persistTokensIfTauri(access: string, refresh: string): Promise<void> {
+  setBearerToken(access, refresh);
+  try {
+    const { isTauri, setStoredTokens } = await import('./native');
+    if (isTauri()) await setStoredTokens(access, refresh);
+  } catch {
+    // Tauri not present or store IPC unavailable — in-memory tokens
+    // still work for this session.
+  }
+}
+
 interface ApiResponse<T> {
   data: T;
 }
@@ -122,7 +165,7 @@ export class ApiClient {
       finalPath,
       () => fetch(apiBase + finalPath, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         credentials: apiBase.startsWith('/') ? 'same-origin' : 'include',
         body: body ? JSON.stringify(body) : undefined
       }),
@@ -144,7 +187,7 @@ export class ApiClient {
       finalPath,
       () => fetch(apiBase + finalPath, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         credentials: apiBase.startsWith('/') ? 'same-origin' : 'include'
       }),
       async (resp) => {
@@ -161,19 +204,31 @@ export class ApiClient {
 
   private async tryRefresh(): Promise<boolean> {
     try {
-      // Refresh token is in an httpOnly cookie scoped to /api/v1/auth — sent automatically.
+      // Browser path: refresh token is in an httpOnly cookie scoped
+      // to /api/v1/auth — sent automatically. Native path: post the
+      // stored refresh token in the body (the endpoint accepts both
+      // — see auth.go's refresh handler) since cookies don't survive
+      // cross-origin from the Tauri webview.
+      const body: Record<string, string> = {};
+      if (refreshTokenStore) {
+        body.refresh_token = refreshTokenStore;
+      }
       const resp = await fetch(apiBase + '/auth/refresh', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include'
+        headers: authHeaders(),
+        credentials: apiBase.startsWith('/') ? 'same-origin' : 'include',
+        body: refreshTokenStore ? JSON.stringify(body) : undefined,
       });
       if (!resp.ok) {
         return false;
       }
       const json = (await resp.json()) as ApiResponse<TokenPair>;
       const pair = json.data;
-      // Update stored user metadata (tokens stay in httpOnly cookies).
+      // Update stored user metadata + bearer cache. The persistent
+      // store update is fire-and-forget — if it fails we still have
+      // the in-memory copy and the user can re-login next launch.
       this.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
+      void persistTokensIfTauri(pair.access_token, pair.refresh_token);
       return true;
     } catch {
       return false;
@@ -227,18 +282,40 @@ export interface TokenPair {
   is_admin: boolean;
 }
 
+/** Capture the access + refresh tokens from a successful auth call
+ *  so subsequent requests carry the bearer header. Browser builds
+ *  short-circuit (the in-memory cache is unread there since the
+ *  cookie path covers auth). */
+async function captureTokens(pair: TokenPair): Promise<TokenPair> {
+  await persistTokensIfTauri(pair.access_token, pair.refresh_token);
+  return pair;
+}
+
 export const authApi = {
   setupStatus: () => api.get<{ setup_required: boolean }>('/setup/status'),
-  login: (username: string, password: string) =>
-    api.post<TokenPair>('/auth/login', { username, password }),
+  login: async (username: string, password: string) =>
+    captureTokens(await api.post<TokenPair>('/auth/login', { username, password })),
   register: (username: string, password: string, email?: string) =>
     api.post<{ id: string; username: string }>('/auth/register', { username, password, email }),
-  logout: () => api.post('/auth/logout'),
+  logout: async () => {
+    try {
+      await api.post('/auth/logout');
+    } finally {
+      // Clear bearer + persisted tokens regardless of whether the
+      // server-side logout succeeded — a leaked refresh token is a
+      // worse outcome than a transient API error.
+      setBearerToken(null, null);
+      try {
+        const { isTauri, clearStoredTokens } = await import('./native');
+        if (isTauri()) await clearStoredTokens();
+      } catch { /* native shell unavailable */ }
+    }
+  },
   oidcEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/oidc/enabled'),
   ldapEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/ldap/enabled'),
   samlEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/saml/enabled'),
-  ldapLogin: (username: string, password: string) =>
-    api.post<TokenPair>('/auth/ldap/login', { username, password }),
+  ldapLogin: async (username: string, password: string) =>
+    captureTokens(await api.post<TokenPair>('/auth/ldap/login', { username, password })),
   forgotPasswordEnabled: () => api.get<{ enabled: boolean }>('/auth/forgot-password/enabled'),
   forgotPassword: (email: string) => api.post<{ message: string }>('/auth/forgot-password', { email }),
   resetPassword: (token: string, password: string) => api.post<{ message: string }>('/auth/reset-password', { token, password }),
@@ -294,8 +371,8 @@ export const userApi = {
     api.del('/users/me/pin', { password }),
   listSwitchable: () =>
     api.get<SwitchableUser[]>('/users/switchable'),
-  pinSwitch: (userId: string, pin: string) =>
-    api.post<TokenPair>('/auth/pin-switch', { user_id: userId, pin }),
+  pinSwitch: async (userId: string, pin: string) =>
+    captureTokens(await api.post<TokenPair>('/auth/pin-switch', { user_id: userId, pin })),
   getPreferences: () =>
     api.get<UserPreferences>('/users/me/preferences'),
   setPreferences: (prefs: UserPreferences) =>

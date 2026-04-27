@@ -44,6 +44,21 @@ fn get_app_version() -> AppVersion {
 // settings change in bursts.
 const STORE_FILE: &str = "settings.json";
 const KEY_SERVER_URL: &str = "server_url";
+// Tokens get their own keys on the same store rather than a separate
+// file: tauri-plugin-store writes the whole file on Save, so co-locating
+// reduces fsync churn when both change in the same flow (e.g. setup
+// screen → login → both server URL and tokens land back-to-back).
+//
+// SECURITY NOTE: tauri-plugin-store is not encryption-at-rest. Tokens
+// here sit in the platform's appdata dir as plain JSON, readable by
+// any process running as the same user. Acceptable for v2.1
+// scaffolding because (a) the access token is short-lived (1 h) so
+// the blast radius of a leaked file is bounded and (b) the refresh
+// token is server-revocable via the existing session-epoch path.
+// Follow-up: swap to tauri-plugin-keychain (macOS Keychain / Windows
+// Credential Vault / libsecret) so the tokens move out of plaintext.
+const KEY_ACCESS_TOKEN: &str = "access_token";
+const KEY_REFRESH_TOKEN: &str = "refresh_token";
 
 /// Returns the configured OnScreen server URL, or None when the user
 /// hasn't completed the first-run setup. The frontend uses None to
@@ -87,6 +102,47 @@ fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Tokens stored together so the frontend can hydrate the bearer
+/// header + the refresh path in a single IPC round-trip on startup.
+/// Both fields are Option so a partially-completed setup (URL set,
+/// not yet logged in) doesn't trip a deserialise error.
+#[derive(Serialize, Default)]
+pub struct StoredTokens {
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+}
+
+#[tauri::command]
+fn get_tokens(app: AppHandle) -> Result<StoredTokens, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    Ok(StoredTokens {
+        access_token: store
+            .get(KEY_ACCESS_TOKEN)
+            .and_then(|v| v.as_str().map(String::from)),
+        refresh_token: store
+            .get(KEY_REFRESH_TOKEN)
+            .and_then(|v| v.as_str().map(String::from)),
+    })
+}
+
+#[tauri::command]
+fn set_tokens(app: AppHandle, access: String, refresh: String) -> Result<(), String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(KEY_ACCESS_TOKEN, access);
+    store.set(KEY_REFRESH_TOKEN, refresh);
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_tokens(app: AppHandle) -> Result<(), String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.delete(KEY_ACCESS_TOKEN);
+    store.delete(KEY_REFRESH_TOKEN);
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -100,6 +156,9 @@ pub fn run() {
             get_app_version,
             get_server_url,
             set_server_url,
+            get_tokens,
+            set_tokens,
+            clear_tokens,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OnScreen desktop");

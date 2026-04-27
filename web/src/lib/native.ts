@@ -55,3 +55,37 @@ export async function setServerUrl(url: string): Promise<void> {
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('set_server_url', { url });
 }
+
+/**
+ * Tokens persisted by the Tauri shell. Both fields are present
+ * after a successful login or refresh; both are null when the user
+ * hasn't authenticated yet (or after clearTokens() — i.e. logout).
+ *
+ * The fetch wrapper consumes these to attach `Authorization: Bearer
+ * <access_token>` on every request when running natively. Cookies
+ * don't survive cross-origin from the Tauri webview to a plain-http
+ * server, which is the most common dev/home-install shape — bearer
+ * is the only viable path there.
+ */
+export type StoredTokens = {
+  access_token: string | null;
+  refresh_token: string | null;
+};
+
+export async function getStoredTokens(): Promise<StoredTokens> {
+  if (!isTauri()) return { access_token: null, refresh_token: null };
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke<StoredTokens>('get_tokens');
+}
+
+export async function setStoredTokens(access: string, refresh: string): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('set_tokens', { access, refresh });
+}
+
+export async function clearStoredTokens(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('clear_tokens');
+}

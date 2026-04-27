@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { api, authApi, userApi, setApiBase } from '$lib/api';
+  import { api, authApi, userApi, setApiBase, setBearerToken } from '$lib/api';
   import type { SwitchableUser } from '$lib/api';
-  import { isTauri, getServerUrl, setServerUrl } from '$lib/native';
+  import { isTauri, getServerUrl, setServerUrl, getStoredTokens } from '$lib/native';
   import { derived } from 'svelte/store';
   import Logo from '$lib/components/Logo.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
@@ -73,6 +73,15 @@
         return;
       }
       setApiBase(stored.replace(/\/$/, '') + '/api/v1');
+      // Hydrate the bearer cache so the very first authed request
+      // (setupStatus / refresh / etc.) carries Authorization. If the
+      // stored access token is expired the wrapper's auto-refresh
+      // path picks up the stored refresh token and rotates both —
+      // same flow as a 401 mid-session.
+      const tokens = await getStoredTokens();
+      if (tokens.access_token && tokens.refresh_token) {
+        setBearerToken(tokens.access_token, tokens.refresh_token);
+      }
     }
 
     try {
