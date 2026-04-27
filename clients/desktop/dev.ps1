@@ -30,8 +30,24 @@ if (-not (cargo tauri --version 2>$null)) {
     exit 1
 }
 
+# Resolve npm to the .cmd shipped alongside node.exe — Start-Process
+# can't dispatch the bare "npm" alias on Windows because it's a
+# PowerShell wrapper, not an executable. Going through node.exe's
+# install dir means we don't depend on whichever npm shim PowerShell
+# happens to resolve.
+$node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $node) {
+    Write-Host "==> node not found on PATH. Install Node 24+ first." -ForegroundColor Red
+    exit 1
+}
+$npmCmd = Join-Path (Split-Path $node.Source) "npm.cmd"
+if (-not (Test-Path $npmCmd)) {
+    Write-Host "==> npm.cmd not found next to node.exe at $npmCmd" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "==> Starting Vite dev server in background..." -ForegroundColor Cyan
-$vite = Start-Process -FilePath "npm" `
+$vite = Start-Process -FilePath $npmCmd `
     -ArgumentList "run", "dev" `
     -WorkingDirectory $webDir `
     -PassThru -NoNewWindow
@@ -55,12 +71,10 @@ try {
 } finally {
     if ($vite -and -not $vite.HasExited) {
         Write-Host "==> Stopping Vite (PID $($vite.Id))..." -ForegroundColor DarkGray
-        Stop-Process -Id $vite.Id -Force -ErrorAction SilentlyContinue
-        # Vite forks a node child — sweep any node processes spawned
-        # by our PID so the port doesn't stay bound.
-        Get-CimInstance Win32_Process -Filter "ParentProcessId = $($vite.Id)" `
-            -ErrorAction SilentlyContinue | ForEach-Object {
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            }
+        # Windows doesn't auto-kill descendants when the parent dies.
+        # taskkill /T walks the whole tree (npm.cmd → node.exe → vite
+        # → any worker forks) and /F is required because vite ignores
+        # WM_CLOSE on the console wrapper.
+        & taskkill.exe /F /T /PID $vite.Id 2>$null | Out-Null
     }
 }
