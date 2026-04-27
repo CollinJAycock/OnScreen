@@ -83,6 +83,19 @@ fn get_server_url(app: AppHandle) -> Result<Option<String>, String> {
 /// at first request. Per the same logic, we don't probe `/health/live`
 /// from Rust on save: the frontend is the right place to surface
 /// "checking…" UX and capture the response shape mismatch path.
+/// Removes the stored server URL so the layout's first-run gate
+/// kicks in on the next reload. Symmetric with clear_tokens — the
+/// /native/server "Sign out + clear server URL" button uses both
+/// to fully reset the client without the user having to delete
+/// the appdata file by hand.
+#[tauri::command]
+fn clear_server_url(app: AppHandle) -> Result<(), String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.delete(KEY_SERVER_URL);
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
     let trimmed = url.trim().trim_end_matches('/').to_string();
@@ -158,6 +171,7 @@ pub fn run() {
             get_app_version,
             get_server_url,
             set_server_url,
+            clear_server_url,
             get_tokens,
             set_tokens,
             clear_tokens,

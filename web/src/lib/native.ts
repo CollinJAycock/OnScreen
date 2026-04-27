@@ -56,6 +56,15 @@ export async function setServerUrl(url: string): Promise<void> {
   await invoke('set_server_url', { url });
 }
 
+/** Removes the stored server URL so the layout's first-run gate
+ *  kicks in on next reload. Used by the disconnect flow alongside
+ *  clearStoredTokens. */
+export async function clearServerUrl(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('clear_server_url');
+}
+
 /**
  * Tokens persisted by the Tauri shell. Both fields are present
  * after a successful login or refresh; both are null when the user
