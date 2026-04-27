@@ -134,4 +134,19 @@ The manual plan still needs human eyes for:
 
 ## Tying into automation
 
-The Playwright suite at [web/tests/e2e/](../web/tests/e2e) doesn't drive Keycloak/lldap/Mailpit yet — auth flows in `smoke.spec.ts` use the local `admin` user. The next layer (v2.1 candidate): a `web/tests/e2e/auth-providers.spec.ts` that boots this compose stack as a Playwright `globalSetup`, runs the OIDC + LDAP rounds, and tears down. Mailpit's API at `http://localhost:8025/api/v1/messages` is automation-friendly — you can fetch the latest message and click the reset link headlessly.
+[`web/tests/e2e/auth-providers.spec.ts`](../web/tests/e2e/auth-providers.spec.ts) (v2.1) covers the OIDC + SAML + LDAP integration paths against this stack. It gates on per-provider env vars and skips cleanly when they aren't set, so unconfigured runs are no-ops:
+
+```bash
+docker compose -f docker/docker-compose.idp.yml up -d
+# … one-time IdP click-through above to create the realm/users …
+
+# Then enable specs per provider:
+E2E_OIDC_ENABLED=1 E2E_OIDC_ISSUER_HOST=localhost:8080 \
+E2E_SAML_ENABLED=1 E2E_SAML_IDP_HOST=localhost:8080 \
+E2E_LDAP_ENABLED=1 E2E_LDAP_USERNAME=ldapuser E2E_LDAP_PASSWORD=ldappass \
+  npm --prefix web run test:e2e -- auth-providers
+```
+
+The OIDC + SAML blocks check the redirect-binding shape (PKCE params, `SAMLRequest` + `SigAlg` + `Signature`) — locking the four-layer SAML signing fix and the OIDC PKCE flow behind a regression guard. The LDAP block runs a real round-trip (`POST /auth/ldap/login` then a Bearer-gated `GET /users/me/preferences`) since LDAP is the one provider OnScreen handles fully server-side.
+
+Mailpit's API at `http://localhost:8025/api/v1/messages` is automation-friendly — you can fetch the latest message and click the reset link headlessly. Not yet wired into the spec; a future addition could exercise the password-reset round-trip against it.

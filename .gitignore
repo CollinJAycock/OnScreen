@@ -32,6 +32,8 @@ Thumbs.db
 /tmp/
 coverage.out
 coverage.html
+/web/test-results/
+/web/playwright-report/
 
 # Go
 vendor/
