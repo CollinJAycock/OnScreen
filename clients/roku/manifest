@@ -1,0 +1,29 @@
+# OnScreen Roku channel manifest. Format is line-based key=value
+# (no equals padding, no quotes, no comments inside values). Roku's
+# bundler enforces specific keys here — see
+# https://developer.roku.com/docs/developer-program/getting-started/architecture/channel-manifest.md
+title=OnScreen
+subtitle=Your media, your server
+major_version=0
+minor_version=1
+build_version=00001
+
+# Channel art. Real PNG/JPG files must live at these paths before
+# sideloading; placeholders aren't enough — Roku rejects the bundle
+# if a referenced image is missing or the wrong dimensions. See
+# images/README.md for the required sizes.
+mm_icon_focus_hd=pkg:/images/icon_focus_hd.png
+mm_icon_focus_sd=pkg:/images/icon_focus_sd.png
+splash_screen_hd=pkg:/images/splash_hd.jpg
+splash_screen_fhd=pkg:/images/splash_fhd.jpg
+splash_color=#1a1a1a
+
+# Render at 1080p; Roku scales to the device's native resolution.
+# Channels designed at 720p ("hd") are also fine but lose sharpness
+# on 4K TVs which all upscale through the same pipeline.
+ui_resolutions=fhd
+
+# Allow the channel to receive deep-link launches (e.g., from the
+# Roku Voice Search or external apps). Future use; harmless to
+# declare now.
+supports_input_launch=1

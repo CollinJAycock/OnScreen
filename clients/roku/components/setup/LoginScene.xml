@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Username + password entry. Two MiniKeyboard fields (compact
+    inline keyboard variant) stacked vertically, plus a Sign-In
+    button. On success we persist tokens via Prefs and route to
+    HomeScene.
+-->
+<component name="LoginScene" extends="Group">
+
+    <script type="text/brightscript" uri="LoginScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x1a1a1aff" />
+
+            <Label id="title"
+                   text="Sign in"
+                   translation="[160, 120]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <Label translation="[160, 220]" text="Username" color="0xa0a0a0ff" />
+            <MiniKeyboard id="usernameField"
+                          translation="[160, 260]"
+                          width="800" />
+
+            <Label translation="[160, 460]" text="Password" color="0xa0a0a0ff" />
+            <MiniKeyboard id="passwordField"
+                          translation="[160, 500]"
+                          width="800"
+                          textEditBox.secureMode="true" />
+
+            <Button id="signInBtn"
+                    text="Sign in"
+                    translation="[160, 720]"
+                    minWidth="320" />
+
+            <Button id="changeServerBtn"
+                    text="Change server"
+                    translation="[520, 720]"
+                    minWidth="320" />
+
+            <Label id="error"
+                   translation="[160, 800]"
+                   color="0xff5050ff"
+                   visible="false" />
+        </Group>
+    </children>
+
+</component>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Video playback scene. Wraps the firmware Video node, which
+    handles HLS / DASH / direct-play file streaming, audio + sub
+    selection, transport state, and the on-screen controls
+    natively. We feed it a ContentNode with the stream URL + a
+    handful of metadata fields (title, runtime, etc.).
+
+    Item resolution (item id → file id → stream URL) happens in a
+    Task node so the UI thread stays responsive while we hit the
+    item endpoint.
+
+    Future work: direct-play vs. transcode negotiation (currently
+    always direct play); audio + sub track pickers; cross-device
+    sync consumer; intro/credits/chapter overlays — all wired the
+    way the Android client does them.
+-->
+<component name="PlayerScene" extends="Group">
+
+    <interface>
+        <field id="itemId" type="string" />
+    </interface>
+
+    <script type="text/brightscript" uri="PlayerScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Video id="video"
+               width="1920"
+               height="1080"
+               translation="[0,0]" />
+
+        <ItemFetchTask id="itemTask" />
+    </children>
+
+</component>

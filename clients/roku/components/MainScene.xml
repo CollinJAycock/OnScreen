@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Root scene. Hosts a single child slot (`activeChild`) that swaps
+    between the setup-flow and home-flow scenes. SceneGraph requires
+    every channel to have exactly one root scene; everything else
+    sits underneath it.
+
+    The decision of which child to mount on launch lives in
+    MainScene.brs (init handler) — checks Prefs.brs for stored URL +
+    token and routes to ServerSetupScene / LoginScene / HomeScene
+    accordingly.
+-->
+<component name="MainScene" extends="Scene">
+
+    <interface>
+        <!-- Set by source/main.brs from launch args; routes past
+             the setup flow when the user came in via deep link. -->
+        <field id="deepLinkContentId" type="string" />
+    </interface>
+
+    <script type="text/brightscript" uri="MainScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+    <children>
+        <!-- Container the .brs swaps fragment scenes in/out of.
+             Sized to fill the screen — child scenes own their
+             own layout. -->
+        <Group id="content"
+               translation="[0,0]"
+               width="1920"
+               height="1080" />
+    </children>
+
+</component>

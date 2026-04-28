@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Top-level browse scene. Fires a Task node on mount to fetch
+    /api/v1/hub, then populates a RowList with one row per hub
+    section (Continue Watching / Recently Added / Trending /
+    Because You Watched).
+
+    RowList is SceneGraph's two-dimensional focus container —
+    handles D-pad navigation between rows + within rows natively,
+    binds to a ContentNode tree we build in BrightScript from the
+    JSON response. Per-item visuals come from PosterCard.xml,
+    referenced via itemComponentName.
+-->
+<component name="HomeScene" extends="Group">
+
+    <script type="text/brightscript" uri="HomeScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x121212ff" />
+
+            <Label id="title"
+                   text="OnScreen"
+                   translation="[80, 50]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <RowList id="rows"
+                     translation="[80, 140]"
+                     itemComponentName="PosterCard"
+                     itemSize="[1760, 380]"
+                     rowItemSize="[[240, 360]]"
+                     rowItemSpacing="[[20, 0]]"
+                     showRowLabel="[true]"
+                     rowHeights="[380]"
+                     focusBitmapBlendColor="0xffffffff"
+                     drawFocusFeedback="true" />
+
+            <Label id="loading"
+                   text="Loading..."
+                   translation="[80, 540]"
+                   color="0xa0a0a0ff" />
+        </Group>
+
+        <!-- Off-screen task that fetches the hub on its own
+             thread (SceneGraph render thread can't block on
+             network). HomeScene observes state="done" on it,
+             then reads `result` for the parsed envelope. -->
+        <HubFetchTask id="hubTask" />
+    </children>
+
+</component>

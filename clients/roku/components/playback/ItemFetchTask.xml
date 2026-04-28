@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Task that resolves /api/v1/items/{id} → ItemDetail. Used by
+    PlayerScene to translate a card's id into the file metadata
+    needed to build a stream URL.
+-->
+<component name="ItemFetchTask" extends="Task">
+
+    <interface>
+        <field id="itemId" type="string" />
+        <field id="result" type="assocArray" />
+    </interface>
+
+    <script type="text/brightscript" uri="ItemFetchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+
+</component>

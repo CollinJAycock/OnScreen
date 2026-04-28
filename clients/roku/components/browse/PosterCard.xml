@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Per-item card rendered inside a RowList row. RowList instantiates
+    one of these per ContentNode in the row and binds via
+    `itemContent` (set by the parent RowList automatically).
+
+    The Poster node handles async image loading natively — we just
+    point it at HDPosterUrl from the ContentNode and Roku fetches +
+    decodes off the UI thread.
+
+    Focus feedback (the highlighted ring around the card) is
+    rendered by the parent RowList; we just provide the visual.
+-->
+<component name="PosterCard" extends="Group">
+
+    <interface>
+        <field id="itemContent" type="node" onChange="onItemContentChange" />
+    </interface>
+
+    <script type="text/brightscript" uri="PosterCard.brs" />
+
+    <children>
+        <Poster id="poster"
+                width="240"
+                height="360"
+                loadDisplayMode="scaleToFill"
+                failedBitmapUri="" />
+
+        <Label id="title"
+               translation="[0, 365]"
+               width="240"
+               height="32"
+               horizAlign="center"
+               wrap="false"
+               truncationLineCount="1"
+               color="0xffffffff" />
+    </children>
+
+</component>

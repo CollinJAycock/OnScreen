@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Task node that fetches /api/v1/hub on a background thread so
+    the UI thread stays responsive. Caller mounts this as a child,
+    sets the `control` field to "RUN" to start, and observes
+    `state` for "done" to read the result.
+
+    The .brs entry function is named `runHubFetch` and is bound to
+    `functionName` below — that's the SceneGraph contract for Task
+    nodes (the runtime invokes it on the spawned thread).
+-->
+<component name="HubFetchTask" extends="Task">
+
+    <interface>
+        <!-- Set by the caller before flipping control=RUN.
+             Observed inputs of a Task are read once at start; you
+             can't reactively change them mid-run. -->
+
+        <!-- Output: parsed `data` object from /api/v1/hub. invalid
+             on failure (network or parse error). -->
+        <field id="result" type="assocArray" />
+    </interface>
+
+    <script type="text/brightscript" uri="HubFetchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+
+</component>
