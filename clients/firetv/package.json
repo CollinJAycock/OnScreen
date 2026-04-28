@@ -1,0 +1,15 @@
+{
+  "name": "onscreen-firetv",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OnScreen Fire TV — build/distribute layer wrapping clients/android/",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "sideload": "node scripts/sideload.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

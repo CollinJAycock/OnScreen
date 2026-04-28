@@ -13,6 +13,17 @@
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
+    <!-- Amazon Fire TV runs Fire OS (an Android fork) and accepts
+         the same APK as Google TV. This feature declaration is
+         what Amazon's launcher reads to classify the app under
+         the TV category in the Amazon Appstore; on a stock
+         Android TV / Google TV device it's an unknown feature
+         and ignored (required="false" makes it a no-op there).
+         See clients/firetv/README.md for the Fire TV-specific
+         build / sideload / store-submission workflow. -->
+    <uses-feature
+        android:name="amazon.hardware.fire_tv"
+        android:required="false" />
 
     <application
         android:name=".OnScreenApp"
