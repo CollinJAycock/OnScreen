@@ -58,4 +58,6 @@
     <string name="unread">Unread</string>
     <string name="skip_intro">Skip Intro</string>
     <string name="skip_credits">Skip Credits</string>
+    <string name="trending">Trending</string>
+    <string name="because_you_watched">Because you watched %1$s</string>
 </resources>

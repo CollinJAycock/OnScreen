@@ -68,6 +68,8 @@ class HomeFragment : BrowseSupportFragment() {
                 if (state.isLoading) return@collectLatest
                 val hasContent = state.continueWatching.isNotEmpty() ||
                     state.recentlyAdded.isNotEmpty() ||
+                    state.trending.isNotEmpty() ||
+                    state.becauseYouWatched.any { it.items.isNotEmpty() } ||
                     state.libraryPreviews.any { it.second.isNotEmpty() } ||
                     state.collections.isNotEmpty()
                 if (state.error != null && !hasContent) {
@@ -181,6 +183,27 @@ class HomeFragment : BrowseSupportFragment() {
             val listAdapter = ArrayObjectAdapter(cardPresenter)
             state.continueWatching.forEach { listAdapter.add(it) }
             val header = HeaderItem(headerId++, getString(R.string.continue_watching))
+            rowsAdapter.add(ListRow(header, listAdapter))
+        }
+
+        // Personalised recommendations land just under continue-watching:
+        // server returns one row per recently-completed seed, and we
+        // render each as its own "Because you watched X" row labelled
+        // by the seed's title. Skipped silently when empty (fresh
+        // install with no watch history).
+        state.becauseYouWatched.forEach { row ->
+            if (row.items.isEmpty()) return@forEach
+            val listAdapter = ArrayObjectAdapter(cardPresenter)
+            row.items.forEach { listAdapter.add(it) }
+            val header = HeaderItem(headerId++,
+                getString(R.string.because_you_watched, row.seed.title))
+            rowsAdapter.add(ListRow(header, listAdapter))
+        }
+
+        if (state.trending.isNotEmpty()) {
+            val listAdapter = ArrayObjectAdapter(cardPresenter)
+            state.trending.forEach { listAdapter.add(it) }
+            val header = HeaderItem(headerId++, getString(R.string.trending))
             rowsAdapter.add(ListRow(header, listAdapter))
         }
 
