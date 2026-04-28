@@ -88,8 +88,21 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
 
         titleView.text = data.title
 
-        if (data.posterPath != null && serverUrl.isNotEmpty()) {
-            imageView.load(artworkUrl(serverUrl, data.posterPath)) {
+        // Audiobooks (and some photos) come back without a
+        // poster_path / thumb_path because the server stores their
+        // image data in the source file itself rather than as an
+        // /artwork/ asset. Fall back to the generic per-item image
+        // endpoint, which is type-agnostic and re-encodes whatever
+        // image the server has on hand.
+        val url = when {
+            data.posterPath != null && serverUrl.isNotEmpty() ->
+                artworkUrl(serverUrl, data.posterPath)
+            data.itemId != null && serverUrl.isNotEmpty() ->
+                "$serverUrl/api/v1/items/${data.itemId}/image?w=500"
+            else -> null
+        }
+        if (url != null) {
+            imageView.load(url) {
                 crossfade(true)
                 placeholder(R.color.bg_elevated)
                 error(R.color.bg_elevated)
@@ -109,17 +122,21 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
     private data class CardData(
         val title: String,
         val posterPath: String?,
+        /** Item id used to build the per-item /image fallback when
+         *  the server didn't expose an /artwork/ path (audiobooks,
+         *  some photos). Null for non-item types like collections. */
+        val itemId: String?,
     )
 
     private fun extractCardData(item: Any): CardData? = when (item) {
-        is HubItem -> CardData(item.title, item.poster_path ?: item.thumb_path)
-        is MediaItem -> CardData(item.title, item.poster_path)
-        is ChildItem -> CardData(item.title, item.poster_path ?: item.thumb_path)
-        is SearchResult -> CardData(item.title, item.poster_path ?: item.thumb_path)
-        is MediaCollection -> CardData(item.name, item.poster_path)
-        is CollectionItem -> CardData(item.title, item.poster_path)
-        is FavoriteItem -> CardData(item.title, item.poster_path ?: item.thumb_path)
-        is HistoryItem -> CardData(item.title, item.thumb_path)
+        is HubItem -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
+        is MediaItem -> CardData(item.title, item.poster_path, item.id)
+        is ChildItem -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
+        is SearchResult -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
+        is MediaCollection -> CardData(item.name, item.poster_path, null)
+        is CollectionItem -> CardData(item.title, item.poster_path, item.id)
+        is FavoriteItem -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
+        is HistoryItem -> CardData(item.title, item.thumb_path, item.id)
         else -> null
     }
 }
