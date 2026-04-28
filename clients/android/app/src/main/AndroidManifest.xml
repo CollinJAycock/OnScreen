@@ -3,6 +3,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- WAKE_LOCK lets ExoPlayer hold a CPU wake lock during playback
+         (setWakeMode(WAKE_MODE_LOCAL) in PlaybackFragment). The
+         screen-on flag is window-level and doesn't need a permission. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature
         android:name="android.software.leanback"

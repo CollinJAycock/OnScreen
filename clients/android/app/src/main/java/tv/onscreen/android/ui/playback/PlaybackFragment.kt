@@ -334,6 +334,10 @@ class PlaybackFragment : VideoSupportFragment() {
 
     private fun initPlayer() {
         val exo = ExoPlayer.Builder(requireContext()).build()
+        // Local wake lock — keeps the CPU alive during playback so the
+        // ExoPlayer worker thread isn't paused. The screen-on flag is
+        // toggled separately in onIsPlayingChanged below.
+        exo.setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL)
         player = exo
 
         val adapter = LeanbackPlayerAdapter(requireContext(), exo, UPDATE_PERIOD_MS)
@@ -368,9 +372,18 @@ class PlaybackFragment : VideoSupportFragment() {
 
         exo.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Screen-on flag tracks active playback so the Fire TV
+                // / Android TV screensaver doesn't kick in mid-show.
+                // Toggling on isPlaying (rather than ACTION_DOWN /
+                // user activity) means we release the flag the moment
+                // the user pauses, so paused-and-walked-away doesn't
+                // hold the screen forever.
+                val window = activity?.window
                 if (isPlaying) {
+                    window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     progressTracker?.start(arguments?.getString(ARG_ITEM_ID) ?: return, viewModel.hlsOffsetMs)
                 } else {
+                    window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     progressTracker?.onPause()
                 }
             }
@@ -721,6 +734,9 @@ class PlaybackFragment : VideoSupportFragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // Drop the screen-on flag so navigating back to a non-player
+        // screen lets the system idle-timer take over again.
+        activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         upNextJob?.cancel()
         upNextJob = null
         syncJob?.cancel()
