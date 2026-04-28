@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { progressUpdates } from '$lib/stores/notifications';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -654,6 +655,29 @@
     mounted = true;
   });
 
+  // Cross-device resume sync. When another of the user's devices
+  // posts new progress for this item, we want to update the resume
+  // position offer (and seek the paused-but-loaded video element)
+  // so the user picks up where they left off cross-device. Skipped
+  // during local active playback — the user driving this device has
+  // authoritative position.
+  const unsubProgress = progressUpdates.subscribe((evt) => {
+    if (!evt || !item || evt.itemId !== item.id) return;
+    // Self-loop guard: every saveProgress on this device round-trips
+    // back as a sync event we'd otherwise re-apply. ±2 s tolerance
+    // covers a server round-trip + clock skew.
+    if (Math.abs(evt.positionMs - lastSelfReportedMs) < 2000) return;
+    // Don't fight the local user mid-playback. If they're actively
+    // watching, their position wins; cross-device sync only matters
+    // when this device is idle/paused.
+    if (videoEl && !videoEl.paused) return;
+    item.view_offset_ms = evt.positionMs;
+    item = item; // trigger Svelte reactivity for the Resume button
+    if (videoEl && Number.isFinite(videoEl.duration)) {
+      videoEl.currentTime = evt.positionMs / 1000;
+    }
+  });
+
   $: if (mounted && id && id !== prevId) {
     prevId = id;
     clearTimers();
@@ -679,6 +703,7 @@
 
   onDestroy(() => {
     clearTimers();
+    unsubProgress();
     document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
     window.removeEventListener('mousemove', onSeekMouseMove);
     window.removeEventListener('mouseup', onSeekMouseUp);
@@ -1301,10 +1326,18 @@
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   }
 
+  // Tracks the position the local device most recently published so
+  // the cross-device sync subscriber can ignore the SSE echo of its
+  // own progress event. Without this, every saveProgress would round-
+  // trip back as a sync event and re-set the same position.
+  let lastSelfReportedMs = -1;
+
   async function saveProgress(state: 'playing' | 'paused' | 'stopped') {
     if (!item || !videoEl || duration === 0) return;
+    const positionMs = Math.floor(currentTime * 1000);
+    lastSelfReportedMs = positionMs;
     try {
-      await itemApi.progress(item.id, Math.floor(currentTime * 1000), Math.floor(duration * 1000), state);
+      await itemApi.progress(item.id, positionMs, Math.floor(duration * 1000), state);
     } catch (e) { console.warn(e); }
   }
 

@@ -283,17 +283,19 @@ SameSite=None dance cookies would require.
   notification` — only when the OnScreen window isn't focused
   (`document.hasFocus()` guard) so album playback doesn't spam
   the notification shell.
-- **Cross-device watch-history sync (server side + SSE plumbing)**:
-  the `notification.Broker` Event now carries an optional `Data`
-  field for non-user-facing payloads. The Progress handler
-  publishes `progress.updated` events containing
-  `{item_id, position_ms, duration_ms, state}` after every
-  successful record, so devices B/C/D get the new resume
-  position pushed without polling. Frontend's
-  `notifications.ts` routes sync events to a separate
-  `progressUpdates` store so they don't pollute the bell-icon
-  list. Watch-page consumer (auto-update resume on currently-
-  paused video) is a follow-up — the broadcast is in place.
+- **Cross-device watch-history sync**: `notification.Broker.Event`
+  carries an optional `Data` field for non-user-facing payloads.
+  The Progress handler publishes `progress.updated` events
+  containing `{item_id, position_ms, duration_ms, state}` after
+  every successful record. Frontend's `notifications.ts` routes
+  sync events to a separate `progressUpdates` store so they
+  don't pollute the bell-icon list. Watch page subscribes:
+  when a sync event for the currently-rendered item arrives
+  AND local playback is paused/idle, it updates the resume
+  position offer and (if the video is loaded) seeks the
+  element so a tap on Play picks up at the cross-device
+  position. Self-loop guard ignores echoes within 2 s of the
+  device's own most recent saveProgress.
 
 ## What's not done yet
 
@@ -313,9 +315,10 @@ SameSite=None dance cookies would require.
   shell so taskbar/lockscreen widgets show track + art and
   control transport. `souvlaki` crate is the cross-platform
   wrapper; integration is its own commit.
-- **Cross-device sync consumers** — the broadcast and the
-  client-side store are wired. Watch-page auto-update of
-  resume position on incoming sync events (when local
-  playback is paused/idle) is the natural next consumer; the
-  AudioPlayer's session sync would benefit too once the
-  multi-device "what's playing" UX lands.
+- **Cross-device sync — additional consumers**: watch page
+  consumes resume-position events; AudioPlayer session sync
+  (multi-device "what's playing", remote-control transport
+  from one device to another) is the next natural consumer
+  but waits on a UX design call about whether multiple
+  devices should be able to *control* a session or only
+  *mirror* it.
