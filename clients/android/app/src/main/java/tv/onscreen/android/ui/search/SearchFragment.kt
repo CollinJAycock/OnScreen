@@ -17,8 +17,7 @@ import tv.onscreen.android.R
 import tv.onscreen.android.data.model.SearchResult
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
-import tv.onscreen.android.ui.detail.DetailFragment
-import tv.onscreen.android.ui.playback.PlaybackFragment
+import tv.onscreen.android.ui.common.Navigator
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -67,15 +66,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
 
         setOnItemViewClickedListener { _, item, _, _ ->
             if (item is SearchResult) {
-                val fragment = if (item.type == "show") {
-                    DetailFragment.newInstance(item.id)
-                } else {
-                    PlaybackFragment.newInstance(item.id, 0)
-                }
-                parentFragmentManager.beginTransaction()
-                    .replace(R.id.main_container, fragment)
-                    .addToBackStack(null)
-                    .commit()
+                Navigator.open(parentFragmentManager, item.id, item.type, 0)
             }
         }
     }

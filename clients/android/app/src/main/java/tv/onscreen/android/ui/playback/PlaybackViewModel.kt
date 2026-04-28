@@ -12,6 +12,7 @@ import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.Marker
 import retrofit2.HttpException
 import tv.onscreen.android.data.model.SubtitleStream
+import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
@@ -39,6 +40,7 @@ class PlaybackViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val transcodeRepo: TranscodeRepository,
     private val preferencesRepo: PreferencesRepository,
+    private val serverPrefs: ServerPrefs,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
@@ -67,7 +69,22 @@ class PlaybackViewModel @Inject constructor(
                 val source = when (mode) {
                     is PlaybackMode.DirectPlay -> {
                         hlsOffsetMs = 0
-                        PlaybackSource.DirectPlay("$serverUrl${file.stream_url}", startMs)
+                        // ExoPlayer's DefaultHttpDataSource bypasses
+                        // our OkHttp interceptor chain, so it can't
+                        // carry Authorization: Bearer on /media/stream
+                        // requests. The asset-route middleware accepts
+                        // the bearer as a ?token= query param via
+                        // RequiredAllowQueryToken. Without this,
+                        // direct-play files silently 401 — notably
+                        // ALL audio, since PlaybackHelper.decide()
+                        // returns DirectPlay for audio-only files
+                        // (transcode is never invoked, so the per-
+                        // session ?token= that videos rely on
+                        // doesn't exist for them).
+                        PlaybackSource.DirectPlay(
+                            buildDirectPlayUrl(serverUrl, file.stream_url),
+                            startMs,
+                        )
                     }
                     is PlaybackMode.Remux -> startTranscode(itemId, 0, startMs, file.id, true, serverUrl)
                     is PlaybackMode.Transcode -> startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl)
@@ -150,6 +167,23 @@ class PlaybackViewModel @Inject constructor(
         viewModelScope.launch {
             transcodeRepo.stop(sid, tok)
         }
+    }
+
+    /**
+     * Build a direct-play stream URL with the bearer token appended
+     * as `?token=`. The server's asset-route middleware
+     * (RequiredAllowQueryToken) accepts that as the auth carrier
+     * since ExoPlayer's HTTP stack can't attach an Authorization
+     * header. Empty token → return the URL unchanged so older
+     * sessions don't blow up; the downstream playback failure
+     * surfaces as the same 401 the user is seeing today.
+     */
+    private suspend fun buildDirectPlayUrl(serverUrl: String, streamPath: String): String {
+        val token = serverPrefs.getAccessToken()
+        val base = "$serverUrl$streamPath"
+        if (token.isNullOrEmpty()) return base
+        val sep = if (streamPath.contains("?")) "&" else "?"
+        return "$base${sep}token=$token"
     }
 
     override fun onCleared() {

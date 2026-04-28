@@ -20,11 +20,10 @@ import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.NavCard
 import tv.onscreen.android.ui.common.NavCardPresenter
-import tv.onscreen.android.ui.detail.DetailFragment
+import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.favorites.FavoritesFragment
 import tv.onscreen.android.ui.history.HistoryFragment
 import tv.onscreen.android.ui.notifications.NotificationsFragment
-import tv.onscreen.android.ui.playback.PlaybackFragment
 import tv.onscreen.android.ui.search.SearchFragment
 import tv.onscreen.android.ui.settings.SettingsFragment
 import androidx.leanback.widget.FocusHighlight
@@ -84,53 +83,20 @@ class HomeFragment : BrowseSupportFragment() {
         setOnItemViewClickedListener { _, item, _, _ ->
             when (item) {
                 is HubItem -> {
-                    if (item.type == "show") {
-                        parentFragmentManager.beginTransaction()
-                            .replace(R.id.main_container, DetailFragment.newInstance(item.id))
-                            .addToBackStack(null)
-                            .commit()
-                    } else {
-                        val resumeMs = item.view_offset_ms ?: 0
-                        if (resumeMs > 0) {
-                            showResumeDialog(resumeMs) { offset ->
-                                parentFragmentManager.beginTransaction()
-                                    .replace(R.id.main_container, PlaybackFragment.newInstance(item.id, offset))
-                                    .addToBackStack(null)
-                                    .commit()
-                            }
-                        } else {
-                            parentFragmentManager.beginTransaction()
-                                .replace(R.id.main_container, PlaybackFragment.newInstance(item.id, 0))
-                                .addToBackStack(null)
-                                .commit()
+                    val resumeMs = item.view_offset_ms ?: 0
+                    if (resumeMs > 0 && item.type != "show" && item.type != "photo") {
+                        showResumeDialog(resumeMs) { offset ->
+                            Navigator.open(parentFragmentManager, item.id, item.type, offset)
                         }
+                    } else {
+                        Navigator.open(parentFragmentManager, item.id, item.type, 0)
                     }
                 }
                 is MediaItem -> {
-                    if (item.type == "show") {
-                        parentFragmentManager.beginTransaction()
-                            .replace(R.id.main_container, DetailFragment.newInstance(item.id))
-                            .addToBackStack(null)
-                            .commit()
-                    } else {
-                        parentFragmentManager.beginTransaction()
-                            .replace(R.id.main_container, PlaybackFragment.newInstance(item.id, 0))
-                            .addToBackStack(null)
-                            .commit()
-                    }
+                    Navigator.open(parentFragmentManager, item.id, item.type, 0)
                 }
                 is SearchResult -> {
-                    if (item.type == "show") {
-                        parentFragmentManager.beginTransaction()
-                            .replace(R.id.main_container, DetailFragment.newInstance(item.id))
-                            .addToBackStack(null)
-                            .commit()
-                    } else {
-                        parentFragmentManager.beginTransaction()
-                            .replace(R.id.main_container, PlaybackFragment.newInstance(item.id, 0))
-                            .addToBackStack(null)
-                            .commit()
-                    }
+                    Navigator.open(parentFragmentManager, item.id, item.type, 0)
                 }
                 is MediaCollection -> {
                     parentFragmentManager.beginTransaction()
