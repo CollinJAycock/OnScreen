@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Foreground stroke for cards. Drawn over the poster art when the card
+    has focus so a subtle accent ring outlines the active card without
+    needing a scale animation. Unfocused state is fully transparent so
+    the underlying art is unobstructed.
+
+    Used by CardPresenter as a stateful selector — see card_focus_state.xml.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <stroke
+        android:width="3dp"
+        android:color="@color/accent" />
+    <corners android:radius="12dp" />
+    <solid android:color="@android:color/transparent" />
+</shape>

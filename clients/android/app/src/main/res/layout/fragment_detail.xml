@@ -1,24 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Modernised detail page.
+
+    Layout strategy (bottom-up):
+      1. Fanart fills the full screen at full opacity (was 0.3 alpha,
+         which read as a faded background instead of a hero).
+      2. detail_scrim (bottom-up) and detail_scrim_horizontal (left-to-
+         right) layer above the fanart so the bottom-left content area
+         stays readable on any image.
+      3. A vertically-scrolling content column anchors at the bottom-
+         left starting around the lower half of the screen — title +
+         metadata + summary + action pills + episode/track list.
+
+    The poster card from the previous layout is intentionally removed —
+    full-bleed fanart IS the visual on a TV-app hero. Episode list moves
+    to the bottom of the content column, where it acts as a horizontal
+    carousel below the fold instead of fighting for vertical space with
+    the summary.
+
+    IDs kept stable so DetailFragment.kt's findViewById calls don't
+    need a corresponding rewrite.
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg_primary">
 
-    <!-- Fanart background (blurred behind poster) -->
+    <!-- Full-bleed fanart hero. -->
     <ImageView
         android:id="@+id/fanart"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:scaleType="centerCrop"
-        android:alpha="0.3" />
+        android:contentDescription="@null" />
 
-    <!-- Gradient scrim over fanart -->
+    <!-- Bottom-up scrim: bg fully opaque at the bottom, fades up. -->
     <View
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@drawable/detail_scrim" />
 
-    <!-- Left arrow -->
+    <!-- Left-to-right scrim: keeps the content column readable when
+         the fanart's left side is bright. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/detail_scrim_horizontal" />
+
+    <!-- Sibling navigation arrows. Hidden until the fragment receives
+         a sibling list (DetailFragment.newInstance with siblings). -->
     <ImageView
         android:id="@+id/btn_left"
         android:layout_width="56dp"
@@ -33,7 +63,6 @@
         android:contentDescription="Previous"
         android:visibility="gone" />
 
-    <!-- Right arrow -->
     <ImageView
         android:id="@+id/btn_right"
         android:layout_width="56dp"
@@ -48,164 +77,168 @@
         android:contentDescription="Next"
         android:visibility="gone" />
 
+    <!-- Hidden poster — kept in the tree because DetailFragment binds
+         to it (poster.load(artworkUrl(...))). The hero now uses fanart
+         as the visual, so the poster doesn't render; its image-load
+         call is harmless. Removing the bind is a follow-up that
+         touches DetailFragment.kt; this layout-only change leaves the
+         Kotlin contract intact. -->
+    <ImageView
+        android:id="@+id/poster"
+        android:layout_width="1dp"
+        android:layout_height="1dp"
+        android:visibility="invisible" />
+
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:fillViewport="true"
         android:clipChildren="false"
         android:clipToPadding="false"
-        android:paddingTop="48dp"
-        android:paddingBottom="48dp">
+        android:scrollbars="none">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="top"
-            android:paddingHorizontal="64dp"
+            android:orientation="vertical"
+            android:paddingStart="80dp"
+            android:paddingEnd="80dp"
+            android:paddingTop="320dp"
+            android:paddingBottom="64dp"
             android:clipChildren="false"
             android:clipToPadding="false">
 
-            <!-- Poster -->
-            <ImageView
-                android:id="@+id/poster"
-                android:layout_width="280dp"
-                android:layout_height="420dp"
-                android:scaleType="centerCrop"
-                android:background="@color/bg_elevated" />
-
-            <!-- Right column -->
-            <LinearLayout
-                android:layout_width="0dp"
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="32dp"
-                android:orientation="vertical"
+                android:textColor="@color/text_primary"
+                android:textSize="44sp"
+                android:textStyle="bold"
+                android:maxLines="2"
+                android:shadowColor="#cc000000"
+                android:shadowDx="0"
+                android:shadowDy="2"
+                android:shadowRadius="6" />
+
+            <TextView
+                android:id="@+id/subtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="16sp"
+                android:maxLines="1" />
+
+            <TextView
+                android:id="@+id/summary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:alpha="0.85"
+                android:maxLines="4"
+                android:lineSpacingExtra="4dp"
+                android:ellipsize="end" />
+
+            <!-- Action pills row. Pills (24 dp radius) instead of the
+                 old 6 dp rectangles read as buttons rather than card
+                 backgrounds and sit better against fanart. -->
+            <LinearLayout
+                android:id="@+id/action_row"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="28dp"
                 android:clipChildren="false"
                 android:clipToPadding="false">
 
-                <TextView
-                    android:id="@+id/title"
+                <Button
+                    android:id="@+id/btn_play"
+                    style="?android:attr/borderlessButtonStyle"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_primary"
-                    android:textSize="28sp"
+                    android:layout_height="52dp"
+                    android:minWidth="180dp"
+                    android:paddingHorizontal="32dp"
+                    android:background="@drawable/btn_pill_primary"
+                    android:textColor="#0a0a14"
+                    android:textSize="15sp"
                     android:textStyle="bold"
-                    android:maxLines="2" />
+                    android:textAllCaps="false"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:text="@string/play" />
 
-                <TextView
-                    android:id="@+id/subtitle"
+                <Button
+                    android:id="@+id/btn_play_from_start"
+                    style="?android:attr/borderlessButtonStyle"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_secondary"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="14dp"
+                    android:paddingHorizontal="28dp"
+                    android:background="@drawable/btn_pill_secondary"
+                    android:textColor="@color/text_primary"
                     android:textSize="14sp"
-                    android:layout_marginTop="6dp"
-                    android:maxLines="1" />
+                    android:textAllCaps="false"
+                    android:focusable="true"
+                    android:visibility="gone"
+                    android:text="@string/play_from_beginning" />
 
-                <!-- Action row -->
+                <ImageView
+                    android:id="@+id/btn_favorite"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="14dp"
+                    android:padding="14dp"
+                    android:background="@drawable/btn_pill_secondary"
+                    android:src="@drawable/ic_heart"
+                    android:scaleType="centerInside"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:contentDescription="@string/favorite" />
+            </LinearLayout>
+
+            <!-- Episodes / tracks / albums section. Hidden until
+                 DetailFragment.configureEpisodes wires it. -->
+            <TextView
+                android:id="@+id/episodes_header"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="40dp"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                android:text="Episodes" />
+
+            <HorizontalScrollView
+                android:id="@+id/season_tabs_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:scrollbars="none"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:visibility="gone">
                 <LinearLayout
-                    android:id="@+id/action_row"
+                    android:id="@+id/season_tabs"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginTop="20dp"
                     android:clipChildren="false"
-                    android:clipToPadding="false">
+                    android:clipToPadding="false" />
+            </HorizontalScrollView>
 
-                    <Button
-                        android:id="@+id/btn_play"
-                        style="?android:attr/borderlessButtonStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="48dp"
-                        android:minWidth="160dp"
-                        android:paddingHorizontal="24dp"
-                        android:background="@drawable/btn_primary"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp"
-                        android:textAllCaps="false"
-                        android:focusable="true"
-                        android:focusableInTouchMode="true"
-                        android:text="@string/play" />
-
-                    <Button
-                        android:id="@+id/btn_play_from_start"
-                        style="?android:attr/borderlessButtonStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="48dp"
-                        android:layout_marginStart="12dp"
-                        android:paddingHorizontal="20dp"
-                        android:background="@drawable/btn_secondary"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp"
-                        android:textAllCaps="false"
-                        android:focusable="true"
-                        android:visibility="gone"
-                        android:text="@string/play_from_beginning" />
-
-                    <ImageView
-                        android:id="@+id/btn_favorite"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:layout_marginStart="12dp"
-                        android:padding="12dp"
-                        android:background="@drawable/btn_secondary"
-                        android:src="@drawable/ic_heart"
-                        android:scaleType="centerInside"
-                        android:focusable="true"
-                        android:focusableInTouchMode="true"
-                        android:contentDescription="@string/favorite" />
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/summary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="14sp"
-                    android:layout_marginTop="20dp"
-                    android:maxLines="6"
-                    android:lineSpacingExtra="3dp" />
-
-                <!-- Seasons / episodes section (shows only) -->
-                <TextView
-                    android:id="@+id/episodes_header"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="32dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:visibility="gone"
-                    android:text="Episodes" />
-
-                <HorizontalScrollView
-                    android:id="@+id/season_tabs_scroll"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:scrollbars="none"
-                    android:clipChildren="false"
-                    android:clipToPadding="false"
-                    android:visibility="gone">
-                    <LinearLayout
-                        android:id="@+id/season_tabs"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:clipChildren="false"
-                        android:clipToPadding="false" />
-                </HorizontalScrollView>
-
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/episode_list"
-                    android:layout_width="match_parent"
-                    android:layout_height="280dp"
-                    android:layout_marginTop="12dp"
-                    android:clipChildren="false"
-                    android:clipToPadding="false"
-                    android:paddingEnd="64dp"
-                    android:visibility="gone" />
-            </LinearLayout>
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/episode_list"
+                android:layout_width="match_parent"
+                android:layout_height="280dp"
+                android:layout_marginTop="16dp"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:paddingEnd="80dp"
+                android:visibility="gone" />
         </LinearLayout>
     </ScrollView>
 

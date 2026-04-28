@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Left-to-right scrim layered above detail_scrim. Keeps the action
+    column readable when the fanart's left half is light or busy
+    (skies, snow, lightboxes). Right side is fully transparent so
+    the original artwork composition is preserved on the right of
+    the screen.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:type="linear"
+        android:angle="0"
+        android:startColor="#ee07070d"
+        android:centerColor="#6607070d"
+        android:endColor="#0007070d" />
+</shape>

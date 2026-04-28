@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pill-shaped primary action. Used on the detail page so Play / Resume
+    reads as the leading affordance. Default is white-on-dark (high
+    contrast against the fanart scrim); focus flips to the brand accent.
+    Larger 24 dp radius distinguishes it from card-shaped buttons used
+    elsewhere (notification list, settings rows).
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/accent" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/accent_dark" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#eeeeff" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+</selector>

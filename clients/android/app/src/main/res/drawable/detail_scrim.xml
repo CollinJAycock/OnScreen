@@ -1,9 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Bottom-up scrim over the full-bleed fanart. Steeper transition than
+    the previous version: bg_primary fully opaque from the bottom up to
+    ~55% of the height, fading to transparent toward the top so the
+    fanart's upper third reads as decorative atmosphere while the lower
+    half stays dark enough for white-on-dark titles + summary text.
+-->
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <gradient
         android:type="linear"
-        android:angle="270"
-        android:startColor="#0007070d"
-        android:centerColor="#8007070d"
-        android:endColor="#ff07070d" />
+        android:angle="90"
+        android:startColor="#ff07070d"
+        android:centerColor="#cc07070d"
+        android:endColor="#3307070d" />
 </shape>
