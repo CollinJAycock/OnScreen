@@ -75,7 +75,16 @@ func (r *LogRingBuffer) Handle(ctx context.Context, rec slog.Record) error {
 	enc := json.NewEncoder(&buf)
 	attrs := map[string]any{}
 	rec.Attrs(func(a slog.Attr) bool {
-		attrs[a.Key] = a.Value.Any()
+		// error values come through as opaque interfaces and JSON-
+		// marshal to "{}" because the standard error structs have no
+		// exported fields. Stringify here so the API surfaces the
+		// actual message — that's the whole reason an admin would
+		// pull logs.
+		v := a.Value.Any()
+		if e, ok := v.(error); ok {
+			v = e.Error()
+		}
+		attrs[a.Key] = v
 		return true
 	})
 	if len(attrs) > 0 {

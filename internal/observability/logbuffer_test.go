@@ -190,6 +190,29 @@ func TestLogRingBuffer_TimeIsRecorded(t *testing.T) {
 	}
 }
 
+func TestLogRingBuffer_ErrorAttrStringified(t *testing.T) {
+	// Plain `error` interface values JSON-marshal to "{}" (no exported
+	// fields), so the buffer must stringify them up-front. Otherwise
+	// /admin/logs returns "err":{} for the most diagnostically useful
+	// log line: an error.
+	buf := newRing(10, slog.LevelDebug)
+	logger := slog.New(buf)
+	logger.Error("boom", "err", errExample{msg: "connection refused"})
+
+	got := buf.Snapshot(slog.LevelDebug)
+	if len(got) != 1 {
+		t.Fatalf("got %d entries, want 1", len(got))
+	}
+	if got[0].Attrs["err"] != "connection refused" {
+		t.Errorf("err attr: got %v (%T), want \"connection refused\" string",
+			got[0].Attrs["err"], got[0].Attrs["err"])
+	}
+}
+
+type errExample struct{ msg string }
+
+func (e errExample) Error() string { return e.msg }
+
 func TestLogRingBuffer_EmptySnapshot(t *testing.T) {
 	buf := newRing(10, slog.LevelDebug)
 	if got := buf.Snapshot(slog.LevelDebug); len(got) != 0 {
