@@ -34,6 +34,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.AudioStream
+import tv.onscreen.android.data.model.Chapter
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -66,6 +67,8 @@ class PlaybackFragment : VideoSupportFragment() {
 
     private var audioAction: Action? = null
     private var subtitleAction: Action? = null
+    private var chaptersAction: Action? = null
+    private var chapters: List<Chapter> = emptyList()
 
     /** Cross-device sync subscriber. Cancelled in onDestroyView. */
     private var syncJob: Job? = null
@@ -88,6 +91,7 @@ class PlaybackFragment : VideoSupportFragment() {
         private const val UPDATE_PERIOD_MS = 1000
         private const val ACTION_AUDIO_ID = 100L
         private const val ACTION_SUBTITLE_ID = 101L
+        private const val ACTION_CHAPTERS_ID = 102L
         private const val UP_NEXT_COUNTDOWN_SEC = 10
         private const val UP_NEXT_LEAD_SEC = 25
 
@@ -144,6 +148,7 @@ class PlaybackFragment : VideoSupportFragment() {
 
                 markers = state.markers
                 dismissedMarkers.clear()
+                chapters = state.item?.files?.firstOrNull()?.chapters ?: emptyList()
 
                 refreshSecondaryActions()
                 startUpNextWatcher()
@@ -296,14 +301,17 @@ class PlaybackFragment : VideoSupportFragment() {
                 super.onCreateSecondaryActions(adapter)
                 audioAction = Action(ACTION_AUDIO_ID, getString(R.string.audio))
                 subtitleAction = Action(ACTION_SUBTITLE_ID, getString(R.string.subtitles))
+                chaptersAction = Action(ACTION_CHAPTERS_ID, getString(R.string.chapters))
                 adapter.add(audioAction)
                 adapter.add(subtitleAction)
+                adapter.add(chaptersAction)
             }
 
             override fun onActionClicked(action: Action) {
                 when (action.id) {
                     ACTION_AUDIO_ID -> showAudioPicker()
                     ACTION_SUBTITLE_ID -> showSubtitlePicker()
+                    ACTION_CHAPTERS_ID -> showChapterPicker()
                     else -> super.onActionClicked(action)
                 }
             }
@@ -355,14 +363,48 @@ class PlaybackFragment : VideoSupportFragment() {
     }
 
     private fun refreshSecondaryActions() {
-        // Hide audio/subtitle buttons if no choices to make.
+        // Hide audio/subtitle/chapter buttons if no choices to make.
         val sa = subtitleAction ?: return
         val aa = audioAction ?: return
+        val ca = chaptersAction ?: return
         val secondary = (glue?.controlsRow as? PlaybackControlsRow)?.secondaryActionsAdapter as? ArrayObjectAdapter
             ?: return
         secondary.clear()
         if (audioStreams.size > 1) secondary.add(aa)
         if (subtitleStreams.isNotEmpty()) secondary.add(sa)
+        // Single-chapter is degenerate (the whole movie). Only surface
+        // the picker when there are at least 2 chapters worth jumping
+        // between.
+        if (chapters.size >= 2) secondary.add(ca)
+    }
+
+    private fun showChapterPicker() {
+        if (chapters.isEmpty()) return
+        val labels = chapters.mapIndexed { i, c ->
+            val title = c.title.ifBlank { getString(R.string.chapter_n, i + 1) }
+            "${i + 1}. $title · ${fmtTimecode(c.start_ms)}"
+        }.toTypedArray()
+
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(R.string.chapters)
+            .setItems(labels) { d, idx ->
+                val target = chapters[idx].start_ms
+                // Server stores chapter offsets in content-time; HLS
+                // sessions need the player-time translation through
+                // the captured offset.
+                val playerMs = (target - viewModel.hlsOffsetMs).coerceAtLeast(0)
+                player?.seekTo(playerMs)
+                d.dismiss()
+            }
+            .show()
+    }
+
+    private fun fmtTimecode(ms: Long): String {
+        val s = ms / 1000
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
     }
 
     private fun showAudioPicker() {
