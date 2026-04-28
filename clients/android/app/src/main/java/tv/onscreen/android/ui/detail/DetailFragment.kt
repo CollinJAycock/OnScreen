@@ -39,6 +39,11 @@ class DetailFragment : Fragment() {
     private var episodeAdapter: EpisodeAdapter? = null
     private var currentSeasonId: String? = null
     private var seasonMap: Map<ChildItem, List<ChildItem>> = emptyMap()
+    /** Guards re-binding when only the favorite flag toggles. Reset in
+     *  onDestroyView — the value is meaningful per-view, but the field
+     *  itself survives the fragment instance, so coming back from the
+     *  back stack would otherwise leave the freshly-recreated view
+     *  empty (poster, fanart, episode list never bound). */
     private var detailBound = false
     private var errorOverlay: ErrorOverlay? = null
 
@@ -309,6 +314,13 @@ class DetailFragment : Fragment() {
         btn.setImageResource(if (isFavorite) R.drawable.ic_heart_filled else R.drawable.ic_heart)
         btn.contentDescription = getString(if (isFavorite) R.string.unfavorite else R.string.favorite)
         btn.setOnClickListener { viewModel.toggleFavorite() }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        detailBound = false
+        episodeAdapter = null
+        errorOverlay = null
     }
 
     private fun navigateToSibling(siblingIds: ArrayList<String>, index: Int) {
