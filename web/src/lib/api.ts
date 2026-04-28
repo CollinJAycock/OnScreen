@@ -52,6 +52,28 @@ export function getBearerToken(): string | null { return bearerToken; }
  *  meaningless to a Rust HTTP client. */
 export function getApiBase(): string { return apiBase; }
 
+/** Resolve an unauthenticated server asset path (`/artwork/...`,
+ *  `/media/files/...`, etc.) to a URL the browser can load.
+ *
+ *  - Same-origin browser builds (apiBase = "/api/v1"): returns the
+ *    path unchanged so the browser hits the same origin (Go server
+ *    or its embedded webui in production, Vite proxy in dev).
+ *  - Cross-origin (Tauri client pointed at a remote server, or a
+ *    browser on a CDN): prepends the configured server origin so
+ *    `<img src=…>` and `<audio src=…>` tags reach the right host
+ *    instead of the page origin (which would 404 in production
+ *    Tauri or proxy to the wrong server in dev).
+ *
+ *  Cookies / bearer auth aren't attachable to image-tag requests,
+ *  so this helper is for endpoints that are signed-via-query-token
+ *  (artwork uses no auth; transcoded segments carry tokens in their
+ *  URLs already).
+ */
+export function assetUrl(path: string): string {
+  if (apiBase.startsWith('/')) return path;
+  return apiBase.replace(/\/api\/v1\/?$/, '') + path;
+}
+
 /** Build the request headers, attaching Authorization when a bearer
  *  token is cached. Browser builds skip the bearer (cookies cover
  *  auth there). */

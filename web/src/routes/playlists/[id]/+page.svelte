@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { playlistApi, type Playlist, type PlaylistItem } from '$lib/api';
+  import { playlistApi, assetUrl, type Playlist, type PlaylistItem } from '$lib/api';
 
   let playlist: Playlist | null = null;
   let items: PlaylistItem[] = [];
@@ -172,7 +172,7 @@
               {#if item.poster_path}
                 <img
                   class="poster"
-                  src="/artwork/{encodeURI(item.poster_path)}?w=150"
+                  src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=150"
                   alt={item.title}
                   loading="lazy"
                 />

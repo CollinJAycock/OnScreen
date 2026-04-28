@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { historyApi, type WatchHistoryItem } from '$lib/api';
+  import { historyApi, assetUrl, type WatchHistoryItem } from '$lib/api';
 
   let items: WatchHistoryItem[] = [];
   let loading = true;
@@ -107,7 +107,7 @@
         <a class="history-row" href="/watch/{item.media_id}">
           <div class="thumb-cell">
             {#if item.thumb_path}
-              <img src="/artwork/{encodeURI(item.thumb_path)}?w=150" alt={item.title} loading="lazy" />
+              <img src="{assetUrl('/artwork/' + encodeURI(item.thumb_path))}?w=150" alt={item.title} loading="lazy" />
             {:else}
               <div class="thumb-blank">
                 <span>{item.title[0]?.toUpperCase() ?? '?'}</span>

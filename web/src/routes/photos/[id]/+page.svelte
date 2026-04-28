@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, type ItemDetail, type MediaItem, type PhotoEXIF } from '$lib/api';
+  import { itemApi, mediaApi, assetUrl, type ItemDetail, type MediaItem, type PhotoEXIF } from '$lib/api';
 
   let item: ItemDetail | null = null;
   let exif: PhotoEXIF | null = null;
@@ -283,7 +283,7 @@
       role="presentation"
     >
       <img
-        src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}"
+        src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}"
         alt={item.title}
         draggable="false"
         style="transform: translate({panX}px, {panY}px) scale({zoom}); cursor: {zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'};"

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
-  import { itemApi, getApiBase, getBearerToken } from '$lib/api';
+  import { itemApi, getApiBase, getBearerToken, assetUrl } from '$lib/api';
   import { isTauri, audioPlayUrl, audioPreloadUrl, audioPause, audioResume, stopAudio, audioState } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
@@ -257,7 +257,11 @@
   // Skipped entirely when the native engine owns playback — the
   // <audio> elements stay silent so they don't double-play.
   $: if (audioElA && audioElB && track && !nativeActive()) {
-    const desired = `/media/stream/${track.fileId}`;
+    // Wrap with assetUrl so cross-origin native builds (when the
+    // user has the engine OFF and falls back to <audio>) hit the
+    // configured server, not the Tauri webview origin. Browser
+    // same-origin builds get the path back unchanged.
+    const desired = assetUrl(`/media/stream/${track.fileId}`);
     if (loadedSrc !== desired) {
       if (preloadSrc === desired) {
         // Gapless path: the next-track element is already primed —
@@ -297,7 +301,7 @@
   // Skipped entirely under native engine — gapless preload there
   // is the engine's responsibility (next commit on the audio track).
   $: if (audioElA && audioElB && upcoming && track && upcoming.id !== track.id && !nativeActive()) {
-    const desired = `/media/stream/${upcoming.fileId}`;
+    const desired = assetUrl(`/media/stream/${upcoming.fileId}`);
     if (preloadSrc !== desired) {
       preloadSrc = desired;
       const el = preloadEl();
@@ -450,7 +454,7 @@
     <div class="left">
       {#if track.posterPath}
         <img class="art"
-             src="/artwork/{encodeURI(track.posterPath)}?w=120"
+             src="{assetUrl('/artwork/' + encodeURI(track.posterPath))}?w=120"
              alt={track.album ?? ''} />
       {:else}
         <div class="art placeholder">♪</div>

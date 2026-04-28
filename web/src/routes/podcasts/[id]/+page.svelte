@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, type ItemDetail, type ChildItem } from '$lib/api';
+  import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
 
   let show: ItemDetail | null = null;
   let episodes: ChildItem[] = [];
@@ -80,7 +80,7 @@
     <header class="hero">
       {#if show.poster_path}
         <img class="hero-poster"
-             src="/artwork/{encodeURI(show.poster_path)}?v={show.updated_at}&w=400"
+             src="{assetUrl('/artwork/' + encodeURI(show.poster_path))}?v={show.updated_at}&w=400"
              alt={show.title} />
       {:else}
         <div class="hero-poster placeholder">{show.title.charAt(0)}</div>
@@ -108,11 +108,11 @@
               <a class="ep" href="/watch/{ep.id}">
                 <div class="ep-thumb">
                   {#if ep.thumb_path}
-                    <img src="/artwork/{encodeURI(ep.thumb_path)}?v={ep.updated_at}&w=200" alt={ep.title} loading="lazy" />
+                    <img src="{assetUrl('/artwork/' + encodeURI(ep.thumb_path))}?v={ep.updated_at}&w=200" alt={ep.title} loading="lazy" />
                   {:else if ep.poster_path}
-                    <img src="/artwork/{encodeURI(ep.poster_path)}?v={ep.updated_at}&w=200" alt={ep.title} loading="lazy" />
+                    <img src="{assetUrl('/artwork/' + encodeURI(ep.poster_path))}?v={ep.updated_at}&w=200" alt={ep.title} loading="lazy" />
                   {:else if show.poster_path}
-                    <img src="/artwork/{encodeURI(show.poster_path)}?v={show.updated_at}&w=200" alt={ep.title} loading="lazy" />
+                    <img src="{assetUrl('/artwork/' + encodeURI(show.poster_path))}?v={show.updated_at}&w=200" alt={ep.title} loading="lazy" />
                   {:else}
                     <div class="ep-thumb-blank">♪</div>
                   {/if}

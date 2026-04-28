@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, mediaApi, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount } from '$lib/api';
+  import { libraryApi, mediaApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount } from '$lib/api';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
   let playlistPickerItemId = '';
@@ -437,7 +437,7 @@
             <a class="mv-card" href="/watch/{v.id}" title={v.title}>
               <div class="mv-thumb">
                 {#if v.poster_path}
-                  <img src="/artwork/{encodeURI(v.poster_path)}?v={v.updated_at}&w=320"
+                  <img src="{assetUrl('/artwork/' + encodeURI(v.poster_path))}?v={v.updated_at}&w=320"
                        alt={v.title} loading="lazy" />
                 {:else}
                   <div class="mv-thumb-blank">{v.title[0]?.toUpperCase()}</div>
@@ -464,8 +464,8 @@
             <a class="item" href={itemHref(item)} tabindex="0">
               <div class="poster">
                 {#if item.poster_path}
-                  <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
-                       srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w"
+                  <img src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300"
+                       srcset="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300 300w"
                        sizes="(max-width: 768px) 100px, 180px"
                        alt={item.title} loading="lazy" />
                 {:else}
@@ -490,8 +490,8 @@
         <a class="item" class:circle-poster={isMusicLibrary} href={itemHref(item)} tabindex="0">
           <div class="poster">
             {#if item.poster_path}
-              <img src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
-                   srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=450 450w"
+              <img src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300"
+                   srcset="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300 300w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=450 450w"
                    sizes="(max-width: 768px) 100px, 180px"
                    alt={item.title} loading="lazy" />
             {:else}

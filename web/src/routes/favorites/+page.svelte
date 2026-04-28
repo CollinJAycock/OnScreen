@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { favoritesApi, type FavoriteItem } from '$lib/api';
+  import { favoritesApi, assetUrl, type FavoriteItem } from '$lib/api';
 
   let items: FavoriteItem[] = [];
   let loading = true;
@@ -73,8 +73,8 @@
           <div class="poster">
             {#if it.poster_path}
               <img
-                src="/artwork/{encodeURI(it.poster_path)}?w=300"
-                srcset="/artwork/{encodeURI(it.poster_path)}?w=150 150w, /artwork/{encodeURI(it.poster_path)}?w=300 300w, /artwork/{encodeURI(it.poster_path)}?w=600 600w"
+                src="{assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=300"
+                srcset="{assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=150 150w, {assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=300 300w, {assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=600 600w"
                 sizes="(max-width: 768px) 150px, 200px"
                 alt={it.title}
                 loading="lazy"

@@ -5,6 +5,7 @@
     searchApi,
     discoverApi,
     requestsApi,
+    assetUrl,
     type SearchResult,
     type DiscoverItem,
   } from '$lib/api';
@@ -267,8 +268,8 @@
             <button class="result-card" on:click={() => navigate(item)}>
               <div class="poster-wrap">
                 {#if art}
-                  <img src="/artwork/{encodeURI(art)}?w=300"
-                       srcset="/artwork/{encodeURI(art)}?w=150 150w, /artwork/{encodeURI(art)}?w=300 300w, /artwork/{encodeURI(art)}?w=450 450w"
+                  <img src="{assetUrl('/artwork/' + encodeURI(art))}?w=300"
+                       srcset="{assetUrl('/artwork/' + encodeURI(art))}?w=150 150w, {assetUrl('/artwork/' + encodeURI(art))}?w=300 300w, {assetUrl('/artwork/' + encodeURI(art))}?w=450 450w"
                        sizes="(max-width: 768px) 100px, 180px"
                        alt={item.title} loading="lazy" />
                 {:else}

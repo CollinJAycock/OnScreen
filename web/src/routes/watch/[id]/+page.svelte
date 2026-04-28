@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -263,7 +263,7 @@
       label: s.title || s.language || `Track ${s.index}`,
       language: s.language || '',
       forced: s.forced,
-      url: `/media/subtitles/${file.id}/${s.index}`,
+      url: assetUrl(`/media/subtitles/${file.id}/${s.index}`),
       origin: 'embedded',
     };
   }
@@ -1812,7 +1812,7 @@
   {:else}
     <img
       class="photo-image"
-      src="/artwork/{encodeURI(item.poster_path ?? '')}?v={item.updated_at}"
+      src="{assetUrl('/artwork/' + encodeURI(item.poster_path ?? ''))}?v={item.updated_at}"
       alt={item.title}
       draggable="false"
       style="transform: scale({photoZoom}) translate({photoPanX / photoZoom}px, {photoPanY / photoZoom}px);"
@@ -1906,7 +1906,7 @@
 
     <!-- Fanart background (blurred, behind controls) -->
     {#if item.fanart_path}
-      <div class="fanart-bg" style="background-image:url('/artwork/{item.fanart_path}?v={item.updated_at}&w=640')"></div>
+      <div class="fanart-bg" style="background-image:url('{assetUrl('/artwork/' + item.fanart_path)}?v={item.updated_at}&w=640')"></div>
     {/if}
 
     <!-- Controls overlay -->
@@ -2444,7 +2444,7 @@
 <div class="detail-page">
   <!-- Fanart hero -->
   {#if item.fanart_path}
-    <div class="detail-hero" style="background-image:url('/artwork/{item.fanart_path}?v={item.updated_at}&w=1280')">
+    <div class="detail-hero" style="background-image:url('{assetUrl('/artwork/' + item.fanart_path)}?v={item.updated_at}&w=1280')">
       <div class="detail-hero-fade"></div>
     </div>
   {/if}
@@ -2457,8 +2457,8 @@
 
     <div class="detail-header">
       {#if item.poster_path}
-        <img class="detail-poster" src="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300"
-             srcset="/artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=150 150w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=300 300w, /artwork/{encodeURI(item.poster_path)}?v={item.updated_at}&w=600 600w"
+        <img class="detail-poster" src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300"
+             srcset="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300 300w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=600 600w"
              sizes="(max-width: 768px) 120px, 220px"
              alt="{item.title}" />
       {/if}
@@ -2520,7 +2520,7 @@
     {#if item.files?.length}
       <a
         class="download-btn"
-        href="/media/stream/{item.files[0].id}"
+        href="{assetUrl('/media/stream/' + item.files[0].id)}"
         download={`${item.title}.${item.files[0].container ?? 'mkv'}`}
         title="Download the original file"
       >
@@ -2598,7 +2598,7 @@
         {#each musicChildren as album}
           <a class="music-album-card" href="/watch/{album.id}">
             {#if album.poster_path}
-              <img src="/artwork/{encodeURI(album.poster_path)}?v={album.updated_at}&w=300" alt={album.title} loading="lazy" />
+              <img src="{assetUrl('/artwork/' + encodeURI(album.poster_path))}?v={album.updated_at}&w=300" alt={album.title} loading="lazy" />
             {:else}
               <div class="music-album-blank">♪</div>
             {/if}

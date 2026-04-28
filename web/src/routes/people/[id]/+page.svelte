@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { peopleApi, type Person, type FilmographyEntry } from '$lib/api';
+  import { peopleApi, assetUrl, type Person, type FilmographyEntry } from '$lib/api';
 
   let person: Person | null = null;
   let filmography: FilmographyEntry[] = [];
@@ -104,7 +104,7 @@
             {#each group.items as f (f.item_id + group.role + (f.character ?? '') + (f.job ?? ''))}
               <a class="tile" href="/watch/{f.item_id}" title={f.title}>
                 {#if f.poster_path}
-                  <img class="tile-poster" src="/artwork/{encodeURI(f.poster_path)}?w=200" alt={f.title} loading="lazy" />
+                  <img class="tile-poster" src="{assetUrl('/artwork/' + encodeURI(f.poster_path))}?w=200" alt={f.title} loading="lazy" />
                 {:else}
                   <div class="tile-poster tile-placeholder">{f.title.charAt(0)}</div>
                 {/if}

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { collectionApi, type Collection, type CollectionItem } from '$lib/api';
+  import { collectionApi, assetUrl, type Collection, type CollectionItem } from '$lib/api';
 
   let collection: Collection | null = null;
   let items: CollectionItem[] = [];
@@ -103,8 +103,8 @@
         {#each items as item (item.id)}
           <a class="card" href="/watch/{item.id}">
             {#if item.poster_path}
-              <img class="poster" src="/artwork/{encodeURI(item.poster_path)}?w=300"
-                   srcset="/artwork/{encodeURI(item.poster_path)}?w=150 150w, /artwork/{encodeURI(item.poster_path)}?w=300 300w, /artwork/{encodeURI(item.poster_path)}?w=450 450w"
+              <img class="poster" src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=300"
+                   srcset="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=150 150w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=300 300w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=450 450w"
                    sizes="(max-width: 768px) 100px, 180px"
                    alt={item.title} loading="lazy" />
             {:else}
