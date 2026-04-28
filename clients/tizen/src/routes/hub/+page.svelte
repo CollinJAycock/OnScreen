@@ -1,0 +1,121 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { endpoints, type HubData } from '$lib/api';
+  import { Unauthorized } from '$lib/api';
+  import HubRow from '$lib/components/HubRow.svelte';
+  import PosterCard from '$lib/components/PosterCard.svelte';
+  import Spinner from '$lib/components/Spinner.svelte';
+
+  let data = $state<HubData | null>(null);
+  let error = $state('');
+
+  onMount(() => {
+    (async () => {
+      try {
+        data = await endpoints.hub.get();
+      } catch (e) {
+        if (e instanceof Unauthorized) goto('/login');
+        else error = (e as Error).message;
+      }
+    })();
+  });
+
+  function open(id: string) {
+    goto(`/item/${id}`);
+  }
+
+  function progress(item: { view_offset_ms?: number; duration_ms?: number }): number | undefined {
+    if (!item.view_offset_ms || !item.duration_ms) return undefined;
+    return item.view_offset_ms / item.duration_ms;
+  }
+</script>
+
+<div class="page">
+  <header>
+    <h1>OnScreen</h1>
+    <nav class="links">
+      <a href="/search/" data-sveltekit-preload-data="false">search</a>
+      <a href="/hub/" data-sveltekit-preload-data="false">home</a>
+    </nav>
+  </header>
+
+  {#if error}
+    <p class="error">{error}</p>
+  {:else if !data}
+    <Spinner />
+  {:else}
+    {#if data.continue_watching.length > 0}
+      <HubRow title="Continue Watching">
+        {#each data.continue_watching as item, i (item.id)}
+          <PosterCard
+            title={item.title}
+            posterPath={item.poster_path}
+            subtitle={item.year ? String(item.year) : undefined}
+            progressRatio={progress(item)}
+            autofocus={i === 0}
+            onclick={() => open(item.id)}
+          />
+        {/each}
+      </HubRow>
+    {/if}
+
+    {#if data.recently_added.length > 0}
+      <HubRow title="Recently Added">
+        {#each data.recently_added as item, i (item.id)}
+          <PosterCard
+            title={item.title}
+            posterPath={item.poster_path}
+            subtitle={item.year ? String(item.year) : undefined}
+            autofocus={data.continue_watching.length === 0 && i === 0}
+            onclick={() => open(item.id)}
+          />
+        {/each}
+      </HubRow>
+    {/if}
+
+    {#if data.continue_watching.length === 0 && data.recently_added.length === 0}
+      <p class="empty">Your library is empty. Add a library and run a scan from the web UI.</p>
+    {/if}
+  {/if}
+</div>
+
+<style>
+  .page {
+    padding: 32px 0 0;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 0 var(--page-pad);
+    margin-bottom: 48px;
+  }
+
+  h1 {
+    font-size: var(--font-xl);
+    margin: 0;
+    color: var(--accent);
+  }
+
+  .links {
+    display: flex;
+    gap: 32px;
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+  }
+
+  .links a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .error, .empty {
+    padding: 0 var(--page-pad);
+    font-size: var(--font-md);
+  }
+
+  .error { color: #fca5a5; }
+  .empty { color: var(--text-secondary); }
+</style>

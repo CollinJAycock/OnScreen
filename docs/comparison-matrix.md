@@ -332,7 +332,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Android TV / Google TV          | ⚠️ | ✅ | ✅ | ✅ | OnScreen: scaffold in [`clients/android/`](../clients/android/) — AndroidX Leanback + Media3 ExoPlayer + Hilt + Retrofit; setup → login → home + skip-intro/credits + chapters + trickplay + cross-device sync wired; awaiting hardware testing (TV emulator on Windows blocked by QEMU x86-image instability) |
 | LG webOS (smart TV)             | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: scaffold in [`clients/webos/`](../clients/webos/) — SvelteKit SPA packaged via `ares-package` with its own spatial-navigation focus manager; browse/play not yet implemented |
 | Roku                            | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: scaffold in [`clients/roku/`](../clients/roku/) — BrightScript + SceneGraph; setup → login → home (RowList of hub rows) + Video-node player + npm sideload script wired. Direct play only; transcode negotiation, audio/sub pickers, sync consumer pending. Jellyfin: third-party. |
-| Samsung Tizen (smart TV)        | ❌ | ✅ | ✅ | ⚠️ | |
+| Samsung Tizen (smart TV)        | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: scaffold in [`clients/tizen/`](../clients/tizen/) — SvelteKit SPA packaged via `tizen package -t wgt`; AVPlay JS API for HW-accelerated HLS/DASH/MP4 (instead of `<video>` + hls.js); Tizen `VK_*` remote-key map. Same Setup → Login → Hub → Player route shape as the webOS scaffold. |
 | Apple TV (tvOS)                 | ❌ | ✅ | ✅ | ⚠️ | Jellyfin: third-party Infuse/SwiftFin |
 | Native iOS phone app            | ❌ | ✅ | ✅ | ✅ | OnScreen runs in mobile browser only |
 | Native Android phone app        | ❌ | ✅ | ✅ | ✅ | OnScreen has Android TV scaffold but no separate phone app |
@@ -341,16 +341,17 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 
 ### 15e. TV-app architecture (OnScreen scaffolds)
 
-| Decision                        | Android TV scaffold | webOS scaffold | Roku scaffold | Rationale |
-|---------------------------------|--------------------|---------------|---------------|-----------|
-| Language / framework            | Kotlin + AndroidX Leanback | SvelteKit SPA | BrightScript + SceneGraph | Each platform mandates its own — Roku has no JS engine for channels and AOSP's Leanback isn't usable off Android |
-| Video player                    | Media3 ExoPlayer (HLS + DASH) | HTML5 `<video>` + hls.js | Firmware Video node (HLS + DASH + MP4) | The native option on each platform; firmware-handled on Roku is a freebie (no demuxer to ship) |
-| Networking                      | Retrofit + Moshi + OkHttp + okhttp-sse | reuses `web/src/lib/api.ts` shape | `roUrlTransfer` + ParseJson | Roku has no SSE primitive — sync via long-poll fallback when wired |
-| DI                              | Hilt | n/a (Svelte stores) | n/a (file-scoped functions) | BrightScript has no DI ecosystem; Singletons-by-convention is the norm |
-| Image loading                   | Coil | browser-native | Poster node (firmware) | Async + cached + diskbacked on Roku for free |
-| Persistent prefs (server URL etc.)| AndroidX DataStore | `localStorage` | `roRegistrySection` | Roku registry isn't encrypted (no Keystore equivalent) — same threat model the Android client documented before its keychain migration |
-| Remote-key navigation           | Leanback handles natively | custom spatial-nav in `lib/focus/` | RowList / Group focus handles natively | webOS the only one needing a hand-rolled focus engine |
-| Min OS                          | Android 5 (API 21) | webOS 6 (LG C1 / 2021+) | RokuOS 11+ | Covers the bulk of the in-field TV install base on each platform |
+| Decision                        | Android TV scaffold | webOS scaffold | Tizen scaffold | Roku scaffold | Rationale |
+|---------------------------------|--------------------|---------------|----------------|---------------|-----------|
+| Language / framework            | Kotlin + AndroidX Leanback | SvelteKit SPA | SvelteKit SPA | BrightScript + SceneGraph | Each platform mandates its own — Roku has no JS engine for channels; Tizen + webOS share the SvelteKit shape because both are webview-based with W3C-Widget packaging |
+| Video player                    | Media3 ExoPlayer (HLS + DASH) | HTML5 `<video>` + hls.js | Tizen AVPlay JS API (HW HLS/DASH/MP4 + HEVC/AV1) | Firmware Video node (HLS + DASH + MP4) | The native option on each platform; AVPlay is the audiophile-pillar equivalent for video on Samsung — firmware decoders for HEVC/AV1, native 4K + HDR pipeline |
+| Networking                      | Retrofit + Moshi + OkHttp + okhttp-sse | reuses `web/src/lib/api.ts` shape | reuses `web/src/lib/api.ts` shape | `roUrlTransfer` + ParseJson | Roku has no SSE primitive — sync via long-poll fallback when wired |
+| DI                              | Hilt | n/a (Svelte stores) | n/a (Svelte stores) | n/a (file-scoped functions) | BrightScript has no DI ecosystem; Singletons-by-convention is the norm |
+| Image loading                   | Coil | browser-native | browser-native | Poster node (firmware) | Async + cached + diskbacked on Roku for free |
+| Persistent prefs (server URL etc.)| AndroidX DataStore | `localStorage` | `localStorage` | `roRegistrySection` | Roku registry isn't encrypted (no Keystore equivalent) — same threat model the Android client documented before its keychain migration |
+| Remote-key navigation           | Leanback handles natively | custom spatial-nav in `lib/focus/` | custom spatial-nav in `lib/focus/` (Tizen `VK_*` codes) | RowList / Group focus handles natively | Tizen + webOS share the spatial-nav shape; only the keycode integers differ between LG and Samsung remotes |
+| Packaging                       | Gradle → APK | `ares-package` → IPK | `tizen package` → WGT | npm + archiver → ZIP | Each store dictates the format |
+| Min OS                          | Android 5 (API 21) | webOS 6 (LG C1 / 2021+) | Tizen 5.5 (Samsung 2019+) | RokuOS 11+ | Covers the bulk of the in-field TV install base on each platform |
 
 ---
 

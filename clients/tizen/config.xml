@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Tizen TV widget manifest. Format is the W3C Widget Packaging spec
+    plus a `tizen:application` block declaring the Tizen-specific
+    bits the firmware reads (privileges, profile, version floor).
+
+    The widget id MUST be a Samsung-issued ID once we submit to the
+    Samsung Apps store. For dev / sideload it can be any URN; the
+    `urn:onscreen:tv` scheme below is fine and matches what the
+    other clients use as a logical identifier.
+
+    Privileges control what JS APIs the app can call. We declare
+    only what the player actually uses today — adding more is a
+    config.xml diff later, no certificate rework.
+-->
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="https://onscreen.tv/tizen"
+        version="0.1.0"
+        viewmodes="maximized">
+
+    <name>OnScreen</name>
+    <description>OnScreen media player for Samsung Tizen TV</description>
+
+    <!-- Entry point — Vite/SvelteKit emits build/index.html as the SPA shell. -->
+    <content src="index.html" />
+
+    <!-- Splash + launcher icons. Real PNGs must live in build/ at
+         these paths before packaging; placeholders aren't enough.
+         See images/README.md for sizes. -->
+    <icon src="icon.png" />
+
+    <feature name="http://tizen.org/feature/screen.size.normal.1080.1920" />
+
+    <!-- Privileges: only what we actually call. -->
+    <tizen:privilege name="http://tizen.org/privilege/internet" />
+    <tizen:privilege name="http://tizen.org/privilege/mediastorage" />
+    <tizen:privilege name="http://tizen.org/privilege/avplay" />
+
+    <!-- Tizen-specific application metadata. -->
+    <tizen:application id="OnScreenTV.OnScreen"
+                       package="OnScreenTV"
+                       required_version="5.5" />
+
+    <!-- Setting block: profile=tv routes the runtime to the Tizen
+         TV web engine; hwkey-event=enable forwards the remote's
+         hardware keys (back, exit, media keys) into the webview
+         as keyboard events. Without it Back exits the app. -->
+    <tizen:setting screen-orientation="landscape"
+                   context-menu="disable"
+                   background-support="disable"
+                   encryption="disable"
+                   install-location="auto"
+                   hwkey-event="enable" />
+
+    <tizen:profile name="tv-samsung" />
+
+    <!-- All cross-origin requests need to be allow-listed for the
+         Tizen webview's strict CSP. `*` covers any user-configured
+         server URL — narrower allow-listing isn't possible because
+         the user picks the host at first launch. -->
+    <access origin="*" subdomains="true" />
+    <tizen:allow-navigation>*</tizen:allow-navigation>
+
+</widget>
