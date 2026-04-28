@@ -3,6 +3,7 @@ package tv.onscreen.android.ui.common
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import tv.onscreen.android.R
+import tv.onscreen.android.ui.browse.CollectionFragment
 import tv.onscreen.android.ui.detail.DetailFragment
 import tv.onscreen.android.ui.photo.PhotoViewFragment
 import tv.onscreen.android.ui.playback.PlaybackFragment
@@ -42,6 +43,13 @@ object Navigator {
             // ExoPlayer (it doesn't decode JPEGs).
             "photo" ->
                 PhotoViewFragment.newInstance(itemId)
+
+            // Collections / playlists drill into their own grid.
+            // The id is the collection id; the title is filled in
+            // when the fragment loads (CollectionFragment fetches
+            // the collection metadata before listing items).
+            "collection", "playlist" ->
+                CollectionFragment.newInstance(itemId, "")
 
             // Default: anything ExoPlayer can play. Movies, episodes,
             // music tracks, audiobooks (single-file MVP), podcast

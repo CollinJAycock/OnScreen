@@ -70,7 +70,10 @@ class PlaybackFragment : VideoSupportFragment() {
     private var audioAction: Action? = null
     private var subtitleAction: Action? = null
     private var chaptersAction: Action? = null
+    private var speedAction: Action? = null
     private var chapters: List<Chapter> = emptyList()
+    private var currentItemType: String = ""
+    private var playbackSpeed: Float = 1.0f
 
     /** Cross-device sync subscriber. Cancelled in onDestroyView. */
     private var syncJob: Job? = null
@@ -98,6 +101,8 @@ class PlaybackFragment : VideoSupportFragment() {
         private const val ACTION_AUDIO_ID = 100L
         private const val ACTION_SUBTITLE_ID = 101L
         private const val ACTION_CHAPTERS_ID = 102L
+        private const val ACTION_SPEED_ID = 103L
+        private val SPEED_OPTIONS = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
         private const val UP_NEXT_COUNTDOWN_SEC = 10
         private const val UP_NEXT_LEAD_SEC = 25
 
@@ -155,6 +160,7 @@ class PlaybackFragment : VideoSupportFragment() {
                 markers = state.markers
                 dismissedMarkers.clear()
                 chapters = state.item?.files?.firstOrNull()?.chapters ?: emptyList()
+                currentItemType = state.item?.type.orEmpty()
 
                 refreshSecondaryActions()
                 startUpNextWatcher()
@@ -339,9 +345,11 @@ class PlaybackFragment : VideoSupportFragment() {
                 audioAction = Action(ACTION_AUDIO_ID, getString(R.string.audio))
                 subtitleAction = Action(ACTION_SUBTITLE_ID, getString(R.string.subtitles))
                 chaptersAction = Action(ACTION_CHAPTERS_ID, getString(R.string.chapters))
+                speedAction = Action(ACTION_SPEED_ID, getString(R.string.speed_label, "1.0"))
                 adapter.add(audioAction)
                 adapter.add(subtitleAction)
                 adapter.add(chaptersAction)
+                adapter.add(speedAction)
             }
 
             override fun onActionClicked(action: Action) {
@@ -349,6 +357,7 @@ class PlaybackFragment : VideoSupportFragment() {
                     ACTION_AUDIO_ID -> showAudioPicker()
                     ACTION_SUBTITLE_ID -> showSubtitlePicker()
                     ACTION_CHAPTERS_ID -> showChapterPicker()
+                    ACTION_SPEED_ID -> showSpeedPicker()
                     else -> super.onActionClicked(action)
                 }
             }
@@ -369,10 +378,15 @@ class PlaybackFragment : VideoSupportFragment() {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     progressTracker?.onStop()
-                    if (nextEpisode != null) {
-                        showUpNextOverlay(immediate = true)
-                    } else {
-                        parentFragmentManager.popBackStack()
+                    val next = nextEpisode
+                    when {
+                        next == null -> parentFragmentManager.popBackStack()
+                        // Music: chain to next track silently. The Up
+                        // Next overlay (with title + countdown) makes
+                        // sense between episodes — between tracks
+                        // it's just chrome the user doesn't want.
+                        currentItemType == "track" -> goToNextEpisode(next)
+                        else -> showUpNextOverlay(immediate = true)
                     }
                 }
             }
@@ -416,6 +430,7 @@ class PlaybackFragment : VideoSupportFragment() {
         val sa = subtitleAction ?: return
         val aa = audioAction ?: return
         val ca = chaptersAction ?: return
+        val sp = speedAction ?: return
         val secondary = (glue?.controlsRow as? PlaybackControlsRow)?.secondaryActionsAdapter as? ArrayObjectAdapter
             ?: return
         secondary.clear()
@@ -425,6 +440,26 @@ class PlaybackFragment : VideoSupportFragment() {
         // the picker when there are at least 2 chapters worth jumping
         // between.
         if (chapters.size >= 2) secondary.add(ca)
+        // Audiobooks get a speed picker — the canonical
+        // audiobook-listener feature. Movies/episodes don't (a
+        // 2x movie is rarely what the user wants); music keeps
+        // playback at 1x to preserve pitch.
+        if (currentItemType == "audiobook") secondary.add(sp)
+    }
+
+    private fun showSpeedPicker() {
+        val labels = SPEED_OPTIONS.map { "%.2fx".format(it) }.toTypedArray()
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(R.string.speed)
+            .setItems(labels) { d, idx ->
+                val chosen = SPEED_OPTIONS[idx]
+                playbackSpeed = chosen
+                val params = androidx.media3.common.PlaybackParameters(chosen)
+                player?.playbackParameters = params
+                speedAction?.label1 = getString(R.string.speed_label, "%.2f".format(chosen))
+                d.dismiss()
+            }
+            .show()
     }
 
     private fun showChapterPicker() {

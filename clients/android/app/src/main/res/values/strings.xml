@@ -74,6 +74,8 @@
     <string name="because_you_watched">Because you watched %1$s</string>
     <string name="chapters">Chapters</string>
     <string name="chapter_n">Chapter %1$d</string>
+    <string name="speed">Playback speed</string>
+    <string name="speed_label">%1$sx</string>
 
     <!-- Search + request -->
     <string name="search_in_library">In your library</string>

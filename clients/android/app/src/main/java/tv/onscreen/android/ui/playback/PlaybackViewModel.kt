@@ -105,8 +105,16 @@ class PlaybackViewModel @Inject constructor(
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
                 )
 
-                if (item.type == "episode" && item.parent_id != null && item.index != null) {
-                    loadNextEpisode(item.parent_id, item.index)
+                // Auto-advance support: episodes within a season,
+                // tracks within an album. Both use the same parent +
+                // index relationship; PlaybackFragment uses the
+                // type to decide whether to surface an Up Next
+                // overlay (episodes) or just chain silently (tracks).
+                if (item.parent_id != null && item.index != null) {
+                    when (item.type) {
+                        "episode" -> loadNextSibling(item.parent_id, item.index, "episode")
+                        "track" -> loadNextSibling(item.parent_id, item.index, "track")
+                    }
                 }
             } catch (e: Exception) {
                 val msg = when {
@@ -118,11 +126,11 @@ class PlaybackViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadNextEpisode(parentId: String, currentIndex: Int) {
+    private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
         try {
             val children = itemRepo.getChildren(parentId)
             val next = children
-                .filter { it.type == "episode" && it.index != null }
+                .filter { it.type == type && it.index != null }
                 .sortedBy { it.index }
                 .firstOrNull { (it.index ?: -1) == currentIndex + 1 }
             _uiState.value = _uiState.value.copy(nextEpisode = next)
