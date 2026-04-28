@@ -508,10 +508,14 @@ func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
-	if item.Type != "photo" {
-		// The image endpoint is photo-specific; for movies/episodes use the
-		// poster_path on the item instead. 404 keeps URL-fishers from
-		// distinguishing "wrong type" from "doesn't exist."
+	// The image endpoint serves photos directly from their source file
+	// and audiobook covers via ffmpeg-extracted embedded artwork.
+	// Movies / shows / episodes / music keep using poster_path on the
+	// item — those have proper /artwork/ assets from the metadata
+	// agent, so routing through here would just add an ffmpeg hop.
+	// 404 for other types keeps URL-fishers from distinguishing
+	// "wrong type" from "doesn't exist."
+	if item.Type != "photo" && item.Type != "audiobook" {
 		respond.NotFound(w, r)
 		return
 	}

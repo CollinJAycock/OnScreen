@@ -123,11 +123,15 @@ func (o Options) withDefaults() Options {
 }
 
 // decodeSource opens sourcePath and returns the decoded image plus whether
-// EXIF orientation was already applied during decode (true for HEIC, which
-// is decoded by ffmpeg with -autorotate).
+// EXIF orientation was already applied during decode (true for HEIC and
+// audiobook covers, both of which are decoded by ffmpeg with -autorotate).
 func decodeSource(ctx context.Context, sourcePath string) (image.Image, bool, error) {
 	if isHEIC(sourcePath) {
 		img, err := decodeHEIC(ctx, sourcePath)
+		return img, true, err
+	}
+	if isAudiobookContainer(sourcePath) {
+		img, err := decodeEmbeddedCover(ctx, sourcePath)
 		return img, true, err
 	}
 	f, err := os.Open(sourcePath)
@@ -140,6 +144,60 @@ func decodeSource(ctx context.Context, sourcePath string) (image.Image, bool, er
 		return nil, false, fmt.Errorf("decode: %w", err)
 	}
 	return img, false, nil
+}
+
+// isAudiobookContainer returns true for the audio container formats whose
+// "cover" is an embedded picture rather than a separate image file. Limited
+// to the formats the audiobook scanner ingests (m4b, m4a, mp3, flac, ogg)
+// so we don't accidentally route a regular music album through ffmpeg —
+// music tracks already have /artwork/ posters from the metadata agent.
+func isAudiobookContainer(sourcePath string) bool {
+	switch strings.ToLower(filepath.Ext(sourcePath)) {
+	case ".m4b", ".m4a", ".mp3", ".flac", ".ogg":
+		return true
+	}
+	return false
+}
+
+// decodeEmbeddedCover shells out to ffmpeg to extract the first attached
+// picture from an audio container (m4b chapter art, MP3 ID3 APIC, FLAC
+// PICTURE, etc.) and returns it decoded. Same memory cap and ffmpeg flags
+// as decodeHEIC; size limit guards against pathological inputs.
+func decodeEmbeddedCover(ctx context.Context, sourcePath string) (image.Image, error) {
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-hide_banner", "-loglevel", "error",
+		"-i", sourcePath,
+		// Map the first video/picture stream if present. The "?" makes
+		// the mapping optional so the command doesn't fail on files
+		// with no embedded cover — we surface that as a decode error
+		// in the Go layer with a cleaner message.
+		"-map", "0:v:0?",
+		"-frames:v", "1",
+		"-f", "mjpeg",
+		"-q:v", "2",
+		"pipe:1",
+	)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg cover extract: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	if out.Len() == 0 {
+		// No embedded cover — the file is otherwise valid, but there's
+		// nothing for us to render. Caller logs and falls back to the
+		// type-default placeholder.
+		return nil, fmt.Errorf("no embedded cover in %s", sourcePath)
+	}
+	if out.Len() > 50*1024*1024 {
+		return nil, fmt.Errorf("ffmpeg cover extract: output exceeds 50 MB")
+	}
+	img, err := jpeg.Decode(&out)
+	if err != nil {
+		return nil, fmt.Errorf("decode ffmpeg cover: %w", err)
+	}
+	return img, nil
 }
 
 // isHEIC returns true when sourcePath has a HEIC/HEIF extension. Detection
