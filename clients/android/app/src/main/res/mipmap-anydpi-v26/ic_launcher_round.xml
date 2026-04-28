@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Round adaptive-icon variant. Some launchers (notably stock Pixel) pull
+    @mipmap/ic_launcher_round when android:roundIcon is set on the manifest;
+    pointing it at the same foreground/background pair as the square adaptive
+    icon means the system mask handles the circular crop without needing a
+    separate pre-rendered round PNG at this layer.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/bg_primary" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
