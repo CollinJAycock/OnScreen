@@ -21,6 +21,8 @@
     <string name="error_login">Login failed</string>
     <string name="no_results">No results found</string>
     <string name="episodes">Episodes</string>
+    <string name="tracks">Tracks</string>
+    <string name="albums">Albums</string>
     <string name="season_n">Season %d</string>
     <string name="audio">Audio</string>
     <string name="subtitles">Subtitles</string>

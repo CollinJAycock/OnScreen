@@ -36,20 +36,50 @@ class DetailViewModel @Inject constructor(
             try {
                 val item = itemRepo.getItem(itemId)
 
-                val seasons = if (item.type == "show") {
-                    buildSeasonMap(itemId)
-                } else if (item.type == "season") {
-                    // Viewing a season directly — load its episodes.
-                    val episodes = itemRepo.getChildren(itemId)
-                    val seasonChild = ChildItem(
-                        id = item.id,
-                        title = item.title,
-                        type = "season",
-                        index = item.index,
-                    )
-                    mapOf(seasonChild to episodes)
-                } else {
-                    emptyMap()
+                // The "seasons" map name is historical (it was originally
+                // show → season → episode). For album / podcast we reuse
+                // the same shape: one synthetic parent with the direct
+                // children attached. For artist we treat each child album
+                // as its own parent group with empty contents — clicks
+                // route through Navigator (drilling into the album's
+                // own DetailFragment) instead of PlaybackFragment, so the
+                // recursive "play first track of first album" path isn't
+                // needed at this layer.
+                val seasons = when (item.type) {
+                    "show" -> buildSeasonMap(itemId)
+
+                    "season", "album", "podcast" -> {
+                        // Direct children are playable (episodes / tracks /
+                        // podcast episodes). Load them and present as a
+                        // single group keyed by a synthetic ChildItem.
+                        val children = itemRepo.getChildren(itemId)
+                        val parent = ChildItem(
+                            id = item.id,
+                            title = item.title,
+                            type = item.type,
+                            index = item.index,
+                        )
+                        mapOf(parent to children)
+                    }
+
+                    "artist" -> {
+                        // Children are albums (containers). Render the
+                        // grid; clicks should drill, not play. The
+                        // Play-on-artist UX is "play first track of
+                        // first album" but that's a two-level traversal;
+                        // skip for now and rely on the user picking an
+                        // album.
+                        val albums = itemRepo.getChildren(itemId)
+                        val parent = ChildItem(
+                            id = item.id,
+                            title = item.title,
+                            type = "artist",
+                            index = item.index,
+                        )
+                        mapOf(parent to albums)
+                    }
+
+                    else -> emptyMap()
                 }
 
                 _uiState.value = DetailUiState(

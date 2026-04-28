@@ -25,6 +25,7 @@ import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.playback.PlaybackFragment
 import javax.inject.Inject
 
@@ -157,7 +158,11 @@ class DetailFragment : Fragment() {
 
     private fun configurePlayButtons(item: ItemDetail, btnPlay: Button, btnFromStart: Button) {
         when (item.type) {
-            "show", "season" -> {
+            "show", "season", "album", "podcast" -> {
+                // Container: Play picks an in-progress / first-unwatched
+                // child (episode for show, track for album, episode for
+                // podcast). The container itself has no `files` so
+                // playItem(item.id) would error with "No playable file."
                 btnPlay.text = getString(R.string.play)
                 btnPlay.setOnClickListener {
                     val target = inProgressEpisode() ?: firstUnwatchedEpisode() ?: firstEpisode()
@@ -165,6 +170,15 @@ class DetailFragment : Fragment() {
                         playItem(target.id, target.view_offset_ms)
                     }
                 }
+                btnFromStart.visibility = View.GONE
+            }
+            "artist" -> {
+                // Artist children are albums (containers), not tracks.
+                // A "Play All" experience would need recursive
+                // traversal (first track of first album); skip until
+                // that UX lands. For now the user picks an album from
+                // the grid below.
+                btnPlay.visibility = View.GONE
                 btnFromStart.visibility = View.GONE
             }
             else -> {
@@ -181,7 +195,7 @@ class DetailFragment : Fragment() {
                 }
             }
         }
-        btnPlay.requestFocus()
+        if (btnPlay.visibility == View.VISIBLE) btnPlay.requestFocus()
     }
 
     private fun firstEpisode(): ChildItem? {
@@ -215,12 +229,29 @@ class DetailFragment : Fragment() {
             return
         }
 
+        // Header label depends on what the children represent. The
+        // layout id stays "episodes_header" for backwards compat;
+        // the visible text is the right one per type.
+        header.text = getString(when (item.type) {
+            "album" -> R.string.tracks
+            "artist" -> R.string.albums
+            else -> R.string.episodes
+        })
         header.visibility = View.VISIBLE
-        tabsScroll.visibility = if (seasons.size > 1) View.VISIBLE else View.GONE
+        // Season tabs are show-specific. Albums and podcasts have a
+        // single child group; rendering tabs there is meaningless.
+        tabsScroll.visibility = if (seasons.size > 1 && item.type == "show") View.VISIBLE else View.GONE
         list.visibility = View.VISIBLE
 
         if (episodeAdapter == null) {
-            episodeAdapter = EpisodeAdapter(serverUrl) { ep -> playItem(ep.id, 0L) }
+            // Route child clicks through Navigator so containers (an
+            // artist's albums) drill into their own detail screen
+            // instead of being mis-played as media. Tracks / episodes
+            // / podcast episodes still hit PlaybackFragment via
+            // Navigator's else branch.
+            episodeAdapter = EpisodeAdapter(serverUrl) { child ->
+                Navigator.open(parentFragmentManager, child.id, child.type, child.view_offset_ms)
+            }
             list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
             list.adapter = episodeAdapter
         }
