@@ -74,8 +74,8 @@ dependencies {
     implementation("io.coil-kt:coil:2.6.0")
 
     // Dependency injection
-    implementation("com.google.dagger:hilt-android:2.51.1")
-    ksp("com.google.dagger:hilt-android-compiler:2.51.1")
+    implementation("com.google.dagger:hilt-android:2.56.2")
+    ksp("com.google.dagger:hilt-android-compiler:2.56.2")
 
     // AndroidX
     implementation("androidx.core:core-ktx:1.13.1")
