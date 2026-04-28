@@ -110,9 +110,8 @@
 | Genre browse                   | ✅ | ✅ | ✅ | ✅ | |
 | Collections                    | ✅ | ✅ | ✅ | ✅ | OnScreen: auto-genre + playlist types |
 | Smart playlists (rule-based)   | ✅ | ✅ | ✅ | ✅ | OnScreen: JSON rules persisted on `collections.rules`, evaluated at query time so newly-imported items appear without rebuild (v2.1 Track F item 1) |
-| Recommendations                | ✅ | ✅ | ✅ | ✅ | OnScreen: watch-cooccurrence (item-to-item collaborative filtering — Plex's algorithm); replaced the planned pgvector embedding pipeline with pure SQL, no Python sidecar (v2.1 Track F items 2 + 4) |
+| Recommendations                | ❌ | ✅ | ✅ | ✅ | OnScreen: removed — the cooccurrence-based "Because you watched" row didn't earn its space on the home hub; trending stays |
 | Trending                       | ✅ | ✅ | ✅ | ✅ | OnScreen: rolling-window aggregate over `watch_events` (v2.1 Track F item 3) |
-| "Because you watched X"        | ✅ | ✅ | ✅ | ⚠️ | OnScreen: watch-cooccurrence row tagged with seed item (v2.1 Track F item 4) |
 | TMDB discover in search        | ✅ | ❌ | ❌ | ❌ | OnScreen: Overseerr-style request inline |
 | Requests (self-service)        | ✅ | ❌ | ❌ | ❌ | Competitors need Overseerr/Ombi/Jellyseerr |
 | Plex Discover (external titles)| ❌ | ✅ | ❌ | ❌ | Plex-exclusive |

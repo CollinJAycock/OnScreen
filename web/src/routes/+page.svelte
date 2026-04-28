@@ -1,14 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { libraryApi, hubApi, assetUrl, type Library, type HubItem, type HubLibraryRow, type HubBecauseYouWatched } from '$lib/api';
+  import { libraryApi, hubApi, assetUrl, type Library, type HubItem, type HubLibraryRow } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let libraries: Library[] = [];
   let continueWatching: HubItem[] = [];
   let recentlyAddedByLibrary: HubLibraryRow[] = [];
   let trending: HubItem[] = [];
-  let becauseYouWatched: HubBecauseYouWatched[] = [];
   let loading = true;
   let error = '';
   let confirmDelete: Library | null = null;
@@ -43,7 +42,6 @@
       continueWatching = hub.continue_watching;
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
-      becauseYouWatched = hub.because_you_watched ?? [];
     } catch { /* silently skip — next poll will retry */ }
   }
 
@@ -55,7 +53,6 @@
       continueWatching = hub.continue_watching;
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
-      becauseYouWatched = hub.because_you_watched ?? [];
     }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load'; }
     finally { loading = false; }
@@ -195,34 +192,6 @@
         </div>
       </section>
     {/if}
-
-    <!-- Because you watched X — one strip per seed item, picked from
-         the user's most recent completed items. Items per row come
-         from the cooccurrence table (rebuilt nightly). -->
-    {#each becauseYouWatched as row (row.seed.id)}
-      <section class="hub-section">
-        <h2 class="hub-title">Because you watched <span class="seed-title">{row.seed.title}</span></h2>
-        <div class="hub-scroll">
-          {#each row.items as item (item.id)}
-            {@const art = item.poster_path ?? item.thumb_path}
-            <a class="hub-card" href={hubHref(item)}>
-              {#if art}
-                <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
-                     srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
-                     sizes="(max-width: 768px) 130px, 220px"
-                     alt={item.title} loading="lazy" />
-              {:else}
-                <div class="hub-poster-blank">
-                  <span>{item.title[0]?.toUpperCase()}</span>
-                </div>
-              {/if}
-              <div class="hub-label">{item.title}</div>
-              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
-            </a>
-          {/each}
-        </div>
-      </section>
-    {/each}
 
     <!-- Per-library recently added — one strip per library -->
     {#each recentlyAddedByLibrary as row (row.library_id)}
@@ -364,12 +333,6 @@
   }
   .hub-title-link:hover {
     color: var(--accent);
-  }
-  /* Italicize the seed title in "Because you watched X" so the user's
-     eye separates the prefix label from the dynamic show name. */
-  .seed-title {
-    font-style: italic;
-    font-weight: 600;
   }
   .hub-scroll {
     display: flex;

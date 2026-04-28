@@ -72,7 +72,6 @@
     <string name="skip_intro">Skip Intro</string>
     <string name="skip_credits">Skip Credits</string>
     <string name="trending">Trending</string>
-    <string name="because_you_watched">Because you watched %1$s</string>
     <string name="chapters">Chapters</string>
     <string name="chapter_n">Chapter %1$d</string>
     <string name="speed">Playback speed</string>

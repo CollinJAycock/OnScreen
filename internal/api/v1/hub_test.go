@@ -30,12 +30,6 @@ type mockHubDB struct {
 
 	trRows []gen.ListTrendingRow
 	trErr  error
-
-	seedRows []gen.ListSeedItemsForUserRow
-	seedErr  error
-
-	cooccByseed map[uuid.UUID][]gen.ListCooccurrentItemsRow
-	cooccErr    error
 }
 
 func (m *mockHubDB) ListContinueWatching(_ context.Context, _ gen.ListContinueWatchingParams) ([]gen.ListContinueWatchingRow, error) {
@@ -57,23 +51,6 @@ func (m *mockHubDB) ListTrending(_ context.Context, _ gen.ListTrendingParams) ([
 		return nil, m.trErr
 	}
 	return m.trRows, nil
-}
-
-func (m *mockHubDB) ListSeedItemsForUser(_ context.Context, _ gen.ListSeedItemsForUserParams) ([]gen.ListSeedItemsForUserRow, error) {
-	if m.seedErr != nil {
-		return nil, m.seedErr
-	}
-	return m.seedRows, nil
-}
-
-func (m *mockHubDB) ListCooccurrentItems(_ context.Context, arg gen.ListCooccurrentItemsParams) ([]gen.ListCooccurrentItemsRow, error) {
-	if m.cooccErr != nil {
-		return nil, m.cooccErr
-	}
-	if m.cooccByseed == nil {
-		return nil, nil
-	}
-	return m.cooccByseed[arg.Seed], nil
 }
 
 func newHubHandler(db *mockHubDB) *HubHandler {
@@ -251,98 +228,6 @@ func TestHub_Get_Trending(t *testing.T) {
 			if it.Title == "Blocked" {
 				t.Errorf("Blocked item leaked through library access filter")
 			}
-		}
-	})
-}
-
-// TestHub_Get_BecauseYouWatched covers the v2.1 BYW row — per-user
-// cooccurrence-based recommendations. The handler walks the user's
-// most recent completed items as seeds, looks up cooccurrent items
-// for each, library-access-filters, and returns one row per seed
-// that has at least one recommendation surviving the filter.
-func TestHub_Get_BecauseYouWatched(t *testing.T) {
-	t.Run("populates one row per seed item with surviving recs", func(t *testing.T) {
-		seedID1 := uuid.New()
-		seedID2 := uuid.New()
-		recID := uuid.New()
-		recID2 := uuid.New()
-		db := &mockHubDB{
-			seedRows: []gen.ListSeedItemsForUserRow{
-				{ID: seedID1, Title: "The Matrix", UpdatedAt: pgtype.Timestamptz{Valid: false}},
-				{ID: seedID2, Title: "Inception", UpdatedAt: pgtype.Timestamptz{Valid: false}},
-			},
-			cooccByseed: map[uuid.UUID][]gen.ListCooccurrentItemsRow{
-				seedID1: {{ID: recID, LibraryID: uuid.New(), Title: "Dark City", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}}},
-				seedID2: {{ID: recID2, LibraryID: uuid.New(), Title: "Memento", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}}},
-			},
-		}
-		h := newHubHandler(db)
-		rec := httptest.NewRecorder()
-		req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
-		h.Get(rec, req)
-		var resp struct {
-			Data HubResponse `json:"data"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-		if len(resp.Data.BecauseYouWatched) != 2 {
-			t.Fatalf("byw: got %d rows, want 2", len(resp.Data.BecauseYouWatched))
-		}
-		if resp.Data.BecauseYouWatched[0].Seed.Title != "The Matrix" {
-			t.Errorf("byw[0] seed: got %q", resp.Data.BecauseYouWatched[0].Seed.Title)
-		}
-		if resp.Data.BecauseYouWatched[0].Items[0].Title != "Dark City" {
-			t.Errorf("byw[0] rec: got %q", resp.Data.BecauseYouWatched[0].Items[0].Title)
-		}
-	})
-
-	t.Run("seeds with zero surviving recs are dropped, not rendered empty", func(t *testing.T) {
-		allowedLib := uuid.New()
-		blockedLib := uuid.New()
-		seedA := uuid.New()
-		seedB := uuid.New()
-		db := &mockHubDB{
-			seedRows: []gen.ListSeedItemsForUserRow{
-				{ID: seedA, Title: "Has recs", UpdatedAt: pgtype.Timestamptz{Valid: false}},
-				{ID: seedB, Title: "Lib-blocked", UpdatedAt: pgtype.Timestamptz{Valid: false}},
-			},
-			cooccByseed: map[uuid.UUID][]gen.ListCooccurrentItemsRow{
-				seedA: {{ID: uuid.New(), LibraryID: allowedLib, Title: "X", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}}},
-				seedB: {{ID: uuid.New(), LibraryID: blockedLib, Title: "Y", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}}},
-			},
-		}
-		h := newHubHandler(db).WithLibraryAccess(&stubLibraryAccessChecker{
-			allowed: map[uuid.UUID]struct{}{allowedLib: {}},
-		})
-		rec := httptest.NewRecorder()
-		req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
-		h.Get(rec, req)
-		var resp struct {
-			Data HubResponse `json:"data"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-		if len(resp.Data.BecauseYouWatched) != 1 {
-			t.Errorf("byw: got %d rows, want 1 (seedB has only blocked-library recs)", len(resp.Data.BecauseYouWatched))
-		}
-	})
-
-	t.Run("empty seeds returns empty byw without nuking the rest of the hub", func(t *testing.T) {
-		db := &mockHubDB{
-			cwRows: []gen.ListContinueWatchingRow{{ID: uuid.New(), LibraryID: uuid.New(), Title: "Inception", Type: "movie", UpdatedAt: pgtype.Timestamptz{Valid: false}}},
-			// No seedRows: user has completed nothing yet (fresh install).
-		}
-		h := newHubHandler(db)
-		rec := httptest.NewRecorder()
-		req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
-		h.Get(rec, req)
-		var resp struct {
-			Data HubResponse `json:"data"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-		if len(resp.Data.BecauseYouWatched) != 0 {
-			t.Errorf("byw should be empty for new user, got %d", len(resp.Data.BecauseYouWatched))
-		}
-		if len(resp.Data.ContinueWatching) != 1 {
-			t.Errorf("continue_watching should still populate, got %d", len(resp.Data.ContinueWatching))
 		}
 	})
 }

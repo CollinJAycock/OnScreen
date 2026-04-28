@@ -35,7 +35,6 @@ sub bindHubToRows(hub as Object)
     root = createObject("roSGNode", "ContentNode")
 
     addRowIfNonEmpty(root, "Continue Watching", hub.continue_watching)
-    addBecauseYouWatched(root, hub.because_you_watched)
     addRowIfNonEmpty(root, "Trending", hub.trending)
     addRowIfNonEmpty(root, "Recently Added", hub.recently_added)
 
@@ -49,20 +48,6 @@ sub addRowIfNonEmpty(root as Object, title as String, items as Object)
     row.title = title
     for each item in items
         addItemToRow(row, item)
-    end for
-end sub
-
-sub addBecauseYouWatched(root as Object, rows as Object)
-    if rows = invalid or rows.Count() = 0 then return
-    for each entry in rows
-        seed = entry.seed
-        items = entry["items"]
-        if seed = invalid or items = invalid or items.Count() = 0 then continue for
-        row = root.createChild("ContentNode")
-        row.title = "Because you watched " + seed.title
-        for each item in items
-            addItemToRow(row, item)
-        end for
     end for
 end sub
 
