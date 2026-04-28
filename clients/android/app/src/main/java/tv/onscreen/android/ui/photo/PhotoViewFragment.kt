@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
+import tv.onscreen.android.data.repository.LibraryRepository
 import tv.onscreen.android.ui.KeyEventHandler
 import javax.inject.Inject
 
@@ -49,6 +50,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
 
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var itemRepo: ItemRepository
+    @Inject lateinit var libraryRepo: LibraryRepository
 
     private var imageView: ImageView? = null
     private var positionLabel: TextView? = null
@@ -117,6 +119,61 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first().orEmpty()
             renderCurrent(initialId)
+
+            // Auto-resolve siblings when the caller didn't supply
+            // them (Search / Home / Favorites / History don't have
+            // a natural sibling row to hand over). Fetch the photo
+            // to find its parent album, then list the album's photo
+            // children so D-pad nav still works regardless of entry
+            // point. Best-effort — failures leave siblings empty
+            // and the viewer stays single-photo.
+            if (siblingIds.isEmpty()) {
+                try {
+                    val detail = itemRepo.getItem(initialId)
+                    Log.d(TAG, "resolve siblings parent=${detail.parent_id} library=${detail.library_id}")
+                    val photos = mutableListOf<String>()
+
+                    // First try the parent album's children. Photos
+                    // taken from albums hand back the right scoped
+                    // set (the album the user was browsing).
+                    val parent = detail.parent_id
+                    if (!parent.isNullOrEmpty()) {
+                        photos += itemRepo.getChildren(parent)
+                            .filter { it.type == "photo" }
+                            .map { it.id }
+                    }
+
+                    // Fallback: list everything in the library. Some
+                    // entry points (Search, Favorites, History) may
+                    // surface a photo with no parent album, or a
+                    // photo whose album isn't where the user wants
+                    // to scroll. The library list keeps left/right
+                    // useful in those cases.
+                    if (photos.size < 2) {
+                        photos.clear()
+                        var offset = 0
+                        while (true) {
+                            val (page, total) = libraryRepo.getItems(
+                                detail.library_id,
+                                limit = 200,
+                                offset = offset,
+                            )
+                            photos += page.filter { it.type == "photo" }.map { it.id }
+                            offset += page.size
+                            if (page.isEmpty() || offset >= total) break
+                        }
+                    }
+
+                    Log.d(TAG, "resolved ${photos.size} siblings")
+                    if (photos.size >= 2) {
+                        siblingIds = photos
+                        currentIndex = photos.indexOf(initialId).coerceAtLeast(0)
+                        renderCurrent(siblingIds[currentIndex])
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "sibling resolve failed: ${e.message}")
+                }
+            }
         }
     }
 
