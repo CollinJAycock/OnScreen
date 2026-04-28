@@ -4,6 +4,7 @@
     <string name="server_url_title">Server URL</string>
     <string name="server_url_description">Enter the address of your OnScreen server</string>
     <string name="server_url_hint">http://192.168.1.100:7070</string>
+    <string name="server_url_example">Example: %1$s</string>
     <string name="login_title">Sign In</string>
     <string name="login_description">Enter your OnScreen credentials</string>
     <string name="username">Username</string>
