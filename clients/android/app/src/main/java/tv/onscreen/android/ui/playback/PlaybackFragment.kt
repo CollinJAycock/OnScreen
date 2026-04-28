@@ -415,7 +415,18 @@ class PlaybackFragment : VideoSupportFragment() {
                 exo.playWhenReady = true
             }
             is PlaybackSource.Hls -> {
-                val factory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf())
+                // Default DefaultHttpDataSource timeouts are 8 s
+                // connect / 8 s read. The first .ts segment waits
+                // for the ffmpeg transcoder to spin up server-side,
+                // which on remote / Cloudflare-Tunnel deployments
+                // routinely takes 10-20 s. Bump both to 30 s and
+                // allow cross-protocol redirects so the tunnel's
+                // HTTP→HTTPS handling doesn't kill the load.
+                val factory = DefaultHttpDataSource.Factory()
+                    .setConnectTimeoutMs(30_000)
+                    .setReadTimeoutMs(30_000)
+                    .setAllowCrossProtocolRedirects(true)
+                    .setDefaultRequestProperties(mapOf())
                 val hlsSource = HlsMediaSource.Factory(factory)
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
                 exo.setMediaSource(hlsSource)
