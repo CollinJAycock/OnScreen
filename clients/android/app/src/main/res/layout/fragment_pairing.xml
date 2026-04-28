@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pairing screen. Displays the URL the user goes to on a second
+    device (phone/laptop), the PIN they type there, and a status
+    line that flips between "Waiting for sign-in...", "Code expired",
+    and "Couldn't reach server" while the fragment polls
+    /api/v1/auth/pair/poll in the background.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="80dp"
+    android:background="@color/bg_primary">
+
+    <TextView
+        android:id="@+id/pair_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/pair_title"
+        android:textColor="@color/text_primary"
+        android:textSize="32sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/pair_instructions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="20sp"
+        android:gravity="center"
+        android:text="@string/pair_instructions" />
+
+    <TextView
+        android:id="@+id/pair_url"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:textColor="@color/accent"
+        android:textSize="28sp"
+        android:fontFamily="monospace" />
+
+    <TextView
+        android:id="@+id/pair_pin_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="60dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="16sp"
+        android:textAllCaps="true"
+        android:letterSpacing="0.15"
+        android:text="@string/pair_pin_label" />
+
+    <!-- The PIN is the headline element. Render large, monospaced,
+         and tracked-out so it reads from the couch. -->
+    <TextView
+        android:id="@+id/pair_pin"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="@color/text_primary"
+        android:textSize="96sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:letterSpacing="0.2" />
+
+    <TextView
+        android:id="@+id/pair_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="60dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="18sp"
+        android:gravity="center" />
+
+    <Button
+        android:id="@+id/pair_back"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="60dp"
+        android:minWidth="200dp"
+        android:background="@drawable/btn_secondary"
+        android:textColor="@color/text_primary"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:text="@android:string/cancel" />
+
+</LinearLayout>

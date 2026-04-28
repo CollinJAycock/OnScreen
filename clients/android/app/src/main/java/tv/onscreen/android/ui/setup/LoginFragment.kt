@@ -23,7 +23,8 @@ class LoginFragment : GuidedStepSupportFragment() {
         private const val ACTION_USERNAME = 1L
         private const val ACTION_PASSWORD = 2L
         private const val ACTION_SIGN_IN = 3L
-        private const val ACTION_CHANGE_SERVER = 4L
+        private const val ACTION_PAIR_DEVICE = 4L
+        private const val ACTION_CHANGE_SERVER = 5L
     }
 
     override fun onCreateGuidance(savedInstanceState: Bundle?): GuidanceStylist.Guidance {
@@ -60,6 +61,19 @@ class LoginFragment : GuidedStepSupportFragment() {
                 .title(getString(R.string.sign_in))
                 .build()
         )
+        // Pair-with-another-device path. Lets the user complete a
+        // full OIDC / OAuth / SAML / LDAP / local sign-in flow on
+        // their phone or laptop where there's a real browser, then
+        // hands the resulting tokens back to the TV. The
+        // username+password fields above remain for direct local /
+        // LDAP sign-in (the only types that work cleanly with a TV
+        // remote).
+        actions.add(
+            GuidedAction.Builder(requireContext())
+                .id(ACTION_PAIR_DEVICE)
+                .title(getString(R.string.pair_with_device))
+                .build()
+        )
         actions.add(
             GuidedAction.Builder(requireContext())
                 .id(ACTION_CHANGE_SERVER)
@@ -86,6 +100,10 @@ class LoginFragment : GuidedStepSupportFragment() {
     override fun onGuidedActionClicked(action: GuidedAction) {
         if (action.id == ACTION_CHANGE_SERVER) {
             (activity as? MainActivity)?.navigateTo(NavigationDestination.SERVER_SETUP)
+            return
+        }
+        if (action.id == ACTION_PAIR_DEVICE) {
+            (activity as? MainActivity)?.navigateTo(NavigationDestination.PAIRING)
             return
         }
         if (action.id != ACTION_SIGN_IN) return

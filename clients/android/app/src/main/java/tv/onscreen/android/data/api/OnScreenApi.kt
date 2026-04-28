@@ -17,6 +17,24 @@ interface OnScreenApi {
     @POST("api/v1/auth/logout")
     suspend fun logout(@Body body: LogoutRequest)
 
+    /** Start a device-pairing session. The TV displays the returned
+     *  PIN; the user signs in via the web at /pair on a phone /
+     *  laptop and types the PIN to finish the link. */
+    @POST("api/v1/auth/pair/code")
+    suspend fun createPairCode(): ApiResponse<PairCodeResponse>
+
+    /** Poll for completion. While pending the server replies 202
+     *  with a {status, expires_at} body that Retrofit returns as
+     *  isSuccessful=true with body=null (we treat 202 as "still
+     *  pending"). Once claimed it returns 200 with a TokenPair.
+     *  Authorization is the device_token from createPairCode, NOT
+     *  the user bearer (the user isn't logged in yet at this point);
+     *  pass it pre-formatted as "Bearer <token>". */
+    @GET("api/v1/auth/pair/poll")
+    suspend fun pollPairCode(
+        @Header("Authorization") deviceTokenHeader: String,
+    ): Response<ApiResponse<TokenPair>>
+
     // ── Hub ─────────────────────────────────────────────────────────────────
 
     @GET("api/v1/hub")

@@ -10,6 +10,7 @@ import tv.onscreen.android.R
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.setup.ServerSetupFragment
 import tv.onscreen.android.ui.setup.LoginFragment
+import tv.onscreen.android.ui.setup.PairingFragment
 import tv.onscreen.android.ui.browse.HomeFragment
 import javax.inject.Inject
 
@@ -46,6 +47,7 @@ class MainActivity : FragmentActivity() {
         val fragment = when (destination) {
             NavigationDestination.SERVER_SETUP -> ServerSetupFragment()
             NavigationDestination.LOGIN -> LoginFragment()
+            NavigationDestination.PAIRING -> PairingFragment()
             NavigationDestination.HOME -> HomeFragment()
         }
 
@@ -63,5 +65,6 @@ class MainActivity : FragmentActivity() {
 enum class NavigationDestination {
     SERVER_SETUP,
     LOGIN,
+    PAIRING,
     HOME,
 }

@@ -23,6 +23,16 @@
     <string name="episodes">Episodes</string>
     <string name="tracks">Tracks</string>
     <string name="albums">Albums</string>
+
+    <!-- Device pairing sign-in -->
+    <string name="pair_with_device">Sign in with another device</string>
+    <string name="pair_title">Sign in</string>
+    <string name="pair_instructions">Open this URL on a phone or computer:</string>
+    <string name="pair_pin_label">Then enter the code</string>
+    <string name="pair_status_creating">Generating code…</string>
+    <string name="pair_status_create_failed">Couldn\'t generate code: %1$s. Retrying…</string>
+    <string name="pair_status_waiting">Waiting for sign-in on the other device…</string>
+    <string name="pair_status_retry">Couldn\'t reach server (%1$s). Retrying…</string>
     <string name="season_n">Season %d</string>
     <string name="audio">Audio</string>
     <string name="subtitles">Subtitles</string>
