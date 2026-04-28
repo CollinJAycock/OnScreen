@@ -16,9 +16,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Subscribes to /api/v1/notifications/stream as an SSE source.
- * Emits each parsed [NotificationItem]; reconnects are handled by the caller
- * (typically a coroutine that collects the flow and restarts on completion).
+ * Subscribes to /api/v1/notifications/stream as an SSE source. The server
+ * multiplexes user-facing notifications (item_added, scan_complete, etc.)
+ * and cross-device sync events (`progress.updated`) on the same stream, so
+ * subscribers receive every parsed [NotificationItem] and branch on the
+ * `type` field. Reconnects are the caller's responsibility — typically a
+ * coroutine that collects the flow and restarts on completion.
+ *
+ * The injected OkHttpClient carries [BaseUrlInterceptor] (rewrites
+ * localhost → configured server) and [AuthInterceptor] (Bearer header), so
+ * the SSE request authenticates and routes the same way regular API calls
+ * do — no separate token plumbing here.
  */
 @Singleton
 class NotificationsStream @Inject constructor(

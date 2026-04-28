@@ -1,6 +1,6 @@
-# Feature Matrix: OnScreen vs Plex / Emby / Jellyfin (Server)
+# Feature Matrix: OnScreen vs Plex / Emby / Jellyfin
 
-**Scope:** server-side features only. Client apps (Plex apps, Emby apps, Jellyfin apps, OnScreen web/Android TV/webOS) are **not** compared here — that's a separate axis and would dwarf the server comparison if combined.
+**Scope:** sections 1–14 cover server-side features. Section 15 covers first-party clients — desktop (Tauri shell on OnScreen, Plexamp/Plex HTPC, Emby Theater, Jellyfin Media Player), plus the OnScreen Android TV and LG webOS scaffolds against the corresponding incumbents. Mobile *phone* clients (iOS/Android handheld) stay out of scope — OnScreen has no scaffold there yet, so a phone-app row would be a single column of ❌.
 
 **Legend**
 - ✅ Supported out of the box
@@ -10,7 +10,7 @@
 - ❌ Not supported
 - ❓ Unverified / depends on configuration
 
-**Snapshot date:** 2026-04-27. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
+**Snapshot date:** 2026-04-28. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
 
 > **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, watch-cooccurrence recommendations ("Because you watched X"), trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
 
@@ -280,6 +280,80 @@
 
 ---
 
+## 15. Native Desktop Clients
+
+Compares OnScreen's Tauri 2 shell against the first-party desktop clients in each ecosystem: Plex's pair (Plexamp for music + Plex HTPC for video), Emby Theater, and the community-maintained Jellyfin Media Player (Jellyfin has no first-party desktop client, so JMP is the de-facto reference).
+
+### 15a. Platform & shell
+
+| Feature                         | OnScreen | Plex (Plexamp/HTPC) | Emby Theater | Jellyfin (JMP) | Notes |
+|---------------------------------|:--:|:--:|:--:|:--:|---|
+| Windows                         | ✅ | ✅ | ✅ | ✅ | OnScreen: Tauri 2 + WebView2 |
+| macOS                           | ✅ | ✅ | ✅ | ✅ | OnScreen: Tauri 2 + WKWebView |
+| Linux                           | ✅ | ⚠️ | ⚠️ | ✅ | OnScreen: Tauri 2 + WebKitGTK; Plex/Emby Linux desktops are second-class |
+| Single shared codebase with web | ✅ | ⚠️ | ⚠️ | ✅ | OnScreen: same SvelteKit bundle in browser + Tauri webview; Plexamp is its own React-Native code |
+| Install size                    | ~10 MB | ~80 MB (Plexamp) | ~150 MB | ~120 MB | OnScreen uses the system webview (no bundled Chromium) |
+| Bundled Chromium                | ❌ | ⚠️ | ✅ | ✅ | Tauri trades install size for system-webview variance |
+
+### 15b. Audiophile audio path
+
+| Feature                         | OnScreen | Plex (Plexamp/HTPC) | Emby Theater | Jellyfin (JMP) | Notes |
+|---------------------------------|:--:|:--:|:--:|:--:|---|
+| Native audio engine (out-of-webview) | ✅ | ✅ | ✅ | ⚠️ | OnScreen: cpal + claxon over a lock-free ringbuf; JMP defers to mpv |
+| Bit-perfect / WASAPI exclusive (Windows) | ❌ | ✅ | ✅ | ✅ | OnScreen: cpal 0.16 hard-codes shared mode; needs a cpal fork or raw `wasapi` swap |
+| CoreAudio HOG mode (macOS)      | ❌ | ✅ | ⚠️ | ✅ | Same cpal limitation |
+| ALSA `hw:` device selection (Linux) | ❌ | ✅ | ⚠️ | ✅ | Same cpal limitation |
+| Gapless playback                | ✅ | ✅ | ✅ | ✅ | OnScreen native: preload slot promotes ringbuf into the new active stream — sub-frame; web client uses dual-`<audio>` rotation |
+| Native FLAC decode              | ✅ | ✅ | ✅ | ✅ | OnScreen: claxon (pure-Rust) |
+| Native ALAC / WAV / AIFF decode | ⚠️ | ✅ | ✅ | ✅ | OnScreen native engine is FLAC-only today; other formats fall through to the webview's `<audio>` |
+| DSD (DoP) playback              | ❌ | ⚠️ | ❌ | ⚠️ | Plexamp does DoP for compatible DACs; JMP via mpv |
+| ReplayGain enforced client-side | ⚠️ | ✅ | ✅ | ✅ | OnScreen: tags surfaced server-side, native engine doesn't apply gain yet |
+| Per-device output picker        | ✅ | ✅ | ✅ | ✅ | OnScreen: cpal device enum + diagnostic test-tone page |
+| Hi-res / sample-rate switching  | ⚠️ | ✅ | ✅ | ✅ | OnScreen requests the FLAC's native rate from cpal but without exclusive mode the OS mixer may still resample |
+
+### 15c. Cross-device + power-user
+
+| Feature                         | OnScreen | Plex (Plexamp/HTPC) | Emby Theater | Jellyfin (JMP) | Notes |
+|---------------------------------|:--:|:--:|:--:|:--:|---|
+| OS media keys (Play/Pause/Next/Prev) | ✅ | ✅ | ✅ | ✅ | OnScreen: `tauri-plugin-global-shortcut`, system-wide |
+| System tray (background play)   | ✅ | ✅ | ✅ | ⚠️ | OnScreen: tray menu for Show/Transport/Quit |
+| Native OS notifications         | ✅ | ✅ | ✅ | ⚠️ | OnScreen: now-playing on track change, gated on window blur |
+| OS now-playing widget (SMTC/MPRIS/MediaPlayer) | ❌ | ✅ | ✅ | ⚠️ | Lockscreen/taskbar art + transport; OnScreen punted (`souvlaki` swap) |
+| Secure credential storage       | ✅ | ✅ | ✅ | ⚠️ | OnScreen: Windows Credential Manager / macOS Keychain / Linux Secret Service via `keyring 3.x` |
+| Cross-device resume sync (push) | ✅ | ✅ | ✅ | ⚠️ | OnScreen: SSE `progress.updated` broadcast + watch-page consumer; Jellyfin polls |
+| "Play on this device" remote control | ❌ | ✅ | ✅ | ⚠️ | Pick another logged-in device from a "now playing" list and stream there |
+| Picture-in-picture mode         | ❌ | ✅ | ✅ | ⚠️ | |
+| Configurable server URL (no Plex.tv lock-in) | ✅ | ⚠️ | ✅ | ✅ | OnScreen: first-run picker + `/native/server` reset |
+
+### 15d. TV & mobile coverage
+
+| Feature                         | OnScreen | Plex (apps) | Emby (apps) | Jellyfin (apps) | Notes |
+|---------------------------------|:--:|:--:|:--:|:--:|---|
+| Android TV / Google TV          | ⚠️ | ✅ | ✅ | ✅ | OnScreen: scaffold in [`clients/android/`](../clients/android/) — AndroidX Leanback + Media3 ExoPlayer + Hilt + Retrofit; UI/auth flow not yet wired |
+| LG webOS (smart TV)             | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: scaffold in [`clients/webos/`](../clients/webos/) — SvelteKit SPA packaged via `ares-package` with its own spatial-navigation focus manager; browse/play not yet implemented |
+| Samsung Tizen (smart TV)        | ❌ | ✅ | ✅ | ⚠️ | |
+| Apple TV (tvOS)                 | ❌ | ✅ | ✅ | ⚠️ | Jellyfin: third-party Infuse/SwiftFin |
+| Roku                            | ❌ | ✅ | ✅ | ⚠️ | Jellyfin: third-party |
+| Native iOS phone app            | ❌ | ✅ | ✅ | ✅ | OnScreen runs in mobile browser only |
+| Native Android phone app        | ❌ | ✅ | ✅ | ✅ | OnScreen has Android TV scaffold but no separate phone app |
+| Download for offline playback (mobile) | ❌ | 💎 | 💎 | ⚠️ | Jellyfin: Finamp does music-only |
+| CarPlay / Android Auto          | ❌ | ✅ | ❌ | ❌ | Plexamp only |
+
+### 15e. TV-app architecture (OnScreen scaffolds)
+
+| Decision                        | Android TV scaffold | webOS scaffold | Rationale |
+|---------------------------------|--------------------|---------------|-----------|
+| Language / framework            | Kotlin + AndroidX Leanback | SvelteKit SPA | Leanback is the AOSP-blessed TV UI primitives; webOS has no native UI toolkit worth fighting Chromium for |
+| Video player                    | Media3 ExoPlayer (HLS + DASH) | HTML5 `<video>` + hls.js | ExoPlayer is the Android-native HW path; webOS Chromium handles HLS via JS shim |
+| Networking                      | Retrofit + Moshi + OkHttp + okhttp-sse | reuses `web/src/lib/api.ts` shape | OkHttp's SSE module covers the cross-device sync stream |
+| DI                              | Hilt | n/a (Svelte stores) | |
+| Image loading                   | Coil | browser-native | |
+| Persistent prefs (server URL etc.)| AndroidX DataStore | `localStorage` | |
+| Remote-key navigation           | Leanback handles natively | custom spatial-nav in `lib/focus/` | webOS has no built-in focus engine — the scaffold ports a Plexamp-style coordinate-based picker |
+| Min OS                          | Android 5 (API 21) | webOS 6 (LG C1 / 2021+) | Covers the bulk of the in-field TV install base |
+
+---
+
 ## Where OnScreen Leads
 
 - **PostgreSQL-native**: partitioned event tables, tsvector FTS, materialized hub cache, no SQLite race conditions under heavy write load.
@@ -298,7 +372,9 @@
 - **No Tidal / Qobuz integration** for music streaming.
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
-- **No bit-perfect playback** — fundamentally a native-client feature (browsers force OS-mixer resampling). Lands when WASAPI-exclusive / CoreAudio-hog / ALSA `hw:` paths exist in the OnScreen native client. Server side already serves the file byte-for-byte; the gap is the player.
+- **No bit-perfect playback** — the native Tauri shell ships with a cpal+claxon FLAC engine (out of webview), but cpal 0.16 hard-codes WASAPI shared mode so the OS mixer can still resample. Real exclusive output needs either a cpal fork or dropping to raw `wasapi`/`coreaudio`/`alsa` per platform — multi-day work behind the audiophile pillar.
+- **TV / mobile native apps are scaffolds, not shipped** — OnScreen has a Tauri 2 desktop client (Windows/macOS/Linux) plus Android TV (Leanback + Media3) and LG webOS (SvelteKit + ares-package) scaffolds in [`clients/`](../clients/), but the latter two have no UI / browse / playback wired yet. iOS, Apple TV, Roku, Tizen, and Android phone apps don't exist. The web frontend works in those browsers as a fallback.
+- **No "play on this device" remote control** — cross-device resume sync ships in v2.1 (SSE `progress.updated` broadcast + watch-page consumer), but transferring an active playback session from one device to another isn't wired.
 - **DASH on the client side** — `manifest.mpd` ships server-side in v2.1, but the frontend still uses `hls.js`. Smart-TV apps (Tizen, webOS, Roku) that prefer DASH won't see the benefit until the shaka-player swap lands.
 - **Picture-in-picture server signal** — handler/store has no PiP-mode flag yet.
 
@@ -327,6 +403,7 @@
 - ✅ **Track G — Per-user policy** (5/5): library `is_private` flag with public/private union semantics; `auto_grant_new_users` template wired into invite + OIDC + SAML + LDAP user-creation paths; per-profile inherit-or-override library access; content-rating gates closed in `ListCollectionItems`, `ListItemsByGenre`, `ListWatchHistory`; admin "view as" middleware (read-only, GET-only, IDOR-gated)
 - ✅ **Track H — Streaming format**: server-side DASH `manifest.mpd` endpoint over the existing fMP4 ladder (one segment ladder, two manifests) + `manifest_url` exposed on the session-start response; frontend shaka-player swap intentionally deferred — real DASH leverage is smart-TV native clients (Track E) consuming the URL directly
 - ✅ **Track D — Quality + dev workflow** (3/3): `auth-providers.spec.ts` Playwright spec covering OIDC PKCE shape, SAML signed-AuthnRequest (locks the four-layer SAML signing fix behind a regression guard), LDAP end-to-end + negative path; gh CLI added to CONTRIBUTING.md prereqs (cuts release form to one command); 10-PR Dependabot triage doc grouping the v2.0-tag queue by risk with paste-ready merge commands
+- ✅ **Track E — Native desktop client** (most of the list): Tauri 2 shell for Windows/macOS/Linux reusing the SvelteKit bundle in a system webview; cpal + claxon native FLAC engine (play/pause/preload/seek/auto-advance) outside the webview; OS media keys via `tauri-plugin-global-shortcut`; system tray with transport menu; OS notifications on track change; refresh + access tokens in the OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service) with one-shot store-to-keychain migration; SSE `progress.updated` broadcast + watch-page consumer for cross-device resume. **Outstanding:** real WASAPI exclusive mode (cpal 0.16 limitation, multi-day platform work), OS now-playing widgets (`souvlaki` swap), "play on this device" remote control.
 
 ## Non-Differentiators (All Four Roughly Equal)
 

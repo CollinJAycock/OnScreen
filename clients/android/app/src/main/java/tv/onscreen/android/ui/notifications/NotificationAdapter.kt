@@ -9,7 +9,6 @@ import tv.onscreen.android.R
 import tv.onscreen.android.data.model.NotificationItem
 import java.time.Duration
 import java.time.Instant
-import java.time.format.DateTimeParseException
 
 class NotificationAdapter(
     private val onClick: (NotificationItem) -> Unit,
@@ -50,8 +49,12 @@ class NotificationAdapter(
             itemView.setOnClickListener { onClick(item) }
         }
 
-        private fun relativeTime(iso: String): String {
-            val instant = try { Instant.parse(iso) } catch (_: DateTimeParseException) { return "" }
+        // Server sends created_at as UnixMilli (int64); previous code
+        // tried Instant.parse on what it assumed was an ISO string and
+        // silently returned empty for every notification.
+        private fun relativeTime(unixMs: Long): String {
+            if (unixMs <= 0) return ""
+            val instant = Instant.ofEpochMilli(unixMs)
             val diff = Duration.between(instant, Instant.now())
             val mins = diff.toMinutes()
             return when {

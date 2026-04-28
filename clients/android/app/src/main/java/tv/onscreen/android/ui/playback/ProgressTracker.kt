@@ -52,6 +52,15 @@ class ProgressTracker(
         this.hlsOffsetMs = offsetMs
     }
 
+    /** Content position reported by the most recent successful publish.
+     *  Used by the cross-device sync subscriber as a self-loop guard —
+     *  the same Progress PUT round-trips back as a `progress.updated`
+     *  SSE event, and the subscriber ignores echoes that match this
+     *  value within a small tolerance. -1 until the first publish. */
+    @Volatile
+    var lastReportedContentMs: Long = -1L
+        private set
+
     private suspend fun report(state: String) {
         val id = itemId ?: return
         val rawPos = positionProvider?.invoke() ?: return
@@ -61,6 +70,7 @@ class ProgressTracker(
         val contentPos = rawPos + hlsOffsetMs
         try {
             itemRepo.updateProgress(id, contentPos, dur, state)
+            lastReportedContentMs = contentPos
         } catch (_: Exception) {
             // Best-effort — don't crash playback if server is unreachable.
         }

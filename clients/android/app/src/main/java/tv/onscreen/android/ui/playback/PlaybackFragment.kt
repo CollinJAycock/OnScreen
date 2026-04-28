@@ -38,7 +38,9 @@ import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
+import tv.onscreen.android.data.repository.NotificationsRepository
 import javax.inject.Inject
+import kotlin.math.abs
 
 @AndroidEntryPoint
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -46,6 +48,7 @@ class PlaybackFragment : VideoSupportFragment() {
 
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var itemRepo: ItemRepository
+    @Inject lateinit var notificationsRepo: NotificationsRepository
 
     private lateinit var viewModel: PlaybackViewModel
     private var player: ExoPlayer? = null
@@ -63,6 +66,9 @@ class PlaybackFragment : VideoSupportFragment() {
 
     private var audioAction: Action? = null
     private var subtitleAction: Action? = null
+
+    /** Cross-device sync subscriber. Cancelled in onDestroyView. */
+    private var syncJob: Job? = null
 
     companion object {
         private const val ARG_ITEM_ID = "item_id"
@@ -126,6 +132,59 @@ class PlaybackFragment : VideoSupportFragment() {
 
                 refreshSecondaryActions()
                 startUpNextWatcher()
+                startCrossDeviceSync(itemId)
+            }
+        }
+    }
+
+    /**
+     * Subscribe to `progress.updated` SSE events for the current item.
+     * When another of the user's devices reports new progress AND local
+     * playback is paused/idle, seek to the new position so a tap on Play
+     * picks up where the other device left off.
+     *
+     * Skipped during local active playback — the user driving this device
+     * has authoritative position. Self-loop guard ignores echoes within
+     * 2 s of our own most recent saveProgress. HLS sessions translate
+     * content-time → player-time via the captured offset; positions
+     * outside the loaded playlist range bail (a fresh transcode on the
+     * next launch will pick up the new resume position from the
+     * server-side store anyway).
+     */
+    private fun startCrossDeviceSync(itemId: String) {
+        syncJob?.cancel()
+        syncJob = viewLifecycleOwner.lifecycleScope.launch {
+            // Reconnect loop matches the notifications-list pattern —
+            // one underlying SSE per subscriber, restart on completion.
+            while (isActive) {
+                try {
+                    notificationsRepo.subscribeProgressUpdates().collect { evt ->
+                        if (evt.item_id != itemId) return@collect
+                        val exo = player ?: return@collect
+                        // Don't fight the local user mid-playback.
+                        if (exo.isPlaying) return@collect
+                        // Self-loop guard: every saveProgress on this
+                        // device round-trips back as a sync event.
+                        val tracker = progressTracker
+                        val lastSelf = tracker?.lastReportedContentMs ?: -1L
+                        if (lastSelf >= 0 && abs(evt.position_ms - lastSelf) < 2000L) {
+                            return@collect
+                        }
+                        val playerPos = evt.position_ms - viewModel.hlsOffsetMs
+                        val dur = exo.duration
+                        if (playerPos < 0 || (dur > 0 && dur != Long.MAX_VALUE && playerPos > dur)) {
+                            // Sync position is outside the currently-loaded
+                            // session. Skip: the new position is already
+                            // committed server-side, so the next playback
+                            // start will pick it up via item.view_offset_ms.
+                            return@collect
+                        }
+                        exo.seekTo(playerPos)
+                    }
+                } catch (_: Exception) {
+                    // Stream dropped; reconnect after a short delay.
+                }
+                delay(5_000)
             }
         }
     }
@@ -402,6 +461,8 @@ class PlaybackFragment : VideoSupportFragment() {
         super.onDestroyView()
         upNextJob?.cancel()
         upNextJob = null
+        syncJob?.cancel()
+        syncJob = null
         progressTracker?.stop()
         progressTracker = null
         player?.release()
