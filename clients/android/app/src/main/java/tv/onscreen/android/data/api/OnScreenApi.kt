@@ -87,6 +87,19 @@ interface OnScreenApi {
         @Query("library_id") libraryId: String? = null,
     ): ApiResponse<List<SearchResult>>
 
+    // ── Discover (TMDB-backed) + Requests ───────────────────────────────────
+
+    @GET("api/v1/discover/search")
+    suspend fun discoverSearch(
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 12,
+    ): ApiResponse<List<DiscoverItem>>
+
+    @POST("api/v1/requests")
+    suspend fun createRequest(
+        @Body body: CreateRequestBody,
+    ): ApiResponse<MediaRequest>
+
     // ── Favorites ───────────────────────────────────────────────────────────
 
     @GET("api/v1/favorites")

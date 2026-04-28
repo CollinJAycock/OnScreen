@@ -62,4 +62,15 @@
     <string name="because_you_watched">Because you watched %1$s</string>
     <string name="chapters">Chapters</string>
     <string name="chapter_n">Chapter %1$d</string>
+
+    <!-- Search + request -->
+    <string name="search_in_library">In your library</string>
+    <string name="search_request_more">Request more</string>
+    <string name="request_confirm_title">Add to your library?</string>
+    <string name="request_confirm_message">"%1$s" will be sent to your media server for download.</string>
+    <string name="request_confirm_yes">Request</string>
+    <string name="request_success">Requested: %1$s</string>
+    <string name="request_failed">Request failed</string>
+    <string name="request_status_pending">Pending</string>
+    <string name="request_status_already">Already requested — status: %1$s</string>
 </resources>

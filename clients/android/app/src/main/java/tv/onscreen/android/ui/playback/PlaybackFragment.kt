@@ -376,6 +376,18 @@ class PlaybackFragment : VideoSupportFragment() {
                     }
                 }
             }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // Surface ExoPlayer's actual error to the user instead
+                // of the silent failure that produced the "audio file
+                // not playable" report. Code + message together pin
+                // down whether it's a network/auth issue, a decoder
+                // miss, or a malformed source. See
+                // https://developer.android.com/reference/androidx/media3/common/PlaybackException
+                // for the error code constants.
+                val msg = "Playback error ${error.errorCodeName}: ${error.message}"
+                showErrorDialog(msg)
+            }
         })
     }
 
