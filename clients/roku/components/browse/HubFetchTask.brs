@@ -13,7 +13,7 @@ sub init()
 end sub
 
 sub runHubFetch()
-    parsed = Client_GetSync(API_HUB, true)
+    parsed = Client_GetSync(ApiHub(), true)
     if parsed = invalid
         m.top.result = {}
     else

@@ -68,13 +68,30 @@ roku/
 cd clients/roku
 npm install                          # one-time
 
-# Sideload to a Roku on your LAN:
-ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
+# Static analysis (BrighterScript compiler — type-checks .brs +
+# validates SceneGraph XML referenced scripts):
+npm run check
 
-# Or just package the zip without uploading (e.g., for store submission):
+# Unit tests for the pure helpers (URL encoding, JSON envelope
+# unwrap, string utils, asset URL builders) via the brs Node-side
+# interpreter. brs has no SceneGraph or roUrlTransfer support so
+# this only covers source/util/* + source/api/Endpoints.brs —
+# scene controllers and HTTP-touching code need real hardware.
+npm test
+
+# Package the zip (no upload — useful before store submission):
 npm run package
 # Output lands at dist/onscreen-roku-<version>.zip
+
+# Sideload to a Roku on your LAN:
+ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
 ```
+
+**Local-only test coverage** (35 cases as of writing): `UrlEncodePath`,
+`AssetStream`/`AssetArtwork` URL contracts, `Json_Parse`/`UnwrapData`/
+`UnwrapList` envelope handling, `StringTrim` / `StringStripTrailingSlash`.
+Anything that depends on `roUrlTransfer`, `roRegistrySection`, or
+SceneGraph nodes can only be exercised on real Roku hardware.
 
 When the sideload succeeds the Roku launches the dev channel
 automatically. Subsequent reloads replace the running channel in

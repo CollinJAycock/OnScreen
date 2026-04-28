@@ -1,0 +1,15 @@
+{
+  "//": "BrighterScript compiler config — drives `npm run check` and the VS Code BrightScript Language extension. Project root is the channel root, files: lists the entries Roku's bundler reads at install time. The default rootDir + files glob is fine but we name them explicitly so a stray .brs in (say) scripts/ doesn't get type-checked as channel code.",
+  "rootDir": ".",
+  "files": [
+    "manifest",
+    "source/**/*.brs",
+    "components/**/*.{brs,xml}",
+    "images/**/*"
+  ],
+  "createPackage": false,
+  "//diagnosticFilters": "Suppress noise. 1011 = same-component-name (we do this intentionally; bsc misreads our setup). 1067 = unknown-roku-component (fires on Keyboard/MiniKeyboard which exist on real Roku but aren't in bsc's component DB).",
+  "diagnosticFilters": [
+    {"codes": [1067, 1011]}
+  ]
+}

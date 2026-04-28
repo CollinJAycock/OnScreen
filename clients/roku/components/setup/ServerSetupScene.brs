@@ -19,7 +19,7 @@ end sub
 sub onConnectPressed()
     url = m.keyboard.text
     if url = invalid then url = ""
-    url = stripTrailingSlash(trim(url))
+    url = StringStripTrailingSlash(StringTrim(url))
     if url = ""
         showError("Server URL can't be empty")
         return
@@ -33,7 +33,7 @@ sub onConnectPressed()
     ' Prefs (BuildTransfer reads from there, not from a parameter).
     ' If the probe fails we don't roll back — the user will retry
     ' Connect and overwrite, which is the simpler UX.
-    Prefs_Set(PREFS_KEY_SERVER_URL, url)
+    Prefs_Set(PrefsKeyServerUrl(), url)
 
     m.connectBtn.text = "Connecting..."
     healthy = probeHealth()
@@ -72,23 +72,5 @@ function getMainScene() as Object
     return node
 end function
 
-function trim(s as String) as String
-    ' BrightScript has no built-in trim. Walk both ends.
-    if s = invalid then return ""
-    startIdx = 1
-    endIdx = Len(s)
-    while startIdx <= endIdx and Mid(s, startIdx, 1) = " "
-        startIdx = startIdx + 1
-    end while
-    while endIdx >= startIdx and Mid(s, endIdx, 1) = " "
-        endIdx = endIdx - 1
-    end while
-    if endIdx < startIdx then return ""
-    return Mid(s, startIdx, endIdx - startIdx + 1)
-end function
-
-function stripTrailingSlash(s as String) as String
-    if s = "" then return s
-    if Right(s, 1) = "/" then return Left(s, Len(s) - 1)
-    return s
-end function
+' String helpers (StringTrim, StringStripTrailingSlash) live in
+' source/util/Strings.brs so they're testable standalone via brs.

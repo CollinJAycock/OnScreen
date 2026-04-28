@@ -22,8 +22,13 @@
 ' firmware doesn't enforce strict OCSP and the chain check is
 ' identical to what every Roku channel uses.
 
-const HTTP_OK = 200
-const HTTP_UNAUTHORIZED = 401
+function HttpOk() as Integer
+    return 200
+end function
+
+function HttpUnauthorized() as Integer
+    return 401
+end function
 
 ' Build a roUrlTransfer pointed at the configured server with the
 ' bearer header already attached (when auth=true and a token
@@ -58,7 +63,7 @@ function Client_GetSync(path as String, auth as Boolean) as Dynamic
 
     raw = transfer.GetToString()
     code = transfer.GetResponseCode()
-    if code <> HTTP_OK then return invalid
+    if code <> HttpOk() then return invalid
     return Json_UnwrapData(Json_Parse(raw))
 end function
 
@@ -69,7 +74,7 @@ function Client_PostSync(path as String, body as Object, auth as Boolean) as Dyn
 
     raw = transfer.PostFromString(FormatJson(body))
     code = transfer.GetResponseCode()
-    if code <> HTTP_OK then return invalid
+    if code <> HttpOk() then return invalid
     return Json_UnwrapData(Json_Parse(raw))
 end function
 
@@ -95,6 +100,6 @@ end function
 ' invalid.
 function Client_DrainAsync(event as Object) as Dynamic
     if event = invalid then return invalid
-    if event.GetResponseCode() <> HTTP_OK then return invalid
+    if event.GetResponseCode() <> HttpOk() then return invalid
     return Json_UnwrapData(Json_Parse(event.GetString()))
 end function

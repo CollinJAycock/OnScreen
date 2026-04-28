@@ -1,20 +1,43 @@
 ' OnScreen API path constants. Mirrors the Go server's router.go
 ' surface. Keep in sync when bumping the server API version.
 '
+' Defined as zero-arg functions instead of `const` declarations
+' because plain BrightScript (vs. BrighterScript) has no const
+' keyword. The function-returning-literal pattern is the standard
+' Roku-channel idiom for module-scoped constants.
+'
 ' Paths are joined to the configured server URL by Client.brs; do
 ' NOT prepend a host here.
 
-const API_BASE = "/api/v1"
+function ApiBase() as String
+    return "/api/v1"
+end function
 
 ' Auth
-const API_AUTH_LOGIN = "/api/v1/auth/login"
-const API_AUTH_REFRESH = "/api/v1/auth/refresh"
-const API_AUTH_LOGOUT = "/api/v1/auth/logout"
+function ApiAuthLogin() as String
+    return "/api/v1/auth/login"
+end function
+
+function ApiAuthRefresh() as String
+    return "/api/v1/auth/refresh"
+end function
+
+function ApiAuthLogout() as String
+    return "/api/v1/auth/logout"
+end function
 
 ' Hub / browse
-const API_HUB = "/api/v1/hub"
-const API_LIBRARIES = "/api/v1/libraries"
-const API_SEARCH = "/api/v1/search"
+function ApiHub() as String
+    return "/api/v1/hub"
+end function
+
+function ApiLibraries() as String
+    return "/api/v1/libraries"
+end function
+
+function ApiSearch() as String
+    return "/api/v1/search"
+end function
 
 ' Items
 function ApiItem(id as String) as String

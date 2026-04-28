@@ -25,7 +25,7 @@ sub onSignInPressed()
     end if
 
     m.signInBtn.text = "Signing in..."
-    pair = Client_PostSync(API_AUTH_LOGIN, {
+    pair = Client_PostSync(ApiAuthLogin(), {
         username: username
         password: password
     }, false)
@@ -37,13 +37,13 @@ sub onSignInPressed()
     end if
 
     Prefs_SetTokens(pair["access_token"], pair["refresh_token"])
-    Prefs_Set(PREFS_KEY_USERNAME, pair["username"])
+    Prefs_Set(PrefsKeyUsername(), pair["username"])
 
     getMainScene().callFunc("navigateTo", "HomeScene")
 end sub
 
 sub onChangeServerPressed()
-    Prefs_Delete(PREFS_KEY_SERVER_URL)
+    Prefs_Delete(PrefsKeyServerUrl())
     Prefs_ClearAuth()
     getMainScene().callFunc("navigateTo", "ServerSetupScene")
 end sub
