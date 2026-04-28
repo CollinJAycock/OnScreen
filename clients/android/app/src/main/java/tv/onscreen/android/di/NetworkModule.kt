@@ -10,12 +10,14 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import tv.onscreen.android.data.api.AuthInterceptor
 import tv.onscreen.android.data.api.BaseUrlInterceptor
+import tv.onscreen.android.data.api.NoRevocationTrustManager
 import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.api.TokenAuthenticator
 import tv.onscreen.android.data.prefs.ServerPrefs
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
+import javax.net.ssl.SSLContext
 
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
@@ -35,15 +37,36 @@ object NetworkModule {
         return BaseUrlInterceptor(prefs)
     }
 
+    /** OCSP/CRL soft-fail TLS factory shared by all OkHttp clients in
+     *  the app. Builds an SSLContext around [NoRevocationTrustManager]
+     *  so a stale OCSP response (the most common cause of "Chain
+     *  validation failed" on devices with skewed clocks or behind
+     *  certain enterprise networks) doesn't break the connection.
+     *  See the trust-manager file for the threat-model rationale. */
+    private data class Tls(
+        val socketFactory: javax.net.ssl.SSLSocketFactory,
+        val trustManager: javax.net.ssl.X509TrustManager,
+    )
+
+    private fun buildTls(): Tls {
+        val tm = NoRevocationTrustManager()
+        val ctx = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<javax.net.ssl.TrustManager>(tm), null)
+        }
+        return Tls(ctx.socketFactory, tm)
+    }
+
     /** Plain client for auth refresh calls — no authenticator, avoids circular dep. */
     @Provides
     @Singleton
     @AuthClient
     fun provideAuthOkHttpClient(baseUrlInterceptor: BaseUrlInterceptor): OkHttpClient {
+        val tls = buildTls()
         return OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor(baseUrlInterceptor)
+            .sslSocketFactory(tls.socketFactory, tls.trustManager)
             .build()
     }
 
@@ -73,6 +96,7 @@ object NetworkModule {
         baseUrlInterceptor: BaseUrlInterceptor,
         @AuthClient authApi: OnScreenApi,
     ): OkHttpClient {
+        val tls = buildTls()
         val builder = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -80,6 +104,7 @@ object NetworkModule {
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(AuthInterceptor(prefs))
             .authenticator(TokenAuthenticator(prefs) { authApi })
+            .sslSocketFactory(tls.socketFactory, tls.trustManager)
 
         return builder.build()
     }
