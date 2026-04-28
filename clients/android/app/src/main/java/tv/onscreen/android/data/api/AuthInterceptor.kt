@@ -1,5 +1,6 @@
 package tv.onscreen.android.data.api
 
+import android.net.Uri
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -39,6 +40,19 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val path = request.url.encodedPath
+
+        // Scope auth to our own server. The shared OkHttp/Coil stack
+        // also fetches external images (TMDB poster CDN for the
+        // "Request more" search row), and TMDB rejects requests that
+        // carry an unknown bearer with 401 — Coil swallows that and
+        // shows the placeholder. Match by host: anything that isn't
+        // the configured server passes through unmodified.
+        val serverHost = runBlocking { prefs.getServerUrl() }?.let {
+            runCatching { Uri.parse(it).host }.getOrNull()
+        }
+        if (serverHost != null && !request.url.host.equals(serverHost, ignoreCase = true)) {
+            return chain.proceed(request)
+        }
 
         if (skipPaths.any { path.contains(it) }) {
             return chain.proceed(request)
