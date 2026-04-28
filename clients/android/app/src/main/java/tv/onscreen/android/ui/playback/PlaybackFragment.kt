@@ -430,7 +430,11 @@ class PlaybackFragment : VideoSupportFragment() {
                 // HTTP→HTTPS handling doesn't kill the load.
                 val factory = DefaultHttpDataSource.Factory()
                     .setConnectTimeoutMs(30_000)
-                    .setReadTimeoutMs(30_000)
+                    // 60 s read so a cold transcoder start (large
+                    // 4K HEVC segments, ~30 MB each, over a
+                    // Cloudflare Tunnel) doesn't trip the default
+                    // 8 s read budget mid-segment.
+                    .setReadTimeoutMs(60_000)
                     .setAllowCrossProtocolRedirects(true)
                     // Cloudflare Tunnel / WAF rules sometimes block
                     // requests with no User-Agent (ExoPlayer's
@@ -440,7 +444,14 @@ class PlaybackFragment : VideoSupportFragment() {
                     // real client and we can grep tunnel logs.
                     .setUserAgent("OnScreen-Android/1.0 (ExoPlayer)")
                     .setDefaultRequestProperties(mapOf())
+                // Retry HTTP / IO failures up to 6 times with the
+                // default exponential backoff (1 s, 2 s, 4 s, 8 s,
+                // 8 s, 8 s ≈ 30 s total). Catches the case where
+                // the playlist isn't ready on the first poll
+                // because the transcoder is still warming up.
+                val errorPolicy = androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6)
                 val hlsSource = HlsMediaSource.Factory(factory)
+                    .setLoadErrorHandlingPolicy(errorPolicy)
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
                 exo.setMediaSource(hlsSource)
                 exo.prepare()

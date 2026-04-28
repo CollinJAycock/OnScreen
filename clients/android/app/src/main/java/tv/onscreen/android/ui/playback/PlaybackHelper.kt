@@ -35,7 +35,7 @@ object PlaybackHelper {
     )
 
     private val directPlayContainers = setOf(
-        "mp4", "mkv", "webm", "mov",
+        "mp4", "mkv", "matroska", "webm", "mov",
     )
 
     /** Video codecs ExoPlayer can play but that may need container remux. */
