@@ -1,16 +1,48 @@
 package tv.onscreen.android
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import dagger.hilt.android.HiltAndroidApp
+import okhttp3.OkHttpClient
 import java.security.Security
+import javax.inject.Inject
 
+/**
+ * Application class. Wires:
+ *   - JVM-level OCSP soft-fail (see disableStrictRevocationChecking
+ *     below) — must run before any HTTPS happens.
+ *   - Coil's singleton ImageLoader is configured against our
+ *     Hilt-managed OkHttpClient so every imageView.load(url) call
+ *     in the UI carries the Authorization: Bearer header. Without
+ *     this, Coil uses its own bare OkHttpClient and artwork
+ *     requests come back 401 (the server's /artwork/ route is
+ *     RequiredAllowQueryToken — accepts header OR ?token= but
+ *     not nothing). Symptom: home + detail screens render with
+ *     placeholder-coloured boxes where posters should be while
+ *     direct-play / transcode video still works fine because
+ *     transcode session URLs carry their own per-session token.
+ */
 @HiltAndroidApp
-class OnScreenApp : Application() {
+class OnScreenApp : Application(), ImageLoaderFactory {
+
+    /**
+     * Hilt populates this after super.onCreate(); newImageLoader()
+     * is invoked lazily on the first image load (well after the
+     * Hilt graph is ready), so the lateinit isn't a hazard here.
+     */
+    @Inject lateinit var okHttpClient: OkHttpClient
 
     override fun onCreate() {
         super.onCreate()
         disableStrictRevocationChecking()
     }
+
+    override fun newImageLoader(): ImageLoader =
+        ImageLoader.Builder(this)
+            .okHttpClient(okHttpClient)
+            .crossfade(true)
+            .build()
 
     /**
      * Disable OCSP/CRL revocation checking at the JVM PKIX layer

@@ -5,7 +5,7 @@ import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
 import androidx.leanback.app.BackgroundManager
-import coil.ImageLoader
+import coil.imageLoader
 import coil.request.ImageRequest
 import tv.onscreen.android.data.artworkUrl
 
@@ -46,7 +46,10 @@ class BackgroundHelper(private val activity: Activity, private val serverUrl: St
     }
 
     private fun loadImage(url: String) {
-        val imageLoader = ImageLoader(activity)
+        // Use the application-singleton ImageLoader (configured in
+        // OnScreenApp with our authed OkHttpClient) instead of a
+        // fresh ImageLoader(activity) — the latter would bypass the
+        // Bearer-injecting AuthInterceptor and 401 on every fanart.
         val request = ImageRequest.Builder(activity)
             .data(url)
             .target(
@@ -54,6 +57,6 @@ class BackgroundHelper(private val activity: Activity, private val serverUrl: St
                 onError = { backgroundManager.drawable = null },
             )
             .build()
-        imageLoader.enqueue(request)
+        activity.imageLoader.enqueue(request)
     }
 }

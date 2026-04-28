@@ -6,8 +6,26 @@ import okhttp3.Response
 import tv.onscreen.android.data.prefs.ServerPrefs
 
 /**
- * Attaches Authorization: Bearer header to API requests.
- * Skips auth/login, auth/refresh, health, artwork, and media stream paths.
+ * Attaches Authorization: Bearer header to API requests. Used for
+ * both Retrofit JSON traffic and image fetches via Coil (the singleton
+ * ImageLoader configured in OnScreenApp uses this same OkHttp client).
+ *
+ * Skip list is for paths that intentionally bypass our auth layer:
+ *
+ * - auth/login, auth/refresh — would fight an expired Bearer with
+ *   itself; auth flow handles auth on its own.
+ * - health/live — probed before login during server-URL setup, no
+ *   token exists yet.
+ * - /media/stream/ — Media3 ExoPlayer uses its own HTTP stack, not
+ *   OkHttp; the route is reached via transcode session URLs that
+ *   carry per-session ?token=, not via this interceptor.
+ *
+ * Notably NOT skipped: /artwork/. Coil's ImageLoader does run through
+ * OkHttp and the server's RequiredAllowQueryToken middleware accepts
+ * the Bearer header. Adding artwork to the skip list (as we did
+ * originally) was the bug behind "no art on Fire TV / cross-origin
+ * builds": every image request hit the server unauthenticated → 401 →
+ * Coil rendered the placeholder colour for every card.
  */
 class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
@@ -15,7 +33,6 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         "auth/login",
         "auth/refresh",
         "health/live",
-        "/artwork/",
         "/media/stream/",
     )
 
