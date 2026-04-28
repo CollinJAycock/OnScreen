@@ -22,6 +22,7 @@ import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.photo.PhotoViewFragment
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -118,7 +119,24 @@ class LibraryFragment : VerticalGridSupportFragment() {
 
         setOnItemViewClickedListener { _, item, _, _ ->
             if (item is MediaItem) {
-                Navigator.open(parentFragmentManager, item.id, item.type, 0)
+                if (item.type == "photo") {
+                    // Pass the surrounding photos as a sibling list so
+                    // PhotoViewFragment's D-pad left/right cycles
+                    // through them. Filtered to other photos in the
+                    // current grid view (sort/genre filter applied) so
+                    // the navigation matches what the user just saw.
+                    val siblings = collectPhotoSiblings()
+                    val startIndex = siblings.indexOf(item.id).coerceAtLeast(0)
+                    parentFragmentManager.beginTransaction()
+                        .replace(
+                            R.id.main_container,
+                            PhotoViewFragment.newInstance(item.id, siblings, startIndex),
+                        )
+                        .addToBackStack(null)
+                        .commit()
+                } else {
+                    Navigator.open(parentFragmentManager, item.id, item.type, 0)
+                }
             }
         }
 
@@ -143,6 +161,25 @@ class LibraryFragment : VerticalGridSupportFragment() {
                 else -> false
             }
         }
+    }
+
+    /** Collect every photo currently in the grid as a flat id list,
+     *  in their visible order. The library may be paginating —
+     *  what's visible is what we have; loadMore-driven additions
+     *  past this point won't be in the sibling list, but the
+     *  PhotoViewFragment's wrap-around handles the boundary
+     *  gracefully (right at the end goes back to the first
+     *  visible photo). For the common case (small albums) the
+     *  whole library is loaded by the time the user clicks. */
+    private fun collectPhotoSiblings(): List<String> {
+        val out = mutableListOf<String>()
+        for (i in 0 until gridAdapter.size()) {
+            val it = gridAdapter.get(i)
+            if (it is MediaItem && it.type == "photo") {
+                out.add(it.id)
+            }
+        }
+        return out
     }
 
     private fun updateTitle() {
