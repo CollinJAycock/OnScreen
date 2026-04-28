@@ -73,6 +73,9 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             viewModel.discover.collectLatest { rebuildRows() }
         }
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.discoverError.collectLatest { rebuildRows() }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.scope.collectLatest { rebuildRows() }
         }
 
@@ -109,6 +112,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     private fun rebuildRows() {
         val library = viewModel.results.value
         val discover = viewModel.discover.value
+        val discoverError = viewModel.discoverError.value
 
         rowsAdapter.clear()
 
@@ -127,6 +131,16 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             discover.forEach { listAdapter.add(it) }
             rowsAdapter.add(
                 ListRow(HeaderItem(1L, getString(R.string.search_request_more)), listAdapter),
+            )
+        } else if (discoverError != null) {
+            // Surface the discover failure in the row label itself so
+            // the user can see why the Request row is empty without
+            // needing to dig into logcat. Hidden when discover
+            // succeeded with no results (the "no TMDB matches"
+            // case shouldn't render any chrome at all).
+            val emptyAdapter = ArrayObjectAdapter(DiscoverCardPresenter(requireContext()))
+            rowsAdapter.add(
+                ListRow(HeaderItem(2L, discoverError), emptyAdapter),
             )
         }
     }

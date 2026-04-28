@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.search
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -10,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 import tv.onscreen.android.data.model.DiscoverItem
 import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.SearchResult
@@ -34,6 +36,14 @@ class SearchViewModel @Inject constructor(
      *  (they're already in [results]; rendering both would duplicate). */
     private val _discover = MutableStateFlow<List<DiscoverItem>>(emptyList())
     val discover: StateFlow<List<DiscoverItem>> = _discover
+
+    /** Reason TMDB discover came back empty — surfaced in the UI so
+     *  the user knows whether requests are even possible on this
+     *  server. Empty = no error (either succeeded or simply has no
+     *  TMDB matches). Non-empty = a configurable problem worth
+     *  showing. */
+    private val _discoverError = MutableStateFlow<String?>(null)
+    val discoverError: StateFlow<String?> = _discoverError
 
     private val _libraries = MutableStateFlow<List<Library>>(emptyList())
     val libraries: StateFlow<List<Library>> = _libraries
@@ -62,6 +72,7 @@ class SearchViewModel @Inject constructor(
         if (query.length < 2) {
             _results.value = emptyList()
             _discover.value = emptyList()
+            _discoverError.value = null
             return
         }
 
@@ -69,31 +80,65 @@ class SearchViewModel @Inject constructor(
         searchJob = viewModelScope.launch {
             delay(300) // Debounce — wait for user to stop typing.
 
-            // Library + discover fan-out in parallel. Library failures
-            // surface as an empty list; discover failures (TMDB not
-            // configured, rate-limited) also surface as empty so the
-            // user still sees library hits even if the request layer
-            // is unavailable.
             val libraryDeferred = async {
-                try { itemRepo.search(query, libraryId = libraryId) } catch (_: Exception) { emptyList() }
-            }
-            // Don't bother hitting TMDB when scoped to a single
-            // library — the user is browsing locally and the discover
-            // hits would surface unrelated titles.
-            val discoverDeferred = async {
-                if (libraryId != null) emptyList()
-                else try {
-                    discoverRepo.search(query)
-                } catch (_: Exception) {
+                try { itemRepo.search(query, libraryId = libraryId) }
+                catch (e: Exception) {
+                    Log.w(TAG, "library search failed", e)
                     emptyList()
+                }
+            }
+
+            // Discover (TMDB) is skipped when scoped to a single
+            // library — cross-library suggestions are noise when the
+            // user has narrowed to a specific shelf. Failures are
+            // surfaced via [discoverError] so the user knows the
+            // Request row is unavailable and why; previously they
+            // were swallowed silently and the row just never
+            // appeared, leaving the user assuming nothing matched.
+            val discoverDeferred = async {
+                if (libraryId != null) {
+                    DiscoverResult(emptyList(), null)
+                } else {
+                    try {
+                        DiscoverResult(discoverRepo.search(query), null)
+                    } catch (e: Exception) {
+                        val reason = explainDiscoverFailure(e)
+                        Log.w(TAG, "discover search failed: $reason", e)
+                        DiscoverResult(emptyList(), reason)
+                    }
                 }
             }
             val (lib, disc) = awaitAll(libraryDeferred, discoverDeferred)
             @Suppress("UNCHECKED_CAST")
             _results.value = lib as List<SearchResult>
-            @Suppress("UNCHECKED_CAST")
-            _discover.value = (disc as List<DiscoverItem>).filter { !it.in_library }
+            val discoverResult = disc as DiscoverResult
+            _discover.value = discoverResult.items.filter { !it.in_library }
+            _discoverError.value = discoverResult.errorReason
         }
+    }
+
+    private data class DiscoverResult(
+        val items: List<DiscoverItem>,
+        val errorReason: String?,
+    )
+
+    /** Map a discover-call exception to a short human-readable
+     *  reason. The most common cases are TMDB-not-configured (404
+     *  / 503 from the server) — for those we use a friendlier
+     *  message; otherwise return the raw exception text. */
+    private fun explainDiscoverFailure(e: Exception): String {
+        if (e is HttpException) {
+            return when (e.code()) {
+                404, 503 -> "Discover unavailable — TMDB not configured on this server"
+                401, 403 -> "Discover requires sign-in"
+                else -> "Discover failed (HTTP ${e.code()})"
+            }
+        }
+        return e.message ?: "Discover failed"
+    }
+
+    companion object {
+        private const val TAG = "SearchViewModel"
     }
 
     /** Create a media request for a discover item. Updates the
