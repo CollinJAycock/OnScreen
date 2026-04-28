@@ -25,6 +25,12 @@ tauri-build = { version = "2", features = [] }
 #                        appdata dir so backups + sync work for free.
 tauri = { version = "2", features = [] }
 tauri-plugin-store = "2"
+# OS-level keyboard shortcuts. Used to register the platform media
+# keys (Play/Pause, Next, Previous) so transport works without the
+# app needing focus — same UX as Spotify, Plexamp, etc. The plugin
+# emits an event when a registered combo fires; the AudioPlayer in
+# the webview listens and dispatches to the audio store.
+tauri-plugin-global-shortcut = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

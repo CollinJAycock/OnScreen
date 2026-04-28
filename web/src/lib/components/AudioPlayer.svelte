@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
   import { itemApi, getApiBase, getBearerToken, assetUrl } from '$lib/api';
-  import { isTauri, audioPlayUrl, audioPreloadUrl, audioPause, audioResume, stopAudio, audioState } from '$lib/native';
+  import { isTauri, audioPlayUrl, audioPreloadUrl, audioPause, audioResume, audioSeek, stopAudio, audioState, onMediaKey } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
@@ -105,6 +105,10 @@
     } catch { /* offline — drop the event */ }
   }
 
+  // OS media-key listener handle. Registered on mount, torn down
+  // on destroy. No-op in the browser bundle.
+  let mediaKeyUnlisten: (() => void) | null = null;
+
   // Restore volume from localStorage so it persists across reloads.
   onMount(() => {
     const v = localStorage.getItem('onscreen_audio_volume');
@@ -114,11 +118,36 @@
     }
     const m = localStorage.getItem('onscreen_audio_muted');
     if (m === '1') muted = true;
+
+    // Wire OS media keys → audio store. The Rust side registers the
+    // shortcuts globally so they fire whether or not OnScreen is
+    // focused. Guards against double-firing while no track is
+    // loaded — pressing play-pause with an empty queue does nothing
+    // rather than getting stuck in a paused-but-empty state.
+    void onMediaKey((action) => {
+      switch (action) {
+        case 'play-pause':
+          if (track) audio.togglePlay();
+          break;
+        case 'next':
+          audio.next();
+          break;
+        case 'previous':
+          audio.prev();
+          break;
+        case 'stop':
+          audio.clear();
+          break;
+      }
+    }).then((unlisten) => {
+      mediaKeyUnlisten = unlisten;
+    });
   });
 
   onDestroy(() => {
     unsubA(); unsubT(); unsubN(); unsubE();
     if (nativePollHandle) clearInterval(nativePollHandle);
+    if (mediaKeyUnlisten) mediaKeyUnlisten();
     // Stop the native engine on player destroy so it doesn't keep
     // playing after navigation away from a route that owns the
     // AudioPlayer (currently only the root layout owns it, but keep
@@ -396,12 +425,33 @@
     positionMS = scrubMS;
   }
   function commitScrub() {
-    const el = activeEl();
-    if (el && Number.isFinite(scrubMS)) {
-      el.currentTime = scrubMS / 1000;
-      audio.setPosition(scrubMS);
-      // Report the new position so resume picks up where the user dropped the thumb.
-      if (track) void report(playing ? 'playing' : 'paused');
+    if (nativeActive() && track && Number.isFinite(scrubMS)) {
+      // Native engine path. Optimistic store update so the seek bar
+      // snaps to the dropped position immediately rather than
+      // rubber-banding back to the old position for a frame.
+      //
+      // Polling is suspended around the IPC because audio_seek
+      // tears down the current pipeline before building the new one;
+      // a poll tick landing in the in-between (engine.current = None)
+      // window would see playing=false and exit the loop. Restart
+      // after the seek settles — at that point the new pipeline is
+      // already producing samples so the next tick gets a clean
+      // playing=true reading.
+      const target = scrubMS;
+      audio.setPosition(target);
+      positionMS = target;
+      stopNativePolling();
+      audioSeek(target, getBearerToken(), null)
+        .catch((err) => console.warn('native engine seek failed:', err))
+        .finally(() => startNativePolling());
+      void report(playing ? 'playing' : 'paused');
+    } else {
+      const el = activeEl();
+      if (el && Number.isFinite(scrubMS)) {
+        el.currentTime = scrubMS / 1000;
+        audio.setPosition(scrubMS);
+        if (track) void report(playing ? 'playing' : 'paused');
+      }
     }
     scrubbing = false;
   }
@@ -452,6 +502,12 @@
 {#if track}
   <aside class="player" aria-label="Audio player">
     <div class="left">
+      <button class="close-btn" on:click={() => audio.clear()}
+              title="Close player" aria-label="Close player">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+          <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854z"/>
+        </svg>
+      </button>
       {#if track.posterPath}
         <img class="art"
              src={assetUrl(`/artwork/${encodeURI(track.posterPath)}?w=120`)}
@@ -648,6 +704,13 @@
     width: 10px; height: 10px; border-radius: 50%;
     background: var(--text-primary); cursor: pointer; border: 0;
   }
+
+  .close-btn {
+    background: none; border: 0; cursor: pointer;
+    color: var(--text-muted); padding: 0.3rem; border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .close-btn:hover { color: var(--text-primary); }
 
   /* Mobile: stack and shorten — sit above the bottom nav (60px). */
   @media (max-width: 768px) {

@@ -337,9 +337,9 @@ pub fn audio_play_url(
     // cold-start otherwise. Both end with current = Some(active).
     let prepared = take_preload_for(&url)?
         .map(Ok)
-        .unwrap_or_else(|| prepare_flac_pipeline(&url, bearer_token.as_deref()))?;
+        .unwrap_or_else(|| prepare_flac_pipeline(&url, bearer_token.as_deref(), 0))?;
 
-    let active = open_active_from_prepared(prepared, &device, url)?;
+    let active = open_active_from_prepared(prepared, &device, url, 0)?;
 
     {
         let mut engine = ENGINE
@@ -383,12 +383,71 @@ pub fn audio_preload_url(
             return Ok(()); // already prepared
         }
     }
-    let prepared = prepare_flac_pipeline(&url, bearer_token.as_deref())?;
+    let prepared = prepare_flac_pipeline(&url, bearer_token.as_deref(), 0)?;
     let mut engine = ENGINE
         .lock()
         .map_err(|_| "audio: poisoned engine lock".to_string())?;
     engine.preload = Some(prepared);
     Ok(())
+}
+
+/// Seek to `position_ms` within the currently-playing track.
+///
+/// Implementation note: FLAC over an HTTP streaming body has no
+/// random-access primitive, so we drop the existing pipeline and
+/// build a new one that drinks-and-discards samples up to the seek
+/// target before producing output. Correct, simple, but bandwidth-
+/// heavy for large seeks against remote servers (a 70-min jump
+/// re-downloads ~70 min of audio at LAN speeds — sub-second over
+/// gigabit, ~30 s over a typical home internet link). HTTP-Range +
+/// FLAC frame resync would amortise this; punted to a follow-up.
+///
+/// Errors when nothing is currently playing — seek without context
+/// is a UI bug; better to surface than silently no-op.
+#[tauri::command]
+pub fn audio_seek(
+    position_ms: u64,
+    bearer_token: Option<String>,
+    device_name: Option<String>,
+) -> Result<PlaybackStatus, String> {
+    // Snapshot the URL before tearing the current pipeline down — we
+    // need it for the re-fetch and the engine lock can't span the
+    // (potentially seconds-long) HTTP + decode phase.
+    let url = {
+        let engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        engine
+            .current
+            .as_ref()
+            .map(|p| p.source_url.clone())
+            .ok_or_else(|| "audio: nothing playing — nothing to seek".to_string())?
+    };
+
+    let device = pick_output_device(device_name.as_deref())?;
+
+    // Tear down current first. Dropping it stops the cpal stream + the
+    // decoder thread releases its end of the ringbuf. The preload slot
+    // is left alone — it points to the next queue track which the
+    // seek doesn't affect.
+    {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        engine.current = None;
+    }
+
+    let prepared =
+        prepare_flac_pipeline(&url, bearer_token.as_deref(), position_ms)?;
+    let active = open_active_from_prepared(prepared, &device, url, position_ms)?;
+
+    {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        engine.current = Some(active);
+    }
+    audio_state()
 }
 
 /// Removes the engine's preload slot and returns it iff its URL
@@ -435,9 +494,21 @@ fn pick_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
 /// build a cpal stream around. Both `audio_play_url` (cold-start)
 /// and `audio_preload_url` go through this — the only difference
 /// is what the caller does with the result.
+///
+/// `skip_to_ms` advances the decoder past N milliseconds before any
+/// samples reach the ringbuf. Used by [`audio_seek`] to land at a
+/// target position; passed as 0 by the cold-start + preload paths.
+/// The skip happens synchronously on the calling thread (drinks
+/// samples without pushing) so the eventual cpal stream pulls
+/// straight from the seek target — no audible "play from start
+/// then jump" glitch. Cost is bandwidth: streams from the start
+/// even for a 70-min seek, since claxon over an HTTP body has no
+/// frame-level random access. Range-based seeking is a future
+/// optimisation; this is correct and simple.
 fn prepare_flac_pipeline(
     url: &str,
     bearer_token: Option<&str>,
+    skip_to_ms: u64,
 ) -> Result<PreloadSlot, String> {
     // ── HTTP fetch ──────────────────────────────────────────────────────────
     let agent = ureq::AgentBuilder::new()
@@ -463,12 +534,40 @@ fn prepare_flac_pipeline(
     let body: Box<dyn Read + Send + 'static> = Box::new(resp.into_reader());
 
     // ── FLAC header probe ───────────────────────────────────────────────────
-    let reader = claxon::FlacReader::new(body)
+    let mut reader = claxon::FlacReader::new(body)
         .map_err(|e| format!("audio: parse FLAC: {e}"))?;
     let info = reader.streaminfo();
     let sample_rate_hz = info.sample_rate;
     let bit_depth = info.bits_per_sample;
     let channels = info.channels as u16;
+
+    // ── Skip-to-position (seek path) ────────────────────────────────────────
+    // Drink samples on the calling thread until we've reached the seek
+    // target. claxon's iterator borrows `reader` mutably, so we scope
+    // the iterator and re-take it from `reader` after the borrow drops
+    // — the FlacReader's internal frame state persists between
+    // iterator instantiations, so the spawn_decoder below picks up
+    // exactly where this loop left off.
+    if skip_to_ms > 0 {
+        let samples_to_skip = (skip_to_ms)
+            .saturating_mul(sample_rate_hz as u64)
+            .saturating_mul(channels as u64)
+            / 1000;
+        let mut iter = reader.samples();
+        let mut consumed: u64 = 0;
+        while consumed < samples_to_skip {
+            match iter.next() {
+                Some(Ok(_)) => consumed += 1,
+                Some(Err(e)) => {
+                    return Err(format!("audio: FLAC decode during seek: {e}"))
+                }
+                None => break, // seek target past EOS — accept it
+            }
+        }
+        // iter dropped → &mut reader released → spawn_decoder can
+        // call .samples() again on the same reader and continue
+        // from the post-skip position.
+    }
 
     // Ringbuf sized for ~200 ms of audio at the file's rate. Tight
     // enough that latency from "play" to first sample is sub-second;
@@ -520,10 +619,17 @@ fn prepare_flac_pipeline(
 /// Promote a prepared slot to an active playback by opening the
 /// cpal output stream around its ringbuf consumer. The decoder
 /// thread keeps running unchanged — it just gains a real reader.
+///
+/// `start_position_ms` seeds the frame counter so `audio_state`
+/// reports the correct position immediately after a seek. The cpal
+/// callback adds new frames on top as samples are consumed, so the
+/// reported position keeps advancing from the seek target rather
+/// than re-counting from zero.
 fn open_active_from_prepared(
     mut prepared: PreloadSlot,
     device: &cpal::Device,
     url: String,
+    start_position_ms: u64,
 ) -> Result<ActivePlayback, String> {
     // Default-mode cpal lets us request a specific rate; the OS
     // mixer picks up the slack if the device doesn't natively
@@ -535,7 +641,10 @@ fn open_active_from_prepared(
         buffer_size: cpal::BufferSize::Default,
     };
     let paused = Arc::new(AtomicBool::new(false));
-    let frames_written = Arc::new(AtomicU64::new(0));
+    let initial_frames = start_position_ms
+        .saturating_mul(prepared.sample_rate_hz as u64)
+        / 1000;
+    let frames_written = Arc::new(AtomicU64::new(initial_frames));
 
     let consumer = prepared
         .consumer

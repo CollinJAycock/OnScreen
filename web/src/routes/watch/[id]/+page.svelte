@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -273,7 +273,11 @@
       label: ext.title || ext.language || 'External',
       language: ext.language || '',
       forced: ext.forced,
-      url: ext.url,
+      // Wrap through assetUrl so the cross-origin native client gets
+      // the bearer appended as `?token=` for the <track src=> /
+      // bare-fetch loadSubtitleCues path. Same-origin browser builds
+      // get the URL back unchanged and rely on the auth cookie.
+      url: assetUrl(ext.url),
       origin: 'external',
     };
   }
@@ -679,18 +683,14 @@
     window.removeEventListener('mousemove', onSeekMouseMove);
     window.removeEventListener('mouseup', onSeekMouseUp);
     if (videoEl && !videoEl.paused && item) {
-      const body = JSON.stringify({
+      // keepalive PUT so the request survives the unmount; apiBeacon
+      // routes through the same auth path as regular calls (cookie
+      // for browser, Authorization for Tauri).
+      apiBeacon('PUT', `/items/${item.id}/progress`, {
         view_offset_ms: Math.round((videoEl.currentTime + hlsOffsetSec) * 1000),
         duration_ms: item.duration_ms ?? 0,
-        state: 'stopped'
+        state: 'stopped',
       });
-      fetch(`/api/v1/items/${item.id}/progress`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        keepalive: true,
-        credentials: 'same-origin'
-      }).catch(() => {});
     }
     stopTranscodeSession();
     destroyHls();
@@ -1369,8 +1369,10 @@
 
   // ── Trickplay hover preview ───────────────────────────────────────────────
   // parseTrickplayVTT turns a WebVTT trickplay index into cue objects. Payload
-  // lines look like "sprite_000.jpg#xywh=0,0,320,180". We resolve filenames
-  // against baseURL so the <img> tag can load them directly.
+  // lines look like "sprite_000.jpg#xywh=0,0,320,180". Sprite URLs flow
+  // through assetUrl so the cross-origin Tauri client gets the bearer
+  // appended as `?token=` — CSS background-image can't carry an
+  // Authorization header.
   function parseTrickplayVTT(text: string, baseURL: string): TrickplayCue[] {
     const cues: TrickplayCue[] = [];
     const lines = text.split(/\r?\n/);
@@ -1388,7 +1390,7 @@
       cues.push({
         start,
         end,
-        url: baseURL + file,
+        url: assetUrl(baseURL + file),
         x: coords[0],
         y: coords[1],
         w: coords[2],
@@ -1419,12 +1421,14 @@
       // trickplay session prints a console error and CSP-noise on the
       // beta deployment, even though the player handles the miss
       // gracefully — see the live console report on adf2810d.
-      const status = await fetch(`/api/v1/items/${itemId}/trickplay`);
-      if (!status.ok) return;
-      const env = await status.json();
-      if (env?.data?.status !== 'done') return;
+      const status = await itemApi.trickplayStatus(itemId);
+      if (status?.status !== 'done') return;
 
-      const r = await fetch(trickplayBaseURL + 'index.vtt');
+      // index.vtt rides through assetUrl: same-origin browser falls
+      // back to the cookie, Tauri cross-origin gets `?token=` so the
+      // RequiredAllowQueryToken middleware lets the static file serve
+      // through.
+      const r = await fetch(assetUrl(trickplayBaseURL + 'index.vtt'));
       if (!r.ok) return;
       const text = await r.text();
       trickplayCues = parseTrickplayVTT(text, trickplayBaseURL);

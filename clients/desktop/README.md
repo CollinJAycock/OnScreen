@@ -248,23 +248,44 @@ SameSite=None dance cookies would require.
   to whatever the cpal device-activation cost is (~10-20 ms on
   every host we care about). PreloadConsumer enum type-erases
   the i16/i32 dispatch so the engine state isn't generic.
+- **Seek under native engine**: `audio_seek(position_ms)`
+  tears down the current pipeline and rebuilds it with the
+  decoder thread drinking-and-discarding samples up to the
+  target before producing output. Correct and simple, but
+  bandwidth-heavy for long jumps against remote servers
+  (a 70-min seek re-streams ~70 min of FLAC — sub-second on
+  gigabit LAN, ~30 s over a typical home internet link).
+  HTTP-Range + frame-resync would amortise this; punted to a
+  follow-up. Frontend in `commitScrub` suspends polling around
+  the IPC so the in-between (engine.current = None) window
+  doesn't trigger the polling loop's "engine stopped" exit.
+- **Media keys**: `tauri-plugin-global-shortcut` registers
+  Play/Pause, Next, Previous, Stop globally so they work
+  regardless of focus. Rust handler emits a `media-key` event
+  the AudioPlayer listens for and dispatches into the audio
+  store. Failures (another app holds a shortcut) are non-fatal.
 
 ## What's not done yet
 
-- **Seek under native engine**: scrubbing the seek bar does
-  nothing while native playback is active. The engine has no
-  `seek_to(position_ms)` yet — would need claxon + HTTP-range
-  seeks (FLAC's frame-header structure means we either consult
-  the seek table from the metadata block or scan forward; both
-  are nontrivial against a streaming HTTP source).
-- **Exclusive-mode toggle**: WASAPI exclusive on Windows
-  (`cpal::SupportedStreamConfig::buffer_size`-driven), CoreAudio
-  per-stream nominal-rate switching on macOS, ALSA `hw:` device
-  enumeration on Linux. cpal exposes the hooks; the UI needs to
-  surface the choice.
+- **Exclusive-mode toggle**: cpal 0.16 hard-codes
+  `AUDCLNT_SHAREMODE_SHARED` in its WASAPI host (verified in
+  the crate source) — there's no high-level API to request
+  exclusive mode. Real bit-perfect output needs either a cpal
+  fork or dropping to the raw `wasapi` crate (Windows only)
+  with parallel implementations for CoreAudio HOG mode (macOS)
+  and ALSA `hw:` device opens (Linux). All multi-day work each.
+  Until then, `<audio>` and the cpal default-mode path both
+  route through the OS mixer; a 96 kHz FLAC played to a 48 kHz-
+  configured device gets resampled outside of our control. This
+  is the headline limitation against the audiophile pillar.
+- **OS now-playing widgets** (SMTC on Windows, MPRIS on Linux,
+  MediaPlayer on macOS) — surfaces "now playing" to the OS
+  shell so taskbar/lockscreen widgets show track + art and
+  control transport. `souvlaki` crate is the cross-platform
+  wrapper; integration is its own commit.
 - **Secure credential storage** — tauri-plugin-keychain swap so
   refresh tokens leave the plaintext appdata file. (See lib.rs
   comment on `KEY_ACCESS_TOKEN` for the threat model.)
-- **System tray + media keys + notifications**
+- **System tray + notifications**
 - **Cross-device watch-history sync** — server side is mostly
   there; client side needs the sync protocol.

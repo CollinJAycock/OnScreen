@@ -230,9 +230,13 @@ func NewRouter(h *Handlers) http.Handler {
 	// leak adult-library thumbnails into a kids-restricted session otherwise.
 	// Filenames are regex-whitelisted (index.vtt | sprite_NNN.jpg) to block
 	// path traversal.
+	//
+	// Uses RequiredAllowQueryToken because sprites are loaded via CSS
+	// background-image — no Authorization header support — and the Tauri
+	// cross-origin client carries auth as `?token=<paseto>`.
 	if h.Trickplay != nil {
 		r.Group(func(r chi.Router) {
-			r.Use(h.Auth_mw.Required)
+			r.Use(h.Auth_mw.RequiredAllowQueryToken)
 			r.Get("/trickplay/{id}/{file}", h.Trickplay.ServeFile)
 		})
 	}

@@ -545,8 +545,12 @@ type PhotoEXIFResponse struct {
 	GPSAlt        *float64   `json:"gps_alt,omitempty"`
 }
 
-// GetEXIF handles GET /api/v1/items/{id}/exif. Returns 404 when the item has
-// no EXIF row (e.g. PNG without an EXIF block, or non-photo item).
+// GetEXIF handles GET /api/v1/items/{id}/exif. Returns 404 only when the
+// item itself doesn't exist; an existing photo with no EXIF row (PNG with
+// no EXIF block, scanner-skipped HEIC, etc.) returns 200 with empty fields
+// — the photo is real, it just has no metadata, and the UI hides the
+// missing rows via optional-chaining. Returning 404 here generated dev-
+// console noise on every photo open.
 func (h *ItemHandler) GetEXIF(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -569,7 +573,7 @@ func (h *ItemHandler) GetEXIF(w http.ResponseWriter, r *http.Request) {
 	pm, err := h.media.GetPhotoMetadata(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
+			respond.Success(w, r, PhotoEXIFResponse{})
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "get photo metadata", "id", id, "err", err)

@@ -347,6 +347,24 @@ export class ApiClient {
 
 export const api = new ApiClient();
 
+/** Fire-and-forget JSON request that survives page unmount. Uses
+ *  `keepalive: true` so the browser keeps the request inflight after
+ *  the page tears down — required for the watch page's "save progress
+ *  on close" hook. Bypasses the standard request wrapper because:
+ *   - response is irrelevant (caller can't await it; the page is gone)
+ *   - 401 retry has nowhere to redirect mid-unmount
+ *  Carries the same auth as regular requests: Authorization header for
+ *  Tauri/bearer mode, cookie for browser/same-origin. */
+export function apiBeacon(method: 'PUT' | 'POST', path: string, body: unknown): void {
+  fetch(apiBase + path, {
+    method,
+    headers: authHeaders(),
+    credentials: credentialsMode(),
+    body: JSON.stringify(body),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export interface TokenPair {
@@ -1129,7 +1147,16 @@ export const itemApi = {
   upsertMarker: (id: string, kind: 'intro' | 'credits', startMs: number, endMs: number) =>
     api.put<Marker>(`/items/${id}/markers/${kind}`, { start_ms: startMs, end_ms: endMs }),
   deleteMarker: (id: string, kind: 'intro' | 'credits') =>
-    api.delete(`/items/${id}/markers/${kind}`)
+    api.delete(`/items/${id}/markers/${kind}`),
+  trickplayStatus: (id: string) =>
+    api.get<{
+      status: 'not_started' | 'pending' | 'done' | 'failed' | 'skipped';
+      sprite_count?: number;
+      interval_sec?: number;
+      thumb_width?: number;
+      thumb_height?: number;
+      last_error?: string;
+    }>(`/items/${id}/trickplay`)
 };
 
 export const subtitleApi = {

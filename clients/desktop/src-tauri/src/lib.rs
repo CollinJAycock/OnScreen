@@ -10,7 +10,8 @@
 mod audio;
 
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 
 /// Returned by `get_app_version` so the frontend can branch on
@@ -167,6 +168,52 @@ pub fn run() {
         // platform appdata dir, so it survives reinstalls and is
         // backupable like any other config file.
         .plugin(tauri_plugin_store::Builder::new().build())
+        // Global keyboard shortcuts — registers the OS media keys
+        // (Play/Pause, Next, Previous, Stop) so transport works
+        // when OnScreen isn't focused. The handler emits a
+        // `media-key` event the AudioPlayer in the webview listens
+        // for and dispatches into the audio store. Same-shape UX
+        // as Spotify/Plexamp without having to integrate per-OS
+        // media-control APIs (SMTC/MPRIS/MediaPlayer) — those
+        // remain a follow-up for OS now-playing widgets.
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    // Only fire on press, not release — a media-key
+                    // tap emits both states and we'd otherwise
+                    // double-fire every action.
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let action = match shortcut.key {
+                        Code::MediaPlayPause => "play-pause",
+                        Code::MediaTrackNext => "next",
+                        Code::MediaTrackPrevious => "previous",
+                        Code::MediaStop => "stop",
+                        _ => return,
+                    };
+                    let _ = app.emit("media-key", action);
+                })
+                .build(),
+        )
+        .setup(|app| {
+            // Register the media-key shortcuts at startup. Failures
+            // here are non-fatal (another app may have grabbed the
+            // shortcut first) — log and keep running rather than
+            // refusing to launch.
+            let gs = app.global_shortcut();
+            for code in [
+                Code::MediaPlayPause,
+                Code::MediaTrackNext,
+                Code::MediaTrackPrevious,
+                Code::MediaStop,
+            ] {
+                if let Err(e) = gs.register(Shortcut::new(None, code)) {
+                    eprintln!("media-key {code:?}: register failed: {e}");
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             get_server_url,
@@ -180,6 +227,7 @@ pub fn run() {
             audio::stop_audio,
             audio::audio_play_url,
             audio::audio_preload_url,
+            audio::audio_seek,
             audio::audio_state,
             audio::audio_pause,
             audio::audio_resume,

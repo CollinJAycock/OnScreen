@@ -226,6 +226,57 @@ export async function audioPlayUrl(
   });
 }
 
+/** Seek to `positionMs` within the currently-playing native track.
+ *  No-op (and rejects) when nothing is playing. The IPC blocks until
+ *  the new pipeline is producing samples — for LAN servers this is
+ *  sub-second; over a slow internet link a multi-minute seek can take
+ *  several seconds because FLAC over an HTTP body has no random-access
+ *  primitive (we re-fetch from the start and discard samples up to
+ *  the target). The frontend should show a seeking indicator to
+ *  cover the gap. */
+export async function audioSeek(
+  positionMs: number,
+  bearerToken: string | null,
+  device: string | null = null,
+): Promise<PlaybackStatus> {
+  if (!isTauri()) {
+    throw new Error('audioSeek is only meaningful inside the native client');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke<PlaybackStatus>('audio_seek', {
+    positionMs,
+    bearerToken,
+    deviceName: device,
+  });
+}
+
+/** Action emitted by the OS media keys. The Rust side maps each
+ *  registered key to one of these strings before forwarding to the
+ *  webview; keeping the wire format string-keyed (rather than a
+ *  number) means the audio store doesn't need to know about cpal/
+ *  Tauri internals. */
+export type MediaKeyAction = 'play-pause' | 'next' | 'previous' | 'stop';
+
+/** Subscribe to OS media keys (Play/Pause, Next, Previous, Stop).
+ *  The handler runs whenever the user taps a media key — including
+ *  when OnScreen isn't focused, since the Rust side registers them
+ *  as global shortcuts. Returns an unsubscribe function for cleanup
+ *  on component destroy.
+ *
+ *  In the browser bundle this is a no-op that returns a no-op
+ *  unsubscribe — the same code path can run in both shells without
+ *  branching at every call site. */
+export async function onMediaKey(
+  handler: (action: MediaKeyAction) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  const unlisten = await listen<MediaKeyAction>('media-key', (e) => {
+    handler(e.payload);
+  });
+  return unlisten;
+}
+
 /** Optimistically prepare the next track so [`audioPlayUrl`] with
  *  the same URL completes near-instantly (gapless transition). The
  *  decoder thread runs in the background filling a ringbuf; idempotent

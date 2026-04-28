@@ -1,5 +1,25 @@
 <script lang="ts">
   import { toast } from '$lib/stores/toast';
+  import { getApiBase, getBearerToken } from '$lib/api';
+
+  // Build the request shape api.ts would use for an admin endpoint:
+  // bearer header for native, same-origin cookie for browser. The
+  // backup flows can't go through `api.ts`'s wrapper because they
+  // need direct Response access (binary Blob for download, raw form
+  // upload for restore). authedFetch keeps the same auth contract
+  // without the parsing layer.
+  function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    const token = getBearerToken();
+    const base = getApiBase();
+    const headers = new Headers(init.headers ?? {});
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const sameOrigin = base.startsWith('/');
+    return fetch(base + path, {
+      ...init,
+      headers,
+      credentials: sameOrigin ? 'same-origin' : 'omit',
+    });
+  }
 
   type RestoreResult = {
     exit_error?: string;
@@ -28,7 +48,7 @@
   async function download() {
     downloading = true;
     try {
-      const resp = await fetch('/api/v1/admin/backup', { credentials: 'same-origin' });
+      const resp = await authedFetch('/admin/backup');
       if (!resp.ok) {
         const json = await resp.json().catch(() => null);
         throw new Error(json?.error?.message ?? `HTTP ${resp.status}`);
@@ -70,11 +90,10 @@
     try {
       const fd = new FormData();
       fd.append('file', f);
-      const url = '/api/v1/admin/restore' + (force ? '?force=true' : '');
-      const resp = await fetch(url, {
+      const path = '/admin/restore' + (force ? '?force=true' : '');
+      const resp = await authedFetch(path, {
         method: 'POST',
         body: fd,
-        credentials: 'same-origin'
       });
       const json = await resp.json();
       if (resp.status === 409 && json?.error?.code === 'DUMP_NEWER_THAN_SERVER') {
