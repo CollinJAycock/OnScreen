@@ -398,8 +398,14 @@ class PlaybackFragment : VideoSupportFragment() {
                 // down whether it's a network/auth issue, a decoder
                 // miss, or a malformed source. See
                 // https://developer.android.com/reference/androidx/media3/common/PlaybackException
-                // for the error code constants.
-                val msg = "Playback error ${error.errorCodeName}: ${error.message}"
+                // for the error code constants. For HTTP/HLS sources
+                // include the failing URL so the user (or a tunnel
+                // log) can identify which request died.
+                val cause = error.cause
+                val urlPart = if (cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException) {
+                    "\n${cause.dataSpec.uri}"
+                } else ""
+                val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
                 showErrorDialog(msg)
             }
         })
@@ -426,6 +432,13 @@ class PlaybackFragment : VideoSupportFragment() {
                     .setConnectTimeoutMs(30_000)
                     .setReadTimeoutMs(30_000)
                     .setAllowCrossProtocolRedirects(true)
+                    // Cloudflare Tunnel / WAF rules sometimes block
+                    // requests with no User-Agent (ExoPlayer's
+                    // default is empty), surfacing on the client as
+                    // a generic NETWORK_CONNECTION_FAILED. Send an
+                    // identifiable UA so the request looks like a
+                    // real client and we can grep tunnel logs.
+                    .setUserAgent("OnScreen-Android/1.0 (ExoPlayer)")
                     .setDefaultRequestProperties(mapOf())
                 val hlsSource = HlsMediaSource.Factory(factory)
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
