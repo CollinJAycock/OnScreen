@@ -40,6 +40,7 @@ import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.NotificationsRepository
+import tv.onscreen.android.data.repository.TrickplayRepository
 import javax.inject.Inject
 import kotlin.math.abs
 
@@ -50,6 +51,7 @@ class PlaybackFragment : VideoSupportFragment() {
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var itemRepo: ItemRepository
     @Inject lateinit var notificationsRepo: NotificationsRepository
+    @Inject lateinit var trickplayRepo: TrickplayRepository
 
     private lateinit var viewModel: PlaybackViewModel
     private var player: ExoPlayer? = null
@@ -72,6 +74,10 @@ class PlaybackFragment : VideoSupportFragment() {
 
     /** Cross-device sync subscriber. Cancelled in onDestroyView. */
     private var syncJob: Job? = null
+
+    /** Trickplay-thumbnail load. Single job because installation is
+     *  one-shot per session. */
+    private var trickplayJob: Job? = null
 
     /** Skip-intro / skip-credits overlay button. Inflated lazily on
      *  first marker hit, then shown/hidden as the player crosses
@@ -154,7 +160,38 @@ class PlaybackFragment : VideoSupportFragment() {
                 startUpNextWatcher()
                 startCrossDeviceSync(itemId)
                 startSkipMarkerWatcher()
+                installTrickplaySeekProvider(itemId)
             }
+        }
+    }
+
+    /**
+     * If the server has trickplay thumbnails generated for this item,
+     * install a [TrickplaySeekProvider] on the playback glue so the
+     * seek bar shows preview images as the user scrubs. Best-effort:
+     * any failure (no trickplay generated, .vtt parse error, network)
+     * silently leaves the seek bar in its plain position-only mode.
+     *
+     * Runs in the background after the player is set up — installing
+     * the provider mid-session is supported by Leanback (it just
+     * upgrades the seek-bar's interaction the next time the user
+     * scrubs).
+     */
+    private fun installTrickplaySeekProvider(itemId: String) {
+        trickplayJob?.cancel()
+        trickplayJob = viewLifecycleOwner.lifecycleScope.launch {
+            val status = trickplayRepo.status(itemId)
+            if (status.status != "done") return@launch
+            val cues = trickplayRepo.fetchCues(itemId) ?: return@launch
+            if (cues.isEmpty()) return@launch
+            val provider = TrickplaySeekProvider(
+                itemId = itemId,
+                cues = cues,
+                repo = trickplayRepo,
+                scope = viewLifecycleOwner.lifecycleScope,
+                hlsOffsetMs = viewModel.hlsOffsetMs,
+            )
+            glue?.seekProvider = provider
         }
     }
 
@@ -603,6 +640,8 @@ class PlaybackFragment : VideoSupportFragment() {
         skipMarkerJob?.cancel()
         skipMarkerJob = null
         skipMarkerOverlay = null
+        trickplayJob?.cancel()
+        trickplayJob = null
         progressTracker?.stop()
         progressTracker = null
         player?.release()

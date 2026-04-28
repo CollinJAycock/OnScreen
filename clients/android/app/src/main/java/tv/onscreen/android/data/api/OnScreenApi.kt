@@ -61,6 +61,9 @@ interface OnScreenApi {
     @GET("api/v1/items/{id}/markers")
     suspend fun getMarkers(@Path("id") id: String): ApiListResponse<Marker>
 
+    @GET("api/v1/items/{id}/trickplay")
+    suspend fun getTrickplayStatus(@Path("id") id: String): ApiResponse<TrickplayStatus>
+
     // ── Transcode ───────────────────────────────────────────────────────────
 
     @POST("api/v1/items/{id}/transcode")
