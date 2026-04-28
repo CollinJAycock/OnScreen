@@ -106,15 +106,17 @@ class PairingFragment : Fragment() {
             pinView.text = code.pin
             statusView.text = getString(R.string.pair_status_waiting)
 
-            // Server suggests a cadence; clamp to keep a misbehaving
-            // server from pinning the radio at one-poll-per-tick or
-            // letting the loop stall for minutes on end.
-            val pollSeconds = code.poll_after.coerceIn(2, 10)
+            // Server suggests a cadence; clamp tighter than the
+            // server-default 2 s so the fragment dismisses within
+            // ~1 s of the user typing the PIN on their phone.
+            // Earlier loop used 2-10 s and the fragment lingered
+            // visibly after sign-in completed; users perceived
+            // that as "I had to press a button to dismiss it."
+            val pollSeconds = code.poll_after.coerceIn(1, 3)
             while (isActive) {
-                delay(pollSeconds * 1000L)
                 when (val result = authRepo.pollPairing(code.device_token)) {
                     is AuthRepository.PollResult.Pending -> {
-                        // Keep showing the waiting state.
+                        // Still pending — sleep then retry.
                     }
                     is AuthRepository.PollResult.Done -> {
                         authRepo.completePairing(result.pair)
@@ -122,10 +124,10 @@ class PairingFragment : Fragment() {
                         return@launch
                     }
                     is AuthRepository.PollResult.Expired -> {
-                        // Cycle a new PIN — much friendlier than
-                        // making the user click Retry. The cancellation
-                        // is automatic via pollJob.cancel() in this
-                        // re-entrant call.
+                        // Cycle a new PIN — friendlier than a
+                        // dead-end "code expired" terminal state.
+                        // pollJob cancellation is automatic via
+                        // the re-entrant call.
                         startPairingCycle(server)
                         return@launch
                     }
@@ -135,6 +137,12 @@ class PairingFragment : Fragment() {
                         // itself; the user can hit Cancel to bail.
                     }
                 }
+                // Sleep AFTER the poll, not before, so the very
+                // first poll fires immediately on entering the
+                // loop. Catches the case where the user signed in
+                // on the phone before the TV finished rendering
+                // this fragment.
+                delay(pollSeconds * 1000L)
             }
         }
     }

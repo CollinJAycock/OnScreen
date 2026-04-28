@@ -51,6 +51,19 @@ class MainActivity : FragmentActivity() {
             NavigationDestination.HOME -> HomeFragment()
         }
 
+        // HOME is a terminal state — the user has finished
+        // setup/login/pairing. Drop the entire back stack so the
+        // setup screens don't linger (PairingFragment was sitting
+        // in the stack and the user had to dismiss it manually
+        // after sign-in completed) and Back from Home doesn't
+        // drop the user back into the login flow.
+        if (destination == NavigationDestination.HOME) {
+            supportFragmentManager.popBackStack(
+                null,
+                androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
+            )
+        }
+
         supportFragmentManager.beginTransaction()
             .replace(R.id.main_container, fragment)
             .apply {
