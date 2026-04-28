@@ -67,6 +67,53 @@ func (a *Authenticator) WithEpochReader(r SessionEpochReader) *Authenticator {
 	return a
 }
 
+// RequiredAllowQueryToken is `Required` plus a `?token=` query
+// fallback. Designed for asset endpoints — `<img src=…>`, `<audio
+// src=…>`, `<a download href=…>` — that can't carry an
+// Authorization header and where cookies don't survive cross-
+// origin (Tauri webview → remote OnScreen). DO NOT use on
+// regular API routes: putting a long-lived bearer in a URL means
+// it appears in server logs, browser history, and Referer
+// headers, broadening the leak surface. Asset URLs are the
+// trade-off — they're already private-cached and don't trigger
+// external navigation.
+//
+// The query fallback only fires when both the Bearer header AND
+// the cookie are absent, so browser builds (cookie auth) keep
+// the existing path with no URL pollution.
+func (a *Authenticator) RequiredAllowQueryToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, err := a.extractClaimsAllowQuery(r)
+		if err != nil || claims == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !a.epochValid(r.Context(), claims) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ctx := context.WithValue(r.Context(), claimsKey{}, claims)
+		ctx = observability.ContextWithUserID(ctx, claims.UserID.String())
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// extractClaimsAllowQuery layers a `?token=<paseto>` lookup on top
+// of the standard Bearer/cookie extraction. Used only by
+// RequiredAllowQueryToken — broadcasting it via plain
+// extractClaims would let a leaked artwork URL grant general
+// API access, which is exactly the trade-off this variant exists
+// to scope.
+func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, error) {
+	if claims, err := a.extractClaims(r); err != nil || claims != nil {
+		return claims, err
+	}
+	if tok := r.URL.Query().Get("token"); tok != "" {
+		return a.tokens.ValidateAccessToken(tok)
+	}
+	return nil, nil
+}
+
 // Required rejects unauthenticated requests with 401. When an epoch
 // reader is configured, tokens whose session_epoch doesn't match the
 // DB's current value are also rejected — this is how admin demotion

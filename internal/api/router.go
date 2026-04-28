@@ -128,12 +128,15 @@ func NewRouter(h *Handlers) http.Handler {
 
 	// ── Media stream + subtitle endpoints ─────────────────────────────────────
 	// Serves a media file by its DB UUID for direct play, plus extracted/embedded
-	// and external VTT subtitles. Auth is required: browser <video> and <track>
-	// elements send same-origin cookies, so the cookie auth path in Auth_mw
-	// covers these even though they cannot attach Bearer headers. Each handler
-	// additionally enforces per-library ACL and the parent item's content rating.
+	// and external VTT subtitles. Browser <video>/<track> can't attach
+	// Authorization headers, so the auth flow accepts three carriers:
+	// Bearer (programmatic clients), cookie (browser same-origin), or
+	// `?token=<paseto>` query (native cross-origin where neither cookie
+	// nor Bearer header is reachable from a media element).
+	// RequiredAllowQueryToken's per-route documentation calls out the
+	// log/Referer leak trade-off — asset routes only.
 	r.Group(func(r chi.Router) {
-		r.Use(h.Auth_mw.Required)
+		r.Use(h.Auth_mw.RequiredAllowQueryToken)
 		if h.Items != nil {
 			r.Get("/media/stream/{id}", h.Items.StreamFile)
 			r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
@@ -156,14 +159,16 @@ func NewRouter(h *Handlers) http.Handler {
 
 	// ── Artwork file server ──────────────────────────────────────────────────
 	// Serves poster/fanart images from library scan_paths. Requires auth
-	// (cookie for browsers, Bearer for native clients) and checks the
-	// caller's library ACL against whichever library owns the resolved
-	// file. This was previously unauthenticated — any user with a valid
-	// URL could read artwork from any library, breaking content-rating
-	// confidentiality on mixed-access deployments (kids vs adult library).
+	// (cookie for browsers, Bearer for programmatic, ?token= query for
+	// the Tauri native client where <img> can't carry an Authorization
+	// header) and checks the caller's library ACL against whichever
+	// library owns the resolved file. This was previously
+	// unauthenticated — any user with a valid URL could read artwork
+	// from any library, breaking content-rating confidentiality on
+	// mixed-access deployments (kids vs adult library).
 	if h.ArtworkRoots != nil {
 		r.Group(func(r chi.Router) {
-			r.Use(h.Auth_mw.Required)
+			r.Use(h.Auth_mw.RequiredAllowQueryToken)
 			r.Get("/artwork/*", func(w http.ResponseWriter, req *http.Request) {
 				rel := strings.TrimPrefix(req.URL.Path, "/artwork/")
 				clean := filepath.Clean(rel)

@@ -100,6 +100,96 @@ func TestRequired_ValidToken(t *testing.T) {
 	}
 }
 
+// ── RequiredAllowQueryToken middleware ───────────────────────────────────────
+// The asset-route variant. Bearer + cookie paths must still work; the
+// only addition is that a `?token=<paseto>` query param is accepted
+// when neither header nor cookie is present.
+
+func TestRequiredAllowQueryToken_QueryToken(t *testing.T) {
+	// The whole point of this variant — `<img src="…?token=…">` works.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token := issueTestToken(t, tm, false)
+
+	var gotClaims *auth.Claims
+	handler := a.RequiredAllowQueryToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotClaims = ClaimsFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/artwork/poster.jpg?w=300&token="+token, nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200", rec.Code)
+	}
+	if gotClaims == nil || gotClaims.Username != "testuser" {
+		t.Errorf("claims not extracted from query token: got %v", gotClaims)
+	}
+}
+
+func TestRequiredAllowQueryToken_BearerHeaderStillWorks(t *testing.T) {
+	// Programmatic clients keep using Authorization — the query path
+	// is additive, not a replacement.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token := issueTestToken(t, tm, false)
+
+	handler := a.RequiredAllowQueryToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/artwork/x.jpg", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200", rec.Code)
+	}
+}
+
+func TestRequiredAllowQueryToken_NoCarriers_Unauthorized(t *testing.T) {
+	// Anonymous request — no Bearer, no cookie, no token query — must
+	// still be rejected. The variant adds an auth carrier, doesn't
+	// disable auth.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+
+	handler := a.RequiredAllowQueryToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler ran without auth")
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/artwork/x.jpg", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", rec.Code)
+	}
+}
+
+func TestRequiredAllowQueryToken_InvalidQueryToken_Unauthorized(t *testing.T) {
+	// Garbage in the query param shouldn't be silently treated as
+	// "no carrier" — we explicitly tried to authenticate via query
+	// and it failed.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+
+	handler := a.RequiredAllowQueryToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler ran with invalid token")
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/artwork/x.jpg?token=not-a-valid-paseto", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", rec.Code)
+	}
+}
+
 // ── Optional middleware ─────────────────────────────────────────────────────
 
 func TestOptional_NoToken(t *testing.T) {

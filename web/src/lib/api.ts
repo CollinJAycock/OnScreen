@@ -52,26 +52,33 @@ export function getBearerToken(): string | null { return bearerToken; }
  *  meaningless to a Rust HTTP client. */
 export function getApiBase(): string { return apiBase; }
 
-/** Resolve an unauthenticated server asset path (`/artwork/...`,
- *  `/media/files/...`, etc.) to a URL the browser can load.
+/** Resolve a server asset path (`/artwork/...`, `/media/stream/...`,
+ *  `/media/subtitles/...`) to a URL a browser asset element can load.
  *
  *  - Same-origin browser builds (apiBase = "/api/v1"): returns the
  *    path unchanged so the browser hits the same origin (Go server
- *    or its embedded webui in production, Vite proxy in dev).
- *  - Cross-origin (Tauri client pointed at a remote server, or a
- *    browser on a CDN): prepends the configured server origin so
- *    `<img src=…>` and `<audio src=…>` tags reach the right host
- *    instead of the page origin (which would 404 in production
- *    Tauri or proxy to the wrong server in dev).
+ *    or its embedded webui in production, Vite proxy in dev). The
+ *    httpOnly auth cookie attaches automatically — no token needed
+ *    in the URL.
+ *  - Cross-origin (Tauri client pointed at any server): prepends
+ *    the configured server origin AND appends `?token=<bearer>`
+ *    when a bearer is cached. The server's RequiredAllowQueryToken
+ *    middleware accepts the query-string token specifically for
+ *    asset routes (where `<img>` / `<audio>` can't carry an
+ *    Authorization header). The token-in-URL trade-off is scoped
+ *    to assets — leaks (logs, Referer) don't grant general API
+ *    access because regular API routes still require Bearer/cookie.
  *
- *  Cookies / bearer auth aren't attachable to image-tag requests,
- *  so this helper is for endpoints that are signed-via-query-token
- *  (artwork uses no auth; transcoded segments carry tokens in their
- *  URLs already).
+ *  When the path already has a query string the bearer is appended
+ *  with `&`; when it doesn't, with `?`. Caller-supplied tokens
+ *  (e.g. transcode segment tokens) take precedence — the helper
+ *  doesn't overwrite an existing `token=` parameter.
  */
 export function assetUrl(path: string): string {
   if (apiBase.startsWith('/')) return path;
-  return apiBase.replace(/\/api\/v1\/?$/, '') + path;
+  const base = apiBase.replace(/\/api\/v1\/?$/, '') + path;
+  if (!bearerToken || /[?&]token=/.test(base)) return base;
+  return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(bearerToken);
 }
 
 /** Build the request headers, attaching Authorization when a bearer
