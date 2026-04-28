@@ -2,6 +2,7 @@ package tv.onscreen.android.ui.photo
 
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -14,7 +15,9 @@ import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import coil.imageLoader
+import coil.request.ErrorResult
 import coil.request.ImageRequest
+import coil.request.SuccessResult
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -48,37 +51,11 @@ class PhotoViewFragment : Fragment() {
 
     private var imageView: ImageView? = null
     private var positionLabel: TextView? = null
+    private var statusLabel: TextView? = null
 
     private var serverUrl: String = ""
     private var siblingIds: List<String> = emptyList()
     private var currentIndex: Int = 0
-
-    companion object {
-        private const val ARG_ITEM_ID = "item_id"
-        private const val ARG_SIBLING_IDS = "sibling_ids"
-        private const val ARG_START_INDEX = "start_index"
-
-        fun newInstance(itemId: String): PhotoViewFragment =
-            newInstance(itemId, emptyList(), 0)
-
-        /** Pre-pass the sibling photos so D-pad left/right cycles
-         *  through them without an extra fetch per click.
-         *  `siblingIds[startIndex]` MUST equal `itemId` — the caller
-         *  is responsible for keeping those in sync. */
-        fun newInstance(
-            itemId: String,
-            siblingIds: List<String>,
-            startIndex: Int,
-        ): PhotoViewFragment {
-            return PhotoViewFragment().apply {
-                arguments = Bundle().apply {
-                    putString(ARG_ITEM_ID, itemId)
-                    putStringArrayList(ARG_SIBLING_IDS, ArrayList(siblingIds))
-                    putInt(ARG_START_INDEX, startIndex)
-                }
-            }
-        }
-    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -136,9 +113,9 @@ class PhotoViewFragment : Fragment() {
         siblingIds = args.getStringArrayList(ARG_SIBLING_IDS).orEmpty()
         currentIndex = args.getInt(ARG_START_INDEX, 0)
 
-        view.requestFocus()
         view.setOnKeyListener { _, keyCode, event ->
             if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            Log.d(TAG, "onKey code=$keyCode siblings=${siblingIds.size} index=$currentIndex")
             when (keyCode) {
                 KeyEvent.KEYCODE_BACK,
                 KeyEvent.KEYCODE_ESCAPE -> {
@@ -157,9 +134,57 @@ class PhotoViewFragment : Fragment() {
             }
         }
 
+        view.setOnFocusChangeListener { _, hasFocus ->
+            Log.d(TAG, "focus changed hasFocus=$hasFocus")
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first().orEmpty()
             renderCurrent(initialId)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Pull focus *after* the activity has finished laying out
+        // the new fragment. Calling requestFocus() in onViewCreated
+        // is unreliable: at that point the parent container is
+        // still claiming focus from the previous fragment's last
+        // focused descendant, and Leanback's focus search re-takes
+        // it asymmetrically. onResume is the earliest hook that
+        // runs after a stable focus pass.
+        val v = view ?: return
+        v.post {
+            val took = v.requestFocus()
+            Log.d(TAG, "requestFocus took=$took hasFocus=${v.isFocused}")
+        }
+    }
+
+    companion object {
+        private const val TAG = "PhotoViewFragment"
+        private const val ARG_ITEM_ID = "item_id"
+        private const val ARG_SIBLING_IDS = "sibling_ids"
+        private const val ARG_START_INDEX = "start_index"
+
+        fun newInstance(itemId: String): PhotoViewFragment =
+            newInstance(itemId, emptyList(), 0)
+
+        /** Pre-pass the sibling photos so D-pad left/right cycles
+         *  through them without an extra fetch per click.
+         *  `siblingIds[startIndex]` MUST equal `itemId` — the caller
+         *  is responsible for keeping those in sync. */
+        fun newInstance(
+            itemId: String,
+            siblingIds: List<String>,
+            startIndex: Int,
+        ): PhotoViewFragment {
+            return PhotoViewFragment().apply {
+                arguments = Bundle().apply {
+                    putString(ARG_ITEM_ID, itemId)
+                    putStringArrayList(ARG_SIBLING_IDS, ArrayList(siblingIds))
+                    putInt(ARG_START_INDEX, startIndex)
+                }
+            }
         }
     }
 
