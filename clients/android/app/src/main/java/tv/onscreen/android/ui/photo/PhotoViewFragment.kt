@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
+import tv.onscreen.android.ui.KeyEventHandler
 import javax.inject.Inject
 
 /**
@@ -44,7 +45,7 @@ import javax.inject.Inject
  * siblings — single-photo viewing doesn't need chrome.
  */
 @AndroidEntryPoint
-class PhotoViewFragment : Fragment() {
+class PhotoViewFragment : Fragment(), KeyEventHandler {
 
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var itemRepo: ItemRepository
@@ -113,50 +114,42 @@ class PhotoViewFragment : Fragment() {
         siblingIds = args.getStringArrayList(ARG_SIBLING_IDS).orEmpty()
         currentIndex = args.getInt(ARG_START_INDEX, 0)
 
-        view.setOnKeyListener { _, keyCode, event ->
-            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            Log.d(TAG, "onKey code=$keyCode siblings=${siblingIds.size} index=$currentIndex")
-            when (keyCode) {
-                KeyEvent.KEYCODE_BACK,
-                KeyEvent.KEYCODE_ESCAPE -> {
-                    parentFragmentManager.popBackStack()
-                    true
-                }
-                KeyEvent.KEYCODE_DPAD_LEFT,
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                    advance(-1); true
-                }
-                KeyEvent.KEYCODE_DPAD_RIGHT,
-                KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                    advance(1); true
-                }
-                else -> false
-            }
-        }
-
-        view.setOnFocusChangeListener { _, hasFocus ->
-            Log.d(TAG, "focus changed hasFocus=$hasFocus")
-        }
-
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first().orEmpty()
             renderCurrent(initialId)
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Pull focus *after* the activity has finished laying out
-        // the new fragment. Calling requestFocus() in onViewCreated
-        // is unreliable: at that point the parent container is
-        // still claiming focus from the previous fragment's last
-        // focused descendant, and Leanback's focus search re-takes
-        // it asymmetrically. onResume is the earliest hook that
-        // runs after a stable focus pass.
-        val v = view ?: return
-        v.post {
-            val took = v.requestFocus()
-            Log.d(TAG, "requestFocus took=$took hasFocus=${v.isFocused}")
+    /**
+     * Receives D-pad / Back / media-key events forwarded from
+     * MainActivity.dispatchKeyEvent. The standard
+     * View.OnKeyListener path doesn't work here: Leanback's
+     * fragment container claims focus during the transition and
+     * the FrameLayout never gets a chance, so D-pad keys are
+     * silently consumed by the previous (still-focused) grid.
+     *
+     * Routing through the activity bypasses focus entirely — the
+     * activity's dispatchKeyEvent fires before the view tree, and
+     * we only consume keys that map to known photo-viewer
+     * commands so other fragments are unaffected.
+     */
+    override fun onActivityKeyEvent(event: KeyEvent): Boolean {
+        Log.d(TAG, "key code=${event.keyCode} siblings=${siblingIds.size} index=$currentIndex")
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_BACK,
+            KeyEvent.KEYCODE_ESCAPE -> {
+                parentFragmentManager.popBackStack()
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                advance(-1); true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                advance(1); true
+            }
+            else -> false
         }
     }
 
