@@ -567,6 +567,12 @@ class PlaybackFragment : VideoSupportFragment() {
     private fun startUpNextWatcher() {
         upNextJob?.cancel()
         if (nextEpisode == null) return
+        // Music tracks chain at EOS only — the lead-in overlay
+        // would clip the last ~25 s of the song, which is exactly
+        // where the outro / fade lives. Episodes still get the
+        // overlay (the credits roll covers the same window, so
+        // the early countdown isn't a content loss there).
+        if (currentItemType == "track") return
         upNextJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 delay(1000)
