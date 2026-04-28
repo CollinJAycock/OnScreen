@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import tv.onscreen.android.data.api.AuthInterceptor
@@ -56,6 +57,17 @@ object NetworkModule {
         return Tls(ctx.socketFactory, tm)
     }
 
+    /** Logcat interceptor so we can see request paths, status codes,
+     *  and rough timing of every API call. Headers + body are
+     *  intentionally skipped to keep bearer tokens out of logs.
+     *  Tighten to NONE before shipping a release build (BuildConfig.
+     *  DEBUG branching needs `buildFeatures { buildConfig = true }`
+     *  on AGP 9 — opt in when we add a release variant). */
+    private fun loggingInterceptor(): HttpLoggingInterceptor =
+        HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BASIC
+        }
+
     /** Plain client for auth refresh calls — no authenticator, avoids circular dep. */
     @Provides
     @Singleton
@@ -66,6 +78,7 @@ object NetworkModule {
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor(baseUrlInterceptor)
+            .addInterceptor(loggingInterceptor())
             .sslSocketFactory(tls.socketFactory, tls.trustManager)
             .build()
     }
@@ -103,6 +116,7 @@ object NetworkModule {
             .writeTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(AuthInterceptor(prefs))
+            .addInterceptor(loggingInterceptor())
             .authenticator(TokenAuthenticator(prefs) { authApi })
             .sslSocketFactory(tls.socketFactory, tls.trustManager)
 
