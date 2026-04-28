@@ -86,9 +86,12 @@ func TestNewLogger_Returns(t *testing.T) {
 	// Smoke: just ensure NewLogger returns a valid logger with the
 	// supplied level var.
 	lv, _ := NewLogLevelVar("warn")
-	logger := NewLogger(lv)
+	logger, buf := NewLogger(lv)
 	if logger == nil {
 		t.Fatal("NewLogger returned nil")
+	}
+	if buf == nil {
+		t.Fatal("NewLogger returned nil buffer")
 	}
 	// Confirm the level is wired through — Debug should be filtered
 	// out by the warn level.

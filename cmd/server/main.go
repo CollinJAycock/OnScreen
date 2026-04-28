@@ -94,7 +94,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("log level: %w", err)
 	}
-	logger := observability.NewLogger(logLevel)
+	logger, logBuffer := observability.NewLogger(logLevel)
 	slog.SetDefault(logger)
 
 	logger.Info("starting onscreen server", "version", version, "build_time", buildTime)
@@ -813,6 +813,7 @@ func run() error {
 		People:             peopleHandler,
 		Plugins:            pluginHandler,
 		Pair:               pairHandler,
+		Logs:               v1.NewLogsHandler(logBuffer),
 		Capabilities:       capabilitiesHandler,
 		ArrServices:        arrServicesHandler,
 		Requests:           requestsHandler,

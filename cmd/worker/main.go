@@ -55,7 +55,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("log level: %w", err)
 	}
-	logger := observability.NewLogger(logLevel)
+	logger, _ := observability.NewLogger(logLevel)
 	slog.SetDefault(logger)
 
 	logger.Info("starting onscreen worker", "version", version, "build_time", buildTime)

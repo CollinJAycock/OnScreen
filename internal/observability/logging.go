@@ -34,13 +34,20 @@ const (
 // Log records written with a context carrying an active OTel span get
 // trace_id/span_id fields added automatically — lets operators jump from a
 // log line to the full distributed trace. No-op when no span is active.
-func NewLogger(level *slog.LevelVar) *slog.Logger {
+//
+// The returned LogRingBuffer captures the most recent records so an admin
+// endpoint can serve them without host shell access. Callers that don't
+// need the buffer can ignore the second return value.
+func NewLogger(level *slog.LevelVar) (*slog.Logger, *LogRingBuffer) {
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: level,
 		// Never log the following fields — enforced at source, but belt+suspenders:
 		// passwords, tokens, file_hash, user PINs.
 	})
-	return slog.New(NewTraceHandler(handler))
+	// 2000 entries ≈ ~1 MB at typical line sizes; plenty to surface a
+	// recent burst of errors without making the buffer memory-heavy.
+	buf := NewLogRingBuffer(handler, 2000)
+	return slog.New(NewTraceHandler(buf)), buf
 }
 
 // WithRequestID returns a child logger with the request ID embedded.

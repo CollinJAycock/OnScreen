@@ -74,6 +74,7 @@ type Handlers struct {
 	People          *v1.PeopleHandler
 	Plugins         *v1.PluginHandler
 	Pair            *v1.PairHandler
+	Logs            *v1.LogsHandler
 	Capabilities    *v1.CapabilitiesHandler
 	ArrServices     *v1.ArrServicesHandler // outbound arr instance CRUD (admin)
 	Requests        *v1.RequestHandler     // user + admin request workflow
@@ -467,6 +468,15 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/backup", h.Backup.Download)
 					r.Post("/admin/restore", h.Backup.Restore)
+				})
+			}
+
+			// Server logs — admin only. Reads from the in-process
+			// ring buffer attached to slog at boot.
+			if h.Logs != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/logs", h.Logs.List)
 				})
 			}
 
