@@ -314,6 +314,21 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 		})
 
+		// SSE notification stream — sibling to the authenticated API
+		// group below so it gets RequiredAllowQueryToken instead of
+		// Required. EventSource can't carry an Authorization header
+		// and cookies don't survive cross-origin from the Tauri
+		// webview, so a `?token=<paseto>` query param is the only
+		// usable carrier. Same trade-off as artwork: log/Referer
+		// leaks scoped to the stream endpoint, regular API still
+		// requires Bearer/cookie.
+		if h.Notifications != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(h.Auth_mw.RequiredAllowQueryToken)
+				r.Get("/notifications/stream", h.Notifications.Stream)
+			})
+		}
+
 		// Authenticated API — require valid token, rate limit by session.
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth_mw.Required)
@@ -377,7 +392,10 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/notifications/unread-count", h.Notifications.UnreadCount)
 				r.Post("/notifications/{id}/read", h.Notifications.MarkRead)
 				r.Post("/notifications/read-all", h.Notifications.MarkAllRead)
-				r.Get("/notifications/stream", h.Notifications.Stream)
+				// SSE stream is wired in a separate top-level group
+				// below — chi stacks middleware, so a sub-group here
+				// would run Required first and 401 before our query-
+				// token variant got a chance.
 			}
 
 			// User admin management — admin only.

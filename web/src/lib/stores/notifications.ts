@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import { notificationApi, type Notification } from '$lib/api';
+import { notificationApi, assetUrl, type Notification } from '$lib/api';
 
 export const notifications = writable<Notification[]>([]);
 export const unreadCount = derived(notifications, ($n) => $n.filter((x) => !x.read).length);
@@ -35,7 +35,12 @@ async function loadInitial() {
 
 function connectSSE() {
   if (eventSource) eventSource.close();
-  eventSource = new EventSource('/api/v1/notifications/stream');
+  // EventSource can't attach an Authorization header — same problem
+  // as <img>/<audio> tags. Route through assetUrl so the bearer
+  // lands as `?token=<paseto>` for cross-origin builds; same-origin
+  // browser builds get the path back unchanged and rely on the
+  // httpOnly cookie like before.
+  eventSource = new EventSource(assetUrl('/api/v1/notifications/stream'));
 
   eventSource.onmessage = (e) => {
     try {
