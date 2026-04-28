@@ -24,6 +24,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/intromarker"
+	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 )
@@ -109,6 +110,7 @@ type ItemHandler struct {
 	access    LibraryAccessChecker
 	subs      ExternalSubLister
 	tracker   *streaming.Tracker
+	sync      *notification.Broker
 	audit     *audit.Logger
 	logger    *slog.Logger
 }
@@ -144,6 +146,18 @@ func (h *ItemHandler) WithLibraryAccess(a LibraryAccessChecker) *ItemHandler {
 // alongside the embedded streams.
 func (h *ItemHandler) WithExternalSubtitles(s ExternalSubLister) *ItemHandler {
 	h.subs = s
+	return h
+}
+
+// WithSyncBroker attaches the cross-device sync broker. The Progress
+// handler publishes a `progress.updated` event to the user's other
+// connected SSE subscribers after a successful record so devices
+// B/C/D refresh their resume position when device A reports new
+// progress on the same item. When nil, sync is a no-op (the data
+// still lands in the DB; devices just won't see it until they
+// refetch the item).
+func (h *ItemHandler) WithSyncBroker(b *notification.Broker) *ItemHandler {
+	h.sync = b
 	return h
 }
 
@@ -826,6 +840,37 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			if err := h.sessions.UpdatePositionByMedia(r.Context(), id, body.ViewOffsetMS); err != nil {
 				h.logger.WarnContext(r.Context(), "update session position", "id", id, "err", err)
 			}
+		}
+	}
+
+	// Cross-device sync. Publish the new position to the user's
+	// other connected SSE subscribers so devices B/C/D refresh
+	// their resume position. The publishing device gets the event
+	// too — frontend filters out events whose origin matches its
+	// own session via a tab-scoped origin token. Best-effort: the
+	// progress data is already committed to the DB, so a missed
+	// publish just means other devices catch up on their next
+	// item refetch.
+	if h.sync != nil {
+		idStr := id.String()
+		data, err := json.Marshal(struct {
+			ItemID     string `json:"item_id"`
+			PositionMS int64  `json:"position_ms"`
+			DurationMS int64  `json:"duration_ms"`
+			State      string `json:"state"`
+		}{
+			ItemID:     idStr,
+			PositionMS: body.ViewOffsetMS,
+			DurationMS: body.DurationMS,
+			State:      body.State,
+		})
+		if err == nil {
+			h.sync.Publish(claims.UserID, notification.Event{
+				Type:      "progress.updated",
+				ItemID:    &idStr,
+				CreatedAt: time.Now().UnixMilli(),
+				Data:      data,
+			})
 		}
 	}
 

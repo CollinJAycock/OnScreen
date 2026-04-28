@@ -10,7 +10,11 @@
 mod audio;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager,
+};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 
@@ -47,21 +51,70 @@ fn get_app_version() -> AppVersion {
 // settings change in bursts.
 const STORE_FILE: &str = "settings.json";
 const KEY_SERVER_URL: &str = "server_url";
-// Tokens get their own keys on the same store rather than a separate
-// file: tauri-plugin-store writes the whole file on Save, so co-locating
-// reduces fsync churn when both change in the same flow (e.g. setup
-// screen → login → both server URL and tokens land back-to-back).
-//
-// SECURITY NOTE: tauri-plugin-store is not encryption-at-rest. Tokens
-// here sit in the platform's appdata dir as plain JSON, readable by
-// any process running as the same user. Acceptable for v2.1
-// scaffolding because (a) the access token is short-lived (1 h) so
-// the blast radius of a leaked file is bounded and (b) the refresh
-// token is server-revocable via the existing session-epoch path.
-// Follow-up: swap to tauri-plugin-keychain (macOS Keychain / Windows
-// Credential Vault / libsecret) so the tokens move out of plaintext.
+// Tokens were originally co-located with server_url in the JSON
+// store (a single file kept fsync churn low when both changed
+// back-to-back in the setup flow). They now live in the OS
+// keychain (Windows Credential Manager / macOS Keychain / Linux
+// Secret Service) — the JSON store keys are retained read-only
+// for one release as a migration fallback so a user upgrading
+// from a previous build doesn't have to re-login.
 const KEY_ACCESS_TOKEN: &str = "access_token";
 const KEY_REFRESH_TOKEN: &str = "refresh_token";
+
+// Keychain entry identifiers. Service is the bundle identifier so
+// "OnScreen" doesn't collide with another app named OnScreen on a
+// shared workstation; account is the credential name (the same
+// keys as the legacy store). Linux Secret Service maps these to a
+// schema entry's "service" + "username" attributes.
+const KEYCHAIN_SERVICE: &str = "com.onscreen.desktop";
+
+/// Read a credential from the OS keychain. Returns None when the
+/// entry doesn't exist (NoEntry), which is the normal "first run"
+/// path. Other errors (libsecret unavailable, locked keychain) are
+/// turned into None too so the caller falls back to the legacy
+/// store rather than refusing to launch.
+fn keychain_get(account: &str) -> Option<String> {
+    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account).ok()?;
+    match entry.get_password() {
+        Ok(s) => Some(s),
+        Err(keyring::Error::NoEntry) => None,
+        Err(e) => {
+            eprintln!("keychain: get {account}: {e}");
+            None
+        }
+    }
+}
+
+/// Write a credential to the OS keychain. Logs and returns false on
+/// failure (e.g. headless Linux without secret-service); the caller
+/// then keeps the value in the legacy plaintext store so login
+/// still works on degraded platforms.
+fn keychain_set(account: &str, value: &str) -> bool {
+    match keyring::Entry::new(KEYCHAIN_SERVICE, account) {
+        Ok(entry) => match entry.set_password(value) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("keychain: set {account}: {e}");
+                false
+            }
+        },
+        Err(e) => {
+            eprintln!("keychain: open {account}: {e}");
+            false
+        }
+    }
+}
+
+/// Delete a credential. Treats NoEntry as success — the goal is
+/// "after this returns, no entry exists for this account."
+fn keychain_clear(account: &str) {
+    if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, account) {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => eprintln!("keychain: delete {account}: {e}"),
+        }
+    }
+}
 
 /// Returns the configured OnScreen server URL, or None when the user
 /// hasn't completed the first-run setup. The frontend uses None to
@@ -128,35 +181,107 @@ pub struct StoredTokens {
     pub refresh_token: Option<String>,
 }
 
+/// Reads tokens from the OS keychain. Falls through to the legacy
+/// JSON store on first launch after upgrading (one-shot migration)
+/// or when the keychain is unavailable (headless Linux without
+/// secret-service). On a successful migration, the values move into
+/// the keychain and the store entries are wiped — subsequent reads
+/// hit the keychain directly.
 #[tauri::command]
 fn get_tokens(app: AppHandle) -> Result<StoredTokens, String> {
+    let access_kc = keychain_get(KEY_ACCESS_TOKEN);
+    let refresh_kc = keychain_get(KEY_REFRESH_TOKEN);
+    if access_kc.is_some() || refresh_kc.is_some() {
+        return Ok(StoredTokens {
+            access_token: access_kc,
+            refresh_token: refresh_kc,
+        });
+    }
+    // Legacy fallback: tokens may be in the plaintext store from a
+    // pre-keychain install. Read them, migrate to the keychain, and
+    // wipe the store entries. Failures during migration leave the
+    // store entries intact so the next run tries again.
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    let access_store = store
+        .get(KEY_ACCESS_TOKEN)
+        .and_then(|v| v.as_str().map(String::from));
+    let refresh_store = store
+        .get(KEY_REFRESH_TOKEN)
+        .and_then(|v| v.as_str().map(String::from));
+    if access_store.is_none() && refresh_store.is_none() {
+        return Ok(StoredTokens::default());
+    }
+    let migrated_access = match access_store.as_deref() {
+        Some(a) => keychain_set(KEY_ACCESS_TOKEN, a),
+        None => true, // nothing to migrate counts as success
+    };
+    let migrated_refresh = match refresh_store.as_deref() {
+        Some(r) => keychain_set(KEY_REFRESH_TOKEN, r),
+        None => true,
+    };
+    if migrated_access && migrated_refresh {
+        store.delete(KEY_ACCESS_TOKEN);
+        store.delete(KEY_REFRESH_TOKEN);
+        let _ = store.save();
+    }
     Ok(StoredTokens {
-        access_token: store
-            .get(KEY_ACCESS_TOKEN)
-            .and_then(|v| v.as_str().map(String::from)),
-        refresh_token: store
-            .get(KEY_REFRESH_TOKEN)
-            .and_then(|v| v.as_str().map(String::from)),
+        access_token: access_store,
+        refresh_token: refresh_store,
     })
 }
 
+/// Writes tokens to the OS keychain, with the legacy JSON store as
+/// a degraded-platform fallback. On platforms where the keychain
+/// works, the store is wiped on every set so we never have a stale
+/// plaintext copy of a rotated refresh token sitting on disk.
 #[tauri::command]
 fn set_tokens(app: AppHandle, access: String, refresh: String) -> Result<(), String> {
+    let kc_access_ok = keychain_set(KEY_ACCESS_TOKEN, &access);
+    let kc_refresh_ok = keychain_set(KEY_REFRESH_TOKEN, &refresh);
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    store.set(KEY_ACCESS_TOKEN, access);
-    store.set(KEY_REFRESH_TOKEN, refresh);
-    store.save().map_err(|e| e.to_string())?;
+    if kc_access_ok && kc_refresh_ok {
+        // Both landed in the keychain — strip any legacy entries.
+        store.delete(KEY_ACCESS_TOKEN);
+        store.delete(KEY_REFRESH_TOKEN);
+        store.save().map_err(|e| e.to_string())?;
+    } else {
+        // Keychain partially or fully unavailable; persist whichever
+        // values didn't make it so the user stays signed in.
+        if !kc_access_ok {
+            store.set(KEY_ACCESS_TOKEN, access);
+        }
+        if !kc_refresh_ok {
+            store.set(KEY_REFRESH_TOKEN, refresh);
+        }
+        store.save().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
+/// Wipes tokens from both the keychain and the legacy store so a
+/// logout doesn't leave a stranded copy in either place.
 #[tauri::command]
 fn clear_tokens(app: AppHandle) -> Result<(), String> {
+    keychain_clear(KEY_ACCESS_TOKEN);
+    keychain_clear(KEY_REFRESH_TOKEN);
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     store.delete(KEY_ACCESS_TOKEN);
     store.delete(KEY_REFRESH_TOKEN);
     store.save().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Brings the main window forward — used by both the tray icon's
+/// left-click and the "Show OnScreen" menu item. Unminimises before
+/// focusing so a tray click recovers from a minimized state too.
+/// Errors are logged but ignored: the worst case is the user has to
+/// click their dock icon instead.
+fn focus_main_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -168,6 +293,11 @@ pub fn run() {
         // platform appdata dir, so it survives reinstalls and is
         // backupable like any other config file.
         .plugin(tauri_plugin_store::Builder::new().build())
+        // OS notifications — surfaces "Now playing X by Y" to the
+        // notification shell when a new track starts. Frontend
+        // gates this behind a user pref so it doesn't spam during
+        // album playback.
+        .plugin(tauri_plugin_notification::init())
         // Global keyboard shortcuts — registers the OS media keys
         // (Play/Pause, Next, Previous, Stop) so transport works
         // when OnScreen isn't focused. The handler emits a
@@ -212,6 +342,54 @@ pub fn run() {
                     eprintln!("media-key {code:?}: register failed: {e}");
                 }
             }
+
+            // System tray: keeps the app reachable while the window
+            // is closed (X just hides on Windows/Linux per Tauri 2's
+            // default close-behavior, so the tray is the recovery
+            // path). Menu items emit the same `media-key` event the
+            // global-shortcut handler does, so the AudioPlayer's
+            // listener handles both paths uniformly.
+            let show_item = MenuItem::with_id(app, "show", "Show OnScreen", true, None::<&str>)?;
+            let play_item = MenuItem::with_id(app, "play-pause", "Play / Pause", true, None::<&str>)?;
+            let next_item = MenuItem::with_id(app, "next", "Next", true, None::<&str>)?;
+            let prev_item = MenuItem::with_id(app, "previous", "Previous", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit OnScreen", true, None::<&str>)?;
+            let menu = Menu::with_items(
+                app,
+                &[&show_item, &sep, &play_item, &next_item, &prev_item, &sep, &quit_item],
+            )?;
+            let _tray = TrayIconBuilder::with_id("main")
+                .tooltip("OnScreen")
+                .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
+                    // No app icon configured — Tauri builds a 1x1
+                    // transparent PNG by default. The tray will
+                    // still be present, just blank.
+                    tauri::image::Image::new_owned(vec![0u8; 4], 1, 1)
+                }))
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => focus_main_window(app),
+                    "play-pause" | "next" | "previous" => {
+                        let _ = app.emit("media-key", event.id.as_ref());
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // Left-click brings the window to the front.
+                    // Right-click is reserved for the OS menu (the
+                    // tray plugin handles that automatically).
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        focus_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -5,6 +5,14 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:tray:allow-new",
+    "core:tray:allow-set-icon",
+    "core:tray:allow-set-tooltip",
+    "core:tray:allow-set-visible",
+    "core:tray:allow-set-menu",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
     "store:default",
     "store:allow-get",
     "store:allow-set",
@@ -12,6 +20,10 @@
     "store:allow-delete",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered"
+    "global-shortcut:allow-is-registered",
+    "notification:default",
+    "notification:allow-notify",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission"
   ]
 }

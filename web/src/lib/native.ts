@@ -250,6 +250,34 @@ export async function audioSeek(
   });
 }
 
+/** Fires an OS notification through the native shell. The first call
+ *  triggers a permission prompt on platforms where notifications are
+ *  opt-in (macOS, modern Linux); subsequent calls are silent until
+ *  the user revokes. No-op in the browser bundle and silently
+ *  swallows failures (notification denial isn't a hard error worth
+ *  surfacing — the in-app player chrome already shows the new
+ *  track). */
+export async function notifyNowPlaying(
+  title: string,
+  body: string,
+): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { isPermissionGranted, requestPermission, sendNotification } =
+      await import('@tauri-apps/plugin-notification');
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const res = await requestPermission();
+      granted = res === 'granted';
+    }
+    if (granted) {
+      sendNotification({ title, body });
+    }
+  } catch (e) {
+    console.debug('notifyNowPlaying failed (non-fatal):', e);
+  }
+}
+
 /** Action emitted by the OS media keys. The Rust side maps each
  *  registered key to one of these strings before forwarding to the
  *  webview; keeping the wire format string-keyed (rather than a

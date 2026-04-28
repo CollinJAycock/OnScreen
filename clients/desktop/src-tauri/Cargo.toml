@@ -23,7 +23,7 @@ tauri-build = { version = "2", features = [] }
 #                        runs without rolling our own SQLite — the
 #                        backing JSON file lives in the platform's
 #                        appdata dir so backups + sync work for free.
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-store = "2"
 # OS-level keyboard shortcuts. Used to register the platform media
 # keys (Play/Pause, Next, Previous) so transport works without the
@@ -31,6 +31,25 @@ tauri-plugin-store = "2"
 # emits an event when a registered combo fires; the AudioPlayer in
 # the webview listens and dispatches to the audio store.
 tauri-plugin-global-shortcut = "2"
+# OS notifications — surfaces track changes / library events to the
+# system notification centre, so the user sees "Now playing X" in
+# their notification shell when the OnScreen window isn't focused.
+tauri-plugin-notification = "2"
+
+# OS keychain. Refresh tokens move out of the plaintext appdata
+# JSON file and into Windows Credential Manager / macOS Keychain
+# / Linux Secret Service. Falls back to the existing store on
+# platforms where the keychain is unavailable (e.g. a headless
+# Linux desktop without libsecret) — the get_tokens IPC retains
+# the old read path as a migration fallback.
+# OS keychain. Refresh tokens move out of the plaintext appdata
+# JSON file and into Windows Credential Manager / macOS Keychain
+# / Linux Secret Service. Pinned to 3.x: 4.0.0 changed scope and
+# pulls in aegis (crypto) that needs clang-cl on Windows MSVC,
+# which we don't want as a build prereq. The 3.x feature names
+# pick the platform-native backends without dragging in vendored
+# C builds.
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

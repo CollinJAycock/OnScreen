@@ -486,6 +486,7 @@ func run() error {
 		WithLibraryAccess(libSvc).
 		WithMarkers(intromarker.NewStore(rwPool)).
 		WithExternalSubtitles(subtitleSvc).
+		WithSyncBroker(notifBrokerEarly).
 		WithAudit(auditLogger)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).

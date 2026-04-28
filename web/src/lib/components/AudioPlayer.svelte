@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
   import { itemApi, getApiBase, getBearerToken, assetUrl } from '$lib/api';
-  import { isTauri, audioPlayUrl, audioPreloadUrl, audioPause, audioResume, audioSeek, stopAudio, audioState, onMediaKey } from '$lib/native';
+  import { isTauri, audioPlayUrl, audioPreloadUrl, audioPause, audioResume, audioSeek, stopAudio, audioState, onMediaKey, notifyNowPlaying } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
@@ -86,6 +86,16 @@
       void itemApi
         .progress(prevTrack.id, positionMS, durationMS || (prevTrack.durationMS ?? 0), 'stopped')
         .catch(() => {});
+    }
+    // OS notification on track change — only when actually moving to
+    // a *different* track (skipping initial track-load on launch
+    // would feel like spam) and only when the user can't already see
+    // the new track in the focused window. Tauri's window focus check
+    // would be more precise but document.hasFocus() is cheap and
+    // covers the common case of "user switched apps mid-album."
+    if (t && prevTrack && prevTrack.id !== t.id && !document.hasFocus()) {
+      const subtitle = [t.artist, t.album].filter(Boolean).join(' — ') || 'Now playing';
+      void notifyNowPlaying(t.title, subtitle);
     }
     prevTrack = t;
     track = t;

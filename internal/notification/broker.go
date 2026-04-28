@@ -2,20 +2,32 @@
 package notification
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/google/uuid"
 )
 
-// Event is a notification payload sent to connected clients.
+// Event is a payload sent to connected clients over the user's SSE
+// channel. Two shapes share this struct so a single broker covers
+// both:
+//
+//   - **User-facing notifications** (Type = "item_added", "scan_complete",
+//     etc.): Title/Body are populated for the bell-icon UI.
+//   - **Sync events** (Type = "progress.updated"): Title/Body are
+//     empty; Data carries the structured payload (item_id +
+//     position_ms + state) other devices use to refresh their
+//     resume-position cache. Frontend filters on Type so sync
+//     events don't render in the notification list.
 type Event struct {
-	ID        string  `json:"id"`
-	Type      string  `json:"type"`
-	Title     string  `json:"title"`
-	Body      string  `json:"body"`
-	ItemID    *string `json:"item_id,omitempty"`
-	Read      bool    `json:"read"`
-	CreatedAt int64   `json:"created_at"`
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Title     string          `json:"title,omitempty"`
+	Body      string          `json:"body,omitempty"`
+	ItemID    *string         `json:"item_id,omitempty"`
+	Read      bool            `json:"read"`
+	CreatedAt int64           `json:"created_at"`
+	Data      json.RawMessage `json:"data,omitempty"`
 }
 
 // Broker manages per-user SSE subscriptions. It is safe for concurrent use.

@@ -264,6 +264,36 @@ SameSite=None dance cookies would require.
   regardless of focus. Rust handler emits a `media-key` event
   the AudioPlayer listens for and dispatches into the audio
   store. Failures (another app holds a shortcut) are non-fatal.
+- **Secure credential storage**: refresh + access tokens live in
+  the OS keychain (Windows Credential Manager, macOS Keychain,
+  Linux Secret Service via zbus) instead of the plaintext
+  appdata JSON. `get_tokens` reads keychain-first with a
+  one-shot migration fallback that copies pre-existing store
+  entries into the keychain and wipes the plaintext on success.
+  `set_tokens` strips legacy entries on every write so a rotated
+  refresh token never leaves a stale copy on disk. `keyring 3.x`
+  pinned because 4.0 pulls aegis (crypto) that needs clang-cl on
+  Windows MSVC builds.
+- **System tray + OS notifications**: tray menu (Show OnScreen,
+  Play/Pause, Next, Previous, Quit) emits the same `media-key`
+  event the global shortcut handler does, so the AudioPlayer
+  listener handles both paths uniformly. Left-click brings the
+  window forward (unminimises if needed). Now-playing
+  notifications fire on track change via `tauri-plugin-
+  notification` — only when the OnScreen window isn't focused
+  (`document.hasFocus()` guard) so album playback doesn't spam
+  the notification shell.
+- **Cross-device watch-history sync (server side + SSE plumbing)**:
+  the `notification.Broker` Event now carries an optional `Data`
+  field for non-user-facing payloads. The Progress handler
+  publishes `progress.updated` events containing
+  `{item_id, position_ms, duration_ms, state}` after every
+  successful record, so devices B/C/D get the new resume
+  position pushed without polling. Frontend's
+  `notifications.ts` routes sync events to a separate
+  `progressUpdates` store so they don't pollute the bell-icon
+  list. Watch-page consumer (auto-update resume on currently-
+  paused video) is a follow-up — the broadcast is in place.
 
 ## What's not done yet
 
@@ -283,9 +313,9 @@ SameSite=None dance cookies would require.
   shell so taskbar/lockscreen widgets show track + art and
   control transport. `souvlaki` crate is the cross-platform
   wrapper; integration is its own commit.
-- **Secure credential storage** — tauri-plugin-keychain swap so
-  refresh tokens leave the plaintext appdata file. (See lib.rs
-  comment on `KEY_ACCESS_TOKEN` for the threat model.)
-- **System tray + notifications**
-- **Cross-device watch-history sync** — server side is mostly
-  there; client side needs the sync protocol.
+- **Cross-device sync consumers** — the broadcast and the
+  client-side store are wired. Watch-page auto-update of
+  resume position on incoming sync events (when local
+  playback is paused/idle) is the natural next consumer; the
+  AudioPlayer's session sync would benefit too once the
+  multi-device "what's playing" UX lands.
