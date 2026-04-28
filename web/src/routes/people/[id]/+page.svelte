@@ -104,7 +104,7 @@
             {#each group.items as f (f.item_id + group.role + (f.character ?? '') + (f.job ?? ''))}
               <a class="tile" href="/watch/{f.item_id}" title={f.title}>
                 {#if f.poster_path}
-                  <img class="tile-poster" src="{assetUrl('/artwork/' + encodeURI(f.poster_path))}?w=200" alt={f.title} loading="lazy" />
+                  <img class="tile-poster" src={assetUrl(`/artwork/${encodeURI(f.poster_path)}?w=200`)} alt={f.title} loading="lazy" />
                 {:else}
                   <div class="tile-poster tile-placeholder">{f.title.charAt(0)}</div>
                 {/if}

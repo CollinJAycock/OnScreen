@@ -167,8 +167,8 @@
             {@const pct = s.duration_ms && s.duration_ms > 0 ? Math.min(100, (s.position_ms / s.duration_ms) * 100) : 0}
             <div class="stream-card">
               {#if s.poster_path}
-                <img class="stream-poster" src="{assetUrl('/artwork/' + encodeURI(s.poster_path))}?w=150"
-                     srcset="{assetUrl('/artwork/' + encodeURI(s.poster_path))}?w=75 75w, {assetUrl('/artwork/' + encodeURI(s.poster_path))}?w=150 150w, {assetUrl('/artwork/' + encodeURI(s.poster_path))}?w=300 300w"
+                <img class="stream-poster" src={assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=150`)}
+                     srcset="{assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=75`)} 75w, {assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=300`)} 300w"
                      sizes="80px"
                      alt={s.title} />
               {:else}
@@ -325,8 +325,8 @@
               <div class="top-row">
                 <span class="top-rank">{i + 1}</span>
                 {#if item.poster_path}
-                  <img class="top-thumb" src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=150"
-                       srcset="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=75 75w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=150 150w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=300 300w"
+                  <img class="top-thumb" src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=150`)}
+                       srcset="{assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=75`)} 75w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=300`)} 300w"
                        sizes="48px"
                        alt={item.title} loading="lazy" />
                 {:else}

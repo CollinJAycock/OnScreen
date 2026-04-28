@@ -454,7 +454,7 @@
     <div class="left">
       {#if track.posterPath}
         <img class="art"
-             src="{assetUrl('/artwork/' + encodeURI(track.posterPath))}?w=120"
+             src={assetUrl(`/artwork/${encodeURI(track.posterPath)}?w=120`)}
              alt={track.album ?? ''} />
       {:else}
         <div class="art placeholder">♪</div>

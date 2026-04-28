@@ -268,8 +268,8 @@
             <button class="result-card" on:click={() => navigate(item)}>
               <div class="poster-wrap">
                 {#if art}
-                  <img src="{assetUrl('/artwork/' + encodeURI(art))}?w=300"
-                       srcset="{assetUrl('/artwork/' + encodeURI(art))}?w=150 150w, {assetUrl('/artwork/' + encodeURI(art))}?w=300 300w, {assetUrl('/artwork/' + encodeURI(art))}?w=450 450w"
+                  <img src={assetUrl(`/artwork/${encodeURI(art)}?w=300`)}
+                       srcset="{assetUrl(`/artwork/${encodeURI(art)}?w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?w=450`)} 450w"
                        sizes="(max-width: 768px) 100px, 180px"
                        alt={item.title} loading="lazy" />
                 {:else}

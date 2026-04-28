@@ -73,8 +73,8 @@
           <div class="poster">
             {#if it.poster_path}
               <img
-                src="{assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=300"
-                srcset="{assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=150 150w, {assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=300 300w, {assetUrl('/artwork/' + encodeURI(it.poster_path))}?w=600 600w"
+                src={assetUrl(`/artwork/${encodeURI(it.poster_path)}?w=300`)}
+                srcset="{assetUrl(`/artwork/${encodeURI(it.poster_path)}?w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(it.poster_path)}?w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(it.poster_path)}?w=600`)} 600w"
                 sizes="(max-width: 768px) 150px, 200px"
                 alt={it.title}
                 loading="lazy"

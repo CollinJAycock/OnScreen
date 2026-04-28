@@ -55,24 +55,31 @@ export function getApiBase(): string { return apiBase; }
 /** Resolve a server asset path (`/artwork/...`, `/media/stream/...`,
  *  `/media/subtitles/...`) to a URL a browser asset element can load.
  *
+ *  **Pass the COMPLETE path including any query string the asset
+ *  endpoint expects** — the helper appends `?token=` (or `&token=`)
+ *  at the END, so callers that concatenate their own `?w=300` after
+ *  the helper's return value would corrupt the URL. Use template
+ *  literals: `assetUrl(`/artwork/${path}?v=${ver}&w=300`)`, never
+ *  `assetUrl('/artwork/'+path) + '?w=300'`.
+ *
  *  - Same-origin browser builds (apiBase = "/api/v1"): returns the
  *    path unchanged so the browser hits the same origin (Go server
  *    or its embedded webui in production, Vite proxy in dev). The
  *    httpOnly auth cookie attaches automatically — no token needed
  *    in the URL.
  *  - Cross-origin (Tauri client pointed at any server): prepends
- *    the configured server origin AND appends `?token=<bearer>`
- *    when a bearer is cached. The server's RequiredAllowQueryToken
- *    middleware accepts the query-string token specifically for
- *    asset routes (where `<img>` / `<audio>` can't carry an
- *    Authorization header). The token-in-URL trade-off is scoped
- *    to assets — leaks (logs, Referer) don't grant general API
- *    access because regular API routes still require Bearer/cookie.
+ *    the configured server origin AND appends `&token=<bearer>` (or
+ *    `?token=` if no other params) when a bearer is cached. The
+ *    server's RequiredAllowQueryToken middleware accepts the query-
+ *    string token specifically for asset routes (where `<img>` /
+ *    `<audio>` can't carry an Authorization header). The token-in-
+ *    URL trade-off is scoped to assets — leaks (logs, Referer)
+ *    don't grant general API access because regular API routes
+ *    still require Bearer/cookie.
  *
- *  When the path already has a query string the bearer is appended
- *  with `&`; when it doesn't, with `?`. Caller-supplied tokens
- *  (e.g. transcode segment tokens) take precedence — the helper
- *  doesn't overwrite an existing `token=` parameter.
+ *  Caller-supplied tokens (e.g. transcode segment tokens) take
+ *  precedence — the helper doesn't overwrite an existing `token=`
+ *  parameter.
  */
 export function assetUrl(path: string): string {
   if (apiBase.startsWith('/')) return path;

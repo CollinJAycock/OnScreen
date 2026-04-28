@@ -150,8 +150,8 @@
             {@const art = item.poster_path ?? item.thumb_path}
             <a class="hub-card" class:square={isSquare(item)} href={hubHref(item)}>
               {#if art}
-                <img src="{assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=300"
-                     srcset="{assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=300 300w, {assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=450 450w"
+                <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
+                     srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
                      sizes="(max-width: 768px) 130px, 220px"
                      alt={item.title} loading="lazy" />
               {:else}
@@ -179,8 +179,8 @@
             {@const art = item.poster_path ?? item.thumb_path}
             <a class="hub-card" href={hubHref(item)}>
               {#if art}
-                <img src="{assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=300"
-                     srcset="{assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=300 300w, {assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=450 450w"
+                <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
+                     srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
                      sizes="(max-width: 768px) 130px, 220px"
                      alt={item.title} loading="lazy" />
               {:else}
@@ -207,8 +207,8 @@
             {@const art = item.poster_path ?? item.thumb_path}
             <a class="hub-card" href={hubHref(item)}>
               {#if art}
-                <img src="{assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=300"
-                     srcset="{assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=300 300w, {assetUrl('/artwork/' + encodeURI(art))}?v={item.updated_at}&w=450 450w"
+                <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
+                     srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
                      sizes="(max-width: 768px) 130px, 220px"
                      alt={item.title} loading="lazy" />
               {:else}
@@ -237,8 +237,8 @@
           {#each row.items as item (item.id)}
             <a class="hub-card" class:square href={hubHref(item)}>
               {#if item.poster_path}
-                <img src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300"
-                     srcset="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=300 300w, {assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}&w=450 450w"
+                <img src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)}
+                     srcset="{assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=450`)} 450w"
                      sizes="(max-width: 768px) 130px, 220px"
                      alt={item.title} loading="lazy" />
               {:else}

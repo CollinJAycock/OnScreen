@@ -172,7 +172,7 @@
               {#if item.poster_path}
                 <img
                   class="poster"
-                  src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?w=150"
+                  src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=150`)}
                   alt={item.title}
                   loading="lazy"
                 />

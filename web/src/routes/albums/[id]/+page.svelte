@@ -158,7 +158,7 @@
     <header class="hero">
       {#if album.poster_path}
         <img class="hero-poster"
-             src="{assetUrl('/artwork/' + encodeURI(album.poster_path))}?v={album.updated_at}&w=400"
+             src={assetUrl(`/artwork/${encodeURI(album.poster_path)}?v=${album.updated_at}&w=400`)}
              alt={album.title} />
       {:else}
         <div class="hero-poster placeholder">♪</div>

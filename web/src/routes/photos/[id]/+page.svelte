@@ -283,7 +283,7 @@
       role="presentation"
     >
       <img
-        src="{assetUrl('/artwork/' + encodeURI(item.poster_path))}?v={item.updated_at}"
+        src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}`)}
         alt={item.title}
         draggable="false"
         style="transform: translate({panX}px, {panY}px) scale({zoom}); cursor: {zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'};"

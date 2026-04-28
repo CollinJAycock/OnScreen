@@ -78,7 +78,7 @@
     <header class="hero">
       {#if artist.poster_path}
         <img class="hero-poster"
-             src="{assetUrl('/artwork/' + encodeURI(artist.poster_path))}?v={artist.updated_at}&w=400"
+             src={assetUrl(`/artwork/${encodeURI(artist.poster_path)}?v=${artist.updated_at}&w=400`)}
              alt={artist.title} />
       {:else}
         <div class="hero-poster placeholder">{artist.title.charAt(0)}</div>
@@ -109,8 +109,8 @@
           <a class="card" href="/albums/{a.id}">
             <div class="poster">
               {#if a.poster_path}
-                <img src="{assetUrl('/artwork/' + encodeURI(a.poster_path))}?v={a.updated_at}&w=300"
-                     srcset="{assetUrl('/artwork/' + encodeURI(a.poster_path))}?v={a.updated_at}&w=150 150w, {assetUrl('/artwork/' + encodeURI(a.poster_path))}?v={a.updated_at}&w=300 300w, {assetUrl('/artwork/' + encodeURI(a.poster_path))}?v={a.updated_at}&w=450 450w"
+                <img src={assetUrl(`/artwork/${encodeURI(a.poster_path)}?v=${a.updated_at}&w=300`)}
+                     srcset="{assetUrl(`/artwork/${encodeURI(a.poster_path)}?v=${a.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(a.poster_path)}?v=${a.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(a.poster_path)}?v=${a.updated_at}&w=450`)} 450w"
                      sizes="(max-width: 768px) 100px, 180px"
                      alt={a.title} loading="lazy" />
               {:else}
@@ -131,10 +131,10 @@
           <a class="card" href="/watch/{v.id}">
             <div class="poster mv-poster">
               {#if v.thumb_path}
-                <img src="{assetUrl('/artwork/' + encodeURI(v.thumb_path))}?v={v.updated_at}&w=400"
+                <img src={assetUrl(`/artwork/${encodeURI(v.thumb_path)}?v=${v.updated_at}&w=400`)}
                      alt={v.title} loading="lazy" />
               {:else if v.poster_path}
-                <img src="{assetUrl('/artwork/' + encodeURI(v.poster_path))}?v={v.updated_at}&w=400"
+                <img src={assetUrl(`/artwork/${encodeURI(v.poster_path)}?v=${v.updated_at}&w=400`)}
                      alt={v.title} loading="lazy" />
               {:else}
                 <div class="poster-blank">▶</div>
