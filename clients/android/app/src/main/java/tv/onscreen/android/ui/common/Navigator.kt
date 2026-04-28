@@ -39,6 +39,18 @@ object Navigator {
             "show", "season", "artist", "album", "podcast" ->
                 DetailFragment.newInstance(itemId)
 
+            // Movies route to detail too. The detail page already
+            // handles a leaf item (Play button + Resume / Play From
+            // Start when there's a view_offset_ms), and routing
+            // straight to playback meant the user never saw the
+            // movie's metadata, summary, or fanart. Containers and
+            // movies use the same detail page; the page reads
+            // item.type to pick the right configurePlayButtons
+            // branch (single-Play for movies, pick-child for shows
+            // / albums / podcasts).
+            "movie" ->
+                DetailFragment.newInstance(itemId)
+
             // Photos render full-screen via Coil; can't go through
             // ExoPlayer (it doesn't decode JPEGs).
             "photo" ->
@@ -51,11 +63,11 @@ object Navigator {
             "collection", "playlist" ->
                 CollectionFragment.newInstance(itemId, "")
 
-            // Default: anything ExoPlayer can play. Movies, episodes,
-            // music tracks, audiobooks (single-file MVP), podcast
-            // episodes. Music + audiobooks render with a black video
-            // surface and the standard transport controls — a proper
-            // music-player UI is a follow-up.
+            // Default: anything ExoPlayer can play. Episodes, music
+            // tracks, audiobooks (single-file MVP), podcast episodes
+            // — all leaf items the user has already drilled to via
+            // the parent container's detail page, so a second detail
+            // hop would be friction.
             else ->
                 PlaybackFragment.newInstance(itemId, resumeMs)
         }

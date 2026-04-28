@@ -83,7 +83,14 @@ class HomeFragment : BrowseSupportFragment() {
             when (item) {
                 is HubItem -> {
                     val resumeMs = item.view_offset_ms ?: 0
-                    if (resumeMs > 0 && item.type != "show" && item.type != "photo") {
+                    // Resume dialog only makes sense for leaf items that
+                    // skip the detail page — episodes, tracks, etc. land
+                    // straight in playback so we ask up front. Movies
+                    // now route to the detail page (which has its own
+                    // Resume / Play From Start buttons), so a dialog
+                    // here would be a redundant extra step.
+                    val skipDialog = item.type == "show" || item.type == "movie" || item.type == "photo"
+                    if (resumeMs > 0 && !skipDialog) {
                         showResumeDialog(resumeMs) { offset ->
                             Navigator.open(parentFragmentManager, item.id, item.type, offset)
                         }
