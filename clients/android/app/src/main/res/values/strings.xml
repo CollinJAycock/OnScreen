@@ -56,4 +56,6 @@
     <string name="resume_from">Resume from %s</string>
     <string name="start_over">Start over</string>
     <string name="unread">Unread</string>
+    <string name="skip_intro">Skip Intro</string>
+    <string name="skip_credits">Skip Credits</string>
 </resources>

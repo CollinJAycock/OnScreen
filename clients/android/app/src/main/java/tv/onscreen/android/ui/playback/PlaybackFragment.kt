@@ -70,6 +70,18 @@ class PlaybackFragment : VideoSupportFragment() {
     /** Cross-device sync subscriber. Cancelled in onDestroyView. */
     private var syncJob: Job? = null
 
+    /** Skip-intro / skip-credits overlay button. Inflated lazily on
+     *  first marker hit, then shown/hidden as the player crosses
+     *  marker windows. */
+    private var skipMarkerOverlay: Button? = null
+    private var skipMarkerJob: Job? = null
+    private var markers: List<tv.onscreen.android.data.model.Marker> = emptyList()
+    /** Per-marker dismissal: once the user clicks Skip (or the credits
+     *  overlay's auto-disappear fires past end_ms), don't re-show that
+     *  same marker for the rest of this playback session. Keyed by
+     *  start_ms because it's stable across the marker list. */
+    private val dismissedMarkers = mutableSetOf<Long>()
+
     companion object {
         private const val ARG_ITEM_ID = "item_id"
         private const val ARG_START_MS = "start_ms"
@@ -130,11 +142,94 @@ class PlaybackFragment : VideoSupportFragment() {
                 glue?.title = state.item?.title ?: ""
                 glue?.subtitle = state.item?.year?.toString() ?: ""
 
+                markers = state.markers
+                dismissedMarkers.clear()
+
                 refreshSecondaryActions()
                 startUpNextWatcher()
                 startCrossDeviceSync(itemId)
+                startSkipMarkerWatcher()
             }
         }
+    }
+
+    /**
+     * Watch the player's content position and surface a "SKIP INTRO" /
+     * "SKIP CREDITS" button when it falls inside a marker window.
+     * The button stays visible for the full window or until the user
+     * clicks it (then jumps to end_ms) or arrows away from it.
+     *
+     * `dismissedMarkers` prevents re-showing the same window if the
+     * user passes through it manually or the auto-hide fires — without
+     * it, scrubbing back inside the intro after dismissal would pop
+     * the overlay again, which is annoying mid-rewatch.
+     *
+     * HLS sessions: positions are translated content-time → player-time
+     * via `viewModel.hlsOffsetMs` so the markers (server-side
+     * content-time) line up regardless of which transcode window is
+     * loaded.
+     */
+    private fun startSkipMarkerWatcher() {
+        skipMarkerJob?.cancel()
+        if (markers.isEmpty()) return
+        skipMarkerJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                delay(500)
+                val exo = player ?: continue
+                if (!exo.isPlaying) {
+                    // Hide the overlay during pause — when playback
+                    // resumes, the position check kicks back in.
+                    hideSkipMarker()
+                    continue
+                }
+                val contentMs = exo.currentPosition + viewModel.hlsOffsetMs
+                val active = markers.firstOrNull { m ->
+                    contentMs >= m.start_ms && contentMs < m.end_ms &&
+                        m.start_ms !in dismissedMarkers
+                }
+                if (active != null) {
+                    showSkipMarker(active)
+                } else {
+                    hideSkipMarker()
+                }
+            }
+        }
+    }
+
+    private fun showSkipMarker(marker: tv.onscreen.android.data.model.Marker) {
+        val rootContainer = (view as? ViewGroup) ?: return
+        val overlay = skipMarkerOverlay ?: run {
+            val btn = LayoutInflater.from(requireContext())
+                .inflate(R.layout.overlay_skip_marker, rootContainer, false) as Button
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+                bottomMargin = 80
+                rightMargin = 60
+            }
+            btn.layoutParams = lp
+            rootContainer.addView(btn)
+            skipMarkerOverlay = btn
+            btn
+        }
+        val labelRes = if (marker.kind == "credits") R.string.skip_credits else R.string.skip_intro
+        overlay.setText(labelRes)
+        overlay.setOnClickListener {
+            dismissedMarkers.add(marker.start_ms)
+            val targetPlayerMs = (marker.end_ms - viewModel.hlsOffsetMs).coerceAtLeast(0)
+            player?.seekTo(targetPlayerMs)
+            hideSkipMarker()
+        }
+        if (overlay.visibility != View.VISIBLE) {
+            overlay.visibility = View.VISIBLE
+            overlay.requestFocus()
+        }
+    }
+
+    private fun hideSkipMarker() {
+        skipMarkerOverlay?.visibility = View.GONE
     }
 
     /**
@@ -463,6 +558,9 @@ class PlaybackFragment : VideoSupportFragment() {
         upNextJob = null
         syncJob?.cancel()
         syncJob = null
+        skipMarkerJob?.cancel()
+        skipMarkerJob = null
+        skipMarkerOverlay = null
         progressTracker?.stop()
         progressTracker = null
         player?.release()

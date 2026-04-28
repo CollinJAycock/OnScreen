@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
+import tv.onscreen.android.data.model.Marker
 import retrofit2.HttpException
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.repository.ItemRepository
@@ -26,6 +27,7 @@ data class PlaybackUiState(
     val item: ItemDetail? = null,
     val audioStreams: List<AudioStream> = emptyList(),
     val subtitles: List<SubtitleStream> = emptyList(),
+    val markers: List<Marker> = emptyList(),
     val nextEpisode: ChildItem? = null,
     val preferredAudioLang: String? = null,
     val preferredSubtitleLang: String? = null,
@@ -71,11 +73,17 @@ class PlaybackViewModel @Inject constructor(
                     is PlaybackMode.Transcode -> startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl)
                 }
 
+                // Markers (intro/credits) are episode-only on the
+                // server but the endpoint returns an empty list for
+                // other types, so we can call unconditionally.
+                val markers = itemRepo.getMarkers(itemId)
+
                 _uiState.value = PlaybackUiState(
                     source = source,
                     item = item,
                     audioStreams = file.audio_streams,
                     subtitles = file.subtitle_streams,
+                    markers = markers,
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
                 )

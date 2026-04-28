@@ -58,6 +58,9 @@ interface OnScreenApi {
         @Body body: ProgressRequest,
     )
 
+    @GET("api/v1/items/{id}/markers")
+    suspend fun getMarkers(@Path("id") id: String): ApiListResponse<Marker>
+
     // ── Transcode ───────────────────────────────────────────────────────────
 
     @POST("api/v1/items/{id}/transcode")

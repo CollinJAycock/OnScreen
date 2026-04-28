@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Skip-intro / skip-credits button overlay. Anchored bottom-end of the
+    player surface; PlaybackFragment shows it while playback position
+    falls within a marker's [start_ms, end_ms] window. Click jumps the
+    player past end_ms; loss-of-focus + window exit hides it
+    automatically.
+-->
+<Button xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/btn_skip_marker"
+    style="?android:attr/borderlessButtonStyle"
+    android:layout_width="wrap_content"
+    android:layout_height="48dp"
+    android:minWidth="180dp"
+    android:paddingHorizontal="22dp"
+    android:background="@drawable/btn_primary"
+    android:textColor="@color/text_primary"
+    android:textSize="14sp"
+    android:textStyle="bold"
+    android:textAllCaps="true"
+    android:letterSpacing="0.05"
+    android:elevation="8dp"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:text="@string/skip_intro" />
