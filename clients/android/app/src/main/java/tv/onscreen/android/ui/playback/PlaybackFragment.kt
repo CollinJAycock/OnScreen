@@ -71,6 +71,8 @@ class PlaybackFragment : VideoSupportFragment() {
     private var subtitleAction: Action? = null
     private var chaptersAction: Action? = null
     private var speedAction: Action? = null
+    private var rewindAction: PlaybackControlsRow.RewindAction? = null
+    private var fastForwardAction: PlaybackControlsRow.FastForwardAction? = null
     private var chapters: List<Chapter> = emptyList()
     private var currentItemType: String = ""
     private var playbackSpeed: Float = 1.0f
@@ -103,6 +105,12 @@ class PlaybackFragment : VideoSupportFragment() {
         private const val ACTION_CHAPTERS_ID = 102L
         private const val ACTION_SPEED_ID = 103L
         private val SPEED_OPTIONS = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+        // Skip-back / skip-forward step in milliseconds. 10 s back is
+        // the conventional "I missed that line" jump; 30 s forward
+        // matches the audiobook / podcast convention and most TV
+        // remotes' dedicated FastForward button feel.
+        private const val SKIP_BACK_MS = 10_000L
+        private const val SKIP_FORWARD_MS = 30_000L
         private const val UP_NEXT_COUNTDOWN_SEC = 10
         private const val UP_NEXT_LEAD_SEC = 25
 
@@ -344,6 +352,19 @@ class PlaybackFragment : VideoSupportFragment() {
         val host = VideoSupportFragmentGlueHost(this)
 
         glue = object : PlaybackTransportControlGlue<LeanbackPlayerAdapter>(requireContext(), adapter) {
+            override fun onCreatePrimaryActions(adapter: ArrayObjectAdapter) {
+                // Order: Rewind, [PlayPause inserted by super], FastForward.
+                // PlaybackTransportControlGlue inserts its own play/pause
+                // action ahead of whatever we add here, so the rendered
+                // row ends up [Rewind] [PlayPause] [FastForward] which
+                // matches the conventional TV remote layout.
+                rewindAction = PlaybackControlsRow.RewindAction(requireContext())
+                fastForwardAction = PlaybackControlsRow.FastForwardAction(requireContext())
+                adapter.add(rewindAction)
+                super.onCreatePrimaryActions(adapter)
+                adapter.add(fastForwardAction)
+            }
+
             override fun onCreateSecondaryActions(adapter: ArrayObjectAdapter) {
                 super.onCreateSecondaryActions(adapter)
                 audioAction = Action(ACTION_AUDIO_ID, getString(R.string.audio))
@@ -362,7 +383,16 @@ class PlaybackFragment : VideoSupportFragment() {
                     ACTION_SUBTITLE_ID -> showSubtitlePicker()
                     ACTION_CHAPTERS_ID -> showChapterPicker()
                     ACTION_SPEED_ID -> showSpeedPicker()
-                    else -> super.onActionClicked(action)
+                    else -> {
+                        // Match by reference rather than id — the
+                        // RewindAction / FastForwardAction subclasses
+                        // override the action id internally.
+                        when (action) {
+                            rewindAction -> seekRelative(-SKIP_BACK_MS)
+                            fastForwardAction -> seekRelative(SKIP_FORWARD_MS)
+                            else -> super.onActionClicked(action)
+                        }
+                    }
                 }
             }
         }.apply {
@@ -493,6 +523,19 @@ class PlaybackFragment : VideoSupportFragment() {
         // 2x movie is rarely what the user wants); music keeps
         // playback at 1x to preserve pitch.
         if (currentItemType == "audiobook") secondary.add(sp)
+    }
+
+    /** Seek by [deltaMs] from the current position, clamped to the
+     *  player's known duration. Used by the primary Rewind /
+     *  FastForward actions and by the corresponding remote media
+     *  keys, which dispatch through onActionClicked → onActionClicked
+     *  → here once the actions exist on the controls row. */
+    private fun seekRelative(deltaMs: Long) {
+        val exo = player ?: return
+        val target = (exo.currentPosition + deltaMs).coerceAtLeast(0L)
+        val dur = exo.duration
+        val clamped = if (dur > 0 && dur != Long.MAX_VALUE && target > dur) dur else target
+        exo.seekTo(clamped)
     }
 
     private fun showSpeedPicker() {
