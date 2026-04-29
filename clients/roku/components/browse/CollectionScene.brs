@@ -71,7 +71,7 @@ sub routeCollectionSelection(itemType as String, itemId as String)
         getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
         return
     end if
-    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "movie"
+    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "movie"
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else
         getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)

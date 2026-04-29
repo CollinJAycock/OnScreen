@@ -31,14 +31,40 @@
         // Container types load children. "audiobook" is dual-shape:
         // single-file books have files of their own (children empty),
         // multi-file books expose audiobook_chapter children.
+        // book_author + book_series are the audiobook hierarchy
+        // parents above an audiobook row — drilling into either
+        // renders the children list (series + standalone books for
+        // an author, books for a series).
         if (
           item.type === 'show' ||
           item.type === 'season' ||
           item.type === 'album' ||
           item.type === 'podcast' ||
-          item.type === 'audiobook'
+          item.type === 'audiobook' ||
+          item.type === 'book_author' ||
+          item.type === 'book_series'
         ) {
-          children = await endpoints.items.children(itemId);
+          const raw = await endpoints.items.children(itemId);
+          // book_author: series alphabetical first, then standalone
+          // books year-desc. Mirrors the Android TV + phone bucket
+          // ordering so the same browse mental model holds across
+          // surfaces. Other types pass through untouched.
+          if (item.type === 'book_author') {
+            const series = raw
+              .filter(c => c.type === 'book_series')
+              .sort((a, b) => a.title.localeCompare(b.title));
+            const books = raw
+              .filter(c => c.type === 'audiobook')
+              .sort((a, b) => {
+                const ya = a.year ?? -1;
+                const yb = b.year ?? -1;
+                if (ya !== yb) return yb - ya;
+                return a.title.localeCompare(b.title);
+              });
+            children = [...series, ...books];
+          } else {
+            children = raw;
+          }
         }
       } catch (e) {
         if (e instanceof Unauthorized) goto('/login');
@@ -82,6 +108,9 @@
         return 'Chapters';
       case 'artist':
         return 'Albums';
+      case 'book_author':
+      case 'book_series':
+        return 'Books';
       default:
         return 'Episodes';
     }
@@ -114,10 +143,16 @@
           <button use:focusable={{ autofocus: true }} class="btn primary" onclick={play}>
             {resumeLabel()}
           </button>
-        {:else if children.length > 0}
+        {:else if children.length > 0 && item.type !== 'book_author' && item.type !== 'book_series'}
           <!-- Container types (show / season / album / podcast / multi-
                file audiobook) have no files of their own. Play picks
-               the first playable child instead. -->
+               the first playable child instead.
+
+               book_author + book_series are pure browse parents — the
+               first child is itself a parent (a series under an
+               author, or a multi-file book under a series), so Play
+               would land on a non-playable row. Hide and let the user
+               pick a book. -->
           <button use:focusable={{ autofocus: true }} class="btn primary" onclick={() => playChild(children[0].id)}>
             Play
           </button>

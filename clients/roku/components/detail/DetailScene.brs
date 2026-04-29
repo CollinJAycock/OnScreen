@@ -57,9 +57,57 @@ sub onChildrenTaskState()
     if m.childrenTask.state <> "done" then return
     list = m.childrenTask.result
     if list = invalid then list = []
-    m.children = list
+    ' book_author children mix book_series + standalone audiobooks.
+    ' Surface series first (alphabetical) then standalone books
+    ' (year-desc) so the user sees the catalog structure rather
+    ' than an arbitrary mixed grid. Other parent types render
+    ' children in server-supplied order.
+    parentType = ""
+    if m.item <> invalid and m.item.type <> invalid then parentType = m.item.type
+    if parentType = "book_author"
+        m.children = sortAuthorChildren(list)
+    else
+        m.children = list
+    end if
     renderChildren()
 end sub
+
+' Sort an author's children: book_series rows by title (server
+' returns them roughly in create order; sorting client-side gives a
+' deterministic alphabetical view), then standalone audiobook rows by
+' year ascending and reversed (newest first). Foreign types drop out
+' — the author detail surface is the wrong place for them.
+'
+' Built-in roArray.sort/sortBy is what's available — no closure-based
+' comparator on Roku, so we sort once per bucket then reverse the
+' books for year-desc.
+function sortAuthorChildren(list as Object) as Object
+    series = []
+    books = []
+    for each c in list
+        if c.type = "book_series"
+            series.push(c)
+        else if c.type = "audiobook"
+            books.push(c)
+        end if
+    end for
+    ' "i" flag = case-insensitive on string fields. Year is numeric
+    ' so "i" is a no-op on books — added uniformly for parity.
+    series.sortBy("title", "i")
+    books.sortBy("year", "i")
+    ' Reverse the books to get newest-first. Roku's roArray has no
+    ' descending-sort flag, so reverse-after-sort is the idiom.
+    out = []
+    for each s in series
+        out.push(s)
+    end for
+    i = books.Count() - 1
+    while i >= 0
+        out.push(books[i])
+        i = i - 1
+    end while
+    return out
+end function
 
 sub renderItem()
     item = m.item
@@ -92,7 +140,17 @@ sub renderItem()
         label = "Resume " + mins.ToStr() + "m"
     end if
     m.playBtn.text = label
-    m.playBtn.setFocus(true)
+
+    ' Hide the Play button on book_author + book_series — the books
+    ' grid below is the only valid affordance, and a Play press there
+    ' would no-op (see onPlayPressed). Focus moves to the children
+    ' list automatically when the button is hidden.
+    if item.type = "book_author" or item.type = "book_series"
+        m.playBtn.visible = false
+    else
+        m.playBtn.visible = true
+        m.playBtn.setFocus(true)
+    end if
 end sub
 
 sub renderChildren()
@@ -113,6 +171,8 @@ sub renderChildren()
         m.childrenHeader.text = "Chapters"
     else if parentType = "artist"
         m.childrenHeader.text = "Albums"
+    else if parentType = "book_author" or parentType = "book_series"
+        m.childrenHeader.text = "Books"
     else
         m.childrenHeader.text = "Episodes"
     end if
@@ -148,10 +208,12 @@ sub renderChildren()
     m.childrenList.visible = true
 end sub
 
-' Children of the carousel were OK-pressed — fire the player. We
-' don't drill into a sub-detail for these; episodes / tracks /
-' chapters are leaves the user explicitly chose. Same model as the
-' Android EpisodeAdapter callback.
+' Children of the carousel were OK-pressed — fire the player for
+' leaf children (episode / track / audiobook_chapter / podcast_episode),
+' or drill into DetailScene for container children that themselves
+' have children (series under an author, audiobook under a series).
+' Without the type branch, a series-card press under an author would
+' hit PlayerScene and 404 on a parent with no file.
 sub onChildSelected()
     selected = m.childrenList.rowItemSelected
     if selected = invalid then return
@@ -161,7 +223,13 @@ sub onChildSelected()
     if rowNode = invalid then return
     childNode = rowNode.getChild(itemIdx)
     if childNode = invalid then return
-    getMainScene().callFunc("navigateToWithItem", "PlayerScene", childNode.id)
+    childType = ""
+    if childNode.itemType <> invalid then childType = childNode.itemType
+    if childType = "book_series" or childType = "audiobook"
+        getMainScene().callFunc("navigateToWithItem", "DetailScene", childNode.id)
+    else
+        getMainScene().callFunc("navigateToWithItem", "PlayerScene", childNode.id)
+    end if
 end sub
 
 ' Play pressed on the parent. Leaf items play themselves; container
@@ -170,6 +238,12 @@ end sub
 ' shipped with).
 sub onPlayPressed()
     if m.item = invalid then return
+    ' book_author + book_series are pure browse parents — the first
+    ' child is itself a parent (a series under an author, or a multi-
+    ' file book under a series), so playing it would land on a
+    ' non-playable row. The user has to pick a book first; the play
+    ' button is hidden for these types in onItemLoaded.
+    if m.item.type = "book_author" or m.item.type = "book_series" then return
     target = m.item.id
     if not isLeafType(m.item.type)
         if m.children.Count() = 0
