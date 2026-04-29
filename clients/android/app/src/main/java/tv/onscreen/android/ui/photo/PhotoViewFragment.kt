@@ -19,6 +19,8 @@ import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -144,24 +146,52 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
                     }
 
                     // Fallback: list everything in the library. Some
-                    // entry points (Search, Favorites, History) may
-                    // surface a photo with no parent album, or a
+                    // entry points (Search, Favorites, History, Home
+                    // hub) surface a photo with no parent album, or a
                     // photo whose album isn't where the user wants
-                    // to scroll. The library list keeps left/right
-                    // useful in those cases.
+                    // to scroll.
+                    //
+                    // Pagination runs concurrently (one async per
+                    // page after the first) instead of sequentially.
+                    // A 4 100-item library used to take ~5 s through
+                    // the LAN-default 200-per-page loop — long enough
+                    // that a user pressing D-pad left/right hit the
+                    // empty-siblings no-op before resolve completed
+                    // and concluded nav was broken. Parallel fetches
+                    // collapse that to roughly one page time.
                     if (photos.size < 2) {
                         photos.clear()
-                        var offset = 0
-                        while (true) {
-                            val (page, total) = libraryRepo.getItems(
-                                detail.library_id,
-                                limit = 200,
-                                offset = offset,
-                            )
-                            photos += page.filter { it.type == "photo" }.map { it.id }
-                            offset += page.size
-                            if (page.isEmpty() || offset >= total) break
+                        val pageSize = 200
+                        val (firstPage, total) = libraryRepo.getItems(
+                            detail.library_id,
+                            limit = pageSize,
+                            offset = 0,
+                        )
+                        // Order matters — siblings are rendered in the
+                        // same order as the library's item list, so
+                        // append pages by their offset rather than in
+                        // arrival order.
+                        val pagesByOffset = sortedMapOf<Int, List<String>>()
+                        pagesByOffset[0] = firstPage
+                            .filter { it.type == "photo" }.map { it.id }
+
+                        if (total > pageSize) {
+                            val remainingOffsets = (pageSize until total step pageSize).toList()
+                            val deferred = remainingOffsets.map { off ->
+                                async {
+                                    val (page, _) = libraryRepo.getItems(
+                                        detail.library_id,
+                                        limit = pageSize,
+                                        offset = off,
+                                    )
+                                    off to page.filter { it.type == "photo" }.map { it.id }
+                                }
+                            }
+                            for ((off, ids) in deferred.awaitAll()) {
+                                pagesByOffset[off] = ids
+                            }
                         }
+                        for (ids in pagesByOffset.values) photos += ids
                     }
 
                     Log.d(TAG, "resolved ${photos.size} siblings")
