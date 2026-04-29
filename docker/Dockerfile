@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     test -x /bin/server && test -x /bin/worker && test -x /bin/goose
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
-FROM alpine:3.21
+FROM alpine:3.23
 RUN apk add --no-cache ffmpeg ca-certificates tzdata chromaprint postgresql17-client \
       tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-spa \
       tesseract-ocr-data-fra tesseract-ocr-data-deu tesseract-ocr-data-ita \
