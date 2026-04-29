@@ -7,11 +7,17 @@ sub init()
     m.passwordField = m.top.findNode("passwordField")
     m.signInBtn = m.top.findNode("signInBtn")
     m.changeServerBtn = m.top.findNode("changeServerBtn")
+    m.pairBtn = m.top.findNode("pairBtn")
     m.error = m.top.findNode("error")
 
     m.signInBtn.observeField("buttonSelected", "onSignInPressed")
     m.changeServerBtn.observeField("buttonSelected", "onChangeServerPressed")
+    m.pairBtn.observeField("buttonSelected", "onPairPressed")
     m.usernameField.setFocus(true)
+end sub
+
+sub onPairPressed()
+    getMainScene().callFunc("navigateTo", "PairScene")
 end sub
 
 sub onSignInPressed()

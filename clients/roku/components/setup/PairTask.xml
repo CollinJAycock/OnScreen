@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Pairing task. Lives on its own thread because the polling loop
+    blocks the calling task on each request — fine here, fatal in
+    the UI thread. Emits `pin` for the scene to render, `phase`
+    for status text, and `done` when tokens are persisted.
+-->
+<component name="PairTask" extends="Task">
+
+    <interface>
+        <field id="pin" type="string" />
+        <field id="phase" type="string" />
+        <field id="failureReason" type="string" />
+        <field id="done" type="boolean" />
+    </interface>
+
+    <script type="text/brightscript" uri="PairTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+</component>

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Device-pairing sign-in. Mirrors the Android PairingFragment:
+
+      1. POST /auth/pair/code  -> { pin, device_token, poll_after }
+      2. Display the URL the user opens on a phone / laptop +
+         the PIN they type there.
+      3. Long-poll /auth/pair/poll until the server returns the
+         signed-in token pair (Done) or the code expires (Expired).
+      4. On Done -> persist tokens via Prefs, navigate to HomeScene.
+      5. On Expired -> request a fresh code automatically; the
+         user never sees a dead-end "code expired" screen.
+
+    The reason this exists: Roku remotes can't ergonomically run an
+    OIDC / OAuth / SAML redirect flow. Pairing punts those flows to
+    a real browser on the user's phone, then hands the resulting
+    tokens back to the channel. Plex / Disney+ / Netflix all do the
+    same thing for the same reason.
+
+    The poll loop runs as a Task so the UI thread stays responsive
+    while the channel waits for the user to redeem the PIN.
+-->
+<component name="PairScene" extends="Group">
+
+    <script type="text/brightscript" uri="PairScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x07070dff" />
+
+            <Label id="title"
+                   text="Sign in"
+                   translation="[0, 200]"
+                   width="1920"
+                   horizAlign="center"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <Label id="instructions"
+                   text="Open this URL on a phone or computer:"
+                   translation="[0, 290]"
+                   width="1920"
+                   horizAlign="center"
+                   color="0x9a9aaaff" />
+
+            <Label id="url"
+                   text=""
+                   translation="[0, 340]"
+                   width="1920"
+                   horizAlign="center"
+                   font="font:MediumBoldSystemFont"
+                   color="0x7c6af7ff" />
+
+            <Label id="pinLabel"
+                   text="Enter the PIN"
+                   translation="[0, 460]"
+                   width="1920"
+                   horizAlign="center"
+                   color="0x9a9aaaff" />
+
+            <Label id="pin"
+                   text="------"
+                   translation="[0, 520]"
+                   width="1920"
+                   horizAlign="center"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <Label id="status"
+                   text="Generating code…"
+                   translation="[0, 760]"
+                   width="1920"
+                   horizAlign="center"
+                   color="0x9a9aaaff" />
+
+            <Button id="cancelBtn"
+                    text="Use password instead"
+                    translation="[760, 880]"
+                    minWidth="400" />
+        </Group>
+
+        <PairTask id="pairTask" />
+    </children>
+
+</component>

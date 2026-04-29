@@ -22,6 +22,18 @@ end sub
 ' scenes call this on their controller via getScene().callFunc()
 ' rather than navigating themselves — keeps routing in one place.
 sub navigateTo(name as String)
+    navigateToWithItem(name, "")
+end sub
+
+' navigateToWithItem mounts a fresh `name` and sets `itemId` on it
+' before attaching, so the new scene's init() observes the field as
+' already populated. Item-aware sub-scenes (DetailScene, PlayerScene)
+' need the id available before mount; the previous pattern of "create
+' a node here, set itemId, then call navigateTo (which then creates
+' ANOTHER node and discards the first)" was both a leak AND broken
+' — the second node had no itemId so init() bailed straight to
+' HomeScene. Setting the field on the surviving instance fixes both.
+sub navigateToWithItem(name as String, itemId as String)
     if m.currentChild <> invalid
         m.content.removeChild(m.currentChild)
     end if
@@ -31,6 +43,9 @@ sub navigateTo(name as String)
         ' than mounting an invalid pointer.
         print "MainScene: unknown child scene "; name
         return
+    end if
+    if itemId <> "" and child.hasField("itemId")
+        child.itemId = itemId
     end if
     m.currentChild = child
     m.content.appendChild(child)

@@ -63,8 +63,28 @@ end function
 ' Asset routes (auth via ?token= query param via the asset-route
 ' middleware on the Go server; the Roku Video / Poster nodes can't
 ' attach an Authorization header to their HTTP fetches).
-function AssetStream(serverUrl as String, fileId as String, accessToken as String) as String
-    return serverUrl + "/media/stream/" + fileId + "?token=" + accessToken
+'
+' AssetStream takes whichever token the caller has. PlayerScene
+' prefers the per-file `stream_token` returned in item-detail
+' (24 h TTL, file_id-bound — survives a long movie without
+' expiring mid-segment) and falls back to the access token only
+' for older server builds that don't ship the field. Roku's Video
+' node has no token-refresh hook, so without the per-file token a
+' 90-minute movie used to die at the 1 h mark with HTTP 401.
+function AssetStream(serverUrl as String, fileId as String, token as String) as String
+    return serverUrl + "/media/stream/" + fileId + "?token=" + token
+end function
+
+' Pairing endpoints. PairCode mints a PIN + device_token for the
+' user to redeem on a phone / laptop; PairPoll long-polls until the
+' redemption returns the signed-in token pair. Same flow as the
+' Android client's PairingFragment.
+function ApiPairCode() as String
+    return "/api/v1/auth/pair/code"
+end function
+
+function ApiPairPoll() as String
+    return "/api/v1/auth/pair/poll"
 end function
 
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String

@@ -29,15 +29,29 @@ sub onItemTaskState()
 
     file = item.files[0]
     serverUrl = Prefs_GetServerUrl()
-    token = Prefs_GetAccessToken()
-    if serverUrl = invalid or token = invalid
+    if serverUrl = invalid
+        bailToHome()
+        return
+    end if
+
+    ' Prefer the per-file stream_token (24 h, file_id-bound) over
+    ' the standard 1 h access token. Roku's Video node has no
+    ' way to refresh on 401 mid-stream, so without this a long
+    ' movie or audiobook chapter dies on the next range request
+    ' once the access token's expiry passes. Server omits the
+    ' field on older builds — fall back to the access token then.
+    streamToken = file.stream_token
+    if streamToken = invalid or streamToken = ""
+        streamToken = Prefs_GetAccessToken()
+    end if
+    if streamToken = invalid or streamToken = ""
         bailToHome()
         return
     end if
 
     content = createObject("roSGNode", "ContentNode")
     content.title = item.title
-    content.url = AssetStream(serverUrl, file.id, token)
+    content.url = AssetStream(serverUrl, file.id, streamToken)
     ' Stream format hint so the Video node picks the right
     ' demuxer. The Go server's /media/stream/{id} serves the file
     ' direct (any format ffprobe identified at scan time); for

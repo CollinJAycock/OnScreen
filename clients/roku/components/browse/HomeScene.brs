@@ -7,12 +7,18 @@ sub init()
     m.rows = m.top.findNode("rows")
     m.loading = m.top.findNode("loading")
     m.hubTask = m.top.findNode("hubTask")
+    m.searchBtn = m.top.findNode("searchBtn")
 
     m.hubTask.observeField("state", "onHubTaskState")
     m.rows.observeField("rowItemSelected", "onCardSelected")
+    m.searchBtn.observeField("buttonSelected", "onSearchPressed")
 
     ' Kick off the fetch. Task nodes start when control=RUN.
     m.hubTask.control = "RUN"
+end sub
+
+sub onSearchPressed()
+    getMainScene().callFunc("navigateTo", "SearchScene")
 end sub
 
 sub onHubTaskState()
@@ -84,14 +90,31 @@ sub onCardSelected()
     itemNode = rowNode.getChild(itemIdx)
     if itemNode = invalid then return
 
-    ' Future: shows + seasons route to a DetailScene; movies and
-    ' episodes go straight to playback. For the scaffold we route
-    ' everything to the player and let it 404 gracefully on
-    ' container types — replace with the real router as DetailScene
-    ' lands.
-    player = createObject("roSGNode", "PlayerScene")
-    player.itemId = itemNode.id
-    getMainScene().callFunc("navigateTo", "PlayerScene")
+    ' Type-aware routing — same model the Android Navigator uses.
+    ' Containers (show / season / artist / album / podcast / multi-
+    ' file audiobook parent) drill into DetailScene so the user can
+    ' pick a child to play. Leaf items (movie / episode / track /
+    ' single-file audiobook / podcast_episode) go straight to
+    ' playback — by the time the user clicked them they've already
+    ' chosen what they want. Movies route to detail too so fanart +
+    ' summary appear before the Play button (matches the Android
+    ' modern UX). Photos + collections deferred until their own
+    ' scenes ship.
+    routeForType(itemNode.itemType, itemNode.id)
+end sub
+
+' Centralised type → destination mapping. DetailScene + (future)
+' SearchScene reuse the same routing once they exist.
+sub routeForType(itemType as String, itemId as String)
+    detail = false
+    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "movie"
+        detail = true
+    end if
+    if detail
+        getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
+    else
+        getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)
+    end if
 end sub
 
 function getMainScene() as Object

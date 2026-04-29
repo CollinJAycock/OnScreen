@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Item detail screen. Caller (HomeScene / SearchScene / future
+    FavoritesScene) sets `itemId` on the node before mount, then
+    calls navigateToWithItem("DetailScene", id) to attach. On init
+    we fire two parallel tasks (item metadata + children list) and
+    render a hero + an action button + a horizontal child list.
+
+    Layout follows the modern Android detail page:
+      - full-bleed fanart (alpha-blended via a dimmer rectangle so
+        the foreground content reads against any image)
+      - title + meta line (year · rating · duration · genres)
+      - summary
+      - Play button (focused on mount)
+      - children row: episodes / tracks / chapters / albums
+
+    Episode-style children include the index ("1. Pilot") so the
+    user knows order at a glance; album / podcast children use the
+    plain title.
+-->
+<component name="DetailScene" extends="Group">
+
+    <interface>
+        <field id="itemId" type="string" />
+    </interface>
+
+    <script type="text/brightscript" uri="DetailScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x07070dff" />
+
+            <!-- Fanart fills the screen behind everything; dimmer
+                 rectangle on top so the title + summary render
+                 readably regardless of image content. -->
+            <Poster id="fanart"
+                    width="1920" height="1080"
+                    loadDisplayMode="scaleToFill"
+                    loadingBitmapOpacity="0" />
+            <Rectangle width="1920" height="1080" color="0x07070dcc" />
+
+            <!-- Bottom-aligned content column. -->
+            <Group translation="[80, 320]">
+                <Label id="title"
+                       text=""
+                       font="font:LargeBoldSystemFont"
+                       color="0xffffffff" />
+                <Label id="meta"
+                       text=""
+                       translation="[0, 80]"
+                       color="0x9a9aaaff" />
+                <Label id="summary"
+                       text=""
+                       translation="[0, 130]"
+                       width="1200"
+                       wrap="true"
+                       maxLines="4"
+                       color="0xeeeef8ff" />
+
+                <Button id="playBtn"
+                        text="Play"
+                        translation="[0, 320]"
+                        showFocusFootprint="true"
+                        minWidth="200"
+                        focusBitmapBlendColor="0x7c6af7ff" />
+            </Group>
+
+            <!-- Children carousel (episodes / tracks / chapters).
+                 Hidden until the children-fetch task lands and
+                 returns at least one item. -->
+            <Label id="childrenHeader"
+                   text=""
+                   translation="[80, 720]"
+                   font="font:MediumBoldSystemFont"
+                   color="0xffffffff"
+                   visible="false" />
+            <RowList id="children"
+                     translation="[80, 770]"
+                     itemComponentName="PosterCard"
+                     itemSize="[1760, 280]"
+                     rowItemSize="[[200, 260]]"
+                     rowItemSpacing="[[16, 0]]"
+                     showRowLabel="[false]"
+                     rowHeights="[280]"
+                     focusBitmapBlendColor="0xffffffff"
+                     drawFocusFeedback="true"
+                     visible="false" />
+
+            <Label id="loading"
+                   text="Loading…"
+                   translation="[80, 540]"
+                   color="0xa0a0a0ff" />
+        </Group>
+
+        <ItemFetchTask id="itemTask" />
+        <ChildrenFetchTask id="childrenTask" />
+    </children>
+
+</component>

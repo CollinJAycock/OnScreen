@@ -27,6 +27,16 @@
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
 
+            <!-- Search affordance. Roku has no dedicated search
+                 key on most remotes, so we expose it as a Button
+                 in the top-right of the hub — same role the
+                 magnifier icon plays on the Android client's
+                 BrowseSupportFragment. -->
+            <Button id="searchBtn"
+                    text="Search"
+                    translation="[1640, 40]"
+                    minWidth="200" />
+
             <RowList id="rows"
                      translation="[80, 140]"
                      itemComponentName="PosterCard"

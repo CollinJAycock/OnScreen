@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Search task. SearchScene fires it on each keystroke (debounced
+    by the scene); the task hits /api/v1/search and writes the
+    decoded results array back. Result is the raw SearchResult
+    list; client-side filtering by type happens in the scene so
+    toggling a filter chip doesn't re-issue the network call.
+-->
+<component name="SearchTask" extends="Task">
+
+    <interface>
+        <field id="query" type="string" />
+        <field id="result" type="array" />
+    </interface>
+
+    <script type="text/brightscript" uri="SearchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+</component>

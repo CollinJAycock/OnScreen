@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Search screen — TV equivalent of the web /search page.
+
+    Layout (top to bottom):
+      - Title
+      - Filter chips: Movies / TV Shows / Episodes / Tracks. Movies
+        + TV Shows on by default; episodes + tracks default off so
+        a search for "Dream" doesn't bury three movie matches under
+        fifty Pink Floyd track names. Filter state is persisted to
+        the registry under the same conceptual key the web client
+        uses (onscreen_search_filters). Toggling a chip re-applies
+        the type filter to the existing result set without re-
+        issuing the network call.
+      - Inline keyboard
+      - Result grid (RowList, single row)
+
+    The search itself fires after a debounce window — Roku
+    keyboards emit a `text` change on every keystroke, which would
+    flood the API otherwise.
+-->
+<component name="SearchScene" extends="Group">
+
+    <script type="text/brightscript" uri="SearchScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x121212ff" />
+
+            <Label id="title"
+                   text="Search"
+                   translation="[80, 50]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <!-- Filter chips. The four-button row is focusable;
+                 left/right between chips, OK toggles, down jumps
+                 to the keyboard. -->
+            <Group id="chipRow" translation="[80, 140]">
+                <Button id="chipMovie" text="Movies"
+                        translation="[0, 0]" minWidth="200" />
+                <Button id="chipShow" text="TV Shows"
+                        translation="[220, 0]" minWidth="200" />
+                <Button id="chipEpisode" text="Episodes"
+                        translation="[440, 0]" minWidth="200" />
+                <Button id="chipTrack" text="Tracks"
+                        translation="[660, 0]" minWidth="200" />
+            </Group>
+
+            <Label translation="[80, 240]" text="Type to search" color="0xa0a0a0ff" />
+            <MiniKeyboard id="queryField"
+                          translation="[80, 280]"
+                          width="1100" />
+
+            <RowList id="results"
+                     translation="[80, 580]"
+                     itemComponentName="PosterCard"
+                     itemSize="[1760, 380]"
+                     rowItemSize="[[200, 300]]"
+                     rowItemSpacing="[[16, 0]]"
+                     showRowLabel="[false]"
+                     rowHeights="[380]"
+                     focusBitmapBlendColor="0xffffffff"
+                     drawFocusFeedback="true"
+                     visible="false" />
+
+            <Label id="status"
+                   translation="[80, 580]"
+                   color="0xa0a0a0ff"
+                   text="Type at least 2 characters." />
+        </Group>
+
+        <SearchTask id="searchTask" />
+    </children>
+
+</component>

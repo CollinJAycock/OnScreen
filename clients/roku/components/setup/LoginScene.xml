@@ -44,8 +44,19 @@
                     translation="[520, 720]"
                     minWidth="320" />
 
+            <!-- Pairing alternative — covers OIDC / OAuth / SAML /
+                 LDAP flows by punting them to a real browser on the
+                 user's phone. The Roku displays a PIN, the user
+                 signs in on their phone, the Roku polls for the
+                 redeemed token pair. Same affordance the Android
+                 LoginFragment exposes. -->
+            <Button id="pairBtn"
+                    text="Sign in with another device"
+                    translation="[160, 800]"
+                    minWidth="680" />
+
             <Label id="error"
-                   translation="[160, 800]"
+                   translation="[160, 880]"
                    color="0xff5050ff"
                    visible="false" />
         </Group>

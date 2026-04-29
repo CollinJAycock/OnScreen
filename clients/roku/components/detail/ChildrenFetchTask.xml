@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Task that resolves /api/v1/items/{id}/children → ChildItem[].
+    Used by DetailScene for show seasons, season episodes, album
+    tracks, podcast episodes, and multi-file audiobook chapters.
+    Kept distinct from ItemFetchTask so consumers can fetch the
+    parent + the children in parallel.
+-->
+<component name="ChildrenFetchTask" extends="Task">
+
+    <interface>
+        <field id="itemId" type="string" />
+        <field id="result" type="array" />
+    </interface>
+
+    <script type="text/brightscript" uri="ChildrenFetchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+</component>
