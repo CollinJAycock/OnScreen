@@ -3,6 +3,8 @@ package tv.onscreen.android
 import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
 import java.security.Security
@@ -42,6 +44,27 @@ class OnScreenApp : Application(), ImageLoaderFactory {
         ImageLoader.Builder(this)
             .okHttpClient(okHttpClient)
             .crossfade(true)
+            // Persist decoded artwork to disk so revisiting History /
+            // Favorites / Library after an app restart doesn't trigger
+            // 50 parallel fetches over Cloudflare. Coil's disk cache
+            // is opt-in — without this builder it only uses the memory
+            // cache, which is wiped on process death. 100 MB covers a
+            // few thousand poster thumbnails comfortably.
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("artwork"))
+                    .maxSizeBytes(100L * 1024 * 1024)
+                    .build()
+            }
+            // 25% of available app memory is Coil's default; pin it
+            // explicitly so the value is visible at the call site for
+            // future tuning.
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .respectCacheHeaders(false) // server doesn't set Cache-Control on /artwork
             .build()
 
     /**

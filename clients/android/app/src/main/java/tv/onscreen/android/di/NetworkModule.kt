@@ -110,10 +110,21 @@ object NetworkModule {
         @AuthClient authApi: OnScreenApi,
     ): OkHttpClient {
         val tls = buildTls()
+        // OkHttp's default Dispatcher caps concurrent requests per
+        // host at 5. The shared client is also Coil's HTTP backend,
+        // so a fast-scrolling photo viewer or a library grid loading
+        // 50 thumbnails saturates that limit and blocks new requests
+        // until in-flight ones drain. Bump per-host to 16 — covers
+        // a row of cards plus background pre-fetches without flooding
+        // the server. Total max stays at the default 64.
+        val dispatcher = okhttp3.Dispatcher().apply {
+            maxRequestsPerHost = 16
+        }
         val builder = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(AuthInterceptor(prefs))
             .addInterceptor(loggingInterceptor())

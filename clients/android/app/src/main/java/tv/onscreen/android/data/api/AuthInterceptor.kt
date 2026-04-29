@@ -27,6 +27,14 @@ import tv.onscreen.android.data.prefs.ServerPrefs
  * originally) was the bug behind "no art on Fire TV / cross-origin
  * builds": every image request hit the server unauthenticated → 401 →
  * Coil rendered the placeholder colour for every card.
+ *
+ * Cached server-host + token: every image fetch through Coil hits this
+ * interceptor on an OkHttp dispatcher thread, and DataStore's reader
+ * is single-coroutine-context. Reading it via runBlocking on every
+ * request serialised dispatcher threads — symptom was photo viewer
+ * stalling after 4-5 quick D-pad presses (hitting OkHttp's default
+ * maxRequestsPerHost). The cached values are refreshed lazily after
+ * a short TTL so token rotation still picks up within seconds.
  */
 class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
@@ -37,7 +45,13 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         "/media/stream/",
     )
 
+    @Volatile private var cachedServerHost: String? = null
+    @Volatile private var cachedToken: String? = null
+    @Volatile private var cacheLoadedAtMs: Long = 0L
+
     override fun intercept(chain: Interceptor.Chain): Response {
+        refreshCacheIfStale()
+
         val request = chain.request()
         val path = request.url.encodedPath
 
@@ -47,9 +61,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         // carry an unknown bearer with 401 — Coil swallows that and
         // shows the placeholder. Match by host: anything that isn't
         // the configured server passes through unmodified.
-        val serverHost = runBlocking { prefs.getServerUrl() }?.let {
-            runCatching { Uri.parse(it).host }.getOrNull()
-        }
+        val serverHost = cachedServerHost
         if (serverHost != null && !request.url.host.equals(serverHost, ignoreCase = true)) {
             return chain.proceed(request)
         }
@@ -58,7 +70,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
             return chain.proceed(request)
         }
 
-        val token = runBlocking { prefs.getAccessToken() }
+        val token = cachedToken
         if (token.isNullOrEmpty()) {
             return chain.proceed(request)
         }
@@ -67,5 +79,37 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
             .header("Authorization", "Bearer $token")
             .build()
         return chain.proceed(authed)
+    }
+
+    /**
+     * Refresh the cached host + token at most once every [CACHE_TTL_MS].
+     * The first call (cacheLoadedAtMs == 0) does the load synchronously
+     * via runBlocking — has to, the very first request after process
+     * start has nothing else to fall back to. Subsequent refreshes are
+     * still synchronous but only fire on a slow cadence so runBlocking
+     * isn't on the hot path.
+     */
+    private fun refreshCacheIfStale() {
+        val now = System.currentTimeMillis()
+        if (now - cacheLoadedAtMs < CACHE_TTL_MS) return
+        synchronized(this) {
+            if (now - cacheLoadedAtMs < CACHE_TTL_MS) return
+            val (host, token) = runBlocking {
+                val url = prefs.getServerUrl()
+                val parsedHost = url?.let { runCatching { Uri.parse(it).host }.getOrNull() }
+                parsedHost to prefs.getAccessToken()
+            }
+            cachedServerHost = host
+            cachedToken = token
+            cacheLoadedAtMs = now
+        }
+    }
+
+    companion object {
+        // 5 s is short enough that token rotation lands on the next
+        // request after refresh, long enough that bursts of image
+        // fetches (4 100 photos in the viewer, library grids on
+        // scroll) all hit the cache.
+        private const val CACHE_TTL_MS = 5_000L
     }
 }
