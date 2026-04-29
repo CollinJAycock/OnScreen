@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -65,6 +66,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.Marker
+import tv.onscreen.mobile.data.model.OnlineSubtitle
 import tv.onscreen.mobile.data.model.SubtitleStream
 
 @OptIn(UnstableApi::class)
@@ -333,11 +335,29 @@ private fun PlayerHost(
         )
     }
 
+    var showOnlineSubtitleSearch by remember { mutableStateOf(false) }
+
     if (showSubtitlePicker) {
         SubtitlePickerDialog(
             streams = ui.subtitles,
             player = player,
+            onFindMore = {
+                showSubtitlePicker = false
+                showOnlineSubtitleSearch = true
+            },
             onDismiss = { showSubtitlePicker = false },
+        )
+    }
+
+    if (showOnlineSubtitleSearch) {
+        OnlineSubtitleSearchDialog(
+            itemId = itemId,
+            preferredLang = ui.preferredSubtitleLang,
+            vm = vm,
+            onDismiss = {
+                showOnlineSubtitleSearch = false
+                vm.clearOnlineSubtitleSearch()
+            },
         )
     }
 
@@ -444,6 +464,7 @@ private fun AudioPickerDialog(
 private fun SubtitlePickerDialog(
     streams: List<SubtitleStream>,
     player: ExoPlayer,
+    onFindMore: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val current = player.trackSelectionParameters
@@ -498,9 +519,126 @@ private fun SubtitlePickerDialog(
                         Text(formatSubtitleLabel(s))
                     }
                 }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                ) {
+                    TextButton(onClick = onFindMore) {
+                        Icon(Icons.Default.Search, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Find more online…")
+                    }
+                }
             }
         },
     )
+}
+
+@Composable
+private fun OnlineSubtitleSearchDialog(
+    itemId: String,
+    preferredLang: String?,
+    vm: PlayerViewModel,
+    onDismiss: () -> Unit,
+) {
+    val ui by vm.onlineSubtitleSearch.collectAsState()
+    var lang by remember { mutableStateOf(preferredLang ?: "en") }
+    var query by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        // Pre-seed a search on the user's preferred language so the
+        // dialog isn't empty on open.
+        vm.searchOnlineSubtitles(itemId, lang.ifEmpty { null }, null)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Find subtitles") },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = lang,
+                        onValueChange = { lang = it.take(3).lowercase() },
+                        singleLine = true,
+                        label = { Text("Lang") },
+                        modifier = Modifier.width(96.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        label = { Text("Title (optional)") },
+                        modifier = Modifier.width(220.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = {
+                        vm.searchOnlineSubtitles(
+                            itemId,
+                            lang.ifEmpty { null },
+                            query.ifBlank { null },
+                        )
+                    }) { Text("Search") }
+                }
+                Spacer(Modifier.width(8.dp))
+                when {
+                    ui.loading -> CircularProgressIndicator()
+                    ui.error != null -> Text(ui.error!!)
+                    ui.results.isEmpty() -> Text("No matches yet — try different terms.")
+                    else -> Column {
+                        ui.results.take(20).forEach { sub ->
+                            OnlineSubtitleRow(
+                                sub = sub,
+                                onPick = {
+                                    vm.downloadOnlineSubtitle(itemId, sub) {
+                                        // Server attaches the .srt to
+                                        // the file's media_files row;
+                                        // user has to open the
+                                        // subtitle picker again to
+                                        // toggle it on. (Auto-toggle
+                                        // would need a fresh prepare
+                                        // and a small audio cut.)
+                                        onDismiss()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun OnlineSubtitleRow(sub: OnlineSubtitle, onPick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.padding(end = 8.dp)) {
+            Text(sub.file_name, style = MaterialTheme.typography.bodyMedium)
+            val parts = mutableListOf<String>().apply {
+                add(sub.language)
+                if (sub.hd) add("HD")
+                if (sub.hearing_impaired) add("CC")
+                if (sub.from_trusted) add("trusted")
+                if (sub.download_count > 0) add("⬇ ${sub.download_count}")
+            }
+            Text(
+                parts.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Button(onClick = onPick) { Text("Add") }
+    }
 }
 
 @Composable

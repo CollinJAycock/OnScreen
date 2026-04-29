@@ -28,6 +28,7 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
 import kotlinx.coroutines.flow.emptyFlow
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.NotificationsRepository
+import tv.onscreen.mobile.data.repository.OnlineSubtitleRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 
@@ -99,6 +100,10 @@ class PlayerViewModelTest {
         return p
     }
 
+    /** Online-subtitle repo with no behavior wired — only the tests
+     *  that exercise the search/download path override. */
+    private fun stubSubtitles(): OnlineSubtitleRepository = mockk(relaxed = true)
+
     /** Notifications repo whose SSE stream emits nothing — keeps the
      *  cross-device resume path silent during tests that don't exercise
      *  it. Tests that *do* (the SSE ones below) override per-test. */
@@ -128,7 +133,7 @@ class PlayerViewModelTest {
             coEvery { itemRepo.getItem("movie-1") } returns
                 movieDetail(directPlayFile().copy(stream_token = "st-24h"), viewOffsetMs = 12_000L)
 
-            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
             vm.prepare("movie-1")
             advanceUntilIdle()
 
@@ -152,7 +157,7 @@ class PlayerViewModelTest {
         coEvery { sp.getServerUrl() } returns "http://srv"
         coEvery { sp.getAccessToken() } returns "at-1h"
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), sp, emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), sp, emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -182,7 +187,7 @@ class PlayerViewModelTest {
             token = "tok",
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -198,7 +203,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile()).copy(files = emptyList())
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -214,7 +219,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem(any()) } throws RuntimeException("api 500")
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -231,7 +236,7 @@ class PlayerViewModelTest {
             ChildItem(id = "ep-2", title = "E2", type = "episode", index = 2),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("ep-1")
         advanceUntilIdle()
 
@@ -244,7 +249,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -259,7 +264,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } throws RuntimeException("offline")
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("ep-1")
         advanceUntilIdle()
 
@@ -273,7 +278,7 @@ class PlayerViewModelTest {
     fun `stopActiveTranscode is a no-op when no session is active`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
 
         vm.stopActiveTranscode()
         advanceUntilIdle()
@@ -294,7 +299,7 @@ class PlayerViewModelTest {
             token = "tok-9",
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -314,7 +319,7 @@ class PlayerViewModelTest {
     fun `reportProgress no-ops when duration is zero`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
 
         vm.reportProgress("movie-1", 1_000L, 0L, "playing")
         advanceUntilIdle()
@@ -337,7 +342,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif)
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif, stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -359,7 +364,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif)
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif, stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -386,7 +391,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif)
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif, stubSubtitles())
         // Record a local report at 60_000ms; the SSE event lands at
         // 60_500ms which is within the 3 s same-device echo window.
         vm.reportProgress("movie-1", 60_000L, 600_000L, "playing")
@@ -411,7 +416,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif)
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), notif, stubSubtitles())
         vm.prepare("movie-1")
         advanceUntilIdle()
         assertThat(vm.remoteResumeMs.value).isEqualTo(90_000L)
@@ -425,11 +430,68 @@ class PlayerViewModelTest {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.updateProgress(any(), any(), any(), any()) } returns Unit
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles())
 
         vm.reportProgress("movie-1", 5_000L, 90_000L, "playing")
         advanceUntilIdle()
 
         coVerify(exactly = 1) { itemRepo.updateProgress("movie-1", 5_000L, 90_000L, "playing") }
+    }
+
+    @Test
+    fun `searchOnlineSubtitles populates the dialog state`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        val subs = mockk<OnlineSubtitleRepository>()
+        coEvery { subs.search("movie-1", "en", null) } returns listOf(
+            tv.onscreen.mobile.data.model.OnlineSubtitle(
+                provider_file_id = 42, file_name = "Movie.srt", language = "en",
+            ),
+        )
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), subs)
+
+        vm.searchOnlineSubtitles("movie-1", "en", null)
+        advanceUntilIdle()
+
+        val ui = vm.onlineSubtitleSearch.value
+        assertThat(ui.loading).isFalse()
+        assertThat(ui.results).hasSize(1)
+        assertThat(ui.results.first().provider_file_id).isEqualTo(42)
+    }
+
+    @Test
+    fun `searchOnlineSubtitles surfaces error message on repo failure`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        val subs = mockk<OnlineSubtitleRepository>()
+        coEvery { subs.search(any(), any(), any()) } throws RuntimeException("rate limited")
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), subs)
+
+        vm.searchOnlineSubtitles("movie-1", "en", null)
+        advanceUntilIdle()
+
+        assertThat(vm.onlineSubtitleSearch.value.error).isEqualTo("rate limited")
+    }
+
+    @Test
+    fun `downloadOnlineSubtitle attaches subtitle to the active file id`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        val subs = mockk<OnlineSubtitleRepository>()
+        coEvery { subs.download(any(), any(), any()) } returns Unit
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), emptyDownloads(), emptyNotifications(), subs)
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        var doneCalled = false
+        val candidate = tv.onscreen.mobile.data.model.OnlineSubtitle(
+            provider_file_id = 99, file_name = "S.srt", language = "fr",
+        )
+        vm.downloadOnlineSubtitle("movie-1", candidate) { doneCalled = true }
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { subs.download("movie-1", "f1", candidate) }
+        assertThat(doneCalled).isTrue()
     }
 }

@@ -15,7 +15,9 @@ import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.data.model.OnlineSubtitle
 import tv.onscreen.mobile.data.repository.NotificationsRepository
+import tv.onscreen.mobile.data.repository.OnlineSubtitleRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 import javax.inject.Inject
@@ -24,6 +26,15 @@ sealed class PlaybackSource {
     data class DirectPlay(val url: String, val startMs: Long) : PlaybackSource()
     data class Hls(val playlistUrl: String, val offsetMs: Long) : PlaybackSource()
 }
+
+/** Snapshot of the OpenSubtitles search dialog. Kept on the VM so
+ *  the dialog survives configuration changes (orientation flips
+ *  during search) without dropping in-flight results. */
+data class OnlineSubtitleSearchUi(
+    val loading: Boolean = false,
+    val results: List<OnlineSubtitle> = emptyList(),
+    val error: String? = null,
+)
 
 data class PlayerUiState(
     val loading: Boolean = true,
@@ -46,6 +57,7 @@ class PlayerViewModel @Inject constructor(
     private val serverPrefs: ServerPrefs,
     private val downloads: tv.onscreen.mobile.data.downloads.OnScreenDownloadManager,
     private val notifications: NotificationsRepository,
+    private val onlineSubtitles: OnlineSubtitleRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PlayerUiState())
@@ -242,6 +254,47 @@ class PlayerViewModel @Inject constructor(
      *  same emission doesn't seek a second time on recomposition. */
     fun clearRemoteResume() {
         _remoteResumeMs.value = null
+    }
+
+    // ── Online subtitles (OpenSubtitles search) ──────────────────────────
+
+    private val _onlineSubtitleSearch = MutableStateFlow(OnlineSubtitleSearchUi())
+    val onlineSubtitleSearch: StateFlow<OnlineSubtitleSearchUi> = _onlineSubtitleSearch.asStateFlow()
+
+    /** Run an OpenSubtitles search through the server-side proxy. The
+     *  server keeps the API key + rate-limit budget; the client just
+     *  passes through the user's filters. */
+    fun searchOnlineSubtitles(itemId: String, lang: String?, query: String?) {
+        _onlineSubtitleSearch.value = OnlineSubtitleSearchUi(loading = true)
+        viewModelScope.launch {
+            try {
+                val results = onlineSubtitles.search(itemId, lang = lang, query = query)
+                _onlineSubtitleSearch.value = OnlineSubtitleSearchUi(loading = false, results = results)
+            } catch (e: Exception) {
+                _onlineSubtitleSearch.value = OnlineSubtitleSearchUi(loading = false, error = e.message)
+            }
+        }
+    }
+
+    /** Download the chosen subtitle and attach it to the active file.
+     *  The next /items/{id} fetch will see it in the subtitle_streams
+     *  list — the player won't auto-pick it, since it'd need a fresh
+     *  prepare(); the user toggles it from the existing subtitle picker. */
+    fun downloadOnlineSubtitle(itemId: String, candidate: OnlineSubtitle, onDone: () -> Unit) {
+        val fileId = _state.value.item?.files?.firstOrNull()?.id ?: return
+        viewModelScope.launch {
+            try {
+                onlineSubtitles.download(itemId, fileId, candidate)
+                _onlineSubtitleSearch.value = OnlineSubtitleSearchUi()
+                onDone()
+            } catch (e: Exception) {
+                _onlineSubtitleSearch.value = _onlineSubtitleSearch.value.copy(error = e.message)
+            }
+        }
+    }
+
+    fun clearOnlineSubtitleSearch() {
+        _onlineSubtitleSearch.value = OnlineSubtitleSearchUi()
     }
 
     /** Subscribe to `progress.updated` events for the currently-

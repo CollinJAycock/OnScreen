@@ -82,6 +82,21 @@ interface OnScreenApi {
     @GET("api/v1/items/{id}/trickplay")
     suspend fun getTrickplayStatus(@Path("id") id: String): ApiResponse<TrickplayStatus>
 
+    // ── Online subtitles (OpenSubtitles proxy) ──────────────────────────────
+
+    @GET("api/v1/items/{id}/subtitles/search")
+    suspend fun searchOnlineSubtitles(
+        @Path("id") id: String,
+        @Query("lang") lang: String? = null,
+        @Query("query") query: String? = null,
+    ): ApiListResponse<OnlineSubtitle>
+
+    @POST("api/v1/items/{id}/subtitles/download")
+    suspend fun downloadOnlineSubtitle(
+        @Path("id") id: String,
+        @Body body: SubtitleDownloadRequest,
+    )
+
     // ── Transcode ───────────────────────────────────────────────────────────
 
     @POST("api/v1/items/{id}/transcode")
