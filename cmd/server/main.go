@@ -490,7 +490,9 @@ func run() error {
 		WithExternalSubtitles(subtitleSvc).
 		WithSyncBroker(notifBrokerEarly).
 		WithAudit(auditLogger).
-		WithStreamTokenMaker(tokenMaker)
+		WithStreamTokenMaker(tokenMaker).
+		WithPosterPicker(metaAgent).
+		WithSubtreeDeleter(&subtreeDeleter{q: gen.New(rwPool)})
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)

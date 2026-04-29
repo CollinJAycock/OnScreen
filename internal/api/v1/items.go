@@ -25,6 +25,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/intromarker"
+	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
@@ -43,6 +44,21 @@ type ItemMediaService interface {
 type ItemEnricher interface {
 	EnrichItem(ctx context.Context, itemID uuid.UUID) error
 	MatchItem(ctx context.Context, itemID uuid.UUID, tmdbID int) error
+}
+
+// ItemPosterPicker drives the manual poster-picker workflow: list every
+// poster TMDB has for a given show / movie, and download one to apply.
+// Optional — when nil, the related routes return BadRequest.
+type ItemPosterPicker interface {
+	ListPosters(ctx context.Context, itemType string, tmdbID int) ([]metadata.PosterCandidate, error)
+	SetItemPoster(ctx context.Context, itemID uuid.UUID, posterURL string) error
+}
+
+// ItemSubtreeDeleter soft-deletes a media item plus everything reachable
+// via parent_id, and marks the matching files as deleted so a re-scan
+// doesn't resurrect the row. Optional — when nil, DELETE returns 405.
+type ItemSubtreeDeleter interface {
+	SoftDeleteSubtree(ctx context.Context, itemID uuid.UUID) error
 }
 
 // ItemMatchSearcher searches for metadata candidates for manual matching.
@@ -115,6 +131,8 @@ type ItemHandler struct {
 	audit     *audit.Logger
 	tokens    *auth.TokenMaker // optional; when set, Get embeds a 24h stream token per file
 	epDB      EpisodePosterDB  // optional; when set, episode rows get the show's poster substituted (per user pref)
+	posters   ItemPosterPicker // optional; when set, /posters and /poster routes are admin-served
+	deleter   ItemSubtreeDeleter // optional; when set, DELETE /items/{id} is admin-served
 	logger    *slog.Logger
 }
 
@@ -168,6 +186,21 @@ func (h *ItemHandler) WithSyncBroker(b *notification.Broker) *ItemHandler {
 // audit emission (still functional, just unobserved).
 func (h *ItemHandler) WithAudit(a *audit.Logger) *ItemHandler {
 	h.audit = a
+	return h
+}
+
+// WithPosterPicker wires the manual poster-picker (TMDB image variants
+// + apply-by-URL). When unset, the corresponding routes return
+// BadRequest. Admin-only at the route layer.
+func (h *ItemHandler) WithPosterPicker(p ItemPosterPicker) *ItemHandler {
+	h.posters = p
+	return h
+}
+
+// WithSubtreeDeleter wires the admin "Remove from library" action.
+// When unset, DELETE /api/v1/items/{id} returns 405.
+func (h *ItemHandler) WithSubtreeDeleter(d ItemSubtreeDeleter) *ItemHandler {
+	h.deleter = d
 	return h
 }
 
@@ -317,6 +350,14 @@ type ItemDetailResponse struct {
 	Files         []ItemFileResponse `json:"files"`
 	Markers       []MarkerJSON       `json:"markers,omitempty"`
 
+	// External IDs surfaced for the manual poster-picker UI: when
+	// tmdb_id is set, the picker can skip the "search TMDB for the
+	// right show/movie" step and drop straight into the poster
+	// variants list. Omitempty keeps payloads small for items that
+	// haven't been enriched yet.
+	TMDBID *int `json:"tmdb_id,omitempty"`
+	TVDBID *int `json:"tvdb_id,omitempty"`
+
 	// Music-specific fields. Empty/nil for non-music items.
 	MusicBrainzID             *string `json:"musicbrainz_id,omitempty"`
 	MusicBrainzReleaseID      *string `json:"musicbrainz_release_id,omitempty"`
@@ -435,6 +476,8 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		s := item.ParentID.String()
 		out.ParentID = &s
 	}
+	out.TMDBID = item.TMDBID
+	out.TVDBID = item.TVDBID
 	out.MusicBrainzID = uuidPtrToStringPtr(item.MusicBrainzID)
 	out.MusicBrainzReleaseID = uuidPtrToStringPtr(item.MusicBrainzReleaseID)
 	out.MusicBrainzReleaseGroupID = uuidPtrToStringPtr(item.MusicBrainzReleaseGroupID)
@@ -1094,6 +1137,161 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(bgCtx, "apply match failed", "id", id, "tmdb_id", body.TMDBID, "err", err)
 		}
 	}()
+	respond.NoContent(w)
+}
+
+// PosterCandidateResponse is one TMDB image variant in the picker UI.
+// Mirrors metadata.PosterCandidate but with explicit JSON tags so the
+// API surface doesn't drift if the metadata package's tags change.
+type PosterCandidateResponse struct {
+	URL      string  `json:"url"`
+	Width    int     `json:"width"`
+	Height   int     `json:"height"`
+	Language *string `json:"language,omitempty"`
+	Vote     float64 `json:"vote"`
+}
+
+// ListPosters handles GET /api/v1/items/{id}/posters?tmdb_id=N.
+// Returns every poster variant TMDB has for the (show or movie) tmdbID
+// supplied. Admin-only — TMDB calls cost the operator's API quota.
+func (h *ItemHandler) ListPosters(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	if h.posters == nil {
+		respond.BadRequest(w, r, "poster picker not configured")
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	tmdbStr := r.URL.Query().Get("tmdb_id")
+	tmdbID, perr := strconv.Atoi(tmdbStr)
+	if perr != nil || tmdbID <= 0 {
+		respond.BadRequest(w, r, "tmdb_id query param required")
+		return
+	}
+	item, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for posters", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	candidates, err := h.posters.ListPosters(r.Context(), item.Type, tmdbID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list posters", "id", id, "tmdb_id", tmdbID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]PosterCandidateResponse, len(candidates))
+	for i, c := range candidates {
+		out[i] = PosterCandidateResponse{
+			URL: c.URL, Width: c.Width, Height: c.Height,
+			Language: c.Language, Vote: c.Vote,
+		}
+	}
+	respond.Success(w, r, out)
+}
+
+// ApplyPoster handles POST /api/v1/items/{id}/poster.
+// Body: {"url": "<image url>"}. Downloads the image, writes it next to
+// the item's media files, and updates poster_path. Admin-only.
+func (h *ItemHandler) ApplyPoster(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	if h.posters == nil {
+		respond.BadRequest(w, r, "poster picker not configured")
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	if _, err := h.media.GetItem(r.Context(), id); err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for apply poster", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
+		respond.BadRequest(w, r, "url is required")
+		return
+	}
+	if h.audit != nil {
+		actor := claims.UserID
+		h.audit.Log(r.Context(), &actor, audit.ActionItemMatchApply, id.String(),
+			map[string]any{"poster_url": body.URL}, audit.ClientIP(r))
+	}
+	if err := h.posters.SetItemPoster(r.Context(), id, body.URL); err != nil {
+		h.logger.ErrorContext(r.Context(), "apply poster", "id", id, "url", body.URL, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
+}
+
+// Delete handles DELETE /api/v1/items/{id}. Soft-deletes the item plus
+// every descendant reachable via parent_id, and marks attached files
+// as deleted so a re-scan doesn't resurrect the row. Admin-only —
+// removes content visible to all users on the server.
+//
+// Use case: a duplicate / mismatched container row created by the
+// scanner from misnamed files (e.g. an Israeli show "A Happy Place"
+// that was created from files Sonarr placed in the US show's folder
+// before renaming them). The user wants the ghost row gone without
+// touching the actual on-disk files.
+func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	if h.deleter == nil {
+		respond.BadRequest(w, r, "subtree deletion not configured")
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	if _, err := h.media.GetItem(r.Context(), id); err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for delete", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		actor := claims.UserID
+		h.audit.Log(r.Context(), &actor, audit.ActionItemMatchApply, id.String(),
+			map[string]any{"action": "soft_delete_subtree"}, audit.ClientIP(r))
+	}
+	if err := h.deleter.SoftDeleteSubtree(r.Context(), id); err != nil {
+		h.logger.ErrorContext(r.Context(), "soft delete subtree", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
 	respond.NoContent(w)
 }
 

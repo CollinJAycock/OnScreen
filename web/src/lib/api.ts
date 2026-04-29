@@ -968,6 +968,8 @@ export interface ItemDetail {
   is_favorite: boolean;
   files: ItemFile[];
   markers?: Marker[];
+  tmdb_id?: number;
+  tvdb_id?: number;
   // Music-specific fields (undefined for non-music items).
   musicbrainz_id?: string;
   musicbrainz_release_id?: string;
@@ -1013,6 +1015,14 @@ export interface MatchCandidate {
   summary?: string;
   poster_url?: string;
   rating?: number;
+}
+
+export interface PosterCandidate {
+  url: string;
+  width: number;
+  height: number;
+  language?: string | null;
+  vote: number;
 }
 
 // ── Collections & Playlists ──────────────────────────────────────────────────
@@ -1145,6 +1155,11 @@ export const itemApi = {
     api.get<MatchCandidate[]>(`/items/${id}/match/search?query=${encodeURIComponent(query)}`),
   applyMatch: (id: string, tmdbId: number) =>
     api.post<void>(`/items/${id}/match`, { tmdb_id: tmdbId }),
+  listPosters: (id: string, tmdbId: number) =>
+    api.get<PosterCandidate[]>(`/items/${id}/posters?tmdb_id=${tmdbId}`),
+  applyPoster: (id: string, url: string) =>
+    api.post<void>(`/items/${id}/poster`, { url }),
+  remove: (id: string) => api.delete(`/items/${id}`),
   addFavorite: (id: string) => api.post<void>(`/items/${id}/favorite`, {}),
   removeFavorite: (id: string) => api.delete(`/items/${id}/favorite`),
   listMarkers: (id: string) => api.requestList<Marker>(`/items/${id}/markers`),

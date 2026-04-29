@@ -119,3 +119,23 @@ type ArtworkDownloader interface {
 	DownloadFanart(ctx context.Context, itemID uuid.UUID, url string) (relativePath string, err error)
 	DownloadThumb(ctx context.Context, itemID uuid.UUID, url string) (relativePath string, err error)
 }
+
+// PosterCandidate is one image variant returned by a metadata agent for the
+// manual poster-picker workflow. Width is the source pixel width (so the UI
+// can size previews accurately) and Language is the ISO 639-1 code or nil
+// for language-agnostic art.
+type PosterCandidate struct {
+	URL      string  `json:"url"`
+	Width    int     `json:"width"`
+	Height   int     `json:"height"`
+	Language *string `json:"language,omitempty"`
+	Vote     float64 `json:"vote"`
+}
+
+// PosterLister returns every poster variant a metadata provider has for a
+// given show or movie. Implemented by the TMDB client; kept as its own
+// interface so other agents (TVDB, MusicBrainz) can opt out.
+type PosterLister interface {
+	ListMoviePostersForID(ctx context.Context, tmdbID int) ([]PosterCandidate, error)
+	ListTVPostersForID(ctx context.Context, tmdbID int) ([]PosterCandidate, error)
+}

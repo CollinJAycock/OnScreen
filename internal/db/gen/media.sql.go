@@ -4074,6 +4074,31 @@ func (q *Queries) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryI
 	return err
 }
 
+const softDeleteMediaFilesForSubtree = `-- name: SoftDeleteMediaFilesForSubtree :exec
+WITH RECURSIVE subtree AS (
+    SELECT mi.id FROM media_items mi WHERE mi.id = $1
+    UNION
+    SELECT m.id
+    FROM media_items m
+    JOIN subtree s ON m.parent_id = s.id
+)
+UPDATE media_files
+SET status = 'deleted', deleted_at = NOW()
+WHERE media_files.media_item_id IN (SELECT subtree.id FROM subtree)
+  AND media_files.status != 'deleted'
+`
+
+// Companion to SoftDeleteMediaItemSubtree — also marks every file
+// attached to any item in the subtree as deleted, so the next scan
+// doesn't try to "restore" the soft-deleted item via
+// RestoreMediaItemAncestry when it sees the file still on disk.
+// Without this, a soft-deleted "A Happy Place" comes right back the
+// next time the scanner runs, defeating the user's removal.
+func (q *Queries) SoftDeleteMediaFilesForSubtree(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteMediaFilesForSubtree, id)
+	return err
+}
+
 const softDeleteMediaItem = `-- name: SoftDeleteMediaItem :exec
 UPDATE media_items SET deleted_at = NOW(), updated_at = NOW()
 WHERE id = $1
@@ -4096,6 +4121,33 @@ WHERE media_items.id = $1
 
 func (q *Queries) SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteMediaItemIfAllFilesDeleted, id)
+	return err
+}
+
+const softDeleteMediaItemSubtree = `-- name: SoftDeleteMediaItemSubtree :exec
+WITH RECURSIVE subtree AS (
+    SELECT mi.id FROM media_items mi WHERE mi.id = $1
+    UNION
+    SELECT m.id
+    FROM media_items m
+    JOIN subtree s ON m.parent_id = s.id
+    WHERE m.deleted_at IS NULL
+)
+UPDATE media_items
+SET deleted_at = NOW(),
+    updated_at = NOW()
+WHERE media_items.id IN (SELECT subtree.id FROM subtree)
+  AND media_items.deleted_at IS NULL
+`
+
+// Soft-deletes the item plus every descendant reachable via parent_id.
+// Used by the admin "Remove from library" action when a user wants to
+// retire a duplicate / mismatched container row (e.g. a show that the
+// scanner created from misnamed files and that no longer reflects the
+// real on-disk content). Works for any container type: show → seasons
+// → episodes, artist → albums → tracks, season → episodes alone, etc.
+func (q *Queries) SoftDeleteMediaItemSubtree(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteMediaItemSubtree, id)
 	return err
 }
 

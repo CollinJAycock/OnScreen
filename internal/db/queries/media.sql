@@ -1089,3 +1089,43 @@ WHERE ep.id = ANY($1::uuid[])
   AND ep.deleted_at IS NULL
   AND show.poster_path IS NOT NULL
   AND show.poster_path <> '';
+
+-- name: SoftDeleteMediaItemSubtree :exec
+-- Soft-deletes the item plus every descendant reachable via parent_id.
+-- Used by the admin "Remove from library" action when a user wants to
+-- retire a duplicate / mismatched container row (e.g. a show that the
+-- scanner created from misnamed files and that no longer reflects the
+-- real on-disk content). Works for any container type: show → seasons
+-- → episodes, artist → albums → tracks, season → episodes alone, etc.
+WITH RECURSIVE subtree AS (
+    SELECT mi.id FROM media_items mi WHERE mi.id = $1
+    UNION
+    SELECT m.id
+    FROM media_items m
+    JOIN subtree s ON m.parent_id = s.id
+    WHERE m.deleted_at IS NULL
+)
+UPDATE media_items
+SET deleted_at = NOW(),
+    updated_at = NOW()
+WHERE media_items.id IN (SELECT subtree.id FROM subtree)
+  AND media_items.deleted_at IS NULL;
+
+-- name: SoftDeleteMediaFilesForSubtree :exec
+-- Companion to SoftDeleteMediaItemSubtree — also marks every file
+-- attached to any item in the subtree as deleted, so the next scan
+-- doesn't try to "restore" the soft-deleted item via
+-- RestoreMediaItemAncestry when it sees the file still on disk.
+-- Without this, a soft-deleted "A Happy Place" comes right back the
+-- next time the scanner runs, defeating the user's removal.
+WITH RECURSIVE subtree AS (
+    SELECT mi.id FROM media_items mi WHERE mi.id = $1
+    UNION
+    SELECT m.id
+    FROM media_items m
+    JOIN subtree s ON m.parent_id = s.id
+)
+UPDATE media_files
+SET status = 'deleted', deleted_at = NOW()
+WHERE media_files.media_item_id IN (SELECT subtree.id FROM subtree)
+  AND media_files.status != 'deleted';

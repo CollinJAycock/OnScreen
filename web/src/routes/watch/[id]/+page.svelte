@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { progressUpdates } from '$lib/stores/notifications';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
@@ -829,6 +829,112 @@
       matchError = e instanceof Error ? e.message : 'Failed to apply match';
     } finally {
       matchApplying = false;
+    }
+  }
+
+  // ── Poster picker modal ────────────────────────────────────────────────────
+  // Two-step flow: pick a TMDB record (reuses the match search), then pick
+  // one of its poster variants. Skips step 1 when the item already has a
+  // tmdb_id — drops straight into the variants list.
+  let showPosterModal = false;
+  let posterStep: 'pick-tmdb' | 'pick-poster' = 'pick-tmdb';
+  let posterTmdbId: number | null = null;
+  let posterTmdbTitle = '';
+  let posterCandidates: PosterCandidate[] = [];
+  let posterMatchQuery = '';
+  let posterMatchResults: MatchCandidate[] = [];
+  let posterLoading = false;
+  let posterApplying = false;
+  let posterError = '';
+
+  async function openPosterModal() {
+    if (!item) return;
+    showPosterModal = true;
+    posterError = '';
+    posterCandidates = [];
+    posterMatchResults = [];
+    posterApplying = false;
+    posterMatchQuery = item.title ?? '';
+    // Skip the TMDB-pick step if the item already has a confirmed match.
+    const tid = item.tmdb_id;
+    if (tid && tid > 0) {
+      posterTmdbId = tid;
+      posterTmdbTitle = item.title ?? '';
+      posterStep = 'pick-poster';
+      await loadPosterCandidates();
+    } else {
+      posterStep = 'pick-tmdb';
+      await searchPosterMatches();
+    }
+  }
+
+  async function searchPosterMatches() {
+    if (!item || !posterMatchQuery.trim()) return;
+    posterLoading = true;
+    posterError = '';
+    try {
+      posterMatchResults = await itemApi.searchMatch(item.id, posterMatchQuery.trim());
+    } catch (e: unknown) {
+      posterError = e instanceof Error ? e.message : 'Search failed';
+    } finally {
+      posterLoading = false;
+    }
+  }
+
+  async function chooseTmdbForPoster(c: MatchCandidate) {
+    posterTmdbId = c.tmdb_id;
+    posterTmdbTitle = c.title;
+    posterStep = 'pick-poster';
+    await loadPosterCandidates();
+  }
+
+  async function loadPosterCandidates() {
+    if (!item || !posterTmdbId) return;
+    posterLoading = true;
+    posterError = '';
+    try {
+      posterCandidates = await itemApi.listPosters(item.id, posterTmdbId);
+      if (posterCandidates.length === 0) {
+        posterError = 'No posters available for this match.';
+      }
+    } catch (e: unknown) {
+      posterError = e instanceof Error ? e.message : 'Failed to load posters';
+    } finally {
+      posterLoading = false;
+    }
+  }
+
+  async function applyPoster(url: string) {
+    if (!item) return;
+    posterApplying = true;
+    posterError = '';
+    try {
+      await itemApi.applyPoster(item.id, url);
+      showPosterModal = false;
+      setTimeout(() => { load(); }, 800);
+    } catch (e: unknown) {
+      posterError = e instanceof Error ? e.message : 'Failed to apply poster';
+    } finally {
+      posterApplying = false;
+    }
+  }
+
+  // ── Remove (admin) ─────────────────────────────────────────────────────────
+  async function removeItem() {
+    if (!item) return;
+    const confirmed = confirm(
+      `Soft-delete "${item.title}" and all its descendants?\n\n` +
+      `This hides the item from the library. The on-disk files are not touched. ` +
+      `Use this to clear ghost rows from misorganised content (e.g. two shows ` +
+      `that ended up sharing one folder).`
+    );
+    if (!confirmed) return;
+    try {
+      await itemApi.remove(item.id);
+      // Bounce back to the library listing — the item no longer exists.
+      goto('/');
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Remove failed');
     }
   }
 
@@ -2546,11 +2652,19 @@
       </div>
     {/if}
 
-    <!-- Fix Match button (shows and movies) -->
-    {#if item.type === 'show' || item.type === 'movie'}
+    <!-- Fix Match + Choose Poster + Remove (shows and movies, admin) -->
+    {#if (item.type === 'show' || item.type === 'movie') && isAdmin}
       <button class="fix-match-btn" on:click={openMatchModal}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         Fix Match
+      </button>
+      <button class="fix-match-btn" on:click={openPosterModal} title="Pick a different poster image">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5-11 11"/></svg>
+        Choose Poster
+      </button>
+      <button class="fix-match-btn fix-match-btn--danger" on:click={removeItem} title="Soft-delete this item and its descendants">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Remove
       </button>
     {/if}
 
@@ -2727,6 +2841,96 @@
     </div>
 
     <button class="match-cancel" on:click={() => showMatchModal = false}>Cancel</button>
+  </div>
+</div>
+{/if}
+
+{#if showPosterModal}
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="match-overlay" on:click={() => showPosterModal = false}>
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="match-modal poster-modal" on:click|stopPropagation>
+    {#if posterStep === 'pick-tmdb'}
+      <h2>Choose Poster — Step 1: pick the right title</h2>
+      <p class="match-hint">Search TMDB for the show or movie this poster should match.</p>
+
+      <form class="match-search-form" on:submit|preventDefault={searchPosterMatches}>
+        <input
+          type="text"
+          bind:value={posterMatchQuery}
+          placeholder="Search TMDB..."
+          class="match-input"
+          autofocus
+        />
+        <button type="submit" class="match-search-btn" disabled={posterLoading}>
+          {posterLoading ? 'Searching...' : 'Search'}
+        </button>
+      </form>
+
+      {#if posterError}<div class="match-error">{posterError}</div>{/if}
+
+      <div class="match-results">
+        {#each posterMatchResults as c}
+          <button class="match-result" on:click={() => chooseTmdbForPoster(c)}>
+            {#if c.poster_url}
+              <img class="match-poster" src={c.poster_url} alt="" />
+            {:else}
+              <div class="match-poster-blank"></div>
+            {/if}
+            <div class="match-result-info">
+              <div class="match-result-title">{c.title}</div>
+              <div class="match-result-meta">
+                {#if c.year}<span>{c.year}</span>{/if}
+                {#if c.rating}<span>&#9733; {c.rating.toFixed(1)}</span>{/if}
+              </div>
+              {#if c.summary}<div class="match-result-summary">{c.summary}</div>{/if}
+            </div>
+          </button>
+        {/each}
+        {#if !posterLoading && posterMatchResults.length === 0 && posterMatchQuery}
+          <div class="match-empty">No results found.</div>
+        {/if}
+      </div>
+    {:else}
+      <h2>
+        Choose Poster — {posterTmdbTitle || 'pick a variant'}
+        <button
+          class="poster-back"
+          on:click={() => { posterStep = 'pick-tmdb'; posterCandidates = []; }}
+          title="Pick a different title"
+        >
+          ← change
+        </button>
+      </h2>
+      <p class="match-hint">Click a poster to apply it. The image is downloaded next to the media files.</p>
+
+      {#if posterError}<div class="match-error">{posterError}</div>{/if}
+
+      {#if posterLoading}
+        <div class="match-empty">Loading…</div>
+      {:else}
+        <div class="poster-grid">
+          {#each posterCandidates as p}
+            <button
+              class="poster-tile"
+              disabled={posterApplying}
+              on:click={() => applyPoster(p.url)}
+              title={p.language ? `${p.language.toUpperCase()} • ${p.width}×${p.height}` : `${p.width}×${p.height}`}
+            >
+              <img src={p.url} alt="" loading="lazy" />
+              <div class="poster-meta">
+                {#if p.language}<span class="poster-lang">{p.language.toUpperCase()}</span>{/if}
+                <span class="poster-dims">{p.width}×{p.height}</span>
+              </div>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+
+    <button class="match-cancel" on:click={() => showPosterModal = false}>Cancel</button>
   </div>
 </div>
 {/if}
@@ -3720,6 +3924,54 @@
     color: #777; font-size: 0.78rem; cursor: pointer;
   }
   .match-cancel:hover { color: #bbb; border-color: rgba(255,255,255,0.15); }
+
+  .fix-match-btn--danger { color: #c66; border-color: rgba(204,102,102,0.3); }
+  .fix-match-btn--danger:hover { color: #e88; border-color: rgba(232,136,136,0.5); }
+
+  .poster-modal { max-width: 980px; }
+  .poster-modal h2 {
+    display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap;
+  }
+  .poster-back {
+    background: none; border: none; color: var(--accent);
+    font-size: 0.78rem; cursor: pointer; padding: 0;
+  }
+  .poster-back:hover { text-decoration: underline; }
+
+  .poster-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.75rem;
+    margin: 0.6rem 0 1rem;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-right: 0.4rem;
+  }
+  .poster-tile {
+    position: relative;
+    background: rgba(255,255,255,0.04);
+    border: 2px solid transparent;
+    border-radius: 6px;
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+    transition: border-color 0.12s, transform 0.12s;
+  }
+  .poster-tile:hover { border-color: var(--accent); transform: scale(1.02); }
+  .poster-tile:disabled { opacity: 0.5; cursor: wait; }
+  .poster-tile img {
+    width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block;
+  }
+  .poster-meta {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; justify-content: space-between;
+    padding: 0.25rem 0.4rem;
+    background: linear-gradient(transparent, rgba(0,0,0,0.85));
+    color: #fff;
+    font-size: 0.7rem;
+  }
+  .poster-lang { font-weight: 700; letter-spacing: 0.5px; }
+  .poster-dims { opacity: 0.85; }
 
   /* ── Photo viewer ───────────────────────────────────── */
   .photo-viewer {

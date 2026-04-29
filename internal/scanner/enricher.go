@@ -1333,6 +1333,111 @@ type TVMatchCandidate struct {
 	Rating    float64
 }
 
+// ListPosters fetches every poster variant TMDB has for the given show or
+// movie tmdbID. The user picks one of these URLs and SetItemPoster applies
+// it. Returns a non-nil empty slice if the agent isn't a PosterLister
+// (e.g. tests with a mock agent), so callers can keep the response shape
+// consistent.
+func (e *Enricher) ListPosters(ctx context.Context, itemType string, tmdbID int) ([]metadata.PosterCandidate, error) {
+	agent := e.agentFn()
+	if agent == nil {
+		return nil, fmt.Errorf("metadata agent not configured")
+	}
+	pl, ok := agent.(metadata.PosterLister)
+	if !ok {
+		return []metadata.PosterCandidate{}, nil
+	}
+	switch itemType {
+	case "show":
+		return pl.ListTVPostersForID(ctx, tmdbID)
+	case "movie":
+		return pl.ListMoviePostersForID(ctx, tmdbID)
+	default:
+		return nil, fmt.Errorf("poster listing only supports show and movie items, got %q", itemType)
+	}
+}
+
+// SetItemPoster downloads the chosen poster URL into the item's art
+// directory and updates poster_path. Used by the manual poster-picker
+// after the user picks one of the variants from ListPosters. Works for
+// any item that has on-disk files reachable via parent traversal —
+// shows resolve to the show root directory, movies to the file's
+// containing folder, episodes to the season/show folder.
+//
+// posterURL can be any HTTP(S) URL (TMDB image, TVDB image, or a
+// user-pasted URL); the artwork manager fetches the bytes and writes
+// them atomically over {item.id}-poster.jpg in the art directory.
+func (e *Enricher) SetItemPoster(ctx context.Context, itemID uuid.UUID, posterURL string) error {
+	if e.artwork == nil {
+		return fmt.Errorf("artwork manager not configured")
+	}
+	if posterURL == "" {
+		return fmt.Errorf("posterURL is required")
+	}
+
+	item, err := e.updater.GetItem(ctx, itemID)
+	if err != nil {
+		return fmt.Errorf("get item %s: %w", itemID, err)
+	}
+
+	// Locate any active file in the subtree so we can resolve the
+	// art directory. Shows have no direct file; an episode's path
+	// gives us showDirFromFile after walking up two levels.
+	files, err := e.updater.GetFiles(ctx, itemID)
+	if err != nil {
+		return fmt.Errorf("get files %s: %w", itemID, err)
+	}
+	var file *media.File
+	for i := range files {
+		if files[i].Status == "active" {
+			file = &files[i]
+			break
+		}
+	}
+	if file == nil {
+		file = e.findDescendantFile(ctx, item.ID)
+	}
+	if file == nil {
+		return fmt.Errorf("no active file under item %s — can't resolve art directory", itemID)
+	}
+
+	var artDir string
+	switch item.Type {
+	case "show":
+		artDir = showDirFromFile(file.FilePath)
+	case "season":
+		// Season posters live next to the season's episodes.
+		artDir = filepath.Dir(file.FilePath)
+	default:
+		// movies, episodes, albums, etc.: drop alongside the file.
+		artDir = filepath.Dir(file.FilePath)
+	}
+	if artDir == "" || artDir == "." {
+		return fmt.Errorf("could not resolve art directory for item %s", itemID)
+	}
+
+	absPath, err := e.artwork.ReplacePoster(ctx, item.ID, posterURL, artDir)
+	if err != nil {
+		return fmt.Errorf("download poster: %w", err)
+	}
+
+	rel := e.relPath(absPath)
+	p := media.UpdateItemMetadataParams{
+		ID:         item.ID,
+		Title:      item.Title,
+		SortTitle:  item.SortTitle,
+		Year:       item.Year,
+		Genres:     item.Genres,
+		PosterPath: &rel,
+	}
+	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
+		return fmt.Errorf("update poster_path: %w", err)
+	}
+	e.logger.InfoContext(ctx, "poster updated via manual picker",
+		"item_id", item.ID, "poster_url", posterURL, "rel_path", rel)
+	return nil
+}
+
 // relPath converts an absolute artwork path to a path relative to the first
 // matching library scan_path. This relative path is what gets stored in the DB
 // and used in /artwork/* URLs.

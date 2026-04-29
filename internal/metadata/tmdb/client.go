@@ -390,6 +390,59 @@ func (c *Client) GetTVExternalIDs(ctx context.Context, tmdbID int) (tvdbID int, 
 	return resp.TVDBID, resp.IMDBID, nil
 }
 
+// ListMoviePostersForID returns all poster variants TMDB has for a movie ID,
+// ordered by TMDB's vote_average descending. Used by the manual
+// poster-picker UI so the user can see every available image and pick
+// the regional / language variant they want — not just the one TMDB's
+// default search picks. Implements metadata.PosterLister.
+func (c *Client) ListMoviePostersForID(ctx context.Context, tmdbID int) ([]metadata.PosterCandidate, error) {
+	return c.listImages(ctx, fmt.Sprintf("/movie/%d/images", tmdbID))
+}
+
+// ListTVPostersForID is the TV-show equivalent of ListMoviePostersForID.
+// Implements metadata.PosterLister.
+func (c *Client) ListTVPostersForID(ctx context.Context, tmdbID int) ([]metadata.PosterCandidate, error) {
+	return c.listImages(ctx, fmt.Sprintf("/tv/%d/images", tmdbID))
+}
+
+func (c *Client) listImages(ctx context.Context, path string) ([]metadata.PosterCandidate, error) {
+	// include_image_language=null,en pulls language-agnostic art (logos
+	// often, but for posters too) plus English variants. The default
+	// behaviour of "/images" is to filter by the request's language
+	// param, which would hide the un-localized release poster if the
+	// account language is non-English.
+	params := url.Values{}
+	params.Set("include_image_language", "en,null,"+strings.SplitN(c.language, "-", 2)[0])
+
+	var resp struct {
+		Posters []struct {
+			FilePath    string  `json:"file_path"`
+			Width       int     `json:"width"`
+			Height      int     `json:"height"`
+			ISO6391     *string `json:"iso_639_1"`
+			VoteAverage float64 `json:"vote_average"`
+		} `json:"posters"`
+	}
+	if err := c.get(ctx, path, params, &resp); err != nil {
+		return nil, fmt.Errorf("tmdb list posters %s: %w", path, err)
+	}
+
+	out := make([]metadata.PosterCandidate, 0, len(resp.Posters))
+	for _, p := range resp.Posters {
+		if p.FilePath == "" {
+			continue
+		}
+		out = append(out, metadata.PosterCandidate{
+			URL:      imageBaseURL + p.FilePath,
+			Width:    p.Width,
+			Height:   p.Height,
+			Language: p.ISO6391,
+			Vote:     p.VoteAverage,
+		})
+	}
+	return out, nil
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 func (c *Client) get(ctx context.Context, path string, params url.Values, dest any) error {
