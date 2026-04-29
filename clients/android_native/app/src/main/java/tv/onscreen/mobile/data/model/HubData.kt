@@ -14,7 +14,13 @@ import com.squareup.moshi.JsonClass
  */
 @JsonClass(generateAdapter = true)
 data class HubData(
+    // Legacy combined feed for backward compatibility — same items
+    // as the three split arrays below. Older server builds only
+    // return this one; newer builds return both.
     val continue_watching: List<HubItem> = emptyList(),
+    val continue_watching_tv: List<HubItem>? = null,
+    val continue_watching_movies: List<HubItem>? = null,
+    val continue_watching_other: List<HubItem>? = null,
     val recently_added: List<HubItem> = emptyList(),
     val recently_added_by_library: List<HubLibraryRow> = emptyList(),
     val trending: List<HubItem> = emptyList(),

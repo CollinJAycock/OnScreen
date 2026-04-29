@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { libraryApi, hubApi, assetUrl, type Library, type HubItem, type HubLibraryRow } from '$lib/api';
+  import { libraryApi, hubApi, assetUrl, type Library, type HubItem, type HubData, type HubLibraryRow } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let libraries: Library[] = [];
-  let continueWatching: HubItem[] = [];
+  let continueTV: HubItem[] = [];
+  let continueMovies: HubItem[] = [];
+  let continueOther: HubItem[] = [];
   let recentlyAddedByLibrary: HubLibraryRow[] = [];
   let trending: HubItem[] = [];
   let loading = true;
@@ -36,10 +38,27 @@
 
   onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
 
+  // Older server builds only return `continue_watching` (the
+  // combined feed); newer ones return the pre-split arrays. Fall
+  // back to a client-side type filter so the UI keeps working
+  // either way until every operator has restarted.
+  function unpackContinue(hub: HubData) {
+    if (hub.continue_watching_tv || hub.continue_watching_movies || hub.continue_watching_other) {
+      continueTV = hub.continue_watching_tv ?? [];
+      continueMovies = hub.continue_watching_movies ?? [];
+      continueOther = hub.continue_watching_other ?? [];
+      return;
+    }
+    const all = hub.continue_watching ?? [];
+    continueTV = all.filter(i => i.type === 'episode');
+    continueMovies = all.filter(i => i.type === 'movie');
+    continueOther = all.filter(i => i.type !== 'episode' && i.type !== 'movie');
+  }
+
   async function refreshHub() {
     try {
       const hub = await hubApi.get();
-      continueWatching = hub.continue_watching;
+      unpackContinue(hub);
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
     } catch { /* silently skip — next poll will retry */ }
@@ -50,7 +69,7 @@
     try {
       const [libs, hub] = await Promise.all([libraryApi.list(), hubApi.get()]);
       libraries = libs;
-      continueWatching = hub.continue_watching;
+      unpackContinue(hub);
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
     }
@@ -102,13 +121,6 @@
     return item.type === 'album' || item.type === 'photo';
   }
 
-  // Wife's request: split Continue Watching into a TV row and a Movies
-  // row, with TV on top. Anything that isn't a TV episode or a movie
-  // (audiobooks, music tracks if they end up here) stays under a third
-  // "Continue Watching" row so it's not silently dropped.
-  $: continueTV       = continueWatching.filter(i => i.type === 'episode');
-  $: continueMovies   = continueWatching.filter(i => i.type === 'movie');
-  $: continueOther    = continueWatching.filter(i => i.type !== 'episode' && i.type !== 'movie');
 
   // Whole per-library rows render as squares when the library's item
   // type is square-friendly. Skips the per-item check inside the #each,

@@ -33,6 +33,14 @@
     if (!item.view_offset_ms || !item.duration_ms) return undefined;
     return item.view_offset_ms / item.duration_ms;
   }
+
+  // Resolve the three Continue Watching buckets. Newer servers
+  // pre-split them; older servers send only the combined feed and
+  // we filter client-side.
+  const tv      = $derived(data?.continue_watching_tv ?? data?.continue_watching.filter(i => i.type === 'episode') ?? []);
+  const movies  = $derived(data?.continue_watching_movies ?? data?.continue_watching.filter(i => i.type === 'movie') ?? []);
+  const other   = $derived(data?.continue_watching_other ?? data?.continue_watching.filter(i => i.type !== 'episode' && i.type !== 'movie') ?? []);
+  const cwEmpty = $derived(tv.length === 0 && movies.length === 0 && other.length === 0);
 </script>
 
 <div class="page">
@@ -51,15 +59,45 @@
   {:else if !data}
     <Spinner />
   {:else}
-    {#if data.continue_watching.length > 0}
-      <HubRow title="Continue Watching">
-        {#each data.continue_watching as item, i (item.id)}
+    {#if tv.length > 0}
+      <HubRow title="Continue Watching TV Shows">
+        {#each tv as item, i (item.id)}
           <PosterCard
             title={item.title}
             posterPath={item.poster_path}
             subtitle={item.year ? String(item.year) : undefined}
             progressRatio={progress(item)}
             autofocus={i === 0}
+            onclick={() => open(item.id, item.type)}
+          />
+        {/each}
+      </HubRow>
+    {/if}
+
+    {#if movies.length > 0}
+      <HubRow title="Continue Watching Movies">
+        {#each movies as item, i (item.id)}
+          <PosterCard
+            title={item.title}
+            posterPath={item.poster_path}
+            subtitle={item.year ? String(item.year) : undefined}
+            progressRatio={progress(item)}
+            autofocus={tv.length === 0 && i === 0}
+            onclick={() => open(item.id, item.type)}
+          />
+        {/each}
+      </HubRow>
+    {/if}
+
+    {#if other.length > 0}
+      <HubRow title="Continue Watching">
+        {#each other as item, i (item.id)}
+          <PosterCard
+            title={item.title}
+            posterPath={item.poster_path}
+            subtitle={item.year ? String(item.year) : undefined}
+            progressRatio={progress(item)}
+            autofocus={tv.length === 0 && movies.length === 0 && i === 0}
             onclick={() => open(item.id, item.type)}
           />
         {/each}
@@ -73,14 +111,14 @@
             title={item.title}
             posterPath={item.poster_path}
             subtitle={item.year ? String(item.year) : undefined}
-            autofocus={data.continue_watching.length === 0 && i === 0}
+            autofocus={cwEmpty && i === 0}
             onclick={() => open(item.id, item.type)}
           />
         {/each}
       </HubRow>
     {/if}
 
-    {#if data.continue_watching.length === 0 && data.recently_added.length === 0}
+    {#if cwEmpty && data.recently_added.length === 0}
       <p class="empty">Your library is empty. Add a library and run a scan from the web UI.</p>
     {/if}
   {/if}

@@ -13,6 +13,9 @@ export interface HubItem {
 
 export interface HubData {
   continue_watching: HubItem[];
+  continue_watching_tv?: HubItem[];
+  continue_watching_movies?: HubItem[];
+  continue_watching_other?: HubItem[];
   recently_added: HubItem[];
 }
 

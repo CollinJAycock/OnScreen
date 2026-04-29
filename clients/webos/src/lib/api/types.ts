@@ -13,6 +13,12 @@ export interface HubItem {
 
 export interface HubData {
   continue_watching: HubItem[];
+  // Pre-split arrays — newer servers populate these so the UI can
+  // render TV / Movies / Other rows. Older servers omit them; the
+  // hub page falls back to filtering continue_watching itself.
+  continue_watching_tv?: HubItem[];
+  continue_watching_movies?: HubItem[];
+  continue_watching_other?: HubItem[];
   recently_added: HubItem[];
 }
 

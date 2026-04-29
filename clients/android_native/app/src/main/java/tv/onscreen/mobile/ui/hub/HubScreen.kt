@@ -111,12 +111,27 @@ private fun HubBody(
     onOpenLibrary: (String) -> Unit,
 ) {
     val hub = ui.hub ?: return
+    // Resolve the three Continue Watching buckets. Newer servers
+    // return them pre-split; older servers return only the combined
+    // continue_watching feed, which we filter client-side. The
+    // null-vs-empty distinction matters: the new fields are nullable
+    // on the model so we can detect "older server" and fall back.
+    val tv = hub.continue_watching_tv ?: hub.continue_watching.filter { it.type == "episode" }
+    val movies = hub.continue_watching_movies ?: hub.continue_watching.filter { it.type == "movie" }
+    val other = hub.continue_watching_other
+        ?: hub.continue_watching.filter { it.type != "episode" && it.type != "movie" }
     LazyColumn(
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        if (hub.continue_watching.isNotEmpty()) {
-            item { PosterRow("Continue watching", hub.continue_watching, serverUrl, onOpenItem) }
+        if (tv.isNotEmpty()) {
+            item { PosterRow("Continue Watching TV Shows", tv, serverUrl, onOpenItem) }
+        }
+        if (movies.isNotEmpty()) {
+            item { PosterRow("Continue Watching Movies", movies, serverUrl, onOpenItem) }
+        }
+        if (other.isNotEmpty()) {
+            item { PosterRow("Continue Watching", other, serverUrl, onOpenItem) }
         }
         if (hub.recently_added.isNotEmpty()) {
             item { PosterRow("Recently added", hub.recently_added, serverUrl, onOpenItem) }

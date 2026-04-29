@@ -73,11 +73,20 @@ func (h *HubHandler) WithLibraries(l HubLibraryLister) *HubHandler {
 }
 
 // HubResponse is the combined home page data.
+//
+// continue_watching keeps the legacy combined feed every client has
+// rendered since v1; continue_watching_tv / _movies / _other are the
+// pre-split rows (TV first, then movies, then everything else) that
+// every client should migrate to. We populate both for one release
+// cycle so older client builds keep working.
 type HubResponse struct {
-	ContinueWatching []HubItem       `json:"continue_watching"`
-	RecentlyAdded    []HubItem       `json:"recently_added"`
-	ByLibrary        []HubLibraryRow `json:"recently_added_by_library"`
-	Trending         []HubItem       `json:"trending"`
+	ContinueWatching       []HubItem       `json:"continue_watching"`
+	ContinueWatchingTV     []HubItem       `json:"continue_watching_tv"`
+	ContinueWatchingMovies []HubItem       `json:"continue_watching_movies"`
+	ContinueWatchingOther  []HubItem       `json:"continue_watching_other"`
+	RecentlyAdded          []HubItem       `json:"recently_added"`
+	ByLibrary              []HubLibraryRow `json:"recently_added_by_library"`
+	Trending               []HubItem       `json:"trending"`
 }
 
 // HubLibraryRow is one "Recently added to <library>" strip on the home
@@ -113,10 +122,13 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := HubResponse{
-		ContinueWatching: []HubItem{},
-		RecentlyAdded:    []HubItem{},
-		ByLibrary:        []HubLibraryRow{},
-		Trending:         []HubItem{},
+		ContinueWatching:       []HubItem{},
+		ContinueWatchingTV:     []HubItem{},
+		ContinueWatchingMovies: []HubItem{},
+		ContinueWatchingOther:  []HubItem{},
+		RecentlyAdded:          []HubItem{},
+		ByLibrary:              []HubLibraryRow{},
+		Trending:               []HubItem{},
 	}
 
 	// Convert max content rating from claims to a rank for SQL filtering.
@@ -156,7 +168,7 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 			}
 			year := intPtrFrom32(row.Year)
 			offset := row.ViewOffset
-			out.ContinueWatching = append(out.ContinueWatching, HubItem{
+			item := HubItem{
 				ID:           row.ID.String(),
 				Title:        row.Title,
 				Type:         row.Type,
@@ -167,7 +179,16 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 				ViewOffsetMS: &offset,
 				DurationMS:   row.DurationMs,
 				UpdatedAt:    timestamptzToMilli(row.UpdatedAt),
-			})
+			}
+			out.ContinueWatching = append(out.ContinueWatching, item)
+			switch row.Type {
+			case "episode":
+				out.ContinueWatchingTV = append(out.ContinueWatchingTV, item)
+			case "movie":
+				out.ContinueWatchingMovies = append(out.ContinueWatchingMovies, item)
+			default:
+				out.ContinueWatchingOther = append(out.ContinueWatchingOther, item)
+			}
 		}
 	}
 

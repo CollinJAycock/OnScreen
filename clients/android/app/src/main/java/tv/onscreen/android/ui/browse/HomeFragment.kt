@@ -64,7 +64,9 @@ class HomeFragment : BrowseSupportFragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiState.collectLatest { state ->
                 if (state.isLoading) return@collectLatest
-                val hasContent = state.continueWatching.isNotEmpty() ||
+                val hasContent = state.continueWatchingTV.isNotEmpty() ||
+                    state.continueWatchingMovies.isNotEmpty() ||
+                    state.continueWatchingOther.isNotEmpty() ||
                     state.recentlyAdded.isNotEmpty() ||
                     state.trending.isNotEmpty() ||
                     state.libraryPreviews.any { it.second.isNotEmpty() } ||
@@ -149,9 +151,25 @@ class HomeFragment : BrowseSupportFragment() {
         val navPresenter = NavCardPresenter(requireContext())
         var headerId = 0L
 
-        if (state.continueWatching.isNotEmpty()) {
+        // Continue Watching: TV first (one tile per show), movies,
+        // then everything else (audiobooks etc.). Empty buckets are
+        // skipped so a user with only movies in flight doesn't see
+        // an empty TV row.
+        if (state.continueWatchingTV.isNotEmpty()) {
             val listAdapter = ArrayObjectAdapter(cardPresenter)
-            state.continueWatching.forEach { listAdapter.add(it) }
+            state.continueWatchingTV.forEach { listAdapter.add(it) }
+            val header = HeaderItem(headerId++, getString(R.string.continue_watching_tv))
+            rowsAdapter.add(ListRow(header, listAdapter))
+        }
+        if (state.continueWatchingMovies.isNotEmpty()) {
+            val listAdapter = ArrayObjectAdapter(cardPresenter)
+            state.continueWatchingMovies.forEach { listAdapter.add(it) }
+            val header = HeaderItem(headerId++, getString(R.string.continue_watching_movies))
+            rowsAdapter.add(ListRow(header, listAdapter))
+        }
+        if (state.continueWatchingOther.isNotEmpty()) {
+            val listAdapter = ArrayObjectAdapter(cardPresenter)
+            state.continueWatchingOther.forEach { listAdapter.add(it) }
             val header = HeaderItem(headerId++, getString(R.string.continue_watching))
             rowsAdapter.add(ListRow(header, listAdapter))
         }

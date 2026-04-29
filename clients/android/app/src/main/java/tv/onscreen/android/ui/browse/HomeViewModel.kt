@@ -16,7 +16,9 @@ import javax.inject.Inject
 
 data class HomeUiState(
     val isLoading: Boolean = true,
-    val continueWatching: List<HubItem> = emptyList(),
+    val continueWatchingTV: List<HubItem> = emptyList(),
+    val continueWatchingMovies: List<HubItem> = emptyList(),
+    val continueWatchingOther: List<HubItem> = emptyList(),
     val recentlyAdded: List<HubItem> = emptyList(),
     val trending: List<HubItem> = emptyList(),
     val libraryPreviews: List<Pair<Library, List<MediaItem>>> = emptyList(),
@@ -62,9 +64,22 @@ class HomeViewModel @Inject constructor(
                     }
                 }.awaitAll()
 
+                // Server populates the three split arrays on builds
+                // that ship the per-show dedupe; older servers only
+                // return the combined continue_watching feed, in
+                // which case we filter client-side.
+                val tv = hub.continue_watching_tv
+                    ?: hub.continue_watching.filter { it.type == "episode" }
+                val movies = hub.continue_watching_movies
+                    ?: hub.continue_watching.filter { it.type == "movie" }
+                val other = hub.continue_watching_other
+                    ?: hub.continue_watching.filter { it.type != "episode" && it.type != "movie" }
+
                 _uiState.value = HomeUiState(
                     isLoading = false,
-                    continueWatching = hub.continue_watching,
+                    continueWatchingTV = tv,
+                    continueWatchingMovies = movies,
+                    continueWatchingOther = other,
                     recentlyAdded = hub.recently_added,
                     trending = hub.trending,
                     libraryPreviews = previews,

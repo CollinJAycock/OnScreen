@@ -52,7 +52,34 @@ end sub
 sub bindHubToRows(hub as Object)
     root = createObject("roSGNode", "ContentNode")
 
-    addRowIfNonEmpty(root, "Continue Watching", hub.continue_watching)
+    ' Continue Watching: server pre-splits TV / Movies / Other on
+    ' newer builds so each row is one tile per show (TV) or one
+    ' tile per file (movies). Older servers only return the
+    ' combined continue_watching feed; we filter client-side as a
+    ' fallback so a server upgrade is the only thing required to
+    ' unlock the split UI.
+    cwTV = hub.continue_watching_tv
+    cwMovies = hub.continue_watching_movies
+    cwOther = hub.continue_watching_other
+    if cwTV = invalid and cwMovies = invalid and cwOther = invalid
+        cwTV = []
+        cwMovies = []
+        cwOther = []
+        if hub.continue_watching <> invalid
+            for each it in hub.continue_watching
+                if it.type = "episode"
+                    cwTV.push(it)
+                else if it.type = "movie"
+                    cwMovies.push(it)
+                else
+                    cwOther.push(it)
+                end if
+            end for
+        end if
+    end if
+    addRowIfNonEmpty(root, "Continue Watching TV Shows", cwTV)
+    addRowIfNonEmpty(root, "Continue Watching Movies", cwMovies)
+    addRowIfNonEmpty(root, "Continue Watching", cwOther)
     addRowIfNonEmpty(root, "Trending", hub.trending)
     addRowIfNonEmpty(root, "Recently Added", hub.recently_added)
 

@@ -1553,7 +1553,16 @@ export interface HubLibraryRow {
 }
 
 export interface HubData {
+  // Legacy combined feed; clients should prefer the split arrays
+  // below. Kept for backward compatibility — same items as
+  // continue_watching_tv + continue_watching_movies + continue_watching_other.
   continue_watching: HubItem[];
+  // Pre-split rows: TV episodes (one tile per show), movies, and
+  // a fallback bucket for audiobooks / podcasts / anything else
+  // that ends up in-progress. Empty arrays when there's nothing.
+  continue_watching_tv?: HubItem[];
+  continue_watching_movies?: HubItem[];
+  continue_watching_other?: HubItem[];
   recently_added: HubItem[];
   recently_added_by_library: HubLibraryRow[];
   // Global "what others are watching" row aggregated from watch_events
