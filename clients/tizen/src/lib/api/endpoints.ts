@@ -1,11 +1,18 @@
 import { api } from './client';
+import type { TokenPair } from './client';
 import type {
   ChildItem,
+  CollectionItem,
+  FavoriteItem,
+  HistoryItem,
   HubData,
   ItemDetail,
   Library,
   ManagedProfile,
+  Marker,
+  MediaCollection,
   MediaItem,
+  PairCodeResponse,
   SearchResult,
   TranscodeSession
 } from './types';
@@ -28,6 +35,10 @@ export const libraries = {
 export const items = {
   get: (id: string) => api.get<ItemDetail>(`/api/v1/items/${id}`),
   children: (id: string) => api.get<ChildItem[]>(`/api/v1/items/${id}/children`),
+  // Intro / credits marker windows for an episode. Empty array
+  // for movies + non-episode types — the server returns [] rather
+  // than 404 so callers can fire-and-forget without branching.
+  markers: (id: string) => api.get<Marker[]>(`/api/v1/items/${id}/markers`),
   progress: (
     id: string,
     viewOffsetMs: number,
@@ -76,4 +87,54 @@ export const transcode = {
     api.del<void>(
       `/api/v1/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`
     )
+};
+
+// ── Device pairing ──────────────────────────────────────────────────────────
+//
+// Same flow as the Android client's PairingFragment: TV requests a code,
+// shows it to the user, polls until the user signs in on a phone /
+// laptop. The poll endpoint takes the device_token as a Bearer because
+// the server treats it like a one-shot identity for this pairing.
+
+export const pair = {
+  start: () => api.post<PairCodeResponse>('/api/v1/auth/pair/code', {}),
+  // Custom poll: returns 200 + token pair, 202 (still pending), 410 (expired).
+  // Caller distinguishes via status — we throw a sentinel for non-200.
+  poll: async (deviceToken: string): Promise<{ status: 'done' | 'pending' | 'expired'; pair?: TokenPair }> => {
+    const origin = api.getOrigin();
+    if (!origin) throw new Error('API origin not configured');
+    const resp = await fetch(`${origin}/api/v1/auth/pair/poll`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${deviceToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    if (resp.status === 200) {
+      const j = await resp.json();
+      return { status: 'done', pair: (j?.data ?? j) as TokenPair };
+    }
+    if (resp.status === 202) return { status: 'pending' };
+    if (resp.status === 410) return { status: 'expired' };
+    throw new Error(`pair poll: HTTP ${resp.status}`);
+  }
+};
+
+// ── Collections ─────────────────────────────────────────────────────────────
+
+export const collections = {
+  list: () => api.get<MediaCollection[]>('/api/v1/collections'),
+  get: (id: string) => api.get<MediaCollection>(`/api/v1/collections/${id}`),
+  items: (id: string, limit = 200) =>
+    api.get<CollectionItem[]>(`/api/v1/collections/${id}/items?limit=${limit}`)
+};
+
+// ── Favorites + History ─────────────────────────────────────────────────────
+
+export const favorites = {
+  list: (limit = 50) => api.get<FavoriteItem[]>(`/api/v1/favorites?limit=${limit}`)
+};
+
+export const history = {
+  list: (limit = 50) => api.get<HistoryItem[]>(`/api/v1/history?limit=${limit}`)
 };

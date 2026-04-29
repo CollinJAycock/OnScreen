@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { goto } from '$app/navigation'; // navigation to pairing screen
   import { api, ApiError } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import { focusable } from '$lib/focus/focusable';
@@ -49,6 +49,14 @@
   {:else if error}
     <p class="error">{error}</p>
   {/if}
+
+  <!-- Pair-with-another-device alternative. Covers OIDC / OAuth /
+       SAML / LDAP flows that need a real browser by punting them to
+       the user's phone. The TV displays a PIN, the user signs in on
+       the phone, the TV polls until tokens land. -->
+  <button use:focusable class="pair-btn" onclick={() => goto('/pair')}>
+    Sign in with another device
+  </button>
 </div>
 
 <style>
@@ -88,4 +96,21 @@
 
   .status, .error { font-size: var(--font-md); margin: 0; }
   .error { color: #fca5a5; }
+
+  .pair-btn {
+    align-self: flex-start;
+    margin-top: 32px;
+    padding: 14px 28px;
+    font-size: var(--font-sm);
+    font-family: inherit;
+    background: transparent;
+    color: var(--text-primary);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .pair-btn:focus-visible {
+    border-color: var(--accent, #7c6af7);
+    outline: none;
+  }
 </style>

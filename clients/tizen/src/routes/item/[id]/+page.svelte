@@ -28,7 +28,16 @@
     (async () => {
       try {
         item = await endpoints.items.get(itemId);
-        if (item.type === 'show' || item.type === 'season') {
+        // Container types load children. "audiobook" is dual-shape:
+        // single-file books have files of their own (children empty),
+        // multi-file books expose audiobook_chapter children.
+        if (
+          item.type === 'show' ||
+          item.type === 'season' ||
+          item.type === 'album' ||
+          item.type === 'podcast' ||
+          item.type === 'audiobook'
+        ) {
           children = await endpoints.items.children(itemId);
         }
       } catch (e) {
@@ -60,6 +69,23 @@
     const mins = Math.floor(item.view_offset_ms / 60000);
     return `Resume · ${mins}m`;
   }
+
+  // Section heading for the children grid. Same labels the Android
+  // detail page uses so a user moving between clients sees the same
+  // mental model — "Chapters" for audiobooks, "Tracks" for albums,
+  // "Episodes" for shows / podcasts.
+  function childrenHeading(type: string): string {
+    switch (type) {
+      case 'album':
+        return 'Tracks';
+      case 'audiobook':
+        return 'Chapters';
+      case 'artist':
+        return 'Albums';
+      default:
+        return 'Episodes';
+    }
+  }
 </script>
 
 {#if error}
@@ -88,15 +114,22 @@
           <button use:focusable={{ autofocus: true }} class="btn primary" onclick={play}>
             {resumeLabel()}
           </button>
+        {:else if children.length > 0}
+          <!-- Container types (show / season / album / podcast / multi-
+               file audiobook) have no files of their own. Play picks
+               the first playable child instead. -->
+          <button use:focusable={{ autofocus: true }} class="btn primary" onclick={() => playChild(children[0].id)}>
+            Play
+          </button>
         {/if}
       </div>
 
       {#if children.length > 0}
         <section class="children">
-          <h2>Episodes</h2>
+          <h2>{childrenHeading(item.type)}</h2>
           <div class="grid">
             {#each children as child (child.id)}
-              {#if child.type === 'episode'}
+              {#if child.type === 'episode' || child.type === 'audiobook_chapter' || child.type === 'track' || child.type === 'podcast_episode'}
                 <PosterCard
                   title={child.index ? `${child.index}. ${child.title}` : child.title}
                   posterPath={child.thumb_path ?? child.poster_path}
