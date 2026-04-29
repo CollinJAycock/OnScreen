@@ -675,6 +675,13 @@ func rootItemType(libraryType string) string {
 		return "show"
 	case "photo":
 		return "photo"
+	case "audiobook":
+		// Audiobook libraries surface authors at the top level —
+		// drilling in goes book_author → (book_series →) audiobook
+		// → audiobook_chapter, mirroring the music artist → album
+		// → track shape. Migration 00069 backfills authors from the
+		// previous flat-grid rows.
+		return "book_author"
 	default:
 		return libraryType // "movie" → "movie"
 	}
@@ -703,14 +710,14 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 	case "photo":
 		return itemType == "photo"
 	case "audiobook":
-		// "audiobook" is the parent / standalone-book row that the
-		// library grid renders. "audiobook_chapter" is a child file
-		// of a multi-file book — never surfaced in the grid (the
-		// SQL list filters by type elsewhere) but allowed through
-		// the type-mapping check so item-detail / children fetches
-		// don't 404.
+		// book_author / book_series are the hierarchy parents above
+		// an audiobook — the library grid lists book_author at the
+		// top level (rootItemType), drilling renders the children of
+		// each. audiobook_chapter is the leaf under a multi-file book.
+		// All four types must accept through this check so detail /
+		// children fetches don't 404 on any node of the hierarchy.
 		switch itemType {
-		case "audiobook", "audiobook_chapter":
+		case "book_author", "book_series", "audiobook", "audiobook_chapter":
 			return true
 		}
 	case "podcast":

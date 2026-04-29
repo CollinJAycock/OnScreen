@@ -8,7 +8,7 @@ import "testing"
 // not the filename, because audiobook rippers often name the file
 // as "Book - Chapter N" and we want the book title for display.
 func TestParseAudiobookPath_AuthorBookFile(t *testing.T) {
-	title, author := parseAudiobookPath(
+	title, author, series := parseAudiobookPath(
 		"/media/Audiobooks/Brandon Sanderson/Mistborn/Mistborn - The Final Empire.m4b",
 		[]string{"/media/Audiobooks"},
 	)
@@ -18,12 +18,15 @@ func TestParseAudiobookPath_AuthorBookFile(t *testing.T) {
 	if title != "Mistborn" {
 		t.Errorf("title = %q, want Mistborn", title)
 	}
+	if series != "" {
+		t.Errorf("series = %q, want empty (no series in this layout)", series)
+	}
 }
 
 // TestParseAudiobookPath_AuthorDirectFile covers the single-nested
 // layout: <Author>/<file>.m4b. No book folder, title from filename.
 func TestParseAudiobookPath_AuthorDirectFile(t *testing.T) {
-	title, author := parseAudiobookPath(
+	title, author, series := parseAudiobookPath(
 		"/media/Audiobooks/Stephen King/It.m4b",
 		[]string{"/media/Audiobooks"},
 	)
@@ -33,13 +36,16 @@ func TestParseAudiobookPath_AuthorDirectFile(t *testing.T) {
 	if title != "It" {
 		t.Errorf("title = %q, want It", title)
 	}
+	if series != "" {
+		t.Errorf("series = %q, want empty", series)
+	}
 }
 
 // TestParseAudiobookPath_LooseAtRoot has no author folder at all —
 // the file sits directly at the library root. Title from filename,
 // author empty (the scanner falls back to tags in that case).
 func TestParseAudiobookPath_LooseAtRoot(t *testing.T) {
-	title, author := parseAudiobookPath(
+	title, author, series := parseAudiobookPath(
 		"/media/Audiobooks/Dune.m4b",
 		[]string{"/media/Audiobooks"},
 	)
@@ -48,6 +54,30 @@ func TestParseAudiobookPath_LooseAtRoot(t *testing.T) {
 	}
 	if title != "Dune" {
 		t.Errorf("title = %q, want Dune", title)
+	}
+	if series != "" {
+		t.Errorf("series = %q, want empty", series)
+	}
+}
+
+// TestParseAudiobookPath_AuthorSeriesBookFile covers the deepest
+// supported layout: <Author>/<Series>/<Book>/<file>. Book = parent,
+// series = grand, author = great-grand. The series branch is what
+// lets the library grid drill author → series → book → chapter
+// instead of flat-listing every book under the author.
+func TestParseAudiobookPath_AuthorSeriesBookFile(t *testing.T) {
+	title, author, series := parseAudiobookPath(
+		"/media/Audiobooks/Brandon Sanderson/Mistborn/The Final Empire/01 - Prologue.mp3",
+		[]string{"/media/Audiobooks"},
+	)
+	if author != "Brandon Sanderson" {
+		t.Errorf("author = %q, want Brandon Sanderson", author)
+	}
+	if series != "Mistborn" {
+		t.Errorf("series = %q, want Mistborn", series)
+	}
+	if title != "The Final Empire" {
+		t.Errorf("title = %q, want The Final Empire", title)
 	}
 }
 
@@ -83,10 +113,10 @@ func TestFileTypeForLibrary_Audiobook(t *testing.T) {
 }
 
 // TestIsMultiFileBookPath covers the layout-detection branch the
-// multi-file scan flow depends on. Three layouts in, three different
-// answers out — the scanner picks parent vs leaf shape from this
-// boolean, so a misclassification creates a duplicate audiobook row
-// per file (the bug that motivated the multi-file rewrite).
+// multi-file scan flow depends on. The series layout is one level
+// deeper and is detected by isSeriesBookPath, so isMultiFileBookPath
+// must return false for it — otherwise the scanner picks the wrong
+// parent for the book (author instead of series).
 func TestIsMultiFileBookPath(t *testing.T) {
 	roots := []string{"/media/Audiobooks"}
 	cases := []struct {
@@ -110,10 +140,8 @@ func TestIsMultiFileBookPath(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "deeper than three levels still classified as multi only when great-grand is the root",
-			// <root>/Series/<Author>/<Book>/<file> — great-grand is
-			// <Author>, not the root, so this is NOT multi-file.
-			path: "/media/Audiobooks/Series Name/Brandon Sanderson/Mistborn/01.mp3",
+			name: "author / series / book / file is series-shaped, not multi-file",
+			path: "/media/Audiobooks/Brandon Sanderson/Mistborn/The Final Empire/01.mp3",
 			want: false,
 		},
 	}
@@ -121,6 +149,47 @@ func TestIsMultiFileBookPath(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := isMultiFileBookPath(c.path, roots); got != c.want {
 				t.Errorf("isMultiFileBookPath(%q) = %v, want %v", c.path, got, c.want)
+			}
+		})
+	}
+}
+
+// TestIsSeriesBookPath covers the deepest layout. The series branch
+// must NOT match the shallower three-segment layout (multi-file
+// without series) — otherwise every multi-file book would be
+// mis-classified as a series and the author would lose its books.
+func TestIsSeriesBookPath(t *testing.T) {
+	roots := []string{"/media/Audiobooks"}
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{
+			name: "author / series / book / file matches",
+			path: "/media/Audiobooks/Brandon Sanderson/Mistborn/The Final Empire/01.mp3",
+			want: true,
+		},
+		{
+			name: "author / book / file does not match",
+			path: "/media/Audiobooks/Brandon Sanderson/Mistborn/01.mp3",
+			want: false,
+		},
+		{
+			name: "author / file does not match",
+			path: "/media/Audiobooks/Stephen King/It.m4b",
+			want: false,
+		},
+		{
+			name: "loose at root does not match",
+			path: "/media/Audiobooks/Dune.m4b",
+			want: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isSeriesBookPath(c.path, roots); got != c.want {
+				t.Errorf("isSeriesBookPath(%q) = %v, want %v", c.path, got, c.want)
 			}
 		})
 	}

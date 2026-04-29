@@ -512,8 +512,13 @@ func TestValidItemTypeForLibrary(t *testing.T) {
 		{"podcast", "podcast", true},
 		{"podcast", "podcast_episode", true},
 		{"podcast", "audiobook", false},
-		// audiobook
+		// audiobook — full hierarchy is book_author → book_series →
+		// audiobook → audiobook_chapter; all four valid through the
+		// type check so detail / children fetches resolve.
+		{"audiobook", "book_author", true},
+		{"audiobook", "book_series", true},
 		{"audiobook", "audiobook", true},
+		{"audiobook", "audiobook_chapter", true},
 		{"audiobook", "track", false},
 		// photo
 		{"photo", "photo", true},
