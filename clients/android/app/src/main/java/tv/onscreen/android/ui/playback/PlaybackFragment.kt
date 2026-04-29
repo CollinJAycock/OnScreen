@@ -217,6 +217,30 @@ class PlaybackFragment : VideoSupportFragment() {
      *  VideoSupportFragment view — the surface view sits at the
      *  bottom of the z-order and our album-cover ImageView paints on
      *  top of it. Controls draw above both. */
+    /** Aspect ratio of the active video for picture-in-picture, or
+     *  null when audio. PictureInPictureParams accepts ratios
+     *  roughly between 0.42 and 2.39; we coerce to a safe default
+     *  rather than throw if the player hasn't reported a video size
+     *  yet. */
+    fun activePiPAspect(): Pair<Int, Int>? {
+        if (currentItemType == "track" || currentItemType == "audiobook") return null
+        val exo = player ?: return null
+        val w = exo.videoSize.width.takeIf { it > 0 } ?: 16
+        val h = exo.videoSize.height.takeIf { it > 0 } ?: 9
+        return w to h
+    }
+
+    /** Toggle the Leanback transport overlay based on PiP state. The
+     *  controls would draw across the small floating window awkwardly
+     *  and consume D-pad focus when the PiP window doesn't have
+     *  input focus — better to hide them entirely and let the system
+     *  PiP chrome handle play/pause. */
+    fun onPiPModeChanged(inPiP: Boolean) {
+        glue?.host?.let { host ->
+            if (inPiP) host.hideControlsOverlay(false) else host.showControlsOverlay(false)
+        }
+    }
+
     private fun bindAudioBackdrop(item: tv.onscreen.android.data.model.ItemDetail?) {
         val root = view as? android.view.ViewGroup ?: return
         val isAudio = currentItemType == "track" || currentItemType == "audiobook"
