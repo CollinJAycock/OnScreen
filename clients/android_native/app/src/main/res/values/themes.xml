@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns the rendered theme; the AndroidManifest theme
+         only needs to be a Material component theme so the activity
+         splash/window background match the dark Compose surface
+         before the first frame. -->
+    <style name="Theme.OnScreenMobile" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_bg</item>
+        <item name="android:statusBarColor">@color/window_bg</item>
+        <item name="android:navigationBarColor">@color/window_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
