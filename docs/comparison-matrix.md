@@ -12,7 +12,7 @@
 
 **Snapshot date:** 2026-04-29. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
 
-> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side), admin logs API, audiobook embedded-cover serving, per-file streaming token (24 h, file_id-bound, purpose-scoped), three TV clients at usable parity (Android TV / Fire TV verified, LG webOS feature-complete, Roku at flow parity). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
+> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side), admin logs API, audiobook embedded-cover serving, **audiobook author/series hierarchy with typed shelf + cross-client author+series detail pages**, per-file streaming token (24 h, file_id-bound, purpose-scoped), three TV clients at usable parity (Android TV / Fire TV verified, LG webOS feature-complete, Roku at flow parity). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
 
 ---
 
@@ -26,7 +26,7 @@
 | Photos                     | ✅ | ✅ | ✅ | ✅ | OnScreen: EXIF + map + timeline |
 | Live TV                    | ✅ | 💎 | 💎 | ✅ | Plex/Emby gate behind paid tier |
 | DVR (scheduled recording)  | ✅ | 💎 | 💎 | ✅ | OnScreen: matcher + capture + retention purge wired (commit `246027b`) |
-| Audiobooks                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: flat one-file-per-book MVP (commit `933c1f0`); embedded cover art served on demand via `/items/{id}/image` (ffmpeg-extracted from m4b/mp3/flac, cached); author/series hierarchy is v2.1 |
+| Audiobooks                 | ✅ | ✅ | ✅ | ✅ | OnScreen: full `book_author → book_series → audiobook → audiobook_chapter` hierarchy with multi-file scan, server-side chapter-boundary resume snap, embedded cover art via `/items/{id}/image` (ffmpeg-extracted, cached). Library top-level renders authors as a typed shelf (mirrors music's artist row). All six clients (web, Android phone + TV, webOS, Tizen, Roku) ship author + series detail pages. |
 | Books / comics             | ⚠️ | ❌ | ⚠️ | ⚠️ | OnScreen: CBZ scan + paginated reader shipped in v2.1 (Track B Stage 1); EPUB and CBR explicitly deferred to Stage 2 |
 | Podcasts                   | ⚠️ | ⚠️ | ❌ | 🧩 | OnScreen: local files + episode UI (commit `a8812ad`, v2.1 polish); RSS subscriptions still deferred |
 | Music videos               | ✅ | ✅ | ✅ | ✅ | OnScreen: artist children w/ 16:9 thumbs (commit `3319bd6`) |
@@ -336,7 +336,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Samsung Tizen (smart TV)        | ✅ | ✅ | ✅ | ⚠️ | OnScreen: [`clients/tizen/`](../clients/tizen/) — SvelteKit SPA packaged via `tizen package -t wgt`; AVPlay JS API dual-path (HW HEVC/AV1) with HTML5 `<video>` fallback. Bulk-ported from webOS: pairing-flow sign-in, hub, library, search with type-filter chips, photos with D-pad sibling nav, audiobook chapter list, collections, favorites + history, skip-intro/credits + Up Next, music auto-advance, cross-device resume via SSE, per-file stream token. Hardware validation on a real Samsung TV outstanding. |
 | Apple TV (tvOS)                 | ❌ | ✅ | ✅ | ⚠️ | Jellyfin: third-party Infuse/SwiftFin |
 | Native iOS phone app            | ❌ | ✅ | ✅ | ✅ | OnScreen runs in mobile browser only |
-| Native Android phone app        | ⚠️ | ✅ | ✅ | ✅ | OnScreen: [`clients/android_native/`](../clients/android_native/) — Kotlin + Jetpack Compose + Material 3 + Hilt + Retrofit, package `tv.onscreen.mobile`. Reuses the TV client's data layer verbatim (Retrofit/Moshi API, AuthInterceptor + TokenAuthenticator, ServerPrefs DataStore, all repos). UI: pairing-PIN sign-in (password fallback), hub with poster strips + library list, library grid, item detail, search with debounce, favorites + history + collections drill-in + photo viewer + downloads screen, search with type-filter chips, audiobook chapter list. Player: Media3 ExoPlayer with direct/remux/transcode negotiation (port of TV `PlaybackHelper`), per-file 24h stream token, audio + subtitle pickers (HLS audio re-issues the session with a new audio_stream_index), in-player OpenSubtitles search + download, 10s progress reporting, skip-intro/credits overlay, Up Next + music auto-advance (cross-album fall-through via `NextSiblingResolver`), **offline-first short-circuit to a local copy when a completed download exists**, **picture-in-picture for video**, **background audio via `OnScreenMediaSessionService`** so backing out of the player doesn't kill the music, **cross-device resume sync** consuming `progress.updated` SSE events. Favorite-toggle in the detail page TopAppBar with optimistic flip. WorkManager + Hilt-injected worker + JSON manifest store on disk. 46 unit tests cover the playback decision matrix, pairing flow, transcode session lifecycle, progress reporting, search-filter logic, OpenSubtitles search/download, cross-device SSE resume + same-device echo dedupe, and `NextSiblingResolver`'s in-container/cross-container/last-of-last paths. Outstanding: real-hardware validation. |
+| Native Android phone app        | ⚠️ | ✅ | ✅ | ✅ | OnScreen: [`clients/android_native/`](../clients/android_native/) — Kotlin + Jetpack Compose + Material 3 + Hilt + Retrofit, package `tv.onscreen.mobile`. Reuses the TV client's data layer verbatim (Retrofit/Moshi API, AuthInterceptor + TokenAuthenticator, ServerPrefs DataStore, all repos). UI: pairing-PIN sign-in (password fallback), hub with poster strips + library list, library grid, item detail, search with debounce, favorites + history + collections drill-in + photo viewer + downloads screen, search with type-filter chips, audiobook chapter list, **author + series detail screens** (book_author / book_series routed via dedicated AuthorScreen + SeriesScreen with the bucketed series-then-books grid). Player: Media3 ExoPlayer with direct/remux/transcode negotiation (port of TV `PlaybackHelper`), per-file 24h stream token, audio + subtitle pickers (HLS audio re-issues the session with a new audio_stream_index), in-player OpenSubtitles search + download, 10s progress reporting, skip-intro/credits overlay, Up Next + music auto-advance (cross-album fall-through via `NextSiblingResolver`), **offline-first short-circuit to a local copy when a completed download exists**, **picture-in-picture for video**, **background audio via `OnScreenMediaSessionService`** so backing out of the player doesn't kill the music, **cross-device resume sync** consuming `progress.updated` SSE events. Favorite-toggle in the detail page TopAppBar with optimistic flip. WorkManager + Hilt-injected worker + JSON manifest store on disk. 46 unit tests cover the playback decision matrix, pairing flow, transcode session lifecycle, progress reporting, search-filter logic, OpenSubtitles search/download, cross-device SSE resume + same-device echo dedupe, and `NextSiblingResolver`'s in-container/cross-container/last-of-last paths. Outstanding: real-hardware validation. |
 | Download for offline playback (mobile) | ✅ | 💎 | 💎 | ⚠️ | OnScreen: WorkManager-driven downloads on the Android phone client; player short-circuits to the local file. Free, not paywalled. Jellyfin: Finamp does music-only |
 | CarPlay / Android Auto          | ❌ | ✅ | ❌ | ❌ | Plexamp only |
 
@@ -376,6 +376,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Collections drill-in             | ✅ | ✅ | ✅ | ✅ | |
 | Photo viewer with D-pad nav      | ✅ | ✅ | ❓ | ❓ | OnScreen auto-resolves siblings from parent album or library |
 | Audiobook chapter list           | ✅ | ❌ | ❓ | ❓ | OnScreen ships chapter list + 0.75–2× speed picker |
+| Author + series detail pages     | ✅ | ❌ | ❓ | ❓ | OnScreen: book_author / book_series shelf via DetailFragment — series alphabetical, standalone books year-desc, both surfaces drill into a books grid |
 | Direct play                      | ✅ | ✅ | ✅ | ✅ | |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ✅ | |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | Avoids ERROR_CODE_IO_BAD_HTTP_STATUS at the 1h access-token mark |
@@ -413,6 +414,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Collections drill-in             | ✅ | ✅ | ✅ | ✅ | |
 | Photo viewer                     | ✅ | ✅ | ✅ | ✅ | OnScreen: HorizontalPager with sibling resolution (parent-album-first → paginated library scan fallback), `/items/{id}/image?w=1920&h=1080` |
 | Audiobook chapter list           | ✅ | ❌ | ⚠️ | ⚠️ | Renders embedded chapter table on the audiobook detail page |
+| Author + series detail pages     | ✅ | ❌ | ❓ | ❓ | Dedicated AuthorScreen + SeriesScreen on their own /author/{id} + /series/{id} routes; ItemDetailScreen redirects book_author / book_series types so library cards land on the right page |
 | Direct play                      | ✅ | ✅ | ✅ | ✅ | |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ✅ | Port of TV client's `PlaybackHelper.decide()` matrix |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
@@ -448,6 +450,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Collections drill-in             | ✅ | ✅ | ✅ | ⚠️ | |
 | Photo viewer (D-pad sibling nav) | ✅ | ✅ | ❓ | ❓ | |
 | Audiobook chapter list           | ✅ | ❌ | ❓ | ❓ | |
+| Author + series detail pages     | ✅ | ❌ | ❓ | ❓ | /item/{id} renders book_author / book_series via the same SvelteKit detail page; books grid sorted client-side (series alphabetical, books year-desc) |
 | Direct play                      | ✅ | ✅ | ✅ | ⚠️ | |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | hls.js + HTML5 `<video>` |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
@@ -477,6 +480,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Collections drill-in             | ✅ | ✅ | ✅ | ⚠️ | |
 | Photo viewer (D-pad sibling nav) | ✅ | ✅ | ❓ | ❓ | |
 | Audiobook chapter list           | ✅ | ❌ | ❓ | ❓ | |
+| Author + series detail pages     | ✅ | ❌ | ❓ | ❓ | Bulk-shared with the webOS /item/{id} detail page (Tizen is a port from webOS); same client-side sort for the author bucket |
 | Direct play                      | ✅ | ✅ | ✅ | ⚠️ | AVPlay JS API HW path |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | AVPlay HLS + HTML5 `<video>` fallback |
 | HW HEVC / AV1 decode             | ✅ | ✅ | ✅ | ⚠️ | Firmware decoders via AVPlay |
@@ -506,7 +510,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | History                          | ✅ | ✅ | ✅ | ⚠️ | |
 | Collections drill-in             | ✅ | ✅ | ✅ | ⚠️ | |
 | Photo viewer (D-pad sibling nav) | ✅ | ✅ | ❓ | ❓ | |
-| Audiobook                        | ⚠️ | ❌ | ⚠️ | ⚠️ | DetailScene + direct play; chapter list outstanding |
+| Audiobook (chapter list + author / series detail) | ✅ | ❌ | ⚠️ | ⚠️ | Full hierarchy: book_author + book_series routed through DetailScene from all 5 source scenes (HomeScene, CollectionScene, FavoritesScene, HistoryScene, SearchScene). DetailScene branches onChildSelected to drill into nested parents (audiobook under series, series under author) instead of mis-playing them. roArray.sortBy + manual reverse for the year-desc author bucket since BrightScript has no closure comparator |
 | Direct play                      | ✅ | ✅ | ✅ | ⚠️ | Firmware Video node |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | `Playback_Decide` three-mode split, 13 brs unit tests |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
@@ -563,6 +567,7 @@ The web client is the universal fallback — runs in any modern browser with no 
 | Analytics dashboard              | ✅ | ✅ | ✅ | ✅ | |
 | Photo viewer + EXIF + map        | ✅ | ⚠️ | ⚠️ | ⚠️ | |
 | Audiobook chapter list           | ✅ | ❌ | ⚠️ | ⚠️ | |
+| Author + series detail pages     | ✅ | ❌ | ❓ | ❓ | Dedicated `/authors/{id}` + `/series/{id}` SvelteKit routes; library page renders authors as round portraits at the top level (typed shelf, mirrors the music artist row) |
 | Music: Lossless + hi-res badges  | ✅ | ⚠️ | ❌ | ⚠️ | |
 | Music: Synced lyrics (USLT/.lrc/LRCLIB) | ✅ | ✅ | ✅ | ✅ | |
 | Music: Gapless via dual-`<audio>`| ✅ | ✅ | ✅ | ✅ | |
@@ -622,7 +627,7 @@ The web client is the universal fallback — runs in any modern browser with no 
 ## v2.1 Closed (in flight on `main`)
 
 - ✅ **Track A — Bug-shape fixes** (3/3): job-queued OCR endpoint (POST returns 202 + job_id, GET polls — unblocks Cloudflare Tunnel free-tier users hitting 100 s timeouts); Vitest SMTP fixture cleanup; Valkey-backed SAML request tracker (HA-ready — AuthnRequest minted on instance A is validatable by ACS callback on instance B)
-- ✅ **Track B — Media types**: home_video library + date-grouped page; CBZ books with paginated reader; audiobook author display + chapter-boundary resume; podcast show + episode detail UI
+- ✅ **Track B — Media types**: home_video library + date-grouped page; CBZ books with paginated reader; **audiobook hierarchy complete** — `book_author → book_series → audiobook → audiobook_chapter` schema (migration 00069 with backfill from the v2.0 flat-grid `original_title` stash, no rescan needed for visibility); scanner detects 4 folder layouts (loose at root, author-only, multi-file book, author/series/book/file); `rootItemType("audiobook")` returns book_author so the library top-level renders authors as a typed shelf (mirrors music's artist row); server-side chapter-boundary resume snap on `GET /items/{id}` so every native client picks up snap-resume without per-client code; author + series detail pages on **all six clients** (web, Android phone + TV, webOS, Tizen, Roku); audiobook embedded covers + chapter scrubber UI in playback. Migration 00068 fixed a latent CHECK-constraint bug on `audiobook_chapter` that would have blocked any fresh DB scanning a multi-file book. Podcast show + episode detail UI also closed.
 - ✅ **Track F — Discovery**: smart playlists (rule JSONB, query-time evaluation); trending row (rolling watch_events aggregate). Watch-cooccurrence recommendations + "Because you watched X" were built (item-to-item collaborative filtering, replaced the planned pgvector pipeline) but removed from the home hub before release — the row didn't earn its space; trending stays. Cooccurrence table + sql kept dormant in case the row earns a comeback
 - ✅ **Track G — Per-user policy** (5/5): library `is_private` flag with public/private union semantics; `auto_grant_new_users` template wired into invite + OIDC + SAML + LDAP user-creation paths; per-profile inherit-or-override library access; content-rating gates closed in `ListCollectionItems`, `ListItemsByGenre`, `ListWatchHistory`; admin "view as" middleware (read-only, GET-only, IDOR-gated)
 - ✅ **Track H — Streaming format**: server-side DASH `manifest.mpd` endpoint over the existing fMP4 ladder (one segment ladder, two manifests) + `manifest_url` exposed on the session-start response; frontend shaka-player swap intentionally deferred — real DASH leverage is smart-TV native clients (Track E) consuming the URL directly
