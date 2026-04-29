@@ -102,6 +102,14 @@
     return item.type === 'album' || item.type === 'photo';
   }
 
+  // Wife's request: split Continue Watching into a TV row and a Movies
+  // row, with TV on top. Anything that isn't a TV episode or a movie
+  // (audiobooks, music tracks if they end up here) stays under a third
+  // "Continue Watching" row so it's not silently dropped.
+  $: continueTV       = continueWatching.filter(i => i.type === 'episode');
+  $: continueMovies   = continueWatching.filter(i => i.type === 'movie');
+  $: continueOther    = continueWatching.filter(i => i.type !== 'episode' && i.type !== 'movie');
+
   // Whole per-library rows render as squares when the library's item
   // type is square-friendly. Skips the per-item check inside the #each,
   // which would otherwise produce a mix of shapes if a library ever
@@ -138,34 +146,42 @@
       </div>
     </div>
   {:else}
-    <!-- Continue Watching -->
-    {#if continueWatching.length > 0}
-      <section class="hub-section">
-        <h2 class="hub-title">Continue Watching</h2>
-        <div class="hub-scroll">
-          {#each continueWatching as item (item.id)}
-            {@const art = item.poster_path ?? item.thumb_path}
-            <a class="hub-card" class:square={isSquare(item)} href={hubHref(item)}>
-              {#if art}
-                <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
-                     srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
-                     sizes="(max-width: 768px) 130px, 220px"
-                     alt={item.title} loading="lazy" />
-              {:else}
-                <div class="hub-poster-blank">
-                  <span>{item.title[0]?.toUpperCase()}</span>
+    <!-- Continue Watching: TV first, then movies, then everything
+         else. Each row is suppressed when its bucket is empty so a
+         user with only movies in flight doesn't see an empty TV row. -->
+    {#each [
+      { title: 'Continue Watching TV Shows', items: continueTV },
+      { title: 'Continue Watching Movies',   items: continueMovies },
+      { title: 'Continue Watching',          items: continueOther },
+    ] as row}
+      {#if row.items.length > 0}
+        <section class="hub-section">
+          <h2 class="hub-title">{row.title}</h2>
+          <div class="hub-scroll">
+            {#each row.items as item (item.id)}
+              {@const art = item.poster_path ?? item.thumb_path}
+              <a class="hub-card" class:square={isSquare(item)} href={hubHref(item)}>
+                {#if art}
+                  <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
+                       srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
+                       sizes="(max-width: 768px) 130px, 220px"
+                       alt={item.title} loading="lazy" />
+                {:else}
+                  <div class="hub-poster-blank">
+                    <span>{item.title[0]?.toUpperCase()}</span>
+                  </div>
+                {/if}
+                <div class="hub-progress">
+                  <div class="hub-progress-bar" style="width:{progressPct(item)}%"></div>
                 </div>
-              {/if}
-              <div class="hub-progress">
-                <div class="hub-progress-bar" style="width:{progressPct(item)}%"></div>
-              </div>
-              <div class="hub-label">{item.title}</div>
-              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
-            </a>
-          {/each}
-        </div>
-      </section>
-    {/if}
+                <div class="hub-label">{item.title}</div>
+                {#if item.year}<div class="hub-year">{item.year}</div>{/if}
+              </a>
+            {/each}
+          </div>
+        </section>
+      {/if}
+    {/each}
 
     <!-- Trending — what others are watching across the library this week. -->
     {#if trending.length > 0}
