@@ -3,10 +3,13 @@ import type { TokenPair } from './client';
 import type {
   ChildItem,
   CollectionItem,
+  FavoriteItem,
+  HistoryItem,
   HubData,
   ItemDetail,
   Library,
   ManagedProfile,
+  Marker,
   MediaCollection,
   MediaItem,
   PairCodeResponse,
@@ -32,6 +35,10 @@ export const libraries = {
 export const items = {
   get: (id: string) => api.get<ItemDetail>(`/api/v1/items/${id}`),
   children: (id: string) => api.get<ChildItem[]>(`/api/v1/items/${id}/children`),
+  // Intro / credits marker windows for an episode. Empty array
+  // for movies + non-episode types — the server returns [] rather
+  // than 404 so callers can fire-and-forget without branching.
+  markers: (id: string) => api.get<Marker[]>(`/api/v1/items/${id}/markers`),
   progress: (
     id: string,
     viewOffsetMs: number,
@@ -120,4 +127,14 @@ export const collections = {
   get: (id: string) => api.get<MediaCollection>(`/api/v1/collections/${id}`),
   items: (id: string, limit = 200) =>
     api.get<CollectionItem[]>(`/api/v1/collections/${id}/items?limit=${limit}`)
+};
+
+// ── Favorites + History ─────────────────────────────────────────────────────
+
+export const favorites = {
+  list: (limit = 50) => api.get<FavoriteItem[]>(`/api/v1/favorites?limit=${limit}`)
+};
+
+export const history = {
+  list: (limit = 50) => api.get<HistoryItem[]>(`/api/v1/history?limit=${limit}`)
 };

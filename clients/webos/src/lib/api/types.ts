@@ -148,6 +148,59 @@ export interface PairCodeResponse {
   poll_after: number;
 }
 
+// ── Favorites + History ─────────────────────────────────────────────────────
+
+export interface FavoriteItem {
+  id: string;
+  library_id: string;
+  type: string;
+  title: string;
+  year?: number;
+  summary?: string;
+  poster_path?: string;
+  thumb_path?: string;
+  duration_ms?: number;
+  favorited_at: number;
+}
+
+export interface HistoryItem {
+  id: string;
+  media_id: string;
+  title: string;
+  type: string;
+  year?: number;
+  thumb_path?: string;
+  client_name?: string;
+  duration_ms?: number;
+  occurred_at: string;
+}
+
+// ── Markers (intro / credits) ───────────────────────────────────────────────
+
+// Marker windows surfaced on the watch route as "Skip Intro" /
+// "Skip Credits" affordances. kind is "intro" | "credits"; source is
+// "auto" | "manual" | "chapter" (informational only, the client
+// doesn't differentiate).
+export interface Marker {
+  kind: string;
+  start_ms: number;
+  end_ms: number;
+  source: string;
+}
+
+// ── Cross-device sync ──────────────────────────────────────────────────────
+
+// Notification SSE event shape. The server multiplexes user-facing
+// notifications with internal sync events (progress.updated) on one
+// stream — clients filter by `type` and act on the ones they care
+// about. The TV client only consumes progress.updated for resume sync.
+export interface NotificationEvent {
+  id: string;
+  type: string;
+  item_id?: string;
+  data?: { position_ms?: number; duration_ms?: number; state?: string };
+}
+
 // ── Collections ─────────────────────────────────────────────────────────────
 
 export interface MediaCollection {

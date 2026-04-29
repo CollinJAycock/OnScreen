@@ -41,6 +41,8 @@
     <nav class="links">
       <a href="/search/" data-sveltekit-preload-data="false">search</a>
       <a href="/hub/" data-sveltekit-preload-data="false">home</a>
+      <a href="/favorites/" data-sveltekit-preload-data="false">favorites</a>
+      <a href="/history/" data-sveltekit-preload-data="false">history</a>
     </nav>
   </header>
 
