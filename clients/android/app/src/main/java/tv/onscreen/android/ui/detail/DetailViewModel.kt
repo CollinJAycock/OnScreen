@@ -48,10 +48,17 @@ class DetailViewModel @Inject constructor(
                 val seasons = when (item.type) {
                     "show" -> buildSeasonMap(itemId)
 
-                    "season", "album", "podcast" -> {
-                        // Direct children are playable (episodes / tracks /
-                        // podcast episodes). Load them and present as a
-                        // single group keyed by a synthetic ChildItem.
+                    "season", "album", "podcast", "audiobook" -> {
+                        // Direct children are playable (episodes /
+                        // tracks / podcast episodes / audiobook
+                        // chapters). Load them and present as a single
+                        // group keyed by a synthetic ChildItem.
+                        //
+                        // For audiobooks, this returns empty for the
+                        // single-file layout (the row has files of its
+                        // own; Play hits configurePlayButtons' "play
+                        // self" branch) and a chapter list for the
+                        // multi-file layout.
                         val children = itemRepo.getChildren(itemId)
                         val parent = ChildItem(
                             id = item.id,

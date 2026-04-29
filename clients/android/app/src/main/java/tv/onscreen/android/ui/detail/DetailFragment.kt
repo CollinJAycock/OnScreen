@@ -162,12 +162,20 @@ class DetailFragment : Fragment() {
     }
 
     private fun configurePlayButtons(item: ItemDetail, btnPlay: Button, btnFromStart: Button) {
-        when (item.type) {
-            "show", "season", "album", "podcast" -> {
+        // Audiobook is dual-shape: a single-file book has files of its
+        // own (no children) and behaves like a leaf, while a multi-file
+        // book has audiobook_chapter children and behaves like an
+        // album. Pick the right branch at runtime by checking whether
+        // the children load returned anything.
+        val isMultiFileAudiobook = item.type == "audiobook" &&
+            seasonMap.values.any { it.isNotEmpty() }
+        when {
+            item.type in setOf("show", "season", "album", "podcast") || isMultiFileAudiobook -> {
                 // Container: Play picks an in-progress / first-unwatched
                 // child (episode for show, track for album, episode for
-                // podcast). The container itself has no `files` so
-                // playItem(item.id) would error with "No playable file."
+                // podcast, chapter for audiobook). The container itself
+                // has no `files` so playItem(item.id) would error with
+                // "No playable file."
                 btnPlay.text = getString(R.string.play)
                 btnPlay.setOnClickListener {
                     val target = inProgressEpisode() ?: firstUnwatchedEpisode() ?: firstEpisode()
@@ -177,7 +185,7 @@ class DetailFragment : Fragment() {
                 }
                 btnFromStart.visibility = View.GONE
             }
-            "artist" -> {
+            item.type == "artist" -> {
                 // Artist children are albums (containers), not tracks.
                 // A "Play All" experience would need recursive
                 // traversal (first track of first album); skip until
@@ -187,6 +195,8 @@ class DetailFragment : Fragment() {
                 btnFromStart.visibility = View.GONE
             }
             else -> {
+                // Leaf items (movie, episode, track, single-file
+                // audiobook, photo with files attached). Plays itself.
                 val resumeMs = item.view_offset_ms
                 if (resumeMs > 0) {
                     btnPlay.text = getString(R.string.resume, fmtTimecode(resumeMs))
@@ -240,6 +250,7 @@ class DetailFragment : Fragment() {
         header.text = getString(when (item.type) {
             "album" -> R.string.tracks
             "artist" -> R.string.albums
+            "audiobook" -> R.string.chapters
             else -> R.string.episodes
         })
         header.visibility = View.VISIBLE
