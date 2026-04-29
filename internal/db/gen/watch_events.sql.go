@@ -14,10 +14,24 @@ import (
 )
 
 const getWatchState = `-- name: GetWatchState :one
-SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at,
-       last_client_id, last_client_name
-FROM watch_state
-WHERE user_id = $1 AND media_id = $2
+SELECT
+    we.user_id,
+    we.media_id,
+    we.position_ms,
+    we.duration_ms,
+    CASE
+        WHEN we.duration_ms IS NULL OR we.duration_ms = 0 THEN 'unwatched'
+        WHEN we.position_ms::float / NULLIF(we.duration_ms, 0) > 0.9 THEN 'watched'
+        WHEN we.position_ms > 0 THEN 'in_progress'
+        ELSE 'unwatched'
+    END AS status,
+    we.occurred_at AS last_watched_at,
+    we.client_id   AS last_client_id,
+    we.client_name AS last_client_name
+FROM watch_events we
+WHERE we.user_id = $1 AND we.media_id = $2
+ORDER BY we.occurred_at DESC
+LIMIT 1
 `
 
 type GetWatchStateParams struct {
@@ -25,9 +39,33 @@ type GetWatchStateParams struct {
 	MediaID uuid.UUID `json:"media_id"`
 }
 
-func (q *Queries) GetWatchState(ctx context.Context, arg GetWatchStateParams) (WatchState, error) {
+type GetWatchStateRow struct {
+	UserID         uuid.UUID          `json:"user_id"`
+	MediaID        uuid.UUID          `json:"media_id"`
+	PositionMs     int64              `json:"position_ms"`
+	DurationMs     *int64             `json:"duration_ms"`
+	Status         string             `json:"status"`
+	LastWatchedAt  pgtype.Timestamptz `json:"last_watched_at"`
+	LastClientID   *string            `json:"last_client_id"`
+	LastClientName *string            `json:"last_client_name"`
+}
+
+// Resolves the resume position for a single (user, media) pair by
+// reading the latest watch_event directly, instead of going through
+// the watch_state materialized view. The view filters
+// event_type IN ('stop', 'scrobble') and only refreshes on stop —
+// so during active playback (a stream of 'play' ticks every 10 s)
+// the view shows the last *finished* session, not the in-progress
+// one. If the player is force-killed before its final 'stop' PUT
+// lands, the resume position is lost entirely.
+//
+// This query sees every event the client publishes, so the next
+// detail-page fetch always reflects the latest known position.
+// The view is still used by ListWatchStateForUser (history bulk
+// read) where eventual consistency is fine.
+func (q *Queries) GetWatchState(ctx context.Context, arg GetWatchStateParams) (GetWatchStateRow, error) {
 	row := q.db.QueryRow(ctx, getWatchState, arg.UserID, arg.MediaID)
-	var i WatchState
+	var i GetWatchStateRow
 	err := row.Scan(
 		&i.UserID,
 		&i.MediaID,

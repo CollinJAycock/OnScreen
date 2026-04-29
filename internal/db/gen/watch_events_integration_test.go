@@ -35,11 +35,12 @@ func insertWatch(t *testing.T, q *gen.Queries, userID, mediaID uuid.UUID, eventT
 	}
 }
 
-// TestWatchEvents_Integration_StateMaterializesAfterRefresh proves the
-// watch_state materialized view picks up the latest event after a
-// REFRESH and that subsequent reads see the new position. This is the
-// loop the resume button depends on.
-func TestWatchEvents_Integration_StateMaterializesAfterRefresh(t *testing.T) {
+// TestWatchEvents_Integration_StateReadsLatestEvent proves a stop
+// event surfaces immediately on the next GetWatchState — no
+// RefreshWatchState required, since GetWatchState reads
+// watch_events directly. This is the loop the resume button
+// depends on.
+func TestWatchEvents_Integration_StateReadsLatestEvent(t *testing.T) {
 	pool := testdb.New(t)
 	q := gen.New(pool)
 	ctx := context.Background()
@@ -48,15 +49,7 @@ func TestWatchEvents_Integration_StateMaterializesAfterRefresh(t *testing.T) {
 	lib := seedLibrary(ctx, t, q, "we-lib-"+uuid.New().String()[:8])
 	item := seedMediaItem(ctx, t, q, lib, "Movie A")
 
-	// Insert a stop event at 12345 ms — the watch_state materialized
-	// view filters WHERE event_type IN ('stop', 'scrobble'), so a
-	// 'play' event would not surface in the view at all.
 	insertWatch(t, q, user, item, "stop", 12345, time.Now())
-
-	// Refresh the materialized view so watch_state reflects the event.
-	if err := q.RefreshWatchState(ctx); err != nil {
-		t.Fatalf("RefreshWatchState: %v", err)
-	}
 
 	state, err := q.GetWatchState(ctx, gen.GetWatchStateParams{UserID: user, MediaID: item})
 	if err != nil {
@@ -64,6 +57,63 @@ func TestWatchEvents_Integration_StateMaterializesAfterRefresh(t *testing.T) {
 	}
 	if state.PositionMs != 12345 {
 		t.Errorf("position_ms = %d, want 12345", state.PositionMs)
+	}
+}
+
+// TestWatchEvents_Integration_StateSeesPlayEventsForResume locks
+// in the regression fix: clients tick `play` events every 10 s
+// during playback (no `scrobble`). The earlier materialized-view
+// query filtered event_type IN ('stop', 'scrobble') and only
+// refreshed on stop, so if the player force-killed before its
+// final stop PUT landed, the resume position was lost entirely.
+// GetWatchState now reads watch_events directly so every play
+// tick is visible to the next detail-page fetch.
+func TestWatchEvents_Integration_StateSeesPlayEventsForResume(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	user := seedUser(ctx, t, q, "we-play-"+uuid.New().String()[:8])
+	lib := seedLibrary(ctx, t, q, "we-play-lib-"+uuid.New().String()[:8])
+	item := seedMediaItem(ctx, t, q, lib, "Movie Play")
+
+	// Simulates an in-progress session that was force-killed: only
+	// `play` ticks were recorded, no `stop` ever landed. The user
+	// should still resume at the last reported position.
+	now := time.Now()
+	insertWatchWithDuration(t, q, user, item, "play", 10_000, 600_000, now.Add(-3*time.Minute))
+	insertWatchWithDuration(t, q, user, item, "play", 30_000, 600_000, now.Add(-2*time.Minute))
+	insertWatchWithDuration(t, q, user, item, "play", 50_000, 600_000, now.Add(-1*time.Minute))
+
+	state, err := q.GetWatchState(ctx, gen.GetWatchStateParams{UserID: user, MediaID: item})
+	if err != nil {
+		t.Fatalf("GetWatchState: %v", err)
+	}
+	if state.PositionMs != 50_000 {
+		t.Errorf("position_ms = %d, want 50000 (latest play tick)", state.PositionMs)
+	}
+	if state.Status != "in_progress" {
+		t.Errorf("status = %q, want in_progress (50s of a 600s movie)", state.Status)
+	}
+}
+
+// insertWatchWithDuration is the same shape as insertWatch but
+// sets duration_ms — needed for the status classification branch
+// (watched vs in_progress vs unwatched) since duration NULL/0
+// classifies as unwatched regardless of position.
+func insertWatchWithDuration(t *testing.T, q *gen.Queries, userID, mediaID uuid.UUID, eventType string, positionMS, durationMS int64, occurredAt time.Time) {
+	t.Helper()
+	dur := durationMS
+	_, err := q.InsertWatchEvent(context.Background(), gen.InsertWatchEventParams{
+		UserID:     userID,
+		MediaID:    mediaID,
+		EventType:  eventType,
+		PositionMs: positionMS,
+		DurationMs: &dur,
+		OccurredAt: pgtype.Timestamptz{Time: occurredAt, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("InsertWatchEvent (%s): %v", eventType, err)
 	}
 }
 
