@@ -1016,8 +1016,53 @@ class PlaybackFragment : VideoSupportFragment() {
         trickplayJob = null
         progressTracker?.stop()
         progressTracker = null
-        player?.release()
+
+        // For music: hand the player to the MediaSessionService
+        // instead of releasing it, so audio continues under the
+        // system media controls when the user navigates away.
+        // Video releases as before — PiP is the right "keep going"
+        // surface for video.
+        val handedOff = handOffAudioPlayerToService()
+        if (!handedOff) {
+            player?.release()
+        }
         player = null
         viewModel.stopActiveTranscode()
+    }
+
+    /** When the user backs out of the player while music is still
+     *  playing, transfer ownership of the ExoPlayer to the
+     *  MediaSessionService and let the service keep it alive under
+     *  the system foreground notification. Returns true when the
+     *  handoff happened (caller should NOT release the player).
+     *
+     *  Skipped for video: the surface-view rendering doesn't
+     *  translate to a service notification and the floating PiP
+     *  window already covers the "keep watching" use case. */
+    private fun handOffAudioPlayerToService(): Boolean {
+        val exo = player ?: return false
+        val isAudio = currentItemType == "track" || currentItemType == "audiobook"
+        if (!isAudio) return false
+        if (!exo.playWhenReady && exo.currentPosition == 0L) return false
+        val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
+        val ctx = activity?.applicationContext ?: return false
+        return try {
+            tv.onscreen.android.playback.AudioHandoff.park(exo, itemId)
+            // Started service so it survives the activity going away.
+            // The service reads from AudioHandoff on its next attach()
+            // and binds the parked player to a Media3 MediaSession,
+            // which surfaces play/pause/skip on the system rail and
+            // keeps the foreground notification alive.
+            ctx.startService(
+                android.content.Intent(
+                    ctx,
+                    tv.onscreen.android.playback.OnScreenMediaSessionService::class.java,
+                ),
+            )
+            true
+        } catch (_: Exception) {
+            tv.onscreen.android.playback.AudioHandoff.clear()
+            false
+        }
     }
 }
