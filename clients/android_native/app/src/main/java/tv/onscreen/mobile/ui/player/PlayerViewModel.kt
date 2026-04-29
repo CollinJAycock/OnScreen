@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import tv.onscreen.mobile.data.model.AudioStream
+import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.SubtitleStream
@@ -30,6 +31,7 @@ data class PlayerUiState(
     val audioStreams: List<AudioStream> = emptyList(),
     val subtitles: List<SubtitleStream> = emptyList(),
     val markers: List<Marker> = emptyList(),
+    val nextSibling: ChildItem? = null,
     val preferredAudioLang: String? = null,
     val preferredSubtitleLang: String? = null,
     val error: String? = null,
@@ -108,11 +110,33 @@ class PlayerViewModel @Inject constructor(
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
                 )
+
+                // Episode + track auto-advance: same parent + index
+                // relationship on both sides. The screen branches on
+                // item.type to decide whether to surface an overlay
+                // (episodes) or chain silently (music tracks).
+                if (item.parent_id != null && item.index != null &&
+                    (item.type == "episode" || item.type == "track")) {
+                    loadNextSibling(item.parent_id, item.index, item.type)
+                }
             } catch (e: Exception) {
                 val msg = if (e is HttpException && e.code() == 403) "content_restricted"
                 else e.message
                 _state.value = PlayerUiState(loading = false, error = msg)
             }
+        }
+    }
+
+    private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
+        try {
+            val children = itemRepo.getChildren(parentId)
+            val next = children
+                .filter { it.type == type && it.index != null }
+                .sortedBy { it.index }
+                .firstOrNull { (it.index ?: -1) == currentIndex + 1 }
+            _state.value = _state.value.copy(nextSibling = next)
+        } catch (_: Exception) {
+            // Best-effort.
         }
     }
 

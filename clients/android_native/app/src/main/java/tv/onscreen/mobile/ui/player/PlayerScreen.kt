@@ -44,6 +44,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -63,6 +64,7 @@ import tv.onscreen.mobile.data.model.SubtitleStream
 fun PlayerScreen(
     itemId: String,
     onClose: () -> Unit,
+    onNext: (String) -> Unit,
     vm: PlayerViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.prepare(itemId) }
@@ -78,7 +80,13 @@ fun PlayerScreen(
         when {
             ui.error != null -> Text(ui.error!!, color = Color.White)
             ui.loading || ui.source == null -> CircularProgressIndicator()
-            else -> PlayerHost(itemId = itemId, ui = ui, vm = vm)
+            else -> PlayerHost(
+                itemId = itemId,
+                ui = ui,
+                vm = vm,
+                onClose = onClose,
+                onNext = onNext,
+            )
         }
     }
 }
@@ -89,10 +97,15 @@ private fun PlayerHost(
     itemId: String,
     ui: PlayerUiState,
     vm: PlayerViewModel,
+    onClose: () -> Unit,
+    onNext: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val source = ui.source!!
     val scope = rememberCoroutineScope()
+    val itemType = ui.item?.type
+    var showUpNext by remember { mutableStateOf(false) }
+    val nextSibling = ui.nextSibling
 
     val player = remember(source) {
         ExoPlayer.Builder(context).build().apply {
@@ -133,6 +146,45 @@ private fun PlayerHost(
 
     DisposableEffect(player) {
         onDispose { player.release() }
+    }
+
+    // EOS handling — episodes surface the Up Next overlay (or pop
+    // the back stack if there's no next), tracks chain silently to
+    // the next track without an overlay (the lead-in countdown
+    // would clip the song's outro fade).
+    DisposableEffect(player, itemType, nextSibling) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) {
+                    val nx = nextSibling
+                    when {
+                        nx == null -> onClose()
+                        itemType == "track" -> onNext(nx.id)
+                        else -> showUpNext = true
+                    }
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    // Lead-in Up Next overlay for episodes — surfaces in the last
+    // ~25s of the stream so the user can confirm before the credits
+    // finish. Skipped for tracks (see EOS handler).
+    LaunchedEffect(player, itemType, nextSibling) {
+        if (itemType != "episode" || nextSibling == null) return@LaunchedEffect
+        while (isActive) {
+            delay(1000)
+            val dur = player.duration
+            val pos = player.currentPosition
+            if (dur > 0 && dur != Long.MAX_VALUE) {
+                val remaining = dur - pos
+                if (remaining in 0..25_000 && !showUpNext) {
+                    showUpNext = true
+                }
+            }
+        }
     }
 
     // Progress reporting — fires every 10s while playing, plus a
@@ -214,6 +266,47 @@ private fun PlayerHost(
             player = player,
             onDismiss = { showSubtitlePicker = false },
         )
+    }
+
+    if (showUpNext && nextSibling != null) {
+        UpNextOverlay(
+            title = nextSibling.title,
+            onPlay = { onNext(nextSibling.id) },
+            onDismiss = { showUpNext = false },
+        )
+    }
+}
+
+@Composable
+private fun UpNextOverlay(
+    title: String,
+    onPlay: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        Column(
+            modifier = Modifier
+                .background(
+                    color = Color(0xCC000000),
+                    shape = RoundedCornerShape(12.dp),
+                )
+                .padding(16.dp),
+        ) {
+            Text("Up next", color = Color.White.copy(alpha = 0.6f))
+            Spacer(Modifier.width(0.dp))
+            Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.width(0.dp))
+            Row {
+                Button(onClick = onPlay) { Text("Play now") }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onDismiss) { Text("Dismiss") }
+            }
+        }
     }
 }
 

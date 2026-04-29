@@ -94,6 +94,14 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
             PlayerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
                 onClose = { nav.popBackStack() },
+                onNext = { nextId ->
+                    // Replace current player route with the next
+                    // sibling so back returns to the detail page,
+                    // not to a chain of player screens stacked up.
+                    nav.navigate(Routes.player(nextId)) {
+                        popUpTo(Routes.PLAYER) { inclusive = true }
+                    }
+                },
             )
         }
     }
