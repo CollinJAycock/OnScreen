@@ -190,6 +190,7 @@ class PlaybackFragment : VideoSupportFragment() {
                 startCrossDeviceSync(itemId)
                 startSkipMarkerWatcher()
                 installTrickplaySeekProvider(itemId)
+                bindAudioBackdrop(state.item)
             }
         }
     }
@@ -206,6 +207,78 @@ class PlaybackFragment : VideoSupportFragment() {
      * upgrades the seek-bar's interaction the next time the user
      * scrubs).
      */
+    /** Audio playback gets a music-Now-Playing-style backdrop: a
+     *  full-bleed blurred album fanart layer plus a centered cover-art
+     *  card. Video items keep the surface view as-is (the album-art
+     *  layer is removed). The Leanback transport controls overlay both
+     *  cases the same way; this is purely visual.
+     *
+     *  We attach the overlay as a sibling of the existing
+     *  VideoSupportFragment view — the surface view sits at the
+     *  bottom of the z-order and our album-cover ImageView paints on
+     *  top of it. Controls draw above both. */
+    private fun bindAudioBackdrop(item: tv.onscreen.android.data.model.ItemDetail?) {
+        val root = view as? android.view.ViewGroup ?: return
+        val isAudio = currentItemType == "track" || currentItemType == "audiobook"
+        val existing = root.findViewWithTag<android.view.View>("audio_backdrop")
+        if (!isAudio || item == null) {
+            if (existing != null) root.removeView(existing)
+            return
+        }
+        val artPath = item.poster_path ?: item.fanart_path
+        if (artPath.isNullOrEmpty()) {
+            if (existing != null) root.removeView(existing)
+            return
+        }
+
+        val ctx = requireContext()
+        val container = if (existing != null) {
+            existing as android.widget.FrameLayout
+        } else {
+            val frame = android.widget.FrameLayout(ctx).apply {
+                tag = "audio_backdrop"
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                )
+                setBackgroundColor(android.graphics.Color.BLACK)
+            }
+            // Full-bleed darkened backdrop (uses the same poster, dimmed).
+            android.widget.ImageView(ctx).apply {
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                )
+                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                imageAlpha = 60
+                tag = "audio_backdrop_bg"
+                frame.addView(this)
+            }
+            // Centered cover card.
+            android.widget.ImageView(ctx).apply {
+                val density = ctx.resources.displayMetrics.density
+                val side = (320 * density).toInt()
+                layoutParams = android.widget.FrameLayout.LayoutParams(side, side).apply {
+                    gravity = android.view.Gravity.CENTER
+                }
+                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                tag = "audio_backdrop_cover"
+                elevation = 12f * density
+                frame.addView(this)
+            }
+            // Insert the backdrop as the first child so the existing
+            // surface + transport stay on top in the z-order.
+            root.addView(frame, 0)
+            frame
+        }
+
+        val bg = container.findViewWithTag<android.widget.ImageView>("audio_backdrop_bg")
+        val cover = container.findViewWithTag<android.widget.ImageView>("audio_backdrop_cover")
+        val url = tv.onscreen.android.data.artworkUrl(serverUrl, artPath, width = 800)
+        bg?.let { coil.Coil.imageLoader(ctx).enqueue(coil.request.ImageRequest.Builder(ctx).data(url).target(it).build()) }
+        cover?.let { coil.Coil.imageLoader(ctx).enqueue(coil.request.ImageRequest.Builder(ctx).data(url).target(it).build()) }
+    }
+
     private fun installTrickplaySeekProvider(itemId: String) {
         trickplayJob?.cancel()
         trickplayJob = viewLifecycleOwner.lifecycleScope.launch {
