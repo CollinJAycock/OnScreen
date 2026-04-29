@@ -703,7 +703,16 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 	case "photo":
 		return itemType == "photo"
 	case "audiobook":
-		return itemType == "audiobook"
+		// "audiobook" is the parent / standalone-book row that the
+		// library grid renders. "audiobook_chapter" is a child file
+		// of a multi-file book — never surfaced in the grid (the
+		// SQL list filters by type elsewhere) but allowed through
+		// the type-mapping check so item-detail / children fetches
+		// don't 404.
+		switch itemType {
+		case "audiobook", "audiobook_chapter":
+			return true
+		}
 	case "podcast":
 		switch itemType {
 		case "podcast", "podcast_episode":

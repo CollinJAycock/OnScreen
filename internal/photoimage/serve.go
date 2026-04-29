@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rwcarlsen/goexif/exif"
@@ -159,11 +160,31 @@ func isAudiobookContainer(sourcePath string) bool {
 	return false
 }
 
+// noEmbeddedCover is a process-wide negative cache: paths known to be
+// audio containers without an attached picture stream. The audiobook
+// scanner ingests thousands of mp3 / m4b files and most of the
+// non-m4b ones have no embedded cover at all. Without this cache,
+// every /items/{id}/image request spawns a fresh ffmpeg only for it
+// to exit non-zero with "Output file does not contain any stream",
+// burning CPU and filling /admin/logs with WARNs. Cleared on process
+// restart — first request after boot still pays the ffmpeg cost,
+// every later request short-circuits to the cleaner "no embedded
+// cover" error path the handler 404s on.
+var noEmbeddedCover sync.Map // map[string]struct{}
+
 // decodeEmbeddedCover shells out to ffmpeg to extract the first attached
 // picture from an audio container (m4b chapter art, MP3 ID3 APIC, FLAC
 // PICTURE, etc.) and returns it decoded. Same memory cap and ffmpeg flags
 // as decodeHEIC; size limit guards against pathological inputs.
+//
+// Files known to have no embedded picture short-circuit via the
+// process-wide negative cache so a viewer scrolling through 4000
+// audiobook items doesn't spawn 4000 doomed ffmpeg processes.
 func decodeEmbeddedCover(ctx context.Context, sourcePath string) (image.Image, error) {
+	if _, miss := noEmbeddedCover.Load(sourcePath); miss {
+		return nil, fmt.Errorf("no embedded cover in %s (cached)", sourcePath)
+	}
+
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner", "-loglevel", "error",
 		"-i", sourcePath,
@@ -182,12 +203,19 @@ func decodeEmbeddedCover(ctx context.Context, sourcePath string) (image.Image, e
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffmpeg cover extract: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
+		// ffmpeg fails with exit 234 ("Output file does not contain
+		// any stream") on audio files with no embedded picture.
+		// Cache the negative result so we don't keep retrying the
+		// same exit-234 spawn for every page navigation.
+		stderrText := stderr.String()
+		if strings.Contains(stderrText, "does not contain any stream") {
+			noEmbeddedCover.Store(sourcePath, struct{}{})
+			return nil, fmt.Errorf("no embedded cover in %s", sourcePath)
+		}
+		return nil, fmt.Errorf("ffmpeg cover extract: %w (stderr=%s)", err, strings.TrimSpace(stderrText))
 	}
 	if out.Len() == 0 {
-		// No embedded cover — the file is otherwise valid, but there's
-		// nothing for us to render. Caller logs and falls back to the
-		// type-default placeholder.
+		noEmbeddedCover.Store(sourcePath, struct{}{})
 		return nil, fmt.Errorf("no embedded cover in %s", sourcePath)
 	}
 	if out.Len() > 50*1024*1024 {

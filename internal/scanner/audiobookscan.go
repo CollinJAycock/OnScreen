@@ -11,113 +11,173 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
-// processAudiobook creates an 'audiobook' media_item for a file in an
-// audiobook library. v2.0 scope is flat — one file = one row — with
-// author / title pulled from (in priority order) embedded tags,
-// folder layout, and filename parse. Chapter navigation comes from
-// ffprobe's container-level chapter markers at playback time.
+// processAudiobook ingests one audio file from an audiobook library.
 //
-// Folder convention (Audiobookshelf / Jellyfin style):
+// Two layouts are supported, mapping to two different DB shapes:
 //
-//	<Library>/<Author>/<Book>/<file>.m4b
-//	<Library>/<Author>/<Book Name>.m4b
-//	<Library>/<Book Name>.m4b
+//   - Single-file book: <root>/<file>.m4b OR <root>/<Author>/<file>.m4b
+//     One row, type="audiobook", file attached. Plays directly.
 //
-// The series hierarchy (author → series → book) is deliberately
-// deferred to v2.1 so users can start organizing their library
-// immediately; a later migration can reparent existing rows without
-// rescanning.
+//   - Multi-file book: <root>/<Author>/<Book>/<part1>.mp3, <part2>.mp3, …
+//     One parent row per book directory, type="audiobook" (this is what
+//     the library grid renders). One child row per audio file,
+//     type="audiobook_chapter", with parent_id pointing at the book.
+//     Drilling into the book on the detail page lists the chapters in
+//     filename order. Mirrors the album → track shape used for music.
+//
+// processAudiobook returns the row that owns this *file* — for single-
+// file layouts that's the book itself, for multi-file layouts that's
+// the chapter. The scanner pipeline attaches the file to whichever row
+// is returned, so the parent book in multi-file mode never carries
+// files of its own.
+//
+// Folder layout precedence (matching parseAudiobookPath):
+//
+//	<root>/<Author>/<Book>/<file>   → multi-file book; book = parent dir,
+//	                                  author = grandparent dir
+//	<root>/<Author>/<file>          → single-file book; author = parent dir
+//	<root>/<Book Name>.m4b          → single-file book at root, no author
+//
+// The series hierarchy (author → series → book) is deferred to a later
+// pass — author still lives on OriginalTitle for both single-file books
+// and multi-file parents.
 func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, path string, roots []string) (*media.Item, error) {
-	title, author := parseAudiobookPath(path, roots)
+	bookTitle, author := parseAudiobookPath(path, roots)
+	if bookTitle == "" {
+		bookTitle = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
 
-	// Read embedded tags (m4b / MP3 ID3 / FLAC Vorbis) — title and
-	// author there beat the folder guess when present. Missing tags
-	// aren't fatal; the folder-derived values stay as the fallback.
+	// Read embedded tags so the chapter row carries a useful title
+	// (taggers commonly write "Chapter 3: …") and the book row's
+	// author can override the folder guess if the artist tag is set.
+	var tagTitle, tagAuthor string
 	if f, err := os.Open(path); err == nil {
 		if m, err := readTagFrom(f); err == nil {
-			if t := strings.TrimSpace(m.Title()); t != "" {
-				title = t
-			}
-			// Audiobook rippers use either <artist> or <album_artist>
-			// for the author — either is acceptable.
+			tagTitle = strings.TrimSpace(m.Title())
 			if a := strings.TrimSpace(m.AlbumArtist()); a != "" {
-				author = a
+				tagAuthor = a
 			} else if a := strings.TrimSpace(m.Artist()); a != "" {
-				author = a
+				tagAuthor = a
 			}
 		}
 		_ = f.Close()
 	}
-
-	if title == "" {
-		title = filepath.Base(path)
+	if tagAuthor != "" {
+		author = tagAuthor
 	}
 
-	p := media.CreateItemParams{
-		LibraryID: libraryID,
-		Type:      "audiobook",
-		Title:     title,
-		SortTitle: sortTitle(title),
-	}
-	// Stash the author on the OriginalTitle field for now — it's
-	// already in the item schema, the UI surfaces it cleanly, and
-	// it avoids a migration just to add a dedicated column. A
-	// proper author hierarchy in v2.1 migrates these values into a
-	// parent `audiobook_author` row.
-	if author != "" {
-		p.OriginalTitle = &author
+	multiFile := isMultiFileBookPath(path, roots)
+
+	if !multiFile {
+		// Existing single-file flow. Tag title (if present) wins
+		// over folder guess for the visible name.
+		title := bookTitle
+		if tagTitle != "" {
+			title = tagTitle
+		}
+		return s.findOrCreateAudiobookRow(ctx, libraryID, "audiobook", title, author, nil)
 	}
 
-	item, err := s.media.FindOrCreateItem(ctx, p)
+	// Multi-file: ensure a parent book row exists (one per <Book>
+	// directory), then create a chapter row pointing at it.
+	book, err := s.findOrCreateAudiobookRow(ctx, libraryID, "audiobook", bookTitle, author, nil)
 	if err != nil {
 		return nil, err
 	}
-	return item, nil
+
+	chapterTitle := tagTitle
+	if chapterTitle == "" {
+		chapterTitle = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+
+	// Children use the hierarchy variant so dedupe is scoped to the
+	// parent's children list — two books with a "Chapter 1" each
+	// don't collide.
+	return s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
+		LibraryID: libraryID,
+		Type:      "audiobook_chapter",
+		Title:     chapterTitle,
+		SortTitle: sortTitle(chapterTitle),
+		ParentID:  &book.ID,
+	})
 }
 
-// parseAudiobookPath returns (title, author) derived from the directory
-// layout. Precedence:
+// findOrCreateAudiobookRow centralises the "stash author on
+// OriginalTitle" detail so both the single-file and multi-file paths
+// emit the same DB shape.
+func (s *Scanner) findOrCreateAudiobookRow(
+	ctx context.Context,
+	libraryID uuid.UUID,
+	itemType, title, author string,
+	parentID *uuid.UUID,
+) (*media.Item, error) {
+	p := media.CreateItemParams{
+		LibraryID: libraryID,
+		Type:      itemType,
+		Title:     title,
+		SortTitle: sortTitle(title),
+		ParentID:  parentID,
+	}
+	if author != "" {
+		p.OriginalTitle = &author
+	}
+	if parentID != nil {
+		return s.media.FindOrCreateHierarchyItem(ctx, p)
+	}
+	return s.media.FindOrCreateItem(ctx, p)
+}
+
+// isMultiFileBookPath returns true when the path matches the
+// <root>/<Author>/<Book>/<file> layout — i.e., the file's
+// great-grandparent directory is a library root. Single-level layouts
+// (<root>/<Author>/<file> and <root>/<file>) are single-file books.
+func isMultiFileBookPath(path string, roots []string) bool {
+	dir := filepath.Dir(path)        // <Book>
+	grand := filepath.Dir(dir)       // <Author>
+	greatGrand := filepath.Dir(grand) // <library root>?
+	return isLibraryRoot(greatGrand, roots)
+}
+
+// parseAudiobookPath returns (bookTitle, author) derived from the
+// directory layout. Used as the fallback when ID3 tags are missing or
+// when we need a stable "this file belongs to which book" key
+// independent of tag quality.
 //
-//	<root>/<Author>/<Book>/<file>   → author from grandparent dir,
-//	                                  title from parent dir
-//	<root>/<Author>/<file>          → author from parent dir,
-//	                                  title from filename stem
-//	<root>/<file>                   → no author, title from filename
-//
-// The roots guard keeps us from using `/mnt/media/Audiobooks` as the
-// author when the library root happens to be the penultimate path
-// element.
-func parseAudiobookPath(path string, roots []string) (title, author string) {
-	title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+//	<root>/<Author>/<Book>/<file>   → bookTitle = parent dir,
+//	                                  author    = grandparent dir
+//	<root>/<Author>/<file>          → bookTitle = filename stem,
+//	                                  author    = parent dir
+//	<root>/<file>                   → bookTitle = filename stem,
+//	                                  author    = ""
+func parseAudiobookPath(path string, roots []string) (bookTitle, author string) {
+	bookTitle = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 
 	dir := filepath.Dir(path)
 	parent := filepath.Base(dir)
 	grand := filepath.Dir(dir)
 	greatGrand := filepath.Dir(grand)
 
-	// Loose file at the library root — no author context, title stays
-	// as the filename stem.
+	// Loose file at the library root — no author, title from filename.
 	if isLibraryRoot(dir, roots) {
 		return
 	}
 
-	// Two-level nesting: <root>/<Author>/<Book>/<file>. The great-
-	// grandparent path equals the library root.
+	// Multi-file: <root>/<Author>/<Book>/<file>. Book is the parent
+	// dir, author is the grandparent dir.
 	if isLibraryRoot(greatGrand, roots) {
+		bookTitle = parent
 		author = filepath.Base(grand)
-		title = parent
 		return
 	}
 
-	// Single-level nesting: <root>/<Author>/<file>. The grandparent
-	// path equals the library root.
+	// Single-file with author: <root>/<Author>/<file>.
 	if isLibraryRoot(grand, roots) {
 		author = parent
 		return
 	}
 
 	// Deeper than two levels — fall back to "nearest non-root
-	// ancestor is the author." Titles stay as the filename stem.
+	// ancestor is the author." Title stays as the filename stem.
 	author = parent
 	return
 }
