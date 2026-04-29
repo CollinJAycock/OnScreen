@@ -356,6 +356,218 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 
 ---
 
+> **Per-app feature sections (16–22).** Sections 1–14 cover server-side capabilities; sections 16–22 cover what each first-party client app actually exposes today, on the same axes (auth → browse → search → media types → playback → cross-device → offline). Each section compares OnScreen's app to the corresponding vendor app on the *same* platform. Cell legend follows the same scheme as the rest of the doc; ❓ is used when a competitor's app behavior on that exact axis isn't reliably documented and we don't want to guess.
+
+---
+
+## 16. Android TV / Fire TV apps
+
+| Feature                          | OnScreen | Plex Android TV | Emby Android TV | Jellyfin Android TV | Notes |
+|----------------------------------|:--:|:--:|:--:|:--:|---|
+| Device-pairing (PIN) sign-in     | ✅ | ✅ | ✅ | ⚠️ | OnScreen pair flow covers OIDC/SAML/LDAP/local — TV never types a password |
+| Password sign-in                 | ✅ | ⚠️ | ✅ | ✅ | Plex pushes Plex.tv SSO over local password |
+| Hub (Continue / Recently / Trending) | ✅ | ✅ | ✅ | ✅ | |
+| Library browse + genre filter    | ✅ | ✅ | ✅ | ✅ | |
+| Full-text search                 | ✅ | ✅ | ✅ | ✅ | |
+| Search type-filter chips         | ❌ | ❌ | ❌ | ❌ | TV client uses the underlying SearchFragment shape; chips are a webOS/Roku/Tizen feature |
+| Item detail page                 | ✅ | ✅ | ✅ | ✅ | |
+| Favorites                        | ✅ | ✅ | ✅ | ✅ | |
+| History                          | ✅ | ✅ | ✅ | ✅ | |
+| Collections drill-in             | ✅ | ✅ | ✅ | ✅ | |
+| Photo viewer with D-pad nav      | ✅ | ✅ | ❓ | ❓ | OnScreen auto-resolves siblings from parent album or library |
+| Audiobook chapter list           | ✅ | ❌ | ❓ | ❓ | OnScreen ships chapter list + 0.75–2× speed picker |
+| Direct play                      | ✅ | ✅ | ✅ | ✅ | |
+| HLS transcode negotiation        | ✅ | ✅ | ✅ | ✅ | |
+| Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | Avoids ERROR_CODE_IO_BAD_HTTP_STATUS at the 1h access-token mark |
+| Audio track picker (HLS re-issue)| ✅ | ❓ | ❓ | ❓ | OnScreen re-issues the session with a new audio_stream_index; transcoded HLS only carries one audio per session |
+| Subtitle picker                  | ✅ | ✅ | ✅ | ✅ | |
+| Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
+| Up Next overlay                  | ✅ | ✅ | ✅ | ✅ | |
+| Music auto-advance (silent EOS chain) | ✅ | ✅ | ✅ | ✅ | |
+| Cross-device resume sync         | ✅ | ✅ | ✅ | ⚠️ | SSE `progress.updated` push; Jellyfin polls |
+| Offline downloads                | ❌ | 💎 | 💎 | ⚠️ | |
+| Hardware verified                | ✅ | ✅ | ✅ | ✅ | OnScreen verified on Fire Stick + Google TV |
+
+---
+
+## 17. Android phone apps
+
+| Feature                          | OnScreen | Plex | Emby | Jellyfin | Notes |
+|----------------------------------|:--:|:--:|:--:|:--:|---|
+| Device-pairing (PIN) sign-in     | ✅ | ⚠️ | ❓ | ❓ | OnScreen pair flow is the default path on the phone too; password is a fallback |
+| Password sign-in                 | ✅ | ⚠️ | ✅ | ✅ | |
+| Hub (Continue / Recently / Trending) | ✅ | ✅ | ✅ | ✅ | |
+| Library browse + grid view       | ✅ | ✅ | ✅ | ✅ | |
+| Full-text search                 | ✅ | ✅ | ✅ | ✅ | OnScreen: 300ms debounce |
+| Search type-filter chips         | ❌ | ❌ | ❌ | ❌ | Outstanding for the phone client |
+| Item detail page                 | ✅ | ✅ | ✅ | ✅ | OnScreen: minimal — title + year + summary + Play |
+| Favorites                        | ✅ | ✅ | ✅ | ✅ | OnScreen: list view; toggle from detail outstanding |
+| History                          | ✅ | ✅ | ✅ | ✅ | |
+| Collections drill-in             | ✅ | ✅ | ✅ | ✅ | |
+| Photo viewer                     | ❌ | ✅ | ✅ | ✅ | Outstanding for the phone client |
+| Audiobook chapter list           | ❌ | ❌ | ⚠️ | ⚠️ | Outstanding |
+| Direct play                      | ✅ | ✅ | ✅ | ✅ | |
+| HLS transcode negotiation        | ✅ | ✅ | ✅ | ✅ | Port of TV client's `PlaybackHelper.decide()` matrix |
+| Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
+| Audio track picker (HLS re-issue)| ✅ | ❓ | ❓ | ❓ | |
+| Subtitle picker                  | ✅ | ✅ | ✅ | ✅ | |
+| Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
+| Up Next overlay                  | ✅ | ✅ | ✅ | ✅ | |
+| Music auto-advance               | ✅ | ✅ | ✅ | ✅ | |
+| Cross-device resume sync         | ❌ | ✅ | ✅ | ⚠️ | Outstanding — SSE consumer not wired in the phone client yet |
+| Background audio / lock-screen controls | ❌ | ✅ | ✅ | ✅ | Outstanding — needs a Media3 MediaSessionService |
+| CarPlay / Android Auto           | ❌ | ✅ | ❌ | ❌ | Plexamp only |
+| Offline downloads                | ❌ | 💎 | 💎 | ⚠️ | |
+| Hardware verified                | ❌ | ✅ | ✅ | ✅ | Real-device validation outstanding |
+
+---
+
+## 18. LG webOS apps
+
+| Feature                          | OnScreen | Plex | Emby | Jellyfin | Notes |
+|----------------------------------|:--:|:--:|:--:|:--:|---|
+| Device-pairing (PIN) sign-in     | ✅ | ✅ | ✅ | ⚠️ | |
+| Password sign-in                 | ✅ | ⚠️ | ✅ | ✅ | |
+| Hub (Continue / Recently / Trending) | ✅ | ✅ | ✅ | ⚠️ | |
+| Library browse                   | ✅ | ✅ | ✅ | ⚠️ | |
+| Full-text search                 | ✅ | ✅ | ✅ | ⚠️ | |
+| Search type-filter chips         | ✅ | ❌ | ❌ | ❌ | |
+| Item detail page                 | ✅ | ✅ | ✅ | ⚠️ | |
+| Favorites                        | ✅ | ✅ | ✅ | ⚠️ | |
+| History                          | ✅ | ✅ | ✅ | ⚠️ | |
+| Collections drill-in             | ✅ | ✅ | ✅ | ⚠️ | |
+| Photo viewer (D-pad sibling nav) | ✅ | ✅ | ❓ | ❓ | |
+| Audiobook chapter list           | ✅ | ❌ | ❓ | ❓ | |
+| Direct play                      | ✅ | ✅ | ✅ | ⚠️ | |
+| HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | hls.js + HTML5 `<video>` |
+| Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
+| Audio track picker               | ⚠️ | ✅ | ✅ | ⚠️ | Direct-play only — HLS re-issue path not wired |
+| Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | |
+| Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
+| Up Next overlay                  | ✅ | ✅ | ✅ | ⚠️ | |
+| Music auto-advance               | ✅ | ✅ | ✅ | ⚠️ | |
+| Cross-device resume sync (SSE)   | ✅ | ✅ | ✅ | ⚠️ | |
+| Hardware verified                | ❌ | ✅ | ✅ | ❓ | Real LG TV validation outstanding |
+
+---
+
+## 19. Samsung Tizen apps
+
+| Feature                          | OnScreen | Plex | Emby | Jellyfin | Notes |
+|----------------------------------|:--:|:--:|:--:|:--:|---|
+| Device-pairing (PIN) sign-in     | ✅ | ✅ | ✅ | ⚠️ | |
+| Password sign-in                 | ✅ | ⚠️ | ✅ | ⚠️ | |
+| Hub                              | ✅ | ✅ | ✅ | ⚠️ | |
+| Library browse                   | ✅ | ✅ | ✅ | ⚠️ | |
+| Full-text search                 | ✅ | ✅ | ✅ | ⚠️ | |
+| Search type-filter chips         | ✅ | ❌ | ❌ | ❌ | |
+| Item detail page                 | ✅ | ✅ | ✅ | ⚠️ | |
+| Favorites                        | ✅ | ✅ | ✅ | ⚠️ | |
+| History                          | ✅ | ✅ | ✅ | ⚠️ | |
+| Collections drill-in             | ✅ | ✅ | ✅ | ⚠️ | |
+| Photo viewer (D-pad sibling nav) | ✅ | ✅ | ❓ | ❓ | |
+| Audiobook chapter list           | ✅ | ❌ | ❓ | ❓ | |
+| Direct play                      | ✅ | ✅ | ✅ | ⚠️ | AVPlay JS API HW path |
+| HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | AVPlay HLS + HTML5 `<video>` fallback |
+| HW HEVC / AV1 decode             | ✅ | ✅ | ✅ | ⚠️ | Firmware decoders via AVPlay |
+| Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
+| Audio track picker               | ⚠️ | ✅ | ✅ | ⚠️ | Direct-play only |
+| Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | |
+| Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
+| Up Next overlay                  | ✅ | ✅ | ✅ | ⚠️ | |
+| Music auto-advance               | ✅ | ✅ | ✅ | ⚠️ | |
+| Cross-device resume sync (SSE)   | ✅ | ✅ | ✅ | ⚠️ | |
+| Hardware verified                | ❌ | ✅ | ✅ | ❓ | Real Samsung TV validation outstanding |
+
+---
+
+## 20. Roku apps
+
+| Feature                          | OnScreen | Plex | Emby | Jellyfin | Notes |
+|----------------------------------|:--:|:--:|:--:|:--:|---|
+| Device-pairing (PIN) sign-in     | ✅ | ✅ | ✅ | ⚠️ | Jellyfin: third-party channel |
+| Password sign-in                 | ✅ | ⚠️ | ✅ | ⚠️ | |
+| Hub                              | ✅ | ✅ | ✅ | ⚠️ | |
+| Library browse                   | ✅ | ✅ | ✅ | ⚠️ | |
+| Full-text search                 | ✅ | ✅ | ✅ | ⚠️ | |
+| Search type-filter chips         | ✅ | ❌ | ❌ | ❌ | |
+| Item detail page                 | ✅ | ✅ | ✅ | ⚠️ | Type-aware DetailScene |
+| Favorites                        | ✅ | ✅ | ✅ | ⚠️ | |
+| History                          | ✅ | ✅ | ✅ | ⚠️ | |
+| Collections drill-in             | ✅ | ✅ | ✅ | ⚠️ | |
+| Photo viewer (D-pad sibling nav) | ✅ | ✅ | ❓ | ❓ | |
+| Audiobook                        | ⚠️ | ❌ | ⚠️ | ⚠️ | DetailScene + direct play; chapter list outstanding |
+| Direct play                      | ✅ | ✅ | ✅ | ⚠️ | Firmware Video node |
+| HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | `Playback_Decide` three-mode split, 13 brs unit tests |
+| Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
+| Audio track picker               | ❌ | ✅ | ✅ | ⚠️ | Outstanding |
+| Subtitle picker                  | ❌ | ✅ | ✅ | ⚠️ | Outstanding — firmware Video node supports it; not wired |
+| Skip-intro / skip-credits        | ✅ | 💎 | ✅ | ⚠️ | |
+| Up Next overlay                  | ✅ | ✅ | ✅ | ⚠️ | |
+| Music auto-advance               | ✅ | ✅ | ✅ | ⚠️ | |
+| Cross-device resume sync         | ⚠️ | ✅ | ✅ | ⚠️ | 5s polling fallback (Roku has no SSE primitive) |
+| Hardware verified                | ❌ | ✅ | ✅ | ❓ | Channel-zip validation outstanding |
+
+---
+
+## 21. Native desktop apps
+
+| Feature                          | OnScreen (Tauri) | Plex (Plexamp / HTPC) | Emby Theater | Jellyfin (JMP) | Notes |
+|----------------------------------|:--:|:--:|:--:|:--:|---|
+| Single shared codebase with web  | ✅ | ⚠️ | ⚠️ | ✅ | |
+| Native audio engine              | ✅ | ✅ | ✅ | ⚠️ | OnScreen: cpal + claxon; JMP: mpv |
+| WASAPI exclusive (Win)           | ❌ | ✅ | ✅ | ✅ | cpal 0.16 limitation |
+| CoreAudio HOG (macOS)            | ❌ | ✅ | ⚠️ | ✅ | |
+| ALSA `hw:` (Linux)               | ❌ | ✅ | ⚠️ | ✅ | |
+| Gapless playback                 | ✅ | ✅ | ✅ | ✅ | |
+| Native FLAC                      | ✅ | ✅ | ✅ | ✅ | claxon |
+| Native ALAC / WAV / AIFF         | ⚠️ | ✅ | ✅ | ✅ | Webview fallback for non-FLAC |
+| OS media keys                    | ✅ | ✅ | ✅ | ✅ | |
+| System tray                      | ✅ | ✅ | ✅ | ⚠️ | |
+| Native OS notifications          | ✅ | ✅ | ✅ | ⚠️ | |
+| OS now-playing widget (SMTC/MPRIS)| ❌ | ✅ | ✅ | ⚠️ | `souvlaki` swap pending |
+| Secure credential storage        | ✅ | ✅ | ✅ | ⚠️ | Keychain / Cred Mgr / Secret Service |
+| Cross-device resume sync (SSE)   | ✅ | ✅ | ✅ | ⚠️ | |
+| "Play on this device" remote     | ❌ | ✅ | ✅ | ⚠️ | |
+| Picture-in-picture               | ❌ | ✅ | ✅ | ⚠️ | |
+| Configurable server URL          | ✅ | ⚠️ | ✅ | ✅ | No Plex.tv lock-in |
+
+---
+
+## 22. Web client (browser)
+
+The web client is the universal fallback — runs in any modern browser with no install. Compared against Plex Web / Emby Web / Jellyfin Web rather than against the native apps.
+
+| Feature                          | OnScreen | Plex Web | Emby Web | Jellyfin Web | Notes |
+|----------------------------------|:--:|:--:|:--:|:--:|---|
+| Device-pairing PIN page (`/pair`)| ✅ | ❌ | ❌ | ❌ | Browser is the canonical PIN-claim surface for the TV apps |
+| Hub                              | ✅ | ✅ | ✅ | ✅ | |
+| Library browse + genre filter    | ✅ | ✅ | ✅ | ✅ | |
+| Full-text search                 | ✅ | ✅ | ✅ | ✅ | |
+| Search type-filter chips         | ✅ | ❌ | ❌ | ❌ | |
+| TMDB discover + Request inline   | ✅ | ❌ | ❌ | ❌ | |
+| Item detail page                 | ✅ | ✅ | ✅ | ✅ | |
+| Favorites                        | ✅ | ✅ | ✅ | ✅ | |
+| History                          | ✅ | ✅ | ✅ | ✅ | |
+| Collections (incl. smart playlists) | ✅ | ✅ | ✅ | ✅ | |
+| Analytics dashboard              | ✅ | ✅ | ✅ | ✅ | |
+| Photo viewer + EXIF + map        | ✅ | ⚠️ | ⚠️ | ⚠️ | |
+| Audiobook chapter list           | ✅ | ❌ | ⚠️ | ⚠️ | |
+| Music: Lossless + hi-res badges  | ✅ | ⚠️ | ❌ | ⚠️ | |
+| Music: Synced lyrics (USLT/.lrc/LRCLIB) | ✅ | ✅ | ✅ | ✅ | |
+| Music: Gapless via dual-`<audio>`| ✅ | ✅ | ✅ | ✅ | |
+| Direct play (raw file + range)   | ✅ | ✅ | ✅ | ✅ | |
+| HLS transcode + DASH             | ✅ | ✅ | ✅ | ✅ | DASH server-side; frontend still uses hls.js |
+| Audio + subtitle pickers         | ✅ | ✅ | ✅ | ✅ | |
+| Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
+| Up Next overlay                  | ✅ | ✅ | ✅ | ✅ | |
+| Cross-device resume sync (SSE)   | ✅ | ✅ | ✅ | ⚠️ | |
+| Admin: settings + scan + users   | ✅ | ✅ | ✅ | ✅ | |
+| Admin: log retrieval             | ✅ | ❌ | ❌ | ❌ | `/api/v1/admin/logs` ring buffer |
+| Admin: live session monitoring   | ✅ | ✅ | ✅ | ✅ | |
+
+---
+
 ## Where OnScreen Leads
 
 - **PostgreSQL-native**: partitioned event tables, tsvector FTS, materialized hub cache, no SQLite race conditions under heavy write load.
