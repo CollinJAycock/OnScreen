@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import tv.onscreen.android.data.model.*
 import tv.onscreen.android.data.repository.CollectionRepository
 import tv.onscreen.android.data.repository.HubRepository
@@ -44,13 +45,18 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = HomeUiState(isLoading = true)
             try {
-                val hubDeferred = async { hubRepo.getHub() }
-                val libsDeferred = async { libraryRepo.getLibraries() }
-                val colsDeferred = async { collectionRepo.getCollections() }
-
-                val hub = hubDeferred.await()
-                val libs = libsDeferred.await()
-                val cols = colsDeferred.await()
+                // supervisorScope so a child failure throws into the
+                // try/catch below instead of cancelling its siblings
+                // and propagating up the viewModelScope (the default
+                // structured-concurrency behaviour). Without this, a
+                // hub-fetch failure tears down libs + cols asyncs
+                // before the catch block reaches the user.
+                val (hub, libs, cols) = supervisorScope {
+                    val hubDeferred = async { hubRepo.getHub() }
+                    val libsDeferred = async { libraryRepo.getLibraries() }
+                    val colsDeferred = async { collectionRepo.getCollections() }
+                    Triple(hubDeferred.await(), libsDeferred.await(), colsDeferred.await())
+                }
 
                 // Load first 20 items from each library in parallel.
                 val previews = libs.map { lib ->

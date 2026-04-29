@@ -2,13 +2,9 @@ package tv.onscreen.android.ui.browse
 
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -22,24 +18,20 @@ import tv.onscreen.android.data.model.HubItem
 import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.MediaCollection
 import tv.onscreen.android.data.model.MediaItem
-import tv.onscreen.android.data.model.NotificationItem
 import tv.onscreen.android.data.repository.CollectionRepository
 import tv.onscreen.android.data.repository.HubRepository
 import tv.onscreen.android.data.repository.LibraryRepository
-import tv.onscreen.android.data.repository.NotificationsRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
 
-    @Before
-    fun setUp() { Dispatchers.setMain(dispatcher) }
+    @Before fun setUp() { Dispatchers.setMain(dispatcher) }
+    @After  fun tearDown() { Dispatchers.resetMain() }
 
-    @After
-    fun tearDown() { Dispatchers.resetMain() }
-
-    private fun hub(id: String) = HubItem(id = id, title = "t-$id", type = "movie")
+    private fun hub(id: String, type: String = "movie") =
+        HubItem(id = id, title = "t-$id", type = type)
     private fun item(id: String) = MediaItem(
         id = id, title = "t-$id", type = "movie",
         created_at = "2026-01-01T00:00:00Z", updated_at = "2026-01-01T00:00:00Z",
@@ -50,57 +42,49 @@ class HomeViewModelTest {
     )
 
     private fun mocks(
-        hubData: HubData = HubData(continue_watching = emptyList(), recently_added = emptyList()),
+        hubData: HubData = HubData(),
         libraries: List<Library> = emptyList(),
         collections: List<MediaCollection> = emptyList(),
-        unread: Long = 0,
-    ): Quad {
+    ): Mocks {
         val hubRepo = mockk<HubRepository>()
         val libRepo = mockk<LibraryRepository>()
         val colRepo = mockk<CollectionRepository>()
-        val notifRepo = mockk<NotificationsRepository>()
-
         coEvery { hubRepo.getHub() } returns hubData
         coEvery { libRepo.getLibraries() } returns libraries
         coEvery { colRepo.getCollections() } returns collections
-        coEvery { notifRepo.unreadCount() } returns unread
         libraries.forEach { l ->
             coEvery { libRepo.getItems(l.id, limit = 20) } returns (emptyList<MediaItem>() to 0)
         }
-        every { notifRepo.subscribe() } returns emptyFlow()
-
-        return Quad(hubRepo, libRepo, colRepo, notifRepo)
+        return Mocks(hubRepo, libRepo, colRepo)
     }
 
-    private data class Quad(
+    private data class Mocks(
         val hub: HubRepository,
         val lib: LibraryRepository,
         val col: CollectionRepository,
-        val notif: NotificationsRepository,
     )
 
     @Test
-    fun `load composes hub, recently added, library previews, and unread count`() = runTest(dispatcher) {
+    fun `load composes hub + recently added + library previews`() = runTest(dispatcher) {
         val m = mocks(
             hubData = HubData(
-                continue_watching = listOf(hub("cw1")),
+                continue_watching = listOf(hub("cw1", type = "movie"), hub("cw2", type = "episode")),
                 recently_added = listOf(hub("ra1"), hub("ra2")),
             ),
             libraries = listOf(lib("l1")),
-            unread = 7,
         )
         coEvery { m.lib.getItems("l1", limit = 20) } returns (listOf(item("a"), item("b")) to 2)
 
-        val vm = HomeViewModel(m.hub, m.lib, m.col, m.notif)
+        val vm = HomeViewModel(m.hub, m.lib, m.col)
         advanceUntilIdle()
 
         val state = vm.uiState.value
         assertThat(state.isLoading).isFalse()
-        assertThat(state.continueWatching.map { it.id }).containsExactly("cw1")
+        assertThat(state.continueWatchingMovies.map { it.id }).containsExactly("cw1")
+        assertThat(state.continueWatchingTV.map { it.id }).containsExactly("cw2")
         assertThat(state.recentlyAdded.map { it.id }).containsExactly("ra1", "ra2").inOrder()
         assertThat(state.libraryPreviews).hasSize(1)
         assertThat(state.libraryPreviews[0].second.map { it.id }).containsExactly("a", "b").inOrder()
-        assertThat(state.unreadNotifications).isEqualTo(7)
         assertThat(state.error).isNull()
     }
 
@@ -109,7 +93,7 @@ class HomeViewModelTest {
         val m = mocks()
         coEvery { m.hub.getHub() } throws RuntimeException("offline")
 
-        val vm = HomeViewModel(m.hub, m.lib, m.col, m.notif)
+        val vm = HomeViewModel(m.hub, m.lib, m.col)
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.error).isEqualTo("offline")
@@ -122,7 +106,7 @@ class HomeViewModelTest {
         coEvery { m.lib.getItems("l1", limit = 20) } returns (listOf(item("a")) to 1)
         coEvery { m.lib.getItems("l2", limit = 20) } throws RuntimeException("lib2 down")
 
-        val vm = HomeViewModel(m.hub, m.lib, m.col, m.notif)
+        val vm = HomeViewModel(m.hub, m.lib, m.col)
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -133,29 +117,24 @@ class HomeViewModelTest {
     }
 
     @Test
-    fun `SSE notification emit bumps unread count`() = runTest(dispatcher) {
-        val hubRepo = mockk<HubRepository>()
-        val libRepo = mockk<LibraryRepository>()
-        val colRepo = mockk<CollectionRepository>()
-        val notifRepo = mockk<NotificationsRepository>()
-        coEvery { hubRepo.getHub() } returns HubData(emptyList(), emptyList())
-        coEvery { libRepo.getLibraries() } returns emptyList()
-        coEvery { colRepo.getCollections() } returns emptyList()
-        coEvery { notifRepo.unreadCount() } returns 2
-        val ch = Channel<NotificationItem>(Channel.UNLIMITED)
-        every { notifRepo.subscribe() } returns ch.receiveAsFlow()
-
-        val vm = HomeViewModel(hubRepo, libRepo, colRepo, notifRepo)
+    fun `Continue Watching split prefers server-side fields when present`() = runTest(dispatcher) {
+        // Newer server: pre-split arrays populated. The
+        // client-side filter on continue_watching is skipped, so the
+        // legacy combined feed can stay empty without affecting
+        // what the UI renders.
+        val m = mocks(
+            hubData = HubData(
+                continue_watching = emptyList(),
+                continue_watching_tv = listOf(hub("ep1", type = "episode")),
+                continue_watching_movies = listOf(hub("mv1", type = "movie")),
+                continue_watching_other = listOf(hub("ab1", type = "audiobook")),
+            ),
+        )
+        val vm = HomeViewModel(m.hub, m.lib, m.col)
         advanceUntilIdle()
-
-        assertThat(vm.uiState.value.unreadNotifications).isEqualTo(2)
-
-        ch.send(NotificationItem(
-            id = "n1", type = "new_content", title = "New", created_at = "2026-01-01T00:00:00Z",
-        ))
-        advanceUntilIdle()
-        assertThat(vm.uiState.value.unreadNotifications).isEqualTo(3)
-
-        ch.close()
+        val state = vm.uiState.value
+        assertThat(state.continueWatchingTV.map { it.id }).containsExactly("ep1")
+        assertThat(state.continueWatchingMovies.map { it.id }).containsExactly("mv1")
+        assertThat(state.continueWatchingOther.map { it.id }).containsExactly("ab1")
     }
 }

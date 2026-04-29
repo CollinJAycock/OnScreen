@@ -1,3 +1,10 @@
+//go:build integration
+
+// Settings round-trip tests stand up a real Postgres via
+// testcontainers (see internal/testdb). Build-tagged so
+// `go test ./...` on a machine without Docker doesn't panic when
+// testcontainers fails to extract the Docker host. Run with:
+// `go test -tags=integration ./internal/domain/settings/...`.
 package settings
 
 import (

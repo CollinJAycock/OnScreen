@@ -18,6 +18,7 @@ import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.ItemFile
+import tv.onscreen.android.data.model.Marker
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.model.TranscodeSession
 import tv.onscreen.android.data.model.UserPreferences
@@ -74,6 +75,26 @@ class PlaybackViewModelTest {
         return p
     }
 
+    /** ServerPrefs stub for the player VM's direct-play URL builder.
+     *  Concrete-class mocking goes through mockk-agent;
+     *  `relaxed = true` returns null/empty defaults for the suspend
+     *  getters without per-call coEvery wiring (none of the VM's
+     *  test scenarios exercise the access-token URL append path —
+     *  if a future test does, layer a coEvery on top). */
+    private fun serverPrefs(): tv.onscreen.android.data.prefs.ServerPrefs =
+        mockk(relaxed = true)
+
+    /** ItemRepository mock with [getMarkers] pre-stubbed to an empty
+     *  list — every PlaybackViewModel.prepare() call hits the markers
+     *  endpoint regardless of item type, so any test that gets past
+     *  the file-presence check needs it answered. Tests that exercise
+     *  a specific marker payload can layer a coEvery on top. */
+    private fun itemRepo(): ItemRepository {
+        val repo = mockk<ItemRepository>()
+        coEvery { repo.getMarkers(any()) } returns emptyList()
+        return repo
+    }
+
     private fun episodeDetail(file: ItemFile, parentId: String, index: Int) = ItemDetail(
         id = "ep-$index",
         library_id = "lib-1",
@@ -86,11 +107,11 @@ class PlaybackViewModelTest {
 
     @Test
     fun `direct play movie produces DirectPlay source with start position`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("movie-1", startMs = 12_000L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -107,7 +128,7 @@ class PlaybackViewModelTest {
 
     @Test
     fun `unsupported codec triggers transcode and produces Hls source`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         coEvery {
@@ -125,7 +146,7 @@ class PlaybackViewModelTest {
             playlist_url = "/transcode/sess-1.m3u8",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("movie-1", startMs = 30_000L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -139,11 +160,11 @@ class PlaybackViewModelTest {
 
     @Test
     fun `missing files surfaces error in ui state`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile()).copy(files = emptyList())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -154,11 +175,11 @@ class PlaybackViewModelTest {
 
     @Test
     fun `repository failure surfaces error message`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem(any()) } throws RuntimeException("api 500")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -167,7 +188,7 @@ class PlaybackViewModelTest {
 
     @Test
     fun `episode load fetches next episode by index plus one`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } returns listOf(
@@ -176,7 +197,7 @@ class PlaybackViewModelTest {
             ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("ep-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -187,7 +208,7 @@ class PlaybackViewModelTest {
 
     @Test
     fun `final episode in season has no next episode`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("ep-3") } returns episodeDetail(directPlayFile(), "season-1", 3)
         coEvery { itemRepo.getChildren("season-1") } returns listOf(
@@ -196,7 +217,7 @@ class PlaybackViewModelTest {
             ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("ep-3", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -205,11 +226,11 @@ class PlaybackViewModelTest {
 
     @Test
     fun `non-episode items do not query siblings`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -219,12 +240,12 @@ class PlaybackViewModelTest {
 
     @Test
     fun `getChildren failure does not break main playback flow`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } throws RuntimeException("offline")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("ep-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -236,9 +257,9 @@ class PlaybackViewModelTest {
 
     @Test
     fun `stopActiveTranscode is a no-op without an active session`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
 
         vm.stopActiveTranscode()
         advanceUntilIdle()
@@ -248,7 +269,7 @@ class PlaybackViewModelTest {
 
     @Test
     fun `stopActiveTranscode sends stop request when session is active`() = runTest(dispatcher) {
-        val itemRepo = mockk<ItemRepository>()
+        val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         coEvery {
@@ -259,7 +280,7 @@ class PlaybackViewModelTest {
             token = "tok-9",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 

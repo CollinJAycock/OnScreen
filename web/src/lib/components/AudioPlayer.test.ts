@@ -7,6 +7,9 @@ const mockProgress = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('$lib/api', () => ({
   itemApi: { progress: mockProgress },
+  getApiBase: () => '',
+  getBearerToken: () => null,
+  assetUrl: (p: string) => p,
 }));
 
 // happy-dom doesn't implement HTMLMediaElement playback. Stub the methods

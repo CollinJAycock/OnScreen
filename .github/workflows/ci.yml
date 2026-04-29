@@ -43,6 +43,21 @@ jobs:
       - name: Integration tests
         run: go test -tags=integration -timeout 10m ./internal/...
 
+      # Race detector on the concurrency-heavy packages — broker pubsub,
+      # transcode dispatcher, scheduler, valkey lock + master-election,
+      # streaming session tracker. -race needs cgo so we install gcc;
+      # scoping to the packages that actually exercise goroutines keeps
+      # CI time bounded vs running -race across the whole repo.
+      - name: Race detector
+        run: |
+          go test -race -timeout 5m \
+            ./internal/notification/... \
+            ./internal/streaming/... \
+            ./internal/scheduler/... \
+            ./internal/valkey/... \
+            ./internal/worker/... \
+            ./internal/transcode/...
+
   lint:
     name: Lint (Go)
     runs-on: ubuntu-latest

@@ -15,8 +15,12 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import kotlinx.coroutines.flow.MutableStateFlow
 import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.SearchResult
+import tv.onscreen.android.data.prefs.SearchFilters
+import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.data.repository.DiscoverRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.LibraryRepository
 
@@ -30,6 +34,17 @@ class SearchViewModelTest {
 
     @After
     fun tearDown() { Dispatchers.resetMain() }
+
+    /** Minimal stubs for the dependencies the tests don't exercise.
+     *  DiscoverRepository defaults to empty results; ServerPrefs
+     *  exposes the all-types-on filter set so the visibleResults
+     *  pass-through doesn't mask test assertions. */
+    private fun stubDiscover(): DiscoverRepository = mockk(relaxed = true)
+    private fun stubPrefs(): ServerPrefs = mockk<ServerPrefs>().also { p ->
+        io.mockk.every { p.searchFilters } returns MutableStateFlow(
+            SearchFilters(movie = true, show = true, episode = true, track = true),
+        )
+    }
 
     private fun lib(id: String, name: String) = Library(
         id = id, name = name, type = "movies",
@@ -46,7 +61,7 @@ class SearchViewModelTest {
         val libRepo = mockk<LibraryRepository>()
         coEvery { libRepo.getLibraries() } returns listOf(lib("l1", "Movies"), lib("l2", "Shows"))
 
-        val vm = SearchViewModel(itemRepo, libRepo)
+        val vm = SearchViewModel(itemRepo, libRepo, stubDiscover(), stubPrefs())
         advanceUntilIdle()
 
         assertThat(vm.libraries.value.map { it.id }).containsExactly("l1", "l2").inOrder()
@@ -58,7 +73,7 @@ class SearchViewModelTest {
         val libRepo = mockk<LibraryRepository>()
         coEvery { libRepo.getLibraries() } returns emptyList()
 
-        val vm = SearchViewModel(itemRepo, libRepo)
+        val vm = SearchViewModel(itemRepo, libRepo, stubDiscover(), stubPrefs())
         advanceUntilIdle()
 
         vm.search("a")
@@ -75,7 +90,7 @@ class SearchViewModelTest {
         coEvery { libRepo.getLibraries() } returns emptyList()
         coEvery { itemRepo.search("star", any(), null) } returns listOf(result("x"))
 
-        val vm = SearchViewModel(itemRepo, libRepo)
+        val vm = SearchViewModel(itemRepo, libRepo, stubDiscover(), stubPrefs())
         advanceUntilIdle()
 
         vm.search("star")
@@ -95,7 +110,7 @@ class SearchViewModelTest {
         coEvery { itemRepo.search("st", any(), null) } returns listOf(result("stale"))
         coEvery { itemRepo.search("star", any(), null) } returns listOf(result("fresh"))
 
-        val vm = SearchViewModel(itemRepo, libRepo)
+        val vm = SearchViewModel(itemRepo, libRepo, stubDiscover(), stubPrefs())
         advanceUntilIdle()
 
         vm.search("st")
@@ -116,7 +131,7 @@ class SearchViewModelTest {
         coEvery { itemRepo.search("star", any(), null) } returns listOf(result("global"))
         coEvery { itemRepo.search("star", any(), "l1") } returns listOf(result("scoped"))
 
-        val vm = SearchViewModel(itemRepo, libRepo)
+        val vm = SearchViewModel(itemRepo, libRepo, stubDiscover(), stubPrefs())
         advanceUntilIdle()
 
         vm.search("star")
@@ -136,7 +151,7 @@ class SearchViewModelTest {
         val libRepo = mockk<LibraryRepository>()
         coEvery { libRepo.getLibraries() } returns emptyList()
 
-        val vm = SearchViewModel(itemRepo, libRepo)
+        val vm = SearchViewModel(itemRepo, libRepo, stubDiscover(), stubPrefs())
         advanceUntilIdle()
 
         vm.setScope(lib("l1", "Movies"))

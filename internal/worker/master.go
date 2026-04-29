@@ -99,6 +99,12 @@ func (m *MasterLock) RunIfMaster(ctx context.Context, fn func(context.Context)) 
 	for {
 		select {
 		case <-ctx.Done():
+			// Cancel the child context explicitly so the WithCancel
+			// resource is released. The initial cancel is a no-op
+			// closure, so an unconditional call is safe even when
+			// fn was never started; satisfies go vet's lostcancel
+			// check on every path out of the loop.
+			cancel()
 			if running {
 				<-done
 			}
