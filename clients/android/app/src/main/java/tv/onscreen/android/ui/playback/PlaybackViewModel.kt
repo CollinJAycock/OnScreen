@@ -51,6 +51,24 @@ class PlaybackViewModel @Inject constructor(
     var hlsOffsetMs: Long = 0L
         private set
 
+    // Cache the inputs needed to re-issue a transcode session when
+    // the user picks a different audio track. ExoPlayer's
+    // setPreferredAudioLanguage works for direct play (the player
+    // sees every track in the container), but a transcoded HLS
+    // stream only carries the one audio the server picked at start
+    // time — switching languages means a fresh session with a new
+    // audio_stream_index. Null when the active source is direct-
+    // play (no re-issue needed).
+    private var lastTranscodeRequest: TranscodeRequest? = null
+
+    private data class TranscodeRequest(
+        val itemId: String,
+        val fileId: String,
+        val height: Int,
+        val videoCopy: Boolean,
+        val serverUrl: String,
+    )
+
     fun prepare(itemId: String, startMs: Long, serverUrl: String) {
         viewModelScope.launch {
             try {
@@ -69,6 +87,13 @@ class PlaybackViewModel @Inject constructor(
                 val source = when (mode) {
                     is PlaybackMode.DirectPlay -> {
                         hlsOffsetMs = 0
+                        // Direct play: ExoPlayer's track selector
+                        // can swap audio + subtitle tracks by
+                        // language, so no transcode-session re-
+                        // issue path is needed. Clear the cached
+                        // request so a stale one from a previous
+                        // play doesn't get reused.
+                        lastTranscodeRequest = null
                         // ExoPlayer's DefaultHttpDataSource bypasses
                         // our OkHttp interceptor chain, so it can't
                         // carry Authorization: Bearer on /media/stream
@@ -146,6 +171,7 @@ class PlaybackViewModel @Inject constructor(
         fileId: String,
         videoCopy: Boolean,
         serverUrl: String,
+        audioStreamIndex: Int? = null,
     ): PlaybackSource.Hls {
         stopActiveTranscode()
 
@@ -155,15 +181,50 @@ class PlaybackViewModel @Inject constructor(
             positionMs = posMs,
             fileId = fileId,
             videoCopy = videoCopy,
+            audioStreamIndex = audioStreamIndex,
             supportsHevc = PlaybackHelper.supportsHevc(),
         )
 
         transcodeSessionId = session.session_id
         transcodeToken = session.token
         hlsOffsetMs = posMs
+        lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
 
         val fullUrl = "$serverUrl${session.playlist_url}"
         return PlaybackSource.Hls(fullUrl, posMs)
+    }
+
+    /**
+     * Re-issue the active transcode session with a new
+     * audio_stream_index, preserving the current playback
+     * position. Used by the audio-track picker on HLS playback —
+     * direct-play swaps tracks via the ExoPlayer track selector
+     * and never needs to come through here.
+     *
+     * Stops the existing session, starts a fresh one at the same
+     * server-side parameters but with the new audio index, then
+     * re-emits the source flow so the fragment swaps the player's
+     * MediaItem. position_ms is included in the start request so
+     * the new session is keyframe-snapped to where the user was.
+     */
+    fun switchAudioStream(audioStreamIndex: Int, currentPositionMs: Long) {
+        val req = lastTranscodeRequest ?: return
+        viewModelScope.launch {
+            try {
+                val source = startTranscode(
+                    itemId = req.itemId,
+                    height = req.height,
+                    posMs = currentPositionMs + hlsOffsetMs,
+                    fileId = req.fileId,
+                    videoCopy = req.videoCopy,
+                    serverUrl = req.serverUrl,
+                    audioStreamIndex = audioStreamIndex,
+                )
+                _uiState.value = _uiState.value.copy(source = source)
+            } catch (_: Exception) {
+                // Best-effort — leave the existing session running.
+            }
+        }
     }
 
     fun stopActiveTranscode() {

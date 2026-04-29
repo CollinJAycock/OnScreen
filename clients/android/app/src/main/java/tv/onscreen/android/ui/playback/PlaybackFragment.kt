@@ -60,6 +60,17 @@ class PlaybackFragment : VideoSupportFragment() {
 
     private var audioStreams: List<AudioStream> = emptyList()
     private var subtitleStreams: List<SubtitleStream> = emptyList()
+    // Index of the currently-active audio stream within audioStreams
+    // (-1 = default, server picks). Tracked here because in HLS
+    // playback the active track isn't observable from ExoPlayer
+    // (the server emitted only one), so we need our own state to
+    // mark the radio button in the picker.
+    private var activeAudioIndex: Int = -1
+    // Source mode of the current playback session — drives whether
+    // the audio picker can use ExoPlayer's track selector
+    // (direct play) or has to re-issue the transcode session
+    // (HLS / remux). null until the first source emission.
+    private var currentSource: PlaybackSource? = null
     private var nextEpisode: ChildItem? = null
     private var serverUrl: String = ""
 
@@ -146,6 +157,7 @@ class PlaybackFragment : VideoSupportFragment() {
                 audioStreams = state.audioStreams
                 subtitleStreams = state.subtitles
                 nextEpisode = state.nextEpisode
+                currentSource = source
 
                 playSource(source)
                 applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang)
@@ -590,13 +602,44 @@ class PlaybackFragment : VideoSupportFragment() {
             "${i + 1}. $name$ch"
         }.toTypedArray()
 
+        // Mark the active track. activeAudioIndex defaults to -1
+        // (server picked / first track); coerce that to the first
+        // entry so the radio dialog always has a checked row.
+        val checked = if (activeAudioIndex in audioStreams.indices) activeAudioIndex else 0
+
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.audio)
-            .setItems(labels) { d, idx ->
-                selectAudioByLanguage(audioStreams[idx].language)
+            .setSingleChoiceItems(labels, checked) { d, idx ->
                 d.dismiss()
+                if (idx == activeAudioIndex) return@setSingleChoiceItems
+                activeAudioIndex = idx
+                applyAudioSelection(idx)
             }
             .show()
+    }
+
+    /**
+     * Apply an audio-track selection. Direct-play files have every
+     * track present in the container so ExoPlayer's track selector
+     * can swap by language without a network round-trip; transcoded
+     * HLS sessions only carry the one audio the server picked at
+     * start time, so a swap requires re-issuing the session with
+     * the new audio_stream_index. The view model figures out the
+     * source mode and routes accordingly.
+     */
+    private fun applyAudioSelection(idx: Int) {
+        val stream = audioStreams.getOrNull(idx) ?: return
+        if (currentSource is PlaybackSource.Hls) {
+            // HLS / remux path — re-issue the transcode session
+            // with the new audio_stream_index. Server-side
+            // audio_stream_index is the FFmpeg stream index, which
+            // the API exposes via AudioStream.index.
+            val pos = player?.currentPosition ?: 0L
+            viewModel.switchAudioStream(stream.index, pos)
+        } else {
+            // Direct play — let ExoPlayer pick the matching track.
+            selectAudioByLanguage(stream.language)
+        }
     }
 
     private fun showSubtitlePicker() {
@@ -606,11 +649,24 @@ class PlaybackFragment : VideoSupportFragment() {
             if (s.forced) "$name (forced)" else name
         })
 
+        // Best-effort active-row detection: pull the current
+        // preferred-text-language from ExoPlayer's track-selection
+        // params. -1 (off) maps to row 0; an unmatched language
+        // also maps to "Off" so the dialog always has a checked row.
+        val preferred = player?.trackSelectionParameters?.preferredTextLanguages?.firstOrNull()
+        val textDisabled = player?.trackSelectionParameters?.disabledTrackTypes?.contains(C.TRACK_TYPE_TEXT) == true
+        val checked = if (textDisabled || preferred.isNullOrBlank()) {
+            0
+        } else {
+            val match = subtitleStreams.indexOfFirst { it.language.equals(preferred, ignoreCase = true) }
+            if (match < 0) 0 else match + 1
+        }
+
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.subtitles)
-            .setItems(labels.toTypedArray()) { d, idx ->
-                if (idx == 0) disableSubtitles() else selectSubtitleByLanguage(subtitleStreams[idx - 1].language)
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { d, idx ->
                 d.dismiss()
+                if (idx == 0) disableSubtitles() else selectSubtitleByLanguage(subtitleStreams[idx - 1].language)
             }
             .show()
     }
