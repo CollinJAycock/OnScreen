@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Generic list-fetch task. Caller sets `path` to a fully-formed
+    API path (e.g. "/api/v1/favorites?limit=50"); we GET it and
+    write the data array back. Reused by FavoritesScene,
+    HistoryScene, and CollectionScene since all three are the same
+    "GET, render grid, route on click" shape.
+-->
+<component name="ListFetchTask" extends="Task">
+
+    <interface>
+        <field id="path" type="string" />
+        <field id="result" type="array" />
+    </interface>
+
+    <script type="text/brightscript" uri="ListFetchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+</component>

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Collection detail — single-row grid of items in a curated list.
+    Caller (HomeScene / SearchScene / FavoritesScene) sets `itemId`
+    on the node before mount; init fires ListFetchTask against
+    /api/v1/collections/{id}/items. The collection's own metadata
+    is fetched separately so the title can render before the item
+    list lands.
+-->
+<component name="CollectionScene" extends="Group">
+
+    <interface>
+        <field id="itemId" type="string" />
+    </interface>
+
+    <script type="text/brightscript" uri="CollectionScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x121212ff" />
+
+            <Label id="title"
+                   text="Collection"
+                   translation="[80, 50]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <RowList id="rows"
+                     translation="[80, 160]"
+                     itemComponentName="PosterCard"
+                     itemSize="[1760, 380]"
+                     rowItemSize="[[240, 360]]"
+                     rowItemSpacing="[[20, 0]]"
+                     showRowLabel="[false]"
+                     rowHeights="[380]"
+                     focusBitmapBlendColor="0xffffffff"
+                     drawFocusFeedback="true" />
+
+            <Label id="empty"
+                   text="This collection is empty."
+                   translation="[80, 540]"
+                   color="0xa0a0a0ff"
+                   visible="false" />
+        </Group>
+
+        <!-- Items only; the collection name + description fetch is
+             skipped intentionally since the user reached this scene
+             from a card that already showed the collection's name.
+             Future: a CollectionMetaFetchTask if the description
+             needs to surface here. -->
+        <ListFetchTask id="itemsTask" />
+    </children>
+
+</component>

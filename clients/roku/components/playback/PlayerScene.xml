@@ -13,9 +13,16 @@
     remux / transcode (HLS), and is skipped on direct play
     (the file streams as-is via /media/stream/{id}).
 
-    Future work: audio + sub track pickers; cross-device sync
-    consumer; intro/credits + Up Next overlays — all wired the
-    way the Android client does them.
+    Three more tasks ride alongside for player polish:
+      - markersTask: /items/{id}/markers, drives Skip Intro /
+        Skip Credits overlay
+      - childrenTask: /items/{parent}/children, used to pick
+        the next sibling for music auto-advance + the Up Next
+        overlay between episodes
+      - syncTimer: polls /items/{id} while paused so a position
+        update from another logged-in device snaps this player
+        to the new offset (Roku has no native SSE consumer, so
+        polling is the practical equivalent)
 -->
 <component name="PlayerScene" extends="Group">
 
@@ -36,8 +43,61 @@
                height="1080"
                translation="[0,0]" />
 
+        <!-- Skip Intro / Skip Credits overlay. Visible while the
+             playhead is inside an active marker window; the user
+             presses * (the convention for Roku channel "options"
+             actions) to skip. Stays hidden otherwise. -->
+        <Label id="skipMarker"
+               text=""
+               translation="[1500, 940]"
+               width="380"
+               height="80"
+               horizAlign="center"
+               vertAlign="center"
+               color="0xffffffff"
+               backgroundColor="0x7c6af7ee"
+               backgroundUri=""
+               visible="false" />
+
+        <!-- Up Next overlay. Surfaces ~25 s before EOS for episodes
+             and podcast episodes. Music tracks + audiobook chapters
+             chain silently at EOS instead — no overlay because the
+             closing seconds carry the outro / final line. -->
+        <Group id="upNext"
+               translation="[1380, 60]"
+               visible="false">
+            <Rectangle width="500" height="160" color="0x07070dee" />
+            <Label id="upNextLabel"
+                   text="UP NEXT"
+                   translation="[20, 16]"
+                   color="0x7c6af7ff"
+                   font="font:SmallBoldSystemFont" />
+            <Label id="upNextTitle"
+                   text=""
+                   translation="[20, 56]"
+                   width="460"
+                   color="0xffffffff"
+                   font="font:MediumBoldSystemFont"
+                   wrap="true"
+                   maxLines="2" />
+            <Label id="upNextHint"
+                   text="OK to play now"
+                   translation="[20, 124]"
+                   color="0x9a9aaaff"
+                   font="font:SmallSystemFont" />
+        </Group>
+
         <ItemFetchTask id="itemTask" />
         <TranscodeStartTask id="transcodeTask" />
+        <ListFetchTask id="markersTask" />
+        <ListFetchTask id="childrenTask" />
+
+        <!-- Cross-device resume sync. Roku has no native SSE
+             primitive, so we poll /items/{id} every 5 s while
+             paused and snap to view_offset_ms when it diverges
+             from local. Active local playback wins — the polled
+             update is ignored on a playing player. -->
+        <Timer id="syncTimer" duration="5" repeat="true" />
     </children>
 
 </component>

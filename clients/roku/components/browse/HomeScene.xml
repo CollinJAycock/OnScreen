@@ -27,15 +27,23 @@
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
 
-            <!-- Search affordance. Roku has no dedicated search
-                 key on most remotes, so we expose it as a Button
-                 in the top-right of the hub — same role the
-                 magnifier icon plays on the Android client's
-                 BrowseSupportFragment. -->
+            <!-- Header navigation buttons. Roku has no dedicated
+                 search key on most remotes, so search + favorites
+                 + history live as Buttons in the top-right of the
+                 hub. Same affordance the Android client exposes
+                 via its bottom nav row. -->
+            <Button id="favoritesBtn"
+                    text="Favorites"
+                    translation="[1140, 40]"
+                    minWidth="160" />
+            <Button id="historyBtn"
+                    text="History"
+                    translation="[1320, 40]"
+                    minWidth="140" />
             <Button id="searchBtn"
                     text="Search"
-                    translation="[1640, 40]"
-                    minWidth="200" />
+                    translation="[1480, 40]"
+                    minWidth="160" />
 
             <RowList id="rows"
                      translation="[80, 140]"

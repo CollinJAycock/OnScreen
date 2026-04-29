@@ -8,10 +8,14 @@ sub init()
     m.loading = m.top.findNode("loading")
     m.hubTask = m.top.findNode("hubTask")
     m.searchBtn = m.top.findNode("searchBtn")
+    m.favoritesBtn = m.top.findNode("favoritesBtn")
+    m.historyBtn = m.top.findNode("historyBtn")
 
     m.hubTask.observeField("state", "onHubTaskState")
     m.rows.observeField("rowItemSelected", "onCardSelected")
     m.searchBtn.observeField("buttonSelected", "onSearchPressed")
+    m.favoritesBtn.observeField("buttonSelected", "onFavoritesPressed")
+    m.historyBtn.observeField("buttonSelected", "onHistoryPressed")
 
     ' Kick off the fetch. Task nodes start when control=RUN.
     m.hubTask.control = "RUN"
@@ -19,6 +23,14 @@ end sub
 
 sub onSearchPressed()
     getMainScene().callFunc("navigateTo", "SearchScene")
+end sub
+
+sub onFavoritesPressed()
+    getMainScene().callFunc("navigateTo", "FavoritesScene")
+end sub
+
+sub onHistoryPressed()
+    getMainScene().callFunc("navigateTo", "HistoryScene")
 end sub
 
 sub onHubTaskState()
@@ -103,9 +115,16 @@ sub onCardSelected()
     routeForType(itemNode.itemType, itemNode.id)
 end sub
 
-' Centralised type → destination mapping. DetailScene + (future)
-' SearchScene reuse the same routing once they exist.
+' Centralised type → destination mapping. DetailScene + SearchScene
+' + FavoritesScene + HistoryScene + CollectionScene all share
+' equivalents of this routine — adding a new type later means
+' updating each, which is why the Android client kept this in a
+' single Navigator object.
 sub routeForType(itemType as String, itemId as String)
+    if itemType = "collection" or itemType = "playlist"
+        getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
+        return
+    end if
     detail = false
     if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "movie"
         detail = true

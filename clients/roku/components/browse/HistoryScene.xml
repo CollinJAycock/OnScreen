@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Watch history — chronological list of recent watch_events for
+    the signed-in user. Same single-row grid as FavoritesScene;
+    the response shape uses media_id (not id) for the routing
+    target since the row id is the watch_event row, not the item.
+-->
+<component name="HistoryScene" extends="Group">
+
+    <script type="text/brightscript" uri="HistoryScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x121212ff" />
+
+            <Label id="title"
+                   text="History"
+                   translation="[80, 50]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <RowList id="rows"
+                     translation="[80, 160]"
+                     itemComponentName="PosterCard"
+                     itemSize="[1760, 380]"
+                     rowItemSize="[[240, 360]]"
+                     rowItemSpacing="[[20, 0]]"
+                     showRowLabel="[false]"
+                     rowHeights="[380]"
+                     focusBitmapBlendColor="0xffffffff"
+                     drawFocusFeedback="true" />
+
+            <Label id="empty"
+                   text="Nothing watched yet."
+                   translation="[80, 540]"
+                   color="0xa0a0a0ff" />
+        </Group>
+
+        <ListFetchTask id="task" />
+    </children>
+
+</component>

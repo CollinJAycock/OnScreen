@@ -101,6 +101,24 @@ function ApiTranscodeStop(sessionId as String, token as String) as String
     return "/api/v1/transcode/sessions/" + sessionId + "?token=" + token
 end function
 
+' Favorites + History + Collections — read-only list endpoints
+' backing the dedicated grid scenes.
+function ApiFavorites() as String
+    return "/api/v1/favorites?limit=50"
+end function
+
+function ApiHistory() as String
+    return "/api/v1/history?limit=50"
+end function
+
+function ApiCollection(id as String) as String
+    return "/api/v1/collections/" + id
+end function
+
+function ApiCollectionItems(id as String) as String
+    return "/api/v1/collections/" + id + "/items?limit=200"
+end function
+
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function
