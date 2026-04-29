@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -753,6 +754,99 @@ func TestEnricher_setRelPath_skipsOnEmpty(t *testing.T) {
 	e.setRelPath(&dest2, "/elsewhere/artwork.jpg")
 	if dest2 != nil {
 		t.Errorf("dest2 = %v, want nil (skip the update)", dest2)
+	}
+
+	// Pre-set dest stays untouched on miss — guarantees the COALESCE
+	// preserve-prior contract holds even if a caller had already
+	// populated the field from an earlier branch (NFO override,
+	// scanner-derived path, etc.).
+	prior := "scanner-set/path.jpg"
+	dest3 := &prior
+	e.setRelPath(&dest3, "/elsewhere/artwork.jpg")
+	if dest3 == nil || *dest3 != prior {
+		t.Errorf("dest3 = %v, want unchanged %q", dest3, prior)
+	}
+}
+
+// TestEnrichMovie_PosterOutsideScanRoot_PreservesPriorPath is the
+// end-to-end integration of the bare-basename regression. An enricher
+// run downloads a poster that, for whatever reason (symlink, bind
+// mount, scan_paths drift, agent-supplied custom path), lands outside
+// library scan_paths. The agent succeeded — Title/Year/Summary etc.
+// should still update — but PosterPath / FanartPath must stay nil in
+// the update params so the SQL COALESCE preserves whatever the
+// scanner had already populated.
+func TestEnrichMovie_PosterOutsideScanRoot_PreservesPriorPath(t *testing.T) {
+	year := 1999
+	agent := &mockAgent{
+		searchMovieResult: &metadata.MovieResult{
+			TMDBID:    603,
+			Title:     "The Matrix",
+			Year:      1999,
+			Summary:   "A computer hacker learns…",
+			PosterURL: "http://example.com/poster.jpg",
+			FanartURL: "http://example.com/fanart.jpg",
+		},
+	}
+	updater := newMockUpdater()
+	itemID := uuid.New()
+	updater.items[itemID] = &media.Item{ID: itemID, Type: "movie", Title: "The Matrix", Year: &year}
+	// Both downloads land OUTSIDE the test scan root (/media). The
+	// enricher must not write the bare basename to PosterPath or
+	// FanartPath — the previous bug stored "poster.jpg" and "fanart.jpg"
+	// which 404 against any non-flat /artwork/* lookup.
+	artwork := &mockArtwork{
+		posterPath: "/elsewhere/poster.jpg",
+		fanartPath: "/elsewhere/fanart.jpg",
+	}
+	e := newTestEnricher(agent, updater, artwork)
+
+	if err := e.Enrich(context.Background(), updater.items[itemID], &media.File{FilePath: "/media/movies/The.Matrix.1999.mkv"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("expected 1 update call, got %d", len(updater.updateCalls))
+	}
+	p := updater.updateCalls[0]
+	if p.Title != "The Matrix" {
+		t.Errorf("title: got %q, want The Matrix (non-art fields should still update)", p.Title)
+	}
+	if p.PosterPath != nil {
+		t.Errorf("poster_path: got %v, want nil (out-of-scan-root downloads must be skipped so COALESCE preserves prior)", *p.PosterPath)
+	}
+	if p.FanartPath != nil {
+		t.Errorf("fanart_path: got %v, want nil (same reason)", *p.FanartPath)
+	}
+}
+
+// TestSetItemPoster_OutsideScanRoot_ReturnsError covers the manual
+// poster picker site. Unlike the agent-side enrichers (which silently
+// skip the bad path so other update fields land), the manual picker
+// is admin-driven and should fail loudly so the operator can fix the
+// scan_paths config rather than ending up with a poster_path the
+// /artwork/* route can't resolve.
+func TestSetItemPoster_OutsideScanRoot_ReturnsError(t *testing.T) {
+	updater := newMockUpdater()
+	itemID := uuid.New()
+	updater.items[itemID] = &media.Item{ID: itemID, Type: "movie", Title: "Stray Film"}
+	updater.files[itemID] = []media.File{
+		{ID: uuid.New(), MediaItemID: itemID, FilePath: "/media/movies/stray/stray.mkv", Status: "active"},
+	}
+	// Downloaded poster lands outside scan_paths — manual picker must
+	// return an error so the admin sees what went wrong.
+	artwork := &mockArtwork{posterPath: "/elsewhere/poster.jpg"}
+	e := newTestEnricher(nil, updater, artwork)
+
+	err := e.SetItemPoster(context.Background(), itemID, "http://example.com/x.jpg")
+	if err == nil {
+		t.Fatal("expected error for out-of-scan-path poster, got nil")
+	}
+	if !strings.Contains(err.Error(), "outside library scan_paths") {
+		t.Errorf("err = %q, want one mentioning 'outside library scan_paths' so the operator knows what to fix", err.Error())
+	}
+	// And no update call lands — the row stays clean.
+	if len(updater.updateCalls) != 0 {
+		t.Errorf("update calls: got %d, want 0 (failed picker must not write a row)", len(updater.updateCalls))
 	}
 }
 
