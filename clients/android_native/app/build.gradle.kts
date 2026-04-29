@@ -61,6 +61,14 @@ dependencies {
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    // WorkManager + hilt-work: long-running background downloads
+    // survive process death, and Hilt injects the worker so it can
+    // share the same OkHttp + repo singletons the rest of the app
+    // uses (no second auth interceptor stack).
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
+
     // Media3 / ExoPlayer — same versions as the TV client so the
     // transcode + HLS path stays identical.
     implementation("androidx.media3:media3-exoplayer:1.3.1")

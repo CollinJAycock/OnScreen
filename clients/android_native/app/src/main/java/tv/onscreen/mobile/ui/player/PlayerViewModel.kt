@@ -43,6 +43,7 @@ class PlayerViewModel @Inject constructor(
     private val transcodeRepo: TranscodeRepository,
     private val preferencesRepo: PreferencesRepository,
     private val serverPrefs: ServerPrefs,
+    private val downloads: tv.onscreen.mobile.data.downloads.OnScreenDownloadManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PlayerUiState())
@@ -83,8 +84,23 @@ class PlayerViewModel @Inject constructor(
                 val mode = PlaybackHelper.decide(file)
                 val startMs = item.view_offset_ms
 
-                val source = when (mode) {
-                    is PlaybackMode.DirectPlay -> {
+                // Offline-first: if the user has a completed download
+                // for this file, play the local copy. Skips even the
+                // transcode/remux negotiation — the on-disk file is
+                // the original bytes the server has.
+                downloads.store.load()
+                val downloaded = downloads.store.get(file.id)
+                val localFile = downloaded?.takeIf { it.status == "completed" }
+                    ?.let { downloads.store.fileFor(it) }
+                    ?.takeIf { it.exists() && it.length() > 0 }
+
+                val source = when {
+                    localFile != null -> {
+                        hlsOffsetMs = 0
+                        lastTranscodeRequest = null
+                        PlaybackSource.DirectPlay("file://${localFile.absolutePath}", startMs)
+                    }
+                    mode is PlaybackMode.DirectPlay -> {
                         hlsOffsetMs = 0
                         lastTranscodeRequest = null
                         PlaybackSource.DirectPlay(
@@ -92,10 +108,11 @@ class PlayerViewModel @Inject constructor(
                             startMs,
                         )
                     }
-                    is PlaybackMode.Remux ->
+                    mode is PlaybackMode.Remux ->
                         startTranscode(itemId, 0, startMs, file.id, true, serverUrl)
-                    is PlaybackMode.Transcode ->
+                    mode is PlaybackMode.Transcode ->
                         startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl)
+                    else -> error("unreachable")
                 }
 
                 val markers = itemRepo.getMarkers(itemId)

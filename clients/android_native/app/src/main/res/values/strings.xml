@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OnScreen</string>
+    <string name="downloads_channel_name">Downloads</string>
+    <string name="downloading_title">Downloading %s</string>
 </resources>

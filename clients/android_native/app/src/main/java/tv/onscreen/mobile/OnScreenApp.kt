@@ -1,6 +1,8 @@
 package tv.onscreen.mobile
 
 import android.app.Application
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
@@ -10,7 +12,15 @@ import okhttp3.OkHttpClient
 import javax.inject.Inject
 
 @HiltAndroidApp
-class OnScreenApp : Application(), ImageLoaderFactory {
+class OnScreenApp : Application(), ImageLoaderFactory, Configuration.Provider {
+
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
+
 
     // Coil shares the OkHttp client with the Retrofit stack so the
     // AuthInterceptor + token-refresh authenticator apply uniformly

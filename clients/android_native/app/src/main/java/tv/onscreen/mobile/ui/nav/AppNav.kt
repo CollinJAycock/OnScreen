@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.stateIn
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.ui.collections.CollectionDetailScreen
 import tv.onscreen.mobile.ui.collections.CollectionsScreen
+import tv.onscreen.mobile.ui.downloads.DownloadsScreen
 import tv.onscreen.mobile.ui.favorites.FavoritesScreen
 import tv.onscreen.mobile.ui.history.HistoryScreen
 import tv.onscreen.mobile.ui.hub.HubScreen
@@ -65,6 +66,13 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 onOpenFavorites = { nav.navigate(Routes.FAVORITES) },
                 onOpenHistory = { nav.navigate(Routes.HISTORY) },
                 onOpenCollections = { nav.navigate(Routes.COLLECTIONS) },
+                onOpenDownloads = { nav.navigate(Routes.DOWNLOADS) },
+            )
+        }
+        composable(Routes.DOWNLOADS) {
+            DownloadsScreen(
+                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.FAVORITES) {

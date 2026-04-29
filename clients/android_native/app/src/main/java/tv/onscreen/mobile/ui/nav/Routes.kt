@@ -11,6 +11,7 @@ object Routes {
     const val HISTORY = "history"
     const val COLLECTIONS = "collections"
     const val COLLECTION = "collection/{id}"
+    const val DOWNLOADS = "downloads"
 
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"

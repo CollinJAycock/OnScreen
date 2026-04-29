@@ -8,9 +8,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,11 +36,21 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.downloads.DownloadEntry
+import tv.onscreen.mobile.data.downloads.DownloadWorker
+import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.repository.ItemRepository
 import javax.inject.Inject
@@ -40,20 +58,51 @@ import javax.inject.Inject
 @HiltViewModel
 class ItemDetailViewModel @Inject constructor(
     private val repo: ItemRepository,
+    private val downloads: OnScreenDownloadManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ItemDetailUi())
     val state: StateFlow<ItemDetailUi> = _state.asStateFlow()
+
+    /** Per-file download state for the currently-loaded item. The
+     *  detail page uses this to render the Download / Downloading X% /
+     *  Downloaded ✓ button. Combines the persisted manifest entry
+     *  with the live WorkManager progress so the user sees byte
+     *  counters update in real time. */
+    val downloadState: StateFlow<Map<String, DownloadButtonState>> =
+        downloads.store.state
+            .combine(flowOf(Unit)) { manifest, _ -> manifest }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, downloads.store.state.value)
+            .let { manifestFlow ->
+                MutableStateFlow<Map<String, DownloadButtonState>>(emptyMap()).also { dest ->
+                    viewModelScope.launch(Dispatchers.Default) {
+                        manifestFlow.collect { manifest ->
+                            dest.value = manifest.entries.associate { e ->
+                                e.file_id to DownloadButtonState.fromEntry(e)
+                            }
+                        }
+                    }
+                }
+            }
 
     fun load(itemId: String) {
         viewModelScope.launch {
             _state.value = ItemDetailUi(loading = true)
             try {
                 _state.value = ItemDetailUi(loading = false, detail = repo.getItem(itemId))
+                downloads.store.load()
             } catch (e: Exception) {
                 _state.value = ItemDetailUi(loading = false, error = e.message)
             }
         }
+    }
+
+    fun startDownload(fileId: String, itemId: String) {
+        downloads.enqueue(fileId, itemId)
+    }
+
+    fun deleteDownload(fileId: String) {
+        viewModelScope.launch { downloads.delete(fileId) }
     }
 }
 
@@ -62,6 +111,65 @@ data class ItemDetailUi(
     val detail: ItemDetail? = null,
     val error: String? = null,
 )
+
+/** UI-friendly snapshot of a single file's download state. Driven by
+ *  the manifest; live WorkManager progress is reported via
+ *  [DownloadEntry.downloaded_bytes]/size_bytes which the worker
+ *  updates as it writes. */
+sealed class DownloadButtonState {
+    data object NotDownloaded : DownloadButtonState()
+    data class InProgress(val downloadedBytes: Long, val totalBytes: Long) : DownloadButtonState() {
+        val ratio: Float
+            get() = if (totalBytes <= 0) 0f else (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+    }
+    data object Completed : DownloadButtonState()
+    data class Failed(val message: String?) : DownloadButtonState()
+
+    companion object {
+        fun fromEntry(e: DownloadEntry): DownloadButtonState = when (e.status) {
+            "completed" -> Completed
+            "failed" -> Failed(e.error)
+            else -> InProgress(e.downloaded_bytes, e.size_bytes)
+        }
+    }
+}
+
+@Composable
+private fun DownloadButton(
+    state: DownloadButtonState,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    when (state) {
+        DownloadButtonState.NotDownloaded -> OutlinedButton(onClick = onDownload) {
+            Icon(Icons.Default.Download, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Download")
+        }
+        is DownloadButtonState.InProgress -> Column {
+            OutlinedButton(onClick = onDelete) {
+                Icon(Icons.Default.Downloading, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("${(state.ratio * 100).toInt()}% — Cancel")
+            }
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { state.ratio },
+                modifier = Modifier.width(160.dp),
+            )
+        }
+        DownloadButtonState.Completed -> OutlinedButton(onClick = onDelete) {
+            Icon(Icons.Default.CheckCircle, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Downloaded")
+        }
+        is DownloadButtonState.Failed -> OutlinedButton(onClick = onDownload) {
+            Icon(Icons.Default.Close, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Retry")
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,16 +205,32 @@ fun ItemDetailScreen(
                 ui.error != null -> Text(ui.error!!, modifier = Modifier.align(Alignment.Center))
                 ui.detail != null -> {
                     val d = ui.detail!!
+                    val downloadStates by vm.downloadState.collectAsState()
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(d.title, style = MaterialTheme.typography.headlineSmall)
                         if (d.year != null) {
                             Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
                         }
                         Spacer(Modifier.height(16.dp))
-                        Button(onClick = { onPlay(itemId) }) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(Modifier.height(0.dp))
-                            Text("Play")
+                        Row {
+                            Button(onClick = { onPlay(itemId) }) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Play")
+                            }
+                            // Only the first file is downloadable from
+                            // the detail page for now — multi-file
+                            // items (audiobooks with chapters) would
+                            // need a per-file picker, scoped out for
+                            // v1 of offline.
+                            d.files.firstOrNull()?.let { file ->
+                                Spacer(Modifier.width(8.dp))
+                                DownloadButton(
+                                    state = downloadStates[file.id] ?: DownloadButtonState.NotDownloaded,
+                                    onDownload = { vm.startDownload(file.id, itemId) },
+                                    onDelete = { vm.deleteDownload(file.id) },
+                                )
+                            }
                         }
                         if (!d.summary.isNullOrEmpty()) {
                             Spacer(Modifier.height(16.dp))
