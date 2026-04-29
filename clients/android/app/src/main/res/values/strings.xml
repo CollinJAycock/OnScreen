@@ -46,9 +46,6 @@
     <string name="unfavorite">Unfavorite</string>
     <string name="favorites">Favorites</string>
     <string name="history">History</string>
-    <string name="notifications">Notifications</string>
-    <string name="mark_all_read">Mark all read</string>
-    <string name="no_notifications">No notifications yet</string>
     <string name="settings">Settings</string>
     <string name="language_preferences">Language Preferences</string>
     <string name="preferred_audio_language">Preferred audio language</string>
@@ -80,6 +77,12 @@
     <!-- Search + request -->
     <string name="search_in_library">In your library</string>
     <string name="search_request_more">Request more</string>
+    <string name="filter_label">Filter</string>
+    <string name="filter_movies">Movies</string>
+    <string name="filter_shows">TV Shows</string>
+    <string name="filter_episodes">Episodes</string>
+    <string name="filter_tracks">Tracks</string>
+    <string name="filter_all_hidden">%1$d match(es) hidden by the type filters above</string>
     <string name="request_confirm_title">Add to your library?</string>
     <string name="request_confirm_message">"%1$s" will be sent to your media server for download.</string>
     <string name="request_confirm_yes">Request</string>

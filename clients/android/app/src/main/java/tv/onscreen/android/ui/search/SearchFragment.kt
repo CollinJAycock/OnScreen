@@ -63,11 +63,11 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             serverUrl = prefs.serverUrl.first() ?: ""
         }
 
-        // Re-render whenever any of the three input streams change.
+        // Re-render whenever any of the input streams change.
         // collectLatest keeps the most recent state; rebuildRows is
         // idempotent (clears + repopulates the adapter).
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.results.collectLatest { rebuildRows() }
+            viewModel.visibleResults.collectLatest { rebuildRows() }
         }
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.discover.collectLatest { rebuildRows() }
@@ -77,6 +77,13 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         }
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.scope.collectLatest { rebuildRows() }
+        }
+        // Filter changes flow through visibleResults too, but binding
+        // here as well so the chip row repaints with the new check
+        // marks immediately (visibleResults only changes if the
+        // filter's mask differs against an existing result set).
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.filters.collectLatest { rebuildRows() }
         }
 
         view.isFocusableInTouchMode = true
@@ -93,6 +100,8 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                     Navigator.open(parentFragmentManager, item.id, item.type, 0)
                 is DiscoverItem ->
                     onDiscoverClicked(item)
+                is FilterChipPresenter.Chip ->
+                    viewModel.toggleFilter(item.type)
             }
         }
     }
@@ -110,11 +119,30 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     }
 
     private fun rebuildRows() {
-        val library = viewModel.results.value
+        val library = viewModel.visibleResults.value
+        val rawCount = viewModel.results.value.size
         val discover = viewModel.discover.value
         val discoverError = viewModel.discoverError.value
+        val filters = viewModel.filters.value
 
         rowsAdapter.clear()
+
+        // Filter chip row first — always visible so the user can
+        // toggle types regardless of whether anything matched. Order
+        // (Movies, TV Shows, Episodes, Tracks) matches the web
+        // /search page so the visual mental model carries across
+        // surfaces.
+        val chipPresenter = FilterChipPresenter(requireContext())
+        val chipAdapter = ArrayObjectAdapter(chipPresenter)
+        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.MOVIE,
+            getString(R.string.filter_movies), filters.movie))
+        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.SHOW,
+            getString(R.string.filter_shows), filters.show))
+        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.EPISODE,
+            getString(R.string.filter_episodes), filters.episode))
+        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.TRACK,
+            getString(R.string.filter_tracks), filters.track))
+        rowsAdapter.add(ListRow(HeaderItem(FILTER_HEADER_ID, getString(R.string.filter_label)), chipAdapter))
 
         if (library.isNotEmpty()) {
             val cardPresenter = CardPresenter(requireContext(), serverUrl)
@@ -122,7 +150,15 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             library.forEach { listAdapter.add(it) }
             val label = viewModel.scope.value?.name
                 ?: getString(R.string.search_in_library)
-            rowsAdapter.add(ListRow(HeaderItem(0L, label), listAdapter))
+            rowsAdapter.add(ListRow(HeaderItem(LIBRARY_HEADER_ID, label), listAdapter))
+        } else if (rawCount > 0) {
+            // Server returned matches but every one was hidden by the
+            // filter checkboxes. Surface that in a header so the user
+            // doesn't think their query failed — same affordance the
+            // web /search page shows.
+            val hiddenAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
+            val msg = getString(R.string.filter_all_hidden, rawCount)
+            rowsAdapter.add(ListRow(HeaderItem(HIDDEN_HEADER_ID, msg), hiddenAdapter))
         }
 
         if (discover.isNotEmpty()) {
@@ -130,7 +166,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             val listAdapter = ArrayObjectAdapter(discoverPresenter)
             discover.forEach { listAdapter.add(it) }
             rowsAdapter.add(
-                ListRow(HeaderItem(1L, getString(R.string.search_request_more)), listAdapter),
+                ListRow(HeaderItem(DISCOVER_HEADER_ID, getString(R.string.search_request_more)), listAdapter),
             )
         } else if (discoverError != null) {
             // Surface the discover failure in the row label itself so
@@ -140,9 +176,17 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             // case shouldn't render any chrome at all).
             val emptyAdapter = ArrayObjectAdapter(DiscoverCardPresenter(requireContext()))
             rowsAdapter.add(
-                ListRow(HeaderItem(2L, discoverError), emptyAdapter),
+                ListRow(HeaderItem(DISCOVER_ERROR_HEADER_ID, discoverError), emptyAdapter),
             )
         }
+    }
+
+    companion object {
+        private const val FILTER_HEADER_ID = 0L
+        private const val LIBRARY_HEADER_ID = 1L
+        private const val HIDDEN_HEADER_ID = 2L
+        private const val DISCOVER_HEADER_ID = 3L
+        private const val DISCOVER_ERROR_HEADER_ID = 4L
     }
 
     private fun onDiscoverClicked(item: DiscoverItem) {

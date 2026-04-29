@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unchecked, unfocused. Translucent surface + thin border so the
+     chip is visible but visually quieter than the checked siblings. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#22ffffff" />
+    <stroke android:width="1dp" android:color="#44ffffff" />
+    <corners android:radius="20dp" />
+</shape>

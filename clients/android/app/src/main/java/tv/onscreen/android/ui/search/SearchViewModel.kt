@@ -9,12 +9,17 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import tv.onscreen.android.data.model.DiscoverItem
 import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.SearchResult
+import tv.onscreen.android.data.prefs.SearchFilters
+import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.DiscoverRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.LibraryRepository
@@ -25,11 +30,45 @@ class SearchViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val libraryRepo: LibraryRepository,
     private val discoverRepo: DiscoverRepository,
+    private val prefs: ServerPrefs,
 ) : ViewModel() {
 
-    /** Library matches — items already in the user's collection. */
+    /** Raw library matches — items already in the user's collection.
+     *  Consumers should bind to [visibleResults] instead so the type-
+     *  filter checkboxes apply. */
     private val _results = MutableStateFlow<List<SearchResult>>(emptyList())
     val results: StateFlow<List<SearchResult>> = _results
+
+    /** Reactive filter state, persisted via DataStore. Defaults match
+     *  the web client (movie + show on, episode + track off). */
+    val filters: StateFlow<SearchFilters> = prefs.searchFilters.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = SearchFilters(movie = true, show = true, episode = false, track = false),
+    )
+
+    /** Library results filtered by the type checkboxes. Matches the
+     *  web /search rules: album + artist piggyback on the Track box,
+     *  season piggybacks on Show. Unknown types pass through so a
+     *  future media type renders the moment the API returns it. */
+    val visibleResults: StateFlow<List<SearchResult>> = combine(_results, filters) { rows, f ->
+        rows.filter { r ->
+            when (r.type) {
+                "movie" -> f.movie
+                "show" -> f.show
+                "season" -> f.show
+                "episode" -> f.episode
+                "artist" -> f.track
+                "album" -> f.track
+                "track" -> f.track
+                else -> true
+            }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = emptyList(),
+    )
 
     /** TMDB-discover matches — titles the user could request. The
      *  list is filtered to drop in_library entries client-side
@@ -64,6 +103,24 @@ class SearchViewModel @Inject constructor(
         _scope.value = library
         if (lastQuery.isNotEmpty()) search(lastQuery)
     }
+
+    /** Toggle a single filter checkbox. Persisted via DataStore so
+     *  the user's choices survive app restart, matching the web
+     *  client's localStorage persistence. */
+    fun toggleFilter(type: FilterType) {
+        viewModelScope.launch {
+            val current = filters.value
+            val next = when (type) {
+                FilterType.MOVIE -> current.copy(movie = !current.movie)
+                FilterType.SHOW -> current.copy(show = !current.show)
+                FilterType.EPISODE -> current.copy(episode = !current.episode)
+                FilterType.TRACK -> current.copy(track = !current.track)
+            }
+            prefs.setSearchFilters(next)
+        }
+    }
+
+    enum class FilterType { MOVIE, SHOW, EPISODE, TRACK }
 
     fun search(query: String) {
         lastQuery = query

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unchecked + focused. Slightly brighter fill + accent border so
+     the user can tell which off-state chip the remote is on. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#33ffffff" />
+    <stroke android:width="2dp" android:color="@color/accent" />
+    <corners android:radius="20dp" />
+</shape>

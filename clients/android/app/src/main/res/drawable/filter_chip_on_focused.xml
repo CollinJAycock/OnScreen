@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Checked + focused. Same accent fill, with a brighter outline so
+     the focused chip pops against the row of un-focused-checked
+     siblings on a TV at couch distance. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/accent" />
+    <stroke android:width="2dp" android:color="#ffffff" />
+    <corners android:radius="20dp" />
+</shape>

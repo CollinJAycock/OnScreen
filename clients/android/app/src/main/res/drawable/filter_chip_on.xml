@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Search filter chip — checked, unfocused. Solid accent fill so the
+    "this filter is on" state reads at a glance against the dark hub.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/accent" />
+    <corners android:radius="20dp" />
+</shape>
