@@ -305,6 +305,40 @@ export async function onMediaKey(
   return unlisten;
 }
 
+/** ReplayGain mode for the native audio engine. The Rust side multiplies
+ *  every f32 sample by a per-track factor computed from the file's
+ *  REPLAYGAIN_* tags so playback volume is normalised across the catalog.
+ *  - off: passthrough, no gain applied.
+ *  - track: REPLAYGAIN_TRACK_GAIN — varies song-to-song, best for shuffle.
+ *  - album: REPLAYGAIN_ALBUM_GAIN — preserves intentional loudness
+ *    differences within an album, best for sequential listening. Falls
+ *    back to track gain when album tags are missing. */
+export type ReplayGainMode = 'off' | 'track' | 'album';
+
+export async function replayGainSetMode(mode: ReplayGainMode): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('replay_gain_set_mode', { mode });
+  } catch (e) {
+    console.debug('replayGainSetMode failed (non-fatal):', e);
+  }
+}
+
+/** Preamp adjustment in dB. Clamped to ±15 on the Rust side; values
+ *  outside that range silently saturate rather than failing. Typical
+ *  use is +6 dB to compensate for ReplayGain's conservative
+ *  reference loudness (most modern catalogs prefer a hotter target). */
+export async function replayGainSetPreamp(db: number): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('replay_gain_set_preamp', { db });
+  } catch (e) {
+    console.debug('replayGainSetPreamp failed (non-fatal):', e);
+  }
+}
+
 /** Push the currently-playing track's metadata to the OS now-playing
  *  widget (Windows SMTC / macOS NowPlayingInfoCenter / Linux MPRIS).
  *  Distinct from [`notifyNowPlaying`]: the notification is a transient

@@ -16,6 +16,9 @@
     nowPlayingSetMetadata,
     nowPlayingSetPlayback,
     nowPlayingClear,
+    replayGainSetMode,
+    replayGainSetPreamp,
+    type ReplayGainMode,
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
@@ -159,6 +162,20 @@
     }
     const m = localStorage.getItem('onscreen_audio_muted');
     if (m === '1') muted = true;
+
+    // Restore native-engine ReplayGain settings. The Rust atomics
+    // reset to defaults on every process launch; the user's choice
+    // lives in localStorage and we re-push it on mount so the
+    // settings survive an app restart. No-op in browser builds via
+    // the isTauri() guard inside replayGainSet*.
+    const storedRgMode = localStorage.getItem('onscreen_native_rg_mode');
+    if (storedRgMode === 'off' || storedRgMode === 'track' || storedRgMode === 'album') {
+      void replayGainSetMode(storedRgMode as ReplayGainMode);
+    }
+    const storedRgPreamp = parseFloat(localStorage.getItem('onscreen_native_rg_preamp') ?? '');
+    if (Number.isFinite(storedRgPreamp)) {
+      void replayGainSetPreamp(storedRgPreamp);
+    }
 
     // Wire OS media keys → audio store. The Rust side registers the
     // shortcuts globally so they fire whether or not OnScreen is

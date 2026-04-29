@@ -1,0 +1,175 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import {
+    isTauri,
+    replayGainSetMode,
+    replayGainSetPreamp,
+    type ReplayGainMode,
+  } from '$lib/native';
+
+  // Defaults match the Rust-side atomics: off + 0 dB preamp. Stored
+  // in localStorage so reopening the desktop app picks up the user's
+  // last choice without a Tauri-side prefs file. The layout's onMount
+  // re-applies these via the IPC commands so the engine state is in
+  // sync with the UI on every launch.
+  let mode: ReplayGainMode = $state('off');
+  let preampDb: number = $state(0);
+  let busyMode = $state(false);
+  let busyPreamp = $state(false);
+  let saveError = $state('');
+
+  // Tauri-only page — surface a clear message in browser builds so a
+  // confused user navigating here from the web shell doesn't see a
+  // silent broken UI.
+  let inTauri = $state(false);
+
+  onMount(() => {
+    inTauri = isTauri();
+    const storedMode = localStorage.getItem('onscreen_native_rg_mode');
+    if (storedMode === 'off' || storedMode === 'track' || storedMode === 'album') {
+      mode = storedMode;
+    }
+    const storedPreamp = parseFloat(localStorage.getItem('onscreen_native_rg_preamp') ?? '');
+    if (Number.isFinite(storedPreamp)) {
+      preampDb = storedPreamp;
+    }
+  });
+
+  async function applyMode(next: ReplayGainMode) {
+    busyMode = true;
+    saveError = '';
+    try {
+      await replayGainSetMode(next);
+      localStorage.setItem('onscreen_native_rg_mode', next);
+      mode = next;
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : String(e);
+    } finally {
+      busyMode = false;
+    }
+  }
+
+  async function applyPreamp() {
+    busyPreamp = true;
+    saveError = '';
+    // Clamp client-side to mirror the Rust-side ±15 dB clamp; the
+    // user sees the actual value the engine will use rather than a
+    // silently-saturated one.
+    const clamped = Math.max(-15, Math.min(15, preampDb));
+    if (clamped !== preampDb) preampDb = clamped;
+    try {
+      await replayGainSetPreamp(clamped);
+      localStorage.setItem('onscreen_native_rg_preamp', String(clamped));
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : String(e);
+    } finally {
+      busyPreamp = false;
+    }
+  }
+</script>
+
+<svelte:head><title>Audio · OnScreen</title></svelte:head>
+
+<div class="page">
+  <h1>Audio (native engine)</h1>
+
+  {#if !inTauri}
+    <p class="hint">
+      This page configures the OnScreen desktop client's native audio
+      engine. Open the desktop app to adjust these settings.
+    </p>
+  {:else}
+    {#if saveError}
+      <p class="err">{saveError}</p>
+    {/if}
+
+    <section>
+      <h2>ReplayGain</h2>
+      <p class="desc">
+        Normalises perceived loudness across the catalog by applying the
+        gain encoded in each file's <code>REPLAYGAIN_*</code> tags. Track
+        mode varies song-to-song and is best for shuffle; album mode
+        preserves intentional loudness differences within an album and
+        is best for sequential listening. Settings apply on the next
+        track — the currently-playing track stays at its original level
+        until it ends or you skip.
+      </p>
+
+      <div class="mode-row">
+        {#each [
+          ['off', 'Off', 'Play at native level — no normalisation'],
+          ['track', 'Track', 'Normalise per-track loudness'],
+          ['album', 'Album', 'Normalise per-album, preserve in-album dynamics'],
+        ] as [val, label, hint] (val)}
+          <button
+            class="mode"
+            class:active={mode === val}
+            disabled={busyMode}
+            onclick={() => applyMode(val as ReplayGainMode)}
+          >
+            <div class="mode-label">{label}</div>
+            <div class="mode-hint">{hint}</div>
+          </button>
+        {/each}
+      </div>
+    </section>
+
+    <section>
+      <h2>Preamp</h2>
+      <p class="desc">
+        Adjusts the overall ReplayGain output by a fixed dB offset.
+        ReplayGain's reference is conservative; +6 dB is a common boost
+        for catalogs mastered hot enough that the default attenuation
+        feels quiet. Clamped to ±15 dB — peak limiting still applies, so
+        positive boosts won't clip.
+      </p>
+      <div class="preamp-row">
+        <input
+          type="range"
+          min="-15"
+          max="15"
+          step="0.5"
+          bind:value={preampDb}
+          disabled={busyPreamp || mode === 'off'}
+          onchange={applyPreamp}
+        />
+        <div class="preamp-value">
+          {preampDb > 0 ? '+' : ''}{preampDb.toFixed(1)} dB
+        </div>
+      </div>
+    </section>
+  {/if}
+</div>
+
+<style>
+  .page { padding: 2.5rem 2.5rem 5rem; max-width: 800px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 1.5rem; }
+  h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+  .hint { color: var(--text-muted); }
+  .err { color: var(--danger, #f87171); margin-bottom: 1rem; }
+  .desc { color: var(--text-secondary); line-height: 1.5; margin: 0 0 1.25rem; }
+  .desc code { background: var(--surface); padding: 0 0.25rem; border-radius: 3px; }
+
+  section + section { margin-top: 2.5rem; }
+
+  .mode-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+  .mode {
+    text-align: left; padding: 1rem; border-radius: 8px;
+    border: 2px solid var(--border); background: var(--surface);
+    color: var(--text-primary); cursor: pointer;
+    transition: border-color 0.1s ease, background 0.1s ease;
+  }
+  .mode:hover:not(:disabled) { border-color: var(--accent); }
+  .mode.active { border-color: var(--accent); background: rgba(124, 106, 247, 0.12); }
+  .mode-label { font-weight: 600; margin-bottom: 0.25rem; }
+  .mode-hint { font-size: 0.8rem; color: var(--text-muted); line-height: 1.3; }
+
+  .preamp-row { display: flex; align-items: center; gap: 1rem; }
+  .preamp-row input[type="range"] { flex: 1; }
+  .preamp-value { width: 6rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 600px) {
+    .page { padding: 1.5rem 1rem 4rem; }
+    .mode-row { grid-template-columns: 1fr; }
+  }
+</style>
