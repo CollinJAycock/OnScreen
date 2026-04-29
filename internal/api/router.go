@@ -16,6 +16,7 @@ import (
 	"github.com/riandyrn/otelchi"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/api/respond"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/observability"
@@ -211,7 +212,17 @@ func NewRouter(h *Handlers) http.Handler {
 							w.Header().Set("Content-Type", "image/jpeg")
 							w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
 							if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
-								h.Logger.Error("artwork resize failed", "path", abs, "error", err)
+								// Client navigating off mid-resize is
+								// normal traffic on a TV remote (scroll
+								// past a card, swap rows, etc.) — log
+								// at debug so the buffer surfaces real
+								// resize failures instead of being
+								// drowned in broken-pipe entries.
+								if respond.IsClientGone(err) {
+									h.Logger.Debug("artwork resize: client gone", "path", abs, "error", err)
+								} else {
+									h.Logger.Error("artwork resize failed", "path", abs, "error", err)
+								}
 							}
 							return
 						}

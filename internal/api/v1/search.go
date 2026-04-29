@@ -132,6 +132,14 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		// User typing fast in the search box cancels the prior
+		// in-flight query (ctx is request-scoped); log that at debug
+		// instead of error and skip InternalError — the response
+		// connection is already gone, nothing to write.
+		if respond.IsClientGone(err) {
+			h.logger.DebugContext(r.Context(), "search query cancelled by client", "err", err)
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "search query failed", "err", err)
 		respond.InternalError(w, r)
 		return

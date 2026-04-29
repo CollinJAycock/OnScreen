@@ -546,8 +546,18 @@ func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 		Fit:     fit,
 		Quality: quality,
 	}); err != nil {
-		h.logger.WarnContext(r.Context(), "serve photo image",
-			"id", id, "path", files[0].FilePath, "err", err)
+		// Skip the noisy "broken pipe" / "context canceled" log line
+		// when the client just navigated away mid-fetch — a TV
+		// remote scrolled past the photo, the activity went to the
+		// background, etc. Drop those to debug; real server-side
+		// failures still log at warn so they show up in /admin/logs.
+		if respond.IsClientGone(err) {
+			h.logger.DebugContext(r.Context(), "serve photo image: client gone",
+				"id", id, "path", files[0].FilePath, "err", err)
+		} else {
+			h.logger.WarnContext(r.Context(), "serve photo image",
+				"id", id, "path", files[0].FilePath, "err", err)
+		}
 		// Headers may already be flushed; best we can do is stop writing.
 		return
 	}
