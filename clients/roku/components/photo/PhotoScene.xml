@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Full-screen photo viewer with D-pad sibling navigation.
+    Mirrors the Android PhotoViewFragment behaviour:
+
+      - Caller (HomeScene / SearchScene / FavoritesScene /
+        HistoryScene / CollectionScene) sets `itemId` before
+        mount; on init we render the photo and start resolving
+        siblings.
+      - Siblings come from the parent album's children when the
+        photo has a parent_id; fallback is the photo's library
+        listing. When neither produces 2+ entries, left/right
+        no-op and the position counter stays hidden.
+      - left/right cycle through the resolved sibling list with
+        wrap-around. back exits.
+
+    Photos render via the per-item /image route (1920×1080, fit=
+    contain) so the server resizes once + caches; subsequent
+    forward/back navigation hits the cache.
+-->
+<component name="PhotoScene" extends="Group">
+
+    <interface>
+        <field id="itemId" type="string" />
+    </interface>
+
+    <script type="text/brightscript" uri="PhotoScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x000000ff" />
+
+            <Poster id="photo"
+                    width="1920" height="1080"
+                    loadDisplayMode="scaleToFitZoom"
+                    loadingBitmapOpacity="0" />
+
+            <!-- Position counter ("3 / 47"). Hidden when there's
+                 only one photo (no siblings means no point in
+                 showing N/total). Translucent dark backdrop so
+                 it stays readable on a bright photo. -->
+            <Label id="position"
+                   text=""
+                   translation="[1700, 1000]"
+                   width="180"
+                   height="60"
+                   horizAlign="center"
+                   vertAlign="center"
+                   color="0xffffffff"
+                   backgroundColor="0x000000aa"
+                   visible="false" />
+        </Group>
+
+        <ItemFetchTask id="itemTask" />
+        <ListFetchTask id="parentChildrenTask" />
+        <ListFetchTask id="libraryItemsTask" />
+    </children>
+
+</component>

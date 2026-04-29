@@ -125,6 +125,10 @@ sub routeForType(itemType as String, itemId as String)
         getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
         return
     end if
+    if itemType = "photo"
+        getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
+        return
+    end if
     detail = false
     if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "movie"
         detail = true

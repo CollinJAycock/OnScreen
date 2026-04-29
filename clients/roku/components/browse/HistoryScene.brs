@@ -60,6 +60,14 @@ sub onCardSelected()
 end sub
 
 sub routeHistorySelection(itemType as String, itemId as String)
+    if itemType = "photo"
+        getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
+        return
+    end if
+    if itemType = "collection" or itemType = "playlist"
+        getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
+        return
+    end if
     if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "movie"
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else

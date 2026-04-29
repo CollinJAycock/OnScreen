@@ -54,8 +54,17 @@ sub onCardSelected()
     routeFavoriteSelection(item.itemType, item.id)
 end sub
 
-' Type-aware routing — same model HomeScene + SearchScene use.
+' Type-aware routing — same model HomeScene + the other browse
+' scenes use.
 sub routeFavoriteSelection(itemType as String, itemId as String)
+    if itemType = "photo"
+        getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
+        return
+    end if
+    if itemType = "collection" or itemType = "playlist"
+        getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
+        return
+    end if
     if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "movie"
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else

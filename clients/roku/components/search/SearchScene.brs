@@ -193,18 +193,28 @@ sub onResultSelected()
     if rowNode = invalid then return
     item = rowNode.getChild(itemIdx)
     if item = invalid then return
-    ' Type-aware routing — same model HomeScene uses. Containers
-    ' drill into DetailScene; leaves go straight to playback.
-    if isDetailType(item.itemType)
-        getMainScene().callFunc("navigateToWithItem", "DetailScene", item.id)
-    else
-        getMainScene().callFunc("navigateToWithItem", "PlayerScene", item.id)
-    end if
+    routeBySearchType(item.itemType, item.id)
 end sub
 
-function isDetailType(t as String) as Boolean
-    return t = "show" or t = "season" or t = "artist" or t = "album" or t = "podcast" or t = "audiobook" or t = "movie"
-end function
+' Type-aware routing — same model HomeScene + the other browse
+' scenes use. Photos drop into the full-screen viewer; collections
+' drill into their item grid; containers go to DetailScene; leaves
+' go straight to playback.
+sub routeBySearchType(itemType as String, itemId as String)
+    if itemType = "photo"
+        getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
+        return
+    end if
+    if itemType = "collection" or itemType = "playlist"
+        getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
+        return
+    end if
+    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "movie"
+        getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
+    else
+        getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)
+    end if
+end sub
 
 function getMainScene() as Object
     node = m.top
