@@ -106,6 +106,10 @@
 
   $: isPhotoLibrary = library?.type === 'photo';
   $: isMusicLibrary = library?.type === 'music';
+  // Audiobook libraries surface authors at the top level (the typed
+  // shelf — same shape as music's artist row). Round-poster + label-
+  // overlay-suppressed treatment matches the artist cards visually.
+  $: isAudiobookLibrary = library?.type === 'audiobook';
   $: isHomeVideoLibrary = library?.type === 'home_video';
 
   // Date-grouped buckets for home-video libraries: [{ key, label, items }].
@@ -151,6 +155,8 @@
     if (item.type === 'photo') return `/photos/${item.id}`;
     if (item.type === 'podcast') return `/podcasts/${item.id}`;
     if (item.type === 'book') return `/books/${item.id}`;
+    if (item.type === 'book_author') return `/authors/${item.id}`;
+    if (item.type === 'book_series') return `/series/${item.id}`;
     return `/watch/${item.id}`;
   }
 
@@ -503,9 +509,9 @@
         </div>
       {/each}
     {:else}
-    <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary}>
+    <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary || isAudiobookLibrary}>
       {#each filtered as item (item.id)}
-        <a class="item" class:circle-poster={isMusicLibrary} href={itemHref(item)} tabindex="0">
+        <a class="item" class:circle-poster={isMusicLibrary || (isAudiobookLibrary && item.type === 'book_author')} href={itemHref(item)} tabindex="0">
           <div class="poster">
             {#if item.poster_path}
               <img src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)}
@@ -518,10 +524,14 @@
               </div>
             {/if}
             <div class="poster-overlay">
-              {#if !isPhotoLibrary && !isMusicLibrary}<div class="play-icon">▶</div>{/if}
+              {#if !isPhotoLibrary && !isMusicLibrary && !isAudiobookLibrary}<div class="play-icon">▶</div>{/if}
               <div class="overlay-title">{item.title}</div>
               {#if item.type === 'audiobook' && item.original_title}
                 <div class="overlay-meta">by {item.original_title}{#if item.duration_ms} · {dur(item.duration_ms)}{/if}</div>
+              {:else if item.type === 'book_author' || item.type === 'book_series'}
+                <!-- Author + series cards lean on the title alone; child
+                     count would need a separate /children fetch and
+                     isn't worth the request count on a grid render. -->
               {:else if !isPhotoLibrary && !isMusicLibrary}
                 <div class="overlay-meta">
                   {#if item.year}{item.year}{/if}
@@ -540,7 +550,7 @@
                 on:click={(e) => enrichItem(e, item.id)}
               >⟳</button>
             {/if}
-            {#if !isMusicLibrary && !isPhotoLibrary}
+            {#if !isMusicLibrary && !isPhotoLibrary && !isAudiobookLibrary}
               <button
                 class="add-playlist-btn"
                 title="Add to playlist"
