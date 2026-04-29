@@ -158,7 +158,39 @@ class PlaybackViewModel @Inject constructor(
                 .filter { it.type == type && it.index != null }
                 .sortedBy { it.index }
                 .firstOrNull { (it.index ?: -1) == currentIndex + 1 }
-            _uiState.value = _uiState.value.copy(nextEpisode = next)
+            if (next != null) {
+                _uiState.value = _uiState.value.copy(nextEpisode = next)
+                return
+            }
+            // Cross-album auto-advance: when a music track ends and
+            // there's no next track in the same album, fall through
+            // to the first track of the next album by the artist.
+            // Plexamp's "Play All" UX expects the queue to chain
+            // through the entire catalog; without this the music
+            // dies at the end of one album. Skipped for episodes
+            // (TV shows already chain across seasons via their own
+            // structure on the server side, and most viewers want
+            // the "next episode" affordance to stop at season
+            // boundaries anyway).
+            if (type == "track") {
+                val album = itemRepo.getItem(parentId)
+                val artistId = album.parent_id ?: return
+                val albums = itemRepo.getChildren(artistId)
+                    .filter { it.type == "album" }
+                    // Year is the natural ordering for an artist's
+                    // discography; fall back to index then created_at
+                    // (already the API's default sort) when year is
+                    // missing.
+                    .sortedWith(compareBy({ it.year ?: Int.MAX_VALUE }, { it.index ?: Int.MAX_VALUE }))
+                val currentAlbumIdx = albums.indexOfFirst { it.id == parentId }
+                if (currentAlbumIdx < 0) return
+                val nextAlbum = albums.getOrNull(currentAlbumIdx + 1) ?: return
+                val firstTrack = itemRepo.getChildren(nextAlbum.id)
+                    .filter { it.type == "track" && it.index != null }
+                    .sortedBy { it.index }
+                    .firstOrNull() ?: return
+                _uiState.value = _uiState.value.copy(nextEpisode = firstTrack)
+            }
         } catch (_: Exception) {
             // Best-effort.
         }

@@ -118,6 +118,46 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** Resolve the first track of the artist's chronologically-first
+     *  album. Used by the Play All button on the artist detail page —
+     *  the player's auto-advance then chains through every album. */
+    fun resolvePlayAllStart(artistId: String, onResolved: (String?) -> Unit) {
+        viewModelScope.launch {
+            val firstTrack = runCatching {
+                val albums = itemRepo.getChildren(artistId)
+                    .filter { it.type == "album" }
+                    .sortedWith(compareBy({ it.year ?: Int.MAX_VALUE }, { it.index ?: Int.MAX_VALUE }))
+                albums.firstNotNullOfOrNull { album ->
+                    itemRepo.getChildren(album.id)
+                        .filter { it.type == "track" && it.index != null }
+                        .minByOrNull { it.index ?: Int.MAX_VALUE }
+                }
+            }.getOrNull()
+            onResolved(firstTrack?.id)
+        }
+    }
+
+    /** Pick a random track from any of the artist's albums. Used by
+     *  the Shuffle button on the artist detail page. The player's
+     *  auto-advance chains through every subsequent album in order —
+     *  Plexamp's true "shuffle queue" re-orders every next-track
+     *  lookup, but that needs a queue model the player doesn't have
+     *  today. */
+    fun resolveShuffleStart(artistId: String, onResolved: (String?) -> Unit) {
+        viewModelScope.launch {
+            val randomTrack = runCatching {
+                val albums = itemRepo.getChildren(artistId).filter { it.type == "album" }
+                val allTracks = albums.flatMap { album ->
+                    runCatching {
+                        itemRepo.getChildren(album.id).filter { it.type == "track" }
+                    }.getOrDefault(emptyList())
+                }
+                allTracks.randomOrNull()
+            }.getOrNull()
+            onResolved(randomTrack?.id)
+        }
+    }
+
     /** Load all seasons, then load episodes for each season in parallel. */
     private suspend fun buildSeasonMap(showId: String): Map<ChildItem, List<ChildItem>> {
         val seasonChildren = itemRepo.getChildren(showId)

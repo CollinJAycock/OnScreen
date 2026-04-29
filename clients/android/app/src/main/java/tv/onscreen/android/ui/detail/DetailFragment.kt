@@ -186,13 +186,26 @@ class DetailFragment : Fragment() {
                 btnFromStart.visibility = View.GONE
             }
             item.type == "artist" -> {
-                // Artist children are albums (containers), not tracks.
-                // A "Play All" experience would need recursive
-                // traversal (first track of first album); skip until
-                // that UX lands. For now the user picks an album from
-                // the grid below.
-                btnPlay.visibility = View.GONE
-                btnFromStart.visibility = View.GONE
+                // Play All resolves to the first track of the
+                // chronologically-first album; the player's
+                // cross-album auto-advance chains through the rest of
+                // the catalog. Shuffle picks a random track from any
+                // album. Both reuse the existing single-item playItem
+                // path — no queue plumbing required.
+                btnPlay.visibility = View.VISIBLE
+                btnPlay.text = getString(R.string.play_all)
+                btnPlay.setOnClickListener {
+                    viewModel.resolvePlayAllStart(item.id) { trackId ->
+                        if (trackId != null) playItem(trackId, 0L)
+                    }
+                }
+                btnFromStart.visibility = View.VISIBLE
+                btnFromStart.text = getString(R.string.shuffle)
+                btnFromStart.setOnClickListener {
+                    viewModel.resolveShuffleStart(item.id) { trackId ->
+                        if (trackId != null) playItem(trackId, 0L)
+                    }
+                }
             }
             else -> {
                 // Leaf items (movie, episode, track, single-file

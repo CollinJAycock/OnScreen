@@ -27,6 +27,8 @@
     <string name="play">Play</string>
     <string name="resume">Resume from %s</string>
     <string name="play_from_beginning">Play from Beginning</string>
+    <string name="play_all">Play All</string>
+    <string name="shuffle">Shuffle</string>
     <string name="error_connection">Could not connect to server</string>
     <string name="error_login">Login failed</string>
     <string name="no_results">No results found</string>
