@@ -695,17 +695,64 @@ func TestEnricher_relPath(t *testing.T) {
 		},
 	}
 	tests := []struct {
+		name    string
 		absPath string
 		want    string
 	}{
-		{filepath.Join("/movies", "Send Help (2026)", "poster.jpg"), "Send Help (2026)/poster.jpg"},
-		{filepath.Join("/tv", "Breaking Bad", "Season 01", "poster.jpg"), "Breaking Bad/Season 01/poster.jpg"},
+		{
+			name:    "movie inside scan root resolves to relative",
+			absPath: filepath.Join("/movies", "Send Help (2026)", "poster.jpg"),
+			want:    "Send Help (2026)/poster.jpg",
+		},
+		{
+			name:    "tv episode inside scan root resolves to relative",
+			absPath: filepath.Join("/tv", "Breaking Bad", "Season 01", "poster.jpg"),
+			want:    "Breaking Bad/Season 01/poster.jpg",
+		},
+		{
+			name:    "outside-root path returns empty (do not write a bare basename)",
+			absPath: filepath.Join("/elsewhere", "loose-poster.jpg"),
+			want:    "",
+		},
+		{
+			name:    "file directly at scan root resolves to bare basename via filepath.Rel (legitimate flat layout)",
+			absPath: filepath.Join("/movies", "single.jpg"),
+			want:    "single.jpg",
+		},
 	}
 	for _, tt := range tests {
-		got := e.relPath(tt.absPath)
-		if got != tt.want {
-			t.Errorf("relPath(%q) = %q, want %q", tt.absPath, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := e.relPath(tt.absPath); got != tt.want {
+				t.Errorf("relPath(%q) = %q, want %q", tt.absPath, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEnricher_setRelPath_skipsOnEmpty covers the bug-class fix: when
+// a downloaded artwork file lands outside library scan_paths, the
+// helper must NOT write a bare basename to *dest. That basename
+// would 404 against /artwork/* on every render. Migration 00054
+// (album-only) and 00070 (album + artist) clean up the rows the
+// previous fallback wrote; this test locks the writer behavior.
+func TestEnricher_setRelPath_skipsOnEmpty(t *testing.T) {
+	e := &Enricher{scanPaths: func() []string { return []string{"/music"} }}
+
+	// In-scan-path file → dest gets the relative path.
+	var dest *string
+	e.setRelPath(&dest, "/music/Pink Floyd/Dark Side/p.jpg")
+	if dest == nil || *dest != "Pink Floyd/Dark Side/p.jpg" {
+		t.Errorf("dest = %v, want pointer to relative path", dest)
+	}
+
+	// Out-of-scan-path file → dest stays at its prior value (nil),
+	// so the COALESCE in UpdateMediaItemMetadata preserves the
+	// existing poster_path instead of overwriting with an unservable
+	// bare basename.
+	var dest2 *string
+	e.setRelPath(&dest2, "/elsewhere/artwork.jpg")
+	if dest2 != nil {
+		t.Errorf("dest2 = %v, want nil (skip the update)", dest2)
 	}
 }
 

@@ -339,8 +339,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 				e.logger.WarnContext(ctx, "poster download failed",
 					"item_id", item.ID, "err", err)
 			} else {
-				rel := e.relPath(absPath)
-				p.PosterPath = &rel
+				e.setRelPath(&p.PosterPath, absPath)
 			}
 		}
 		if result.FanartURL != "" {
@@ -349,8 +348,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 				e.logger.WarnContext(ctx, "fanart download failed",
 					"item_id", item.ID, "err", err)
 			} else {
-				rel := e.relPath(absPath)
-				p.FanartPath = &rel
+				e.setRelPath(&p.FanartPath, absPath)
 			}
 		}
 	}
@@ -529,8 +527,7 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				e.logger.WarnContext(ctx, "show poster download failed",
 					"item_id", item.ID, "err", err)
 			} else {
-				rel := e.relPath(absPath)
-				p.PosterPath = &rel
+				e.setRelPath(&p.PosterPath, absPath)
 			}
 		}
 		if result.FanartURL != "" {
@@ -539,8 +536,7 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				e.logger.WarnContext(ctx, "show fanart download failed",
 					"item_id", item.ID, "err", err)
 			} else {
-				rel := e.relPath(absPath)
-				p.FanartPath = &rel
+				e.setRelPath(&p.FanartPath, absPath)
 			}
 		}
 	}
@@ -637,8 +633,7 @@ func (e *Enricher) enrichSeason(ctx context.Context, agent metadata.Agent, item 
 			e.logger.WarnContext(ctx, "season poster download failed",
 				"item_id", item.ID, "err", err)
 		} else {
-			rel := e.relPath(absPath)
-			p.PosterPath = &rel
+			e.setRelPath(&p.PosterPath, absPath)
 		}
 	}
 
@@ -822,8 +817,7 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 			e.logger.WarnContext(ctx, "episode thumb download failed",
 				"item_id", item.ID, "err", err)
 		} else {
-			rel := e.relPath(absPath)
-			p.ThumbPath = &rel
+			e.setRelPath(&p.ThumbPath, absPath)
 		}
 	}
 
@@ -953,14 +947,12 @@ func (e *Enricher) enrichArtist(ctx context.Context, agent metadata.MusicAgent, 
 	}
 	if result.ThumbURL != "" && artDir != "" && e.artwork != nil {
 		if abs, err := e.artwork.DownloadArtistPoster(ctx, item.ID, result.ThumbURL, artDir); err == nil {
-			rel := e.relPath(abs)
-			p.PosterPath = &rel
+			e.setRelPath(&p.PosterPath, abs)
 		}
 	}
 	if result.FanartURL != "" && artDir != "" && e.artwork != nil {
 		if abs, err := e.artwork.DownloadArtistFanart(ctx, item.ID, result.FanartURL, artDir); err == nil {
-			rel := e.relPath(abs)
-			p.FanartPath = &rel
+			e.setRelPath(&p.FanartPath, abs)
 		}
 	}
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
@@ -1032,8 +1024,7 @@ func (e *Enricher) enrichAlbum(ctx context.Context, agent metadata.MusicAgent, i
 		// Overwrite {id}-poster.jpg — if a scan wrote embedded art for
 		// this album, the enricher's cover should take precedence.
 		if abs, err := e.artwork.ReplacePoster(ctx, item.ID, coverURL, artDir); err == nil {
-			rel := e.relPath(abs)
-			p.PosterPath = &rel
+			e.setRelPath(&p.PosterPath, abs)
 		}
 	}
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
@@ -1165,8 +1156,7 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 				e.logger.WarnContext(ctx, "match poster download failed",
 					"item_id", item.ID, "err", dlErr)
 			} else {
-				rel := e.relPath(absPath)
-				p.PosterPath = &rel
+				e.setRelPath(&p.PosterPath, absPath)
 			}
 		}
 		if result.FanartURL != "" {
@@ -1175,8 +1165,7 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 				e.logger.WarnContext(ctx, "match fanart download failed",
 					"item_id", item.ID, "err", dlErr)
 			} else {
-				rel := e.relPath(absPath)
-				p.FanartPath = &rel
+				e.setRelPath(&p.FanartPath, absPath)
 			}
 		}
 	}
@@ -1243,15 +1232,13 @@ func (e *Enricher) matchMovie(ctx context.Context, agent metadata.Agent, item *m
 		if result.PosterURL != "" {
 			absPath, dlErr := e.artwork.ReplaceShowPoster(ctx, item.ID, result.PosterURL, artDir)
 			if dlErr == nil {
-				rel := e.relPath(absPath)
-				p.PosterPath = &rel
+				e.setRelPath(&p.PosterPath, absPath)
 			}
 		}
 		if result.FanartURL != "" {
 			absPath, dlErr := e.artwork.ReplaceShowFanart(ctx, item.ID, result.FanartURL, artDir)
 			if dlErr == nil {
-				rel := e.relPath(absPath)
-				p.FanartPath = &rel
+				e.setRelPath(&p.FanartPath, absPath)
 			}
 		}
 	}
@@ -1437,6 +1424,13 @@ func (e *Enricher) SetItemPoster(ctx context.Context, itemID uuid.UUID, posterUR
 	}
 
 	rel := e.relPath(absPath)
+	if rel == "" {
+		// The downloaded file landed somewhere /artwork/* can't serve
+		// from. Surface the misconfiguration to the caller (manual
+		// poster picker UI) instead of silently writing an unservable
+		// poster_path that 404s on every render.
+		return fmt.Errorf("downloaded poster %s falls outside library scan_paths", absPath)
+	}
 	p := media.UpdateItemMetadataParams{
 		ID:         item.ID,
 		Title:      item.Title,
@@ -1465,6 +1459,31 @@ func (e *Enricher) SetItemPoster(ctx context.Context, itemID uuid.UUID, posterUR
 // deep inside <Artist>/, is populated by the scanner (not the
 // enricher), and the scanner's own fallback includes the parent dir
 // — so the split fallback policies together cover both cases.
+// Returns "" when the file is outside every scan_path. Callers MUST
+// guard on empty before storing — a bare basename would 404 against
+// any non-flat layout (an album poster at <Artist>/<Album>/<id>.jpg
+// stored as just "<id>.jpg" can't be resolved by /artwork/*, since
+// the route walks scan roots and the file lives two dirs deeper).
+// The previous fallback returned filepath.Base() and silently wrote
+// unservable rows whenever scanPaths() didn't match — that's the
+// failure mode migration 00054 nulled out, and migration 00070 cleans
+// up the regression that re-broke them.
+//
+// Flat-layout music libraries where the artist poster sits at the
+// scan root still resolve correctly: filepath.Rel(root, root+"/x.jpg")
+// returns "x.jpg" through the loop, never reaching the empty fallback.
+// setRelPath stores relPath(abs) in *dest unless the resolution
+// failed. The skip-on-empty path leaves *dest nil, which combines
+// with the COALESCE in UpdateMediaItemMetadata to preserve whatever
+// the caller had already (the scanner-derived path or a previous
+// successful enricher result) rather than overwriting it with an
+// unservable bare basename.
+func (e *Enricher) setRelPath(dest **string, abs string) {
+	if rel := e.relPath(abs); rel != "" {
+		*dest = &rel
+	}
+}
+
 func (e *Enricher) relPath(absPath string) string {
 	clean := filepath.Clean(absPath)
 	if e.scanPaths != nil {
@@ -1475,7 +1494,7 @@ func (e *Enricher) relPath(absPath string) string {
 			}
 		}
 	}
-	return filepath.Base(absPath)
+	return ""
 }
 
 // tvdbShowFallback asks TVDB for a show when TMDB couldn't help. When base is
