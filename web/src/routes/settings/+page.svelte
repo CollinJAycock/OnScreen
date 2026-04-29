@@ -40,6 +40,7 @@
   // Language preferences state
   let prefAudioLang = '';
   let prefSubtitleLang = '';
+  let prefEpisodeUseShowPoster = true;
   let prefSaving = false;
 
 
@@ -89,6 +90,7 @@
       const prefs = await userApi.getPreferences();
       prefAudioLang = prefs.preferred_audio_lang ?? '';
       prefSubtitleLang = prefs.preferred_subtitle_lang ?? '';
+      prefEpisodeUseShowPoster = prefs.episode_use_show_poster ?? true;
     } catch { /* ignore — non-critical */ }
 
   });
@@ -99,9 +101,10 @@
       await userApi.setPreferences({
         preferred_audio_lang: prefAudioLang || null,
         preferred_subtitle_lang: prefSubtitleLang || null,
-        max_content_rating: null
+        max_content_rating: null,
+        episode_use_show_poster: prefEpisodeUseShowPoster
       });
-      toast.success('Language preferences saved');
+      toast.success('Preferences saved');
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to save preferences');
     } finally {
@@ -583,6 +586,27 @@
           <option value="tur">Turkish</option>
         </select>
       </div>
+      <div class="pref-divider" role="separator"></div>
+
+      <div class="sec-label inline-label">Display</div>
+
+      <div class="field toggle-field">
+        <label for="pref-ep-show-poster" class="toggle-label">
+          <input
+            id="pref-ep-show-poster"
+            type="checkbox"
+            bind:checked={prefEpisodeUseShowPoster}
+          />
+          <span>Use the series poster for episodes</span>
+        </label>
+        <p class="hint">
+          On Continue Watching, History, and Search, episode rows show the show's
+          curated poster instead of an auto-extracted episode thumbnail. Episodes
+          inside a season's list still show their own art so they stay
+          distinguishable.
+        </p>
+      </div>
+
       <div class="pref-foot">
         <button class="btn-save" disabled={prefSaving} on:click={savePreferences}>
           {prefSaving ? 'Saving...' : 'Save Preferences'}
@@ -688,6 +712,26 @@
   select option { background: var(--bg-elevated); color: var(--text-primary); }
 
   .pref-foot { display: flex; justify-content: flex-end; }
+
+  .pref-divider {
+    height: 1px;
+    margin: 1.25rem 0 1rem;
+    background: var(--border);
+  }
+
+  .inline-label { margin-bottom: 0.5rem; }
+
+  .toggle-field { display: flex; flex-direction: column; gap: 0.4rem; }
+  .toggle-label {
+    display: flex; align-items: center; gap: 0.6rem;
+    cursor: pointer; user-select: none;
+    font-size: 0.875rem; color: var(--text-primary);
+  }
+  .toggle-label input[type="checkbox"] {
+    width: 1rem; height: 1rem;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
 
   /* Arr webhook URL */
   .url-box {

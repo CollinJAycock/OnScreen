@@ -490,6 +490,10 @@ export interface UserPreferences {
   preferred_audio_lang: string | null;
   preferred_subtitle_lang: string | null;
   max_content_rating: string | null;
+  // Optional on the wire: server returns it always, but the
+  // setPreferences PUT body can omit it (server treats absent as
+  // "leave unchanged" via SQL COALESCE).
+  episode_use_show_poster?: boolean;
 }
 
 // ── Libraries ─────────────────────────────────────────────────────────────────
