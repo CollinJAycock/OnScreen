@@ -26,7 +26,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden|keyboard"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden|keyboard|uiMode"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.OnScreenMobile">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

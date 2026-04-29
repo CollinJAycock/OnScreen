@@ -26,6 +26,7 @@ import tv.onscreen.mobile.ui.hub.HubScreen
 import tv.onscreen.mobile.ui.item.ItemDetailScreen
 import tv.onscreen.mobile.ui.library.LibraryScreen
 import tv.onscreen.mobile.ui.pair.PairScreen
+import tv.onscreen.mobile.ui.photo.PhotoViewerScreen
 import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
 import javax.inject.Inject
@@ -121,12 +122,22 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 itemId = entry.arguments!!.getString("id")!!,
                 onPlay = { id -> nav.navigate(Routes.player(id)) },
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenPhoto = { id -> nav.navigate(Routes.photo(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.SEARCH) {
             SearchScreen(
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(
+            Routes.PHOTO,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            PhotoViewerScreen(
+                itemId = entry.arguments!!.getString("id")!!,
                 onBack = { nav.popBackStack() },
             )
         }

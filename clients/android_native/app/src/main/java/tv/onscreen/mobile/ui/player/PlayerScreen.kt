@@ -1,6 +1,10 @@
 package tv.onscreen.mobile.ui.player
 
+import android.app.Activity
+import android.app.PictureInPictureParams
 import android.net.Uri
+import android.os.Build
+import android.util.Rational
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -148,6 +153,18 @@ private fun PlayerHost(
         onDispose { player.release() }
     }
 
+    // Cross-device resume: when another of the user's devices reports
+    // progress for this item, the VM emits a position to seek to.
+    // We consume + clear so a recomposition doesn't seek twice off
+    // the same emission.
+    val remoteResume by vm.remoteResumeMs.collectAsState()
+    LaunchedEffect(remoteResume) {
+        val target = remoteResume ?: return@LaunchedEffect
+        val playerTarget = (target - vm.hlsOffsetMs).coerceAtLeast(0L)
+        player.seekTo(playerTarget)
+        vm.clearRemoteResume()
+    }
+
     // EOS handling — episodes surface the Up Next overlay (or pop
     // the back stack if there's no next), tracks chain silently to
     // the next track without an overlay (the lead-in countdown
@@ -243,6 +260,17 @@ private fun PlayerHost(
         if (ui.subtitles.isNotEmpty()) {
             IconButton(onClick = { showSubtitlePicker = true }) {
                 Icon(Icons.Default.Subtitles, contentDescription = "Subtitles", tint = Color.White)
+            }
+        }
+        // Picture-in-picture only makes sense for video — audio-only
+        // playback gets the (forthcoming) MediaSession service for
+        // backgrounding instead. Gate on resolution_h so audiobooks
+        // and music don't surface a PiP button that would just shrink
+        // the album art.
+        val hasVideo = ui.item?.files?.firstOrNull()?.video_codec != null
+        if (hasVideo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            IconButton(onClick = { enterPip(context as? Activity) }) {
+                Icon(Icons.Default.PictureInPicture, contentDescription = "Picture in picture", tint = Color.White)
             }
         }
     }
@@ -467,6 +495,25 @@ private fun SkipMarkerOverlay(
         ) {
             Text(if (marker.kind == "intro") "Skip intro" else "Skip credits")
         }
+    }
+}
+
+/** Drop the host activity into PiP at a 16:9 aspect ratio. The
+ *  Compose tree keeps rendering — Android composites the player
+ *  surface into the floating window, controls automatically hide.
+ *  Returning safely when the activity is null or the OS rejects the
+ *  request keeps a misconfigured device from crashing the player. */
+private fun enterPip(activity: Activity?) {
+    if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    try {
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .build()
+        activity.enterPictureInPictureMode(params)
+    } catch (_: Exception) {
+        // Some launchers / form-factors reject PiP — swallow rather
+        // than crash; the user can fall back to backgrounding music
+        // via the MediaSession service.
     }
 }
 

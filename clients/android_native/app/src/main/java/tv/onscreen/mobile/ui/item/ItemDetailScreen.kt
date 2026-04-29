@@ -14,6 +14,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Downloading
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -52,6 +54,7 @@ import tv.onscreen.mobile.data.downloads.DownloadEntry
 import tv.onscreen.mobile.data.downloads.DownloadWorker
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.ItemDetail
+import tv.onscreen.mobile.data.repository.FavoritesRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
 import javax.inject.Inject
 
@@ -59,6 +62,7 @@ import javax.inject.Inject
 class ItemDetailViewModel @Inject constructor(
     private val repo: ItemRepository,
     private val downloads: OnScreenDownloadManager,
+    private val favorites: FavoritesRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ItemDetailUi())
@@ -103,6 +107,25 @@ class ItemDetailViewModel @Inject constructor(
 
     fun deleteDownload(fileId: String) {
         viewModelScope.launch { downloads.delete(fileId) }
+    }
+
+    /** Optimistic toggle. The detail returned from /items already
+     *  carries [ItemDetail.is_favorite]; we flip it locally first so
+     *  the heart icon reacts immediately, then fire the API call. On
+     *  failure we revert — the operation is idempotent on the server
+     *  side so a desync between local state and remote is the only
+     *  thing to guard against. */
+    fun toggleFavorite() {
+        val current = _state.value.detail ?: return
+        val nextValue = !current.is_favorite
+        _state.value = _state.value.copy(detail = current.copy(is_favorite = nextValue))
+        viewModelScope.launch {
+            try {
+                if (nextValue) favorites.add(current.id) else favorites.remove(current.id)
+            } catch (_: Exception) {
+                _state.value = _state.value.copy(detail = current)
+            }
+        }
     }
 }
 
@@ -171,17 +194,37 @@ private fun DownloadButton(
     }
 }
 
+private fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ItemDetailScreen(
     itemId: String,
     onPlay: (String) -> Unit,
     onOpenItem: (String) -> Unit,
+    onOpenPhoto: (String) -> Unit,
     onBack: () -> Unit,
     vm: ItemDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.load(itemId) }
     val ui by vm.state.collectAsState()
+
+    // Photos open straight into the full-screen viewer; the detail
+    // page would just be a thumbnail wrapping the same image. Pop the
+    // detail off the back stack so Back returns to the source list.
+    LaunchedEffect(ui.detail?.id, ui.detail?.type) {
+        val d = ui.detail
+        if (d != null && d.type == "photo") {
+            onOpenPhoto(d.id)
+            onBack()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -190,6 +233,17 @@ fun ItemDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    val d = ui.detail
+                    if (d != null) {
+                        IconButton(onClick = { vm.toggleFavorite() }) {
+                            Icon(
+                                imageVector = if (d.is_favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = if (d.is_favorite) "Remove from favorites" else "Add to favorites",
+                            )
+                        }
                     }
                 },
             )
@@ -235,6 +289,39 @@ fun ItemDetailScreen(
                         if (!d.summary.isNullOrEmpty()) {
                             Spacer(Modifier.height(16.dp))
                             Text(d.summary, style = MaterialTheme.typography.bodyMedium)
+                        }
+
+                        // Audiobook chapters: m4b / mp3 / flac books
+                        // surface their embedded chapter table. Tapping
+                        // a chapter starts the player at that chapter's
+                        // start_ms. Movies render their chapter list the
+                        // same way today on the TV client; we keep the
+                        // phone scoped to audiobooks since movie chapter
+                        // navigation is a remote-control affordance.
+                        val chapters = d.files.firstOrNull()?.chapters.orEmpty()
+                        if (d.type == "audiobook" && chapters.isNotEmpty()) {
+                            Spacer(Modifier.height(24.dp))
+                            Text("Chapters", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(8.dp))
+                            chapters.forEachIndexed { i, c ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(vertical = 6.dp),
+                                ) {
+                                    Text(
+                                        text = "${i + 1}. ${c.title}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier
+                                            .padding(end = 12.dp),
+                                    )
+                                    Text(
+                                        text = formatDuration(c.start_ms),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                     }
                 }

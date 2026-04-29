@@ -15,6 +15,7 @@ import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.data.repository.NotificationsRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 import javax.inject.Inject
@@ -44,10 +45,22 @@ class PlayerViewModel @Inject constructor(
     private val preferencesRepo: PreferencesRepository,
     private val serverPrefs: ServerPrefs,
     private val downloads: tv.onscreen.mobile.data.downloads.OnScreenDownloadManager,
+    private val notifications: NotificationsRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
+
+    /** Cross-device resume signal. Emits a seek-to position (ms)
+     *  whenever the server reports new progress for the currently-
+     *  loaded item from another device. The screen consumes this and
+     *  seeks the ExoPlayer instance — same-device echoes are dropped
+     *  by ID below so we don't fight ourselves. */
+    private val _remoteResumeMs = MutableStateFlow<Long?>(null)
+    val remoteResumeMs: StateFlow<Long?> = _remoteResumeMs.asStateFlow()
+
+    private var sseJob: kotlinx.coroutines.Job? = null
+    private var localProgressMs: Long = 0L
 
     private var transcodeSessionId: String? = null
     private var transcodeToken: String? = null
@@ -136,6 +149,8 @@ class PlayerViewModel @Inject constructor(
                     (item.type == "episode" || item.type == "track")) {
                     loadNextSibling(item.parent_id, item.index, item.type)
                 }
+
+                subscribeRemoteProgress(itemId)
             } catch (e: Exception) {
                 val msg = if (e is HttpException && e.code() == 403) "content_restricted"
                 else e.message
@@ -215,10 +230,43 @@ class PlayerViewModel @Inject constructor(
      *  will pick up where this one left off. */
     fun reportProgress(itemId: String, positionMs: Long, durationMs: Long, state: String) {
         if (durationMs <= 0) return
+        localProgressMs = positionMs
         viewModelScope.launch {
             try {
                 itemRepo.updateProgress(itemId, positionMs, durationMs, state)
             } catch (_: Exception) { }
+        }
+    }
+
+    /** Cleared by the screen after it consumes the seek signal so the
+     *  same emission doesn't seek a second time on recomposition. */
+    fun clearRemoteResume() {
+        _remoteResumeMs.value = null
+    }
+
+    /** Subscribe to `progress.updated` events for the currently-
+     *  loaded item. The server broadcasts every progress write to all
+     *  of a user's connected devices, so we have to filter:
+     *   1. Wrong item — ignore.
+     *   2. Position within ~3s of our last local report — same-device
+     *      echo, ignore (otherwise the player fights its own writes).
+     *   3. Otherwise — emit a seek-to so the screen can match the
+     *      other device's position. */
+    private fun subscribeRemoteProgress(itemId: String) {
+        sseJob?.cancel()
+        sseJob = viewModelScope.launch {
+            try {
+                notifications.subscribeProgressUpdates().collect { ev ->
+                    if (ev.item_id != itemId) return@collect
+                    val delta = kotlin.math.abs(ev.position_ms - localProgressMs)
+                    if (delta < 3_000L) return@collect
+                    _remoteResumeMs.value = ev.position_ms
+                }
+            } catch (_: Exception) {
+                // SSE drop — leave the player running on its own
+                // state. A reconnect tier could be added later but
+                // would need a backoff to avoid hammering the server.
+            }
         }
     }
 
@@ -253,6 +301,7 @@ class PlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        sseJob?.cancel()
         stopActiveTranscode()
     }
 }
