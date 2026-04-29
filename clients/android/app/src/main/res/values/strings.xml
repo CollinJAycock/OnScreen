@@ -49,6 +49,8 @@
     <string name="episodes">Episodes</string>
     <string name="tracks">Tracks</string>
     <string name="albums">Albums</string>
+    <string name="books">Books</string>
+    <string name="series">Series</string>
 
     <!-- Device pairing sign-in -->
     <string name="pair_with_device">Sign in with another device</string>

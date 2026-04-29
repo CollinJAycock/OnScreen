@@ -148,4 +148,66 @@ class DetailViewModelTest {
         val episodes = seasons.values.first()
         assertThat(episodes.map { it.id }).containsExactly("ep1", "ep2").inOrder()
     }
+
+    @Test
+    fun `book_author renders series before standalone books`() = runTest(dispatcher) {
+        // Series alphabetical first, books year-desc after. The single-
+        // bucket render leans on this ordering — without it the user
+        // would see series and books shuffled together randomly.
+        val itemRepo = mockk<ItemRepository>()
+        val favRepo = mockk<FavoritesRepository>()
+        val author = ItemDetail(
+            id = "auth-1", library_id = "lib", title = "Brandon Sanderson",
+            type = "book_author",
+        )
+        coEvery { itemRepo.getItem("auth-1") } returns author
+        coEvery { itemRepo.getChildren("auth-1") } returns listOf(
+            ChildItem(id = "b-old", title = "Elantris", type = "audiobook", year = 2005),
+            ChildItem(id = "s-mistborn", title = "Mistborn", type = "book_series"),
+            ChildItem(id = "b-new", title = "Tress", type = "audiobook", year = 2023),
+            ChildItem(id = "s-stormlight", title = "Stormlight Archive", type = "book_series"),
+            // Foreign type — chapter rows belong under their book
+            // parent, never on the author detail.
+            ChildItem(id = "noise", title = "Ch1", type = "audiobook_chapter"),
+        )
+
+        val vm = DetailViewModel(itemRepo, favRepo)
+        vm.load("auth-1")
+        advanceUntilIdle()
+
+        val seasons = vm.uiState.value.seasons
+        assertThat(seasons).hasSize(1)
+        val children = seasons.values.first()
+        assertThat(children.map { it.id }).containsExactly(
+            "s-mistborn", "s-stormlight", "b-new", "b-old",
+        ).inOrder()
+    }
+
+    @Test
+    fun `book_series surfaces children for the books list`() = runTest(dispatcher) {
+        // Same shape as season / album — VM hands children through;
+        // the rendering layer sorts. Locks the route through the
+        // multi-type case so a refactor that changes the type-switch
+        // can't drop book_series into the default empty branch.
+        val itemRepo = mockk<ItemRepository>()
+        val favRepo = mockk<FavoritesRepository>()
+        val series = ItemDetail(
+            id = "ser-1", library_id = "lib", title = "Mistborn",
+            type = "book_series",
+        )
+        coEvery { itemRepo.getItem("ser-1") } returns series
+        coEvery { itemRepo.getChildren("ser-1") } returns listOf(
+            ChildItem(id = "b1", title = "The Final Empire", type = "audiobook", year = 2006),
+            ChildItem(id = "b2", title = "The Well of Ascension", type = "audiobook", year = 2007),
+        )
+
+        val vm = DetailViewModel(itemRepo, favRepo)
+        vm.load("ser-1")
+        advanceUntilIdle()
+
+        val seasons = vm.uiState.value.seasons
+        assertThat(seasons).hasSize(1)
+        val children = seasons.values.first()
+        assertThat(children.map { it.id }).containsExactly("b1", "b2").inOrder()
+    }
 }

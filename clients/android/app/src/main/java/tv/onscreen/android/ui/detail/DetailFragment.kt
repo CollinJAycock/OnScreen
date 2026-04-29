@@ -207,6 +207,17 @@ class DetailFragment : Fragment() {
                     }
                 }
             }
+            item.type == "book_author" || item.type == "book_series" -> {
+                // Pure browse parents — Play All on an author or
+                // series would need a "first book → play first
+                // chapter" double-resolve, and the user already has
+                // to pick a book before playback makes sense (vs
+                // music where Play All means "everything by this
+                // artist"). Hide both buttons; the books list below
+                // is the only affordance.
+                btnPlay.visibility = View.GONE
+                btnFromStart.visibility = View.GONE
+            }
             else -> {
                 // Leaf items (movie, episode, track, single-file
                 // audiobook, photo with files attached). Plays itself.
@@ -264,6 +275,7 @@ class DetailFragment : Fragment() {
             "album" -> R.string.tracks
             "artist" -> R.string.albums
             "audiobook" -> R.string.chapters
+            "book_author", "book_series" -> R.string.books
             else -> R.string.episodes
         })
         header.visibility = View.VISIBLE

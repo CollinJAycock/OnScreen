@@ -35,8 +35,12 @@ object Navigator {
     private fun destinationFor(itemId: String, type: String, resumeMs: Long): Fragment {
         return when (type) {
             // Containers — go to the detail screen so the user can
-            // pick a season / episode / track / chapter to play.
-            "show", "season", "artist", "album", "podcast" ->
+            // pick a season / episode / track / chapter / book to play.
+            // book_author + book_series are the audiobook hierarchy
+            // parents above an audiobook row; same shape as artist /
+            // album, drilling renders the children list.
+            "show", "season", "artist", "album", "podcast",
+            "book_author", "book_series" ->
                 DetailFragment.newInstance(itemId)
 
             // Movies route to detail too. The detail page already

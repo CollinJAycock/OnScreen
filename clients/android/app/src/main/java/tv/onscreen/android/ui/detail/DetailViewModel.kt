@@ -48,17 +48,22 @@ class DetailViewModel @Inject constructor(
                 val seasons = when (item.type) {
                     "show" -> buildSeasonMap(itemId)
 
-                    "season", "album", "podcast", "audiobook" -> {
+                    "season", "album", "podcast", "audiobook", "book_series" -> {
                         // Direct children are playable (episodes /
                         // tracks / podcast episodes / audiobook
-                        // chapters). Load them and present as a single
-                        // group keyed by a synthetic ChildItem.
+                        // chapters / books). Load them and present as
+                        // a single group keyed by a synthetic ChildItem.
                         //
                         // For audiobooks, this returns empty for the
                         // single-file layout (the row has files of its
                         // own; Play hits configurePlayButtons' "play
                         // self" branch) and a chapter list for the
                         // multi-file layout.
+                        //
+                        // For book_series, children are audiobook rows
+                        // ordered by year (release order ≈ reading
+                        // order); the list adapter sorts them itself
+                        // before render.
                         val children = itemRepo.getChildren(itemId)
                         val parent = ChildItem(
                             id = item.id,
@@ -67,6 +72,35 @@ class DetailViewModel @Inject constructor(
                             index = item.index,
                         )
                         mapOf(parent to children)
+                    }
+
+                    "book_author" -> {
+                        // Children are book_series rows + standalone
+                        // audiobook rows. Render them in a single
+                        // group; the card adapter routes clicks via
+                        // Navigator (book_series → DetailFragment,
+                        // audiobook → DetailFragment leaf path).
+                        // Series first, then standalone books, both
+                        // sorted within their bucket — gives the same
+                        // structure the web client renders without
+                        // needing a multi-section UI.
+                        val children = itemRepo.getChildren(itemId)
+                        val series = children
+                            .filter { it.type == "book_series" }
+                            .sortedBy { it.title.lowercase() }
+                        val books = children
+                            .filter { it.type == "audiobook" }
+                            .sortedWith(
+                                compareByDescending<ChildItem> { it.year ?: -1 }
+                                    .thenBy { it.title.lowercase() },
+                            )
+                        val parent = ChildItem(
+                            id = item.id,
+                            title = item.title,
+                            type = "book_author",
+                            index = item.index,
+                        )
+                        mapOf(parent to (series + books))
                     }
 
                     "artist" -> {
