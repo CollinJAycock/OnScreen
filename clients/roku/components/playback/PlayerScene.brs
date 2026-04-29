@@ -31,6 +31,25 @@ sub init()
     m.upNextTitle = m.top.findNode("upNextTitle")
     m.upNextHint = m.top.findNode("upNextHint")
     m.syncTimer = m.top.findNode("syncTimer")
+    m.trackPicker = m.top.findNode("trackPicker")
+    m.trackPickerTitle = m.top.findNode("trackPickerTitle")
+    m.trackPickerList = m.top.findNode("trackPickerList")
+
+    ' Track-picker state. trackPickerMode is "" (closed), "audio",
+    ' or "subtitle". The * (options) button cycles closed → audio
+    ' → subtitle → closed; up/down navigates the LabelList; OK
+    ' selects; back closes. Active indices track what the current
+    ' transcode session was started for (audio_stream_index) and
+    ' what the firmware Video node's subtitle selector is set to.
+    ' -1 on subtitle means "off".
+    m.trackPickerMode = ""
+    m.activeAudioIndex = 0
+    m.activeSubtitleIndex = -1
+    ' Cache the transcode inputs needed for an audio re-issue. Set
+    ' once when the first transcode session lands; nil on direct
+    ' play (the firmware Video node's audio track selector sees
+    ' every track in the container, so re-issue isn't needed).
+    m.lastTranscodeRequest = invalid
 
     m.session = invalid ' { session_id, token } when remux/transcode
     m.item = invalid
@@ -62,6 +81,7 @@ sub init()
     m.video.observeField("state", "onVideoState")
     m.video.observeField("position", "onVideoPosition")
     m.syncTimer.observeField("fire", "onSyncTimerFire")
+    m.trackPickerList.observeField("itemSelected", "onTrackPickerSelect")
 
     if m.top.itemId = invalid or m.top.itemId = ""
         bailToHome()
@@ -119,7 +139,18 @@ sub onItemTaskState()
     m.transcodeTask.height = decision.height
     m.transcodeTask.videoCopy = decision.videoCopy
     m.transcodeTask.supportsHevc = decision.supportsHevc
+    m.transcodeTask.audioStreamIndex = -1
+    m.transcodeTask.positionMs = 0
     m.transcodeTask.control = "RUN"
+    ' Cache the inputs so the audio picker can re-issue at a new
+    ' audio_stream_index without re-running Playback_Decide.
+    m.lastTranscodeRequest = {
+        itemId: m.top.itemId,
+        fileId: m.file.id,
+        height: decision.height,
+        videoCopy: decision.videoCopy,
+        supportsHevc: decision.supportsHevc
+    }
 end sub
 
 sub startDirectPlayback(serverUrl as String)
@@ -337,6 +368,21 @@ end sub
 ' captures focus during playback).
 function onKeyEvent(key as String, press as Boolean) as Boolean
     if not press then return false
+    ' Track picker takes priority when open — back closes it (without
+    ' leaving the player), * cycles to the next mode (audio →
+    ' subtitle → closed), up/down/OK ride through to the LabelList.
+    if m.trackPickerMode <> ""
+        if key = "back"
+            closeTrackPicker()
+            return true
+        end if
+        if key = "options" or key = "*"
+            cycleTrackPicker()
+            return true
+        end if
+        ' Let LabelList swallow up/down/OK natively.
+        return false
+    end if
     ' Skip-marker overlay: * (options key) skips, back dismisses
     ' that marker for the rest of this play.
     if m.activeMarker <> invalid
@@ -356,8 +402,201 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
             return true
         end if
     end if
+    ' * (options) with no overlay open → opens the audio picker
+    ' (or subtitle picker if there's no audio choice but subtitles
+    ' exist). Same key cycles through the modes once open.
+    if key = "options" or key = "*"
+        if hasMultiAudio()
+            openTrackPicker("audio")
+            return true
+        end if
+        if hasSubtitles()
+            openTrackPicker("subtitle")
+            return true
+        end if
+    end if
     return false
 end function
+
+' ── Audio + subtitle picker ────────────────────────────────────────
+
+function hasMultiAudio() as Boolean
+    if m.file = invalid or m.file.audio_streams = invalid then return false
+    return m.file.audio_streams.Count() > 1
+end function
+
+function hasSubtitles() as Boolean
+    if m.file = invalid or m.file.subtitle_streams = invalid then return false
+    return m.file.subtitle_streams.Count() > 0
+end function
+
+sub openTrackPicker(mode as String)
+    m.trackPickerMode = mode
+    if mode = "audio"
+        m.trackPickerTitle.text = "AUDIO  ·  * for subtitles  ·  back to close"
+        m.trackPickerList.content = buildAudioContent()
+        m.trackPickerList.jumpToItem = m.activeAudioIndex
+    else
+        m.trackPickerTitle.text = "SUBTITLES  ·  * to close  ·  back to close"
+        m.trackPickerList.content = buildSubtitleContent()
+        ' +1 because index 0 in the LabelList is the synthetic "Off" row.
+        cursor = 0
+        if m.activeSubtitleIndex >= 0 then cursor = m.activeSubtitleIndex + 1
+        m.trackPickerList.jumpToItem = cursor
+    end if
+    m.trackPicker.visible = true
+    m.trackPickerList.setFocus(true)
+end sub
+
+sub cycleTrackPicker()
+    if m.trackPickerMode = "audio"
+        if hasSubtitles()
+            openTrackPicker("subtitle")
+        else
+            closeTrackPicker()
+        end if
+    else
+        ' From subtitle: close. The opening cycle is audio → subtitle
+        ' → closed; subtitle-only flows just open and close.
+        closeTrackPicker()
+    end if
+end sub
+
+sub closeTrackPicker()
+    m.trackPickerMode = ""
+    m.trackPicker.visible = false
+    m.video.setFocus(true)
+end sub
+
+function buildAudioContent() as Object
+    root = createObject("roSGNode", "ContentNode")
+    if m.file = invalid or m.file.audio_streams = invalid then return root
+    for i = 0 to m.file.audio_streams.Count() - 1
+        s = m.file.audio_streams[i]
+        node = root.createChild("ContentNode")
+        prefix = "  "
+        if i = m.activeAudioIndex then prefix = "● "
+        lang = "und"
+        if s.language <> invalid and s.language <> "" then lang = s.language
+        codec = ""
+        if s.codec <> invalid then codec = s.codec
+        ch = ""
+        if s.channels <> invalid then ch = s.channels.ToStr() + "ch"
+        parts = [lang]
+        if codec <> "" then parts.push(codec)
+        if ch <> "" then parts.push(ch)
+        if s.title <> invalid and s.title <> "" then parts.push(s.title)
+        node.title = prefix + buildJoin(parts, " · ")
+    end for
+    return root
+end function
+
+function buildSubtitleContent() as Object
+    root = createObject("roSGNode", "ContentNode")
+    offNode = root.createChild("ContentNode")
+    if m.activeSubtitleIndex < 0
+        offNode.title = "● Off"
+    else
+        offNode.title = "  Off"
+    end if
+    if m.file = invalid or m.file.subtitle_streams = invalid then return root
+    for i = 0 to m.file.subtitle_streams.Count() - 1
+        s = m.file.subtitle_streams[i]
+        node = root.createChild("ContentNode")
+        prefix = "  "
+        if i = m.activeSubtitleIndex then prefix = "● "
+        lang = "und"
+        if s.language <> invalid and s.language <> "" then lang = s.language
+        parts = [lang]
+        if s.forced = true then parts.push("forced")
+        if s.title <> invalid and s.title <> "" then parts.push(s.title)
+        node.title = prefix + buildJoin(parts, " · ")
+    end for
+    return root
+end function
+
+function buildJoin(parts as Object, sep as String) as String
+    out = ""
+    first = true
+    for each p in parts
+        if first
+            out = p
+            first = false
+        else
+            out = out + sep + p
+        end if
+    end for
+    return out
+end function
+
+' LabelList delivers itemSelected when the user presses OK on a row.
+sub onTrackPickerSelect()
+    idx = m.trackPickerList.itemSelected
+    if m.trackPickerMode = "audio"
+        if m.file <> invalid and m.file.audio_streams <> invalid
+            picked = m.file.audio_streams[idx]
+            if picked <> invalid and idx <> m.activeAudioIndex
+                m.activeAudioIndex = idx
+                ' Server-side audio_stream_index is the stream's
+                ' "index" field (the ffprobe stream index), not its
+                ' position in the array. Pass that through.
+                streamIdx = picked.index
+                if streamIdx = invalid then streamIdx = idx
+                reissueAudioTrack(streamIdx)
+            end if
+        end if
+        closeTrackPicker()
+    else if m.trackPickerMode = "subtitle"
+        if idx = 0
+            m.activeSubtitleIndex = -1
+            ' Roku's Video node uses globalCaptionMode + the
+            ' selected subtitle index from `availableSubtitleTracks`.
+            ' Setting subtitleTrack to "" disables.
+            m.video.subtitleTrack = ""
+        else
+            m.activeSubtitleIndex = idx - 1
+            applySubtitleSelection(m.activeSubtitleIndex)
+        end if
+        closeTrackPicker()
+    end if
+end sub
+
+' Re-issue the active transcode session at the current playhead with
+' a new audio_stream_index. Server emits one audio per session for
+' transcode/remux mode, so language switching can't ride the player's
+' track selector — only a fresh session carries the chosen language.
+sub reissueAudioTrack(audioStreamIndex as Integer)
+    if m.lastTranscodeRequest = invalid then return
+    posMs = Int(m.video.position * 1000)
+    stopTranscodeSession()
+    req = m.lastTranscodeRequest
+    m.transcodeTask.itemId = req.itemId
+    m.transcodeTask.fileId = req.fileId
+    m.transcodeTask.height = req.height
+    m.transcodeTask.videoCopy = req.videoCopy
+    m.transcodeTask.supportsHevc = req.supportsHevc
+    m.transcodeTask.audioStreamIndex = audioStreamIndex
+    m.transcodeTask.positionMs = posMs
+    m.transcodeTask.control = "RUN"
+end sub
+
+' Map the user's pick to the firmware Video node's subtitle selector.
+' availableSubtitleTracks is populated by Roku once playback starts;
+' setting subtitleTrack to one of its TrackName entries enables it.
+sub applySubtitleSelection(streamIdx as Integer)
+    avail = m.video.availableSubtitleTracks
+    if avail = invalid or avail.Count() = 0
+        ' Subtitles aren't surfaced yet (race during initial playlist
+        ' parse) — store the pick and the LabelList will retry on
+        ' the next user interaction. Best-effort.
+        return
+    end if
+    ' availableSubtitleTracks order matches the file's subtitle_streams
+    ' order. Roku's TrackName field is what subtitleTrack expects.
+    if streamIdx >= 0 and streamIdx < avail.Count()
+        m.video.subtitleTrack = avail[streamIdx].TrackName
+    end if
+end sub
 
 ' Tear down the active transcode session via DELETE. Best-effort —
 ' we don't block on the response, and a server idle-timeout sweep

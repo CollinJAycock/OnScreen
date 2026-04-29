@@ -87,6 +87,28 @@
                    font="font:SmallSystemFont" />
         </Group>
 
+        <!-- In-player Audio + Subtitle picker. The * (options) button
+             toggles the panel through three states: closed → audio
+             open → subtitle open → closed. up/down navigates the
+             list, OK selects, back closes. Hidden by default; the
+             Video node keeps focus during normal playback. -->
+        <Group id="trackPicker"
+               translation="[1380, 200]"
+               visible="false">
+            <Rectangle width="500" height="640" color="0x07070dee" />
+            <Label id="trackPickerTitle"
+                   text=""
+                   translation="[24, 18]"
+                   color="0x9a9aaaff"
+                   font="font:SmallBoldSystemFont" />
+            <LabelList id="trackPickerList"
+                       translation="[16, 56]"
+                       itemSize="[468, 52]"
+                       numRows="11"
+                       drawFocusFeedback="true"
+                       focusBitmapBlendColor="0x7c6af7ff" />
+        </Group>
+
         <ItemFetchTask id="itemTask" />
         <TranscodeStartTask id="transcodeTask" />
         <ListFetchTask id="markersTask" />

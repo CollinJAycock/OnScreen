@@ -36,6 +36,29 @@
   // Chapters: surface as jump targets. Start offsets used for green-button cycling.
   const chapters = $derived<Chapter[]>(item?.files[0]?.chapters ?? []);
 
+  // Audio + subtitle stream metadata for the in-player pickers.
+  // Yellow opens the audio picker, blue opens the subtitle picker —
+  // standard TV-remote convention. Picking an audio track on an HLS
+  // session re-issues the transcode with a new audio_stream_index;
+  // subtitles toggle the corresponding video.textTracks entry.
+  const audioStreams = $derived(item?.files[0]?.audio_streams ?? []);
+  const subtitleStreams = $derived(item?.files[0]?.subtitle_streams ?? []);
+  let audioPickerOpen = $state(false);
+  let subtitlePickerOpen = $state(false);
+  let pickerCursor = $state(0);
+  // Index of the currently-active audio_stream within audio_streams.
+  // Initialised to 0 since the first transcode session uses the
+  // server's default audio (usually the first stream); switchAudioStream
+  // updates it after a successful re-issue. Direct-play (not used on
+  // webOS today — every webOS session is transcoded) would need a
+  // separate textTracks-style API.
+  let activeAudioIndex = $state(0);
+  // Active subtitle: -1 means "off". Persisted via video.textTracks
+  // mode rather than re-issued through the transcode session, since
+  // the server emits subtitle streams as WebVTT lanes inside the HLS
+  // playlist.
+  let activeSubtitleIndex = $state(-1);
+
   // Intro / credits markers fetched alongside the item — drives the
   // Skip button overlay. Empty array for non-episode types and for
   // shows without auto-detected markers; either way the overlay
@@ -116,6 +139,9 @@
   }
 
   function onKey(k: RemoteKey): boolean {
+    // Audio + subtitle pickers grab keys before everything else when
+    // open — up/down moves cursor, enter selects, back closes.
+    if (pickerKey(k)) return true;
     // Up Next overlay grabs the OK / Back keys when visible — Enter
     // accepts and chains, Back dismisses for the rest of this play.
     if (upNextShown) {
@@ -160,8 +186,126 @@
       case 'red':
         jumpToChapter(-1);
         return true;
+      case 'yellow':
+        if (audioStreams.length > 1) openAudioPicker();
+        return true;
+      case 'blue':
+        if (subtitleStreams.length > 0) openSubtitlePicker();
+        return true;
     }
     return false;
+  }
+
+  // ── Audio + subtitle pickers ───────────────────────────────────────
+
+  function openAudioPicker() {
+    subtitlePickerOpen = false;
+    pickerCursor = activeAudioIndex < 0 ? 0 : activeAudioIndex;
+    audioPickerOpen = true;
+    showControls();
+  }
+
+  function openSubtitlePicker() {
+    audioPickerOpen = false;
+    // Cursor offset: index 0 = "Off", indices 1..N = subtitle streams.
+    pickerCursor = activeSubtitleIndex < 0 ? 0 : activeSubtitleIndex + 1;
+    subtitlePickerOpen = true;
+    showControls();
+  }
+
+  function closePickers() {
+    audioPickerOpen = false;
+    subtitlePickerOpen = false;
+  }
+
+  function pickerKey(k: RemoteKey): boolean {
+    if (!audioPickerOpen && !subtitlePickerOpen) return false;
+    if (k === 'back') { closePickers(); return true; }
+    const len = audioPickerOpen ? audioStreams.length : subtitleStreams.length + 1;
+    if (k === 'up') {
+      pickerCursor = (pickerCursor - 1 + len) % len;
+      return true;
+    }
+    if (k === 'down') {
+      pickerCursor = (pickerCursor + 1) % len;
+      return true;
+    }
+    if (k === 'enter') {
+      if (audioPickerOpen) {
+        const stream = audioStreams[pickerCursor];
+        if (stream && pickerCursor !== activeAudioIndex) {
+          void switchAudioStream(stream.index, pickerCursor);
+        }
+      } else {
+        // pickerCursor === 0 is the synthetic "Off" row.
+        applySubtitleSelection(pickerCursor === 0 ? -1 : pickerCursor - 1);
+      }
+      closePickers();
+      return true;
+    }
+    return false;
+  }
+
+  // Re-issue the active transcode session with a new
+  // audio_stream_index, preserving the current playback position.
+  // Server emits one audio per transcode session, so language
+  // switching can't go through hls.js's track selector — only a
+  // fresh session carries the chosen language.
+  async function switchAudioStream(audioStreamIndex: number, pickerIndex: number) {
+    if (!video || !item) return;
+    const file = item.files[0];
+    if (!file) return;
+    const positionMs = position;
+    try {
+      const fresh = await endpoints.transcode.start({
+        itemId: itemID,
+        height: 1080,
+        positionMs,
+        fileId: file.id,
+        supportsHEVC: true,
+        audioStreamIndex,
+      });
+      // Tear down the previous hls instance before swapping the
+      // source. Without destroy() the old fragments keep buffering
+      // in the background.
+      hls?.destroy();
+      hls = null;
+      session = fresh;
+      const Hls = await loadHls();
+      const fullURL = fresh.playlist_url.startsWith('http')
+        ? fresh.playlist_url
+        : api.mediaUrl(fresh.playlist_url);
+      if (Hls.isSupported()) {
+        const inst = new Hls({ lowLatencyMode: false });
+        inst.loadSource(fullURL);
+        inst.attachMedia(video);
+        hls = inst;
+      } else {
+        video.src = fullURL;
+      }
+      video.addEventListener('loadedmetadata', () => {
+        if (video) video.currentTime = positionMs / 1000;
+        void video?.play();
+      }, { once: true });
+      activeAudioIndex = pickerIndex;
+    } catch (e) {
+      // Re-issue failed — keep the existing session running. The
+      // user can try again from the picker.
+      console.warn('audio re-issue failed', e);
+    }
+  }
+
+  // Toggle a subtitle track via the video element's textTracks API.
+  // Server-emitted WebVTT lanes show up as TextTrack entries when
+  // the HLS playlist references them; the picker maps the user's
+  // selection to a track mode of 'showing' / 'disabled'.
+  function applySubtitleSelection(streamIndex: number) {
+    if (!video) return;
+    activeSubtitleIndex = streamIndex;
+    const tracks = video.textTracks;
+    for (let i = 0; i < tracks.length; i++) {
+      tracks[i].mode = i === streamIndex ? 'showing' : 'disabled';
+    }
   }
 
   // ── Markers ────────────────────────────────────────────────────────
@@ -472,6 +616,41 @@
     </div>
   {/if}
 
+  <!-- Audio + subtitle pickers. Yellow opens audio (HLS re-issues the
+       session with the chosen audio_stream_index, preserving position);
+       blue opens subtitles (toggles a video.textTracks entry). The
+       overlay floats above the video; arrow keys move the cursor,
+       OK selects, Back closes. -->
+  {#if audioPickerOpen}
+    <div class="picker">
+      <div class="picker-title">Audio</div>
+      {#each audioStreams as s, i (s.index)}
+        <div class="picker-row" class:active={i === pickerCursor} class:current={i === activeAudioIndex}>
+          {#if i === activeAudioIndex}● {/if}
+          {s.language || 'und'} · {s.codec} · {s.channels}ch{#if s.title}{` · ${s.title}`}{/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if subtitlePickerOpen}
+    <div class="picker">
+      <div class="picker-title">Subtitles</div>
+      <div class="picker-row" class:active={pickerCursor === 0} class:current={activeSubtitleIndex === -1}>
+        {#if activeSubtitleIndex === -1}● {/if}
+        Off
+      </div>
+      {#each subtitleStreams as s, i (s.index)}
+        <div class="picker-row"
+             class:active={pickerCursor === i + 1}
+             class:current={i === activeSubtitleIndex}>
+          {#if i === activeSubtitleIndex}● {/if}
+          {s.language || 'und'}{#if s.forced}{' · forced'}{/if}{#if s.title}{` · ${s.title}`}{/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <!-- Up Next overlay — appears 25 s before EOS for episodes /
        podcasts. Music tracks + audiobook chapters skip this and
        chain silently at EOS so the outro plays through. -->
@@ -509,6 +688,8 @@
           <span>◀◀ ▶▶ seek 30s</span>
           <span>OK play/pause</span>
           {#if chapters.length > 0}<span>red/green chapters</span>{/if}
+          {#if audioStreams.length > 1}<span>yellow audio</span>{/if}
+          {#if subtitleStreams.length > 0}<span>blue subtitles</span>{/if}
           <span>back exit</span>
         </div>
       </div>
@@ -638,6 +819,39 @@
     font-size: var(--font-md);
     font-weight: 600;
     border-radius: 24px;
+  }
+
+  .picker {
+    position: absolute;
+    top: 80px;
+    right: 60px;
+    padding: 24px 32px;
+    background: rgba(7, 7, 13, 0.92);
+    border: 2px solid var(--border-strong);
+    border-radius: 12px;
+    min-width: 360px;
+    max-width: 520px;
+  }
+  .picker-title {
+    font-size: var(--font-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+  }
+  .picker-row {
+    font-size: var(--font-md);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 6px;
+    white-space: pre-wrap;
+  }
+  .picker-row.active {
+    background: var(--accent);
+    color: white;
+  }
+  .picker-row.current:not(.active) {
+    color: var(--accent);
   }
 
   .up-next {

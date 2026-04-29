@@ -20,6 +20,14 @@
         <field id="height" type="integer" />
         <field id="videoCopy" type="boolean" />
         <field id="supportsHevc" type="boolean" />
+        <!-- audio_stream_index is an optional re-issue param. -1
+             means "use server default" (the standard first run);
+             non-negative is the index from item.files[0].audio_streams
+             that the user picked from the in-player Audio picker.
+             positionMs lets a re-issue resume at the exact second
+             instead of restarting from 0. -->
+        <field id="audioStreamIndex" type="integer" value="-1" />
+        <field id="positionMs" type="integer" value="0" />
         <field id="result" type="assocArray" />
     </interface>
 
