@@ -1090,8 +1090,20 @@ class PlaybackFragment : VideoSupportFragment() {
         if (!exo.playWhenReady && exo.currentPosition == 0L) return false
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
         val ctx = activity?.applicationContext ?: return false
+        val item = viewModel.uiState.value.item
         return try {
-            tv.onscreen.android.playback.AudioHandoff.park(exo, itemId)
+            // Capture the metadata the service needs for progress
+            // reports + auto-advance — pulling it from the item
+            // endpoint inside the service would race with the
+            // activity going away.
+            val meta = tv.onscreen.android.playback.AudioHandoff.Metadata(
+                itemId = itemId,
+                itemType = currentItemType.ifEmpty { item?.type.orEmpty() },
+                parentId = item?.parent_id,
+                index = item?.index,
+                hlsOffsetMs = viewModel.hlsOffsetMs,
+            )
+            tv.onscreen.android.playback.AudioHandoff.park(exo, meta)
             // Started service so it survives the activity going away.
             // The service reads from AudioHandoff on its next attach()
             // and binds the parked player to a Media3 MediaSession,

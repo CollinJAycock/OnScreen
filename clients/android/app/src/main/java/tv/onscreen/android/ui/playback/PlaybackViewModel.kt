@@ -152,52 +152,15 @@ class PlaybackViewModel @Inject constructor(
     }
 
     private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
-        try {
-            val children = itemRepo.getChildren(parentId)
-            val next = children
-                .filter { it.type == type && it.index != null }
-                .sortedBy { it.index }
-                .firstOrNull { (it.index ?: -1) == currentIndex + 1 }
-            if (next != null) {
-                _uiState.value = _uiState.value.copy(nextEpisode = next)
-                return
-            }
-            // Cross-container auto-advance: when the user finishes
-            // the last episode of a season or the last track of an
-            // album, fall through to the first child of the *next*
-            // sibling container. Plex/Netflix/Plexamp all chain
-            // S04E12 → S05E01 by default and "Play All" on an artist
-            // needs this to walk the discography. Without it,
-            // playback dies at the end of one season / album.
-            //
-            // For tracks: parent is an album, grandparent the artist;
-            //   sibling containers are albums sorted by year.
-            // For episodes: parent is a season, grandparent the show;
-            //   sibling containers are seasons sorted by index.
-            if (type == "track" || type == "episode") {
-                val parent = itemRepo.getItem(parentId)
-                val grandparentId = parent.parent_id ?: return
-                val containerType = if (type == "track") "album" else "season"
-                val rawSiblings = itemRepo.getChildren(grandparentId)
-                    .filter { it.type == containerType }
-                val siblings = if (type == "track") {
-                    rawSiblings.sortedWith(
-                        compareBy({ it.year ?: Int.MAX_VALUE }, { it.index ?: Int.MAX_VALUE }),
-                    )
-                } else {
-                    rawSiblings.sortedBy { it.index ?: Int.MAX_VALUE }
-                }
-                val currentIdx = siblings.indexOfFirst { it.id == parentId }
-                if (currentIdx < 0) return
-                val nextContainer = siblings.getOrNull(currentIdx + 1) ?: return
-                val firstChild = itemRepo.getChildren(nextContainer.id)
-                    .filter { it.type == type && it.index != null }
-                    .sortedBy { it.index }
-                    .firstOrNull() ?: return
-                _uiState.value = _uiState.value.copy(nextEpisode = firstChild)
-            }
-        } catch (_: Exception) {
-            // Best-effort.
+        // Same resolver the MediaSessionService uses on its own
+        // STATE_ENDED — keeps the in-fragment Up Next overlay and
+        // the service-side autoplay aligned on what comes next, no
+        // matter which surface the track ends on.
+        val item = _uiState.value.item ?: return
+        val next = tv.onscreen.android.playback.NextSiblingResolver(itemRepo)
+            .resolve(item.id, type, parentId, currentIndex)
+        if (next != null) {
+            _uiState.value = _uiState.value.copy(nextEpisode = next)
         }
     }
 

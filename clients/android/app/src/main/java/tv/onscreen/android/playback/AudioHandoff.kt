@@ -20,28 +20,40 @@ import androidx.media3.exoplayer.ExoPlayer
  */
 object AudioHandoff {
 
+    /** Snapshot of the parked item so the service can address
+     *  progress reports + auto-advance lookups without re-fetching
+     *  the item over the network. Captured at park time on the
+     *  fragment side from the same state the player is bound to. */
+    data class Metadata(
+        val itemId: String,
+        val itemType: String,
+        val parentId: String?,
+        val index: Int?,
+        val hlsOffsetMs: Long,
+    )
+
     private var parked: ExoPlayer? = null
-    private var parkedItemId: String? = null
+    private var parkedMeta: Metadata? = null
 
     /** Park a player for pickup by the MediaSessionService. */
     @Synchronized
-    fun park(player: ExoPlayer, itemId: String) {
+    fun park(player: ExoPlayer, meta: Metadata) {
         parked?.takeIf { it !== player }?.release()
         parked = player
-        parkedItemId = itemId
+        parkedMeta = meta
     }
 
     /** Take the parked player out of the slot. Returns null if none
      *  is currently parked, or if [forItemId] doesn't match — the
      *  caller is asking for a specific item and the parked one is
-     *  for something else, so it should keep playing in the
-     *  service while the new fragment builds its own player. */
+     *  for something else, so it should keep playing in the service
+     *  while the new fragment builds its own player. */
     @Synchronized
     fun take(forItemId: String): ExoPlayer? {
-        if (parkedItemId != forItemId) return null
+        if (parkedMeta?.itemId != forItemId) return null
         val p = parked
         parked = null
-        parkedItemId = null
+        parkedMeta = null
         return p
     }
 
@@ -50,12 +62,19 @@ object AudioHandoff {
     @Synchronized
     fun peek(): ExoPlayer? = parked
 
+    /** Metadata snapshot that goes alongside the parked player.
+     *  Read by the service immediately after attach() so the
+     *  progress reporter knows which item to PUT against and the
+     *  auto-advance listener can compute the next sibling. */
+    @Synchronized
+    fun peekMetadata(): Metadata? = parkedMeta
+
     /** Unconditional clear — used by the service when it's about
      *  to release the player itself (playback ended, user dismissed
      *  notification). */
     @Synchronized
     fun clear() {
         parked = null
-        parkedItemId = null
+        parkedMeta = null
     }
 }
