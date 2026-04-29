@@ -12,7 +12,7 @@
 
 **Snapshot date:** 2026-04-28. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
 
-> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, watch-cooccurrence recommendations ("Because you watched X"), trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
+> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side), admin logs API, audiobook embedded-cover serving. See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
 
 ---
 
@@ -26,7 +26,7 @@
 | Photos                     | ✅ | ✅ | ✅ | ✅ | OnScreen: EXIF + map + timeline |
 | Live TV                    | ✅ | 💎 | 💎 | ✅ | Plex/Emby gate behind paid tier |
 | DVR (scheduled recording)  | ✅ | 💎 | 💎 | ✅ | OnScreen: matcher + capture + retention purge wired (commit `246027b`) |
-| Audiobooks                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: flat one-file-per-book MVP (commit `933c1f0`); author/series hierarchy is v2.1 |
+| Audiobooks                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: flat one-file-per-book MVP (commit `933c1f0`); embedded cover art served on demand via `/items/{id}/image` (ffmpeg-extracted from m4b/mp3/flac, cached); author/series hierarchy is v2.1 |
 | Books / comics             | ⚠️ | ❌ | ⚠️ | ⚠️ | OnScreen: CBZ scan + paginated reader shipped in v2.1 (Track B Stage 1); EPUB and CBR explicitly deferred to Stage 2 |
 | Podcasts                   | ⚠️ | ⚠️ | ❌ | 🧩 | OnScreen: local files + episode UI (commit `a8812ad`, v2.1 polish); RSS subscriptions still deferred |
 | Music videos               | ✅ | ✅ | ✅ | ✅ | OnScreen: artist children w/ 16:9 thumbs (commit `3319bd6`) |
@@ -205,6 +205,7 @@
 | Filesystem-watcher incremental scan | ✅ | ✅ | ✅ | ✅ | |
 | Scheduled scan (cron-like)     | ⚠️ | ✅ | ✅ | ✅ | OnScreen: per-library interval only, no cron syntax |
 | Structured JSON logs           | ✅ | ❌ | ❌ | ❌ | OnScreen: log/slog JSON on stdout |
+| Admin log retrieval API        | ✅ | ❌ | ❌ | ❌ | OnScreen: `GET /api/v1/admin/logs?level=…&limit=…` reads from a 2000-entry in-process ring; lets operators pull recent server output without host shell access (TrueNAS Apps, Cloud Run) |
 | OpenTelemetry tracing          | ✅ | ❌ | ❌ | ❌ | OTLP/gRPC, otelchi + otelpgx |
 | Prometheus metrics             | ✅ | ❌ | ❌ | ❌ | `/metrics` endpoint |
 | Analytics dashboard            | ✅ | ✅ | ✅ | ✅ | |
@@ -328,10 +329,10 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 
 | Feature                         | OnScreen | Plex (apps) | Emby (apps) | Jellyfin (apps) | Notes |
 |---------------------------------|:--:|:--:|:--:|:--:|---|
-| Android TV / Google TV          | ⚠️ | ✅ | ✅ | ✅ | OnScreen: [`clients/android/`](../clients/android/) — AndroidX Leanback + Media3 ExoPlayer + Hilt + Retrofit; setup → login → home + skip-intro/credits + chapters + trickplay + cross-device sync wired. Streaming + artwork verified on real hardware (Fire Stick, Google TV) |
+| Android TV / Google TV          | ✅ | ✅ | ✅ | ✅ | OnScreen: [`clients/android/`](../clients/android/) — AndroidX Leanback + Media3 ExoPlayer + Hilt + Retrofit; full hub + library browse, photos with D-pad nav, music with auto-advance, audiobook speed picker, collections, skip-intro/credits, chapters, trickplay, device-pairing sign-in (covers OIDC/OAuth/SAML/LDAP/local), cross-device resume, screen-on during playback. Verified on real hardware (Fire Stick, Google TV). Outstanding: full TV-app polish + offline downloads |
 | LG webOS (smart TV)             | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: scaffold in [`clients/webos/`](../clients/webos/) — SvelteKit SPA packaged via `ares-package` with its own spatial-navigation focus manager; browse/play not yet implemented |
 | Roku                            | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: scaffold in [`clients/roku/`](../clients/roku/) — BrightScript + SceneGraph; setup → login → home (RowList of hub rows) + Video-node player + npm sideload script wired. Direct play only; transcode negotiation, audio/sub pickers, sync consumer pending. Jellyfin: third-party. |
-| Amazon Fire TV                  | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: shares the [`clients/android/`](../clients/android/) APK; [`clients/firetv/`](../clients/firetv/) is build/sideload + Amazon Appstore docs. Fire OS = Android fork, accepts the same binary; the manifest declares `amazon.hardware.fire_tv` so Amazon's launcher categorises it correctly while remaining a no-op on Google TV devices. **Verified on hardware (Fire Stick)** — streaming works, artwork loads after the Coil-via-authed-OkHttpClient fix (every imageView.load now carries the Bearer header instead of hitting `/artwork/` unauthenticated). Jellyfin: third-party Fire TV builds. |
+| Amazon Fire TV                  | ✅ | ✅ | ✅ | ⚠️ | OnScreen: shares the [`clients/android/`](../clients/android/) APK; [`clients/firetv/`](../clients/firetv/) is build/sideload + Amazon Appstore docs. Fire OS = Android fork, accepts the same binary; the manifest declares `amazon.hardware.fire_tv` so Amazon's launcher categorises it correctly while remaining a no-op on Google TV devices. **Verified on hardware (Fire Stick)** — streaming, artwork (Coil-via-authed-OkHttp + `/items/{id}/image` fallback for audiobook covers), photo D-pad navigation, music auto-advance, screen-on during playback all confirmed. Jellyfin: third-party Fire TV builds. |
 | Samsung Tizen (smart TV)        | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: scaffold in [`clients/tizen/`](../clients/tizen/) — SvelteKit SPA packaged via `tizen package -t wgt`; AVPlay JS API for HW-accelerated HLS/DASH/MP4 (instead of `<video>` + hls.js); Tizen `VK_*` remote-key map. Same Setup → Login → Hub → Player route shape as the webOS scaffold. |
 | Apple TV (tvOS)                 | ❌ | ✅ | ✅ | ⚠️ | Jellyfin: third-party Infuse/SwiftFin |
 | Native iOS phone app            | ❌ | ✅ | ✅ | ✅ | OnScreen runs in mobile browser only |
@@ -367,14 +368,14 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 - **Secret encryption at rest** for webhooks and plugin credentials (AES-256-GCM).
 - **NFO + Cover Art Archive fallback chain**: NFO overrides TMDB on the final write; CAA fills MusicBrainz-keyed album art that TheAudioDB doesn't have. Plex doesn't do CAA at all.
 
-## Where OnScreen Trails (as of 2026-04-27)
+## Where OnScreen Trails (as of 2026-04-28)
 
 - **EPUB / CBR books** — CBZ scan + reader shipped in v2.1 Stage 1, but the other two formats still need their parsers and explicitly slipped to Stage 2.
 - **No Tidal / Qobuz integration** for music streaming.
 - **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
 - **No bit-perfect playback** — the native Tauri shell ships with a cpal+claxon FLAC engine (out of webview), but cpal 0.16 hard-codes WASAPI shared mode so the OS mixer can still resample. Real exclusive output needs either a cpal fork or dropping to raw `wasapi`/`coreaudio`/`alsa` per platform — multi-day work behind the audiophile pillar.
-- **TV / mobile native apps are scaffolds, not shipped** — OnScreen has a Tauri 2 desktop client (Windows/macOS/Linux) plus Android TV (Leanback + Media3) and LG webOS (SvelteKit + ares-package) scaffolds in [`clients/`](../clients/), but the latter two have no UI / browse / playback wired yet. iOS, Apple TV, Roku, Tizen, and Android phone apps don't exist. The web frontend works in those browsers as a fallback.
+- **TV / mobile coverage is uneven** — OnScreen has a Tauri 2 desktop client (Windows/macOS/Linux) plus a hardware-verified Android TV / Fire TV client (Leanback + Media3 ExoPlayer). LG webOS, Samsung Tizen, and Roku scaffolds exist in [`clients/`](../clients/) but their browse + playback code paths aren't wired yet. iOS, Apple TV, and Android phone apps don't exist. The web frontend works in those browsers as a fallback.
 - **No "play on this device" remote control** — cross-device resume sync ships in v2.1 (SSE `progress.updated` broadcast + watch-page consumer), but transferring an active playback session from one device to another isn't wired.
 - **DASH on the client side** — `manifest.mpd` ships server-side in v2.1, but the frontend still uses `hls.js`. Smart-TV apps (Tizen, webOS, Roku) that prefer DASH won't see the benefit until the shaka-player swap lands.
 - **Picture-in-picture server signal** — handler/store has no PiP-mode flag yet.
@@ -400,11 +401,14 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 
 - ✅ **Track A — Bug-shape fixes** (3/3): job-queued OCR endpoint (POST returns 202 + job_id, GET polls — unblocks Cloudflare Tunnel free-tier users hitting 100 s timeouts); Vitest SMTP fixture cleanup; Valkey-backed SAML request tracker (HA-ready — AuthnRequest minted on instance A is validatable by ACS callback on instance B)
 - ✅ **Track B — Media types**: home_video library + date-grouped page; CBZ books with paginated reader; audiobook author display + chapter-boundary resume; podcast show + episode detail UI
-- ✅ **Track F — Discovery**: smart playlists (rule JSONB, query-time evaluation); trending row (rolling watch_events aggregate); watch-cooccurrence recommendations + "Because you watched X" (item-to-item collaborative filtering, replaced the planned pgvector pipeline)
+- ✅ **Track F — Discovery**: smart playlists (rule JSONB, query-time evaluation); trending row (rolling watch_events aggregate). Watch-cooccurrence recommendations + "Because you watched X" were built (item-to-item collaborative filtering, replaced the planned pgvector pipeline) but removed from the home hub before release — the row didn't earn its space; trending stays. Cooccurrence table + sql kept dormant in case the row earns a comeback
 - ✅ **Track G — Per-user policy** (5/5): library `is_private` flag with public/private union semantics; `auto_grant_new_users` template wired into invite + OIDC + SAML + LDAP user-creation paths; per-profile inherit-or-override library access; content-rating gates closed in `ListCollectionItems`, `ListItemsByGenre`, `ListWatchHistory`; admin "view as" middleware (read-only, GET-only, IDOR-gated)
 - ✅ **Track H — Streaming format**: server-side DASH `manifest.mpd` endpoint over the existing fMP4 ladder (one segment ladder, two manifests) + `manifest_url` exposed on the session-start response; frontend shaka-player swap intentionally deferred — real DASH leverage is smart-TV native clients (Track E) consuming the URL directly
 - ✅ **Track D — Quality + dev workflow** (3/3): `auth-providers.spec.ts` Playwright spec covering OIDC PKCE shape, SAML signed-AuthnRequest (locks the four-layer SAML signing fix behind a regression guard), LDAP end-to-end + negative path; gh CLI added to CONTRIBUTING.md prereqs (cuts release form to one command); 10-PR Dependabot triage doc grouping the v2.0-tag queue by risk with paste-ready merge commands
 - ✅ **Track E — Native desktop client** (most of the list): Tauri 2 shell for Windows/macOS/Linux reusing the SvelteKit bundle in a system webview; cpal + claxon native FLAC engine (play/pause/preload/seek/auto-advance) outside the webview; OS media keys via `tauri-plugin-global-shortcut`; system tray with transport menu; OS notifications on track change; refresh + access tokens in the OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service) with one-shot store-to-keychain migration; SSE `progress.updated` broadcast + watch-page consumer for cross-device resume. **Outstanding:** real WASAPI exclusive mode (cpal 0.16 limitation, multi-day platform work), OS now-playing widgets (`souvlaki` swap), "play on this device" remote control.
+- ✅ **Track E — TV clients** (Android TV / Fire TV verified on hardware): full Leanback + Media3 ExoPlayer client; device-pairing sign-in covers every auth provider via web browser PIN handoff; photo viewer with D-pad sibling navigation (auto-resolves siblings from parent album or library); music auto-advance through albums (silent EOS chain, no Up Next overlay); audiobook speed picker (0.75–2x); collections drill from search/hub; HLS retry policy + 60s read timeout for cold-start transcodes over Cloudflare Tunnel; screen-on flag during active playback. Roku, Tizen, webOS scaffolds in the tree; full UI parity outstanding.
+- ✅ **Track J — Admin observability**: `/api/v1/admin/logs` endpoint backed by an in-process 2000-entry slog ring buffer — admin-only, level + limit filters, error attrs stringified for diagnostic readability. Lets operators pull recent server output without SSH/kubectl access (TrueNAS Apps, Cloud Run).
+- ✅ **Audiobook embedded covers**: `/items/{id}/image` extends to type=audiobook, extracts the first attached picture from the m4b/mp3/flac container via ffmpeg, runs it through the same resize + on-disk cache as photos. First request per book triggers ffmpeg; subsequent requests at the same dimensions hit the cache.
 
 ## Non-Differentiators (All Four Roughly Equal)
 
