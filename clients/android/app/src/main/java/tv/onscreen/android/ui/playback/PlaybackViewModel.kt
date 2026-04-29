@@ -162,34 +162,39 @@ class PlaybackViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(nextEpisode = next)
                 return
             }
-            // Cross-album auto-advance: when a music track ends and
-            // there's no next track in the same album, fall through
-            // to the first track of the next album by the artist.
-            // Plexamp's "Play All" UX expects the queue to chain
-            // through the entire catalog; without this the music
-            // dies at the end of one album. Skipped for episodes
-            // (TV shows already chain across seasons via their own
-            // structure on the server side, and most viewers want
-            // the "next episode" affordance to stop at season
-            // boundaries anyway).
-            if (type == "track") {
-                val album = itemRepo.getItem(parentId)
-                val artistId = album.parent_id ?: return
-                val albums = itemRepo.getChildren(artistId)
-                    .filter { it.type == "album" }
-                    // Year is the natural ordering for an artist's
-                    // discography; fall back to index then created_at
-                    // (already the API's default sort) when year is
-                    // missing.
-                    .sortedWith(compareBy({ it.year ?: Int.MAX_VALUE }, { it.index ?: Int.MAX_VALUE }))
-                val currentAlbumIdx = albums.indexOfFirst { it.id == parentId }
-                if (currentAlbumIdx < 0) return
-                val nextAlbum = albums.getOrNull(currentAlbumIdx + 1) ?: return
-                val firstTrack = itemRepo.getChildren(nextAlbum.id)
-                    .filter { it.type == "track" && it.index != null }
+            // Cross-container auto-advance: when the user finishes
+            // the last episode of a season or the last track of an
+            // album, fall through to the first child of the *next*
+            // sibling container. Plex/Netflix/Plexamp all chain
+            // S04E12 → S05E01 by default and "Play All" on an artist
+            // needs this to walk the discography. Without it,
+            // playback dies at the end of one season / album.
+            //
+            // For tracks: parent is an album, grandparent the artist;
+            //   sibling containers are albums sorted by year.
+            // For episodes: parent is a season, grandparent the show;
+            //   sibling containers are seasons sorted by index.
+            if (type == "track" || type == "episode") {
+                val parent = itemRepo.getItem(parentId)
+                val grandparentId = parent.parent_id ?: return
+                val containerType = if (type == "track") "album" else "season"
+                val rawSiblings = itemRepo.getChildren(grandparentId)
+                    .filter { it.type == containerType }
+                val siblings = if (type == "track") {
+                    rawSiblings.sortedWith(
+                        compareBy({ it.year ?: Int.MAX_VALUE }, { it.index ?: Int.MAX_VALUE }),
+                    )
+                } else {
+                    rawSiblings.sortedBy { it.index ?: Int.MAX_VALUE }
+                }
+                val currentIdx = siblings.indexOfFirst { it.id == parentId }
+                if (currentIdx < 0) return
+                val nextContainer = siblings.getOrNull(currentIdx + 1) ?: return
+                val firstChild = itemRepo.getChildren(nextContainer.id)
+                    .filter { it.type == type && it.index != null }
                     .sortedBy { it.index }
                     .firstOrNull() ?: return
-                _uiState.value = _uiState.value.copy(nextEpisode = firstTrack)
+                _uiState.value = _uiState.value.copy(nextEpisode = firstChild)
             }
         } catch (_: Exception) {
             // Best-effort.
