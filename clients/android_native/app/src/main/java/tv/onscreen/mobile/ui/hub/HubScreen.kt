@@ -18,6 +18,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +51,9 @@ fun HubScreen(
     onOpenItem: (String) -> Unit,
     onOpenLibrary: (String) -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenFavorites: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onOpenCollections: () -> Unit,
     vm: HubViewModel = hiltViewModel(),
 ) {
     val ui by vm.state.collectAsState()
@@ -57,6 +63,15 @@ fun HubScreen(
             CenterAlignedTopAppBar(
                 title = { Text("OnScreen") },
                 actions = {
+                    IconButton(onClick = onOpenFavorites) {
+                        Icon(Icons.Default.Favorite, contentDescription = "Favorites")
+                    }
+                    IconButton(onClick = onOpenHistory) {
+                        Icon(Icons.Default.History, contentDescription = "History")
+                    }
+                    IconButton(onClick = onOpenCollections) {
+                        Icon(Icons.Default.Bookmarks, contentDescription = "Collections")
+                    }
                     IconButton(onClick = onOpenSearch) {
                         Icon(Icons.Default.Search, contentDescription = "Search")
                     }

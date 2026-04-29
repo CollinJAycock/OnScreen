@@ -7,8 +7,13 @@ object Routes {
     const val ITEM = "item/{id}"
     const val SEARCH = "search"
     const val PLAYER = "player/{id}"
+    const val FAVORITES = "favorites"
+    const val HISTORY = "history"
+    const val COLLECTIONS = "collections"
+    const val COLLECTION = "collection/{id}"
 
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"
     fun player(id: String) = "player/$id"
+    fun collection(id: String) = "collection/$id"
 }

@@ -17,6 +17,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.ui.collections.CollectionDetailScreen
+import tv.onscreen.mobile.ui.collections.CollectionsScreen
+import tv.onscreen.mobile.ui.favorites.FavoritesScreen
+import tv.onscreen.mobile.ui.history.HistoryScreen
 import tv.onscreen.mobile.ui.hub.HubScreen
 import tv.onscreen.mobile.ui.item.ItemDetailScreen
 import tv.onscreen.mobile.ui.library.LibraryScreen
@@ -58,6 +62,37 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
                 onOpenLibrary = { id -> nav.navigate(Routes.library(id)) },
                 onOpenSearch = { nav.navigate(Routes.SEARCH) },
+                onOpenFavorites = { nav.navigate(Routes.FAVORITES) },
+                onOpenHistory = { nav.navigate(Routes.HISTORY) },
+                onOpenCollections = { nav.navigate(Routes.COLLECTIONS) },
+            )
+        }
+        composable(Routes.FAVORITES) {
+            FavoritesScreen(
+                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(Routes.HISTORY) {
+            HistoryScreen(
+                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(Routes.COLLECTIONS) {
+            CollectionsScreen(
+                onOpenCollection = { id -> nav.navigate(Routes.collection(id)) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(
+            Routes.COLLECTION,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            CollectionDetailScreen(
+                collectionId = entry.arguments!!.getString("id")!!,
+                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
             )
         }
         composable(
