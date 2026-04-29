@@ -82,7 +82,7 @@ class PlaybackViewModel @Inject constructor(
                         // session ?token= that videos rely on
                         // doesn't exist for them).
                         PlaybackSource.DirectPlay(
-                            buildDirectPlayUrl(serverUrl, file.stream_url),
+                            buildDirectPlayUrl(serverUrl, file.stream_url, file.stream_token),
                             startMs,
                         )
                     }
@@ -182,12 +182,18 @@ class PlaybackViewModel @Inject constructor(
      * as `?token=`. The server's asset-route middleware
      * (RequiredAllowQueryToken) accepts that as the auth carrier
      * since ExoPlayer's HTTP stack can't attach an Authorization
-     * header. Empty token → return the URL unchanged so older
-     * sessions don't blow up; the downstream playback failure
-     * surfaces as the same 401 the user is seeing today.
+     * header.
+     *
+     * Prefer the per-file [streamToken] (24 h, baked into the file
+     * response) over the standard 1 h access token — ExoPlayer can't
+     * refresh on a 401 mid-stream, so the longer-lived token is what
+     * keeps a 90-minute movie from dying with
+     * ERROR_CODE_IO_BAD_HTTP_STATUS at the 1 h mark. Falls back to
+     * the access token for older server builds that don't ship the
+     * field.
      */
-    private suspend fun buildDirectPlayUrl(serverUrl: String, streamPath: String): String {
-        val token = serverPrefs.getAccessToken()
+    private suspend fun buildDirectPlayUrl(serverUrl: String, streamPath: String, streamToken: String?): String {
+        val token = if (!streamToken.isNullOrEmpty()) streamToken else serverPrefs.getAccessToken()
         val base = "$serverUrl$streamPath"
         if (token.isNullOrEmpty()) return base
         val sep = if (streamPath.contains("?")) "&" else "?"
