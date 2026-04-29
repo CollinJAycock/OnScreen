@@ -1,7 +1,9 @@
 package tv.onscreen.android.ui.livetv
 
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Toast
 import androidx.leanback.app.VerticalGridSupportFragment
 import androidx.leanback.widget.ArrayObjectAdapter
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.Recording
+import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.detail.DetailFragment
 
 @AndroidEntryPoint
@@ -21,6 +24,7 @@ class RecordingsFragment : VerticalGridSupportFragment() {
 
     private lateinit var viewModel: RecordingsViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
+    private var errorOverlay: ErrorOverlay? = null
 
     companion object {
         private const val NUM_COLUMNS = 4
@@ -35,6 +39,14 @@ class RecordingsFragment : VerticalGridSupportFragment() {
         }
     }
 
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val inner = super.onCreateView(inflater, container, savedInstanceState)
+            ?: return super.onCreateView(inflater, container, savedInstanceState)!!
+        val overlay = ErrorOverlay.wrap(inner)
+        errorOverlay = overlay
+        return overlay.root
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[RecordingsViewModel::class.java]
@@ -45,6 +57,12 @@ class RecordingsFragment : VerticalGridSupportFragment() {
             viewModel.uiState.collectLatest { state ->
                 gridAdapter.clear()
                 state.items.forEach { gridAdapter.add(it) }
+                when {
+                    state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
+                    !state.isLoading && state.items.isEmpty() ->
+                        errorOverlay?.showEmpty(R.string.empty_recordings_title, R.string.empty_recordings_message)
+                    else -> errorOverlay?.hide()
+                }
             }
         }
 

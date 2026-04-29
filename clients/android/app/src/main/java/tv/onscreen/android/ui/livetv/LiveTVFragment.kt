@@ -1,7 +1,9 @@
 package tv.onscreen.android.ui.livetv
 
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import androidx.leanback.app.VerticalGridSupportFragment
 import androidx.leanback.widget.ArrayObjectAdapter
 import androidx.leanback.widget.FocusHighlight
@@ -12,12 +14,14 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
+import tv.onscreen.android.ui.common.ErrorOverlay
 
 @AndroidEntryPoint
 class LiveTVFragment : VerticalGridSupportFragment() {
 
     private lateinit var viewModel: LiveTVViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
+    private var errorOverlay: ErrorOverlay? = null
 
     companion object {
         // Channel cards are wider than poster cards so 4 across reads
@@ -35,6 +39,14 @@ class LiveTVFragment : VerticalGridSupportFragment() {
         }
     }
 
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val inner = super.onCreateView(inflater, container, savedInstanceState)
+            ?: return super.onCreateView(inflater, container, savedInstanceState)!!
+        val overlay = ErrorOverlay.wrap(inner)
+        errorOverlay = overlay
+        return overlay.root
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[LiveTVViewModel::class.java]
@@ -45,6 +57,12 @@ class LiveTVFragment : VerticalGridSupportFragment() {
             viewModel.uiState.collectLatest { state ->
                 gridAdapter.clear()
                 state.channels.forEach { gridAdapter.add(it) }
+                when {
+                    state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
+                    !state.isLoading && state.channels.isEmpty() ->
+                        errorOverlay?.showEmpty(R.string.empty_live_tv_title, R.string.empty_live_tv_message)
+                    else -> errorOverlay?.hide()
+                }
             }
         }
 

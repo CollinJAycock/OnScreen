@@ -1,7 +1,9 @@
 package tv.onscreen.android.ui.history
 
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import androidx.leanback.app.VerticalGridSupportFragment
 import androidx.leanback.widget.ArrayObjectAdapter
 import androidx.leanback.widget.FocusHighlight
@@ -16,6 +18,7 @@ import tv.onscreen.android.R
 import tv.onscreen.android.data.model.HistoryItem
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
+import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.detail.DetailFragment
 import javax.inject.Inject
 
@@ -26,6 +29,7 @@ class HistoryFragment : VerticalGridSupportFragment() {
 
     private lateinit var viewModel: HistoryViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
+    private var errorOverlay: ErrorOverlay? = null
 
     companion object {
         private const val NUM_COLUMNS = 5
@@ -38,6 +42,14 @@ class HistoryFragment : VerticalGridSupportFragment() {
             shadowEnabled = false
             numberOfColumns = NUM_COLUMNS
         }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val inner = super.onCreateView(inflater, container, savedInstanceState)
+            ?: return super.onCreateView(inflater, container, savedInstanceState)!!
+        val overlay = ErrorOverlay.wrap(inner)
+        errorOverlay = overlay
+        return overlay.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -55,6 +67,12 @@ class HistoryFragment : VerticalGridSupportFragment() {
                 val seen = mutableSetOf<String>()
                 state.items.forEach { item ->
                     if (seen.add(item.media_id)) gridAdapter.add(item)
+                }
+                when {
+                    state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
+                    !state.isLoading && gridAdapter.size() == 0 ->
+                        errorOverlay?.showEmpty(R.string.empty_history_title, R.string.empty_history_message)
+                    else -> errorOverlay?.hide()
                 }
             }
         }

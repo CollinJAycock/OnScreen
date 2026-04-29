@@ -30,6 +30,20 @@
     <string name="error_connection">Could not connect to server</string>
     <string name="error_login">Login failed</string>
     <string name="no_results">No results found</string>
+
+    <!-- Empty-state copy for browse fragments. Each pair is shown
+         when the corresponding list comes back empty so the user
+         sees a friendly prompt instead of a blank grid. -->
+    <string name="empty_favorites_title">No favorites yet</string>
+    <string name="empty_favorites_message">Mark items with the heart icon on their detail page and they\'ll show up here.</string>
+    <string name="empty_history_title">No watch history yet</string>
+    <string name="empty_history_message">Anything you play will show up here automatically.</string>
+    <string name="empty_collection_title">Empty collection</string>
+    <string name="empty_collection_message">No items in this collection yet.</string>
+    <string name="empty_live_tv_title">No live channels</string>
+    <string name="empty_live_tv_message">Add a tuner in the web settings to see channels here.</string>
+    <string name="empty_recordings_title">No recordings yet</string>
+    <string name="empty_recordings_message">Schedule recordings from the web settings — they\'ll show up here once they\'re running.</string>
     <string name="episodes">Episodes</string>
     <string name="tracks">Tracks</string>
     <string name="albums">Albums</string>

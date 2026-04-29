@@ -20,14 +20,29 @@ class ErrorOverlay private constructor(
     private val retryButton: Button,
 ) {
     fun show(message: String?, onRetry: () -> Unit) {
+        titleView.setText(R.string.error_connection)
         messageView.text = message ?: ""
         messageView.visibility = if (message.isNullOrBlank()) View.GONE else View.VISIBLE
+        retryButton.visibility = View.VISIBLE
         retryButton.setOnClickListener {
             hide()
             onRetry()
         }
         overlay.visibility = View.VISIBLE
         retryButton.requestFocus()
+    }
+
+    /** Show an "empty" state — same overlay layout, custom title +
+     *  message, no retry button. Used by list fragments (favorites,
+     *  history, recordings, collection items) so an empty grid reads
+     *  as "you don't have any of these yet" instead of looking like
+     *  a load failure. */
+    fun showEmpty(titleRes: Int, messageRes: Int) {
+        titleView.setText(titleRes)
+        messageView.setText(messageRes)
+        messageView.visibility = View.VISIBLE
+        retryButton.visibility = View.GONE
+        overlay.visibility = View.VISIBLE
     }
 
     fun hide() {
