@@ -4265,9 +4265,15 @@ SET title                   = $2,
     duration_ms             = $11,
     genres                  = $12,
     tags                    = $13,
-    poster_path             = $14,
-    fanart_path             = $15,
-    thumb_path              = $16,
+    -- COALESCE on the art paths: the enricher only sets these when
+    -- it has a new URL to download. Without this guard, a nil from
+    -- the agent (e.g. TheAudioDB miss + CAA unreachable for an
+    -- obscure 2026 collector's edition) wiped whatever the scanner
+    -- had already extracted from the disk-side cover.jpg /
+    -- folder.jpg. Mirrors the existing tmdb_id / tvdb_id behaviour.
+    poster_path             = COALESCE($14, poster_path),
+    fanart_path             = COALESCE($15, fanart_path),
+    thumb_path              = COALESCE($16, thumb_path),
     originally_available_at = $17,
     tmdb_id                 = COALESCE($18, tmdb_id),
     tvdb_id                 = COALESCE($19, tvdb_id),
