@@ -114,6 +114,7 @@ type ItemHandler struct {
 	sync      *notification.Broker
 	audit     *audit.Logger
 	tokens    *auth.TokenMaker // optional; when set, Get embeds a 24h stream token per file
+	epDB      EpisodePosterDB  // optional; when set, episode rows get the show's poster substituted (per user pref)
 	logger    *slog.Logger
 }
 
@@ -167,6 +168,18 @@ func (h *ItemHandler) WithSyncBroker(b *notification.Broker) *ItemHandler {
 // audit emission (still functional, just unobserved).
 func (h *ItemHandler) WithAudit(a *audit.Logger) *ItemHandler {
 	h.audit = a
+	return h
+}
+
+// WithEpisodePoster wires the episode → show poster substitution.
+// Honours the per-user episode_use_show_poster preference; affects
+// the single-item ItemDetailResponse for episodes and the
+// children-of-a-show response (so seasons → posters look like the
+// show, not a frame grab from the first episode). The
+// children-of-a-season list intentionally skips substitution so
+// individual episodes inside a season stay distinguishable.
+func (h *ItemHandler) WithEpisodePoster(db EpisodePosterDB) *ItemHandler {
+	h.epDB = db
 	return h
 }
 
@@ -506,6 +519,19 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			h.logger.WarnContext(r.Context(), "list markers", "item_id", id, "err", err)
+		}
+	}
+
+	// Episode-poster substitution. Single-item endpoint; only matters
+	// for type=='episode'. Honours the per-user pref via the helper.
+	if h.epDB != nil && out.Type == "episode" {
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			if posters := resolveEpisodeShowPosters(r.Context(), h.epDB, claims.UserID, []uuid.UUID{id}); len(posters) > 0 {
+				if p, ok := posters[id]; ok {
+					pp := p
+					out.PosterPath = &pp
+				}
+			}
 		}
 	}
 

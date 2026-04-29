@@ -796,6 +796,7 @@ type preferencesResponse struct {
 	MaxVideoHeight        *int32  `json:"max_video_height,omitempty"`
 	PreferredVideoCodec   *string `json:"preferred_video_codec,omitempty"`
 	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
+	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
 }
 
 // GetPreferences handles GET /api/v1/users/me/preferences.
@@ -823,6 +824,7 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		MaxVideoHeight:        row.MaxVideoHeight,
 		PreferredVideoCodec:   row.PreferredVideoCodec,
 		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
+		EpisodeUseShowPoster:  row.EpisodeUseShowPoster,
 	})
 }
 
@@ -840,6 +842,7 @@ func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PreferredAudioLang    *string `json:"preferred_audio_lang"`
 		PreferredSubtitleLang *string `json:"preferred_subtitle_lang"`
+		EpisodeUseShowPoster  *bool   `json:"episode_use_show_poster"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -849,6 +852,7 @@ func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
 		ID:                    claims.UserID,
 		PreferredAudioLang:    body.PreferredAudioLang,
 		PreferredSubtitleLang: body.PreferredSubtitleLang,
+		EpisodeUseShowPoster:  body.EpisodeUseShowPoster,
 	}); err != nil {
 		respond.InternalError(w, r)
 		return

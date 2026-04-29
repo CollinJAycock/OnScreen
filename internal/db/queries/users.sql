@@ -183,15 +183,19 @@ RETURNING *;
 -- → client falls back to its own logic or server defaults.
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
-       preferred_video_codec, forced_subtitles_only
+       preferred_video_codec, forced_subtitles_only,
+       episode_use_show_poster
 FROM users
 WHERE id = $1;
 
 -- name: UpdateUserPreferences :exec
--- Language and content-rating preferences.
+-- Language preferences plus the episode-poster substitution toggle.
+-- episode_use_show_poster uses COALESCE so a PUT that omits the
+-- field doesn't accidentally reset it back to default.
 UPDATE users
-SET preferred_audio_lang = $2,
-    preferred_subtitle_lang = $3,
+SET preferred_audio_lang      = $2,
+    preferred_subtitle_lang   = $3,
+    episode_use_show_poster   = COALESCE(sqlc.narg('episode_use_show_poster')::boolean, episode_use_show_poster),
     updated_at = NOW()
 WHERE id = $1;
 

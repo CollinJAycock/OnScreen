@@ -21,6 +21,7 @@ type HistoryDB interface {
 type HistoryHandler struct {
 	db     HistoryDB
 	access LibraryAccessChecker
+	epDB   EpisodePosterDB
 	logger *slog.Logger
 }
 
@@ -32,6 +33,13 @@ func NewHistoryHandler(db HistoryDB, logger *slog.Logger) *HistoryHandler {
 // WithLibraryAccess enables per-user library filtering on history rows.
 func (h *HistoryHandler) WithLibraryAccess(a LibraryAccessChecker) *HistoryHandler {
 	h.access = a
+	return h
+}
+
+// WithEpisodePoster wires the episode → show poster substitution.
+// Honours the per-user episode_use_show_poster preference.
+func (h *HistoryHandler) WithEpisodePoster(db EpisodePosterDB) *HistoryHandler {
+	h.epDB = db
 	return h
 }
 
@@ -114,6 +122,33 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 
 		items = append(items, item)
+	}
+
+	// Episode-poster substitution. History references the underlying
+	// media via media_id, so we collect those IDs (not the history-row
+	// IDs) for the lookup.
+	if h.epDB != nil {
+		var epIDs []uuid.UUID
+		for _, it := range items {
+			if it.Type == "episode" {
+				if id, err := uuid.Parse(it.MediaID); err == nil {
+					epIDs = append(epIDs, id)
+				}
+			}
+		}
+		if posters := resolveEpisodeShowPosters(r.Context(), h.epDB, claims.UserID, epIDs); len(posters) > 0 {
+			for i := range items {
+				if items[i].Type != "episode" {
+					continue
+				}
+				if id, err := uuid.Parse(items[i].MediaID); err == nil {
+					if p, ok := posters[id]; ok {
+						pp := p
+						items[i].ThumbPath = &pp
+					}
+				}
+			}
+		}
 	}
 
 	// The ListWatchHistory query does not return a total count.

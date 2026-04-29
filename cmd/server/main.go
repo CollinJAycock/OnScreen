@@ -394,9 +394,10 @@ func run() error {
 	analyticsHandler := v1.NewAnalyticsHandler(gen.New(roPool), logger)
 	hubHandler := v1.NewHubHandler(gen.New(roPool), logger).
 		WithLibraryAccess(libSvc).
-		WithLibraries(libSvc)
-	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
-	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc)
+		WithLibraries(libSvc).
+		WithEpisodePoster(gen.New(roPool))
+	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
+	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
 	// Derive a stable machine ID from the secret key so webhook payloads
 	// identify this server consistently across restarts without a dedicated config field.
@@ -483,6 +484,7 @@ func run() error {
 		WithLibraryAccess(libSvc)
 
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
+		WithEpisodePoster(gen.New(roPool)).
 		WithLibraryAccess(libSvc).
 		WithMarkers(intromarker.NewStore(rwPool)).
 		WithExternalSubtitles(subtitleSvc).

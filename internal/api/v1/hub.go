@@ -37,6 +37,7 @@ type HubHandler struct {
 	db      HubDB
 	access  LibraryAccessChecker
 	libs    HubLibraryLister
+	epDB    EpisodePosterDB // optional — when set, substitutes show posters for episode rows
 	logger  *slog.Logger
 	perLib  int32 // items per library row; defaults to 12 if zero
 }
@@ -49,6 +50,16 @@ func NewHubHandler(db HubDB, logger *slog.Logger) *HubHandler {
 // WithLibraryAccess enables per-user library filtering on hub rows.
 func (h *HubHandler) WithLibraryAccess(a LibraryAccessChecker) *HubHandler {
 	h.access = a
+	return h
+}
+
+// WithEpisodePoster wires the lookup used to substitute the show
+// poster for episode rows in Continue Watching, Recently Added, and
+// Trending. Honours the per-user `episode_use_show_poster` flag —
+// when off, this is a no-op. When unset (tests), no substitution
+// happens at all.
+func (h *HubHandler) WithEpisodePoster(db EpisodePosterDB) *HubHandler {
+	h.epDB = db
 	return h
 }
 
@@ -235,6 +246,55 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 			})
 			if len(out.Trending) >= 12 {
 				break
+			}
+		}
+	}
+
+	// Episode-poster substitution. Collect every episode ID across
+	// the four sections, hit the lookup once, then patch posters in
+	// place. Episodes whose show ancestor chain breaks (orphan
+	// season, missing show) are left with their original art —
+	// callers always get *some* poster, never an empty cell.
+	if h.epDB != nil {
+		var epIDs []uuid.UUID
+		collect := func(items []HubItem) {
+			for _, it := range items {
+				if it.Type != "episode" {
+					continue
+				}
+				if id, err := uuid.Parse(it.ID); err == nil {
+					epIDs = append(epIDs, id)
+				}
+			}
+		}
+		collect(out.ContinueWatching)
+		collect(out.RecentlyAdded)
+		collect(out.Trending)
+		for _, row := range out.ByLibrary {
+			collect(row.Items)
+		}
+		if posters := resolveEpisodeShowPosters(r.Context(), h.epDB, claims.UserID, epIDs); len(posters) > 0 {
+			apply := func(items []HubItem) {
+				for i := range items {
+					if items[i].Type != "episode" {
+						continue
+					}
+					id, err := uuid.Parse(items[i].ID)
+					if err != nil {
+						continue
+					}
+					if p, ok := posters[id]; ok {
+						pp := p
+						items[i].PosterPath = &pp
+						items[i].ThumbPath = &pp
+					}
+				}
+			}
+			apply(out.ContinueWatching)
+			apply(out.RecentlyAdded)
+			apply(out.Trending)
+			for i := range out.ByLibrary {
+				apply(out.ByLibrary[i].Items)
 			}
 		}
 	}

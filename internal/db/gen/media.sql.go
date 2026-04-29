@@ -959,6 +959,54 @@ func (q *Queries) GetMediaItemLyrics(ctx context.Context, id uuid.UUID) (GetMedi
 	return i, err
 }
 
+const getShowPostersForEpisodes = `-- name: GetShowPostersForEpisodes :many
+SELECT
+    ep.id          AS episode_id,
+    show.poster_path AS show_poster_path
+FROM media_items ep
+JOIN media_items season ON season.id = ep.parent_id AND season.deleted_at IS NULL
+JOIN media_items show   ON show.id   = season.parent_id AND show.deleted_at IS NULL
+WHERE ep.id = ANY($1::uuid[])
+  AND ep.type = 'episode'
+  AND ep.deleted_at IS NULL
+  AND show.poster_path IS NOT NULL
+  AND show.poster_path <> ''
+`
+
+type GetShowPostersForEpisodesRow struct {
+	EpisodeID      uuid.UUID `json:"episode_id"`
+	ShowPosterPath *string   `json:"show_poster_path"`
+}
+
+// Resolves the show ancestor poster for a batch of episode IDs.
+// Episodes have parent_id → season; season has parent_id → show.
+// Used to substitute episode thumbnails with the show poster on
+// browse surfaces (hub / history / search) when the user has the
+// episode_use_show_poster preference enabled. Returns one row per
+// episode whose two-hop ancestor lookup yielded a poster — episodes
+// whose chain breaks (orphan season, missing show, NULL show poster)
+// are simply absent and the caller leaves their existing poster
+// alone.
+func (q *Queries) GetShowPostersForEpisodes(ctx context.Context, dollar_1 []uuid.UUID) ([]GetShowPostersForEpisodesRow, error) {
+	rows, err := q.db.Query(ctx, getShowPostersForEpisodes, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetShowPostersForEpisodesRow{}
+	for rows.Next() {
+		var i GetShowPostersForEpisodesRow
+		if err := rows.Scan(&i.EpisodeID, &i.ShowPosterPath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const hardDeleteSoftDeletedFilesByLibrary = `-- name: HardDeleteSoftDeletedFilesByLibrary :execrows
 DELETE FROM media_files
 WHERE status = 'deleted'

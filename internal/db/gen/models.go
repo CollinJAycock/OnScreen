@@ -502,6 +502,7 @@ type User struct {
 	SamlIssuer            *string            `json:"saml_issuer"`
 	SamlSubject           *string            `json:"saml_subject"`
 	InheritLibraryAccess  bool               `json:"inherit_library_access"`
+	EpisodeUseShowPoster  bool               `json:"episode_use_show_poster"`
 }
 
 type UserFavorite struct {

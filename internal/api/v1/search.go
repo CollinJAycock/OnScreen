@@ -22,6 +22,7 @@ type SearchDB interface {
 type SearchHandler struct {
 	db     SearchDB
 	access LibraryAccessChecker
+	epDB   EpisodePosterDB
 	logger *slog.Logger
 }
 
@@ -33,6 +34,13 @@ func NewSearchHandler(db SearchDB, logger *slog.Logger) *SearchHandler {
 // WithLibraryAccess enables per-user library filtering on search results.
 func (h *SearchHandler) WithLibraryAccess(a LibraryAccessChecker) *SearchHandler {
 	h.access = a
+	return h
+}
+
+// WithEpisodePoster wires the episode → show poster substitution.
+// Honours the per-user episode_use_show_poster preference.
+func (h *SearchHandler) WithEpisodePoster(db EpisodePosterDB) *SearchHandler {
+	h.epDB = db
 	return h
 }
 
@@ -143,6 +151,31 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "search query failed", "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+
+	if h.epDB != nil && claims != nil {
+		var epIDs []uuid.UUID
+		for _, res := range results {
+			if res.Type == "episode" {
+				if id, err := uuid.Parse(res.ID); err == nil {
+					epIDs = append(epIDs, id)
+				}
+			}
+		}
+		if posters := resolveEpisodeShowPosters(r.Context(), h.epDB, claims.UserID, epIDs); len(posters) > 0 {
+			for i := range results {
+				if results[i].Type != "episode" {
+					continue
+				}
+				if id, err := uuid.Parse(results[i].ID); err == nil {
+					if p, ok := posters[id]; ok {
+						pp := p
+						results[i].PosterPath = &pp
+						results[i].ThumbPath = &pp
+					}
+				}
+			}
+		}
 	}
 
 	respond.Success(w, r, results)
