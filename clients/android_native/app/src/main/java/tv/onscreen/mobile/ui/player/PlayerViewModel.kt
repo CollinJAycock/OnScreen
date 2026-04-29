@@ -169,6 +169,18 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Fire-and-forget progress publish. Best-effort: server
+     *  unreachability shouldn't crash playback, and the next tick
+     *  will pick up where this one left off. */
+    fun reportProgress(itemId: String, positionMs: Long, durationMs: Long, state: String) {
+        if (durationMs <= 0) return
+        viewModelScope.launch {
+            try {
+                itemRepo.updateProgress(itemId, positionMs, durationMs, state)
+            } catch (_: Exception) { }
+        }
+    }
+
     fun stopActiveTranscode() {
         val sid = transcodeSessionId ?: return
         val tok = transcodeToken ?: return
