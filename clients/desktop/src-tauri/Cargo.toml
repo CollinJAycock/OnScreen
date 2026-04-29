@@ -64,6 +64,13 @@ cpal = "0.16"
 # friction. Decode runs on a background thread; samples land in a
 # ringbuf the realtime cpal callback drains.
 claxon = "0.4"
+
+# symphonia — pure-Rust multi-format decoder. Handles the rest of
+# the lossless catalog: ALAC (Apple Lossless, typically inside an
+# MP4/M4A container), WAV (LPCM), and AIFF. FLAC stays on claxon
+# (already-tested path + smaller dep). Default features off so we
+# pull in only the codec + container modules we actually use.
+symphonia = { version = "0.5", default-features = false, features = ["alac", "isomp4", "wav", "aiff", "pcm"] }
 # Lock-free single-producer single-consumer ring buffer. The
 # realtime audio callback can't take a Mutex (blocking inside
 # the callback drops samples = audible glitch) — ringbuf's

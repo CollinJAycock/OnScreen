@@ -337,7 +337,7 @@ pub fn audio_play_url(
     // cold-start otherwise. Both end with current = Some(active).
     let prepared = take_preload_for(&url)?
         .map(Ok)
-        .unwrap_or_else(|| prepare_flac_pipeline(&url, bearer_token.as_deref(), 0))?;
+        .unwrap_or_else(|| prepare_pipeline(&url, bearer_token.as_deref(), 0))?;
 
     let active = open_active_from_prepared(prepared, &device, url, 0)?;
 
@@ -383,7 +383,7 @@ pub fn audio_preload_url(
             return Ok(()); // already prepared
         }
     }
-    let prepared = prepare_flac_pipeline(&url, bearer_token.as_deref(), 0)?;
+    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), 0)?;
     let mut engine = ENGINE
         .lock()
         .map_err(|_| "audio: poisoned engine lock".to_string())?;
@@ -438,7 +438,7 @@ pub fn audio_seek(
     }
 
     let prepared =
-        prepare_flac_pipeline(&url, bearer_token.as_deref(), position_ms)?;
+        prepare_pipeline(&url, bearer_token.as_deref(), position_ms)?;
     let active = open_active_from_prepared(prepared, &device, url, position_ms)?;
 
     {
@@ -486,6 +486,366 @@ fn pick_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
         None => host
             .default_output_device()
             .ok_or_else(|| "audio: no default output device".to_string()),
+    }
+}
+
+/// What lossless format does this URL look like? Picks the decoder
+/// path: claxon for FLAC (already-tested, no symphonia), symphonia
+/// for ALAC / WAV / AIFF. Extension-only — the server doesn't surface
+/// a Content-Type we can rely on across deployments, but the music
+/// scanner preserves the original file extension on `stream_url`,
+/// so the URL is the source of truth.
+///
+/// Returns FLAC for unknowns; the existing claxon pipeline is the
+/// long-tested path and any failure surfaces a clear "audio: parse
+/// FLAC" error message that points at the format mismatch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AudioFormat {
+    Flac,
+    Symphonia, // ALAC / WAV / AIFF — anything symphonia handles
+}
+
+fn detect_format(url: &str) -> AudioFormat {
+    // Strip query string before the extension check so a `?token=`
+    // suffix doesn't make every URL look like ".jpg?token=xyz".
+    let path = url.split('?').next().unwrap_or(url);
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".m4a")
+        || lower.ends_with(".mp4")
+        || lower.ends_with(".alac")
+        || lower.ends_with(".wav")
+        || lower.ends_with(".wave")
+        || lower.ends_with(".aiff")
+        || lower.ends_with(".aif")
+    {
+        AudioFormat::Symphonia
+    } else {
+        AudioFormat::Flac
+    }
+}
+
+/// Format-aware dispatcher. Both call sites (cold-start in
+/// `audio_play_url` and the seek-rewind in `audio_seek`) go through
+/// this; FLAC routes through the existing claxon path, everything
+/// else through the symphonia path.
+fn prepare_pipeline(
+    url: &str,
+    bearer_token: Option<&str>,
+    skip_to_ms: u64,
+) -> Result<PreloadSlot, String> {
+    match detect_format(url) {
+        AudioFormat::Flac => prepare_flac_pipeline(url, bearer_token, skip_to_ms),
+        AudioFormat::Symphonia => prepare_symphonia_pipeline(url, bearer_token, skip_to_ms),
+    }
+}
+
+/// HTTP fetch + symphonia probe + spawn decoder thread for a non-
+/// FLAC lossless format (ALAC, WAV, AIFF). Same shape as
+/// [`prepare_flac_pipeline`] — returns a [`PreloadSlot`] the
+/// promote-to-active step can open a cpal stream around.
+///
+/// Sample format dispatch:
+///   - 16-bit source        → i16 ringbuf, i16 cpal stream
+///   - everything else      → i32 ringbuf, i32 cpal stream (matching
+///                            FLAC's 24-bit-in-32 packing)
+///
+/// HTTP body is wrapped in symphonia's ReadOnlySource so the format
+/// probe can drive a Read-only stream. ALAC inside MP4/M4A doesn't
+/// strictly require seek for streaming playback; WAV / AIFF likewise
+/// stream from front-to-back. Future seek implementation may want a
+/// real seekable source via Range requests, but that's a future
+/// optimisation — current `audio_seek` rebuilds the pipeline with
+/// `skip_to_ms` so we land at the target without needing a true seek.
+fn prepare_symphonia_pipeline(
+    url: &str,
+    bearer_token: Option<&str>,
+    skip_to_ms: u64,
+) -> Result<PreloadSlot, String> {
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions, ReadOnlySource};
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    // ── HTTP fetch ──────────────────────────────────────────────────────────
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+    let mut req = agent.get(url);
+    if let Some(tok) = bearer_token {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    let resp = req
+        .call()
+        .map_err(|e| format!("audio: GET {url}: {e}"))?;
+    if resp.status() != 200 {
+        return Err(format!(
+            "audio: GET {url}: HTTP {} — bearer rejected or not found",
+            resp.status()
+        ));
+    }
+
+    // ── Probe ───────────────────────────────────────────────────────────────
+    let body: Box<dyn Read + Send + Sync> = Box::new(resp.into_reader());
+    let source = ReadOnlySource::new(body);
+    let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
+
+    // Extension hint helps probe pick the right format on the first try
+    // (otherwise ALAC inside MP4 would need a deeper magic-byte probe).
+    let mut hint = Hint::new();
+    let path = url.split('?').next().unwrap_or(url);
+    if let Some(ext) = path.rsplit('.').next() {
+        hint.with_extension(ext);
+    }
+
+    let fmt_opts = FormatOptions::default();
+    let meta_opts = MetadataOptions::default();
+    let probed = symphonia::default::get_probe()
+        .format(&hint, stream, &fmt_opts, &meta_opts)
+        .map_err(|e| format!("audio: probe format: {e}"))?;
+
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| "audio: no default track in stream".to_string())?;
+    let track_id = track.id;
+    let codec_params = track.codec_params.clone();
+
+    let sample_rate_hz = codec_params
+        .sample_rate
+        .ok_or_else(|| "audio: codec missing sample_rate".to_string())?;
+    let channels_count = codec_params
+        .channels
+        .ok_or_else(|| "audio: codec missing channels".to_string())?
+        .count() as u16;
+    let bit_depth = codec_params.bits_per_sample.unwrap_or(16);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("audio: build decoder: {e}"))?;
+
+    // ── Skip-to-position (seek path) ────────────────────────────────────────
+    // Drink + drop packets until cumulative samples reaches the target.
+    // Same correctness contract as the FLAC seek: streams from start so
+    // bandwidth-heavy on long seeks; correct + simple. Range-based seek
+    // is a future optimisation.
+    let mut samples_skipped: u64 = 0;
+    let samples_to_skip = (skip_to_ms)
+        .saturating_mul(sample_rate_hz as u64)
+        / 1000;
+    while samples_skipped < samples_to_skip {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::IoError(_)) => break, // EOS — accept the cap
+            Err(e) => return Err(format!("audio: read packet during seek: {e}")),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(buf) => {
+                samples_skipped = samples_skipped.saturating_add(buf.frames() as u64);
+            }
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(e) => return Err(format!("audio: decode during seek: {e}")),
+        }
+    }
+
+    // ── Ringbuf + decoder thread ────────────────────────────────────────────
+    let ring_capacity = (sample_rate_hz as usize)
+        .saturating_mul(channels_count as usize)
+        / 5; // ~200 ms
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let ended = Arc::new(AtomicBool::new(false));
+
+    let (consumer, decoder_handle) = if bit_depth <= 16 {
+        let (cons, h) = spawn_symphonia_decoder::<i16>(
+            format,
+            decoder,
+            track_id,
+            ring_capacity,
+            channels_count as usize,
+            stop_flag.clone(),
+            ended.clone(),
+            |s: f32| (s.clamp(-1.0, 1.0) * (i16::MAX as f32)) as i16,
+        )?;
+        (PreloadConsumer::I16(cons), h)
+    } else {
+        let (cons, h) = spawn_symphonia_decoder::<i32>(
+            format,
+            decoder,
+            track_id,
+            ring_capacity,
+            channels_count as usize,
+            stop_flag.clone(),
+            ended.clone(),
+            // 24-bit-in-32 packing: cpal expects the data in the upper
+            // 24 bits of the i32 with the low 8 zero. f32 → i32 with
+            // 8-bit shift to land in that layout.
+            |s: f32| {
+                let scaled = s.clamp(-1.0, 1.0) * ((i32::MAX as f32) / 256.0);
+                (scaled as i32).saturating_mul(256)
+            },
+        )?;
+        (PreloadConsumer::I32(cons), h)
+    };
+
+    Ok(PreloadSlot {
+        source_url: url.to_string(),
+        sample_rate_hz,
+        bit_depth: bit_depth as u32,
+        channels: channels_count,
+        stop_flag,
+        ended,
+        decoder_handle: Some(decoder_handle),
+        consumer: Some(consumer),
+    })
+}
+
+/// Spawn a decoder thread for a symphonia format. Same ringbuf
+/// shape as [`spawn_decoder`] (the FLAC variant), but the decode
+/// step pulls Packets and flattens AudioBuffers to interleaved
+/// per-frame samples instead of claxon's already-flat iterator.
+fn spawn_symphonia_decoder<T>(
+    mut format: Box<dyn symphonia::core::formats::FormatReader>,
+    mut decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    track_id: u32,
+    capacity: usize,
+    channels: usize,
+    stop_flag: Arc<AtomicBool>,
+    ended: Arc<AtomicBool>,
+    convert_sample: fn(f32) -> T,
+) -> Result<(<HeapRb<T> as Split>::Cons, JoinHandle<()>), String>
+where
+    T: Send + 'static + Default + Copy,
+{
+    use symphonia::core::errors::Error as SymphoniaError;
+
+    let rb = HeapRb::<T>::new(capacity.max(8192));
+    let (mut producer, consumer) = rb.split();
+
+    let stop_flag_dec = stop_flag.clone();
+    let ended_dec = ended.clone();
+    let decoder_handle = std::thread::Builder::new()
+        .name("onscreen-symphonia-decoder".into())
+        .spawn(move || {
+            // Reusable f32 buffer for interleaved samples. Symphonia
+            // lets us copy a planar AudioBufferRef into a mono f32
+            // sample stream interleaved by channel; we match that
+            // shape into the ringbuf the cpal callback drains.
+            let mut interleaved = Vec::<f32>::new();
+
+            loop {
+                if stop_flag_dec.load(Ordering::Acquire) {
+                    return;
+                }
+                let packet = match format.next_packet() {
+                    Ok(p) => p,
+                    Err(SymphoniaError::IoError(_)) => {
+                        ended_dec.store(true, Ordering::Release);
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("audio: symphonia next_packet: {e}");
+                        return;
+                    }
+                };
+                if packet.track_id() != track_id {
+                    continue;
+                }
+                let buf = match decoder.decode(&packet) {
+                    Ok(b) => b,
+                    Err(SymphoniaError::DecodeError(_)) => continue, // skip bad packet
+                    Err(e) => {
+                        eprintln!("audio: symphonia decode: {e}");
+                        return;
+                    }
+                };
+
+                // Buffer → interleaved f32. Symphonia's
+                // AudioBufferRef carries planar f32/i16/i32/u24/etc.;
+                // we normalise to f32 + interleave in one pass to
+                // hand a uniform stream to convert_sample.
+                let frames = buf.frames();
+                interleaved.clear();
+                interleaved.resize(frames * channels, 0.0);
+                copy_interleaved_f32(&buf, &mut interleaved, channels);
+
+                for sample in interleaved.iter() {
+                    let mut converted = convert_sample(*sample);
+                    loop {
+                        match producer.try_push(converted) {
+                            Ok(()) => break,
+                            Err(returned) => {
+                                converted = returned;
+                                if stop_flag_dec.load(Ordering::Acquire) {
+                                    return;
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(2));
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .map_err(|e| format!("audio: spawn symphonia decoder: {e}"))?;
+
+    Ok((consumer, decoder_handle))
+}
+
+/// Copy a symphonia AudioBufferRef into an interleaved f32 vec.
+/// Handles the planar-to-interleaved transform + the sample-format
+/// normalisation in one pass. Caller is responsible for sizing
+/// [`out`] to `frames * channels`.
+fn copy_interleaved_f32(
+    buf: &symphonia::core::audio::AudioBufferRef<'_>,
+    out: &mut [f32],
+    channels: usize,
+) {
+    use symphonia::core::audio::{AudioBufferRef, Signal};
+    macro_rules! interleave {
+        ($audio:expr, $scale:expr) => {{
+            let frames = $audio.frames();
+            for ch in 0..channels {
+                let plane = $audio.chan(ch);
+                for f in 0..frames {
+                    out[f * channels + ch] = plane[f] as f32 * $scale;
+                }
+            }
+        }};
+    }
+    match buf {
+        AudioBufferRef::F32(b) => interleave!(b, 1.0_f32),
+        AudioBufferRef::S16(b) => interleave!(b, 1.0_f32 / (i16::MAX as f32)),
+        AudioBufferRef::S32(b) => interleave!(b, 1.0_f32 / (i32::MAX as f32)),
+        AudioBufferRef::S24(b) => {
+            let frames = b.frames();
+            // i24 stored in i32 with sign-extension; range is ±(2^23-1).
+            let scale = 1.0_f32 / 8_388_607.0;
+            for ch in 0..channels {
+                let plane = b.chan(ch);
+                for f in 0..frames {
+                    out[f * channels + ch] = plane[f].inner() as f32 * scale;
+                }
+            }
+        }
+        AudioBufferRef::U8(b) => interleave!(b, 1.0_f32 / 128.0),
+        AudioBufferRef::U16(b) => interleave!(b, 1.0_f32 / (u16::MAX as f32 / 2.0)),
+        AudioBufferRef::U24(b) => {
+            let frames = b.frames();
+            let scale = 1.0_f32 / 8_388_608.0;
+            for ch in 0..channels {
+                let plane = b.chan(ch);
+                for f in 0..frames {
+                    out[f * channels + ch] = (plane[f].inner() as f32 - 8_388_608.0) * scale;
+                }
+            }
+        }
+        AudioBufferRef::U32(b) => interleave!(b, 1.0_f32 / (u32::MAX as f32 / 2.0)),
+        AudioBufferRef::F64(b) => interleave!(b, 1.0_f32),
+        AudioBufferRef::S8(b) => interleave!(b, 1.0_f32 / 128.0),
     }
 }
 
@@ -824,6 +1184,65 @@ where
         )
         .map_err(|e| format!("audio: build stream: {e}"))?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Lossless format dispatch from URL extension. The decoder
+    // pipeline branches on this — a misdetection routes ALAC through
+    // the FLAC path (or vice versa) and the file fails to play.
+    #[test]
+    fn detect_format_flac_default() {
+        // Unknown extensions default to FLAC because the existing
+        // claxon path emits a clearer "audio: parse FLAC" error than
+        // a symphonia probe failure on a non-audio body.
+        assert_eq!(detect_format("https://srv/track.flac"), AudioFormat::Flac);
+        assert_eq!(detect_format("https://srv/track"), AudioFormat::Flac);
+        assert_eq!(detect_format("https://srv/track.unknown"), AudioFormat::Flac);
+    }
+
+    #[test]
+    fn detect_format_alac_via_m4a_or_mp4_or_alac() {
+        assert_eq!(detect_format("https://srv/track.m4a"), AudioFormat::Symphonia);
+        assert_eq!(detect_format("https://srv/track.mp4"), AudioFormat::Symphonia);
+        assert_eq!(detect_format("https://srv/track.alac"), AudioFormat::Symphonia);
+    }
+
+    #[test]
+    fn detect_format_wav() {
+        assert_eq!(detect_format("https://srv/track.wav"), AudioFormat::Symphonia);
+        assert_eq!(detect_format("https://srv/track.wave"), AudioFormat::Symphonia);
+    }
+
+    #[test]
+    fn detect_format_aiff_or_aif() {
+        assert_eq!(detect_format("https://srv/track.aiff"), AudioFormat::Symphonia);
+        assert_eq!(detect_format("https://srv/track.aif"), AudioFormat::Symphonia);
+    }
+
+    #[test]
+    fn detect_format_ignores_query_string() {
+        // /artwork/* and /media/stream/* both append `?token=…` for
+        // the Tauri webview path. The detector must look at the path,
+        // not the full URL with query, or every track would route to
+        // the FLAC fallback.
+        assert_eq!(
+            detect_format("https://srv/track.m4a?token=abc"),
+            AudioFormat::Symphonia,
+        );
+        assert_eq!(
+            detect_format("https://srv/track.flac?token=abc&v=1"),
+            AudioFormat::Flac,
+        );
+    }
+
+    #[test]
+    fn detect_format_case_insensitive() {
+        assert_eq!(detect_format("https://srv/Track.M4A"), AudioFormat::Symphonia);
+        assert_eq!(detect_format("https://srv/Track.WAV"), AudioFormat::Symphonia);
+    }
 }
 
 // ── Test-tone (kept from the foundation commit) ─────────────────────────────
