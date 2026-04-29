@@ -3,9 +3,11 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/auth"
@@ -104,14 +106,45 @@ func (a *Authenticator) RequiredAllowQueryToken(next http.Handler) http.Handler 
 // extractClaims would let a leaked artwork URL grant general
 // API access, which is exactly the trade-off this variant exists
 // to scope.
+//
+// Stream-purpose tokens are also enforced to match the request's
+// {id} URL param against the token's FileID claim. The route
+// pattern uses chi {id} for /media/stream/{id} and {fileId} for
+// /media/subtitles/{fileId}/{streamIndex}; either match counts
+// since both name the same file UUID. Tokens without purpose=stream
+// (the standard 1 h access token reused as a `?token=` carrier on
+// older clients) skip the file-id check — those still behave as
+// before.
 func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, error) {
 	if claims, err := a.extractClaims(r); err != nil || claims != nil {
 		return claims, err
 	}
-	if tok := r.URL.Query().Get("token"); tok != "" {
-		return a.tokens.ValidateAccessToken(tok)
+	tok := r.URL.Query().Get("token")
+	if tok == "" {
+		return nil, nil
 	}
-	return nil, nil
+	claims, err := a.tokens.ValidateAccessToken(tok)
+	if err != nil || claims == nil {
+		return claims, err
+	}
+	if claims.Purpose == "stream" {
+		// Bind enforcement: the token's file_id must match the
+		// {id} / {fileId} path param. If neither chi param is
+		// present (the artwork / trickplay routes), the token is
+		// out of scope here — stream tokens shouldn't be honoured
+		// on non-stream asset routes either.
+		want := chi.URLParam(r, "id")
+		if want == "" {
+			want = chi.URLParam(r, "fileId")
+		}
+		if want == "" {
+			return nil, fmt.Errorf("validate token: stream token presented on non-file-scoped route")
+		}
+		if claims.FileID == nil || claims.FileID.String() != want {
+			return nil, fmt.Errorf("validate token: stream token file_id mismatch")
+		}
+	}
+	return claims, nil
 }
 
 // Required rejects unauthenticated requests with 401. When an epoch
@@ -290,15 +323,35 @@ func (a *Authenticator) extractClaims(r *http.Request) (*auth.Claims, error) {
 	// Native API: Authorization: Bearer <paseto>
 	if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
 		token := strings.TrimPrefix(bearer, "Bearer ")
-		return a.tokens.ValidateAccessToken(token)
+		return a.validateGeneralPurposeToken(token)
 	}
 
 	// Browser cookie fallback: httpOnly access-token cookie set by auth handlers.
 	if c, err := r.Cookie("onscreen_at"); err == nil && c.Value != "" {
-		return a.tokens.ValidateAccessToken(c.Value)
+		return a.validateGeneralPurposeToken(c.Value)
 	}
 
 	return nil, nil
+}
+
+// validateGeneralPurposeToken decrypts a token and rejects narrowly-
+// scoped variants (purpose=stream) so they can't be presented as a
+// Bearer to a non-asset API route. Stream tokens flow only through
+// extractClaimsAllowQuery's `?token=` path on /media/stream and
+// /media/subtitles, which additionally enforces the file_id binding.
+func (a *Authenticator) validateGeneralPurposeToken(token string) (*auth.Claims, error) {
+	claims, err := a.tokens.ValidateAccessToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if claims != nil && claims.Purpose != "" {
+		// Any token with a non-empty purpose is scoped to a specific
+		// asset route (today: stream). Reject on the general path so
+		// a leaked stream URL can't grant settings / item-mutation
+		// access via Bearer header.
+		return nil, fmt.Errorf("validate token: purpose=%q not accepted on general route", claims.Purpose)
+	}
+	return claims, nil
 }
 
 // userIDFromContext retrieves the user ID string from context (set by auth middleware).

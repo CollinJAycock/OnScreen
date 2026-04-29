@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/auth"
@@ -187,6 +188,110 @@ func TestRequiredAllowQueryToken_InvalidQueryToken_Unauthorized(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status: got %d, want 401", rec.Code)
+	}
+}
+
+// ── Stream-purpose tokens ────────────────────────────────────────────────────
+//
+// Stream tokens are 24 h, scoped to a single file_id, and flagged
+// purpose=stream. They:
+//   - work via `?token=` on the stream / subtitle routes when the
+//     URL's {id} matches the token's file_id;
+//   - are rejected via Bearer (the general-API path);
+//   - are rejected via `?token=` when the file_id doesn't match.
+
+func issueStreamToken(t *testing.T, tm *auth.TokenMaker, fileID uuid.UUID) string {
+	t.Helper()
+	tok, err := tm.IssueStreamToken(auth.Claims{
+		UserID:   uuid.New(),
+		Username: "streamuser",
+	}, fileID)
+	if err != nil {
+		t.Fatalf("IssueStreamToken: %v", err)
+	}
+	return tok
+}
+
+func TestStreamToken_QueryAcceptedOnMatchingFileID(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	fileID := uuid.New()
+	token := issueStreamToken(t, tm, fileID)
+
+	// chi.URLParam pulls from the route's RouteContext, which the
+	// raw httptest.NewRequest doesn't set. Wire a tiny chi router
+	// so the {id} param resolves the same way it does in production.
+	mux := chi.NewRouter()
+	mux.With(a.RequiredAllowQueryToken).Get("/media/stream/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/media/stream/"+fileID.String()+"?token="+token, nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("matching file_id: got %d, want 200", rec.Code)
+	}
+}
+
+func TestStreamToken_QueryRejectedOnMismatchedFileID(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	tokenForFileA := issueStreamToken(t, tm, uuid.New())
+	differentFileID := uuid.New()
+
+	mux := chi.NewRouter()
+	mux.With(a.RequiredAllowQueryToken).Get("/media/stream/{id}", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler ran with mismatched file_id")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/media/stream/"+differentFileID.String()+"?token="+tokenForFileA, nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("mismatched file_id: got %d, want 401", rec.Code)
+	}
+}
+
+func TestStreamToken_BearerRejectedOnGeneralRoute(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token := issueStreamToken(t, tm, uuid.New())
+
+	handler := a.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("stream token must not unlock general API routes")
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/items", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("stream token via Bearer: got %d, want 401", rec.Code)
+	}
+}
+
+func TestStreamToken_QueryRejectedOnNonFileScopedRoute(t *testing.T) {
+	// /artwork/* has no {id}/{fileId} param — a stream token in a
+	// query there can't bind to anything, so it must be rejected.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token := issueStreamToken(t, tm, uuid.New())
+
+	mux := chi.NewRouter()
+	mux.With(a.RequiredAllowQueryToken).Get("/artwork/*", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("stream token must not unlock /artwork")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/artwork/poster.jpg?token="+token, nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("stream token on /artwork: got %d, want 401", rec.Code)
 	}
 }
 

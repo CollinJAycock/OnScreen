@@ -15,6 +15,16 @@ import (
 const (
 	AccessTokenTTL  = time.Hour           // Paseto access token TTL (ADR-013)
 	RefreshTokenTTL = 30 * 24 * time.Hour // Refresh token TTL
+	// StreamTokenTTL covers per-file media-stream tokens minted at
+	// item-detail fetch and embedded in the file's stream URL. Native
+	// players (ExoPlayer, AVPlay) use their own HTTP stack and can't
+	// invoke the Bearer-refresh path, so a 1 h access token expires
+	// mid-playback and surfaces as ERROR_CODE_IO_BAD_HTTP_STATUS on
+	// the next range request. 24 h is long enough that a single
+	// movie / TV-binge session never trips on it; the token still
+	// dies on session_epoch bumps (admin demote, force-logout) so a
+	// stale credential stays revocable in seconds.
+	StreamTokenTTL = 24 * time.Hour
 )
 
 // Claims are the standard fields embedded in every Paseto access token.
@@ -32,6 +42,19 @@ type Claims struct {
 	SessionEpoch     int64     `json:"session_epoch"`
 	IssuedAt         time.Time `json:"iat"`
 	ExpiresAt        time.Time `json:"exp"`
+	// Purpose narrows what a token is allowed to do. Empty for the
+	// classic 1 h access token (Bearer + asset query both work).
+	// "stream" for the 24 h streaming token: rejected on Bearer
+	// extraction, accepted only by RequiredAllowQueryToken on asset
+	// routes — so a leaked stream URL can't be repurposed as a
+	// general-API credential.
+	Purpose string `json:"purpose,omitempty"`
+	// FileID binds a stream-purpose token to a single file UUID.
+	// The /media/stream/{id} handler matches the URL param against
+	// this claim. Stops a leaked URL from being repurposed across
+	// files the user has access to. Zero / nil for non-stream
+	// tokens.
+	FileID *uuid.UUID `json:"file_id,omitempty"`
 }
 
 // TokenMaker issues and validates Paseto v4 local tokens.
@@ -67,6 +90,33 @@ func (m *TokenMaker) IssueAccessToken(claims Claims) (string, error) {
 	}
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 
+	return token.V4Encrypt(m.key, nil), nil
+}
+
+// IssueStreamToken creates a Paseto v4 local token with the longer
+// StreamTokenTTL, scoped to a single file via the FileID claim and
+// flagged with purpose=stream so the Bearer-extraction path rejects
+// it. Bearer-only routes can't be reached with a stream token; the
+// asset middleware (RequiredAllowQueryToken) accepts it on
+// /media/stream + /media/subtitles + /artwork + /trickplay.
+func (m *TokenMaker) IssueStreamToken(claims Claims, fileID uuid.UUID) (string, error) {
+	token := paseto.NewToken()
+	token.SetIssuedAt(time.Now())
+	token.SetNotBefore(time.Now())
+	token.SetExpiration(time.Now().Add(StreamTokenTTL))
+	token.SetString("user_id", claims.UserID.String())
+	token.SetString("username", claims.Username)
+	isAdminStr := "false"
+	if claims.IsAdmin {
+		isAdminStr = "true"
+	}
+	token.SetString("is_admin", isAdminStr)
+	if claims.MaxContentRating != "" {
+		token.SetString("max_content_rating", claims.MaxContentRating)
+	}
+	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
+	token.SetString("purpose", "stream")
+	token.SetString("file_id", fileID.String())
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -109,6 +159,13 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		fmt.Sscanf(epochStr, "%d", &sessionEpoch)
 	}
 	issuedAt, _ := token.GetIssuedAt()
+	purpose, _ := token.GetString("purpose")
+	var fileID *uuid.UUID
+	if s, _ := token.GetString("file_id"); s != "" {
+		if id, err := uuid.Parse(s); err == nil {
+			fileID = &id
+		}
+	}
 
 	return &Claims{
 		UserID:           userID,
@@ -118,6 +175,8 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		SessionEpoch:     sessionEpoch,
 		IssuedAt:         issuedAt,
 		ExpiresAt:        exp,
+		Purpose:          purpose,
+		FileID:           fileID,
 	}, nil
 }
 

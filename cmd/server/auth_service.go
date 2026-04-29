@@ -35,6 +35,11 @@ type authQuerier interface {
 	RotateSession(ctx context.Context, arg gen.RotateSessionParams) (gen.Session, error)
 	DeleteSession(ctx context.Context, id uuid.UUID) error
 	TouchSession(ctx context.Context, id uuid.UUID) error
+	// BumpSessionEpoch increments the user's session_epoch so any
+	// outstanding access / stream tokens get rejected by the auth
+	// middleware. Logout calls it; admin demote and user delete
+	// already do.
+	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
 }
 
 type authService struct {
@@ -187,7 +192,22 @@ func (s *authService) Logout(ctx context.Context, refreshToken string) error {
 	if err != nil {
 		return nil // already gone
 	}
-	return s.db.DeleteSession(ctx, session.ID)
+	if err := s.db.DeleteSession(ctx, session.ID); err != nil {
+		return err
+	}
+	// Bump the user's session_epoch so any outstanding access /
+	// stream tokens minted under the old epoch get rejected by the
+	// auth middleware on the next request. Without this, a 1 h
+	// access token (or 24 h stream token) keeps working after
+	// "log out" until its natural TTL elapses — the user's
+	// expectation is that logout invalidates *now*. Best-effort
+	// because session was already deleted; a transient DB error
+	// here doesn't fail the logout, but it does leave the window
+	// open until the token's TTL.
+	if err := s.db.BumpSessionEpoch(ctx, session.UserID); err != nil {
+		s.logger.WarnContext(ctx, "logout: bump session epoch", "err", err, "user_id", session.UserID)
+	}
+	return nil
 }
 
 // issueTokenPair creates an access + refresh token and persists the session.

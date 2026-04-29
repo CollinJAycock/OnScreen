@@ -19,6 +19,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -112,6 +113,7 @@ type ItemHandler struct {
 	tracker   *streaming.Tracker
 	sync      *notification.Broker
 	audit     *audit.Logger
+	tokens    *auth.TokenMaker // optional; when set, Get embeds a 24h stream token per file
 	logger    *slog.Logger
 }
 
@@ -168,6 +170,15 @@ func (h *ItemHandler) WithAudit(a *audit.Logger) *ItemHandler {
 	return h
 }
 
+// WithStreamTokenMaker attaches the PASETO maker used to mint per-file
+// stream tokens on Get. Optional — without it the response omits
+// stream_token and clients fall back to the standard access token,
+// which is the pre-existing behaviour.
+func (h *ItemHandler) WithStreamTokenMaker(m *auth.TokenMaker) *ItemHandler {
+	h.tokens = m
+	return h
+}
+
 // checkLibraryAccess returns true if the caller is allowed to see items in the
 // given library. Returns false + writes NotFound when denied. Returns false +
 // writes InternalError on lookup failure. When the handler has no access
@@ -214,8 +225,19 @@ type SubtitleStreamJSON struct {
 
 // ItemFileResponse is the API representation of a media file.
 type ItemFileResponse struct {
-	ID                  string                 `json:"id"`
-	StreamURL           string                 `json:"stream_url"`
+	ID        string `json:"id"`
+	StreamURL string `json:"stream_url"`
+	// StreamToken is a 24 h PASETO bound to the requesting user,
+	// scoped to /media/stream and /media/subtitles via the asset-route
+	// middleware (RequiredAllowQueryToken accepts any valid token).
+	// Native players (ExoPlayer, AVPlay, …) embed this in the URL's
+	// `?token=…` carrier so a long viewing session doesn't fail with
+	// HTTP 401 when the standard 1 h access token expires mid-stream
+	// — they can't refresh on 401 because they bypass the OkHttp /
+	// fetch token-authenticator paths the other clients run on.
+	// Falls back to the access token client-side when this field is
+	// empty (older server build).
+	StreamToken         string                 `json:"stream_token,omitempty"`
 	Container           *string                `json:"container,omitempty"`
 	VideoCodec          *string                `json:"video_codec,omitempty"`
 	AudioCodec          *string                `json:"audio_codec,omitempty"`
@@ -411,13 +433,31 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.Compilation = item.Compilation
 	out.ReleaseType = item.ReleaseType
 
+	// Per-file stream token: 24 h PASETO bound to a single file_id,
+	// flagged purpose=stream so the Bearer extraction path rejects
+	// it. Different token per file because the file_id is part of
+	// the claim — a leaked URL can't be repurposed across files.
+	// Skipped silently when the handler wasn't wired with a
+	// TokenMaker (older test setups); the client falls back to the
+	// standard access token in that case.
+	claims := middleware.ClaimsFromContext(r.Context())
+
 	for _, f := range files {
 		if f.Status != "active" {
 			continue
 		}
+		streamToken := ""
+		if h.tokens != nil && claims != nil {
+			if tok, err := h.tokens.IssueStreamToken(*claims, f.ID); err == nil {
+				streamToken = tok
+			} else {
+				h.logger.WarnContext(r.Context(), "issue stream token", "err", err, "user_id", claims.UserID, "file_id", f.ID)
+			}
+		}
 		fr := ItemFileResponse{
 			ID:                  f.ID.String(),
 			StreamURL:           "/media/stream/" + f.ID.String(),
+			StreamToken:         streamToken,
 			Container:           f.Container,
 			VideoCodec:          f.VideoCodec,
 			AudioCodec:          f.AudioCodec,

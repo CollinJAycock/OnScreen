@@ -487,7 +487,8 @@ func run() error {
 		WithMarkers(intromarker.NewStore(rwPool)).
 		WithExternalSubtitles(subtitleSvc).
 		WithSyncBroker(notifBrokerEarly).
-		WithAudit(auditLogger)
+		WithAudit(auditLogger).
+		WithStreamTokenMaker(tokenMaker)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
