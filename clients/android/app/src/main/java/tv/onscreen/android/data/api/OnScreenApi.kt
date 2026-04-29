@@ -152,23 +152,6 @@ interface OnScreenApi {
     @PUT("api/v1/users/me/preferences")
     suspend fun setPreferences(@Body body: UserPreferences): ApiResponse<UserPreferences>
 
-    // ── Notifications ───────────────────────────────────────────────────────
-
-    @GET("api/v1/notifications")
-    suspend fun getNotifications(
-        @Query("limit") limit: Int = 50,
-        @Query("offset") offset: Int = 0,
-    ): ApiListResponse<NotificationItem>
-
-    @GET("api/v1/notifications/unread-count")
-    suspend fun getUnreadCount(): ApiResponse<UnreadCount>
-
-    @POST("api/v1/notifications/{id}/read")
-    suspend fun markNotificationRead(@Path("id") id: String)
-
-    @POST("api/v1/notifications/read-all")
-    suspend fun markAllNotificationsRead()
-
     // ── History ─────────────────────────────────────────────────────────────
 
     @GET("api/v1/history")

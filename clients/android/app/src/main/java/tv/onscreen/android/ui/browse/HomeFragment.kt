@@ -23,7 +23,6 @@ import tv.onscreen.android.ui.common.NavCardPresenter
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.favorites.FavoritesFragment
 import tv.onscreen.android.ui.history.HistoryFragment
-import tv.onscreen.android.ui.notifications.NotificationsFragment
 import tv.onscreen.android.ui.search.SearchFragment
 import tv.onscreen.android.ui.settings.SettingsFragment
 import androidx.leanback.widget.FocusHighlight
@@ -114,7 +113,6 @@ class HomeFragment : BrowseSupportFragment() {
                     val fragment = when (item.id) {
                         NAV_FAVORITES -> FavoritesFragment()
                         NAV_HISTORY -> HistoryFragment()
-                        NAV_NOTIFICATIONS -> NotificationsFragment()
                         NAV_SETTINGS -> SettingsFragment()
                         else -> null
                     }
@@ -188,11 +186,10 @@ class HomeFragment : BrowseSupportFragment() {
             rowsAdapter.add(ListRow(header, listAdapter))
         }
 
-        // Browse row: Favorites / History / Notifications / Settings.
+        // Browse row: Favorites / History / Settings.
         val navAdapter = ArrayObjectAdapter(navPresenter)
         navAdapter.add(NavCard(NAV_FAVORITES, getString(R.string.favorites), R.drawable.ic_heart_filled))
         navAdapter.add(NavCard(NAV_HISTORY, getString(R.string.history), R.drawable.ic_history))
-        navAdapter.add(NavCard(NAV_NOTIFICATIONS, getString(R.string.notifications), R.drawable.ic_bell, state.unreadNotifications))
         navAdapter.add(NavCard(NAV_SETTINGS, getString(R.string.settings), R.drawable.ic_settings))
         rowsAdapter.add(ListRow(HeaderItem(headerId++, getString(R.string.browse)), navAdapter))
 
@@ -223,7 +220,6 @@ class HomeFragment : BrowseSupportFragment() {
     companion object {
         private const val NAV_FAVORITES = "favorites"
         private const val NAV_HISTORY = "history"
-        private const val NAV_NOTIFICATIONS = "notifications"
         private const val NAV_SETTINGS = "settings"
     }
 }
