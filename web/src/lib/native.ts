@@ -339,6 +339,34 @@ export async function replayGainSetPreamp(db: number): Promise<void> {
   }
 }
 
+/** Toggle exclusive-mode hinting on the native audio engine. The
+ *  audiophile-pillar goal is bit-perfect output: samples reach the
+ *  DAC at native rate without OS-mixer resampling. cpal 0.16
+ *  hard-codes shared mode on every host, so true exclusive output
+ *  needs raw WASAPI / CoreAudio / ALSA backends — those land
+ *  per-platform later. Today this flag selects "tight buffer" cpal
+ *  config (~10 ms at the file's native rate) which trims OS-mixer
+ *  resampler latency without bypassing it. */
+export async function audioSetExclusiveMode(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('audio_set_exclusive_mode', { enabled });
+  } catch (e) {
+    console.debug('audioSetExclusiveMode failed (non-fatal):', e);
+  }
+}
+
+export async function audioGetExclusiveMode(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return (await invoke('audio_get_exclusive_mode')) as boolean;
+  } catch {
+    return false;
+  }
+}
+
 /** Push the currently-playing track's metadata to the OS now-playing
  *  widget (Windows SMTC / macOS NowPlayingInfoCenter / Linux MPRIS).
  *  Distinct from [`notifyNowPlaying`]: the notification is a transient

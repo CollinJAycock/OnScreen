@@ -4,6 +4,7 @@
     isTauri,
     replayGainSetMode,
     replayGainSetPreamp,
+    audioSetExclusiveMode,
     type ReplayGainMode,
   } from '$lib/native';
 
@@ -14,8 +15,10 @@
   // sync with the UI on every launch.
   let mode: ReplayGainMode = $state('off');
   let preampDb: number = $state(0);
+  let exclusive: boolean = $state(false);
   let busyMode = $state(false);
   let busyPreamp = $state(false);
+  let busyExclusive = $state(false);
   let saveError = $state('');
 
   // Tauri-only page — surface a clear message in browser builds so a
@@ -33,7 +36,24 @@
     if (Number.isFinite(storedPreamp)) {
       preampDb = storedPreamp;
     }
+    exclusive = localStorage.getItem('onscreen_native_exclusive') === '1';
   });
+
+  async function applyExclusive() {
+    busyExclusive = true;
+    saveError = '';
+    try {
+      await audioSetExclusiveMode(exclusive);
+      localStorage.setItem('onscreen_native_exclusive', exclusive ? '1' : '0');
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : String(e);
+      // Revert UI state on failure so what the user sees matches
+      // what's actually configured.
+      exclusive = !exclusive;
+    } finally {
+      busyExclusive = false;
+    }
+  }
 
   async function applyMode(next: ReplayGainMode) {
     busyMode = true;
@@ -115,6 +135,30 @@
     </section>
 
     <section>
+      <h2>Exclusive output</h2>
+      <p class="desc">
+        Tightens the audio buffer so the OS mixer's resampler runs at
+        lower latency. <strong>Bit-perfect output</strong> (no mixer
+        resampling at all) needs platform-specific work — Windows
+        WASAPI exclusive mode, macOS CoreAudio HOG mode, or Linux
+        ALSA <code>hw:</code> direct — and isn't on by default yet.
+        This switch is the on-ramp: when those backends ship per
+        platform, your existing choice carries over. New tracks pick
+        up the change; the currently-playing track keeps its current
+        config until it ends.
+      </p>
+      <label class="toggle">
+        <input
+          type="checkbox"
+          bind:checked={exclusive}
+          disabled={busyExclusive}
+          onchange={applyExclusive}
+        />
+        <span>Tight-buffer mode (~10 ms at file native rate)</span>
+      </label>
+    </section>
+
+    <section>
       <h2>Preamp</h2>
       <p class="desc">
         Adjusts the overall ReplayGain output by a fixed dB offset.
@@ -167,6 +211,9 @@
   .preamp-row { display: flex; align-items: center; gap: 1rem; }
   .preamp-row input[type="range"] { flex: 1; }
   .preamp-value { width: 6rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .toggle { display: flex; align-items: center; gap: 0.75rem; cursor: pointer; }
+  .toggle input { width: 1.1rem; height: 1.1rem; }
 
   @media (max-width: 600px) {
     .page { padding: 1.5rem 1rem 4rem; }

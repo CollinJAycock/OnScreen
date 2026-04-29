@@ -194,6 +194,36 @@ pub fn replay_gain_set_preamp(db: f32) -> Result<(), String> {
     Ok(())
 }
 
+// ── Exclusive-mode toggle ──────────────────────────────────────────────────
+//
+// The audiophile pillar's headline goal is bit-perfect output: samples
+// reach the DAC at the source bit-depth + rate without the OS mixer
+// resampling them. cpal 0.16 hard-codes shared mode on every host —
+// real exclusive output needs:
+//   - Windows: raw IAudioClient::Initialize with AUDCLNT_SHAREMODE_EXCLUSIVE
+//   - macOS:   AudioObjectSetPropertyData with kAudioDevicePropertyHogMode
+//   - Linux:   ALSA `hw:` device + tuned period_size
+//
+// All three are platform-specific lifts. Until they land, this flag
+// drives the most we *can* do through cpal: tighten the cpal buffer-
+// size hint so the OS mixer's resampler runs at lower latency (still
+// resamples — just less buffering before the user hears the change).
+// It also gates the future per-platform modules; when those ship,
+// the flag flips them on without touching the call sites.
+
+static EXCLUSIVE_MODE: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+pub fn audio_set_exclusive_mode(enabled: bool) -> Result<(), String> {
+    EXCLUSIVE_MODE.store(enabled, Ordering::Release);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn audio_get_exclusive_mode() -> Result<bool, String> {
+    Ok(EXCLUSIVE_MODE.load(Ordering::Acquire))
+}
+
 /// Public-safe device descriptor returned by [`list_audio_devices`].
 #[derive(Serialize)]
 pub struct AudioDevice {
@@ -1182,12 +1212,30 @@ fn open_active_from_prepared(
 ) -> Result<ActivePlayback, String> {
     // Default-mode cpal lets us request a specific rate; the OS
     // mixer picks up the slack if the device doesn't natively
-    // support it. The exclusive-mode toggle (future commit) is
-    // what enforces "no resampling, ever."
+    // support it. Real exclusive output (no OS resampling) needs
+    // a per-platform backend (raw WASAPI / CoreAudio / ALSA) — the
+    // EXCLUSIVE_MODE flag below selects "tight buffer" mode in cpal
+    // until those backends land, which lowers latency on the OS
+    // mixer's resampler without bypassing it. The flag's call site
+    // exists today so the future raw-backend implementations can
+    // light up without touching this function.
+    let exclusive = EXCLUSIVE_MODE.load(Ordering::Acquire);
+    let buffer_size = if exclusive {
+        // ~10 ms at the file's native rate. Small enough that the
+        // OS mixer's resampler stays close to "transparent" but
+        // large enough that the realtime callback isn't starved on
+        // a moderately busy system. Tuned to the lower bound of
+        // typical USB DAC ASIO buffers (4-12 ms is the audiophile
+        // sweet spot).
+        let frames = (prepared.sample_rate_hz as u32) / 100;
+        cpal::BufferSize::Fixed(frames.max(64))
+    } else {
+        cpal::BufferSize::Default
+    };
     let stream_config = cpal::StreamConfig {
         channels: prepared.channels,
         sample_rate: cpal::SampleRate(prepared.sample_rate_hz),
-        buffer_size: cpal::BufferSize::Default,
+        buffer_size,
     };
     let paused = Arc::new(AtomicBool::new(false));
     let initial_frames = start_position_ms

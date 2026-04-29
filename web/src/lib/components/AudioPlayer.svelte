@@ -18,6 +18,7 @@
     nowPlayingClear,
     replayGainSetMode,
     replayGainSetPreamp,
+    audioSetExclusiveMode,
     type ReplayGainMode,
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
@@ -175,6 +176,10 @@
     const storedRgPreamp = parseFloat(localStorage.getItem('onscreen_native_rg_preamp') ?? '');
     if (Number.isFinite(storedRgPreamp)) {
       void replayGainSetPreamp(storedRgPreamp);
+    }
+    const storedExclusive = localStorage.getItem('onscreen_native_exclusive') === '1';
+    if (storedExclusive) {
+      void audioSetExclusiveMode(true);
     }
 
     // Wire OS media keys → audio store. The Rust side registers the
