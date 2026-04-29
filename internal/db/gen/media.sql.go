@@ -1414,7 +1414,28 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
+                       -- Strip a release-group prefix in square
+                       -- brackets ("[ToonsHub] Frieren...",
+                       -- "[QWERTY] 8 Out Of 10 Cats") before any
+                       -- other normalization. The scanner pulls
+                       -- these in from filenames when the canonical
+                       -- show row hasn't been created yet, and the
+                       -- prefix is never part of the actual title —
+                       -- always safe to drop. Country suffixes like
+                       -- "(US)" or " IE" intentionally stay because
+                       -- "The Zoo (Ireland)" and "The Zoo" are
+                       -- different productions (year mismatch
+                       -- already keeps them apart for cases like
+                       -- "Heroes 2006" vs "Heroes 2024", but the
+                       -- non-parenthesised country tag would
+                       -- accidentally merge two real shows).
+                       unaccent(replace(replace(
+                         regexp_replace(
+                           coalesce(NULLIF(original_title, ''), title),
+                           '^\s*\[[^\]]+\]\s*', '', 'i'
+                         ),
+                         '&amp;', '&'), '''', '')
+                       ),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
@@ -3390,7 +3411,28 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
+                       -- Strip a release-group prefix in square
+                       -- brackets ("[ToonsHub] Frieren...",
+                       -- "[QWERTY] 8 Out Of 10 Cats") before any
+                       -- other normalization. The scanner pulls
+                       -- these in from filenames when the canonical
+                       -- show row hasn't been created yet, and the
+                       -- prefix is never part of the actual title —
+                       -- always safe to drop. Country suffixes like
+                       -- "(US)" or " IE" intentionally stay because
+                       -- "The Zoo (Ireland)" and "The Zoo" are
+                       -- different productions (year mismatch
+                       -- already keeps them apart for cases like
+                       -- "Heroes 2006" vs "Heroes 2024", but the
+                       -- non-parenthesised country tag would
+                       -- accidentally merge two real shows).
+                       unaccent(replace(replace(
+                         regexp_replace(
+                           coalesce(NULLIF(original_title, ''), title),
+                           '^\s*\[[^\]]+\]\s*', '', 'i'
+                         ),
+                         '&amp;', '&'), '''', '')
+                       ),
                        '^\s*(the|a|an)\s+', '', 'i'
                      ),
                      '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
