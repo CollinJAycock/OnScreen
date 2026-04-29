@@ -12,7 +12,7 @@
 
 **Snapshot date:** 2026-04-29. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
 
-> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side), admin logs API, audiobook embedded-cover serving, **audiobook author/series hierarchy with typed shelf + cross-client author+series detail pages**, per-file streaming token (24 h, file_id-bound, purpose-scoped), three TV clients at usable parity (Android TV / Fire TV verified, LG webOS feature-complete, Roku at flow parity). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
+> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side), admin logs API, audiobook embedded-cover serving, **audiobook author/series hierarchy with typed shelf + cross-client author+series detail pages**, **in-player audio + subtitle pickers across every client (Android TV, phone, web, webOS, Tizen, Roku) with HLS re-issue for transcode-session audio switching**, per-file streaming token (24 h, file_id-bound, purpose-scoped), three TV clients at usable parity (Android TV / Fire TV verified, LG webOS feature-complete, Roku at flow parity). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
 
 ---
 
@@ -454,8 +454,8 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Direct play                      | ✅ | ✅ | ✅ | ⚠️ | |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | hls.js + HTML5 `<video>` |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
-| Audio track picker               | ⚠️ | ✅ | ✅ | ⚠️ | Direct-play only — HLS re-issue path not wired |
-| Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | |
+| Audio track picker (HLS re-issue)| ✅ | ✅ | ✅ | ⚠️ | Yellow remote key opens picker; selection re-issues the transcode session at the current position with the new `audio_stream_index` |
+| Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | Blue remote key; toggles via `video.textTracks[i].mode` against the WebVTT lanes hls.js exposes |
 | Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
 | Up Next overlay                  | ✅ | ✅ | ✅ | ⚠️ | |
 | Music auto-advance               | ✅ | ✅ | ✅ | ⚠️ | |
@@ -485,8 +485,8 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | AVPlay HLS + HTML5 `<video>` fallback |
 | HW HEVC / AV1 decode             | ✅ | ✅ | ✅ | ⚠️ | Firmware decoders via AVPlay |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
-| Audio track picker               | ⚠️ | ✅ | ✅ | ⚠️ | Direct-play only |
-| Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | |
+| Audio track picker (HLS re-issue)| ✅ | ✅ | ✅ | ⚠️ | Yellow remote key; AVPlay + HTML5 fallback both rebuild the player on a fresh transcode session at the current position |
+| Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | Blue remote key; AVPlay path uses `webapis.avplay.setSelectTrack('TEXT', i)`, dev fallback uses `video.textTracks` |
 | Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
 | Up Next overlay                  | ✅ | ✅ | ✅ | ⚠️ | |
 | Music auto-advance               | ✅ | ✅ | ✅ | ⚠️ | |
@@ -514,8 +514,8 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Direct play                      | ✅ | ✅ | ✅ | ⚠️ | Firmware Video node |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | `Playback_Decide` three-mode split, 13 brs unit tests |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
-| Audio track picker               | ❌ | ✅ | ✅ | ⚠️ | Outstanding |
-| Subtitle picker                  | ❌ | ✅ | ✅ | ⚠️ | Outstanding — firmware Video node supports it; not wired |
+| Audio track picker (HLS re-issue)| ✅ | ✅ | ✅ | ⚠️ | * (options) toggles a unified picker through audio → subtitle → closed; LabelList navigation. TranscodeStartTask gains `audioStreamIndex` + `positionMs` interface fields; selection fires a new task that rebuilds the Video node's content with the fresh playlist URL |
+| Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | Same * picker; selection maps the picked index to `availableSubtitleTracks[i].TrackName` and assigns `video.subtitleTrack`. Off row clears it |
 | Skip-intro / skip-credits        | ✅ | 💎 | ✅ | ⚠️ | |
 | Up Next overlay                  | ✅ | ✅ | ✅ | ⚠️ | |
 | Music auto-advance               | ✅ | ✅ | ✅ | ⚠️ | |
@@ -640,6 +640,7 @@ The web client is the universal fallback — runs in any modern browser with no 
   - **Samsung Tizen** (SvelteKit + tizen-package): bulk-ported from webOS — pairing flow + hub + search with type-filter chips + photos + audiobook chapter list + collections + favorites + history + skip-intro/credits + Up Next + music auto-advance + cross-device SSE sync. AVPlay JS dual-path with HTML5 `<video>` fallback for HW HEVC/AV1. Hardware validation on a real Samsung TV outstanding.
   - **Android phone** (Compose + Material 3): new module at `clients/android_native/`, package `tv.onscreen.mobile`, distinct from the TV client at `clients/android/`. Reuses the TV client's data layer verbatim (Retrofit + Moshi + Hilt + DataStore + AuthInterceptor + TokenAuthenticator). UI: pairing-PIN sign-in (password fallback), hub with poster strips, library grid, item detail, search with debounce, favorites + history + collections drill-in. Player: Media3 ExoPlayer with the full direct/remux/transcode negotiation port from `PlaybackHelper.decide()`, per-file 24h stream token, audio + subtitle pickers (HLS audio re-issues the session with a new audio_stream_index), 10 s progress reporting, skip-intro/credits overlay, Up Next + music auto-advance. Real-hardware validation, photo viewer, audiobook chapter list, cross-device SSE resume, search type-filter chips, favorite-toggle on detail page outstanding.
 - ✅ **Android TV subtitle + audio pickers**: pickers showed only ExoPlayer-side tracks, so transcode/remux sessions (which the server emits with one audio stream) couldn't switch language. `PlaybackViewModel.switchAudioStream` now re-issues the HLS session with a new `audio_stream_index` while preserving position; direct-play still uses ExoPlayer's language selector. Subtitle picker gets the same single-choice UX with active-row detection.
+- ✅ **Smart-TV trio audio + subtitle pickers**: closes the same gap on webOS, Tizen, and Roku that the Android TV picker work closed earlier. webOS + Tizen wire yellow (audio) and blue (subtitle) remote keys to floating SvelteKit overlays; audio selection re-issues the transcode session at the current position, subtitle selection toggles `video.textTracks[i].mode` (or `webapis.avplay.setSelectTrack('TEXT', i)` on the Tizen AVPlay HW path). Roku ships a unified LabelList picker the * (options) button cycles through audio → subtitle → closed; `TranscodeStartTask` gains `audioStreamIndex` + `positionMs` interface fields so the re-issue lands on the same Roku Video node without a scene rebuild. Subtitle selection maps the picked index to the firmware Video node's `availableSubtitleTracks[i].TrackName`. All three were the last cells flagged ⚠️ / ❌ on the picker rows in sections 18–20.
 - ✅ **Track J — Admin observability**: `/api/v1/admin/logs` endpoint backed by an in-process 2000-entry slog ring buffer — admin-only, level + limit filters, error attrs stringified for diagnostic readability. Lets operators pull recent server output without SSH/kubectl access (TrueNAS Apps, Cloud Run).
 - ✅ **Audiobook embedded covers**: `/items/{id}/image` extends to type=audiobook, extracts the first attached picture from the m4b/mp3/flac container via ffmpeg, runs it through the same resize + on-disk cache as photos. First request per book triggers ffmpeg; subsequent requests at the same dimensions hit the cache.
 - ✅ **Continue Watching split (server + clients)**: hub now returns three pre-split arrays (`continue_watching_tv`, `continue_watching_movies`, `continue_watching_other`) on top of the legacy combined feed; TV-shows row dedupes to one tile per series (the most recently watched episode). Web + Android TV + phone consume the split when present and fall back to the combined feed for older servers.
