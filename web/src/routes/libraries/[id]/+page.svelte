@@ -74,11 +74,29 @@
 
   // Hydrate filters from URL on first load (?genre=Drama, ?year_min=, ?year_max=)
   // so deep-links from the genre/year browse pages preselect the correct filter.
+  // Also reads ?sort= and ?sort_dir= so the home page's "Recently Added"
+  // shelf can land here on /libraries/{id}?sort=created_at&sort_dir=desc and
+  // have the right pill pre-selected — no extra click to flip the sort.
   function readFiltersFromURL() {
     const sp = $page.url.searchParams;
     selectedGenre = sp.get('genre') ?? '';
     yearMin = sp.get('year_min') ?? '';
     yearMax = sp.get('year_max') ?? '';
+
+    const s = sp.get('sort');
+    if (s === 'title' || s === 'year' || s === 'rating' || s === 'created_at' || s === 'taken_at') {
+      sortField = s;
+      // Preserve sort_dir from the URL when present; otherwise pick a
+      // sensible default per field (newest-first for time-based sorts,
+      // ascending for title).
+      const dir = sp.get('sort_dir');
+      if (dir === 'asc') sortAsc = true;
+      else if (dir === 'desc') sortAsc = false;
+      else sortAsc = s === 'title';
+      // Mark as user-driven so loadLibrary's photo/home-video default
+      // doesn't stomp on the URL-supplied sort.
+      sortDefaulted = true;
+    }
   }
 
   let mounted = false;

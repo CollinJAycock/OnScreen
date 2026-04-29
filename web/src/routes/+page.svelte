@@ -193,12 +193,15 @@
       </section>
     {/if}
 
-    <!-- Per-library recently added — one strip per library -->
+    <!-- Per-library recently added — one strip per library. The header
+         link carries the sort state so clicking lands on the library
+         page already sorted by created_at descending — same view the
+         shelf is showing, just with the full pagination + filters. -->
     {#each recentlyAddedByLibrary as row (row.library_id)}
       {@const square = isSquareLibrary(row.library_type)}
       <section class="hub-section">
         <h2 class="hub-title">
-          <a class="hub-title-link" href={`/libraries/${row.library_id}`}>
+          <a class="hub-title-link" href={`/libraries/${row.library_id}?sort=created_at&sort_dir=desc`}>
             Recently Added to {row.library_name}
           </a>
         </h2>
