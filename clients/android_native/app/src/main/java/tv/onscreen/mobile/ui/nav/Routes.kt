@@ -13,10 +13,14 @@ object Routes {
     const val COLLECTION = "collection/{id}"
     const val DOWNLOADS = "downloads"
     const val PHOTO = "photo/{id}"
+    const val AUTHOR = "author/{id}"
+    const val SERIES = "series/{id}"
 
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"
     fun player(id: String) = "player/$id"
     fun collection(id: String) = "collection/$id"
     fun photo(id: String) = "photo/$id"
+    fun author(id: String) = "author/$id"
+    fun series(id: String) = "series/$id"
 }

@@ -25,10 +25,12 @@ import tv.onscreen.mobile.ui.history.HistoryScreen
 import tv.onscreen.mobile.ui.hub.HubScreen
 import tv.onscreen.mobile.ui.item.ItemDetailScreen
 import tv.onscreen.mobile.ui.library.LibraryScreen
+import tv.onscreen.mobile.ui.author.AuthorScreen
 import tv.onscreen.mobile.ui.pair.PairScreen
 import tv.onscreen.mobile.ui.photo.PhotoViewerScreen
 import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
+import tv.onscreen.mobile.ui.series.SeriesScreen
 import javax.inject.Inject
 
 @HiltViewModel
@@ -123,6 +125,8 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 onPlay = { id -> nav.navigate(Routes.player(id)) },
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
                 onOpenPhoto = { id -> nav.navigate(Routes.photo(id)) },
+                onOpenAuthor = { id -> nav.navigate(Routes.author(id)) },
+                onOpenSeries = { id -> nav.navigate(Routes.series(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
@@ -138,6 +142,27 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         ) { entry ->
             PhotoViewerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(
+            Routes.AUTHOR,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            AuthorScreen(
+                authorId = entry.arguments!!.getString("id")!!,
+                onOpenSeries = { id -> nav.navigate(Routes.series(id)) },
+                onOpenBook = { id -> nav.navigate(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(
+            Routes.SERIES,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            SeriesScreen(
+                seriesId = entry.arguments!!.getString("id")!!,
+                onOpenBook = { id -> nav.navigate(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )
         }

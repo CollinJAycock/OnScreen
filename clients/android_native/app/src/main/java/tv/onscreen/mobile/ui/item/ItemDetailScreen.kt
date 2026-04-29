@@ -209,20 +209,27 @@ fun ItemDetailScreen(
     onPlay: (String) -> Unit,
     onOpenItem: (String) -> Unit,
     onOpenPhoto: (String) -> Unit,
+    onOpenAuthor: (String) -> Unit,
+    onOpenSeries: (String) -> Unit,
     onBack: () -> Unit,
     vm: ItemDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.load(itemId) }
     val ui by vm.state.collectAsState()
 
-    // Photos open straight into the full-screen viewer; the detail
-    // page would just be a thumbnail wrapping the same image. Pop the
-    // detail off the back stack so Back returns to the source list.
+    // Type-based redirects: photos open straight into the full-screen
+    // viewer; book_author + book_series have dedicated screens that
+    // render the children list. The shared ItemDetailScreen would
+    // just show a title with no useful body for these types since
+    // they don't carry a playable file. Pop the detail off the back
+    // stack so Back returns to the source list, not to a flash of
+    // the wrong page.
     LaunchedEffect(ui.detail?.id, ui.detail?.type) {
-        val d = ui.detail
-        if (d != null && d.type == "photo") {
-            onOpenPhoto(d.id)
-            onBack()
+        val d = ui.detail ?: return@LaunchedEffect
+        when (d.type) {
+            "photo" -> { onOpenPhoto(d.id); onBack() }
+            "book_author" -> { onOpenAuthor(d.id); onBack() }
+            "book_series" -> { onOpenSeries(d.id); onBack() }
         }
     }
 
