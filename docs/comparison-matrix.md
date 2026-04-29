@@ -369,7 +369,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Hub (Continue / Recently / Trending) | ✅ | ✅ | ✅ | ✅ | |
 | Library browse + genre filter    | ✅ | ✅ | ✅ | ✅ | |
 | Full-text search                 | ✅ | ✅ | ✅ | ✅ | |
-| Search type-filter chips         | ❌ | ❌ | ❌ | ❌ | TV client uses the underlying SearchFragment shape; chips are a webOS/Roku/Tizen feature |
+| Search type-filter chips         | ✅ | ❌ | ❌ | ❌ | OnScreen TV: Movies / TV Shows / Episodes / Tracks chips on SearchFragment, persisted via DataStore — matches the web/webOS/Roku/Tizen feature |
 | Item detail page                 | ✅ | ✅ | ✅ | ✅ | |
 | Favorites                        | ✅ | ✅ | ✅ | ✅ | |
 | History                          | ✅ | ✅ | ✅ | ✅ | |

@@ -14,6 +14,13 @@
     <string name="continue_watching">Continue Watching</string>
     <string name="continue_watching_tv">Continue Watching TV Shows</string>
     <string name="continue_watching_movies">Continue Watching Movies</string>
+    <string name="live_tv">Live TV</string>
+    <string name="recordings">Recordings</string>
+    <string name="live_tv_no_guide">No guide data</string>
+    <string name="recording_scheduled_msg">Scheduled — won\'t be playable until it records.</string>
+    <string name="recording_in_progress_msg">Recording in progress.</string>
+    <string name="recording_failed_msg">Recording failed.</string>
+    <string name="recording_unavailable_msg">Recording unavailable.</string>
     <string name="recently_added">Recently Added</string>
     <string name="collections">Collections</string>
     <string name="search_hint">Search movies, shows, music…</string>

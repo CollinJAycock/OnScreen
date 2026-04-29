@@ -160,6 +160,31 @@ interface OnScreenApi {
         @Query("offset") offset: Int = 0,
     ): ApiListResponse<HistoryItem>
 
+    // ── Live TV ─────────────────────────────────────────────────────────────
+
+    /** Lists configured + enabled channels. The disabled-channel
+     *  curation happens via the web settings UI; the TV client
+     *  always asks for enabled-only so the lineup matches what
+     *  the user expects to see. */
+    @GET("api/v1/tv/channels")
+    suspend fun getChannels(@Query("enabled_only") enabledOnly: Boolean = true): ApiResponse<List<Channel>>
+
+    /** Up to two rows per channel (current + next program). The
+     *  client merges by channel_id against the channels list and
+     *  shows "no guide data" for channels missing from the response. */
+    @GET("api/v1/tv/channels/now-next")
+    suspend fun getNowAndNext(): ApiResponse<List<NowNext>>
+
+    /** Recordings for the calling user. status filter:
+     *  "scheduled" | "recording" | "completed" | "failed" | "cancelled".
+     *  Empty = all statuses. */
+    @GET("api/v1/tv/recordings")
+    suspend fun getRecordings(
+        @Query("status") status: String? = null,
+        @Query("limit") limit: Int = 100,
+        @Query("offset") offset: Int = 0,
+    ): ApiResponse<List<Recording>>
+
     // ── Health ──────────────────────────────────────────────────────────────
 
     @GET("health/live")

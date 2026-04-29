@@ -59,6 +59,11 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
     implementation("androidx.media3:media3-ui-leanback:1.3.1")
+    // media3-ui (non-Leanback PlayerView) is used by the Live TV
+    // channel player — its Leanback counterpart is bundled with the
+    // detail-page playback machinery and doesn't fit a fullscreen
+    // channel surface.
+    implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-session:1.3.1")
 
     // Networking
