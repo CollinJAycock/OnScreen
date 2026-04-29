@@ -679,3 +679,47 @@ func TestItemGet_ContentRating_UnratedContentBlocked(t *testing.T) {
 		t.Errorf("status: got %d, want %d (unrated content blocked — treated as rank 4)", rec.Code, http.StatusForbidden)
 	}
 }
+
+// TestSnapToChapterStart covers the audiobook resume-snap helper. The
+// invariants under test:
+//
+//   - Position before the first chapter passes through unchanged
+//     (caller intent is "start from there", not "reset to chapter 1").
+//   - Position inside a chapter snaps to that chapter's start.
+//   - Position exactly on a chapter boundary returns that boundary
+//     (idempotent; a previously-snapped position survives a re-snap).
+//   - Empty / nil chapter slice is a no-op.
+func TestSnapToChapterStart(t *testing.T) {
+	chapters := []ChapterJSON{
+		{Title: "Ch 1", StartMS: 0, EndMS: 60_000},
+		{Title: "Ch 2", StartMS: 60_000, EndMS: 180_000},
+		{Title: "Ch 3", StartMS: 180_000, EndMS: 360_000},
+	}
+
+	cases := []struct {
+		name string
+		pos  int64
+		want int64
+	}{
+		{"pre-first chapter passes through", -100, -100},
+		{"inside chapter 1 snaps to 0", 30_000, 0},
+		{"on chapter 2 boundary stays at 60000", 60_000, 60_000},
+		{"inside chapter 2 snaps to 60000", 100_000, 60_000},
+		{"inside chapter 3 snaps to 180000", 250_000, 180_000},
+		{"past last chapter snaps to last start", 999_999, 180_000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := snapToChapterStart(chapters, c.pos); got != c.want {
+				t.Errorf("snapToChapterStart(%d) = %d, want %d", c.pos, got, c.want)
+			}
+		})
+	}
+
+	if got := snapToChapterStart(nil, 12_345); got != 12_345 {
+		t.Errorf("snapToChapterStart(nil) = %d, want pass-through", got)
+	}
+	if got := snapToChapterStart([]ChapterJSON{}, 12_345); got != 12_345 {
+		t.Errorf("snapToChapterStart(empty) = %d, want pass-through", got)
+	}
+}

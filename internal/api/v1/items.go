@@ -568,6 +568,21 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		out.Files = append(out.Files, fr)
 	}
 
+	// Audiobook resume: snap view_offset_ms to the start of the
+	// chapter the saved position lands inside. Mid-chapter resume
+	// drops the listener back into a partial sentence — chapters are
+	// the natural boundary for narration the way scenes are for
+	// video. Web client did this in `+page.svelte` already; moving
+	// the snap server-side hands the same behavior to every native
+	// client without each having to re-implement the walk.
+	//
+	// No-op when the file has no chapters (rare for audiobooks but
+	// possible for plain mp3 rips), when there's no saved progress,
+	// or when the saved position is before the first chapter start.
+	if out.ViewOffsetMS > 0 && (out.Type == "audiobook" || out.Type == "audiobook_chapter") && len(out.Files) > 0 {
+		out.ViewOffsetMS = snapToChapterStart(out.Files[0].Chapters, out.ViewOffsetMS)
+	}
+
 	// Markers are only meaningful for episodes; movies are excluded by policy.
 	if h.markers != nil && item.Type == "episode" {
 		if ms, err := h.markers.List(r.Context(), id); err == nil {
@@ -1429,6 +1444,27 @@ func parseJSONBAudioStreams(data []byte) []AudioStreamJSON {
 		})
 	}
 	return out
+}
+
+// snapToChapterStart walks the chapter list and returns the start_ms
+// of the chapter that contains [positionMS]. When [positionMS] is
+// before the first chapter or the chapters slice is empty, the
+// position passes through unchanged — keeps the function safe to call
+// unconditionally on items that may or may not have chapter metadata.
+//
+// Audiobook chapters are dense (~30 chapters in a typical novel);
+// linear scan is well below the cost of the SQL roundtrip that
+// produced the position itself, so binary-search would be premature.
+func snapToChapterStart(chapters []ChapterJSON, positionMS int64) int64 {
+	snapped := positionMS
+	for _, c := range chapters {
+		if c.StartMS <= positionMS {
+			snapped = c.StartMS
+		} else {
+			break
+		}
+	}
+	return snapped
 }
 
 func parseJSONBChapters(data []byte) []ChapterJSON {

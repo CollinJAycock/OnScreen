@@ -81,3 +81,47 @@ func TestFileTypeForLibrary_Audiobook(t *testing.T) {
 		t.Errorf("fileTypeForLibrary(audiobook) = %q, want audiobook", got)
 	}
 }
+
+// TestIsMultiFileBookPath covers the layout-detection branch the
+// multi-file scan flow depends on. Three layouts in, three different
+// answers out — the scanner picks parent vs leaf shape from this
+// boolean, so a misclassification creates a duplicate audiobook row
+// per file (the bug that motivated the multi-file rewrite).
+func TestIsMultiFileBookPath(t *testing.T) {
+	roots := []string{"/media/Audiobooks"}
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{
+			name: "author / book / file is multi-file",
+			path: "/media/Audiobooks/Brandon Sanderson/Mistborn/01 - Prologue.mp3",
+			want: true,
+		},
+		{
+			name: "author / file is single-file",
+			path: "/media/Audiobooks/Stephen King/It.m4b",
+			want: false,
+		},
+		{
+			name: "loose at root is single-file",
+			path: "/media/Audiobooks/Dune.m4b",
+			want: false,
+		},
+		{
+			name: "deeper than three levels still classified as multi only when great-grand is the root",
+			// <root>/Series/<Author>/<Book>/<file> — great-grand is
+			// <Author>, not the root, so this is NOT multi-file.
+			path: "/media/Audiobooks/Series Name/Brandon Sanderson/Mistborn/01.mp3",
+			want: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isMultiFileBookPath(c.path, roots); got != c.want {
+				t.Errorf("isMultiFileBookPath(%q) = %v, want %v", c.path, got, c.want)
+			}
+		})
+	}
+}
