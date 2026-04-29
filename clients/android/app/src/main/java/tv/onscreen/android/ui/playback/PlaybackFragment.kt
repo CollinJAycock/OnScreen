@@ -97,6 +97,10 @@ class PlaybackFragment : VideoSupportFragment() {
     /** Trickplay-thumbnail load. Single job because installation is
      *  one-shot per session. */
     private var trickplayJob: Job? = null
+    /** True for the first source emission after a parked-player
+     *  re-take, so we don't restart playback when the user comes
+     *  back to a track that's already playing in the service. */
+    private var playerWasReused: Boolean = false
 
     /** Skip-intro / skip-credits overlay button. Inflated lazily on
      *  first marker hit, then shown/hidden as the player crosses
@@ -162,7 +166,18 @@ class PlaybackFragment : VideoSupportFragment() {
                 nextEpisode = state.nextEpisode
                 currentSource = source
 
-                playSource(source)
+                // Skip the first prepare() when we re-took a player
+                // already playing this item from the
+                // MediaSessionService — calling setMediaSource
+                // would restart the song from 0:00. The transcode
+                // session and HLS playlist URL haven't changed
+                // since the original prepare, so the existing
+                // ExoPlayer state is still correct.
+                if (playerWasReused) {
+                    playerWasReused = false
+                } else {
+                    playSource(source)
+                }
                 applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang)
 
                 val tracker = ProgressTracker(viewLifecycleOwner.lifecycleScope, itemRepo)
@@ -453,7 +468,36 @@ class PlaybackFragment : VideoSupportFragment() {
     }
 
     private fun initPlayer() {
-        val exo = ExoPlayer.Builder(requireContext()).build()
+        // Re-entry handoff: if the user backed out of this same item
+        // while music was playing, the previous fragment instance
+        // parked the player in AudioHandoff and the
+        // MediaSessionService picked it up. Take it back here so
+        // playback continues seamlessly under the Leanback transport
+        // controls — without this we'd build a fresh ExoPlayer and
+        // run two parallel sessions for the duration of the new
+        // fragment's life.
+        val itemId = arguments?.getString(ARG_ITEM_ID)
+        val parked = itemId?.let { tv.onscreen.android.playback.AudioHandoff.take(it) }
+        val exo = parked ?: ExoPlayer.Builder(requireContext()).build()
+        if (parked != null) {
+            // Reused-parked-player flag suppresses the next
+            // setMediaSource/prepare on the first state emission so
+            // the song doesn't restart from 0:00 when the user
+            // re-enters mid-track. Cleared after the first source
+            // arrives.
+            playerWasReused = true
+            // Service is about to be empty — stop it so the foreground
+            // notification disappears now that the fragment owns the
+            // player again.
+            try {
+                requireContext().applicationContext.stopService(
+                    android.content.Intent(
+                        requireContext(),
+                        tv.onscreen.android.playback.OnScreenMediaSessionService::class.java,
+                    ),
+                )
+            } catch (_: Exception) { }
+        }
         // Local wake lock — keeps the CPU alive during playback so the
         // ExoPlayer worker thread isn't paused. The screen-on flag is
         // toggled separately in onIsPlayingChanged below.
