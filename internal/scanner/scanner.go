@@ -582,14 +582,31 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	} else {
 		title, year := parseFilename(path)
 		itemType := fileTypeForLibrary(libraryType)
-		var createErr error
-		item, createErr = s.media.FindOrCreateItem(ctx, media.CreateItemParams{
+		// Movies: Radarr's recommended layout is
+		// `{Movie CleanTitle} ({Release Year})/file.mkv`, with optional
+		// `{tmdb-NNN}` / `[imdb-tt...]` suffix on the folder. Parsing
+		// those markers lets the same row collapse onto an existing
+		// canonical match by id even when title parsing differs.
+		movieParams := media.CreateItemParams{
 			LibraryID: libraryID,
 			Type:      itemType,
 			Title:     title,
 			SortTitle: title,
 			Year:      year,
-		})
+		}
+		if itemType == "movie" {
+			folderIDs := ParseFolderIDs(filepath.Base(filepath.Dir(path)))
+			if folderIDs.TMDBID > 0 {
+				t := folderIDs.TMDBID
+				movieParams.TMDBID = &t
+			}
+			if folderIDs.IMDBID != "" {
+				i := folderIDs.IMDBID
+				movieParams.IMDBID = &i
+			}
+		}
+		var createErr error
+		item, createErr = s.media.FindOrCreateItem(ctx, movieParams)
 		if createErr != nil {
 			return nil, nil, false, fmt.Errorf("find or create item for %s: %w", path, createErr)
 		}
@@ -747,13 +764,38 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 		})
 	}
 
-	// 1. Find or create the "show" item (parent_id=null).
-	show, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
+	// 1. Find or create the "show" item (parent_id=null). When the
+	//    show's root folder carries a TRaSH/Sonarr-style id marker
+	//    (`{tmdb-NNN}`, `{tvdb-NNN}`, `[tvdbid-NNN]`, `{imdb-tt...}`),
+	//    pass those IDs into FindOrCreateHierarchyItem so:
+	//      - the find side can match an existing row by tmdb_id even
+	//        if the parsed title differs (the same show ingested
+	//        twice as `[ToonsHub] My Hero Academia` and then later
+	//        renamed to `My Hero Academia {tmdb-65930}` collapses
+	//        onto a single row);
+	//      - a fresh insert starts with the IDs already set, so the
+	//        enricher can `RefreshTV` directly instead of falling
+	//        back to a fuzzy title search that may miss.
+	folderIDs := ParseFolderIDs(filepath.Base(showDirFromFile(path)))
+	createParams := media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "show",
 		Title:     showTitle,
 		SortTitle: showTitle,
-	})
+	}
+	if folderIDs.TMDBID > 0 {
+		t := folderIDs.TMDBID
+		createParams.TMDBID = &t
+	}
+	if folderIDs.TVDBID > 0 {
+		t := folderIDs.TVDBID
+		createParams.TVDBID = &t
+	}
+	if folderIDs.IMDBID != "" {
+		i := folderIDs.IMDBID
+		createParams.IMDBID = &i
+	}
+	show, err := s.media.FindOrCreateHierarchyItem(ctx, createParams)
 	if err != nil {
 		return nil, fmt.Errorf("find or create show %q: %w", showTitle, err)
 	}
@@ -825,11 +867,15 @@ func parseFilename(path string) (string, *int) {
 	if numericNameRE.MatchString(stem) {
 		dir := filepath.Base(filepath.Dir(path))
 		if dir != "" && dir != "." && dir != string(os.PathSeparator) {
-			return cleanTitle(dir)
+			return cleanTitle(StripFolderIDMarkers(dir))
 		}
 	}
 
-	return cleanTitle(stem)
+	// Strip TRaSH/Sonarr/Radarr id markers (`{tmdb-NNN}`, `{tvdb-NNN}`,
+	// `[tvdbid-NNN]`, `{imdb-tt...}`) before title parsing — the
+	// markers are extracted separately by ParseFolderIDs and would
+	// otherwise leak into the human-readable title.
+	return cleanTitle(StripFolderIDMarkers(stem))
 }
 
 // cleanTitle normalises a raw media name (filename stem or stored title) into

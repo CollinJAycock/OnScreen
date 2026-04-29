@@ -61,9 +61,12 @@ func ParseTVFilename(path string) (showTitle string, season int, episode int, ok
 
 // extractShowTitle cleans a raw prefix into a show title. If the prefix is
 // empty or unhelpful (e.g. just episode number), it falls back to the parent
-// folder name (skipping "Season N" folders).
+// folder name (skipping "Season N" folders). Any TRaSH/Sonarr-style external
+// id marker (`{tmdb-NNN}`, `{tvdb-NNN}`, `[tvdbid-NNN]`, `{imdb-tt...}`) is
+// stripped from the folder name before cleaning, so the marker doesn't leak
+// into the show title and torpedo title-based dedup matching.
 func extractShowTitle(rawPrefix string, fullPath string) string {
-	title := cleanShowTitle(rawPrefix)
+	title := cleanShowTitle(StripFolderIDMarkers(rawPrefix))
 	if title != "" {
 		return title
 	}
@@ -77,7 +80,7 @@ func extractShowTitle(rawPrefix string, fullPath string) string {
 		if seasonFolderRE.MatchString(dir) {
 			continue
 		}
-		cleaned := cleanShowTitle(dir)
+		cleaned := cleanShowTitle(StripFolderIDMarkers(dir))
 		if cleaned != "" {
 			return cleaned
 		}

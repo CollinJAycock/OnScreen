@@ -985,6 +985,18 @@ func (s *Service) findItemByTitle(ctx context.Context, p CreateItemParams) *Item
 	if p.Title == "" {
 		return nil
 	}
+	// External-ID match wins when the caller supplied one. A folder
+	// like `My Hero Academia {tmdb-65930}/Season 1/...` carries the
+	// authoritative TMDB id, and matching by id collapses onto the
+	// canonical row even when the parsed title differs from what's
+	// in the DB ("Frieren" folder → "Frieren: Beyond Journey's End"
+	// canonical row from TMDB). Without this the title fallback
+	// would create a fresh duplicate row instead.
+	if p.TMDBID != nil && *p.TMDBID > 0 {
+		if found, err := s.rw.GetMediaItemByTMDBID(ctx, p.LibraryID, *p.TMDBID); err == nil && found.Type == p.Type {
+			return &found
+		}
+	}
 	// Exact-match lookup aligned with the unique partial index. This avoids
 	// the LIMIT 10 full-text search missing a show whose title is also present
 	// in its episodes' filenames (which would otherwise crowd out the show row).
