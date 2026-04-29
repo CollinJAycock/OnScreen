@@ -2,7 +2,21 @@
   import { onMount, onDestroy } from 'svelte';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
   import { itemApi, getApiBase, getBearerToken, assetUrl } from '$lib/api';
-  import { isTauri, audioPlayUrl, audioPreloadUrl, audioPause, audioResume, audioSeek, stopAudio, audioState, onMediaKey, notifyNowPlaying } from '$lib/native';
+  import {
+    isTauri,
+    audioPlayUrl,
+    audioPreloadUrl,
+    audioPause,
+    audioResume,
+    audioSeek,
+    stopAudio,
+    audioState,
+    onMediaKey,
+    notifyNowPlaying,
+    nowPlayingSetMetadata,
+    nowPlayingSetPlayback,
+    nowPlayingClear,
+  } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
@@ -97,6 +111,23 @@
       const subtitle = [t.artist, t.album].filter(Boolean).join(' — ') || 'Now playing';
       void notifyNowPlaying(t.title, subtitle);
     }
+    // OS now-playing widget — fires on every track change, focused or
+    // not (the widget is the persistent lockscreen / Bluetooth display,
+    // not a transient toast). Cover art URL routed through assetUrl
+    // so the helper appends `?token=` for the Tauri webview path; the
+    // OS shell fetches it with that token attached.
+    if (t && (!prevTrack || prevTrack.id !== t.id)) {
+      const artUrl = t.posterPath
+        ? assetUrl(`/artwork/${encodeURI(t.posterPath)}?w=600`)
+        : null;
+      void nowPlayingSetMetadata({
+        title: t.title,
+        artist: t.artist ?? null,
+        album: t.album ?? null,
+        artUrl,
+        durationMs: t.durationMS ?? null,
+      });
+    }
     prevTrack = t;
     track = t;
     lastReportedMS = 0;
@@ -162,7 +193,10 @@
     // playing after navigation away from a route that owns the
     // AudioPlayer (currently only the root layout owns it, but keep
     // the cleanup safe for future component-scoped reuse).
-    if (isTauri()) void stopAudio();
+    if (isTauri()) {
+      void stopAudio();
+      void nowPlayingClear();
+    }
   });
 
   // Native engine → UI sync. Polls audio_state every 250 ms while
@@ -254,7 +288,10 @@
   } else if (!track && nativeLoadedUrl !== '') {
     nativeLoadedUrl = '';
     stopNativePolling();
-    if (isTauri()) void stopAudio();
+    if (isTauri()) {
+      void stopAudio();
+      void nowPlayingClear();
+    }
   }
 
   // Pause/resume sync for native playback. The <audio> block below
@@ -266,6 +303,16 @@
     } else {
       void audioPause();
     }
+  }
+
+  // OS now-playing widget — playback state. Fires on every play /
+  // pause transition while a track is loaded. The widget's scrubber
+  // is updated from positionMS so the lockscreen seek bar reflects
+  // local progress. Stopped state is handled by the explicit
+  // nowPlayingClear() calls in stopAudio paths below; this block is
+  // play/pause-only.
+  $: if (track) {
+    void nowPlayingSetPlayback(playing ? 'playing' : 'paused', positionMS);
   }
 
   // Optimistically preload the next track on the native engine when

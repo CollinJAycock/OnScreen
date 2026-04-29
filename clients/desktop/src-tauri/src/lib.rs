@@ -8,6 +8,7 @@
 // - System integration (tray, notifications, media keys)
 
 mod audio;
+mod now_playing;
 
 use serde::Serialize;
 use tauri::{
@@ -390,6 +391,17 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // OS now-playing widget. Builds once at setup-time, after
+            // the main window exists (Windows needs its HWND). Failure
+            // is non-fatal — the manage() call still installs the
+            // empty NowPlayingState so the frontend's commands no-op
+            // gracefully on a headless container or a Linux box
+            // without a session bus.
+            app.manage(now_playing::NowPlayingState::default());
+            if let Err(e) = now_playing::init(app.handle()) {
+                eprintln!("now-playing widget: init failed: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -409,6 +421,9 @@ pub fn run() {
             audio::audio_state,
             audio::audio_pause,
             audio::audio_resume,
+            now_playing::now_playing_set_metadata,
+            now_playing::now_playing_set_playback,
+            now_playing::now_playing_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OnScreen desktop");

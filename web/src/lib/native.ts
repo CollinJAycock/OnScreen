@@ -305,6 +305,71 @@ export async function onMediaKey(
   return unlisten;
 }
 
+/** Push the currently-playing track's metadata to the OS now-playing
+ *  widget (Windows SMTC / macOS NowPlayingInfoCenter / Linux MPRIS).
+ *  Distinct from [`notifyNowPlaying`]: the notification is a transient
+ *  toast in the system shell, the now-playing widget is the persistent
+ *  lockscreen / Bluetooth-headset / smartwatch display.
+ *
+ *  No-op in the browser bundle. Failures are swallowed (the widget is
+ *  cosmetic — playback itself is unaffected, and the widget bus may
+ *  be unavailable on a headless Linux container or during a startup
+ *  race on Windows). */
+export async function nowPlayingSetMetadata(meta: {
+  title: string;
+  artist?: string | null;
+  album?: string | null;
+  artUrl?: string | null;
+  durationMs?: number | null;
+}): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('now_playing_set_metadata', {
+      meta: {
+        title: meta.title,
+        artist: meta.artist ?? null,
+        album: meta.album ?? null,
+        art_url: meta.artUrl ?? null,
+        duration_ms: meta.durationMs ?? null,
+      },
+    });
+  } catch (e) {
+    console.debug('nowPlayingSetMetadata failed (non-fatal):', e);
+  }
+}
+
+/** Push playback state + current position to the OS now-playing
+ *  widget. Call on every play / pause / seek / track change so the
+ *  lockscreen scrubber stays accurate. */
+export async function nowPlayingSetPlayback(
+  state: 'playing' | 'paused' | 'stopped',
+  positionMs?: number,
+): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('now_playing_set_playback', {
+      playback: { state, position_ms: positionMs ?? null },
+    });
+  } catch (e) {
+    console.debug('nowPlayingSetPlayback failed (non-fatal):', e);
+  }
+}
+
+/** Clear the now-playing widget — used on stop / logout so the
+ *  lockscreen doesn't keep showing the last track when the app is
+ *  idle. */
+export async function nowPlayingClear(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('now_playing_clear');
+  } catch (e) {
+    console.debug('nowPlayingClear failed (non-fatal):', e);
+  }
+}
+
 /** Optimistically prepare the next track so [`audioPlayUrl`] with
  *  the same URL completes near-instantly (gapless transition). The
  *  decoder thread runs in the background filling a ringbuf; idempotent

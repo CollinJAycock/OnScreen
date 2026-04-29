@@ -75,6 +75,23 @@ ringbuf = "0.4"
 # right. Bearer auth via ureq's `set` API.
 ureq = "2"
 
+# OS now-playing widget: SystemMediaTransportControls on Windows,
+# MPNowPlayingInfoCenter / MPRemoteCommandCenter on macOS, MPRIS
+# (D-Bus) on Linux. souvlaki abstracts the three behind one
+# MediaControls struct so we set metadata / playback state once and
+# the lockscreen art + transport buttons + Bluetooth headset
+# controls light up across all three platforms. Already-cached OS
+# media keys via tauri-plugin-global-shortcut keep working — souvlaki
+# adds the *display* widget plus a second event source for
+# system-level transport (Bluetooth play button, Apple Watch, etc.).
+souvlaki = "0.8"
+
+# Windows-only: souvlaki needs an HWND to bind to. tauri::WebviewWindow
+# exposes hwnd() under raw-window-handle; on Windows we cast it to
+# the i32 souvlaki expects.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation"] }
+
 [features]
 # Default to nothing — opt into custom-protocol for production builds
 # the way Tauri's templates do. The runner enables it automatically
