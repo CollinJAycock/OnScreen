@@ -35,9 +35,164 @@ use ringbuf::traits::*;
 use ringbuf::HeapRb;
 use serde::Serialize;
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+
+// ── ReplayGain ─────────────────────────────────────────────────────────────
+//
+// ReplayGain normalises perceived loudness across a catalog so the user
+// doesn't have to chase the volume knob across tracks. We read the
+// REPLAYGAIN_TRACK_GAIN / _PEAK / _ALBUM_GAIN / _ALBUM_PEAK tags out
+// of the file at pipeline-prepare time, compute a single linear scale
+// factor based on the user's current mode + preamp, and multiply
+// every f32 sample by that factor in the decoder thread before
+// convert-back-to-int. One multiply per sample = single-digit ns on
+// modern CPUs at any sample rate we care about.
+//
+// Mode + preamp live as atomics so the frontend can change them
+// without holding the engine lock; the change applies on the next
+// track since the factor is captured at pipeline-prepare time
+// (changing it mid-track would need a fresh pipeline anyway, which
+// is what `audio_seek` does — and the user's track-change cadence
+// is the natural reapplication point).
+
+const REPLAY_GAIN_MODE_OFF: u8 = 0;
+const REPLAY_GAIN_MODE_TRACK: u8 = 1;
+const REPLAY_GAIN_MODE_ALBUM: u8 = 2;
+
+static REPLAY_GAIN_MODE: AtomicU8 = AtomicU8::new(REPLAY_GAIN_MODE_OFF);
+/// Preamp in 0.1 dB units (so an i32 covers ±214 million dB without
+/// floating-point comparisons in the atomic). Default 0 = no adjust.
+static REPLAY_GAIN_PREAMP_DB_X10: AtomicI32 = AtomicI32::new(0);
+
+#[derive(Default, Clone, Copy)]
+struct ReplayGainTags {
+    track_gain_db: Option<f32>,
+    track_peak: Option<f32>,
+    album_gain_db: Option<f32>,
+    album_peak: Option<f32>,
+}
+
+/// Compute the linear scale factor to apply to f32 samples. Returns
+/// 1.0 when the mode is off, or when no relevant tag was found —
+/// the latter is a soft fallback so a partially-tagged catalog
+/// doesn't go silent.
+///
+/// Peak limiting: if a positive gain would push the highest sample
+/// above 1.0, we clamp to `1 / peak` to prevent clipping. Negative
+/// gains never need clamping (attenuation is always safe).
+///
+/// Pure function — `mode` and `preamp_db` are passed explicitly so
+/// the unit tests can drive every branch without touching the
+/// process-wide atomics. The atomics-reading wrapper below is what
+/// pipeline-prepare calls.
+fn compute_gain_factor_for(tags: &ReplayGainTags, mode: u8, preamp_db: f32) -> f32 {
+    if mode == REPLAY_GAIN_MODE_OFF {
+        return 1.0;
+    }
+    let (gain_db, peak) = match mode {
+        REPLAY_GAIN_MODE_TRACK => (tags.track_gain_db, tags.track_peak),
+        REPLAY_GAIN_MODE_ALBUM => (
+            // Fall back to track values when album tags are missing —
+            // an album-tagged catalog with one orphan track should
+            // still get normalised, just on track gain instead.
+            tags.album_gain_db.or(tags.track_gain_db),
+            tags.album_peak.or(tags.track_peak),
+        ),
+        _ => return 1.0,
+    };
+    let Some(gain_db) = gain_db else { return 1.0 };
+    let total_db = gain_db + preamp_db;
+    let factor = 10f32.powf(total_db / 20.0);
+    // Clamp to prevent clipping when the requested gain would push
+    // the loudest sample above full-scale. peak is a [0, 1] f32
+    // (1.0 = full-scale); if peak * factor > 1.0, scale back so the
+    // peak just reaches 1.0.
+    if let Some(peak) = peak {
+        if peak > 0.0 && factor * peak > 1.0 {
+            return 1.0 / peak;
+        }
+    }
+    factor
+}
+
+fn compute_gain_factor(tags: &ReplayGainTags) -> f32 {
+    let mode = REPLAY_GAIN_MODE.load(Ordering::Acquire);
+    let preamp_db = REPLAY_GAIN_PREAMP_DB_X10.load(Ordering::Acquire) as f32 / 10.0;
+    compute_gain_factor_for(tags, mode, preamp_db)
+}
+
+/// Parse a ReplayGain gain string into dB. Tag values are typically
+/// formatted "-6.50 dB" or "+3.20 dB"; some encoders drop the unit
+/// or the sign, so be liberal: trim whitespace, strip a trailing
+/// " dB" if present, parse the rest as f32. Returns None on garbage.
+fn parse_replay_gain_db(value: &str) -> Option<f32> {
+    let trimmed = value.trim();
+    let stripped = trimmed
+        .strip_suffix(" dB")
+        .or_else(|| trimmed.strip_suffix(" db"))
+        .or_else(|| trimmed.strip_suffix("dB"))
+        .or_else(|| trimmed.strip_suffix("db"))
+        .unwrap_or(trimmed);
+    stripped.trim().parse::<f32>().ok()
+}
+
+/// Parse a ReplayGain peak string. Peaks are linear floats in [0, 1+]
+/// (some encoders emit slight overshoots from intersample peaks).
+fn parse_replay_gain_peak(value: &str) -> Option<f32> {
+    value.trim().parse::<f32>().ok()
+}
+
+/// Match a Vorbis-comment-shaped (key, value) pair into the right
+/// ReplayGainTags slot. Case-insensitive on the key — most encoders
+/// uppercase but some lowercase. Returns true if the pair matched a
+/// known tag (caller can use that for early-out, though we don't
+/// today).
+fn ingest_replay_gain_tag(tags: &mut ReplayGainTags, key: &str, value: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    match upper.as_str() {
+        "REPLAYGAIN_TRACK_GAIN" => {
+            tags.track_gain_db = parse_replay_gain_db(value);
+            true
+        }
+        "REPLAYGAIN_TRACK_PEAK" => {
+            tags.track_peak = parse_replay_gain_peak(value);
+            true
+        }
+        "REPLAYGAIN_ALBUM_GAIN" => {
+            tags.album_gain_db = parse_replay_gain_db(value);
+            true
+        }
+        "REPLAYGAIN_ALBUM_PEAK" => {
+            tags.album_peak = parse_replay_gain_peak(value);
+            true
+        }
+        _ => false,
+    }
+}
+
+#[tauri::command]
+pub fn replay_gain_set_mode(mode: String) -> Result<(), String> {
+    let v = match mode.as_str() {
+        "off" => REPLAY_GAIN_MODE_OFF,
+        "track" => REPLAY_GAIN_MODE_TRACK,
+        "album" => REPLAY_GAIN_MODE_ALBUM,
+        other => return Err(format!("audio: unknown ReplayGain mode {other:?}")),
+    };
+    REPLAY_GAIN_MODE.store(v, Ordering::Release);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn replay_gain_set_preamp(db: f32) -> Result<(), String> {
+    if !db.is_finite() {
+        return Err("audio: ReplayGain preamp must be finite".into());
+    }
+    let clamped = db.clamp(-15.0, 15.0);
+    REPLAY_GAIN_PREAMP_DB_X10.store((clamped * 10.0) as i32, Ordering::Release);
+    Ok(())
+}
 
 /// Public-safe device descriptor returned by [`list_audio_devices`].
 #[derive(Serialize)]
@@ -613,6 +768,19 @@ fn prepare_symphonia_pipeline(
     let track_id = track.id;
     let codec_params = track.codec_params.clone();
 
+    // ReplayGain extraction. Symphonia exposes container metadata
+    // via format.metadata().current() (a MetadataRevision). The
+    // ReplayGain tags ride as user-defined `Tag` entries with the
+    // REPLAYGAIN_* keys; symphonia's StandardTagKey enum doesn't
+    // distinguish them so we scan by the raw tag key.
+    let mut rg_tags = ReplayGainTags::default();
+    if let Some(meta) = format.metadata().current() {
+        for tag in meta.tags() {
+            ingest_replay_gain_tag(&mut rg_tags, &tag.key, &tag.value.to_string());
+        }
+    }
+    let gain_factor = compute_gain_factor(&rg_tags);
+
     let sample_rate_hz = codec_params
         .sample_rate
         .ok_or_else(|| "audio: codec missing sample_rate".to_string())?;
@@ -670,6 +838,7 @@ fn prepare_symphonia_pipeline(
             stop_flag.clone(),
             ended.clone(),
             |s: f32| (s.clamp(-1.0, 1.0) * (i16::MAX as f32)) as i16,
+            gain_factor,
         )?;
         (PreloadConsumer::I16(cons), h)
     } else {
@@ -688,6 +857,7 @@ fn prepare_symphonia_pipeline(
                 let scaled = s.clamp(-1.0, 1.0) * ((i32::MAX as f32) / 256.0);
                 (scaled as i32).saturating_mul(256)
             },
+            gain_factor,
         )?;
         (PreloadConsumer::I32(cons), h)
     };
@@ -717,6 +887,7 @@ fn spawn_symphonia_decoder<T>(
     stop_flag: Arc<AtomicBool>,
     ended: Arc<AtomicBool>,
     convert_sample: fn(f32) -> T,
+    gain_factor: f32,
 ) -> Result<(<HeapRb<T> as Split>::Cons, JoinHandle<()>), String>
 where
     T: Send + 'static + Default + Copy,
@@ -774,7 +945,13 @@ where
                 copy_interleaved_f32(&buf, &mut interleaved, channels);
 
                 for sample in interleaved.iter() {
-                    let mut converted = convert_sample(*sample);
+                    // ReplayGain attenuation/boost. The symphonia
+                    // path natively works in f32 already so the
+                    // multiply lands in the same step where the
+                    // claxon path needs an extra cast — same cost
+                    // either way (~1 ns per sample).
+                    let scaled = *sample * gain_factor;
+                    let mut converted = convert_sample(scaled);
                     loop {
                         match producer.try_push(converted) {
                             Ok(()) => break,
@@ -901,6 +1078,16 @@ fn prepare_flac_pipeline(
     let bit_depth = info.bits_per_sample;
     let channels = info.channels as u16;
 
+    // ReplayGain extraction. claxon exposes Vorbis comments via
+    // reader.tags() — iterate, ingest the four ReplayGain keys, then
+    // the gain factor is computed against the user's current mode.
+    // Tags missing → factor stays 1.0 (no-op multiply).
+    let mut rg_tags = ReplayGainTags::default();
+    for (key, value) in reader.tags() {
+        ingest_replay_gain_tag(&mut rg_tags, key, value);
+    }
+    let gain_factor = compute_gain_factor(&rg_tags);
+
     // ── Skip-to-position (seek path) ────────────────────────────────────────
     // Drink samples on the calling thread until we've reached the seek
     // target. claxon's iterator borrows `reader` mutably, so we scope
@@ -948,6 +1135,7 @@ fn prepare_flac_pipeline(
             stop_flag.clone(),
             ended.clone(),
             |s| s as i16,
+            gain_factor,
         )?;
         (PreloadConsumer::I16(cons), h)
     } else {
@@ -960,6 +1148,7 @@ fn prepare_flac_pipeline(
             // cpal expects "24 bits packed as 32" with the data in the
             // upper 24 bits and the low 8 zero on most hosts.
             |s| s.saturating_mul(256),
+            gain_factor,
         )?;
         (PreloadConsumer::I32(cons), h)
     };
@@ -1063,12 +1252,21 @@ fn spawn_decoder<T>(
     stop_flag: Arc<AtomicBool>,
     ended: Arc<AtomicBool>,
     convert_sample: fn(i32) -> T,
+    gain_factor: f32,
 ) -> Result<(<HeapRb<T> as Split>::Cons, JoinHandle<()>), String>
 where
     T: Send + 'static + Default + Copy,
 {
     let rb = HeapRb::<T>::new(capacity.max(8192));
     let (mut producer, consumer) = rb.split();
+
+    // Branch off the gain factor up front: when ReplayGain is off
+    // (factor == 1.0), the inner loop stays on the original
+    // direct-convert fast path. When ReplayGain is active, samples
+    // run through an f32 multiply before convert. The per-sample cost
+    // is one floating-point multiply (~1 ns) — measurable but well
+    // under the budget at any sample rate we care about.
+    let apply_gain = (gain_factor - 1.0).abs() > 1e-6;
 
     // Decoder thread. Pushes one FLAC sample at a time; sleeps when
     // the ring is full so the cpal callback can drain. Exits cleanly
@@ -1090,7 +1288,17 @@ where
                 }
                 match samples.next() {
                     Some(Ok(s)) => {
-                        let mut sample = convert_sample(s);
+                        let scaled = if apply_gain {
+                            // FLAC samples are signed integers in
+                            // the native bit-depth range. Scaling
+                            // happens in i32 space directly — no
+                            // normalisation needed because the
+                            // factor preserves the same range.
+                            ((s as f32) * gain_factor) as i32
+                        } else {
+                            s
+                        };
+                        let mut sample = convert_sample(scaled);
                         loop {
                             match producer.try_push(sample) {
                                 Ok(()) => break,
@@ -1242,6 +1450,147 @@ mod tests {
     fn detect_format_case_insensitive() {
         assert_eq!(detect_format("https://srv/Track.M4A"), AudioFormat::Symphonia);
         assert_eq!(detect_format("https://srv/Track.WAV"), AudioFormat::Symphonia);
+    }
+
+    // ── ReplayGain ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_replay_gain_db_handles_unit_variants() {
+        assert_eq!(parse_replay_gain_db("-6.50 dB"), Some(-6.5));
+        assert_eq!(parse_replay_gain_db("+3.20 dB"), Some(3.2));
+        assert_eq!(parse_replay_gain_db("-6.50 db"), Some(-6.5));
+        assert_eq!(parse_replay_gain_db("-6.50dB"), Some(-6.5));
+        assert_eq!(parse_replay_gain_db("0.00"), Some(0.0));
+        assert_eq!(parse_replay_gain_db("  -6.50  "), Some(-6.5));
+        assert_eq!(parse_replay_gain_db("garbage"), None);
+        assert_eq!(parse_replay_gain_db(""), None);
+    }
+
+    #[test]
+    fn parse_replay_gain_peak_basic() {
+        assert_eq!(parse_replay_gain_peak("0.95"), Some(0.95));
+        assert_eq!(parse_replay_gain_peak("1.0"), Some(1.0));
+        // Some encoders emit slight overshoots from intersample
+        // peaks — accept rather than reject so peak limiting still
+        // engages (factor * peak > 1 still triggers the clamp).
+        assert_eq!(parse_replay_gain_peak("1.0123"), Some(1.0123));
+        assert_eq!(parse_replay_gain_peak("garbage"), None);
+    }
+
+    #[test]
+    fn ingest_replay_gain_tag_case_insensitive_keys() {
+        let mut tags = ReplayGainTags::default();
+        ingest_replay_gain_tag(&mut tags, "REPLAYGAIN_TRACK_GAIN", "-6.50 dB");
+        ingest_replay_gain_tag(&mut tags, "replaygain_track_peak", "0.95");
+        ingest_replay_gain_tag(&mut tags, "ReplayGain_Album_Gain", "-7.00 dB");
+        ingest_replay_gain_tag(&mut tags, "REPLAYGAIN_ALBUM_PEAK", "0.99");
+        // Unknown key drops on the floor — return value is false but
+        // we don't lean on it in production code (debug aid only).
+        assert!(!ingest_replay_gain_tag(&mut tags, "ARTIST", "Pink Floyd"));
+
+        assert_eq!(tags.track_gain_db, Some(-6.5));
+        assert_eq!(tags.track_peak, Some(0.95));
+        assert_eq!(tags.album_gain_db, Some(-7.0));
+        assert_eq!(tags.album_peak, Some(0.99));
+    }
+
+    #[test]
+    fn compute_gain_factor_off_mode_is_passthrough() {
+        let tags = ReplayGainTags {
+            track_gain_db: Some(-6.0),
+            track_peak: Some(0.9),
+            album_gain_db: Some(-7.0),
+            album_peak: Some(0.95),
+        };
+        assert_eq!(
+            compute_gain_factor_for(&tags, REPLAY_GAIN_MODE_OFF, 0.0),
+            1.0,
+        );
+    }
+
+    #[test]
+    fn compute_gain_factor_no_tags_returns_one() {
+        // Mode on but tags missing → factor 1.0 so the track plays
+        // at native level rather than going silent.
+        let empty = ReplayGainTags::default();
+        assert_eq!(
+            compute_gain_factor_for(&empty, REPLAY_GAIN_MODE_TRACK, 0.0),
+            1.0,
+        );
+        assert_eq!(
+            compute_gain_factor_for(&empty, REPLAY_GAIN_MODE_ALBUM, 0.0),
+            1.0,
+        );
+    }
+
+    #[test]
+    fn compute_gain_factor_track_mode_applies_track_gain() {
+        let tags = ReplayGainTags {
+            track_gain_db: Some(-6.0),
+            track_peak: None,
+            album_gain_db: Some(-12.0), // ignored in track mode
+            album_peak: None,
+        };
+        // -6 dB → 10^(-6/20) ≈ 0.5012
+        let factor = compute_gain_factor_for(&tags, REPLAY_GAIN_MODE_TRACK, 0.0);
+        assert!((factor - 0.5012).abs() < 0.001, "factor = {factor}");
+    }
+
+    #[test]
+    fn compute_gain_factor_album_mode_falls_back_to_track() {
+        // Album tags missing → use track tags. Common on a partially-
+        // tagged catalog (one orphan single mixed into an album-tagged
+        // library); the user wouldn't expect that one track to play
+        // at full level when everything else is normalised.
+        let tags = ReplayGainTags {
+            track_gain_db: Some(-9.0),
+            track_peak: None,
+            album_gain_db: None,
+            album_peak: None,
+        };
+        let factor = compute_gain_factor_for(&tags, REPLAY_GAIN_MODE_ALBUM, 0.0);
+        let expected = 10f32.powf(-9.0 / 20.0);
+        assert!((factor - expected).abs() < 0.001, "factor = {factor}");
+    }
+
+    #[test]
+    fn compute_gain_factor_preamp_adds() {
+        let tags = ReplayGainTags {
+            track_gain_db: Some(-6.0),
+            ..Default::default()
+        };
+        // -6 + 6 = 0 dB → factor 1.0
+        let factor = compute_gain_factor_for(&tags, REPLAY_GAIN_MODE_TRACK, 6.0);
+        assert!((factor - 1.0).abs() < 0.001, "factor = {factor}");
+    }
+
+    #[test]
+    fn compute_gain_factor_clips_to_peak() {
+        // +6 dB on a 0.9 peak would put the highest sample at
+        // ~1.79 (clipping). Peak limiter should clamp to 1/0.9 ≈ 1.111
+        // so the loudest sample reaches but doesn't exceed full-scale.
+        let tags = ReplayGainTags {
+            track_gain_db: Some(0.0),
+            track_peak: Some(0.9),
+            ..Default::default()
+        };
+        let factor = compute_gain_factor_for(&tags, REPLAY_GAIN_MODE_TRACK, 6.0);
+        let expected = 1.0 / 0.9;
+        assert!((factor - expected).abs() < 0.001, "factor = {factor}");
+    }
+
+    #[test]
+    fn compute_gain_factor_no_clip_when_attenuating() {
+        // Attenuation never needs clipping — a peak of 1.0 with -6 dB
+        // gain lands at 0.5012, well below full-scale.
+        let tags = ReplayGainTags {
+            track_gain_db: Some(-6.0),
+            track_peak: Some(1.0),
+            ..Default::default()
+        };
+        let factor = compute_gain_factor_for(&tags, REPLAY_GAIN_MODE_TRACK, 0.0);
+        assert!(factor < 1.0, "factor = {factor}");
+        assert!(factor * 1.0 < 1.0); // safe
     }
 }
 

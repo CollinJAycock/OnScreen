@@ -421,6 +421,8 @@ pub fn run() {
             audio::audio_state,
             audio::audio_pause,
             audio::audio_resume,
+            audio::replay_gain_set_mode,
+            audio::replay_gain_set_preamp,
             now_playing::now_playing_set_metadata,
             now_playing::now_playing_set_playback,
             now_playing::now_playing_clear,
