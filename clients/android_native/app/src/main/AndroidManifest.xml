@@ -35,6 +35,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Background-audio host. Started when the user navigates
+             away from PlayerScreen mid-track; the service inherits
+             the parked ExoPlayer + metadata via AudioHandoff and
+             keeps playback running with system media-session controls. -->
+        <service
+            android:name=".playback.OnScreenMediaSessionService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
         <!-- WorkManager auto-init disabled — Hilt's Configuration.Provider
              on the Application class supplies the worker factory instead.
              Without this override, WorkManager spins up its own

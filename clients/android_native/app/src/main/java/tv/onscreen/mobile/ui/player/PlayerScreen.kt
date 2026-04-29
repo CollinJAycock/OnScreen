@@ -57,6 +57,9 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
+import android.content.Intent
+import tv.onscreen.mobile.playback.AudioHandoff
+import tv.onscreen.mobile.playback.OnScreenMediaSessionService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -112,6 +115,21 @@ private fun PlayerHost(
     var showUpNext by remember { mutableStateOf(false) }
     val nextSibling = ui.nextSibling
 
+    // Re-entry: if the same item is parked in AudioHandoff (because
+    // an earlier instance of this screen handed playback to the
+    // background service), stop the service so the foreground
+    // notification disappears and rebuild a fresh player here. The
+    // brief audio cut on re-entry is the cost of not threading a
+    // bound-service binder through the Compose tree just to call
+    // detach() — the player will resume from the last reported
+    // progress position, so the user sees a small skip back at most.
+    LaunchedEffect(itemId) {
+        if (AudioHandoff.peekMetadata()?.itemId == itemId) {
+            AudioHandoff.clear()
+            context.stopService(Intent(context, OnScreenMediaSessionService::class.java))
+        }
+    }
+
     val player = remember(source) {
         ExoPlayer.Builder(context).build().apply {
             val dsFactory = DefaultHttpDataSource.Factory()
@@ -149,8 +167,35 @@ private fun PlayerHost(
         }
     }
 
+    // Audio-only playback: park into the MediaSessionService on
+    // dispose so backing out of the screen doesn't kill the music.
+    // Video playback releases the player normally — PiP is the
+    // backgrounding affordance for video.
+    val isAudioOnly = ui.item?.files?.firstOrNull()?.video_codec == null
     DisposableEffect(player) {
-        onDispose { player.release() }
+        onDispose {
+            if (isAudioOnly && player.playWhenReady && player.duration > 0) {
+                val item = ui.item
+                AudioHandoff.park(
+                    player,
+                    AudioHandoff.Metadata(
+                        itemId = itemId,
+                        itemType = item?.type ?: "track",
+                        parentId = item?.parent_id,
+                        index = item?.index,
+                        hlsOffsetMs = vm.hlsOffsetMs,
+                    ),
+                )
+                val intent = Intent(context, OnScreenMediaSessionService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } else {
+                player.release()
+            }
+        }
     }
 
     // Cross-device resume: when another of the user's devices reports
