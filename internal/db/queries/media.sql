@@ -799,23 +799,60 @@ ORDER BY created_at DESC
 LIMIT sqlc.arg('limit');
 
 -- name: ListContinueWatching :many
-SELECT m.id, m.library_id, m.type, m.title, m.sort_title,
-       m.original_title, m.year, m.summary, m.tagline, m.rating, m.audience_rating,
-       m.content_rating, m.duration_ms, m.genres, m.tags, m.tmdb_id, m.tvdb_id, m.imdb_id,
-       m.musicbrainz_id, m.parent_id, m.index, m.poster_path, m.fanart_path, m.thumb_path,
-       m.originally_available_at, m.created_at, m.updated_at, m.deleted_at,
-       ws.position_ms AS view_offset, ws.duration_ms AS view_duration,
-       COALESCE(grandparent.poster_path, parent.poster_path, m.poster_path, grandparent.thumb_path, parent.thumb_path, m.thumb_path) AS fallback_poster
-FROM watch_state ws
-JOIN media_items m ON m.id = ws.media_id
-LEFT JOIN media_items parent ON parent.id = m.parent_id
-LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
-WHERE ws.user_id = $1
-  AND ws.status = 'in_progress'
-  AND m.deleted_at IS NULL
-  AND m.type IN ('movie', 'episode')
-  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY ws.last_watched_at DESC
+-- For movies, every in-progress row passes through. For episodes,
+-- only the most-recently-watched episode per show is kept — the
+-- user wanted Continue Watching TV Shows to surface one tile per
+-- show, not a wall of three episodes from the same series. The
+-- "show key" is grandparent.id when present (the standard
+-- show → season → episode chain) and falls back to parent.id for
+-- the rare flat-layout episode that hangs directly off a show
+-- without a season row.
+WITH rows AS (
+    SELECT m.id, m.library_id, m.type, m.title, m.sort_title,
+           m.original_title, m.year, m.summary, m.tagline, m.rating, m.audience_rating,
+           m.content_rating, m.duration_ms, m.genres, m.tags, m.tmdb_id, m.tvdb_id, m.imdb_id,
+           m.musicbrainz_id, m.parent_id, m.index, m.poster_path, m.fanart_path, m.thumb_path,
+           m.originally_available_at, m.created_at, m.updated_at, m.deleted_at,
+           ws.position_ms AS view_offset,
+           ws.duration_ms AS view_duration,
+           ws.last_watched_at,
+           COALESCE(grandparent.poster_path, parent.poster_path, m.poster_path,
+                    grandparent.thumb_path, parent.thumb_path, m.thumb_path) AS fallback_poster,
+           CASE
+               WHEN m.type = 'episode'
+                   THEN COALESCE(grandparent.id, parent.id, m.id)
+               ELSE m.id
+           END AS show_key
+    FROM watch_state ws
+    JOIN media_items m ON m.id = ws.media_id
+    LEFT JOIN media_items parent ON parent.id = m.parent_id
+    LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
+    WHERE ws.user_id = $1
+      AND ws.status = 'in_progress'
+      AND m.deleted_at IS NULL
+      AND m.type IN ('movie', 'episode')
+      AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+),
+deduped AS (
+    SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline,
+           rating, audience_rating, content_rating, duration_ms, genres, tags,
+           tmdb_id, tvdb_id, imdb_id, musicbrainz_id, parent_id, index, poster_path,
+           fanart_path, thumb_path, originally_available_at, created_at, updated_at, deleted_at,
+           view_offset, view_duration, last_watched_at, fallback_poster
+    FROM (
+        SELECT *,
+               ROW_NUMBER() OVER (PARTITION BY show_key ORDER BY last_watched_at DESC) AS rn
+        FROM rows
+    ) t
+    WHERE t.rn = 1
+)
+SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline,
+       rating, audience_rating, content_rating, duration_ms, genres, tags,
+       tmdb_id, tvdb_id, imdb_id, musicbrainz_id, parent_id, index, poster_path,
+       fanart_path, thumb_path, originally_available_at, created_at, updated_at, deleted_at,
+       view_offset, view_duration, fallback_poster
+FROM deduped
+ORDER BY last_watched_at DESC
 LIMIT $2;
 
 -- name: ListMediaItemsForSmartPlaylist :many
