@@ -1205,6 +1205,6 @@ WITH RECURSIVE subtree AS (
     JOIN subtree s ON m.parent_id = s.id
 )
 UPDATE media_files
-SET status = 'deleted', deleted_at = NOW()
+SET status = 'deleted'
 WHERE media_files.media_item_id IN (SELECT subtree.id FROM subtree)
   AND media_files.status != 'deleted';
