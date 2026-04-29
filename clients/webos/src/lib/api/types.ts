@@ -134,3 +134,41 @@ export interface TranscodeSession {
   playlist_url: string;
   token: string;
 }
+
+// ── Device pairing ──────────────────────────────────────────────────────────
+
+// Server response from POST /auth/pair/code. The TV displays the PIN +
+// the URL for the user to enter on a phone / laptop, then long-polls
+// /auth/pair/poll with the device_token until the server returns the
+// signed-in token pair (or the code expires and we recycle).
+export interface PairCodeResponse {
+  pin: string;
+  device_token: string;
+  expires_at: string;
+  poll_after: number;
+}
+
+// ── Collections ─────────────────────────────────────────────────────────────
+
+export interface MediaCollection {
+  id: string;
+  name: string;
+  description?: string;
+  // Auto-generated collections (auto_genre) vs manual playlists vs
+  // smart-rule lists. The TV detail page renders all three the same
+  // way (a grid of items), so the type is informational only.
+  type: string;
+  genre?: string;
+  poster_path?: string;
+  created_at: string;
+}
+
+export interface CollectionItem {
+  id: string;
+  title: string;
+  type: string;
+  year?: number;
+  poster_path?: string;
+  duration_ms?: number;
+  position?: number;
+}

@@ -6,6 +6,7 @@
   import { focusManager } from '$lib/focus/manager';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { openItem } from '$lib/nav';
 
   let items = $state<MediaItem[] | null>(null);
   let error = $state('');
@@ -42,7 +43,7 @@
           posterPath={item.poster_path}
           subtitle={item.year ? String(item.year) : undefined}
           autofocus={i === 0}
-          onclick={() => goto(`/item/${item.id}`)}
+          onclick={() => openItem(item.id, item.type)}
         />
       {/each}
     </div>

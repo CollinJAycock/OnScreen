@@ -6,6 +6,7 @@
   import HubRow from '$lib/components/HubRow.svelte';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { openItem } from '$lib/nav';
 
   let data = $state<HubData | null>(null);
   let error = $state('');
@@ -21,8 +22,11 @@
     })();
   });
 
-  function open(id: string) {
-    goto(`/item/${id}`);
+  function open(id: string, type: string) {
+    // Type-aware routing: photos go to a full-screen viewer,
+    // collections drill into their item grid, everything else lands
+    // on the standard /item detail page.
+    openItem(id, type);
   }
 
   function progress(item: { view_offset_ms?: number; duration_ms?: number }): number | undefined {
@@ -54,7 +58,7 @@
             subtitle={item.year ? String(item.year) : undefined}
             progressRatio={progress(item)}
             autofocus={i === 0}
-            onclick={() => open(item.id)}
+            onclick={() => open(item.id, item.type)}
           />
         {/each}
       </HubRow>
@@ -68,7 +72,7 @@
             posterPath={item.poster_path}
             subtitle={item.year ? String(item.year) : undefined}
             autofocus={data.continue_watching.length === 0 && i === 0}
-            onclick={() => open(item.id)}
+            onclick={() => open(item.id, item.type)}
           />
         {/each}
       </HubRow>
