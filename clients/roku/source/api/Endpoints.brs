@@ -87,6 +87,20 @@ function ApiPairPoll() as String
     return "/api/v1/auth/pair/poll"
 end function
 
+' Transcode session endpoints. Start POSTs a per-session ffmpeg job
+' and returns { session_id, playlist_url, token, … } — the playlist
+' URL is relative, so callers must prepend the configured server
+' origin before handing it to the Video node. Stop tears down the
+' session on player exit so the server doesn't leave the ffmpeg
+' process running until the idle-timeout sweep.
+function ApiItemTranscode(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/transcode"
+end function
+
+function ApiTranscodeStop(sessionId as String, token as String) as String
+    return "/api/v1/transcode/sessions/" + sessionId + "?token=" + token
+end function
+
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function

@@ -48,6 +48,11 @@ const suites = [
     sources: ['source/util/Strings.brs'],
     test: 'tests/Strings_test.brs',
   },
+  {
+    name: 'PlaybackDecide',
+    sources: ['source/playback/Decide.brs'],
+    test: 'tests/PlaybackDecide_test.brs',
+  },
 ];
 
 let totalPass = 0;

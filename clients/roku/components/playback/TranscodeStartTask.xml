@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Task that POSTs /api/v1/items/{id}/transcode and writes the
+    server's session response back. PlayerScene fires it when
+    Playback_Decide returns mode=remux or mode=transcode; on
+    completion the task's `result` carries { session_id,
+    playlist_url, token } which the scene weaves into the HLS
+    URL handed to the Video node.
+
+    Distinct from ItemFetchTask so the two requests can fire in
+    parallel — the item fetch has the file metadata we need to
+    decide the mode, but once decided the transcode start +
+    Video node prep can race the rest of the item-detail load.
+-->
+<component name="TranscodeStartTask" extends="Task">
+
+    <interface>
+        <field id="itemId" type="string" />
+        <field id="fileId" type="string" />
+        <field id="height" type="integer" />
+        <field id="videoCopy" type="boolean" />
+        <field id="supportsHevc" type="boolean" />
+        <field id="result" type="assocArray" />
+    </interface>
+
+    <script type="text/brightscript" uri="TranscodeStartTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+</component>

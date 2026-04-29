@@ -6,13 +6,15 @@
     natively. We feed it a ContentNode with the stream URL + a
     handful of metadata fields (title, runtime, etc.).
 
-    Item resolution (item id → file id → stream URL) happens in a
-    Task node so the UI thread stays responsive while we hit the
-    item endpoint.
+    Item resolution (item id → file id → playback decision)
+    happens in a Task node so the UI thread stays responsive
+    while we hit the item endpoint. A second Task starts the
+    server-side ffmpeg session when the decision says
+    remux / transcode (HLS), and is skipped on direct play
+    (the file streams as-is via /media/stream/{id}).
 
-    Future work: direct-play vs. transcode negotiation (currently
-    always direct play); audio + sub track pickers; cross-device
-    sync consumer; intro/credits/chapter overlays — all wired the
+    Future work: audio + sub track pickers; cross-device sync
+    consumer; intro/credits + Up Next overlays — all wired the
     way the Android client does them.
 -->
 <component name="PlayerScene" extends="Group">
@@ -26,6 +28,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Decide.brs" />
 
     <children>
         <Video id="video"
@@ -34,6 +37,7 @@
                translation="[0,0]" />
 
         <ItemFetchTask id="itemTask" />
+        <TranscodeStartTask id="transcodeTask" />
     </children>
 
 </component>
