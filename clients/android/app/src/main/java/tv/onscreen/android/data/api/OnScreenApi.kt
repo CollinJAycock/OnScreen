@@ -185,6 +185,28 @@ interface OnScreenApi {
         @Query("offset") offset: Int = 0,
     ): ApiResponse<List<Recording>>
 
+    // ── External subtitles (OpenSubtitles) ──────────────────────────────────
+
+    /** Search OpenSubtitles for additional subtitle tracks for an
+     *  item. Server enriches the query with title / year / IMDB ID
+     *  derived from the item itself; lang filters by ISO-639. */
+    @GET("api/v1/items/{id}/subtitles/search")
+    suspend fun searchOnlineSubtitles(
+        @Path("id") itemId: String,
+        @Query("lang") lang: String? = null,
+        @Query("query") query: String? = null,
+    ): ApiListResponse<OnlineSubtitle>
+
+    /** Download one of the search results onto a specific file_id.
+     *  Server fetches the .srt from OpenSubtitles, persists it next
+     *  to the media file, and returns the new external_subtitle row
+     *  that the next item-fetch surfaces in subtitle_streams. */
+    @POST("api/v1/items/{id}/subtitles/download")
+    suspend fun downloadOnlineSubtitle(
+        @Path("id") itemId: String,
+        @Body body: SubtitleDownloadRequest,
+    ): Response<Unit>
+
     // ── Health ──────────────────────────────────────────────────────────────
 
     @GET("health/live")

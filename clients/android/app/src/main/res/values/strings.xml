@@ -63,6 +63,14 @@
     <string name="audio">Audio</string>
     <string name="subtitles">Subtitles</string>
     <string name="off">Off</string>
+    <string name="subtitles_find_more">Find more online…</string>
+    <string name="subtitles_searching">Searching</string>
+    <string name="subtitles_searching_msg">Looking for subtitles on OpenSubtitles…</string>
+    <string name="subtitles_search_failed">Subtitle search failed</string>
+    <string name="subtitles_no_results">No subtitle matches</string>
+    <string name="subtitles_pick_result">Choose a subtitle</string>
+    <string name="subtitles_downloaded">Subtitle added</string>
+    <string name="subtitles_download_failed">Couldn\'t download subtitle</string>
     <string name="up_next">Up Next</string>
     <string name="play_now">Play Now</string>
     <string name="cancel">Cancel</string>

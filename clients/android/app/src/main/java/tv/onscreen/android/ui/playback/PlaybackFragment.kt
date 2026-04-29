@@ -40,6 +40,8 @@ import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.NotificationsRepository
+import android.widget.Toast
+import tv.onscreen.android.data.repository.OnlineSubtitleRepository
 import tv.onscreen.android.data.repository.TrickplayRepository
 import javax.inject.Inject
 import kotlin.math.abs
@@ -52,6 +54,7 @@ class PlaybackFragment : VideoSupportFragment() {
     @Inject lateinit var itemRepo: ItemRepository
     @Inject lateinit var notificationsRepo: NotificationsRepository
     @Inject lateinit var trickplayRepo: TrickplayRepository
+    @Inject lateinit var onlineSubtitleRepo: OnlineSubtitleRepository
 
     private lateinit var viewModel: PlaybackViewModel
     private var player: ExoPlayer? = null
@@ -648,6 +651,12 @@ class PlaybackFragment : VideoSupportFragment() {
             val name = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } }
             if (s.forced) "$name (forced)" else name
         })
+        // "Find more online…" entry tacks an OpenSubtitles search on
+        // the end of the picker. Index = labels.size — beyond every
+        // track row — so the radio-row indices for real tracks don't
+        // shift around.
+        val findMoreIdx = labels.size
+        labels.add(getString(R.string.subtitles_find_more))
 
         // Best-effort active-row detection: pull the current
         // preferred-text-language from ExoPlayer's track-selection
@@ -666,9 +675,72 @@ class PlaybackFragment : VideoSupportFragment() {
             .setTitle(R.string.subtitles)
             .setSingleChoiceItems(labels.toTypedArray(), checked) { d, idx ->
                 d.dismiss()
-                if (idx == 0) disableSubtitles() else selectSubtitleByLanguage(subtitleStreams[idx - 1].language)
+                when (idx) {
+                    0 -> disableSubtitles()
+                    findMoreIdx -> showOnlineSubtitleSearch()
+                    else -> selectSubtitleByLanguage(subtitleStreams[idx - 1].language)
+                }
             }
             .show()
+    }
+
+    /** Two-step OpenSubtitles flow: search → pick → download → reload
+     *  the item so the new track shows up in the next subtitle picker
+     *  open. Keeps the standard track flow above untouched and uses
+     *  the same dialog style. */
+    private fun showOnlineSubtitleSearch() {
+        val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
+        val fileId = viewModel.uiState.value.item?.files?.firstOrNull()?.id ?: return
+        val ctx = requireContext()
+        val loading = AlertDialog.Builder(ctx, R.style.PlayerDialog)
+            .setTitle(R.string.subtitles_searching)
+            .setMessage(R.string.subtitles_searching_msg)
+            .setCancelable(true)
+            .show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val results = try {
+                onlineSubtitleRepo.search(itemId)
+            } catch (e: Exception) {
+                loading.dismiss()
+                Toast.makeText(ctx, e.message ?: getString(R.string.subtitles_search_failed), Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            loading.dismiss()
+            if (results.isEmpty()) {
+                Toast.makeText(ctx, R.string.subtitles_no_results, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val labels = results.map { r ->
+                buildString {
+                    append(r.language.uppercase())
+                    if (r.from_trusted) append(" ★")
+                    if (r.hearing_impaired) append(" SDH")
+                    append(" · ")
+                    append(r.file_name)
+                }
+            }.toTypedArray()
+            AlertDialog.Builder(ctx, R.style.PlayerDialog)
+                .setTitle(R.string.subtitles_pick_result)
+                .setItems(labels) { _, which ->
+                    val pick = results.getOrNull(which) ?: return@setItems
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            onlineSubtitleRepo.download(itemId, fileId, pick)
+                            Toast.makeText(ctx, R.string.subtitles_downloaded, Toast.LENGTH_SHORT).show()
+                            // Re-prepare so the new track surfaces in
+                            // ExoPlayer's track list. Cheaper than
+                            // tearing down the player session — the
+                            // server side just returned a row that
+                            // the next item-fetch will include.
+                            viewModel.prepare(itemId, player?.currentPosition ?: 0L,
+                                prefs.serverUrl.first() ?: "")
+                        } catch (e: Exception) {
+                            Toast.makeText(ctx, e.message ?: getString(R.string.subtitles_download_failed), Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                .show()
+        }
     }
 
     private fun applyPreferredTracks(audioLang: String?, subtitleLang: String?) {
