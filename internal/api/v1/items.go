@@ -61,6 +61,15 @@ type ItemSubtreeDeleter interface {
 	SoftDeleteSubtree(ctx context.Context, itemID uuid.UUID) error
 }
 
+// ItemCreditsRefresher wipes the cached cast/crew for an item and
+// re-fetches from the metadata agent. Called by ApplyMatch so the
+// detail page shows the new match's cast instead of the previous
+// wrong one. Optional — when nil, ApplyMatch skips the refresh and
+// the next /credits view triggers the existing lazy-fetch path.
+type ItemCreditsRefresher interface {
+	RefreshCredits(ctx context.Context, itemID uuid.UUID, itemType string, tmdbID int) error
+}
+
 // ItemMatchSearcher searches for metadata candidates for manual matching.
 type ItemMatchSearcher interface {
 	SearchTVCandidates(ctx context.Context, query string) ([]MatchCandidate, error)
@@ -133,6 +142,7 @@ type ItemHandler struct {
 	epDB      EpisodePosterDB  // optional; when set, episode rows get the show's poster substituted (per user pref)
 	posters   ItemPosterPicker // optional; when set, /posters and /poster routes are admin-served
 	deleter   ItemSubtreeDeleter // optional; when set, DELETE /items/{id} is admin-served
+	credits   ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
 	logger    *slog.Logger
 }
 
@@ -201,6 +211,16 @@ func (h *ItemHandler) WithPosterPicker(p ItemPosterPicker) *ItemHandler {
 // When unset, DELETE /api/v1/items/{id} returns 405.
 func (h *ItemHandler) WithSubtreeDeleter(d ItemSubtreeDeleter) *ItemHandler {
 	h.deleter = d
+	return h
+}
+
+// WithCreditsRefresher wires the cast/crew wipe-and-refetch path
+// triggered after a manual Fix Match completes. Without this, the
+// detail page would still show the previous match's cast until the
+// user manually clears the cache (or hits a /credits view that
+// somehow ended up empty).
+func (h *ItemHandler) WithCreditsRefresher(c ItemCreditsRefresher) *ItemHandler {
+	h.credits = c
 	return h
 }
 
@@ -1130,11 +1150,27 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"tmdb_id": body.TMDBID}, audit.ClientIP(r))
 	}
 
-	// Run in background so the request returns immediately.
+	// Run in background so the request returns immediately. After
+	// the metadata refresh succeeds, refresh cast/crew too — the
+	// previous match's people are now stale and the user expects
+	// the detail page to reflect the new title's cast.
 	bgCtx := context.WithoutCancel(r.Context())
 	go func() {
 		if err := h.enricher.MatchItem(bgCtx, id, body.TMDBID); err != nil {
 			h.logger.WarnContext(bgCtx, "apply match failed", "id", id, "tmdb_id", body.TMDBID, "err", err)
+			return
+		}
+		if h.credits != nil {
+			item, err := h.media.GetItem(bgCtx, id)
+			if err != nil {
+				h.logger.WarnContext(bgCtx, "apply match: load item for credits refresh failed",
+					"id", id, "err", err)
+				return
+			}
+			if err := h.credits.RefreshCredits(bgCtx, id, item.Type, body.TMDBID); err != nil {
+				h.logger.WarnContext(bgCtx, "apply match: credits refresh failed",
+					"id", id, "tmdb_id", body.TMDBID, "err", err)
+			}
 		}
 	}()
 	respond.NoContent(w)

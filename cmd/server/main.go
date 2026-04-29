@@ -483,6 +483,23 @@ func run() error {
 	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
 		WithLibraryAccess(libSvc)
 
+	// People service has to land here (vs the per-handler section
+	// below) so the items handler can hook the cast/crew refresher
+	// into ApplyMatch's background goroutine. peopleHandler is wired
+	// further down with the rest of the v1 handlers.
+	peopleQ := &peopleAdapter{q: gen.New(rwPool)}
+	peopleAgentFn := func() people.Agent {
+		a := agentFn()
+		if a == nil {
+			return nil
+		}
+		if pa, ok := a.(people.Agent); ok {
+			return pa
+		}
+		return nil
+	}
+	peopleSvc := people.New(peopleQ, peopleAgentFn)
+
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
 		WithEpisodePoster(gen.New(roPool)).
 		WithLibraryAccess(libSvc).
@@ -492,7 +509,8 @@ func run() error {
 		WithAudit(auditLogger).
 		WithStreamTokenMaker(tokenMaker).
 		WithPosterPicker(metaAgent).
-		WithSubtreeDeleter(&subtreeDeleter{q: gen.New(rwPool)})
+		WithSubtreeDeleter(&subtreeDeleter{q: gen.New(rwPool)}).
+		WithCreditsRefresher(peopleSvc)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
@@ -758,20 +776,9 @@ func run() error {
 	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger)
 	tasksHandler := v1.NewTasksHandler(gen.New(rwPool), schedRegistry, logger)
 
-	// ── People (cast/crew) — lazy TMDB fetch on first item-detail view ───────
-	peopleQ := &peopleAdapter{q: gen.New(rwPool)}
-	peopleAgentFn := func() people.Agent {
-		a := agentFn()
-		if a == nil {
-			return nil
-		}
-		// *tmdb.Client implements both metadata.Agent and people.Agent.
-		if pa, ok := a.(people.Agent); ok {
-			return pa
-		}
-		return nil
-	}
-	peopleSvc := people.New(peopleQ, peopleAgentFn)
+	// ── People (cast/crew) handler — lazy TMDB fetch on first item-detail
+	// view. peopleSvc itself is constructed earlier (above the items
+	// handler) so the items handler can wire it as a credits refresher.
 	peopleHandler := v1.NewPeopleHandler(peopleSvc, &peopleItemLookup{
 		svc:      mediaSvc,
 		agentFn:  agentFn,

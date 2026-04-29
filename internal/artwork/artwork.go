@@ -98,6 +98,21 @@ func (m *Manager) ReplacePoster(ctx context.Context, itemID uuid.UUID, url strin
 	return m.download(ctx, url, filepath.Join(absDir, itemID.String()+"-poster.jpg"), true)
 }
 
+// ReplaceShowPoster overwrites absDir/poster.jpg atomically. Used by
+// the manual Fix Match flow on shows + movies to swap out the on-disk
+// poster.jpg the previous match downloaded — without force, the
+// existing-file short-circuit in download() would keep the old image
+// even though poster_path now points at the same filename.
+func (m *Manager) ReplaceShowPoster(ctx context.Context, _ uuid.UUID, url string, absDir string) (string, error) {
+	return m.download(ctx, url, filepath.Join(absDir, "poster.jpg"), true)
+}
+
+// ReplaceShowFanart is the fanart counterpart of ReplaceShowPoster —
+// overwrites absDir/fanart.jpg atomically.
+func (m *Manager) ReplaceShowFanart(ctx context.Context, _ uuid.UUID, url string, absDir string) (string, error) {
+	return m.download(ctx, url, filepath.Join(absDir, "fanart.jpg"), true)
+}
+
 // download fetches url and writes to absPath (absolute file path).
 // Returns the absolute path. When force is false, skips re-download if a
 // file already exists at absPath (the common cache-miss case). When force

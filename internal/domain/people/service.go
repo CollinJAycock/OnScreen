@@ -143,6 +143,32 @@ func (s *Service) GetCredits(ctx context.Context, itemID uuid.UUID, itemType str
 	return out, nil
 }
 
+// RefreshCredits wipes the cached credits for an item and re-fetches
+// from TMDB using the supplied tmdbID. Called by the manual Fix Match
+// flow so the cast/crew shown on the detail page reflects the new
+// match instead of the previous wrong one. Falls back gracefully
+// when no agent is configured (just leaves the table empty so the
+// next GetCredits view triggers a lazy fetch later).
+func (s *Service) RefreshCredits(ctx context.Context, itemID uuid.UUID, itemType string, tmdbID int) error {
+	if itemType != "movie" && itemType != "show" {
+		return nil // episodes/seasons inherit credits from their parent show
+	}
+	if err := s.q.DeleteCreditsForItem(ctx, itemID); err != nil {
+		return fmt.Errorf("delete existing credits: %w", err)
+	}
+	if tmdbID == 0 {
+		return nil
+	}
+	agent := s.agent()
+	if agent == nil {
+		return nil
+	}
+	if err := s.fetchAndStoreCredits(ctx, agent, itemID, itemType, tmdbID); err != nil {
+		return fmt.Errorf("fetch fresh credits: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) fetchAndStoreCredits(ctx context.Context, agent Agent, itemID uuid.UUID, itemType string, tmdbID int) error {
 	var (
 		res *metadata.CreditsResult

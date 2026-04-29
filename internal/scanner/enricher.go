@@ -39,6 +39,13 @@ type ArtworkFetcher interface {
 	// ID-qualified filename prevents cross-album collisions in flat
 	// layouts (see DownloadArtistPoster).
 	ReplacePoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
+	// ReplaceShowPoster / ReplaceShowFanart force-overwrite the bare
+	// poster.jpg / fanart.jpg used by show + movie folders. Called by
+	// the manual Fix Match flow so picking a different TMDB id swaps
+	// the on-disk image too — the standard Download* path skips when
+	// the file already exists.
+	ReplaceShowPoster(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
+	ReplaceShowFanart(ctx context.Context, itemID uuid.UUID, url, mediaDir string) (string, error)
 	// DownloadArtistPoster/Fanart write to ID-qualified filenames to avoid
 	// collisions in flat music layouts where multiple artists share a parent
 	// directory (e.g., /Music/Artist/track.flac yields the library root as
@@ -1147,8 +1154,13 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 		"item_id", item.ID, "art_dir", artDir,
 		"poster_url", result.PosterURL, "fanart_url", result.FanartURL)
 	if e.artwork != nil && artDir != "" && artDir != "." {
+		// Use the Replace variant so a wrong-match poster.jpg /
+		// fanart.jpg from a previous enrich gets overwritten — the
+		// non-Replace path short-circuits when the file already
+		// exists, which leaves the old image bytes on disk even
+		// though poster_path now points at the same filename.
 		if result.PosterURL != "" {
-			absPath, dlErr := e.artwork.DownloadPoster(ctx, item.ID, result.PosterURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowPoster(ctx, item.ID, result.PosterURL, artDir)
 			if dlErr != nil {
 				e.logger.WarnContext(ctx, "match poster download failed",
 					"item_id", item.ID, "err", dlErr)
@@ -1158,7 +1170,7 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 			}
 		}
 		if result.FanartURL != "" {
-			absPath, dlErr := e.artwork.DownloadFanart(ctx, item.ID, result.FanartURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowFanart(ctx, item.ID, result.FanartURL, artDir)
 			if dlErr != nil {
 				e.logger.WarnContext(ctx, "match fanart download failed",
 					"item_id", item.ID, "err", dlErr)
@@ -1223,17 +1235,20 @@ func (e *Enricher) matchMovie(ctx context.Context, agent metadata.Agent, item *m
 		p.OriginallyAvailableAt = &result.ReleaseDate
 	}
 
+	// Force-overwrite via ReplaceShow* (non-Replace path skips when
+	// the file already exists, which would leave the old wrong-match
+	// poster bytes on disk).
 	artDir := filepath.Dir(file.FilePath)
 	if e.artwork != nil && artDir != "" && artDir != "." {
 		if result.PosterURL != "" {
-			absPath, dlErr := e.artwork.DownloadPoster(ctx, item.ID, result.PosterURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowPoster(ctx, item.ID, result.PosterURL, artDir)
 			if dlErr == nil {
 				rel := e.relPath(absPath)
 				p.PosterPath = &rel
 			}
 		}
 		if result.FanartURL != "" {
-			absPath, dlErr := e.artwork.DownloadFanart(ctx, item.ID, result.FanartURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowFanart(ctx, item.ID, result.FanartURL, artDir)
 			if dlErr == nil {
 				rel := e.relPath(absPath)
 				p.FanartPath = &rel
