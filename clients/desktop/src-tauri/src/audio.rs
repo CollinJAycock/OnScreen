@@ -1695,24 +1695,23 @@ fn open_active_from_prepared(
         }
     }
 
-    let stream = match consumer {
-        PreloadConsumer::I16(cons) => open_cpal_stream::<i16>(
-            cons,
-            device,
-            &stream_config,
-            prepared.channels,
-            paused.clone(),
-            frames_written.clone(),
-        )?,
-        PreloadConsumer::I32(cons) => open_cpal_stream::<i32>(
-            cons,
-            device,
-            &stream_config,
-            prepared.channels,
-            paused.clone(),
-            frames_written.clone(),
-        )?,
-    };
+    // cpal in WASAPI-shared on Windows often refuses a stream config
+    // whose sample rate doesn't match the device's mix-format rate
+    // (set in Sound → Properties → Advanced). Asking for 44.1 kHz on
+    // a 48 kHz-locked device returns "stream configuration not
+    // supported" instead of resampling. We catch that and retry with
+    // the device's default config so the user still hears audio —
+    // bit-perfect bypass via WASAPI exclusive is the route to no-
+    // resampling output, which the EXCLUSIVE_MODE branch above
+    // handles separately.
+    let stream = open_with_fallback(
+        device,
+        &stream_config,
+        prepared.channels,
+        consumer,
+        paused.clone(),
+        frames_written.clone(),
+    )?;
     stream.play().map_err(|e| format!("audio: play: {e}"))?;
 
     // Take the decoder handle out of `prepared` so the
@@ -1741,6 +1740,89 @@ fn open_active_from_prepared(
         bit_depth: prepared.bit_depth,
         channels: prepared.channels,
     })
+}
+
+/// Open a cpal output stream, picking a config the device actually
+/// supports. The Windows shared-mode validator rejects rates that
+/// don't match the device's mix-format setting, so asking for 44.1
+/// kHz on a 48 kHz-locked device fails with "stream configuration
+/// not supported." This helper validates the requested config first
+/// and falls back to the device's default config when the requested
+/// rate isn't in the supported range.
+///
+/// The consumer is consumed exactly once (after the config is
+/// chosen), so retry-from-scratch concerns don't apply.
+fn open_with_fallback(
+    device: &cpal::Device,
+    requested: &cpal::StreamConfig,
+    channels: u16,
+    consumer: PreloadConsumer,
+    paused: Arc<AtomicBool>,
+    frames_written: Arc<AtomicU64>,
+) -> Result<cpal::Stream, String> {
+    let config = pick_supported_config(device, requested);
+    if config.sample_rate != requested.sample_rate {
+        eprintln!(
+            "audio: cpal — device doesn't support {} Hz in shared mode; \
+             falling back to {} Hz (OS mixer will resample). To restore \
+             bit-perfect output, set Sound Settings → Output Device → \
+             Properties → Advanced → Default Format to a rate that \
+             matches your music — or enable WASAPI exclusive mode.",
+            requested.sample_rate.0, config.sample_rate.0,
+        );
+    }
+    match consumer {
+        PreloadConsumer::I16(cons) => open_cpal_stream::<i16>(
+            cons,
+            device,
+            &config,
+            channels,
+            paused,
+            frames_written,
+        ),
+        PreloadConsumer::I32(cons) => open_cpal_stream::<i32>(
+            cons,
+            device,
+            &config,
+            channels,
+            paused,
+            frames_written,
+        ),
+    }
+}
+
+/// Walk the device's supported_output_configs ranges and pick the best
+/// match for `requested`. Returns the requested config when the device
+/// supports it directly; otherwise falls back to the device's default
+/// output config (which the OS mixer resamples to from the file's
+/// native rate). The fallback config keeps the same buffer-size hint
+/// so the EXCLUSIVE_MODE-derived "tight buffer" still applies.
+fn pick_supported_config(
+    device: &cpal::Device,
+    requested: &cpal::StreamConfig,
+) -> cpal::StreamConfig {
+    use cpal::traits::DeviceTrait;
+    if let Ok(ranges) = device.supported_output_configs() {
+        for range in ranges {
+            if range.channels() != requested.channels {
+                continue;
+            }
+            if range.min_sample_rate() <= requested.sample_rate
+                && range.max_sample_rate() >= requested.sample_rate
+            {
+                return requested.clone();
+            }
+        }
+    }
+    if let Ok(default) = device.default_output_config() {
+        let default_cfg: cpal::StreamConfig = default.into();
+        return cpal::StreamConfig {
+            channels: default_cfg.channels,
+            sample_rate: default_cfg.sample_rate,
+            buffer_size: requested.buffer_size,
+        };
+    }
+    requested.clone()
 }
 
 /// Spawns the FLAC decoder thread, returns the consumer side of the
