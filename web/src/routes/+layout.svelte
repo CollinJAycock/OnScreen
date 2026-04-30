@@ -390,6 +390,19 @@
             Profiles
           </a>
         {/if}
+        {#if isTauri()}
+          <!-- Native engine settings — only meaningful inside the
+               desktop client. Browser builds get nothing here so the
+               nav doesn't render a link to a page that just says
+               "open the desktop app". Available to any signed-in user
+               since the settings are per-device, not per-account. -->
+          <a href="/native/audio" class="nav-link" class:active={path.startsWith('/native/audio')}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path d="M10 3.75a2 2 0 10-4 0v10.5a2 2 0 104 0v-8.5a.75.75 0 011.5 0v6.5a2 2 0 104 0v-3.5a.75.75 0 011.5 0v1a.75.75 0 001.5 0v-1a2.25 2.25 0 00-4.5 0v3.5a.5.5 0 11-1 0v-6.5a2.25 2.25 0 00-4.5 0v8.5a.5.5 0 11-1 0V3.75z"/>
+            </svg>
+            Audio
+          </a>
+        {/if}
         {#if isAdmin}
           <a href="/settings" class="nav-link" class:active={path.startsWith('/settings')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
