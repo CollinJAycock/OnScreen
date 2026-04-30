@@ -576,17 +576,32 @@ pub fn audio_play_url(
         .map(Ok)
         .unwrap_or_else(|| prepare_pipeline(&url, bearer_token.as_deref(), 0))?;
 
+    // Release any prior active stream BEFORE opening the new one.
+    // WASAPI exclusive mode holds the device — if we open the new
+    // stream first, the second IAudioClient::Initialize hits
+    // AUDCLNT_E_DEVICE_IN_USE and falls back to the cpal path
+    // (or, with the consumer-already-consumed safeguard, errors
+    // outright). Dropping the old ActivePlayback signals its
+    // stop_flag + joins the WASAPI thread, releasing the device
+    // before the new open. cpal users don't notice — cpal's
+    // device handle is shared mode and tolerant of the brief
+    // gap. The swap is no longer "atomic" from the polling loop's
+    // POV (current = None for ~ms) but the audio_state poller is
+    // a UI-side scrubber tick that already tolerates a momentary
+    // null state.
+    {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        engine.current = None;
+    }
+
     let active = open_active_from_prepared(prepared, &device, url, 0)?;
 
     {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        // Drop the old current AFTER the new one's stream is built —
-        // releasing its decoder thread + cpal device a moment late
-        // is harmless and keeps the swap atomic from the user's POV
-        // (no period of "current is None" the polling loop could
-        // catch in between).
         engine.current = Some(active);
     }
 
