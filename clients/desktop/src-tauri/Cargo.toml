@@ -96,8 +96,15 @@ souvlaki = "0.8"
 # Windows-only: souvlaki needs an HWND to bind to. tauri::WebviewWindow
 # exposes hwnd() under raw-window-handle; on Windows we cast it to
 # the i32 souvlaki expects.
+#
+# wasapi: bit-perfect IAudioClient (AUDCLNT_SHAREMODE_EXCLUSIVE) for
+# the EXCLUSIVE_MODE toggle. cpal handles IAudioClient internally but
+# only in shared mode (the OS mixer resamples); the wasapi crate
+# wraps the COM calls we need to bypass that. macOS + Linux equivalents
+# still pending — they fall through to the cpal tight-buffer path.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation"] }
+wasapi = "0.17"
 
 [features]
 # Default to nothing — opt into custom-protocol for production builds

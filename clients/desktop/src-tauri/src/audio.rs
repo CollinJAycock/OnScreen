@@ -291,11 +291,29 @@ pub struct PlaybackStatus {
     pub channels: Option<u16>,
 }
 
+/// Output-side stream for an active playback. cpal handles the cross-
+/// platform default; the WASAPI variant exists only on Windows when
+/// EXCLUSIVE_MODE flips on and IsFormatSupported returns Ok-no-alt for
+/// the file's native format. Drop on either variant cleans up the
+/// underlying device handle.
+///
+/// allow(dead_code) on the fields: they're held for their Drop side
+/// effects (cpal::Stream stops + releases the device on drop, the
+/// WASAPI variant signals + joins its render thread). Reading the
+/// inner value is never required.
+#[allow(dead_code)]
+enum ActiveStream {
+    Cpal(cpal::Stream),
+    #[cfg(target_os = "windows")]
+    Wasapi(crate::windows_exclusive::WasapiStream),
+}
+
 struct ActivePlayback {
-    // The cpal::Stream owns the realtime callback. Drop = stream
-    // stops + device released. Stays alive as long as this struct
-    // does — we hold it in the engine's Mutex.
-    _stream: cpal::Stream,
+    // Output-side handle. cpal::Stream's drop stops + releases the
+    // device; the WASAPI variant signals its render thread to exit
+    // and joins. Either way ActivePlayback stays alive as long as
+    // playback does — we hold it in the engine's Mutex.
+    _stream: ActiveStream,
     // The decoder thread checks this between FLAC frames and
     // returns when set, releasing its end of the ringbuf so the
     // cpal callback drains to silence and ends. Atomic so no lock
@@ -1587,6 +1605,61 @@ fn open_active_from_prepared(
         .consumer
         .take()
         .ok_or_else(|| "audio: preload consumer already taken".to_string())?;
+
+    // Windows + exclusive flag: try WASAPI exclusive mode first. On
+    // any failure (format unsupported, device busy, virtual output)
+    // fall back to the cpal tight-buffer path so the user still
+    // hears audio. macOS + Linux fall straight to cpal — their
+    // exclusive backends (CoreAudio HOG mode / ALSA hw:) are still
+    // pending, so the EXCLUSIVE_MODE flag for them stays a
+    // tighter-buffer cpal hint until those modules ship.
+    #[cfg(target_os = "windows")]
+    {
+        if exclusive {
+            let wasapi_consumer = match consumer {
+                PreloadConsumer::I16(c) => crate::windows_exclusive::WasapiConsumer::I16(c),
+                PreloadConsumer::I32(c) => crate::windows_exclusive::WasapiConsumer::I32(c),
+            };
+            match crate::windows_exclusive::WasapiStream::open(
+                wasapi_consumer,
+                prepared.sample_rate_hz,
+                prepared.channels,
+                prepared.bit_depth,
+                paused.clone(),
+                frames_written.clone(),
+            ) {
+                Ok(stream) => {
+                    let decoder_handle = prepared.decoder_handle.take();
+                    return Ok(ActivePlayback {
+                        _stream: ActiveStream::Wasapi(stream),
+                        stop_flag: prepared.stop_flag.clone(),
+                        paused,
+                        ended: prepared.ended.clone(),
+                        frames_written,
+                        decoder_handle,
+                        source_url: url,
+                        sample_rate_hz: prepared.sample_rate_hz,
+                        bit_depth: prepared.bit_depth,
+                        channels: prepared.channels,
+                    });
+                }
+                Err(e) => {
+                    eprintln!(
+                        "audio: WASAPI exclusive open failed ({e}); falling back to cpal shared mode"
+                    );
+                    // Recover the consumer for the cpal fallback —
+                    // unfortunately it moved into wasapi_consumer, so
+                    // the caller would have to retry the prepare to
+                    // get a fresh ringbuf. Surface as an error rather
+                    // than try to silently "recover" with a stale ringbuf.
+                    return Err(format!(
+                        "audio: WASAPI exclusive open failed and consumer was consumed: {e}"
+                    ));
+                }
+            }
+        }
+    }
+
     let stream = match consumer {
         PreloadConsumer::I16(cons) => open_cpal_stream::<i16>(
             cons,
@@ -1614,7 +1687,7 @@ fn open_active_from_prepared(
     let decoder_handle = prepared.decoder_handle.take();
 
     Ok(ActivePlayback {
-        _stream: stream,
+        _stream: ActiveStream::Cpal(stream),
         stop_flag: prepared.stop_flag.clone(),
         paused,
         ended: prepared.ended.clone(),
@@ -2154,7 +2227,7 @@ pub fn play_test_tone(
     let ended = Arc::new(AtomicBool::new(false));
     let frames_written = Arc::new(AtomicU64::new(0));
     let active = ActivePlayback {
-        _stream: stream,
+        _stream: ActiveStream::Cpal(stream),
         stop_flag: stop_flag.clone(),
         paused,
         ended,

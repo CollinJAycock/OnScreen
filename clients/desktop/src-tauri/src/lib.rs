@@ -9,6 +9,8 @@
 
 mod audio;
 mod now_playing;
+#[cfg(target_os = "windows")]
+mod windows_exclusive;
 
 use serde::Serialize;
 use tauri::{
