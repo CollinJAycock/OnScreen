@@ -367,6 +367,31 @@ export async function audioGetExclusiveMode(): Promise<boolean> {
   }
 }
 
+/** Reports the audio backend currently engaged. The EXCLUSIVE_MODE
+ *  toggle requests exclusive output, but the actual open can fall
+ *  back to cpal silently when the device rejects the format or
+ *  another app holds it — this command exposes the truth so the
+ *  settings UI can render an honest "currently bit-perfect" badge.
+ *
+ *  Wire identifiers stay stable across releases; the frontend maps
+ *  them to user-facing labels:
+ *    "wasapi-exclusive" — bit-perfect; OS mixer bypassed.
+ *    "cpal-tight"       — EXCLUSIVE_MODE on but cpal fallback engaged
+ *                         (10 ms buffer; OS mixer still resamples).
+ *    "cpal-shared"      — EXCLUSIVE_MODE off; default cpal config.
+ *    "none"             — nothing playing on the native engine. */
+export type ActiveBackend = 'wasapi-exclusive' | 'cpal-tight' | 'cpal-shared' | 'none';
+
+export async function audioGetActiveBackend(): Promise<ActiveBackend> {
+  if (!isTauri()) return 'none';
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return (await invoke('audio_get_active_backend')) as ActiveBackend;
+  } catch {
+    return 'none';
+  }
+}
+
 /** Push the currently-playing track's metadata to the OS now-playing
  *  widget (Windows SMTC / macOS NowPlayingInfoCenter / Linux MPRIS).
  *  Distinct from [`notifyNowPlaying`]: the notification is a transient

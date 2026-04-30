@@ -427,6 +427,7 @@ pub fn run() {
             audio::replay_gain_set_preamp,
             audio::audio_set_exclusive_mode,
             audio::audio_get_exclusive_mode,
+            audio::audio_get_active_backend,
             now_playing::now_playing_set_metadata,
             now_playing::now_playing_set_playback,
             now_playing::now_playing_clear,

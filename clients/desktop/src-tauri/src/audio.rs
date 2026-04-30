@@ -213,6 +213,23 @@ pub fn replay_gain_set_preamp(db: f32) -> Result<(), String> {
 
 static EXCLUSIVE_MODE: AtomicBool = AtomicBool::new(false);
 
+// Active-backend reporting. The user-visible "is bit-perfect actually
+// engaged?" signal — the EXCLUSIVE_MODE toggle just *requests* exclusive,
+// but the WASAPI open can fall back to cpal silently when the device
+// rejects the format or another app holds it. ACTIVE_BACKEND tracks
+// what we're really running on, so the settings UI can render a
+// "Currently: WASAPI exclusive" / "cpal shared" badge instead of
+// trusting the toggle's "intended" state.
+//
+// Encoded as a u8 because AtomicU8 is one cycle to load/store on
+// every platform and the enum has only 4 cases. See
+// audio_get_active_backend below for the wire format.
+const BACKEND_NONE: u8 = 0;        // No active playback.
+const BACKEND_CPAL_SHARED: u8 = 1; // cpal default (BufferSize::Default).
+const BACKEND_CPAL_TIGHT: u8 = 2;  // cpal with EXCLUSIVE_MODE on (Fixed buffer).
+const BACKEND_WASAPI_EXCLUSIVE: u8 = 3; // raw WASAPI exclusive — bit-perfect.
+static ACTIVE_BACKEND: AtomicU8 = AtomicU8::new(BACKEND_NONE);
+
 #[tauri::command]
 pub fn audio_set_exclusive_mode(enabled: bool) -> Result<(), String> {
     EXCLUSIVE_MODE.store(enabled, Ordering::Release);
@@ -222,6 +239,22 @@ pub fn audio_set_exclusive_mode(enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn audio_get_exclusive_mode() -> Result<bool, String> {
     Ok(EXCLUSIVE_MODE.load(Ordering::Acquire))
+}
+
+/// Reports the audio backend currently running. Used by the settings
+/// UI to surface whether the EXCLUSIVE_MODE toggle actually engaged
+/// (WASAPI exclusive on Windows + a supporting device) or whether
+/// the open silently fell back to cpal. The returned strings are
+/// stable wire identifiers; the frontend maps them to user-facing
+/// labels.
+#[tauri::command]
+pub fn audio_get_active_backend() -> Result<&'static str, String> {
+    Ok(match ACTIVE_BACKEND.load(Ordering::Acquire) {
+        BACKEND_CPAL_SHARED => "cpal-shared",
+        BACKEND_CPAL_TIGHT => "cpal-tight",
+        BACKEND_WASAPI_EXCLUSIVE => "wasapi-exclusive",
+        _ => "none",
+    })
 }
 
 /// Public-safe device descriptor returned by [`list_audio_devices`].
@@ -471,6 +504,7 @@ pub fn stop_audio() -> Result<(), String> {
     // running for a track the user explicitly cancelled.
     engine.current = None;
     engine.preload = None;
+    ACTIVE_BACKEND.store(BACKEND_NONE, Ordering::Release);
     Ok(())
 }
 
@@ -1630,6 +1664,7 @@ fn open_active_from_prepared(
             ) {
                 Ok(stream) => {
                     let decoder_handle = prepared.decoder_handle.take();
+                    ACTIVE_BACKEND.store(BACKEND_WASAPI_EXCLUSIVE, Ordering::Release);
                     return Ok(ActivePlayback {
                         _stream: ActiveStream::Wasapi(stream),
                         stop_flag: prepared.stop_flag.clone(),
@@ -1685,6 +1720,14 @@ fn open_active_from_prepared(
     // `prepared` falls out of scope at function exit. The handle
     // moves into ActivePlayback unchanged.
     let decoder_handle = prepared.decoder_handle.take();
+
+    // cpal landed: tight-buffer when EXCLUSIVE_MODE was requested
+    // (toggle on but the platform's raw backend isn't wired yet, or
+    // WASAPI fell back), default-buffer otherwise.
+    ACTIVE_BACKEND.store(
+        if exclusive { BACKEND_CPAL_TIGHT } else { BACKEND_CPAL_SHARED },
+        Ordering::Release,
+    );
 
     Ok(ActivePlayback {
         _stream: ActiveStream::Cpal(stream),

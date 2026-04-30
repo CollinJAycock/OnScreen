@@ -5,7 +5,9 @@
     replayGainSetMode,
     replayGainSetPreamp,
     audioSetExclusiveMode,
+    audioGetActiveBackend,
     type ReplayGainMode,
+    type ActiveBackend,
   } from '$lib/native';
 
   // Defaults match the Rust-side atomics: off + 0 dB preamp. Stored
@@ -20,6 +22,12 @@
   let busyPreamp = $state(false);
   let busyExclusive = $state(false);
   let saveError = $state('');
+  let activeBackend: ActiveBackend = $state('none');
+  // Poll the engine while this page is open so the badge updates
+  // when a track starts or stops. 1 s is fine — the badge isn't on
+  // the audio hot path, and polling gives us "what's actually
+  // running right now" without wiring a separate event channel.
+  let backendPoll: ReturnType<typeof setInterval> | null = null;
 
   // Tauri-only page — surface a clear message in browser builds so a
   // confused user navigating here from the web shell doesn't see a
@@ -37,7 +45,36 @@
       preampDb = storedPreamp;
     }
     exclusive = localStorage.getItem('onscreen_native_exclusive') === '1';
+
+    // Hydrate the active-backend badge immediately + start polling.
+    // Only meaningful inside the desktop client, so gate on inTauri.
+    if (inTauri) {
+      void audioGetActiveBackend().then((b) => { activeBackend = b; });
+      backendPoll = setInterval(async () => {
+        activeBackend = await audioGetActiveBackend();
+      }, 1000);
+    }
+    return () => {
+      if (backendPoll) clearInterval(backendPoll);
+    };
   });
+
+  // Map the wire identifier to a user-facing label + tone (good /
+  // ok / muted) for the badge styling. Kept inline with the data
+  // so the strings live next to the cases they describe.
+  function backendLabel(b: ActiveBackend): { text: string; tone: 'good' | 'ok' | 'muted' } {
+    switch (b) {
+      case 'wasapi-exclusive':
+        return { text: 'WASAPI exclusive · bit-perfect', tone: 'good' };
+      case 'cpal-tight':
+        return { text: 'cpal shared (tight buffer) · OS mixer still resampling', tone: 'ok' };
+      case 'cpal-shared':
+        return { text: 'cpal shared (default) · OS mixer routing', tone: 'ok' };
+      case 'none':
+      default:
+        return { text: 'No active playback', tone: 'muted' };
+    }
+  }
 
   async function applyExclusive() {
     busyExclusive = true;
@@ -156,6 +193,15 @@
         />
         <span>Tight-buffer mode (~10 ms at file native rate)</span>
       </label>
+
+      {#snippet badge()}
+        {@const info = backendLabel(activeBackend)}
+        <div class="status status-{info.tone}">
+          <span class="status-dot"></span>
+          <span>Currently: {info.text}</span>
+        </div>
+      {/snippet}
+      {@render badge()}
     </section>
 
     <section>
@@ -214,6 +260,15 @@
 
   .toggle { display: flex; align-items: center; gap: 0.75rem; cursor: pointer; }
   .toggle input { width: 1.1rem; height: 1.1rem; }
+
+  .status { display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; font-size: 0.85rem; }
+  .status-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; }
+  .status-good { color: var(--text-primary); }
+  .status-good .status-dot { background: #4ade80; box-shadow: 0 0 6px rgba(74, 222, 128, 0.6); }
+  .status-ok { color: var(--text-secondary); }
+  .status-ok .status-dot { background: var(--accent); }
+  .status-muted { color: var(--text-muted); }
+  .status-muted .status-dot { background: var(--text-muted); }
 
   @media (max-width: 600px) {
     .page { padding: 1.5rem 1rem 4rem; }
