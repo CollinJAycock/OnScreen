@@ -257,7 +257,31 @@ export class ApiClient {
       if (refreshed) {
         return this.requestWithRetry(path, doFetch, parseResponse, false);
       }
+      // Refresh failed → tokens are dead (server-side session purge,
+      // logout-on-another-device bumped session_epoch, refresh token
+      // expiry, or the keychain hydrated with values from a server
+      // that no longer recognises them). Tear everything down so the
+      // user lands at a clean /login:
+      //   1. Clear in-memory bearer cache so subsequent calls don't
+      //      retry with the dead token.
+      //   2. Wipe localStorage user metadata so the layout doesn't
+      //      flash a "logged in" UI before the redirect.
+      //   3. Native (Tauri) path: drop the stored refresh + access
+      //      tokens from the keychain. Without this, the next app
+      //      launch re-hydrates the dead tokens and lands the user
+      //      right back here — the bug that motivated this commit.
+      setBearerToken(null, null);
       this.setUser(null);
+      if (typeof window !== 'undefined') {
+        // Fire-and-forget — `clearStoredTokens` is a native-only IPC
+        // and the import is dynamic so the browser bundle doesn't
+        // pull in the Tauri shim. Failures (no Tauri / IPC denied)
+        // are non-fatal: the in-memory + localStorage clear above
+        // is enough to break the retry loop in this session.
+        import('./native').then(({ isTauri, clearStoredTokens }) => {
+          if (isTauri()) void clearStoredTokens();
+        }).catch(() => {});
+      }
       window.location.href = '/login';
       return undefined as T;
     }
@@ -313,6 +337,13 @@ export class ApiClient {
   }
 
   private async tryRefresh(): Promise<boolean> {
+    // Network-level failure → throw so the caller's catch keeps
+    // tokens around for the next retry. Server-rejection (4xx) →
+    // return false; the caller treats that as "tokens are dead"
+    // and tears down. Without this distinction a flaky LAN would
+    // log a user out after one failed refresh, even though their
+    // tokens are perfectly valid.
+    let resp: Response;
     try {
       // Browser path: refresh token is in an httpOnly cookie scoped
       // to /api/v1/auth — sent automatically. Native path: post the
@@ -323,15 +354,29 @@ export class ApiClient {
       if (refreshTokenStore) {
         body.refresh_token = refreshTokenStore;
       }
-      const resp = await fetch(apiBase + '/auth/refresh', {
+      resp = await fetch(apiBase + '/auth/refresh', {
         method: 'POST',
         headers: authHeaders(),
         credentials: credentialsMode(),
         body: refreshTokenStore ? JSON.stringify(body) : undefined,
       });
-      if (!resp.ok) {
-        return false;
-      }
+    } catch (e) {
+      // Network error / DNS failure / fetch aborted — propagate so
+      // the caller's catch keeps the user logged in for retry. The
+      // /api/v1 hub poll on app foreground will re-trigger refresh
+      // when the network comes back.
+      throw e;
+    }
+    if (!resp.ok) {
+      // 401 (refresh token rejected) or 5xx (server temporarily
+      // sad) — both surface as "refresh failed, tokens dead" today.
+      // Distinguishing 5xx as recoverable would need a queue; for
+      // now we treat all non-2xx as terminal and let the user
+      // re-login. The keychain clear in the caller means they
+      // start clean rather than re-loading a stale token.
+      return false;
+    }
+    try {
       const json = (await resp.json()) as ApiResponse<TokenPair>;
       const pair = json.data;
       // Update stored user metadata + bearer cache. The persistent
@@ -341,6 +386,8 @@ export class ApiClient {
       void persistTokensIfTauri(pair.access_token, pair.refresh_token);
       return true;
     } catch {
+      // Malformed body — server returned 2xx but we can't parse it.
+      // Treat as failed refresh; the caller's tear-down path runs.
       return false;
     }
   }
