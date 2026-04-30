@@ -688,6 +688,7 @@ fn pick_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
 enum AudioFormat {
     Flac,
     Symphonia, // ALAC / WAV / AIFF — anything symphonia handles
+    Dsd,       // .dsf — DSD over PCM via dop_packer below
 }
 
 fn detect_format(url: &str) -> AudioFormat {
@@ -695,7 +696,13 @@ fn detect_format(url: &str) -> AudioFormat {
     // suffix doesn't make every URL look like ".jpg?token=xyz".
     let path = url.split('?').next().unwrap_or(url);
     let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".m4a")
+    if lower.ends_with(".dsf") {
+        // DSF only for v1; DFF (Sony's DSD Interchange Format) has
+        // more variant headers + can carry compressed DST. Adding
+        // DFF support is a bigger parser; defer until there's hardware
+        // to validate against.
+        AudioFormat::Dsd
+    } else if lower.ends_with(".m4a")
         || lower.ends_with(".mp4")
         || lower.ends_with(".alac")
         || lower.ends_with(".wav")
@@ -721,6 +728,7 @@ fn prepare_pipeline(
     match detect_format(url) {
         AudioFormat::Flac => prepare_flac_pipeline(url, bearer_token, skip_to_ms),
         AudioFormat::Symphonia => prepare_symphonia_pipeline(url, bearer_token, skip_to_ms),
+        AudioFormat::Dsd => prepare_dsd_pipeline(url, bearer_token, skip_to_ms),
     }
 }
 
@@ -1054,6 +1062,338 @@ fn copy_interleaved_f32(
         AudioBufferRef::F64(b) => interleave!(b, 1.0_f32),
         AudioBufferRef::S8(b) => interleave!(b, 1.0_f32 / 128.0),
     }
+}
+
+// ── DSD (DoP) ──────────────────────────────────────────────────────────────
+//
+// DSD = Direct Stream Digital, the 1-bit/2.8224 MHz (DSD64) bitstream
+// format SACDs use. Modern DACs accept DSD over a regular PCM channel
+// via DoP (DSD over PCM): every 16 DSD bits per channel pack into one
+// 24-bit PCM word with an alternating 0x05/0xFA marker byte in the
+// upper 8 bits. The DAC sees the markers and unwraps the DSD; a
+// non-DSD-aware DAC plays the result as broadband white noise (so the
+// user side has to know they have a DoP-capable DAC — there's no
+// graceful fallback).
+//
+// Output rate = DSD rate / 16 → DSD64 (2_822_400 Hz) plays as 176_400 Hz
+// PCM, which any audio API can carry. Output is 24-bit; we use the
+// existing 24-bit-in-32 ringbuf path the FLAC + symphonia branches
+// already feed into.
+//
+// File format support: .dsf only for v1. The DSF header is well-
+// specified (Sony's DSD Audio File Format spec) and 95% of consumer
+// DSD downloads ship .dsf. .dff (DSDIFF) has more variant chunks and
+// can carry DST-compressed payloads; defer until there's a real DSD
+// catalog to test against.
+
+const DSD_BLOCK_SIZE_PER_CHANNEL: usize = 4096;
+const DOP_MARKER_05: u32 = 0x05;
+const DOP_MARKER_FA: u32 = 0xFA;
+
+#[derive(Clone, Copy)]
+struct DsfHeader {
+    /// DSD bitstream rate, e.g. 2_822_400 for DSD64.
+    sample_rate_hz: u32,
+    /// 1 (mono) or 2 (stereo). DSF supports up to 6 channels but
+    /// consumer catalogs are stereo; keeping the parser tight rather
+    /// than supporting variants we can't test.
+    channels: u16,
+    /// Bits-per-sample as stored — always 1 for DSD. Kept on the
+    /// header for parser symmetry; the DoP packer assumes 1.
+    bits_per_sample: u8,
+    /// Total DSD samples per channel in the file. Drives the
+    /// known-duration calculation in audio_state.
+    sample_count: u64,
+    /// Bytes per channel per block. Spec mandates 4096; the value
+    /// is parsed off the header so a non-conformant file fails
+    /// loudly rather than silently misaligning channels.
+    block_size_per_channel: u32,
+    /// LSB-first (1) or MSB-first (0). DSF spec says LSB-first;
+    /// we track it for explicit handling rather than assuming.
+    bits_per_sample_lsb_first: bool,
+}
+
+/// Parse a DSF header from a streaming reader. Reads exactly the bytes
+/// it needs (28 + 52 + 12 = 92 header bytes plus skipping any pre-data
+/// padding) so the caller can hand the same reader to the DSD decoder
+/// thread immediately afterward. Returns the header + the offset
+/// remaining-data is at (always 0 in normal DSF flow — header is
+/// followed by data block, no padding in spec).
+fn parse_dsf_header<R: Read>(reader: &mut R) -> Result<DsfHeader, String> {
+    let mut buf = [0u8; 28];
+    reader
+        .read_exact(&mut buf)
+        .map_err(|e| format!("audio: read DSF DSD chunk: {e}"))?;
+    if &buf[0..4] != b"DSD " {
+        return Err(format!("audio: not a DSF file (magic = {:?})", &buf[0..4]));
+    }
+    // Skip chunk_size + total_size + metadata_offset; we don't need
+    // them to decode (data length lives on the data chunk header).
+
+    let mut buf = [0u8; 52];
+    reader
+        .read_exact(&mut buf)
+        .map_err(|e| format!("audio: read DSF fmt chunk: {e}"))?;
+    if &buf[0..4] != b"fmt " {
+        return Err(format!("audio: missing DSF fmt chunk (got {:?})", &buf[0..4]));
+    }
+    // fmt chunk layout (after the 12-byte chunk header which was
+    // included in the 52 bytes above):
+    //   12: format_version (u32)
+    //   16: format_id      (u32)  — always 0 for DSD raw
+    //   20: channel_type   (u32)
+    //   24: channel_num    (u32)
+    //   28: sample_rate    (u32)  — bits per second (DSD: 2_822_400 etc.)
+    //   32: bits_per_sample (u32) — 1 for DSD
+    //   36: sample_count   (u64)
+    //   44: block_size_per_channel (u32)
+    //   48: reserved       (u32)
+    let channel_num = u32::from_le_bytes(buf[24..28].try_into().unwrap());
+    let sample_rate = u32::from_le_bytes(buf[28..32].try_into().unwrap());
+    let bits_per_sample = u32::from_le_bytes(buf[32..36].try_into().unwrap());
+    let sample_count = u64::from_le_bytes(buf[36..44].try_into().unwrap());
+    let block_size_per_channel = u32::from_le_bytes(buf[44..48].try_into().unwrap());
+
+    if channel_num == 0 || channel_num > 6 {
+        return Err(format!("audio: unsupported DSF channel count {channel_num}"));
+    }
+    if bits_per_sample != 1 {
+        return Err(format!(
+            "audio: unsupported DSF bits_per_sample {bits_per_sample} (expected 1)"
+        ));
+    }
+    if block_size_per_channel != DSD_BLOCK_SIZE_PER_CHANNEL as u32 {
+        return Err(format!(
+            "audio: unsupported DSF block_size_per_channel {block_size_per_channel} (expected 4096)"
+        ));
+    }
+
+    let mut buf = [0u8; 12];
+    reader
+        .read_exact(&mut buf)
+        .map_err(|e| format!("audio: read DSF data chunk header: {e}"))?;
+    if &buf[0..4] != b"data" {
+        return Err(format!("audio: missing DSF data chunk (got {:?})", &buf[0..4]));
+    }
+
+    Ok(DsfHeader {
+        sample_rate_hz: sample_rate,
+        channels: channel_num as u16,
+        bits_per_sample: 1,
+        sample_count,
+        block_size_per_channel,
+        // DSF spec: LSB-first storage. We decode under that assumption;
+        // the field tracks it for explicit handling.
+        bits_per_sample_lsb_first: true,
+    })
+}
+
+/// Pack 16 DSD bits per channel into a single 24-bit-in-32 PCM word
+/// with the alternating DoP marker in the upper 8 bits. `marker_high`
+/// alternates 0x05 / 0xFA on consecutive output frames so the DAC
+/// sync-locks; the caller threads its own toggle state.
+///
+/// DSF stores DSD bytes LSB-first (oldest sample at bit 0), but DoP
+/// expects the oldest sample at the MSB. Reverse + lay them out
+/// MSB-first inside the lower 16 bits, then OR in the marker byte
+/// shifted to the upper 8 bits of a 24-bit word, then shift left
+/// 8 more so cpal's 24-in-32 expects the data in the upper 24 bits.
+fn dop_pack_word(dsd_byte_msb: u8, dsd_byte_lsb: u8, marker_high: u32) -> i32 {
+    // Reverse bit order in each byte so MSB carries the oldest sample.
+    let hi = dsd_byte_msb.reverse_bits() as u32;
+    let lo = dsd_byte_lsb.reverse_bits() as u32;
+    let payload24 = (marker_high << 16) | (hi << 8) | lo;
+    // Shift into 24-in-32 packing.
+    (payload24 << 8) as i32
+}
+
+/// HTTP fetch + DSF header + DoP-packing decoder thread. Returns
+/// the same PreloadSlot shape the FLAC + symphonia branches do; the
+/// cpal stream config will be 24-bit at sample_rate_hz / 16 with
+/// channel count from the DSF header.
+fn prepare_dsd_pipeline(
+    url: &str,
+    bearer_token: Option<&str>,
+    skip_to_ms: u64,
+) -> Result<PreloadSlot, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+    let mut req = agent.get(url);
+    if let Some(tok) = bearer_token {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    let resp = req
+        .call()
+        .map_err(|e| format!("audio: GET {url}: {e}"))?;
+    if resp.status() != 200 {
+        return Err(format!(
+            "audio: GET {url}: HTTP {} — bearer rejected or not found",
+            resp.status()
+        ));
+    }
+    let mut body: Box<dyn Read + Send + 'static> = Box::new(resp.into_reader());
+
+    let header = parse_dsf_header(&mut body)?;
+
+    // DoP output rate: 16 DSD samples per channel pack into one
+    // 24-bit PCM frame. DSD64 (2_822_400) → 176_400 Hz. DSD128 →
+    // 352_800. cpal accepts 176.4/352.8 kHz on every host that has
+    // a DAC supporting it — fallback to nearest supported config is
+    // the OS's job in default mode, exclusive mode (future) requires
+    // exact match.
+    let pcm_rate = header.sample_rate_hz / 16;
+    let channels = header.channels;
+
+    // Skip-to-position. Each PCM output frame represents 16 DSD
+    // samples (per channel) = 16 bytes (8 bits/byte, 1 bit/sample).
+    // The DSF data is interleaved at the BLOCK level, not per-frame:
+    // 4096 bytes of channel 0, then 4096 of channel 1, etc., one
+    // block group at a time. To skip, we drop entire blocks rather
+    // than seek mid-block to keep channel alignment.
+    let bytes_per_block_group = (header.block_size_per_channel as u64) * (channels as u64);
+    if skip_to_ms > 0 {
+        // Bytes per channel per second of DSD = sample_rate_hz / 8.
+        let bytes_per_sec = (header.sample_rate_hz as u64) / 8;
+        let target_bytes_per_channel = skip_to_ms.saturating_mul(bytes_per_sec) / 1000;
+        // Round down to whole blocks so we don't desync channels.
+        let target_blocks = target_bytes_per_channel / (header.block_size_per_channel as u64);
+        let skip_bytes = target_blocks * bytes_per_block_group;
+        let mut remaining = skip_bytes;
+        let mut sink = [0u8; 4096];
+        while remaining > 0 {
+            let n = remaining.min(sink.len() as u64) as usize;
+            body
+                .read_exact(&mut sink[..n])
+                .map_err(|e| format!("audio: skip DSF data: {e}"))?;
+            remaining -= n as u64;
+        }
+    }
+
+    let ring_capacity = (pcm_rate as usize)
+        .saturating_mul(channels as usize)
+        / 5; // ~200 ms
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let ended = Arc::new(AtomicBool::new(false));
+
+    let (consumer, decoder_handle) =
+        spawn_dsd_decoder(body, header, ring_capacity, stop_flag.clone(), ended.clone())?;
+
+    Ok(PreloadSlot {
+        source_url: url.to_string(),
+        sample_rate_hz: pcm_rate,
+        bit_depth: 24,
+        channels,
+        stop_flag,
+        ended,
+        decoder_handle: Some(decoder_handle),
+        consumer: Some(PreloadConsumer::I32(consumer)),
+    })
+}
+
+/// Decoder thread for the DSD path. Reads block-interleaved DSF
+/// data (4096 bytes per channel, repeating block-group), DoP-packs
+/// 16 DSD bits per channel into one 24-bit-in-32 PCM word, pushes
+/// to the ringbuf in interleaved channel order so the cpal callback
+/// can drain straight into its output.
+fn spawn_dsd_decoder(
+    mut reader: Box<dyn Read + Send + 'static>,
+    header: DsfHeader,
+    capacity: usize,
+    stop_flag: Arc<AtomicBool>,
+    ended: Arc<AtomicBool>,
+) -> Result<(<HeapRb<i32> as Split>::Cons, JoinHandle<()>), String> {
+    let rb = HeapRb::<i32>::new(capacity.max(8192));
+    let (mut producer, consumer) = rb.split();
+    let channels = header.channels as usize;
+    let block_bytes = header.block_size_per_channel as usize;
+
+    let stop_flag_dec = stop_flag.clone();
+    let ended_dec = ended.clone();
+    let decoder_handle = std::thread::Builder::new()
+        .name("onscreen-dsd-decoder".into())
+        .spawn(move || {
+            // Per-channel block buffers. DSF stores [block_ch0,
+            // block_ch1, ...]; we read one block-group at a time
+            // and emit DoP frames interleaved across channels.
+            let mut blocks = vec![vec![0u8; block_bytes]; channels];
+            // DoP marker toggle — alternates 0x05 / 0xFA on each
+            // emitted PCM frame. Both channels get the SAME marker
+            // on the same frame; the toggle advances per frame, not
+            // per sample-channel.
+            let mut marker_high = DOP_MARKER_05;
+
+            loop {
+                if stop_flag_dec.load(Ordering::Acquire) {
+                    return;
+                }
+                // Read the next block-group: one block per channel,
+                // sequentially. EOF on the first byte of any channel
+                // means the file ended cleanly.
+                for ch in 0..channels {
+                    if let Err(e) = reader.read_exact(&mut blocks[ch]) {
+                        // First-byte EOF on channel 0 = clean EOS.
+                        // Anywhere else = truncated file; surface as
+                        // EOS too rather than logging an error mid-
+                        // album (network blip, server killed
+                        // mid-transfer).
+                        if ch == 0 && e.kind() == std::io::ErrorKind::UnexpectedEof {
+                            ended_dec.store(true, Ordering::Release);
+                            return;
+                        }
+                        eprintln!("audio: DSF read at ch{ch}: {e}");
+                        ended_dec.store(true, Ordering::Release);
+                        return;
+                    }
+                }
+                // Emit DoP frames. block_bytes / 2 = number of PCM
+                // frames this block-group produces (16 DSD bits → 1
+                // PCM word, 2 DSD bytes carry 16 bits).
+                let frames_per_block = block_bytes / 2;
+                for f in 0..frames_per_block {
+                    let off = f * 2;
+                    for ch in 0..channels {
+                        // DSF spec: LSB-first within byte. dop_pack_word
+                        // bit-reverses each byte so DoP gets MSB-first
+                        // ordering. The two bytes are passed in order
+                        // [oldest, newest] — DSF stores oldest sample
+                        // first, DoP wants oldest-MSB → that's "oldest
+                        // byte = high byte after reversal".
+                        let oldest = blocks[ch][off];
+                        let newest = blocks[ch][off + 1];
+                        let pcm = dop_pack_word(oldest, newest, marker_high);
+                        let mut sample = pcm;
+                        loop {
+                            match producer.try_push(sample) {
+                                Ok(()) => break,
+                                Err(returned) => {
+                                    sample = returned;
+                                    if stop_flag_dec.load(Ordering::Acquire) {
+                                        return;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(2));
+                                }
+                            }
+                        }
+                    }
+                    marker_high = if marker_high == DOP_MARKER_05 {
+                        DOP_MARKER_FA
+                    } else {
+                        DOP_MARKER_05
+                    };
+                }
+            }
+        })
+        .map_err(|e| format!("audio: spawn DSD decoder: {e}"))?;
+
+    // header.sample_count + bits_per_sample_lsb_first are tracked on
+    // the header for parser symmetry but not used after the decoder
+    // is spawned — quiet the lint without removing the fields.
+    let _ = header.sample_count;
+    let _ = header.bits_per_sample;
+    let _ = header.bits_per_sample_lsb_first;
+    Ok((consumer, decoder_handle))
 }
 
 /// HTTP fetch + FLAC header parse + spawn decoder thread → returns
@@ -1625,6 +1965,129 @@ mod tests {
         let factor = compute_gain_factor_for(&tags, REPLAY_GAIN_MODE_TRACK, 6.0);
         let expected = 1.0 / 0.9;
         assert!((factor - expected).abs() < 0.001, "factor = {factor}");
+    }
+
+    // ── DSD ────────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_format_dsf() {
+        assert_eq!(detect_format("https://srv/track.dsf"), AudioFormat::Dsd);
+        assert_eq!(detect_format("https://srv/Track.DSF"), AudioFormat::Dsd);
+        assert_eq!(
+            detect_format("https://srv/track.dsf?token=abc"),
+            AudioFormat::Dsd,
+        );
+    }
+
+    // DoP packing reference values — the key invariants under test:
+    //   1. Marker byte lands in the high 8 bits of the 24-bit-in-32
+    //      payload (bits 24-31 of the i32).
+    //   2. Both DSF data bytes are bit-reversed (DSF stores LSB-first;
+    //      DoP requires MSB-first).
+    //   3. Older sample (first byte) ends up higher in the 16-bit
+    //      payload than the newer sample.
+    #[test]
+    fn dop_pack_word_marker_byte_in_high_bits() {
+        // 0x05 marker, both data bytes 0 → packed = 0x0500_0000 (in
+        // 24-in-32 space, payload << 8).
+        let w = dop_pack_word(0, 0, DOP_MARKER_05);
+        assert_eq!((w as u32) >> 24, 0x05);
+        let w = dop_pack_word(0, 0, DOP_MARKER_FA);
+        assert_eq!((w as u32) >> 24, 0xFA);
+    }
+
+    #[test]
+    fn dop_pack_word_bit_reverses_each_byte() {
+        // DSF byte 0b0000_0001 (LSB-first; oldest sample = bit 0 = 1)
+        // bit-reversed = 0b1000_0000 = 0x80. With marker 0x05 in the
+        // high bits and the older byte in the high payload nibble:
+        //   payload24 = 0x05 << 16 | 0x80 << 8 | 0x80
+        //             = 0x05_80_80
+        // Then << 8 for 24-in-32 packing = 0x0580_8000.
+        let w = dop_pack_word(0b0000_0001, 0b0000_0001, DOP_MARKER_05);
+        assert_eq!(w as u32, 0x0580_8000);
+    }
+
+    #[test]
+    fn dop_pack_word_byte_ordering_oldest_high() {
+        // First arg is the oldest byte; should land in the upper 8
+        // bits of the 16-bit payload. With oldest = 0xFF (reversed
+        // = 0xFF), newest = 0x00 (reversed = 0x00):
+        //   payload24 = 0x05_FF_00 → << 8 = 0x05FF_0000
+        let w = dop_pack_word(0xFF, 0x00, DOP_MARKER_05);
+        assert_eq!(w as u32, 0x05FF_0000);
+    }
+
+    #[test]
+    fn parse_dsf_header_basic_stereo() {
+        // Hand-craft a minimal DSF header: 28-byte DSD chunk + 52-byte
+        // fmt chunk (DSD64 stereo 1-bit) + 12-byte data chunk header.
+        let mut buf: Vec<u8> = Vec::new();
+        // DSD chunk: magic + chunk_size + total_size + metadata_offset
+        buf.extend_from_slice(b"DSD ");
+        buf.extend_from_slice(&28u64.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes()); // total_size — unused
+        buf.extend_from_slice(&0u64.to_le_bytes()); // metadata_offset
+        // fmt chunk
+        buf.extend_from_slice(b"fmt ");
+        buf.extend_from_slice(&52u64.to_le_bytes()); // chunk_size
+        buf.extend_from_slice(&1u32.to_le_bytes()); // format_version
+        buf.extend_from_slice(&0u32.to_le_bytes()); // format_id (DSD raw)
+        buf.extend_from_slice(&2u32.to_le_bytes()); // channel_type (stereo)
+        buf.extend_from_slice(&2u32.to_le_bytes()); // channel_num
+        buf.extend_from_slice(&2_822_400u32.to_le_bytes()); // DSD64 rate
+        buf.extend_from_slice(&1u32.to_le_bytes()); // bits_per_sample
+        buf.extend_from_slice(&12_345u64.to_le_bytes()); // sample_count
+        buf.extend_from_slice(&4096u32.to_le_bytes()); // block_size_per_channel
+        buf.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        // data chunk header
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&0u64.to_le_bytes());
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let h = parse_dsf_header(&mut cursor).expect("parse");
+        assert_eq!(h.sample_rate_hz, 2_822_400);
+        assert_eq!(h.channels, 2);
+        assert_eq!(h.bits_per_sample, 1);
+        assert_eq!(h.sample_count, 12_345);
+        assert_eq!(h.block_size_per_channel, 4096);
+    }
+
+    #[test]
+    fn parse_dsf_header_rejects_wrong_magic() {
+        let mut buf: Vec<u8> = b"NOPE".to_vec();
+        buf.resize(28, 0);
+        let mut cursor = std::io::Cursor::new(buf);
+        assert!(parse_dsf_header(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn parse_dsf_header_rejects_unsupported_block_size() {
+        // Same shape as the basic-stereo test but with a non-spec
+        // block_size_per_channel — DSF spec mandates 4096; supporting
+        // arbitrary block sizes would need a more careful interleave
+        // walker so we reject rather than silently misalign.
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(b"DSD ");
+        buf.extend_from_slice(&28u64.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        buf.extend_from_slice(b"fmt ");
+        buf.extend_from_slice(&52u64.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.extend_from_slice(&2_822_400u32.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        buf.extend_from_slice(&8192u32.to_le_bytes()); // wrong
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&0u64.to_le_bytes());
+
+        let mut cursor = std::io::Cursor::new(buf);
+        assert!(parse_dsf_header(&mut cursor).is_err());
     }
 
     #[test]
