@@ -204,14 +204,40 @@ fn run_exclusive_loop(
         .get_audiorenderclient()
         .map_err(|e| format!("audio: GetService(IAudioRenderClient): {e:?}"))?;
 
-    audio_client
-        .start_stream()
-        .map_err(|e| format!("audio: IAudioClient::Start: {e:?}"))?;
+    eprintln!(
+        "audio: WASAPI exclusive opened — {} Hz / {} ch / {} bits / buffer {} frames",
+        sample_rate_hz, channels, bit_depth, buffer_frames,
+    );
 
     // Pre-allocated copy buffer sized for one full WASAPI frame
     // group. Avoids per-event Vec growth.
     let mut copy_buf =
         vec![0u8; (buffer_frames as usize) * (channels as usize) * bytes_per_sample];
+
+    // Pre-fill the IAudioRenderClient buffer with silence before
+    // starting the stream. WASAPI exclusive event-driven mode
+    // expects the buffer primed before Start; without it, the
+    // first event fires while the buffer is undefined and we get
+    // either silence-forever or audible glitches on stream start.
+    // Silence here is fine — by the time the first event signals
+    // "give me more," the decoder thread has produced enough
+    // samples that the next write carries real audio.
+    let silent_flag = wasapi::BufferFlags {
+        data_discontinuity: false,
+        silent: true,
+        timestamp_error: false,
+    };
+    if let Err(e) =
+        render_client.write_to_device(buffer_frames as usize, &copy_buf, Some(silent_flag))
+    {
+        return Err(format!("audio: prefill silence: {e:?}"));
+    }
+
+    audio_client
+        .start_stream()
+        .map_err(|e| format!("audio: IAudioClient::Start: {e:?}"))?;
+
+    eprintln!("audio: WASAPI exclusive stream started");
 
     loop {
         if stop_flag.load(Ordering::Acquire) {
@@ -280,7 +306,7 @@ fn run_exclusive_loop(
         if let Err(e) =
             render_client.write_to_device(frames, &copy_buf[..needed_bytes], None)
         {
-            eprintln!("audio: WASAPI write: {e:?}");
+            eprintln!("audio: WASAPI write_to_device error (loop exits): {e:?}");
             break;
         }
 
@@ -289,6 +315,7 @@ fn run_exclusive_loop(
         frames_written.fetch_add(frames as u64, Ordering::AcqRel);
     }
 
+    eprintln!("audio: WASAPI exclusive render loop exiting (stop_flag or error)");
     let _ = audio_client.stop_stream();
     Ok(())
 }
