@@ -707,6 +707,9 @@ func run() error {
 	_ = notifServiceEarly // used by scanEnqueuer above
 	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger)
 
+	// ── Cross-device playback transfer ───────────────────────────────────────
+	playbackHandler := v1.NewPlaybackHandler(gen.New(roPool), notifBrokerEarly, logger)
+
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
 	expectedSchemaVersion, err := dbmigrations.Highest()
@@ -819,6 +822,7 @@ func run() error {
 		PasswordReset:      passwordResetHandler,
 		Invite:             inviteHandler,
 		Notifications:      notifHandler,
+		Playback:           playbackHandler,
 		Maintenance:        maintenanceHandler,
 		Backup:             backupHandler,
 		Tasks:              tasksHandler,

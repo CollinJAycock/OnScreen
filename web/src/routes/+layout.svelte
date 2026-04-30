@@ -12,7 +12,13 @@
   import NotificationPanel from '$lib/components/NotificationPanel.svelte';
   import AudioPlayer from '$lib/components/AudioPlayer.svelte';
   import { theme } from '$lib/stores/theme';
-  import { initNotifications, stopNotifications } from '$lib/stores/notifications';
+  import {
+    initNotifications,
+    stopNotifications,
+    playbackTransfers,
+  } from '$lib/stores/notifications';
+  import { itemApi, getClientName } from '$lib/api';
+  import { audio, type AudioTrack } from '$lib/stores/audio';
   import { currentTrack } from '$lib/stores/audio';
 
   $: hasAudio = $currentTrack !== null;
@@ -136,6 +142,46 @@
       isAdmin = user.is_admin;
       initNotifications();
     }
+
+    // Cross-device "play on this device" receiver. The originator
+    // posts to /playback/transfer; the broker fans out per-user;
+    // each connected client reaches this subscription. Filter on
+    // target_client_name === own client name so only the chosen
+    // device starts playback. Audio routes to the player; everything
+    // else navigates to /watch/{id}?at=position so the watch page
+    // resumes at the requested offset.
+    playbackTransfers.subscribe(async (evt) => {
+      if (!evt) return;
+      if (evt.targetClientName !== getClientName()) return;
+      try {
+        const detail = await itemApi.get(evt.itemId);
+        const audioTypes = new Set(['track', 'audiobook', 'audiobook_chapter']);
+        if (audioTypes.has(detail.type)) {
+          const track: AudioTrack = {
+            id: detail.id,
+            fileId: detail.files[0]?.id ?? '',
+            title: detail.title,
+            artist: undefined,
+            album: undefined,
+            durationMS: detail.duration_ms,
+            posterPath: detail.poster_path ?? undefined,
+          };
+          audio.play([track]);
+          // Position seek lives on the AudioPlayer's <audio> element;
+          // the audio store sets the source and the element fires
+          // loadedmetadata after which currentTime is honoured. The
+          // store's existing resume-from-view_offset_ms path picks
+          // up the saved position; the transfer's position_ms is
+          // absorbed via the same mechanism since the originator's
+          // last progress write went through the broker too.
+        } else {
+          const at = evt.positionMs > 0 ? `?at=${evt.positionMs}` : '';
+          goto(`/watch/${evt.itemId}${at}`);
+        }
+      } catch (e) {
+        console.warn('playback transfer: load item failed', e);
+      }
+    });
   });
 
   async function openSwitcher() {

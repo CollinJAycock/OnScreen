@@ -55,6 +55,24 @@ WHERE user_id = $1
 ORDER BY last_watched_at DESC
 LIMIT 10000;
 
+-- name: ListRecentClientNamesForUser :many
+-- Distinct client_name values the user has scrobbled from in the last
+-- 30 days, sorted most-recently-used first. Drives the "Play on…"
+-- device picker in the player chrome — devices that haven't reported
+-- in a while are filtered out so the menu doesn't accumulate stale
+-- entries (a phone the user has since replaced, a TV they don't own
+-- anymore). 30 days is the same window the watch_events partitioning
+-- uses so the query reads from the hot partition.
+SELECT we.client_name, MAX(we.occurred_at)::timestamptz AS last_seen
+FROM watch_events we
+WHERE we.user_id = $1
+  AND we.client_name IS NOT NULL
+  AND we.client_name != ''
+  AND we.occurred_at > NOW() - INTERVAL '30 days'
+GROUP BY we.client_name
+ORDER BY last_seen DESC
+LIMIT 50;
+
 -- name: ListWatchHistory :many
 -- Collapse consecutive 'stop'/'scrobble' events for the same media that occur
 -- within a 30-minute window into a single row, keeping the LATEST event in the

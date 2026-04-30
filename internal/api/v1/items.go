@@ -938,6 +938,14 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		ViewOffsetMS int64  `json:"view_offset_ms"`
 		DurationMS   int64  `json:"duration_ms"`
 		State        string `json:"state"` // "playing"|"paused"|"stopped"
+		// Optional client identifier the frontend supplies — drives
+		// the per-device device picker on the cross-device transfer
+		// flow and the "Resume from <Living Room TV>" UX. Empty
+		// strings drop to nil so older clients (no field) and clients
+		// that explicitly omit it (a browser on a private window
+		// where the user hasn't named the device) both round-trip
+		// the same way.
+		ClientName string `json:"client_name,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -949,6 +957,17 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	if body.DurationMS > 0 {
 		durPtr = &body.DurationMS
 	}
+	var clientNamePtr *string
+	if body.ClientName != "" {
+		// Cap at 64 chars so a deliberately-long client_name from a
+		// misbehaving frontend doesn't bloat the watch_events row.
+		// 64 covers "Living Room Samsung Q90R" and similar with room
+		// to spare; anything longer gets truncated rather than rejected.
+		if len(body.ClientName) > 64 {
+			body.ClientName = body.ClientName[:64]
+		}
+		clientNamePtr = &body.ClientName
+	}
 
 	if err := h.watch.Record(r.Context(), watchevent.RecordParams{
 		UserID:     claims.UserID,
@@ -956,6 +975,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		EventType:  eventType,
 		PositionMS: body.ViewOffsetMS,
 		DurationMS: durPtr,
+		ClientName: clientNamePtr,
 		OccurredAt: time.Now(),
 	}); err != nil {
 		h.logger.ErrorContext(r.Context(), "record progress", "id", id, "err", err)

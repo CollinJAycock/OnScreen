@@ -24,6 +24,19 @@ export type ProgressUpdate = {
  *  fire on late subscribers. */
 export const progressUpdates = writable<ProgressUpdate | null>(null);
 
+/** Cross-device "play on this device" event. The originator posts
+ *  to /api/v1/playback/transfer; the broker fans out per-user; each
+ *  receiving client filters on `targetClientName === own client name`
+ *  and starts playback at `positionMs` on a match. Same discrete-
+ *  event shape as progressUpdates so a late subscriber doesn't fire
+ *  on a stale transfer. */
+export type PlaybackTransfer = {
+  itemId: string;
+  positionMs: number;
+  targetClientName: string;
+};
+export const playbackTransfers = writable<PlaybackTransfer | null>(null);
+
 let eventSource: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -78,6 +91,22 @@ function connectSSE() {
           positionMs: ev.data.position_ms,
           durationMs: ev.data.duration_ms,
           state: ev.data.state,
+        });
+        return;
+      }
+      if (ev.type === 'playback.transfer' && ev.data) {
+        // Re-cast `data` because TransferPayload uses a different
+        // shape than ProgressUpdateData — both ride this same SSE
+        // channel; the type field discriminates.
+        const tdata = ev.data as unknown as {
+          item_id: string;
+          position_ms: number;
+          target_client_name: string;
+        };
+        playbackTransfers.set({
+          itemId: tdata.item_id,
+          positionMs: tdata.position_ms,
+          targetClientName: tdata.target_client_name,
         });
         return;
       }

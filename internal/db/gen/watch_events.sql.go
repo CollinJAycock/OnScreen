@@ -131,6 +131,50 @@ func (q *Queries) InsertWatchEvent(ctx context.Context, arg InsertWatchEventPara
 	return i, err
 }
 
+const listRecentClientNamesForUser = `-- name: ListRecentClientNamesForUser :many
+SELECT we.client_name, MAX(we.occurred_at)::timestamptz AS last_seen
+FROM watch_events we
+WHERE we.user_id = $1
+  AND we.client_name IS NOT NULL
+  AND we.client_name != ''
+  AND we.occurred_at > NOW() - INTERVAL '30 days'
+GROUP BY we.client_name
+ORDER BY last_seen DESC
+LIMIT 50
+`
+
+type ListRecentClientNamesForUserRow struct {
+	ClientName *string            `json:"client_name"`
+	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+}
+
+// Distinct client_name values the user has scrobbled from in the last
+// 30 days, sorted most-recently-used first. Drives the "Play on…"
+// device picker in the player chrome — devices that haven't reported
+// in a while are filtered out so the menu doesn't accumulate stale
+// entries (a phone the user has since replaced, a TV they don't own
+// anymore). 30 days is the same window the watch_events partitioning
+// uses so the query reads from the hot partition.
+func (q *Queries) ListRecentClientNamesForUser(ctx context.Context, userID uuid.UUID) ([]ListRecentClientNamesForUserRow, error) {
+	rows, err := q.db.Query(ctx, listRecentClientNamesForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentClientNamesForUserRow{}
+	for rows.Next() {
+		var i ListRecentClientNamesForUserRow
+		if err := rows.Scan(&i.ClientName, &i.LastSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWatchHistory = `-- name: ListWatchHistory :many
 WITH events AS (
     SELECT we.id, we.user_id, we.media_id, we.event_type,

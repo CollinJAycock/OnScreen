@@ -68,6 +68,7 @@ type Handlers struct {
 	PasswordReset   *v1.PasswordResetHandler
 	Invite          *v1.InviteHandler
 	Notifications   *v1.NotificationHandler
+	Playback        *v1.PlaybackHandler
 	Favorites       *v1.FavoritesHandler
 	Maintenance     *v1.MaintenanceHandler
 	Backup          *v1.BackupHandler
@@ -698,6 +699,16 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/items/{id}/markers/{kind}", h.Items.UpsertMarker)
 				r.Delete("/items/{id}/markers/{kind}", h.Items.DeleteMarker)
 				r.Get("/items/{id}/exif", h.Items.GetEXIF)
+			}
+
+			// Cross-device "play on this device" remote control.
+			// Devices lists distinct clients the user has scrobbled
+			// from; Transfer broadcasts a `playback.transfer` SSE
+			// event each connected client filters against its own
+			// client name.
+			if h.Playback != nil {
+				r.Get("/playback/devices", h.Playback.Devices)
+				r.Post("/playback/transfer", h.Playback.Transfer)
 			}
 
 			// Photo browse + on-demand resize. Image endpoint shares the

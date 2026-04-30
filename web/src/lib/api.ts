@@ -81,6 +81,40 @@ export function getApiBase(): string { return apiBase; }
  *  precedence — the helper doesn't overwrite an existing `token=`
  *  parameter.
  */
+/** Produces a stable per-installation client_name string the server
+ *  uses to attribute scrobbles to a specific device + populate the
+ *  cross-device "Play on…" picker. Format:
+ *    Web — Chrome on Windows
+ *    Desktop — Windows  (Tauri builds set onscreen_client_kind to "Desktop")
+ *  Stored in localStorage so a user who renames the entry via a
+ *  future settings UI has their choice persist across reloads. */
+export function getClientName(): string {
+  if (typeof window === 'undefined') return 'Web';
+  const stored = localStorage.getItem('onscreen_client_name');
+  if (stored && stored.trim() !== '') return stored;
+  const kind = localStorage.getItem('onscreen_client_kind') ?? 'Web';
+  const ua = navigator.userAgent;
+  // Best-effort extraction — order matters because UA strings
+  // contain multiple browser identifiers (Chrome's UA also
+  // contains "Safari" and "Mozilla"); pick the most-specific
+  // engine first.
+  const browser =
+    /Edg\//.test(ua) ? 'Edge' :
+    /OPR\//.test(ua) ? 'Opera' :
+    /Firefox/.test(ua) ? 'Firefox' :
+    /Chrome/.test(ua) ? 'Chrome' :
+    /Safari/.test(ua) ? 'Safari' :
+    'Browser';
+  const os =
+    /Windows/.test(ua) ? 'Windows' :
+    /Mac OS|Macintosh/.test(ua) ? 'macOS' :
+    /Linux/.test(ua) ? 'Linux' :
+    /Android/.test(ua) ? 'Android' :
+    /iPad|iPhone/.test(ua) ? 'iOS' :
+    'Desktop';
+  return `${kind} — ${browser} on ${os}`;
+}
+
 export function assetUrl(path: string): string {
   if (apiBase.startsWith('/')) return path;
   const base = apiBase.replace(/\/api\/v1\/?$/, '') + path;
@@ -1149,7 +1183,12 @@ export const itemApi = {
     api.put<void>(`/items/${id}/progress`, {
       view_offset_ms: viewOffsetMs,
       duration_ms: durationMs,
-      state
+      state,
+      // client_name drives the device picker in the cross-device
+      // "Play on…" remote control. Browser builds derive a label
+      // from userAgent + a "Web —" prefix so the user can tell the
+      // browser apart from native clients in the picker.
+      client_name: getClientName(),
     }),
   searchMatch: (id: string, query: string) =>
     api.get<MatchCandidate[]>(`/items/${id}/match/search?query=${encodeURIComponent(query)}`),
@@ -1160,6 +1199,18 @@ export const itemApi = {
   applyPoster: (id: string, url: string) =>
     api.post<void>(`/items/${id}/poster`, { url }),
   remove: (id: string) => api.delete(`/items/${id}`),
+  // Cross-device transfer — list distinct clients the user has
+  // recently scrobbled from (drives the "Play on…" picker), and
+  // broadcast a transfer event the receiving client filters by
+  // target_client_name and starts playback on a match.
+  listDevices: () =>
+    api.get<{ client_name: string; last_seen: string }[]>(`/playback/devices`),
+  transfer: (itemId: string, targetClientName: string, positionMs: number) =>
+    api.post<void>(`/playback/transfer`, {
+      item_id: itemId,
+      target_client_name: targetClientName,
+      position_ms: positionMs,
+    }),
   addFavorite: (id: string) => api.post<void>(`/items/${id}/favorite`, {}),
   removeFavorite: (id: string) => api.delete(`/items/${id}/favorite`),
   listMarkers: (id: string) => api.requestList<Marker>(`/items/${id}/markers`),
