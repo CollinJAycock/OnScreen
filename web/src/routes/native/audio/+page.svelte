@@ -9,6 +9,7 @@
     type ReplayGainMode,
     type ActiveBackend,
   } from '$lib/native';
+  import { nativeEngine } from '$lib/stores/nativeEngine';
 
   // Defaults match the Rust-side atomics: off + 0 dB preamp. Stored
   // in localStorage so reopening the desktop app picks up the user's
@@ -18,6 +19,14 @@
   let mode: ReplayGainMode = $state('off');
   let preampDb: number = $state(0);
   let exclusive: boolean = $state(false);
+  let engineEnabled: boolean = $state(false);
+  // Subscribe to the nativeEngine store so the toggle reflects the
+  // current state and other surfaces (the legacy /native/server
+  // toggle) stay in sync if the user changes it from somewhere else.
+  $effect(() => {
+    const unsub = nativeEngine.subscribe((v) => { engineEnabled = v; });
+    return unsub;
+  });
   let busyMode = $state(false);
   let busyPreamp = $state(false);
   let busyExclusive = $state(false);
@@ -139,6 +148,27 @@
     {#if saveError}
       <p class="err">{saveError}</p>
     {/if}
+
+    <section>
+      <h2>Native engine</h2>
+      <p class="desc">
+        When on, music playback routes through the OS-native audio
+        engine (cpal + claxon, with the WASAPI / CoreAudio / ALSA
+        exclusive-mode paths layered on top) instead of the browser's
+        <code>&lt;audio&gt;</code> element. The audiophile-pillar
+        settings below — ReplayGain, exclusive output — only apply on
+        this path; with the native engine off they're inert. Switch
+        takes effect on the next track.
+      </p>
+      <label class="toggle">
+        <input
+          type="checkbox"
+          bind:checked={engineEnabled}
+          onchange={(e) => nativeEngine.set((e.target as HTMLInputElement).checked)}
+        />
+        <span>Use the native audio engine for music playback</span>
+      </label>
+    </section>
 
     <section>
       <h2>ReplayGain</h2>
