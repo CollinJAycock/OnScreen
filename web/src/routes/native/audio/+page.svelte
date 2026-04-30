@@ -194,14 +194,10 @@
         <span>Tight-buffer mode (~10 ms at file native rate)</span>
       </label>
 
-      {#snippet badge()}
-        {@const info = backendLabel(activeBackend)}
-        <div class="status status-{info.tone}">
-          <span class="status-dot"></span>
-          <span>Currently: {info.text}</span>
-        </div>
-      {/snippet}
-      {@render badge()}
+      <div class="status status-{backendLabel(activeBackend).tone}">
+        <span class="status-dot"></span>
+        <span>Currently: {backendLabel(activeBackend).text}</span>
+      </div>
     </section>
 
     <section>
