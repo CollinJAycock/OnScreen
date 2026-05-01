@@ -355,6 +355,46 @@ func TestSubtitleBurnFilter_EscapesSingleQuote(t *testing.T) {
 	}
 }
 
+// TestBuildHLS_Software_StripsTo8Bit guards the libx264 10-bit-input
+// fix surfaced by the v2.1 libx264 live matrix run against Chainsaw Man
+// (10-bit AV1 source). Without format=yuv420p in the filter chain,
+// libx264 emits 10-bit High 10 profile H.264 — a valid bitstream but
+// browsers (Chromium especially) have no 10-bit H.264 decoder, so the
+// player falls back to no-video. Same fix shape as the existing AMF /
+// QSV / NVENC strip; libx264 had been overlooked.
+func TestBuildHLS_Software_StripsTo8Bit(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/anime.mkv",
+		Encoder:       EncoderSoftware,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "format=yuv420p") {
+		t.Errorf("libx264 must strip to 8-bit: %s", argStr)
+	}
+}
+
+// TestSubtitleBurnFilter_WindowsPath guards the Windows path-handling
+// fix surfaced by the v2.1 burn-in integration test against Goodfellas.
+// Backslashes get stripped by the filter parser as escape introducers
+// and the drive-letter colon (`C:`) is otherwise parsed as a filter
+// key=value separator — both paths in `C:\movies\Foo (1990)\bar.mkv`
+// would crash ffmpeg with "Unable to parse 'original_size' option
+// value 'moviesFoo (1990)bar.mkv'". The fix flips backslashes to
+// forward slashes and escapes every colon in the path.
+func TestSubtitleBurnFilter_WindowsPath(t *testing.T) {
+	got := subtitleBurnFilter(`C:\movies\Foo (1990)\bar.mkv`, 2)
+	want := `subtitles='C\:/movies/Foo (1990)/bar.mkv':si=2`
+	if got != want {
+		t.Errorf("Windows path filter: got %q, want %q", got, want)
+	}
+}
+
 // TestIsHEVCEncoder_AllVariants confirms every HEVC encoder we
 // support is recognized — the segment-format selector and the
 // HEVC-output codec tag depend on this flag being right.
@@ -933,12 +973,21 @@ func TestBuildHLS_MaxMuxingQueueSize(t *testing.T) {
 }
 
 func TestBuildVideoFilter_Empty_NoScaleNoTonemap(t *testing.T) {
-	vf := buildVideoFilter(BuildArgs{
-		Encoder: EncoderSoftware,
-		// no width/height, no tonemap
-	})
-	if vf != "" {
-		t.Errorf("expected empty filter chain, got: %s", vf)
+	// libx264 / NVENC / AMF / QSV always end the chain at format=yuv420p
+	// to keep the encoder on the 8-bit path (browsers can't decode 10-bit
+	// H.264 High 10 from libx264, and the GPU encoders reject 10-bit
+	// input outright). The chain is otherwise empty when no scale and
+	// no tonemap are requested. HEVC and AV1 software encoders allow
+	// 10-bit (Main10 / AV1 10-bit profiles) and produce a truly empty
+	// chain in this case.
+	if vf := buildVideoFilter(BuildArgs{Encoder: EncoderSoftware}); vf != "format=yuv420p" {
+		t.Errorf("libx264 chain: want format=yuv420p, got: %q", vf)
+	}
+	if vf := buildVideoFilter(BuildArgs{Encoder: EncoderHEVCSoftware}); vf != "" {
+		t.Errorf("libx265 chain should stay empty (allows 10-bit Main10), got: %q", vf)
+	}
+	if vf := buildVideoFilter(BuildArgs{Encoder: EncoderAV1Software}); vf != "" {
+		t.Errorf("libsvtav1 chain should stay empty (handles 10-bit), got: %q", vf)
 	}
 }
 

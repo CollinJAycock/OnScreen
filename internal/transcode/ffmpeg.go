@@ -213,9 +213,19 @@ func BuildHLS(a BuildArgs) []string {
 		args = append(args,
 			"-c:v", string(a.Encoder),
 			"-b:v", fmt.Sprintf("%dk", a.BitrateKbps),
-			"-maxrate", fmt.Sprintf("%dk", maxrate),
-			"-bufsize", fmt.Sprintf("%dk", maxrate*2),
 		)
+		// SVT-AV1 rejects -maxrate unless the encoder is in CRF mode
+		// ("Max Bitrate only supported with CRF mode"). VBR with target
+		// bitrate is the live-stream shape we want, so just skip the
+		// maxrate clamp for libsvtav1 — its internal rate control already
+		// constrains output around -b:v without needing the muxer-side
+		// hint that NVENC/AMF/x264 want.
+		if a.Encoder != EncoderAV1Software {
+			args = append(args,
+				"-maxrate", fmt.Sprintf("%dk", maxrate),
+				"-bufsize", fmt.Sprintf("%dk", maxrate*2),
+			)
+		}
 
 		// Encoder-specific flags. NVENC preset/tune/rc are configurable via
 		// TRANSCODE_NVENC_PRESET, TRANSCODE_NVENC_TUNE, TRANSCODE_NVENC_RC.
@@ -303,9 +313,12 @@ func BuildHLS(a BuildArgs) []string {
 				"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", SegmentDuration),
 				"-sc_threshold", "0",
 			)
-			// HEVC software: constrain to Main profile, Level 5.0 for 4K.
+			// HEVC software: constrain to Main profile only. `-level-idc` is
+			// an hevc_nvenc-specific option name; libx265 takes its level
+			// hint via `-x265-params level=5.0` and accepts the muxer's
+			// auto-derived level when unset, so we just leave it alone.
 			if a.Encoder == EncoderHEVCSoftware {
-				args = append(args, "-profile:v", "main", "-level-idc", "150")
+				args = append(args, "-profile:v", "main")
 			}
 		}
 	}
@@ -346,20 +359,6 @@ func BuildHLS(a BuildArgs) []string {
 		// first_pts=0 here either: it aborts the HLS muxer.
 		if a.StartOffset <= 0 {
 			args = append(args, "-af", "aresample=async=1")
-		}
-	}
-
-	// ── Subtitles ────────────────────────────────────────────────────────────
-	if len(a.SubtitleStreams) > 0 {
-		// Extract each text-based subtitle stream to a separate WebVTT file.
-		// These are output as additional -map outputs, not part of the HLS playlist.
-		for i, streamIdx := range a.SubtitleStreams {
-			vttPath := filepath.Join(a.SessionDir, fmt.Sprintf("sub%d.vtt", i))
-			args = append(args,
-				"-map", fmt.Sprintf("0:s:%d", streamIdx),
-				"-c:s", "webvtt",
-				vttPath,
-			)
 		}
 	}
 
@@ -448,6 +447,21 @@ func BuildHLS(a BuildArgs) []string {
 	}
 	args = append(args, playlistPath)
 
+	// ── Subtitle WebVTT extraction (separate output contexts) ────────────────
+	// Each subtitle stream extracts to its own .vtt file as a SECOND ffmpeg
+	// output. Has to come AFTER the HLS playlist positional — otherwise the
+	// preceding -c:v / -b:v / etc. accumulate onto the first positional
+	// output (the .vtt) and the webvtt muxer rejects it with
+	// "webvtt muxer does not support any stream of type video".
+	for i, streamIdx := range a.SubtitleStreams {
+		vttPath := filepath.Join(a.SessionDir, fmt.Sprintf("sub%d.vtt", i))
+		args = append(args,
+			"-map", fmt.Sprintf("0:s:%d", streamIdx),
+			"-c:s", "webvtt",
+			vttPath,
+		)
+	}
+
 	return args
 }
 
@@ -531,14 +545,17 @@ func buildVideoFilter(a BuildArgs) string {
 			"format=yuv420p",
 		}, ",")
 		filters = append(filters, toneMap)
-	} else if a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC {
+	} else if a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware {
 		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
-		// ("10-bit input video is not supported"). The tonemap chain
-		// above ends in format=yuv420p and covers HDR sources; this
-		// branch handles the rare 10-bit SDR source (some anime,
-		// archival masters) and is a no-op on 8-bit input. HEVC
-		// variants of all three encoders accept 10-bit (Main10), so
-		// we don't strip for them.
+		// ("10-bit input video is not supported"). libx264 *accepts*
+		// 10-bit input but emits 10-bit High 10 profile H.264 — valid
+		// bitstream, but most browsers can't decode it (Chromium has
+		// no 10-bit H.264 decoder). The tonemap chain above ends in
+		// format=yuv420p and covers HDR sources; this branch handles
+		// the rare 10-bit SDR source (some anime, AV1 10-bit archival
+		// masters) and is a no-op on 8-bit input. HEVC variants of
+		// these encoders accept 10-bit (Main10), so we don't strip
+		// for them.
 		filters = append(filters, "format=yuv420p")
 	}
 
@@ -561,9 +578,19 @@ func buildVideoFilter(a BuildArgs) string {
 // quotes around the path let FFmpeg's filter parser handle paths
 // with colons + spaces; the backslash escape protects single quotes
 // inside the path itself.
+//
+// Windows paths (`C:\movies\...`) need an extra step: the filter parser
+// treats `:` as a key=value separator inside filter args (so `C:` is
+// otherwise parsed as a key), and backslashes are interpreted as escape
+// introducers and stripped. Convert backslashes to forward slashes
+// (ffmpeg accepts mixed separators on Windows) and escape every colon
+// in the path so the parser doesn't try to interpret `C` as a key whose
+// value is the rest of the path.
 func subtitleBurnFilter(input string, si int) string {
-	escaped := strings.ReplaceAll(input, `'`, `\'`)
-	return fmt.Sprintf("subtitles='%s':si=%d", escaped, si)
+	path := strings.ReplaceAll(input, `\`, `/`)
+	path = strings.ReplaceAll(path, `:`, `\:`)
+	path = strings.ReplaceAll(path, `'`, `\'`)
+	return fmt.Sprintf("subtitles='%s':si=%d", path, si)
 }
 
 // IsHEVCEncoder returns true if the encoder produces HEVC (H.265) output.

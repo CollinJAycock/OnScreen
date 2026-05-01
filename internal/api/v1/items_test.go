@@ -1,11 +1,14 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -518,6 +521,72 @@ func TestStreamFile_InactiveFile(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// TestStreamFile_Success_FullBody guards the direct-play happy path:
+// active file + an item the user can see → 200 with the file body.
+// Without this we only had the 404 negative tests; nothing exercised
+// the actual http.ServeFile call against a real file on disk.
+func TestStreamFile_Success_FullBody(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "movie.mp4")
+	body := []byte("fake-mp4-data\x00\x01\x02\x03\x04")
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "Test"},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	h.StreamFile(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Body.Bytes(); !bytes.Equal(got, body) {
+		t.Errorf("body: got %q, want %q", got, body)
+	}
+}
+
+// TestStreamFile_Range guards http.ServeFile's byte-range support — a
+// browser scrubbing a long video sends `Range: bytes=N-` repeatedly,
+// and a 200-not-206 reply tanks playback (forces full re-download).
+// Asserts both 206 + correct partial content + correct Content-Range
+// header for a tail-range request.
+func TestStreamFile_Range(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "movie.mp4")
+	body := bytes.Repeat([]byte("0123456789"), 100) // 1000 bytes
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "Test"},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req.Header.Set("Range", "bytes=100-199")
+	h.StreamFile(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status: got %d, want 206 PartialContent", rec.Code)
+	}
+	if got := rec.Body.Len(); got != 100 {
+		t.Errorf("body length: got %d, want 100", got)
+	}
+	if cr := rec.Header().Get("Content-Range"); cr != "bytes 100-199/1000" {
+		t.Errorf("Content-Range: got %q, want %q", cr, "bytes 100-199/1000")
+	}
+	if !bytes.Equal(rec.Body.Bytes(), body[100:200]) {
+		t.Errorf("body slice mismatch")
 	}
 }
 
