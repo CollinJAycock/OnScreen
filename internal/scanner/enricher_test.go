@@ -634,12 +634,45 @@ func TestEnrichItem_NoActiveFile_Error(t *testing.T) {
 	updater := newMockUpdater()
 	itemID := uuid.New()
 	updater.items[itemID] = &media.Item{ID: itemID, Type: "movie", Title: "Test"}
-	// No files for this item.
+	// No files for this item, no descendants either.
 	e := newTestEnricher(agent, updater, nil)
 
 	err := e.EnrichItem(context.Background(), itemID)
 	if err == nil {
 		t.Fatal("expected error when no active file exists")
+	}
+}
+
+// TestEnrichItem_Show_FallsThroughToDescendantFile guards the v2.1 fix
+// for the admin bulk re-enrich-unmatched path: shows have no direct
+// files (the files belong to descendant episodes), so EnrichItem must
+// walk parent_id → children to find one. Without this, the on-demand
+// admin Enrich and bulk re-enrich endpoints both fail with "no active
+// file for item X" the moment they're called on a show, even though
+// the show's episodes are perfectly scannable. Mirrors the existing
+// MatchItem behavior so Fix Match and bulk Re-enrich agree.
+func TestEnrichItem_Show_FallsThroughToDescendantFile(t *testing.T) {
+	agent := &mockAgent{
+		searchTVResult: &metadata.TVShowResult{Title: "My Hero Academia"},
+	}
+	updater := newMockUpdater()
+
+	showID := uuid.New()
+	seasonID := uuid.New()
+	episodeID := uuid.New()
+	updater.items[showID] = &media.Item{ID: showID, Type: "show", Title: "[ToonsHub] My Hero Academia"}
+	updater.items[seasonID] = &media.Item{ID: seasonID, Type: "season", Title: "Season 1", ParentID: &showID}
+	updater.items[episodeID] = &media.Item{ID: episodeID, Type: "episode", Title: "Episode 1", ParentID: &seasonID}
+	// Show + season have no direct files; episode does.
+	updater.children[showID] = []media.Item{*updater.items[seasonID]}
+	updater.children[seasonID] = []media.Item{*updater.items[episodeID]}
+	updater.files[episodeID] = []media.File{
+		{ID: uuid.New(), MediaItemID: episodeID, FilePath: "/tv/My Hero Academia/Season 01/S01E01.mkv", Status: "active"},
+	}
+	e := newTestEnricher(agent, updater, nil)
+
+	if err := e.EnrichItem(context.Background(), showID); err != nil {
+		t.Fatalf("EnrichItem on show with descendant-only files: %v", err)
 	}
 }
 
