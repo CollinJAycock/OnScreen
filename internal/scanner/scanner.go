@@ -73,6 +73,16 @@ var yearRE = regexp.MustCompile(`[\.\s][\(\[]?(\d{4})[\)\]]?`)
 // normalization agree on what counts as the canonical title.
 var bracketPrefixRE = regexp.MustCompile(`(?i)^\s*\[[^\]]+\]\s*`)
 
+// StripReleaseGroupPrefix removes a leading `[release-group]` token plus
+// surrounding whitespace from a title. Exported so the admin
+// "re-enrich-unmatched" tool can clean stored titles in bulk without
+// pulling in the full cleanTitle pipeline (which is filename-shaped
+// and applies year extraction). Called on already-stored titles where
+// year/quality tags have long since been stripped.
+func StripReleaseGroupPrefix(title string) string {
+	return bracketPrefixRE.ReplaceAllString(title, "")
+}
+
 // MetadataAgent is called for newly discovered files to fetch external metadata.
 type MetadataAgent interface {
 	Enrich(ctx context.Context, item *media.Item, file *media.File) error

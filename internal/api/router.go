@@ -50,6 +50,7 @@ type Handlers struct {
 	Search          *v1.SearchHandler
 	History         *v1.HistoryHandler
 	Items           *v1.ItemHandler
+	ItemsAdmin      *v1.ItemBulkAdminHandler // admin bulk re-enrich / cleanup
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
 	Trickplay       *v1.TrickplayHandler
@@ -493,6 +494,15 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/logs", h.Logs.List)
+				})
+			}
+
+			// Bulk item admin — recovery tools that operate across the
+			// library rather than on a single item. Admin only.
+			if h.ItemsAdmin != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Post("/admin/items/re-enrich-unmatched", h.ItemsAdmin.ReEnrichUnmatched)
 				})
 			}
 

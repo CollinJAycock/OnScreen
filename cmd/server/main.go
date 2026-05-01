@@ -860,6 +860,7 @@ func run() error {
 		Search:             searchHandler,
 		History:            historyHandler,
 		Items:              itemHandler,
+		ItemsAdmin:         v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		Photos:             photosHandler,
 		Books:              booksHandler,
 		Trickplay:          trickplayHandler,

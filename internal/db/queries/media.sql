@@ -433,6 +433,42 @@ RETURNING id, library_id, type, title, sort_title, original_title, year,
           parent_id, index, poster_path, fanart_path, thumb_path,
           originally_available_at, created_at, updated_at, deleted_at;
 
+-- name: ListUnmatchedTopLevelItems :many
+-- Top-level (parent_id IS NULL) movies + shows that have NO external IDs
+-- (tmdb_id / tvdb_id / imdb_id all NULL). Used by the admin "re-enrich
+-- unmatched" tool to recover items the scanner couldn't match — typically
+-- shows whose stored title still has a `[release-group]` prefix that
+-- poisoned the TMDB search query before the cleanTitle bracket-strip
+-- landed. Caller cleans the title via Go-side cleanTitle() and re-queues
+-- enrichment per item.
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE parent_id IS NULL
+  AND deleted_at IS NULL
+  AND type IN ('movie', 'show')
+  AND tmdb_id IS NULL
+  AND tvdb_id IS NULL
+  AND imdb_id IS NULL
+  AND (sqlc.narg('library_id')::uuid IS NULL OR library_id = sqlc.narg('library_id'))
+ORDER BY created_at ASC
+LIMIT sqlc.arg('result_limit')::int;
+
+-- name: UpdateMediaItemTitle :exec
+-- Narrow update used by the admin re-enrich-unmatched tool: rewrites only
+-- the title + sort_title without touching the metadata fields that
+-- UpdateMediaItemMetadata would overwrite. Lets the operator clean a
+-- bracket-prefixed title before the enricher runs, so even if TMDB still
+-- can't match the show, the title is at least readable.
+UPDATE media_items
+SET title      = $2,
+    sort_title = $3,
+    updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL;
+
 -- name: UpdateMediaItemMetadata :one
 UPDATE media_items
 SET title                   = $2,

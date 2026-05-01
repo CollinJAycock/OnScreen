@@ -3799,6 +3799,116 @@ func (q *Queries) ListTrending(ctx context.Context, arg ListTrendingParams) ([]L
 	return items, nil
 }
 
+const listUnmatchedTopLevelItems = `-- name: ListUnmatchedTopLevelItems :many
+SELECT id, library_id, type, title, sort_title, original_title, year,
+       summary, tagline, rating, audience_rating, content_rating, duration_ms,
+       genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       parent_id, index, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at
+FROM media_items
+WHERE parent_id IS NULL
+  AND deleted_at IS NULL
+  AND type IN ('movie', 'show')
+  AND tmdb_id IS NULL
+  AND tvdb_id IS NULL
+  AND imdb_id IS NULL
+  AND ($1::uuid IS NULL OR library_id = $1)
+ORDER BY created_at ASC
+LIMIT $2::int
+`
+
+type ListUnmatchedTopLevelItemsParams struct {
+	LibraryID   pgtype.UUID `json:"library_id"`
+	ResultLimit int32       `json:"result_limit"`
+}
+
+type ListUnmatchedTopLevelItemsRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Top-level (parent_id IS NULL) movies + shows that have NO external IDs
+// (tmdb_id / tvdb_id / imdb_id all NULL). Used by the admin "re-enrich
+// unmatched" tool to recover items the scanner couldn't match — typically
+// shows whose stored title still has a `[release-group]` prefix that
+// poisoned the TMDB search query before the cleanTitle bracket-strip
+// landed. Caller cleans the title via Go-side cleanTitle() and re-queues
+// enrichment per item.
+func (q *Queries) ListUnmatchedTopLevelItems(ctx context.Context, arg ListUnmatchedTopLevelItemsParams) ([]ListUnmatchedTopLevelItemsRow, error) {
+	rows, err := q.db.Query(ctx, listUnmatchedTopLevelItems, arg.LibraryID, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnmatchedTopLevelItemsRow{}
+	for rows.Next() {
+		var i ListUnmatchedTopLevelItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listYearsWithCounts = `-- name: ListYearsWithCounts :many
 SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items
@@ -4589,4 +4699,28 @@ func (q *Queries) UpdateMediaItemMetadata(ctx context.Context, arg UpdateMediaIt
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const updateMediaItemTitle = `-- name: UpdateMediaItemTitle :exec
+UPDATE media_items
+SET title      = $2,
+    sort_title = $3,
+    updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdateMediaItemTitleParams struct {
+	ID        uuid.UUID `json:"id"`
+	Title     string    `json:"title"`
+	SortTitle string    `json:"sort_title"`
+}
+
+// Narrow update used by the admin re-enrich-unmatched tool: rewrites only
+// the title + sort_title without touching the metadata fields that
+// UpdateMediaItemMetadata would overwrite. Lets the operator clean a
+// bracket-prefixed title before the enricher runs, so even if TMDB still
+// can't match the show, the title is at least readable.
+func (q *Queries) UpdateMediaItemTitle(ctx context.Context, arg UpdateMediaItemTitleParams) error {
+	_, err := q.db.Exec(ctx, updateMediaItemTitle, arg.ID, arg.Title, arg.SortTitle)
+	return err
 }
