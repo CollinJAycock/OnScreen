@@ -3567,7 +3567,8 @@ func (q *Queries) ListPrefixDuplicateTopLevelItems(ctx context.Context, arg List
 
 const listRecentlyAdded = `-- name: ListRecentlyAdded :many
 WITH episodes AS (
-    SELECT e.id, e.library_id, e.type, e.title, e.sort_title, e.original_title,
+    SELECT DISTINCT ON (grandparent.id)
+           e.id, e.library_id, e.type, e.title, e.sort_title, e.original_title,
            e.year, e.summary, e.tagline, e.rating, e.audience_rating,
            COALESCE(e.content_rating, grandparent.content_rating) AS content_rating,
            e.duration_ms, e.genres, e.tags,
@@ -3578,14 +3579,17 @@ WITH episodes AS (
            e.poster_path, e.fanart_path, e.thumb_path,
            e.originally_available_at, e.created_at, e.updated_at, e.deleted_at,
            COALESCE(grandparent.poster_path, parent.poster_path, e.poster_path,
-                    grandparent.thumb_path, parent.thumb_path, e.thumb_path) AS fallback_poster,
-           ROW_NUMBER() OVER (PARTITION BY grandparent.id ORDER BY e.created_at DESC) AS rn
+                    grandparent.thumb_path, parent.thumb_path, e.thumb_path) AS fallback_poster
     FROM media_items e
     JOIN media_items parent ON parent.id = e.parent_id AND parent.deleted_at IS NULL
     JOIN media_items grandparent ON grandparent.id = parent.parent_id
         AND grandparent.deleted_at IS NULL
         AND grandparent.type = 'show'
+        AND grandparent.poster_path IS NOT NULL
     WHERE e.type = 'episode' AND e.deleted_at IS NULL
+      AND ($1::uuid IS NULL OR e.library_id = $1)
+      AND ($2::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= $2)
+    ORDER BY grandparent.id, e.created_at DESC
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -3601,7 +3605,6 @@ FROM (
            originally_available_at, created_at, updated_at, deleted_at,
            fallback_poster
     FROM episodes
-    WHERE rn = 1
 
     UNION ALL
 
@@ -3614,17 +3617,10 @@ FROM (
     FROM media_items
     WHERE deleted_at IS NULL
       AND type IN ('movie', 'album', 'photo')
+      AND poster_path IS NOT NULL
+      AND ($1::uuid IS NULL OR library_id = $1)
+      AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
 ) combined
-WHERE ($1::uuid IS NULL OR library_id = $1)
-  AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
-  -- Posterless rows are always unenriched shows whose TMDB match never
-  -- happened (release-group bracket prefix in the title, too-cryptic
-  -- name, etc.) — surfacing them in Recently Added produces tiles with
-  -- no artwork. Filter them out at the query level so the row degrades
-  -- gracefully (one fewer tile) instead of rendering broken art. The
-  -- enrichment-side cleanTitle fix should let new scans match TMDB and
-  -- regain a poster_path; admin "Fix Match" recovers existing rows.
-  AND fallback_poster IS NOT NULL
 ORDER BY created_at DESC
 LIMIT $3
 `
@@ -3669,18 +3665,25 @@ type ListRecentlyAddedRow struct {
 
 // "Recently Added" hub row, one row per logical content event:
 //   - For TV libraries: the most-recently-added episode per show, deduped
-//     via window function on the show id (grandparent → season → episode).
-//     The "user added a new episode of an existing show" case now surfaces;
-//     pre-v2.1 the filter was `type='show'` so only brand-new shows showed
-//     up. fallback_poster mirrors ContinueWatching's chain (show → season
-//     → episode → thumb fallbacks) because episode poster_path is usually
-//     NULL while the show always has art from enrichment.
-//   - For movies / albums / photos: unchanged — one row per item ordered
-//     by created_at DESC.
+//     via DISTINCT ON the show id (grandparent → season → episode).
+//     fallback_poster comes from the show via the parent chain because
+//     episode poster_path is almost always NULL.
+//   - For movies / albums / photos: one row per item ordered by created_at.
 //
-// The library_id and max_rating_rank filters apply post-union so the
-// caller-side semantics stay identical (per-library and global views both
-// consume the same rows).
+// Performance notes:
+//   - library_id + max_rating_rank + poster filters are pushed into BOTH
+//     branches of the UNION so the planner uses idx_media_items_library
+//     (partial on deleted_at IS NULL) for per-library calls. Pre-v2.1 the
+//     filter was post-UNION and per-library calls paid the full global
+//     cost — observed at ~6s server-side on QA before this rewrite.
+//   - Episode dedup uses DISTINCT ON instead of ROW_NUMBER + WHERE rn=1;
+//     the planner can satisfy DISTINCT ON via index ordering (it can't
+//     prune ROW_NUMBER partitions until the window evaluates).
+//   - `grandparent.poster_path IS NOT NULL` is pushed into the JOIN: every
+//     episode row is filtered against an unenriched show right at the
+//     join, never appearing in the dedup pool. This both speeds up the
+//     query and replaces the post-UNION `fallback_poster IS NOT NULL`
+//     guard from the original v2.1 form.
 func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedParams) ([]ListRecentlyAddedRow, error) {
 	rows, err := q.db.Query(ctx, listRecentlyAdded, arg.LibraryID, arg.MaxRatingRank, arg.Limit)
 	if err != nil {
