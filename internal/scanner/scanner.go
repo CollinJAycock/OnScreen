@@ -62,6 +62,17 @@ var bookExtensions = map[string]bool{
 // brackets, or dots.
 var yearRE = regexp.MustCompile(`[\.\s][\(\[]?(\d{4})[\)\]]?`)
 
+// bracketPrefixRE matches a leading release-group prefix in square brackets
+// like `[ToonsHub] My Hero Academia`, `[QWERTY] 8 Out Of 10 Cats`, or
+// `[DKB] Sentai Daishikkaku`. The bracketed token is never part of the
+// actual show title, but it gets pulled into the parsed title from the
+// folder/filename and then poisons the TMDB search query (TMDB returns no
+// match because it's looking for the literal `[ToonsHub] My Hero Academia`).
+// Strip mirrors the existing pattern in `ListDuplicateTopLevelItems` /
+// `MergeTopLevelDuplicates` SQL so the enrichment search and the dedup
+// normalization agree on what counts as the canonical title.
+var bracketPrefixRE = regexp.MustCompile(`(?i)^\s*\[[^\]]+\]\s*`)
+
 // MetadataAgent is called for newly discovered files to fetch external metadata.
 type MetadataAgent interface {
 	Enrich(ctx context.Context, item *media.Item, file *media.File) error
@@ -900,6 +911,13 @@ func parseFilename(path string) (string, *int) {
 // underscore-separated, and mixed naming, and strips everything after the year
 // (resolution tags, source tags, group names, etc.).
 func cleanTitle(name string) (title string, year *int) {
+	// Strip a leading [release-group] prefix before any other normalization.
+	// "[ToonsHub] My Hero Academia" → "My Hero Academia". Done first so the
+	// bracket contents don't leak into the year regex or the search query
+	// passed to TMDB. Same regex shape the SQL dedup queries use, kept in
+	// sync so library scan-time matching and post-hoc dedup agree.
+	name = bracketPrefixRE.ReplaceAllString(name, "")
+
 	// Normalise all common separators to dots so the year regex and
 	// dot→space replacement work uniformly.
 	name = strings.ReplaceAll(name, "_", ".")

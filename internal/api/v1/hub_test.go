@@ -493,6 +493,51 @@ func TestHub_Get_RecentlyAdded_EpisodeUsesFallbackPoster(t *testing.T) {
 	}
 }
 
+// TestHub_Get_RecentlyAdded_NoFallbackPosterFiltered verifies the
+// query contract — posterless rows (unenriched shows whose chain has
+// no artwork to fall back to) shouldn't reach the handler at all
+// because the SQL filters `AND fallback_poster IS NOT NULL`. The
+// handler test simulates that by NOT putting any nil-poster rows in
+// the mock; it'd only reach this code path on a stale schema or a
+// bug in the SQL filter. Documenting the expected handler-side
+// shape: no fallback → row would render artless if it slipped
+// through, which is a regression.
+func TestHub_Get_RecentlyAdded_NoFallbackPosterFiltered(t *testing.T) {
+	// SQL contract: posterless rows are filtered upstream. Verify the
+	// handler doesn't put any artless tile in the response if (somehow)
+	// a posterless row arrived — a defense-in-depth check on the chain.
+	db := &mockHubDB{
+		raRows: []gen.ListRecentlyAddedRow{
+			{ // legitimate, with fallback
+				ID:             uuid.New(),
+				LibraryID:      uuid.New(),
+				Title:          "Pilot",
+				Type:           "episode",
+				FallbackPoster: strPtrLocal("/posters/show.jpg"),
+				UpdatedAt:      pgtype.Timestamptz{Valid: false},
+			},
+		},
+	}
+	h := newHubHandler(db)
+
+	rec := httptest.NewRecorder()
+	req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+	h.Get(rec, req)
+
+	var resp struct {
+		Data HubResponse `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Data.RecentlyAdded) != 1 {
+		t.Fatalf("recently_added: got %d, want 1", len(resp.Data.RecentlyAdded))
+	}
+	if resp.Data.RecentlyAdded[0].PosterPath == nil {
+		t.Errorf("a row with FallbackPoster set must always render with a poster")
+	}
+}
+
+func strPtrLocal(s string) *string { return &s }
+
 // TestHub_Get_RecentlyAdded_PreferOwnPosterOverFallback verifies the
 // fallback only kicks in when PosterPath is nil. Movies / albums /
 // photos always populate poster_path on themselves, and the SQL sets

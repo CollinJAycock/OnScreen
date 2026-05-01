@@ -102,6 +102,36 @@ func TestCleanTitle(t *testing.T) {
 			wantTitle: "It's A Wonderful Life",
 			wantYear:  intPtr(1946),
 		},
+		// QA bug 2026-05-01: shows with a [release-group] prefix never
+		// matched on TMDB because the bracket leaked into the search query.
+		// cleanTitle now strips the prefix so enrichment can find the show.
+		{
+			name:      "release-group bracket prefix",
+			input:     "[ToonsHub] My Hero Academia",
+			wantTitle: "My Hero Academia",
+			wantYear:  nil,
+		},
+		{
+			name:      "release-group bracket plus year",
+			input:     "[ToonsHub] Frieren Beyond Journeys End 2023",
+			wantTitle: "Frieren Beyond Journeys End",
+			wantYear:  intPtr(2023),
+		},
+		{
+			name:      "release-group bracket no inner space",
+			input:     "[DKB]Sentai Daishikkaku",
+			wantTitle: "Sentai Daishikkaku",
+			wantYear:  nil,
+		},
+		// Year inside brackets — not a release group, not stripped.
+		// "Hoppers [2026]" already covered above; this confirms the
+		// new strip is anchored to a leading [text] only.
+		{
+			name:      "embedded brackets stay (only leading stripped)",
+			input:     "Foo Bar [Director's Cut] 2015",
+			wantTitle: "Foo Bar [Director's Cut]",
+			wantYear:  intPtr(2015),
+		},
 	}
 
 	for _, tt := range tests {

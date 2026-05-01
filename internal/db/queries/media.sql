@@ -850,6 +850,14 @@ FROM (
 ) combined
 WHERE (sqlc.narg('library_id')::uuid IS NULL OR library_id = sqlc.narg('library_id'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  -- Posterless rows are always unenriched shows whose TMDB match never
+  -- happened (release-group bracket prefix in the title, too-cryptic
+  -- name, etc.) — surfacing them in Recently Added produces tiles with
+  -- no artwork. Filter them out at the query level so the row degrades
+  -- gracefully (one fewer tile) instead of rendering broken art. The
+  -- enrichment-side cleanTitle fix should let new scans match TMDB and
+  -- regain a poster_path; admin "Fix Match" recovers existing rows.
+  AND fallback_poster IS NOT NULL
 ORDER BY created_at DESC
 LIMIT sqlc.arg('limit');
 
