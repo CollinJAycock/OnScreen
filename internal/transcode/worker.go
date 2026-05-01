@@ -222,10 +222,23 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		if enc == "" {
 			enc = BestEncoder(w.encoders)
 		}
+		// AV1 takes priority over HEVC when requested — the natural
+		// trigger is "source is AV1, client supports AV1, we have an
+		// AV1 encoder," which means re-encoding to AV1 is the
+		// efficient choice (no AV1→HEVC waste). Fall back to HEVC,
+		// then H.264, when no AV1 encoder is active. The bitrate the
+		// API computed assumes HEVC; AV1 is roughly the same
+		// efficiency tier so we leave it as-is.
+		if job.PreferAV1 && !IsAV1Encoder(enc) {
+			if av1 := BestAV1Encoder(w.encoders); av1 != "" {
+				enc = av1
+			}
+		}
 		// Use HEVC output encoder when requested and available.
 		// If HEVC was requested but no HEVC encoder exists, restore the
 		// H.264-grade bitrate — the API already scaled it down for HEVC.
-		if job.PreferHEVC && !IsHEVCEncoder(enc) {
+		// Skip if AV1 already took the slot above.
+		if job.PreferHEVC && !IsHEVCEncoder(enc) && !IsAV1Encoder(enc) {
 			if hevc := BestHEVCEncoder(w.encoders); hevc != "" {
 				enc = hevc
 			} else if HEVCBitrateRatio > 0 {
@@ -242,6 +255,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"start_offset_sec", job.StartOffsetSec,
 			"tonemap", job.NeedsToneMap,
 			"prefer_hevc", job.PreferHEVC,
+			"prefer_av1", job.PreferAV1,
 			"tonemap_cuda", w.hasTonemapCuda,
 			"tonemap_opencl", w.hasTonemapOpenCL,
 			"zscale", w.hasZscale,
@@ -290,12 +304,15 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 
-	// Stamp the session with this worker's address and actual HEVC output status.
-	// The API sets HEVCOutput based on client preference, but the worker may fall
-	// back to H.264 if no HEVC encoder is active. Correct it here so the playlist
-	// handler looks for the right segment extension (.ts vs .m4s).
+	// Stamp the session with this worker's address and actual HEVC/AV1
+	// output status. The API sets HEVCOutput / AV1Output based on
+	// client preference, but the worker may have fallen back to a
+	// different family if the requested encoder wasn't active.
+	// Correct here so the playlist handler waits for the right segment
+	// extension (.ts vs .m4s) — both fMP4 codec families use .m4s.
 	actualHEVC := IsHEVCEncoder(actualEncoder)
-	if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr, actualHEVC); err != nil {
+	actualAV1 := IsAV1Encoder(actualEncoder)
+	if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr, actualHEVC, actualAV1); err != nil {
 		w.logger.Warn("set worker info on session", "session_id", job.SessionID, "err", err)
 	}
 

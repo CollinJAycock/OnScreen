@@ -29,6 +29,42 @@ func TestBestEncoder_AMF(t *testing.T) {
 	}
 }
 
+func TestBestAV1Encoder(t *testing.T) {
+	// Empty list / no AV1 encoder → empty string. Worker callers
+	// distinguish "no AV1 available" from "use this AV1 encoder" via
+	// the empty-string sentinel; a wrong default would silently pick
+	// the H.264 path.
+	if got := BestAV1Encoder(nil); got != "" {
+		t.Errorf("nil slice: want empty, got %s", got)
+	}
+	if got := BestAV1Encoder([]Encoder{EncoderNVENC, EncoderHEVCNVENC, EncoderSoftware}); got != "" {
+		t.Errorf("no AV1 in list: want empty, got %s", got)
+	}
+	// Priority order: caller's slice order wins (matches DetectEncoders'
+	// detection-order semantics, same as BestHEVCEncoder).
+	got := BestAV1Encoder([]Encoder{EncoderNVENC, EncoderAV1NVENC, EncoderAV1Software, EncoderSoftware})
+	if got != EncoderAV1NVENC {
+		t.Errorf("want EncoderAV1NVENC (first AV1 in list), got %s", got)
+	}
+	// Software-only AV1 in the list (the libsvtav1 test path) — picks it.
+	got = BestAV1Encoder([]Encoder{EncoderSoftware, EncoderHEVCSoftware, EncoderAV1Software})
+	if got != EncoderAV1Software {
+		t.Errorf("want EncoderAV1Software, got %s", got)
+	}
+}
+
+func TestHasAV1Encoder(t *testing.T) {
+	if HasAV1Encoder([]Encoder{EncoderNVENC, EncoderHEVCNVENC, EncoderSoftware}) {
+		t.Error("no AV1 in list: want false, got true")
+	}
+	if !HasAV1Encoder([]Encoder{EncoderSoftware, EncoderAV1Software}) {
+		t.Error("libsvtav1 in list: want true, got false")
+	}
+	if !HasAV1Encoder([]Encoder{EncoderAV1NVENC}) {
+		t.Error("av1_nvenc only: want true, got false")
+	}
+}
+
 func TestParseOverride(t *testing.T) {
 	tests := []struct {
 		override string

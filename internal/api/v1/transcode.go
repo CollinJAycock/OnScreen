@@ -103,6 +103,7 @@ type transcodeStartRequest struct {
 	VideoCopy        bool    `json:"video_copy"`         // true = copy video stream, only transcode audio
 	AudioStreamIndex *int    `json:"audio_stream_index"` // nil = default (first) audio stream
 	SupportsHEVC     bool    `json:"supports_hevc"`      // client can decode HEVC (H.265) output
+	SupportsAV1      bool    `json:"supports_av1"`       // client can decode AV1 output — used to auto-prefer AV1 re-encode for AV1 source files
 }
 
 type transcodeStartResponse struct {
@@ -297,10 +298,19 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
+	isSourceAV1 := file.VideoCodec != nil && strings.EqualFold(*file.VideoCodec, "av1")
 	isSourceHDR := file.HDRType != nil && *file.HDRType != ""
 
 	// Use HEVC output for 4K when client supports it — 40% bitrate savings.
 	preferHEVC := body.SupportsHEVC && height >= 2160 && !body.VideoCopy
+	// Auto-prefer AV1 output for AV1-source playback when the client supports it.
+	// Avoids the AV1 → H.264 round-trip we'd otherwise do (any non-Auto quality
+	// click on an AV1 source). The worker confirms an AV1 encoder is actually
+	// active before honoring this; if not, it falls back to HEVC then H.264.
+	// AV1 takes priority over HEVC at the worker — natural use case is "play
+	// the AV1 source," and re-encoding AV1 → HEVC throws away the format
+	// efficiency the source already paid for.
+	preferAV1 := body.SupportsAV1 && isSourceAV1 && !body.VideoCopy
 
 	// For remux, use the source file bitrate (video is copied unchanged).
 	// For full transcode, use the target bitrate from quality selection.
@@ -322,6 +332,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		SegToken:    segTok,
 		BitrateKbps: sessionBitrate,
 		HEVCOutput:  preferHEVC,
+		AV1Output:   preferAV1,
 	}
 	if h.audit != nil {
 		actor := claims.UserID
@@ -372,6 +383,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		IsHEVC:           isSourceHEVC,
 		NeedsToneMap:     isSourceHDR && !body.VideoCopy,
 		PreferHEVC:       preferHEVC,
+		PreferAV1:        preferAV1,
 		EnqueuedAt:       time.Now(),
 	}
 	h.logger.InfoContext(ctx, "transcode job created",
@@ -382,8 +394,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		"output_w", width, "output_h", height,
 		"bitrate_kbps", jobBitrate,
 		"prefer_hevc", preferHEVC,
+		"prefer_av1", preferAV1,
+		"source_codec", func() string {
+			if file.VideoCodec != nil {
+				return *file.VideoCodec
+			}
+			return ""
+		}(),
 		"needs_tonemap", job.NeedsToneMap,
 		"supports_hevc", body.SupportsHEVC,
+		"supports_av1", body.SupportsAV1,
 	)
 
 	workerAddr, err := h.sessions.DispatchJob(ctx, job)
@@ -569,12 +589,12 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Determine segment file shape from session metadata. HEVC output
-	// uses fMP4 (.m4s); MPEG-TS sessions use .ts. Both layouts are
-	// single-rendition muxed (audio + video in one segment file), so
-	// the only difference is the file extension.
+	// Determine segment file shape from session metadata. HEVC and AV1
+	// output use fMP4 (.m4s); MPEG-TS sessions use .ts. Both layouts
+	// are single-rendition muxed (audio + video in one segment file),
+	// so the only difference is the file extension.
 	seg1Name := "seg00001.ts"
-	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.HEVCOutput {
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && (sess.HEVCOutput || sess.AV1Output) {
 		seg1Name = "seg00001.m4s"
 	}
 

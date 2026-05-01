@@ -40,7 +40,8 @@ type Session struct {
 	ClientID       string    `json:"client_id,omitempty"`
 	SegToken       string    `json:"seg_token,omitempty"`
 	BitrateKbps    int       `json:"bitrate_kbps,omitempty"`
-	HEVCOutput     bool      `json:"hevc_output,omitempty"` // true = fMP4 segments (.m4s), false = MPEG-TS (.ts)
+	HEVCOutput     bool      `json:"hevc_output,omitempty"` // true = fMP4 segments (.m4s) with hvc1 codec
+	AV1Output      bool      `json:"av1_output,omitempty"`  // true = fMP4 segments (.m4s) with av01 codec; either fMP4 flag selects the .m4s wait path
 }
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.
@@ -248,7 +249,7 @@ func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uu
 // SetWorkerInfo stamps the session with the worker ID and address that claimed
 // the job. The API uses WorkerAddr to proxy segment requests to the correct
 // worker in multi-instance deployments.
-func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, workerAddr string, hevcOutput bool) error {
+func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, workerAddr string, hevcOutput, av1Output bool) error {
 	raw, err := s.v.Get(ctx, sessionKey(sessionID))
 	if err != nil {
 		return fmt.Errorf("get session for worker stamp: %w", err)
@@ -260,6 +261,7 @@ func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, w
 	sess.WorkerID = workerID
 	sess.WorkerAddr = workerAddr
 	sess.HEVCOutput = hevcOutput
+	sess.AV1Output = av1Output
 	b, err := json.Marshal(sess)
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
@@ -469,6 +471,7 @@ type TranscodeJob struct {
 	NeedsToneMap     bool      `json:"needs_tone_map"`
 	IsHEVC           bool      `json:"is_hevc"`
 	PreferHEVC       bool      `json:"prefer_hevc"` // request HEVC output (4K + client supports it)
+	PreferAV1        bool      `json:"prefer_av1"`  // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
 	SubtitleStreams  []int     `json:"subtitle_streams,omitempty"`
 	EnqueuedAt       time.Time `json:"enqueued_at"`
 }

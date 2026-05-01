@@ -1727,14 +1727,15 @@ export interface TranscodeSession {
 }
 
 export const transcodeApi = {
-  start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean, audioStreamIndex?: number, supportsHEVC?: boolean) =>
+  start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean, audioStreamIndex?: number, supportsHEVC?: boolean, supportsAV1?: boolean) =>
     api.post<TranscodeSession>(`/items/${itemId}/transcode`, {
       file_id: fileId,
       height,
       position_ms: positionMs,
       video_copy: videoCopy ?? false,
       audio_stream_index: audioStreamIndex ?? null,
-      supports_hevc: supportsHEVC ?? false
+      supports_hevc: supportsHEVC ?? false,
+      supports_av1: supportsAV1 ?? false
     }),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)

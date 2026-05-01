@@ -406,6 +406,16 @@
     clientSupportsHEVC = typeof MediaSource !== 'undefined' &&
       MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"');
   } catch { /* MSE unavailable */ }
+  // Detect AV1 playback support. The codec string `av01.0.05M.08` is
+  // Main profile, level 5, 8-bit — covers the common 1080p/4K SDR
+  // range. Reported to the server as `supports_av1` so the API can
+  // auto-prefer AV1 re-encode for AV1 source files (avoids the
+  // AV1 → H.264 round-trip on a forced-quality click).
+  let clientSupportsAV1 = false;
+  try {
+    clientSupportsAV1 = typeof MediaSource !== 'undefined' &&
+      MediaSource.isTypeSupported('video/mp4; codecs="av01.0.05M.08"');
+  } catch { /* MSE unavailable */ }
 
   // Video codecs browsers can decode natively.
   const browserVideoCodecs = new Set(['h264', 'vp8', 'vp9', 'av1']);
@@ -1234,7 +1244,7 @@
 
     try {
       const audioIdx = selectedAudioIndex >= 0 ? selectedAudioIndex : undefined;
-      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC);
+      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC, clientSupportsAV1);
       transcodeSessionId = sess.session_id;
       transcodeToken = sess.token;
       // The server may snap the start time back to the previous keyframe

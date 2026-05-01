@@ -232,6 +232,28 @@ func BestHEVCEncoder(encoders []Encoder) Encoder {
 	return ""
 }
 
+// HasAV1Encoder returns true if the encoder list contains an AV1-capable encoder.
+func HasAV1Encoder(encoders []Encoder) bool {
+	for _, e := range encoders {
+		if IsAV1Encoder(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// BestAV1Encoder returns the highest-priority AV1 encoder from the list,
+// or empty string if none available. Same priority-order semantics as
+// BestHEVCEncoder — first hit wins.
+func BestAV1Encoder(encoders []Encoder) Encoder {
+	for _, e := range encoders {
+		if IsAV1Encoder(e) {
+			return e
+		}
+	}
+	return ""
+}
+
 // detectGPUName tries to return a human-readable GPU name (e.g. "NVIDIA GeForce RTX 5080").
 // Falls back to a generic label based on the encoder type.
 func detectGPUName(ctx context.Context, enc Encoder) string {
