@@ -25,6 +25,15 @@ type ItemUpdater interface {
 	GetItem(ctx context.Context, id uuid.UUID) (*media.Item, error)
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error)
+	// GetItemByTMDBID + MergeIntoTopLevel power the merge-aware Fix Match
+	// path: when the chosen TMDB id is already attached to a different row
+	// in the same library, matchShow / matchMovie merges the current row
+	// into that survivor instead of trying to update its title (which
+	// would clash on the library_id+type+title+year unique constraint).
+	// Both methods return nil error when the lookup misses; merge is a
+	// no-op when loser == survivor.
+	GetItemByTMDBID(ctx context.Context, libraryID uuid.UUID, tmdbID int) (*media.Item, error)
+	MergeIntoTopLevel(ctx context.Context, loserID, survivorID uuid.UUID, itemType string) error
 }
 
 // ArtworkFetcher downloads artwork files and returns their relative paths.
@@ -1114,6 +1123,24 @@ func (e *Enricher) MatchItem(ctx context.Context, itemID uuid.UUID, tmdbID int) 
 // matchShow re-enriches a show using RefreshTV with a specific TMDB ID, then
 // cascades enrichment to all seasons and episodes.
 func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File, tmdbID int) error {
+	// Pre-flight: is another top-level row in the same library already
+	// attached to this TMDB id? If yes, this Fix Match call is really a
+	// merge — reparent the current row's children onto the survivor and
+	// soft-delete the current row, instead of trying to update the title
+	// to the canonical TMDB title (which would crash with the
+	// idx_media_items_library_type_title_year unique-constraint
+	// violation that the operator hit on QA).
+	if survivor, err := e.updater.GetItemByTMDBID(ctx, item.LibraryID, tmdbID); err == nil && survivor != nil && survivor.ID != item.ID {
+		e.logger.InfoContext(ctx, "fix match: merging into existing canonical row",
+			"loser_id", item.ID, "survivor_id", survivor.ID,
+			"loser_title", item.Title, "survivor_title", survivor.Title,
+			"tmdb_id", tmdbID)
+		if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+			return fmt.Errorf("merge into canonical row: %w", err)
+		}
+		return nil
+	}
+
 	result, err := agent.RefreshTV(ctx, tmdbID)
 	if err != nil {
 		return fmt.Errorf("refresh tv %d: %w", tmdbID, err)
@@ -1194,6 +1221,19 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 
 // matchMovie re-enriches a movie using RefreshMovie with a specific TMDB ID.
 func (e *Enricher) matchMovie(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File, tmdbID int) error {
+	// Pre-flight merge: same shape as matchShow, see comment there for
+	// the unique-constraint reasoning.
+	if survivor, err := e.updater.GetItemByTMDBID(ctx, item.LibraryID, tmdbID); err == nil && survivor != nil && survivor.ID != item.ID {
+		e.logger.InfoContext(ctx, "fix match: merging into existing canonical row",
+			"loser_id", item.ID, "survivor_id", survivor.ID,
+			"loser_title", item.Title, "survivor_title", survivor.Title,
+			"tmdb_id", tmdbID)
+		if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+			return fmt.Errorf("merge into canonical row: %w", err)
+		}
+		return nil
+	}
+
 	result, err := agent.RefreshMovie(ctx, tmdbID)
 	if err != nil {
 		return fmt.Errorf("refresh movie %d: %w", tmdbID, err)

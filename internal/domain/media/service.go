@@ -1196,6 +1196,35 @@ func (s *Service) DedupeTopLevelItems(ctx context.Context, itemType string, libr
 	return res, nil
 }
 
+// GetItemByTMDBID looks up a top-level item in the given library by its
+// TMDB id. Used by Fix Match's pre-flight check: if the chosen TMDB id is
+// already attached to a different row, Fix Match merges into that row
+// instead of trying to update the current row's title (which would clash
+// with the survivor's on the unique-title constraint).
+func (s *Service) GetItemByTMDBID(ctx context.Context, libraryID uuid.UUID, tmdbID int) (*Item, error) {
+	item, err := s.rw.GetMediaItemByTMDBID(ctx, libraryID, tmdbID)
+	if err != nil {
+		return nil, mapNotFound(err)
+	}
+	return &item, nil
+}
+
+// MergeIntoTopLevel merges a loser top-level item into a survivor in the
+// same library: reparents seasons/episodes (collisions merge recursively),
+// reparents files, soft-deletes the loser. Wraps the same applyDedupePairs
+// path that DedupeTopLevelItems uses, but for an explicit known pair
+// rather than a query-discovered one. Used by Fix Match when the chosen
+// TMDB id is already attached to a different row in the same library.
+// Safe to call when loser == survivor (no-op).
+func (s *Service) MergeIntoTopLevel(ctx context.Context, loserID, survivorID uuid.UUID, itemType string) error {
+	if loserID == survivorID {
+		return nil
+	}
+	pairs := []DuplicatePair{{LoserID: loserID, SurvivorID: survivorID}}
+	var res DedupeResult
+	return s.applyDedupePairs(ctx, pairs, itemType, &res)
+}
+
 // MergeCollabArtists finds collaboration-style artist rows ("Elton John &
 // Bonnie Raitt", "The Black Eyed Peas, CL") whose primary name already exists
 // as a standalone artist in the same library, and merges the collab row into

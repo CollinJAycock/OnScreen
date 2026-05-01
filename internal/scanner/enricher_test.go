@@ -67,13 +67,26 @@ type mockUpdater struct {
 	children    map[uuid.UUID][]media.Item // parentID -> children
 	files       map[uuid.UUID][]media.File
 	updateCalls []media.UpdateItemMetadataParams
+
+	// Pre-flight merge support for matchShow / matchMovie. Tests register
+	// "tmdb-id already attached" survivors here; the mock returns ErrNotFound
+	// otherwise.
+	itemByTMDB    map[int]*media.Item
+	mergeCalls    []mergeCall
+	mergeErr      error
+}
+
+type mergeCall struct {
+	LoserID, SurvivorID uuid.UUID
+	ItemType            string
 }
 
 func newMockUpdater() *mockUpdater {
 	return &mockUpdater{
-		items:    make(map[uuid.UUID]*media.Item),
-		children: make(map[uuid.UUID][]media.Item),
-		files:    make(map[uuid.UUID][]media.File),
+		items:      make(map[uuid.UUID]*media.Item),
+		children:   make(map[uuid.UUID][]media.Item),
+		files:      make(map[uuid.UUID][]media.File),
+		itemByTMDB: make(map[int]*media.Item),
 	}
 }
 
@@ -107,6 +120,21 @@ func (m *mockUpdater) GetFiles(_ context.Context, itemID uuid.UUID) ([]media.Fil
 
 func (m *mockUpdater) ListChildren(_ context.Context, parentID uuid.UUID) ([]media.Item, error) {
 	return m.children[parentID], nil
+}
+
+func (m *mockUpdater) GetItemByTMDBID(_ context.Context, _ uuid.UUID, tmdbID int) (*media.Item, error) {
+	if it, ok := m.itemByTMDB[tmdbID]; ok {
+		return it, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func (m *mockUpdater) MergeIntoTopLevel(_ context.Context, loserID, survivorID uuid.UUID, itemType string) error {
+	if m.mergeErr != nil {
+		return m.mergeErr
+	}
+	m.mergeCalls = append(m.mergeCalls, mergeCall{LoserID: loserID, SurvivorID: survivorID, ItemType: itemType})
+	return nil
 }
 
 type mockArtwork struct {
@@ -697,6 +725,119 @@ func TestEnrichItem_Success(t *testing.T) {
 	}
 	if len(updater.updateCalls) != 1 {
 		t.Errorf("expected 1 update call, got %d", len(updater.updateCalls))
+	}
+}
+
+// ── MatchItem (Fix Match) ────────────────────────────────────────────────────
+
+// TestMatchItem_Show_MergesWhenCanonicalAlreadyExists guards the v2.1
+// fix for the duplicate-key crash in Fix Match. When the operator
+// applies a TMDB id to a row that's already attached to a different
+// row in the same library, matchShow now merges the current row into
+// the survivor instead of attempting to update its title (which would
+// hit `idx_media_items_library_type_title_year` and abort enrichment).
+func TestMatchItem_Show_MergesWhenCanonicalAlreadyExists(t *testing.T) {
+	libraryID := uuid.New()
+	loserID := uuid.New()
+	survivorID := uuid.New()
+	updater := newMockUpdater()
+	updater.items[loserID] = &media.Item{
+		ID: loserID, LibraryID: libraryID, Type: "show", Title: "[ToonsHub] My Hero Academia",
+	}
+	updater.items[survivorID] = &media.Item{
+		ID: survivorID, LibraryID: libraryID, Type: "show", Title: "My Hero Academia",
+	}
+	// Episode under the loser provides the file MatchItem walks to.
+	episodeID := uuid.New()
+	parent := loserID
+	updater.items[episodeID] = &media.Item{ID: episodeID, Type: "episode", ParentID: &parent}
+	updater.children[loserID] = []media.Item{*updater.items[episodeID]}
+	updater.files[episodeID] = []media.File{
+		{ID: uuid.New(), MediaItemID: episodeID, FilePath: "/tv/MHA/S01E01.mkv", Status: "active"},
+	}
+	// Existing canonical row already attached to TMDB id 65930.
+	updater.itemByTMDB[65930] = updater.items[survivorID]
+
+	// Agent should NOT be called — the merge short-circuits before TMDB lookup.
+	agent := &mockAgent{}
+	e := newTestEnricher(agent, updater, nil)
+
+	if err := e.MatchItem(context.Background(), loserID, 65930); err != nil {
+		t.Fatalf("MatchItem: %v", err)
+	}
+	if len(updater.mergeCalls) != 1 {
+		t.Fatalf("merge calls: got %d, want 1", len(updater.mergeCalls))
+	}
+	mc := updater.mergeCalls[0]
+	if mc.LoserID != loserID || mc.SurvivorID != survivorID || mc.ItemType != "show" {
+		t.Errorf("merge call: got %+v, want loser=%s survivor=%s type=show", mc, loserID, survivorID)
+	}
+	// No metadata update should have happened — merge replaces the update path.
+	if len(updater.updateCalls) != 0 {
+		t.Errorf("update calls: got %d, want 0 (merge path skips metadata write)", len(updater.updateCalls))
+	}
+}
+
+// TestMatchItem_Show_NoCanonical_TakesUpdatePath confirms the standard
+// Fix Match path still runs when the chosen TMDB id isn't already
+// attached to another row.
+func TestMatchItem_Show_NoCanonical_TakesUpdatePath(t *testing.T) {
+	libraryID := uuid.New()
+	itemID := uuid.New()
+	updater := newMockUpdater()
+	updater.items[itemID] = &media.Item{ID: itemID, LibraryID: libraryID, Type: "show", Title: "Show A"}
+	episodeID := uuid.New()
+	parent := itemID
+	updater.items[episodeID] = &media.Item{ID: episodeID, Type: "episode", ParentID: &parent}
+	updater.children[itemID] = []media.Item{*updater.items[episodeID]}
+	updater.files[episodeID] = []media.File{
+		{ID: uuid.New(), MediaItemID: episodeID, FilePath: "/tv/Show A/S01E01.mkv", Status: "active"},
+	}
+	// itemByTMDB is empty — no survivor.
+	agent := &mockAgent{
+		searchTVResult: &metadata.TVShowResult{Title: "Show A Canonical"},
+	}
+	e := newTestEnricher(agent, updater, nil)
+
+	if err := e.MatchItem(context.Background(), itemID, 12345); err != nil {
+		t.Fatalf("MatchItem: %v", err)
+	}
+	if len(updater.mergeCalls) != 0 {
+		t.Errorf("merge calls: got %d, want 0 (no canonical row → standard update path)", len(updater.mergeCalls))
+	}
+	if len(updater.updateCalls) == 0 {
+		t.Errorf("expected update calls in the standard path")
+	}
+}
+
+// TestMatchItem_Show_SelfMatch_NoOp confirms the merge path is a no-op
+// when the TMDB id is already attached to the same row Fix Match is
+// being applied to (idempotent).
+func TestMatchItem_Show_SelfMatch_NoOp(t *testing.T) {
+	libraryID := uuid.New()
+	itemID := uuid.New()
+	updater := newMockUpdater()
+	updater.items[itemID] = &media.Item{ID: itemID, LibraryID: libraryID, Type: "show", Title: "Already Matched"}
+	episodeID := uuid.New()
+	parent := itemID
+	updater.items[episodeID] = &media.Item{ID: episodeID, Type: "episode", ParentID: &parent}
+	updater.children[itemID] = []media.Item{*updater.items[episodeID]}
+	updater.files[episodeID] = []media.File{
+		{ID: uuid.New(), MediaItemID: episodeID, FilePath: "/tv/x/S01E01.mkv", Status: "active"},
+	}
+	// Survivor *is* the same row.
+	updater.itemByTMDB[55555] = updater.items[itemID]
+
+	agent := &mockAgent{
+		searchTVResult: &metadata.TVShowResult{Title: "Already Matched"},
+	}
+	e := newTestEnricher(agent, updater, nil)
+
+	if err := e.MatchItem(context.Background(), itemID, 55555); err != nil {
+		t.Fatalf("MatchItem: %v", err)
+	}
+	if len(updater.mergeCalls) != 0 {
+		t.Errorf("merge calls: got %d, want 0 (self-match must not trigger merge)", len(updater.mergeCalls))
 	}
 }
 
