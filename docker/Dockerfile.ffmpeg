@@ -3,7 +3,7 @@
 #
 #   docker build -f docker/Dockerfile.ffmpeg -t onscreen-ffmpeg:latest .
 #
-FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS builder
+FROM nvidia/cuda:13.2.1-devel-ubuntu24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential nasm yasm pkg-config git wget \
@@ -50,7 +50,7 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
     make install
 
 # Runtime image with just the built binaries and libs
-FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
+FROM nvidia/cuda:13.2.1-runtime-ubuntu24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates tzdata wget \
