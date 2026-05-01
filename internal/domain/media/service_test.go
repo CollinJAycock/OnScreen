@@ -540,6 +540,50 @@ func TestGetFiles_ReturnsFiles(t *testing.T) {
 	}
 }
 
+// TestCreateOrUpdateFile_DeletedTombstone_StaysDeleted guards the QA-bug
+// fix: a user soft-deletes a TV show (typically because it's a duplicate
+// or bad-metadata match), the files stay on disk, the library scanner
+// runs again — and pre-fix, the soft-deleted item came back in Recently
+// Added under a new ID. Root cause: CreateOrUpdateFile treated
+// status='deleted' the same as status='missing' (both 'inactive'),
+// flipping the file row back to active and calling
+// RestoreMediaItemAncestry, which cleared deleted_at on the parent
+// show + season chain.
+//
+// Contract: status='deleted' is a sticky tombstone — distinct from
+// 'missing'. CreateOrUpdateFile must return the existing row unchanged.
+// The 'missing' → restore path (covered by
+// TestCreateOrUpdateFile_ExistingPath_MarksActive below) must keep
+// working — that's auto-recovery for transient file-system blips.
+func TestCreateOrUpdateFile_DeletedTombstone_StaysDeleted(t *testing.T) {
+	svc, q := newService(t)
+	itemID := uuid.New()
+	existingID := uuid.New()
+	existing := File{ID: existingID, MediaItemID: itemID, FilePath: "/a.mkv", Status: "deleted"}
+	q.files[itemID] = []File{existing}
+	q.fileByPath["/a.mkv"] = existing
+
+	hash := "abc123"
+	f, isNew, err := svc.CreateOrUpdateFile(context.Background(), CreateFileParams{
+		MediaItemID: itemID,
+		FilePath:    "/a.mkv",
+		FileHash:    &hash,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isNew {
+		t.Error("want isNew=false for tombstoned path")
+	}
+	if f.Status != "deleted" {
+		t.Errorf("tombstone must be sticky: want status=deleted, got %s", f.Status)
+	}
+	// Underlying row must not have been flipped active either.
+	if got := q.fileByPath["/a.mkv"].Status; got != "deleted" {
+		t.Errorf("file row in store: want status=deleted, got %s", got)
+	}
+}
+
 func TestCreateOrUpdateFile_ExistingPath_MarksActive(t *testing.T) {
 	svc, q := newService(t)
 	itemID := uuid.New()

@@ -604,6 +604,18 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 	// Check if path already known.
 	existing, err := s.rw.GetMediaFileByPath(ctx, p.FilePath)
 	if err == nil {
+		// Sticky tombstone: status='deleted' is a user-driven hard "no" on
+		// this file — distinct from 'missing', which is the auto-cleanup
+		// grace period that DOES auto-restore on rescan. Don't flip it
+		// active or restore the parent item's deleted_at; return the row
+		// untouched so the caller treats it as a no-op. The scanner has
+		// the same guard up front (so we never reach here for a file the
+		// scanner saw on disk), but a different caller — e.g. a future
+		// move-detection or hash-resync path — could still land here
+		// without that pre-check.
+		if existing.Status == "deleted" {
+			return &existing, false, nil
+		}
 		wasInactive := existing.Status != "active"
 		// Path known — mark active, update hash, and refresh probe metadata.
 		if err := s.rw.MarkMediaFileActive(ctx, existing.ID); err != nil {

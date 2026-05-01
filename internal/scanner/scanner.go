@@ -445,6 +445,23 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		s.logger.WarnContext(ctx, "hash failed, proceeding without", "path", path, "err", err)
 	}
 
+	// Sticky tombstone: if a file row already exists with status='deleted',
+	// the user explicitly deleted this content from the library (typically
+	// to remove a duplicate or a bad metadata match). Bail out — even
+	// though the file is still on disk, we don't auto-resurrect.
+	//
+	// Without this, the slow path below would call FindOrCreateHierarchyItem
+	// for the show/season/episode (or FindOrCreateItem for a flat library),
+	// the lookup queries filter `deleted_at IS NULL` so they MISS the
+	// soft-deleted row and CREATE a fresh duplicate item with the same
+	// title; then CreateOrUpdateFile reassigns the tombstoned file row to
+	// the new item. Net effect from the user's perspective: deleted shows
+	// reappear in Recently Added under a new ID. Recovery from a tombstone
+	// requires an explicit restore action, not just leaving the file on disk.
+	if existing, err := s.media.GetFileByPath(ctx, path); err == nil && existing.Status == "deleted" {
+		return nil, nil, false, nil
+	}
+
 	// Fast path: if the file is already known, the hash hasn't changed,
 	// and we already have probe metadata (duration_ms), skip ffprobe
 	// entirely — just mark the file active and return.
