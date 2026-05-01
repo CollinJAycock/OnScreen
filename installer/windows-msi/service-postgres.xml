@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <id>OnScreenPostgres</id>
+  <name>OnScreen — PostgreSQL</name>
+  <description>PostgreSQL database for the OnScreen media server (auto-managed; do not stop directly).</description>
+  <executable>{app}\pgsql\bin\postgres.exe</executable>
+  <arguments>-D "{userpf}\OnScreen\pgdata"</arguments>
+  <workingdirectory>{app}\pgsql\bin</workingdirectory>
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+  <logpath>{userpf}\OnScreen\logs</logpath>
+</service>

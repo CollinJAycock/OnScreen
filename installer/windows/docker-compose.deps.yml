@@ -1,0 +1,47 @@
+# OnScreen dependencies for a Windows test box.
+#
+# Runs Postgres (with pgvector for "because you watched X" /
+# embeddings) and Valkey (Redis-compatible session/cache layer).
+# OnScreen itself runs as a native Windows process via WinSW; only
+# the deps are containerised.
+#
+# Usage:
+#   docker compose -f docker-compose.deps.yml up -d
+#
+# DATABASE_URL and VALKEY_URL in .env should point at:
+#   postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable
+#   redis://localhost:6379
+
+name: onscreen-deps
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: onscreen
+      POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
+      POSTGRES_DB: onscreen
+    ports:
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:

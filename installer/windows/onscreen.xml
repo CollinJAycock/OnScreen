@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WinSW configuration for OnScreen.
+
+  WinSW (https://github.com/winsw/winsw) wraps server.exe so Windows can
+  manage it as a Service: start/stop/restart, auto-start on boot, log
+  rotation, graceful Ctrl+C on stop. The wrapper is the same .exe
+  binary renamed (or this XML is named to match the .exe stem).
+
+  After install-service.ps1 runs:
+    - Service name: OnScreen
+    - Display name: "OnScreen Media Server"
+    - Manage from `services.msc`, or `sc start/stop OnScreen`,
+      or `Restart-Service OnScreen` from PowerShell.
+
+  Logs live next to this file:
+    - logs\onscreen.out.log   stdout
+    - logs\onscreen.err.log   stderr
+    - logs\onscreen.wrapper.log  WinSW's own bookkeeping
+-->
+<service>
+  <id>OnScreen</id>
+  <name>OnScreen Media Server</name>
+  <description>OnScreen — open-source media server (Postgres-native). Auto-started on boot.</description>
+
+  <!-- The binary to wrap, relative to this XML file. -->
+  <executable>%BASE%\server.exe</executable>
+  <workingdirectory>%BASE%</workingdirectory>
+
+  <!-- Pull config from .env at install time so secrets aren't in the XML.
+       install-service.ps1 turns .env into env="" lines under <env/>. -->
+
+  <!-- Stop signal: WinSW sends Ctrl+C, the Go binary's signal handler
+       runs `pool.Close()` + `srv.Shutdown(ctx)` cleanly. -->
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="none"/>
+  <resetfailure>1 hour</resetfailure>
+
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <logpath>%BASE%\logs</logpath>
+
+  <!-- Prepend bundled ffmpeg dir to PATH so the server can find it
+       without the operator wiring TOOLS_PATH manually. install-service.ps1
+       overwrites this from .env if TOOLS_PATH is set there. -->
+  <env name="PATH" value="%BASE%\ffmpeg;%PATH%"/>
+</service>

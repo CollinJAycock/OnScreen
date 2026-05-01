@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <id>OnScreenRedis</id>
+  <name>OnScreen — Redis (Valkey-compatible)</name>
+  <description>Redis-compatible session/cache store for the OnScreen media server.</description>
+  <executable>{app}\redis\redis-server.exe</executable>
+  <arguments>"{app}\redis\redis.windows.conf" --port 6379 --bind 127.0.0.1 --protected-mode yes</arguments>
+  <workingdirectory>{app}\redis</workingdirectory>
+  <stoptimeout>10 sec</stoptimeout>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="15 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>2048</sizeThreshold>
+    <keepFiles>2</keepFiles>
+  </log>
+  <logpath>{userpf}\OnScreen\logs</logpath>
+</service>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <id>OnScreen</id>
+  <name>OnScreen Media Server</name>
+  <description>OnScreen — open-source media server. Listens on localhost:7070; depends on the bundled Postgres + Redis services.</description>
+  <executable>{app}\server.exe</executable>
+  <workingdirectory>{app}</workingdirectory>
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="none"/>
+  <resetfailure>1 hour</resetfailure>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <logpath>{userpf}\OnScreen\logs</logpath>
+  <!-- Wait for the deps to be up before we start. WinSW maps these to
+       Windows Service Control Manager dependencies, so SCM gates start
+       order automatically. -->
+  <depend>OnScreenPostgres</depend>
+  <depend>OnScreenRedis</depend>
+  <!-- Inject the .env contents at install time. The installer rewrites
+       these <env/> tags before registering the service. -->
+  <env name="PATH" value="{app}\ffmpeg;%PATH%"/>
+</service>
