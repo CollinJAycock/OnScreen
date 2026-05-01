@@ -3626,7 +3626,7 @@ FROM (
            poster_path AS fallback_poster
     FROM media_items
     WHERE deleted_at IS NULL
-      AND type IN ('movie', 'album', 'photo')
+      AND type IN ('movie', 'album', 'photo', 'audiobook')
       AND poster_path IS NOT NULL
       AND ($1::uuid IS NULL OR library_id = $1)
       AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)

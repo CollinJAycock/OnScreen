@@ -1,7 +1,9 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,16 @@ import (
 
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
+
+// audiobookArtFilenames lists on-disk cover candidates checked in the
+// audiobook's directory. Same shape as albumArtFilenames; "cover.jpg"
+// is the standard for Audible/Plex/Jellyfin libraries, "folder.jpg" is
+// the Windows convention.
+var audiobookArtFilenames = []string{
+	"cover.jpg", "cover.jpeg", "cover.png",
+	"folder.jpg", "folder.jpeg", "folder.png",
+	"poster.jpg", "poster.jpeg", "poster.png",
+}
 
 // processAudiobook ingests one audio file from an audiobook library.
 //
@@ -92,7 +104,12 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 		if tagTitle != "" {
 			title = tagTitle
 		}
-		return s.findOrCreateAudiobookRow(ctx, libraryID, "audiobook", title, author, bookParent)
+		book, err := s.findOrCreateAudiobookRow(ctx, libraryID, "audiobook", title, author, bookParent)
+		if err != nil {
+			return nil, err
+		}
+		s.extractAudiobookArt(ctx, book, authorRow, path, roots)
+		return book, nil
 	}
 
 	// Multi-file: ensure the book row exists (one per <Book>
@@ -101,6 +118,7 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 	if err != nil {
 		return nil, err
 	}
+	s.extractAudiobookArt(ctx, book, authorRow, path, roots)
 
 	chapterTitle := tagTitle
 	if chapterTitle == "" {
@@ -114,6 +132,122 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 		SortTitle: sortTitle(chapterTitle),
 		ParentID:  &book.ID,
 	})
+}
+
+// extractAudiobookArt writes the audiobook's cover to {book.id}-poster.jpg
+// in the book directory and updates book.poster_path. Source order:
+// on-disk cover files first (cover.jpg / folder.jpg / poster.jpg in the
+// book dir or its parent for single-file-with-author layouts), then the
+// audio file's embedded picture tag. When the author row has no
+// poster_path yet, it inherits the same path so the author tile shows
+// the first scanned book's cover until something better lands (currently
+// nothing — there's no audiobook-side equivalent of TheAudioDB).
+//
+// Idempotent: if the {id}-poster.jpg already exists on disk, we just
+// ensure the DB pointers are correct without re-extracting. Re-scans
+// of the same library are cheap.
+//
+// Mirrors extractAlbumArt in shape; kept separate because the parent
+// chain differs (audiobook → book_author, vs album → artist) and
+// because the candidate filename list is narrower for books (no
+// "front.jpg" / "album.jpg" — those only appear in music libraries).
+func (s *Scanner) extractAudiobookArt(ctx context.Context, book *media.Item, author *media.Item, filePath string, roots []string) string {
+	if book == nil {
+		return ""
+	}
+	bookDir := filepath.Dir(filePath)
+
+	// Look in the book's own directory first; if nothing there and the
+	// layout is "single-file at <Author>/<file>", the cover may be in
+	// the author dir alongside other books. We don't walk further up.
+	artData, ok := findArtOnDisk(bookDir, audiobookArtFilenames)
+	if !ok {
+		// Embedded picture tag from the audio file itself.
+		if data, err := readEmbeddedArtwork(filePath); err == nil && len(data) > 0 {
+			artData = data
+		}
+	}
+	if len(artData) == 0 {
+		return ""
+	}
+
+	posterFile := filepath.Join(bookDir, book.ID.String()+"-poster.jpg")
+
+	relPath := ""
+	for _, root := range roots {
+		if rel, err := filepath.Rel(root, posterFile); err == nil && !strings.HasPrefix(rel, "..") {
+			relPath = filepath.ToSlash(rel)
+			break
+		}
+	}
+	if relPath == "" {
+		relPath = filepath.ToSlash(filepath.Join(filepath.Base(bookDir), book.ID.String()+"-poster.jpg"))
+	}
+
+	// Idempotent re-scan: if the ID-qualified poster already exists,
+	// only sync the DB pointers (book + author).
+	if _, err := os.Stat(posterFile); err == nil {
+		s.syncAudiobookPosterPaths(ctx, book, author, relPath)
+		return relPath
+	}
+
+	// Re-encode through stdlib JPEG when possible for consistent quality;
+	// fall through to raw bytes when the source isn't a decodable image
+	// the stdlib supports (some m4b embeds are JPEG-2000 etc).
+	var outData []byte
+	if img, imgErr := decodeImageBytes(artData); imgErr == nil {
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err == nil {
+			outData = buf.Bytes()
+		}
+	}
+	if outData == nil {
+		outData = artData
+	}
+
+	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+		s.logger.WarnContext(ctx, "failed to write audiobook art",
+			"book_id", book.ID, "err", err)
+		return ""
+	}
+
+	s.syncAudiobookPosterPaths(ctx, book, author, relPath)
+	return relPath
+}
+
+// syncAudiobookPosterPaths sets book.poster_path to relPath, and
+// cascades the same path to the author row when the author has no
+// poster yet. Skips the author update when the author already has a
+// poster — first-book-wins keeps later scans from churning the
+// author tile every time another book is added.
+func (s *Scanner) syncAudiobookPosterPaths(ctx context.Context, book *media.Item, author *media.Item, relPath string) {
+	if book.PosterPath == nil || *book.PosterPath != relPath {
+		if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+			ID:        book.ID,
+			Title:     book.Title,
+			SortTitle: book.SortTitle,
+			Year:      book.Year,
+			PosterPath: &relPath,
+		}); err != nil {
+			s.logger.WarnContext(ctx, "failed to update audiobook poster_path",
+				"book_id", book.ID, "err", err)
+		} else {
+			book.PosterPath = &relPath
+		}
+	}
+	if author != nil && (author.PosterPath == nil || *author.PosterPath == "") {
+		if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+			ID:        author.ID,
+			Title:     author.Title,
+			SortTitle: author.SortTitle,
+			PosterPath: &relPath,
+		}); err != nil {
+			s.logger.WarnContext(ctx, "failed to update author poster_path",
+				"author_id", author.ID, "err", err)
+		} else {
+			author.PosterPath = &relPath
+		}
+	}
 }
 
 // findOrCreateAuthor looks up (or creates) the book_author row for an

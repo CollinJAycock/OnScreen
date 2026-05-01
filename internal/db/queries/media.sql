@@ -920,7 +920,7 @@ FROM (
            poster_path AS fallback_poster
     FROM media_items
     WHERE deleted_at IS NULL
-      AND type IN ('movie', 'album', 'photo')
+      AND type IN ('movie', 'album', 'photo', 'audiobook')
       AND poster_path IS NOT NULL
       AND (sqlc.narg('library_id')::uuid IS NULL OR library_id = sqlc.narg('library_id'))
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
