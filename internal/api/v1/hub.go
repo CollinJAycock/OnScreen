@@ -366,7 +366,8 @@ func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed fun
 			continue
 		}
 		switch lib.Type {
-		case "movie", "show", "music", "photo", "audiobook":
+		case "movie", "show", "music", "photo", "audiobook",
+			"podcast", "home_video", "book", "dvr":
 		default:
 			continue
 		}

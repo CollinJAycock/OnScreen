@@ -3626,7 +3626,21 @@ FROM (
            poster_path AS fallback_poster
     FROM media_items
     WHERE deleted_at IS NULL
-      AND type IN ('movie', 'album', 'photo', 'audiobook')
+      -- Top-level "thing was added" event types per library:
+      --   movie       — movie + DVR captures (one-off recordings)
+      --   episode     — handled separately by the show_recency / episodes
+      --                 CTE branch for proper grandparent dedup; not here
+      --   album       — music libraries, one tile per album added
+      --   photo       — photo libraries, one tile per photo
+      --   audiobook   — one tile per book added
+      --   podcast     — podcast libraries surface the show (one tile per
+      --                 new podcast); per-episode dedup-by-podcast is a
+      --                 v2.2 follow-up that needs the same shape as TV
+      --                 (see ListRecentlyAdded comment block above)
+      --   home_video  — flat clips, one tile per file
+      --   book        — CBZ books, one tile per file
+      AND type IN ('movie', 'album', 'photo', 'audiobook',
+                   'podcast', 'home_video', 'book')
       AND poster_path IS NOT NULL
       AND ($1::uuid IS NULL OR library_id = $1)
       AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)

@@ -587,7 +587,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// file = one row, page count probed via archive/zip and
 		// stashed on duration_ms ("duration" for a book = pages).
 		var bkErr error
-		item, bkErr = s.processBook(ctx, libraryID, path)
+		item, bkErr = s.processBook(ctx, libraryID, path, roots)
 		if bkErr != nil {
 			return nil, nil, false, fmt.Errorf("book for %s: %w", path, bkErr)
 		}

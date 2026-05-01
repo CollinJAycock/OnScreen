@@ -394,23 +394,31 @@ func TestHub_Get_PerLibraryRecentlyAdded(t *testing.T) {
 	moviesID := uuid.New()
 	musicID := uuid.New()
 	dvrID := uuid.New()
+	unsupportedID := uuid.New()
 	earlier := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mid := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	later := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 
 	db := &perLibHubDB{
 		byLib: map[uuid.UUID][]gen.ListRecentlyAddedRow{
 			moviesID: {{ID: uuid.New(), LibraryID: moviesID, Title: "The Matrix", Type: "movie"}},
 			musicID:  {{ID: uuid.New(), LibraryID: musicID, Title: "Dark Side of the Moon", Type: "album"}},
-			// DVR rows are returned by the DB but the handler must skip
-			// the library entirely because type='dvr' has no visible
-			// recently-added items.
+			// DVR captures land as `movie` / `episode` items in a library
+			// of type='dvr'. Pre-v2.1 the handler skipped the dvr library
+			// type entirely; post-v2.1 it's in the allowlist so DVR
+			// recordings surface in the home hub like any other library.
 			dvrID: {{ID: uuid.New(), LibraryID: dvrID, Title: "Nightly News", Type: "movie"}},
+			// Unrecognised library types still skip — defensive guard so
+			// a future scaffolded library type doesn't accidentally start
+			// rendering until it has a corresponding hub row shape.
+			unsupportedID: {{ID: uuid.New(), LibraryID: unsupportedID, Title: "x", Type: "x"}},
 		},
 	}
 	libs := &stubHubLibLister{libs: []library.Library{
 		{ID: musicID, Name: "Music", Type: "music", CreatedAt: later},
 		{ID: moviesID, Name: "Movies", Type: "movie", CreatedAt: earlier},
-		{ID: dvrID, Name: "Recordings", Type: "dvr", CreatedAt: earlier},
+		{ID: dvrID, Name: "Recordings", Type: "dvr", CreatedAt: mid},
+		{ID: unsupportedID, Name: "Future", Type: "future_thing", CreatedAt: earlier},
 	}}
 	h := NewHubHandler(db, slog.Default()).WithLibraries(libs)
 
@@ -426,21 +434,21 @@ func TestHub_Get_PerLibraryRecentlyAdded(t *testing.T) {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 
-	if len(resp.Data.ByLibrary) != 2 {
-		t.Fatalf("by_library rows: got %d, want 2 (dvr must be skipped)", len(resp.Data.ByLibrary))
+	if len(resp.Data.ByLibrary) != 3 {
+		t.Fatalf("by_library rows: got %d, want 3 (movies + dvr + music; future_thing skipped)", len(resp.Data.ByLibrary))
 	}
-	// Stable order = library creation time ascending: Movies before Music.
-	if resp.Data.ByLibrary[0].LibraryName != "Movies" {
-		t.Errorf("row[0]: got %q, want Movies", resp.Data.ByLibrary[0].LibraryName)
+	// Stable order = library creation time ascending.
+	wantNames := []string{"Movies", "Recordings", "Music"}
+	for i, want := range wantNames {
+		if resp.Data.ByLibrary[i].LibraryName != want {
+			t.Errorf("row[%d]: got %q, want %q", i, resp.Data.ByLibrary[i].LibraryName, want)
+		}
 	}
-	if resp.Data.ByLibrary[1].LibraryName != "Music" {
-		t.Errorf("row[1]: got %q, want Music", resp.Data.ByLibrary[1].LibraryName)
-	}
-	if resp.Data.ByLibrary[0].Items[0].Title != "The Matrix" {
-		t.Errorf("movies item: got %q", resp.Data.ByLibrary[0].Items[0].Title)
-	}
-	if resp.Data.ByLibrary[1].Items[0].Title != "Dark Side of the Moon" {
-		t.Errorf("music item: got %q", resp.Data.ByLibrary[1].Items[0].Title)
+	// "Future" library never enters the response.
+	for _, row := range resp.Data.ByLibrary {
+		if row.LibraryName == "Future" {
+			t.Errorf("future_thing library type must be skipped, got row: %+v", row)
+		}
 	}
 }
 
