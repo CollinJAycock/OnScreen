@@ -488,9 +488,15 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// entirely — just mark the file active and return.
 	// We still load the parent item to check whether it needs enrichment
 	// (e.g. a file scanned before the TMDB key was configured).
-	// Photos and music skip the fast path: photos need per-file items,
-	// music needs album art and track duration propagated to items.
-	if hash != nil && libraryType != "photo" && libraryType != "music" {
+	// Photos, music, audiobook, book skip the fast path: photos need
+	// per-file items, music needs album art + track duration propagated,
+	// audiobook + book need cover extraction (the {id}-poster.jpg lookup
+	// is idempotent so a re-scan of an unchanged file still self-heals
+	// missing poster_path; without this carve-out, every audiobook
+	// scanned before extractAudiobookArt landed would stay artless
+	// forever because the fast path skipped processAudiobook).
+	if hash != nil && libraryType != "photo" && libraryType != "music" &&
+		libraryType != "audiobook" && libraryType != "book" {
 		if existing, err := s.media.GetFileByPath(ctx, path); err == nil &&
 			existing.FileHash != nil && *existing.FileHash == *hash &&
 			(existing.DurationMS != nil || isImageFile(path)) &&
