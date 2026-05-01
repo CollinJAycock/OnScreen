@@ -470,6 +470,7 @@ type TranscodeJob struct {
 	AudioStreamIndex int       `json:"audio_stream_index"` // -1 = default
 	NeedsToneMap     bool      `json:"needs_tone_map"`
 	IsHEVC           bool      `json:"is_hevc"`
+	IsAV1            bool      `json:"is_av1"` // source is AV1; remux must use fMP4 (mpegts has no AV1 stream type)
 	PreferHEVC       bool      `json:"prefer_hevc"` // request HEVC output (4K + client supports it)
 	PreferAV1        bool      `json:"prefer_av1"`  // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
 	SubtitleStreams  []int     `json:"subtitle_streams,omitempty"`

@@ -267,6 +267,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			Encoder:          enc,
 			IsVAAPI:          enc == EncoderVAAPI || enc == EncoderHEVCVAAPI,
 			IsHEVC:           job.IsHEVC,
+			IsAV1:            job.IsAV1,
 			Width:            job.Width,
 			Height:           job.Height,
 			BitrateKbps:      bitrate,
@@ -312,6 +313,13 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// extension (.ts vs .m4s) — both fMP4 codec families use .m4s.
 	actualHEVC := IsHEVCEncoder(actualEncoder)
 	actualAV1 := IsAV1Encoder(actualEncoder)
+	// AV1 source remux (`-c:v copy` of an AV1 stream) also lands in
+	// fMP4 segments — mpegts has no AV1 stream type, so BuildHLS
+	// switches the container regardless of the encoder string. Mark
+	// the session so the playlist handler waits for seg00001.m4s.
+	if string(actualEncoder) == "copy" && job.IsAV1 {
+		actualAV1 = true
+	}
 	if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr, actualHEVC, actualAV1); err != nil {
 		w.logger.Warn("set worker info on session", "session_id", job.SessionID, "err", err)
 	}

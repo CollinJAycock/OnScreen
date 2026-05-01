@@ -381,6 +381,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		AudioChannels:    2,
 		AudioStreamIndex: audioStreamIdx,
 		IsHEVC:           isSourceHEVC,
+		IsAV1:            isSourceAV1,
 		NeedsToneMap:     isSourceHDR && !body.VideoCopy,
 		PreferHEVC:       preferHEVC,
 		PreferAV1:        preferAV1,

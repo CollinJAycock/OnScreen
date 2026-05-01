@@ -77,6 +77,11 @@ type BuildArgs struct {
 	OpenCLDevice string
 	IsVAAPI          bool // VAAPI needs hwupload filter
 	IsHEVC           bool // source is HEVC (informational, NVDEC auto-selects decoder)
+	// IsAV1 marks an AV1 source. Required so video_copy remux switches
+	// the HLS container to fMP4 + av01 tag — mpegts has no AV1 stream
+	// type, so an `-c:v copy` into mpegts segments crashes the muxer
+	// (Could not find tag for codec av1 in stream #0).
+	IsAV1            bool
 
 	// Audio (ADR-018)
 	AudioCodec       string // "copy" | "aac"
@@ -142,19 +147,7 @@ func BuildHLS(a BuildArgs) []string {
 	}
 
 	isNVENC := !videoCopy && (a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC)
-
-	// Tonemap strategy for NVENC with HDR content:
-	//   1. tonemap_cuda  — all-GPU pipeline, fastest (not in mainline FFmpeg)
-	//   2. tonemap_opencl — CUDA decode → OpenCL tonemap → NVENC, 2 PCIe round-trips
-	//   3. zscale         — full software decode + CPU tonemap, slowest
-	//   4. skip           — no tonemapping, washed-out output but plays
-	useOpenCLTonemap := isNVENC && a.NeedsToneMap && !a.HasTonemapCuda && a.HasTonemapOpenCL
-
-	// Use CUDA hwaccel when:
-	//   - NVENC is selected AND
-	//   - either no tonemapping is needed, or we have tonemap_cuda, or we have tonemap_opencl
-	// Without any GPU-capable tonemap, fall back to software decode + zscale.
-	useCudaHwaccel := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda && !a.HasTonemapOpenCL)
+	_ = isNVENC // retained for tonemap-gate / filter-graph branches below
 
 	if !videoCopy {
 		// VAAPI init filter (must come before input for hardware decode).
@@ -162,51 +155,25 @@ func BuildHLS(a BuildArgs) []string {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		// NVENC: full GPU pipeline — CUDA hardware decode (NVDEC) + GPU filters
-		// + NVENC encode. Frames never leave the GPU.
+		// NVENC: software decode + NVENC encode. Setting `-hwaccel cuda
+		// -hwaccel_output_format cuda` here is the textbook Jellyfin /
+		// nvidia-recommended pattern, but on mainline ffmpeg 8.x +
+		// recent NVIDIA drivers it's fragile across source files —
+		// we hit "[hevc] No decoder surfaces left" on x265 BDRip
+		// sources and h264_nvenc -22 EINVAL on the cuda-frame chain
+		// for 10-bit HEVC sources. Both manifest as a 70 s playlist-
+		// endpoint stall (deadline-wait for seg 0 that never comes,
+		// because ffmpeg crashed at filter init).
 		//
-		// Key flags from Jellyfin's proven NVENC pipeline:
-		//   -hwaccel_flags +unsafe_output  — skips internal frame copies that
-		//     can deadlock on HEVC+PGS with certain driver versions
-		//   -threads 1  — prevents multi-threaded decode contention with the GPU
-		//   -hwaccel_output_format cuda  — keeps decoded frames in CUDA memory
-		//     so scale_cuda / tonemap_cuda can process them without CPU roundtrip
-		//
-		if useCudaHwaccel {
-			args = append(args,
-				"-hwaccel", "cuda",
-				"-hwaccel_output_format", "cuda",
-				"-hwaccel_flags", "+unsafe_output",
-				"-threads", "1",
-			)
-		}
-
-		// OpenCL tonemap: initialize the OpenCL device so hwupload/
-		// tonemap_opencl can use it. Must come before -i.
-		//
-		// Platform.device index comes from a startup probe (see
-		// DetectOpenCLDevice) that picks the platform whose name
-		// matches the active encoder's vendor. Falls back to 0.0
-		// when the probe was inconclusive — works on most single-
-		// vendor boxes but breaks on dual-GPU machines where the
-		// "wrong" vendor sits at index 0. Bare `opencl=ocl` triggers
-		// the auto-picker which fails (-19) on any host with more
-		// than one OpenCL platform.
-		//
-		// `opencl@cu=...` (deriving OpenCL from CUDA) was tried first
-		// but the Windows ffmpeg builds we ship don't compile in the
-		// CUDA-OpenCL interop path — surface error is "Function not
-		// implemented" (-40).
-		if useOpenCLTonemap {
-			device := a.OpenCLDevice
-			if device == "" {
-				device = "0.0"
-			}
-			args = append(args,
-				"-init_hw_device", "opencl=ocl:"+device,
-				"-filter_hw_device", "ocl",
-			)
-		}
+		// jellyfin-ffmpeg patches around these driver quirks; mainline
+		// + Gyan.dev does not. Until we ship a Jellyfin-fork ffmpeg in
+		// our installer, software input decode is the only way to make
+		// NVENC reliable across every source / driver / mainline build.
+		// Software HEVC decode runs at 17× real-time on 1080p sources
+		// and 3-4× on 4K on the CPUs that ship with NVENC-capable
+		// boxes — plenty of headroom for live transcoding. NVENC encode
+		// itself is unaffected (it gets nv12 frames over PCIe instead
+		// of straight from VRAM; trivial copy on modern PCIe-4/5).
 
 		// AMF: software decode + AMF encode. Setting `-hwaccel d3d11va`
 		// here looked like a free win but it picks the *first* D3D11
@@ -399,10 +366,14 @@ func BuildHLS(a BuildArgs) []string {
 	// ── HLS output ───────────────────────────────────────────────────────────
 	// HEVC and AV1 output require fMP4 segments — HLS.js's MPEG-TS
 	// transmuxer doesn't support either codec. fMP4 segments are passed
-	// directly to MSE without transmuxing.
+	// directly to MSE without transmuxing. AV1 also has no MPEG-TS
+	// stream type at all, so `-c:v copy` of an AV1 source into mpegts
+	// segments crashes the muxer ("Could not find tag for codec av1");
+	// AV1 source remux must therefore also route through fMP4.
 	isHEVCOutput := IsHEVCEncoder(a.Encoder) && !videoCopy
 	isAV1Output := IsAV1Encoder(a.Encoder) && !videoCopy
-	needsFMP4 := isHEVCOutput || isAV1Output
+	isAV1Remux := videoCopy && a.IsAV1
+	needsFMP4 := isHEVCOutput || isAV1Output || isAV1Remux
 	segExt := ".ts"
 	segType := "mpegts"
 	if needsFMP4 {
@@ -427,7 +398,7 @@ func BuildHLS(a BuildArgs) []string {
 	switch {
 	case isHEVCOutput:
 		args = append(args, "-tag:v", "hvc1")
-	case isAV1Output:
+	case isAV1Output, isAV1Remux:
 		args = append(args, "-tag:v", "av01")
 	}
 
@@ -514,53 +485,17 @@ func buildVideoFilter(a BuildArgs) string {
 		filters = append(filters, "format=nv12", "hwupload")
 	}
 
-	// ── NVENC: full GPU filter pipeline ─────────────────────────────────────
-	// With -hwaccel cuda -hwaccel_output_format cuda, decoded frames are already
-	// in CUDA memory. All filters operate in VRAM — no CPU roundtrip.
-	//
-	// Priority for HDR tonemapping on NVENC:
-	//   1. tonemap_cuda  — all-CUDA, fastest (jellyfin-ffmpeg fork only)
-	//   2. tonemap_opencl — CUDA decode, OpenCL tonemap, NVENC encode
-	//   3. zscale         — software decode + CPU tonemap (handled below)
-	useCudaPipeline := isNVENC && !(a.NeedsToneMap && !a.HasTonemapCuda && !a.HasTonemapOpenCL)
-	useOpenCLTonemap := isNVENC && a.NeedsToneMap && !a.HasTonemapCuda && a.HasTonemapOpenCL
+	// NVENC falls through to the software-scale + zscale-tonemap path
+	// below alongside AMF/QSV. The previous all-CUDA pipeline
+	// (-hwaccel cuda → scale_cuda → tonemap_opencl → hevc_nvenc) was
+	// fragile on mainline ffmpeg 8.x + recent NVIDIA drivers — see
+	// the BuildArgs comment for the full failure-mode rundown.
+	// Uniform software-decode pipeline trades a small efficiency hit
+	// (NVDEC was decoding 10× cheaper than libhevc on 4K) for
+	// reliability across every source file, ffmpeg version, and
+	// driver release the project sees.
 
-	if isNVENC && useCudaPipeline {
-		if a.NeedsToneMap && !useOpenCLTonemap {
-			// tonemap_cuda: all-CUDA pipeline, frames never leave VRAM.
-			filters = append(filters, "tonemap_cuda=tonemap=hable:desat=0:peak=100:format=nv12")
-		}
-
-		if useOpenCLTonemap {
-			// tonemap_opencl: CUDA decode → scale in CUDA → download → OpenCL tonemap → download.
-			// NVENC accepts CPU-side NV12 frames (implicit upload).
-			scaleFilter := "scale_cuda=format=p010"
-			if a.Width > 0 && a.Height > 0 {
-				scaleFilter = fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=p010", a.Width, a.Height)
-			}
-			filters = append(filters,
-				scaleFilter,
-				"hwdownload",
-				"format=p010",
-				"hwupload",
-				"tonemap_opencl=tonemap=hable:desat=0:peak=100:format=nv12:primaries=bt709:transfer=bt709:matrix=bt709",
-				"hwdownload",
-				"format=nv12",
-			)
-			return strings.Join(filters, ",")
-		}
-
-		// GPU-side scaling + 10-bit → 8-bit via format=nv12.
-		if a.Width > 0 && a.Height > 0 {
-			filters = append(filters, fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
-		} else if !a.NeedsToneMap {
-			// No scale + no tonemap: still need format conversion for 10-bit sources.
-			filters = append(filters, "scale_cuda=format=nv12")
-		}
-		return strings.Join(filters, ",")
-	}
-
-	// ── Non-NVENC paths ─────────────────────────────────────────────────────
+	// ── Software / vendor-encoder paths (NVENC + AMF + QSV + libx264) ──────
 	// Scale to target resolution, maintaining aspect ratio.
 	if a.Width > 0 && a.Height > 0 {
 		switch {
@@ -584,7 +519,7 @@ func buildVideoFilter(a BuildArgs) string {
 	// anyway, and an HDR-to-SDR transcode is the rarer case.
 	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF
 	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
-	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || isAMF || isQSV || (isNVENC && !a.HasTonemapCuda && !a.HasTonemapOpenCL))
+	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || isAMF || isQSV || isNVENC)
 	if needsSoftwareTonemap {
 		// zscale-based tonemapping (libzimg required in FFmpeg build).
 		toneMap := strings.Join([]string{
@@ -596,14 +531,14 @@ func buildVideoFilter(a BuildArgs) string {
 			"format=yuv420p",
 		}, ",")
 		filters = append(filters, toneMap)
-	} else if a.Encoder == EncoderAMF || a.Encoder == EncoderQSV {
-		// h264_amf and h264_qsv both reject 10-bit input ("10-bit
-		// input video is not supported"). The tonemap chain above
-		// ends in format=yuv420p and covers HDR sources; this branch
-		// handles the rare 10-bit SDR source (some anime, archival
-		// masters) and is a no-op on 8-bit input. HEVC variants of
-		// both encoders accept 10-bit (Main10), so we don't strip
-		// for them.
+	} else if a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC {
+		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
+		// ("10-bit input video is not supported"). The tonemap chain
+		// above ends in format=yuv420p and covers HDR sources; this
+		// branch handles the rare 10-bit SDR source (some anime,
+		// archival masters) and is a no-op on 8-bit input. HEVC
+		// variants of all three encoders accept 10-bit (Main10), so
+		// we don't strip for them.
 		filters = append(filters, "format=yuv420p")
 	}
 
