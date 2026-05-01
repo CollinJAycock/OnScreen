@@ -98,7 +98,20 @@ WITH normalized AS (
                        -- accidentally merge two real shows).
                        unaccent(replace(replace(
                          regexp_replace(
-                           coalesce(NULLIF(original_title, ''), title),
+                           -- Use `title` as the dedup source rather than
+                           -- preferring original_title. TMDB-enriched
+                           -- rows often have an original_title in the
+                           -- production language (e.g. Japanese for an
+                           -- anime, German for a foreign film); after
+                           -- the `[^a-zA-Z0-9]+` strip below that becomes
+                           -- the empty string, the row is excluded by
+                           -- `WHERE norm <> ''`, and a duplicate row
+                           -- whose title was scanned in English never
+                           -- gets folded into the canonical row. title
+                           -- is NOT NULL in the schema and is the
+                           -- user-facing English label across both rows
+                           -- so dedup keys converge correctly.
+                           title,
                            '^\s*\[[^\]]+\]\s*', '', 'i'
                          ),
                          '&amp;', '&'), '''', '')
@@ -171,7 +184,11 @@ WITH normalized AS (
                        -- accidentally merge two real shows).
                        unaccent(replace(replace(
                          regexp_replace(
-                           coalesce(NULLIF(original_title, ''), title),
+                           -- See ListDuplicateTopLevelItems for why this is
+                           -- `title` and not `coalesce(original_title, title)`:
+                           -- CJK / non-Latin original titles strip to empty
+                           -- and exclude their row from dedup entirely.
+                           title,
                            '^\s*\[[^\]]+\]\s*', '', 'i'
                          ),
                          '&amp;', '&'), '''', '')
