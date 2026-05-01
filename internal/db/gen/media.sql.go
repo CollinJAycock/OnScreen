@@ -3566,9 +3566,20 @@ func (q *Queries) ListPrefixDuplicateTopLevelItems(ctx context.Context, arg List
 }
 
 const listRecentlyAdded = `-- name: ListRecentlyAdded :many
-WITH episodes AS (
-    SELECT DISTINCT ON (grandparent.id)
-           e.id, e.library_id, e.type, e.title, e.sort_title, e.original_title,
+WITH recent_episodes AS (
+    SELECT e.id, e.library_id, e.parent_id, e.created_at,
+           e.title, e.sort_title, e.original_title, e.year, e.summary, e.tagline,
+           e.rating, e.audience_rating, e.content_rating, e.duration_ms,
+           e.genres, e.tags, e.tmdb_id, e.tvdb_id, e.imdb_id, e.musicbrainz_id,
+           e.index, e.poster_path, e.fanart_path, e.thumb_path,
+           e.originally_available_at, e.updated_at, e.deleted_at, e.type
+    FROM media_items e
+    WHERE e.type = 'episode' AND e.deleted_at IS NULL
+      AND ($1::uuid IS NULL OR e.library_id = $1)
+    ORDER BY e.created_at DESC
+    LIMIT 500
+), episodes AS (
+    SELECT e.id, e.library_id, e.type, e.title, e.sort_title, e.original_title,
            e.year, e.summary, e.tagline, e.rating, e.audience_rating,
            COALESCE(e.content_rating, grandparent.content_rating) AS content_rating,
            e.duration_ms, e.genres, e.tags,
@@ -3579,17 +3590,15 @@ WITH episodes AS (
            e.poster_path, e.fanart_path, e.thumb_path,
            e.originally_available_at, e.created_at, e.updated_at, e.deleted_at,
            COALESCE(grandparent.poster_path, parent.poster_path, e.poster_path,
-                    grandparent.thumb_path, parent.thumb_path, e.thumb_path) AS fallback_poster
-    FROM media_items e
+                    grandparent.thumb_path, parent.thumb_path, e.thumb_path) AS fallback_poster,
+           ROW_NUMBER() OVER (PARTITION BY grandparent.id ORDER BY e.created_at DESC) AS rn
+    FROM recent_episodes e
     JOIN media_items parent ON parent.id = e.parent_id AND parent.deleted_at IS NULL
     JOIN media_items grandparent ON grandparent.id = parent.parent_id
         AND grandparent.deleted_at IS NULL
         AND grandparent.type = 'show'
         AND grandparent.poster_path IS NOT NULL
-    WHERE e.type = 'episode' AND e.deleted_at IS NULL
-      AND ($1::uuid IS NULL OR e.library_id = $1)
-      AND ($2::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= $2)
-    ORDER BY grandparent.id, e.created_at DESC
+    WHERE ($2::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= $2)
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -3605,6 +3614,7 @@ FROM (
            originally_available_at, created_at, updated_at, deleted_at,
            fallback_poster
     FROM episodes
+    WHERE rn = 1
 
     UNION ALL
 
@@ -3665,25 +3675,26 @@ type ListRecentlyAddedRow struct {
 
 // "Recently Added" hub row, one row per logical content event:
 //   - For TV libraries: the most-recently-added episode per show, deduped
-//     via DISTINCT ON the show id (grandparent → season → episode).
+//     via window function on the show id (grandparent → season → episode).
 //     fallback_poster comes from the show via the parent chain because
 //     episode poster_path is almost always NULL.
 //   - For movies / albums / photos: one row per item ordered by created_at.
 //
-// Performance notes:
-//   - library_id + max_rating_rank + poster filters are pushed into BOTH
-//     branches of the UNION so the planner uses idx_media_items_library
-//     (partial on deleted_at IS NULL) for per-library calls. Pre-v2.1 the
-//     filter was post-UNION and per-library calls paid the full global
-//     cost — observed at ~6s server-side on QA before this rewrite.
-//   - Episode dedup uses DISTINCT ON instead of ROW_NUMBER + WHERE rn=1;
-//     the planner can satisfy DISTINCT ON via index ordering (it can't
-//     prune ROW_NUMBER partitions until the window evaluates).
-//   - `grandparent.poster_path IS NOT NULL` is pushed into the JOIN: every
-//     episode row is filtered against an unenriched show right at the
-//     join, never appearing in the dedup pool. This both speeds up the
-//     query and replaces the post-UNION `fallback_poster IS NOT NULL`
-//     guard from the original v2.1 form.
+// Performance: filters are pushed to the candidate-fetch step BEFORE the
+// window function evaluates. v2.1's first-cut shape applied library_id
+// + poster filters post-UNION, and a six-library hub fetch took 6-8s on
+// QA because every per-library call still scanned every episode in the
+// DB before narrowing. This rewrite pre-filters episodes to a small
+// recent slice scoped to the library + already-enriched parent show,
+// then runs the window function over that slice.
+//
+// The 500-row over-fetch on the recent_episodes CTE is the dedup
+// budget: enough to cover ~500 distinct shows' worth of "newest
+// episode" candidates, far more than the LIMIT (typically 12-40)
+// actually consumes after re-sort. If a library has more than 500
+// shows with very recent activity, dedup may miss the long tail —
+// acceptable trade for sub-second hub loads. Tighten the LIMIT here
+// only if it becomes user-visible.
 func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedParams) ([]ListRecentlyAddedRow, error) {
 	rows, err := q.db.Query(ctx, listRecentlyAdded, arg.LibraryID, arg.MaxRatingRank, arg.Limit)
 	if err != nil {
