@@ -839,43 +839,60 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY hub_recently_added;
 
 -- name: ListRecentlyAdded :many
 -- "Recently Added" hub row, one row per logical content event:
---   - For TV libraries: one tile per show, ordered by the most-recently-
---     added episode's created_at. The tile renders as the show (poster +
---     show title); the row's `created_at` is the latest episode's
---     timestamp so a show that just received a new episode bubbles to
---     the top. New episodes for already-known shows surface alongside
---     brand-new shows.
---   - For movies / albums / photos: one row per item ordered by
---     created_at (unchanged from pre-v2.1).
+--   - For TV libraries: the most-recently-added episode per show, deduped
+--     via window function on the show id (grandparent → season → episode).
+--     fallback_poster comes from the show via the parent chain because
+--     episode poster_path is almost always NULL.
+--   - For movies / albums / photos: one row per item ordered by created_at.
 --
--- Performance: the show-anchored query (per-show MAX(episode.created_at)
--- via GROUP BY) is dramatically cheaper than the episode-anchored
--- alternative (window function over a 500-row episode pre-filter, joined
--- to grandparent). The TV branch only iterates shows-in-scope (~hundreds
--- per library), aggregating their episodes via the existing partial
--- parent_id index. Pre-v2.1 the row was just `type = 'show'` ordered by
--- show.created_at; we keep that shape and swap the sort key to the
--- max-episode timestamp so "new content for an existing show" surfaces.
-WITH show_recency AS (
-    SELECT show.id, show.library_id, show.type, show.title, show.sort_title,
-           show.original_title, show.year, show.summary, show.tagline,
-           show.rating, show.audience_rating, show.content_rating, show.duration_ms,
-           show.genres, show.tags, show.tmdb_id, show.tvdb_id, show.imdb_id,
-           show.musicbrainz_id, show.parent_id, show.index, show.poster_path,
-           show.fanart_path, show.thumb_path, show.originally_available_at,
-           show.updated_at, show.deleted_at,
-           show.poster_path AS fallback_poster,
-           COALESCE(MAX(episode.created_at), show.created_at) AS recent_at
-    FROM media_items show
-    LEFT JOIN media_items season ON season.parent_id = show.id
-        AND season.type = 'season' AND season.deleted_at IS NULL
-    LEFT JOIN media_items episode ON episode.parent_id = season.id
-        AND episode.type = 'episode' AND episode.deleted_at IS NULL
-    WHERE show.type = 'show' AND show.deleted_at IS NULL
-      AND show.poster_path IS NOT NULL
-      AND (sqlc.narg('library_id')::uuid IS NULL OR show.library_id = sqlc.narg('library_id'))
-      AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(show.content_rating) <= sqlc.narg('max_rating_rank'))
-    GROUP BY show.id
+-- Performance: filters are pushed to the candidate-fetch step BEFORE the
+-- window function evaluates. v2.1's first-cut shape applied library_id
+-- + poster filters post-UNION, and a six-library hub fetch took 6-8s on
+-- QA because every per-library call still scanned every episode in the
+-- DB before narrowing. This rewrite pre-filters episodes to a small
+-- recent slice scoped to the library + already-enriched parent show,
+-- then runs the window function over that slice.
+--
+-- The 500-row over-fetch on the recent_episodes CTE is the dedup
+-- budget: enough to cover ~500 distinct shows' worth of "newest
+-- episode" candidates, far more than the LIMIT (typically 12-40)
+-- actually consumes after re-sort. If a library has more than 500
+-- shows with very recent activity, dedup may miss the long tail —
+-- acceptable trade for sub-second hub loads. Tighten the LIMIT here
+-- only if it becomes user-visible.
+WITH recent_episodes AS (
+    SELECT e.id, e.library_id, e.parent_id, e.created_at,
+           e.title, e.sort_title, e.original_title, e.year, e.summary, e.tagline,
+           e.rating, e.audience_rating, e.content_rating, e.duration_ms,
+           e.genres, e.tags, e.tmdb_id, e.tvdb_id, e.imdb_id, e.musicbrainz_id,
+           e.index, e.poster_path, e.fanart_path, e.thumb_path,
+           e.originally_available_at, e.updated_at, e.deleted_at, e.type
+    FROM media_items e
+    WHERE e.type = 'episode' AND e.deleted_at IS NULL
+      AND (sqlc.narg('library_id')::uuid IS NULL OR e.library_id = sqlc.narg('library_id'))
+    ORDER BY e.created_at DESC
+    LIMIT 500
+), episodes AS (
+    SELECT e.id, e.library_id, e.type, e.title, e.sort_title, e.original_title,
+           e.year, e.summary, e.tagline, e.rating, e.audience_rating,
+           COALESCE(e.content_rating, grandparent.content_rating) AS content_rating,
+           e.duration_ms, e.genres, e.tags,
+           COALESCE(e.tmdb_id, grandparent.tmdb_id) AS tmdb_id,
+           COALESCE(e.tvdb_id, grandparent.tvdb_id) AS tvdb_id,
+           COALESCE(e.imdb_id, grandparent.imdb_id) AS imdb_id,
+           e.musicbrainz_id, e.parent_id, e.index,
+           e.poster_path, e.fanart_path, e.thumb_path,
+           e.originally_available_at, e.created_at, e.updated_at, e.deleted_at,
+           COALESCE(grandparent.poster_path, parent.poster_path, e.poster_path,
+                    grandparent.thumb_path, parent.thumb_path, e.thumb_path) AS fallback_poster,
+           ROW_NUMBER() OVER (PARTITION BY grandparent.id ORDER BY e.created_at DESC) AS rn
+    FROM recent_episodes e
+    JOIN media_items parent ON parent.id = e.parent_id AND parent.deleted_at IS NULL
+    JOIN media_items grandparent ON grandparent.id = parent.parent_id
+        AND grandparent.deleted_at IS NULL
+        AND grandparent.type = 'show'
+        AND grandparent.poster_path IS NOT NULL
+    WHERE (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= sqlc.narg('max_rating_rank'))
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -888,9 +905,10 @@ FROM (
            summary, tagline, rating, audience_rating, content_rating, duration_ms,
            genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
            parent_id, index, poster_path, fanart_path, thumb_path,
-           originally_available_at, recent_at AS created_at, updated_at, deleted_at,
+           originally_available_at, created_at, updated_at, deleted_at,
            fallback_poster
-    FROM show_recency
+    FROM episodes
+    WHERE rn = 1
 
     UNION ALL
 
