@@ -485,7 +485,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Author + series detail pages     | ✅ | ❌ | ❓ | ❓ | Bulk-shared with the webOS /item/{id} detail page (Tizen is a port from webOS); same client-side sort for the author bucket |
 | Direct play                      | ✅ | ✅ | ✅ | ⚠️ | AVPlay JS API HW path |
 | HLS transcode negotiation        | ✅ | ✅ | ✅ | ⚠️ | AVPlay HLS + HTML5 `<video>` fallback |
-| HW HEVC / AV1 decode             | ✅ | ✅ | ✅ | ⚠️ | Firmware decoders via AVPlay |
+| HW HEVC / AV1 decode             | ✅ | ✅ | ✅ | ⚠️ | Firmware decoders via AVPlay. NVDEC HEVC + AV1 validated 2026-04-30 on RTX 5080 (Goodfellas 4K HDR HEVC + Chainsaw Man 4K AV1 anamorphic) end-to-end through the transcode pipeline. AMD VCN (iGPU) decode not yet exercised — software AV1 decode worked on the AMF path. |
 | Per-file 24h stream token        | ✅ | ❌ | ❌ | ❌ | |
 | Audio track picker (HLS re-issue)| ✅ | ✅ | ✅ | ⚠️ | Yellow remote key; AVPlay + HTML5 fallback both rebuild the player on a fresh transcode session at the current position |
 | Subtitle picker                  | ✅ | ✅ | ✅ | ⚠️ | Blue remote key; AVPlay path uses `webapis.avplay.setSelectTrack('TEXT', i)`, dev fallback uses `video.textTracks` |
@@ -599,17 +599,28 @@ The web client is the universal fallback — runs in any modern browser with no 
 - **Env-var config (12-factor) + hot reload via SIGHUP**: fits container orchestrators; competitors ship XML/JSON config files.
 - **Secret encryption at rest** for webhooks and plugin credentials (AES-256-GCM).
 - **NFO + Cover Art Archive fallback chain**: NFO overrides TMDB on the final write; CAA fills MusicBrainz-keyed album art that TheAudioDB doesn't have. Plex doesn't do CAA at all.
+- **Native bit-perfect audio engine** (Windows): WASAPI exclusive (raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE`, OS mixer bypassed) + DSD-via-DoP + ReplayGain enforcement + symphonia-backed FLAC/ALAC/WAV/AIFF with SEEKTABLE-driven mid-track scrub. Plex/Emby/Jellyfin don't ship a bit-perfect path on any OS — audiophile users layer Roon/Audirvana on top. macOS HOG + Linux ALSA `hw:` are roadmap'd to mirror this; Windows is shipped today.
 
 ## Where OnScreen Trails (as of 2026-04-30)
 
-- **EPUB / CBR books** — CBZ scan + reader shipped in v2.1 Stage 1, but the other two formats still need their parsers and explicitly slipped to Stage 2.
-- **No Tidal / Qobuz integration** for music streaming.
-- **NVENC (HEVC + AV1) validated** on Windows dev box (RTX 5080, 2026-04-30) for code paths *and* in production on Linux via the TrueNAS Docker deploy (RTX 5000) for OS+containerization shape. **AMF (H.264 + HEVC) validated** 2026-04-30 on Ryzen 9900X iGPU (HDR HEVC source → zscale tonemap → AMF encode). **QSV (H.264 + HEVC) validated** 2026-04-30 on Raptor Lake-HX UHD Graphics (i9-13900HX iGPU) end-to-end via the OnScreen worker — 4K AV1 SDR → 1080p H.264 and 4K HEVC HDR10 → zscale tonemap → 4K hevc_qsv (fMP4, hvc1 tag) and 1080p h264_qsv all sourced through the worker's emitted ffmpeg argv. **VAAPI (Linux Intel/AMD)** still pending hardware tests.
-- **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
-- **macOS / Linux exclusive output is deferred** — Windows ships bit-perfect WASAPI exclusive (raw `wasapi` IAudioClient in `AUDCLNT_SHAREMODE_EXCLUSIVE`, plus shared-mode `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` for non-mix rates). macOS HOG mode + Linux ALSA `hw:` not yet wired — both ~250 LOC mirroring `windows_exclusive.rs` when those platforms land in user-testing scope.
-- **TV / mobile coverage is uneven** — OnScreen has a Tauri 2 desktop client (Windows/macOS/Linux), a hardware-verified Android TV / Fire TV client (Leanback + Media3 ExoPlayer), a feature-complete LG webOS app (SvelteKit + ares-package), a Roku app at full flow parity (BrightScript + SceneGraph, including transcode negotiation), a Samsung Tizen app at flow parity (SvelteKit + AVPlay), and an Android phone app at full feature parity (Compose + Material 3, scaffold in `clients/android_native/`, including background audio + cross-device resume + PiP + photo viewer + offline downloads + OpenSubtitles search). webOS, Roku, Tizen, and the Android phone app still need real-hardware validation. iOS and Apple TV apps don't exist. The web frontend works in those browsers as a fallback.
-- **Picture-in-picture server signal** — handler/store has no PiP-mode flag yet.
-- **Picture-in-picture in the desktop shell** — Tauri 2 webview doesn't expose `requestPictureInPicture` on Windows. Lands when the upstream PR or a workaround lands.
+Each entry names the specific competitor we're behind. "We don't have feature X but neither does anyone else" isn't a trail — those moved to Non-Differentiators.
+
+- **iOS + Apple TV apps** *(vs Plex, Emby, Jellyfin — all three ship native apps)*. We don't yet. Closes the "every couch-platform" parity story, but blocked on a Swift skill ramp + App Store review the project hasn't budgeted.
+- **Tidal / Qobuz integration** *(vs Plex Pass — Plex is the only one of the four that has this)*. Track C of the v2.1 roadmap; sized XL (OAuth bind, library import, streaming passthrough, ReplayGain alignment with the local FLAC pipeline, licensing legwork). Re-scope decision still pending.
+- **ML-driven recommendations** *(vs Plex + Emby — both ship "Because you watched X"-style rows; Jellyfin doesn't)*. The v2.1 pgvector embedding pipeline never landed; a watch-cooccurrence implementation was built and pulled because the home-hub row didn't earn its space. Trending + smart playlists shipped (Track F, validated); the personalised tier didn't.
+- **EPUB + CBR books** *(vs Jellyfin — Plex/Emby don't do books at all)*. CBZ scan + reader shipped in v2.1 Stage 1. EPUB and CBR parsers + reader integration explicitly slipped to Stage 2.
+- **TV-client hardware validation** *(vs all three competitors — they ship polished, soaked apps for these surfaces)*. Code-complete:
+  - **Android TV / Fire TV** (Leanback + Media3): ✅ hardware-verified, no gap.
+  - **LG webOS, Samsung Tizen, Roku, Android phone**: full feature parity in code (pairing → hub → search → playback → audio/subtitle pickers → cross-device resume → audiobook/photo features). Real-hardware soak still outstanding; web frontend is the fallback.
+- **Hardware encoder validation on Linux VAAPI** *(vs Plex/Emby paid tiers, which exercise this continuously)*. Three of four vendors now validated:
+  - NVENC (Windows + Linux/TrueNAS): ✅ validated 2026-04-30 — both code-paths and OS+containerization shape covered.
+  - AMF (Ryzen 9900X iGPU): ✅ validated 2026-04-30 — HDR HEVC → zscale → AMF encode end-to-end.
+  - QSV (Raptor Lake-HX UHD Graphics, i9-13900HX): ✅ validated 2026-05-01 — h264_qsv + hevc_qsv both end-to-end via real-content sessions; surfaced and fixed the `BestHEVCEncoder`/`HasHEVCEncoder` selector bug at `internal/transcode/hardware.go:212-233` that was hiding non-NVENC HEVC variants from the 4K-prefer-HEVC path.
+  - VAAPI (Linux Intel iGPU or AMD discrete): ⚠️ still pending — needs Linux + non-NVIDIA GPU; TrueNAS box is NVIDIA-only.
+- **AV1 encode hardware coverage** *(vs Plex Pass — Plex has limited AV1 encode on Arc; Emby/Jellyfin paid tiers similar)*. AV1 NVENC validated 2026-04-30 on RTX 5080. AV1 QSV is hardware-gated on Intel Arc / Xe2 (Alchemist/Battlemage discrete or Lunar/Meteor/Arrow Lake iGPU); pre-Arc Intel iGPUs have AV1 *decode* but no encode block — confirmed 2026-05-01 on Raptor Lake-HX where `av1_qsv` returns `MFX -40 "Current codec type is unsupported"` despite being compiled into the ffmpeg build. AMD AV1 encode requires RDNA3 dGPU (not the 9900X iGPU's RDNA2 VCN3). DetectEncoders correctly excludes unsupported variants from the active list.
+- **Hardware decode coverage on AMD VCN + Intel QSV** *(vs Plex/Emby, same reasoning)*. NVDEC HEVC + AV1 validated 2026-04-30 on RTX 5080. AMD VCN3 (Ryzen iGPU) and Intel QSV decode paths haven't been driven through real content yet — both the AMF and QSV encode tests ran on software input decode (the dual-adapter handoff kept VCN/QSV out of the loop, and we don't currently set `-hwaccel qsv` / `-hwaccel d3d11va` on those encoder paths). Encode validation isn't decode validation; the decode block needs an explicit pipeline change to exercise.
+- **Picture-in-picture server signal** *(competitor parity: marginal — Plex has limited cross-device PiP awareness, Emby/Jellyfin don't)*. The handler/store has no PiP-mode flag, so cross-device "is this user in PiP?" awareness can't be derived. PiP itself works on Android TV + Android phone; the server just doesn't know.
+- **Picture-in-picture in the Tauri desktop shell** *(vs Plex desktop — has PiP; Emby/Jellyfin desktop are web-wrapper apps with similar limitations to ours)*. Tauri 2 webview doesn't expose `requestPictureInPicture` on Windows. Lands when the upstream PR or a workaround merges; tracked as outstanding on Track E.
 
 ## v2 Closed (since the prior snapshot)
 
@@ -664,4 +675,4 @@ The web client is the universal fallback — runs in any modern browser with no 
 
 ## Non-Differentiators (All Four Roughly Equal)
 
-Movies / TV / music / photo scanning, embedded + disk art, TMDB+TVDB+MusicBrainz metadata, HLS streaming, direct play, resume position, multi-user, parental content ratings, chapter markers, audit-safe session management.
+Movies / TV / music / photo scanning, embedded + disk art, TMDB+TVDB+MusicBrainz metadata, HLS streaming, direct play, resume position, multi-user, parental content ratings, chapter markers, audit-safe session management, **direct cloud-storage integration** (none of the four ship S3/GCS-native libraries — all four rely on local or NFS mounts; users layer rclone or similar themselves).
