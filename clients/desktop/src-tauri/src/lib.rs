@@ -11,6 +11,8 @@ mod audio;
 mod now_playing;
 #[cfg(target_os = "windows")]
 mod windows_exclusive;
+#[cfg(target_os = "windows")]
+mod windows_shared;
 
 use serde::Serialize;
 use tauri::{
@@ -52,8 +54,8 @@ fn get_app_version() -> AppVersion {
 // One file rather than one per setting because tauri-plugin-store
 // writes the whole file on Save — fewer files = fewer writes when
 // settings change in bursts.
-const STORE_FILE: &str = "settings.json";
-const KEY_SERVER_URL: &str = "server_url";
+pub const STORE_FILE: &str = "settings.json";
+pub const KEY_SERVER_URL: &str = "server_url";
 // Tokens were originally co-located with server_url in the JSON
 // store (a single file kept fsync churn low when both changed
 // back-to-back in the setup flow). They now live in the OS
@@ -161,7 +163,28 @@ fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
     }
     let parsed = url::Url::parse(&trimmed).map_err(|e| format!("invalid URL: {e}"))?;
     match parsed.scheme() {
-        "http" | "https" => {}
+        "https" => {}
+        "http" => {
+            // http:// is allowed in debug builds (developers running
+            // a local dev server on `localhost:7070`) but rejected in
+            // release builds for any non-loopback host. The bearer
+            // token rides this URL — over plaintext on a coffee-shop
+            // wifi it would be sniffed in seconds. Loopback exempts
+            // home-network test rigs that haven't set up TLS yet.
+            let host = parsed.host_str().unwrap_or("");
+            let is_loopback = host == "localhost"
+                || host == "127.0.0.1"
+                || host == "[::1]"
+                || host == "::1";
+            #[cfg(not(debug_assertions))]
+            if !is_loopback {
+                return Err(format!(
+                    "plaintext http:// not allowed for {host:?} — use https:// (loopback addresses are exempt)"
+                ));
+            }
+            #[cfg(debug_assertions)]
+            let _ = is_loopback; // silence warning in dev
+        }
         other => {
             return Err(format!(
                 "unsupported scheme {other:?} — server URL must be http:// or https://"
@@ -249,7 +272,13 @@ fn set_tokens(app: AppHandle, access: String, refresh: String) -> Result<(), Str
         store.save().map_err(|e| e.to_string())?;
     } else {
         // Keychain partially or fully unavailable; persist whichever
-        // values didn't make it so the user stays signed in.
+        // values didn't make it so the user stays signed in. Surface
+        // the degradation to the frontend via a Tauri event so the
+        // settings UI can render a "credentials cached on disk" banner
+        // — without it the user has no way to know their refresh token
+        // is sitting plaintext in `appdata/settings.json`. Common
+        // causes: headless Linux without Secret Service, sandboxed mac
+        // builds without keychain entitlements.
         if !kc_access_ok {
             store.set(KEY_ACCESS_TOKEN, access);
         }
@@ -257,6 +286,16 @@ fn set_tokens(app: AppHandle, access: String, refresh: String) -> Result<(), Str
             store.set(KEY_REFRESH_TOKEN, refresh);
         }
         store.save().map_err(|e| e.to_string())?;
+        eprintln!(
+            "auth: keychain unavailable (access_ok={kc_access_ok} refresh_ok={kc_refresh_ok}) — credentials cached plaintext in settings store"
+        );
+        let _ = app.emit(
+            "auth:keychain-degraded",
+            serde_json::json!({
+                "access_ok": kc_access_ok,
+                "refresh_ok": kc_refresh_ok,
+            }),
+        );
     }
     Ok(())
 }
@@ -426,8 +465,11 @@ pub fn run() {
             audio::replay_gain_set_mode,
             audio::replay_gain_set_preamp,
             audio::audio_set_exclusive_mode,
+            audio::audio_set_volume,
             audio::audio_get_exclusive_mode,
             audio::audio_get_active_backend,
+            audio::audio_get_output_is_bluetooth,
+            audio::audio_set_bluetooth_override,
             now_playing::now_playing_set_metadata,
             now_playing::now_playing_set_playback,
             now_playing::now_playing_clear,

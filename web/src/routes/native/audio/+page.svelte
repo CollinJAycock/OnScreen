@@ -6,8 +6,12 @@
     replayGainSetPreamp,
     audioSetExclusiveMode,
     audioGetActiveBackend,
+    audioGetOutputIsBluetooth,
+    audioSetBluetoothOverride,
+    audioState,
     type ReplayGainMode,
     type ActiveBackend,
+    type PlaybackStatus,
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
 
@@ -32,6 +36,22 @@
   let busyExclusive = $state(false);
   let saveError = $state('');
   let activeBackend: ActiveBackend = $state('none');
+  // Snapshot of the currently-playing track's format. Used by the
+  // bit-perfect hint below to surface "this file is 192 kHz but the
+  // OS is resampling it down" guidance — only meaningful when there's
+  // an active source. Polled alongside activeBackend.
+  let playback: PlaybackStatus | null = $state(null);
+  // Output is a Bluetooth endpoint — Windows BT audio service always
+  // re-encodes through SBC/AAC/aptX/LDAC, so the chain is lossy
+  // regardless of WASAPI mode. Drives the BT-aware badge text.
+  // Reflects the union of auto-detection + the manual override below.
+  let outputIsBluetooth: boolean = $state(false);
+  // Manual override for BT detection. Many BT headsets (Soundcore,
+  // Sony, Bose, etc.) report device strings that are shape-identical
+  // to wired headphones, so auto-detection misses them. User flips
+  // this once; persisted in localStorage so it survives restarts.
+  let btOverride: boolean = $state(false);
+  let busyBtOverride: boolean = $state(false);
   // Poll the engine while this page is open so the badge updates
   // when a track starts or stops. 1 s is fine — the badge isn't on
   // the audio hot path, and polling gives us "what's actually
@@ -54,13 +74,23 @@
       preampDb = storedPreamp;
     }
     exclusive = localStorage.getItem('onscreen_native_exclusive') === '1';
+    btOverride = localStorage.getItem('onscreen_native_bt_override') === '1';
+    if (btOverride && isTauri()) {
+      // Re-apply the override on launch so the engine flag reflects
+      // the user's persisted choice without requiring them to re-toggle.
+      void audioSetBluetoothOverride(true);
+    }
 
     // Hydrate the active-backend badge immediately + start polling.
     // Only meaningful inside the desktop client, so gate on inTauri.
     if (inTauri) {
       void audioGetActiveBackend().then((b) => { activeBackend = b; });
+      void audioState().then((s) => { playback = s; });
+      void audioGetOutputIsBluetooth().then((bt) => { outputIsBluetooth = bt; });
       backendPoll = setInterval(async () => {
         activeBackend = await audioGetActiveBackend();
+        playback = await audioState();
+        outputIsBluetooth = await audioGetOutputIsBluetooth();
       }, 1000);
     }
     return () => {
@@ -71,10 +101,31 @@
   // Map the wire identifier to a user-facing label + tone (good /
   // ok / muted) for the badge styling. Kept inline with the data
   // so the strings live next to the cases they describe.
-  function backendLabel(b: ActiveBackend): { text: string; tone: 'good' | 'ok' | 'muted' } {
+  function backendLabel(b: ActiveBackend, bt: boolean): { text: string; tone: 'good' | 'ok' | 'muted' } {
+    // Bluetooth always carries a lossy codec downstream of WASAPI —
+    // exclusive mode bypasses the mixer but not the BT audio
+    // service's encoder. Demote the badge from "bit-perfect" to a
+    // BT-specific label whenever the output endpoint is BT, no
+    // matter which backend opened it.
+    if (bt) {
+      switch (b) {
+        case 'wasapi-exclusive':
+          return { text: 'WASAPI exclusive · Bluetooth (lossy codec to headset)', tone: 'ok' };
+        case 'wasapi-shared':
+          return { text: 'WASAPI shared · Bluetooth (lossy codec + OS resample)', tone: 'ok' };
+        case 'cpal-tight':
+        case 'cpal-shared':
+          return { text: 'cpal shared · Bluetooth (lossy codec to headset)', tone: 'ok' };
+        case 'none':
+        default:
+          return { text: 'No active playback', tone: 'muted' };
+      }
+    }
     switch (b) {
       case 'wasapi-exclusive':
         return { text: 'WASAPI exclusive · bit-perfect', tone: 'good' };
+      case 'wasapi-shared':
+        return { text: 'WASAPI shared (auto-convert) · OS mixer resampling', tone: 'ok' };
       case 'cpal-tight':
         return { text: 'cpal shared (tight buffer) · OS mixer still resampling', tone: 'ok' };
       case 'cpal-shared':
@@ -82,6 +133,20 @@
       case 'none':
       default:
         return { text: 'No active playback', tone: 'muted' };
+    }
+  }
+
+  async function applyBtOverride() {
+    busyBtOverride = true;
+    saveError = '';
+    try {
+      await audioSetBluetoothOverride(btOverride);
+      localStorage.setItem('onscreen_native_bt_override', btOverride ? '1' : '0');
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : String(e);
+      btOverride = !btOverride;
+    } finally {
+      busyBtOverride = false;
     }
   }
 
@@ -224,10 +289,53 @@
         <span>Tight-buffer mode (~10 ms at file native rate)</span>
       </label>
 
-      <div class="status status-{backendLabel(activeBackend).tone}">
+      <div class="status status-{backendLabel(activeBackend, outputIsBluetooth).tone}">
         <span class="status-dot"></span>
-        <span>Currently: {backendLabel(activeBackend).text}</span>
+        <span>Currently: {backendLabel(activeBackend, outputIsBluetooth).text}</span>
       </div>
+
+      <label class="toggle">
+        <input
+          type="checkbox"
+          bind:checked={btOverride}
+          disabled={busyBtOverride}
+          onchange={applyBtOverride}
+        />
+        <span>Treat output as Bluetooth (lossy codec, not bit-perfect)</span>
+      </label>
+      <p class="hint hint-soft">
+        Auto-detection only catches devices Windows reports through the
+        Bluetooth bus driver — wireless brands like Soundcore, Sony, and
+        Bose look identical to wired headphones in Windows' device
+        properties. Flip this on if your output is a Bluetooth headset
+        and the badge above doesn't already say so.
+      </p>
+
+      {#if outputIsBluetooth}
+        <p class="hint hint-warn">
+          Output is a <strong>Bluetooth device</strong>. Bluetooth audio
+          always inserts a lossy codec (SBC, AAC, aptX, or LDAC) between
+          OnScreen and your headset — bit-perfect playback is not
+          achievable on this output regardless of WASAPI mode. The
+          Windows system volume is also applied digitally before the
+          BT encoder, so volume changes will modify samples.
+          For the audiophile path, switch to a wired DAC or USB headset.
+        </p>
+      {:else if activeBackend === 'wasapi-shared' && playback?.sample_rate_hz && playback.sample_rate_hz > 48000 && !exclusive}
+        <p class="hint hint-warn">
+          The OS audio engine is resampling this {(playback.sample_rate_hz / 1000).toFixed(playback.sample_rate_hz % 1000 === 0 ? 0 : 1)} kHz / {playback.bit_depth ?? '?'}-bit
+          file down to your device's mix-format before it reaches the
+          DAC. Decoded samples are lossless, but the playback chain is
+          not bit-perfect. <strong>Enable exclusive output above</strong>
+          to send the file at its native rate.
+        </p>
+      {:else if activeBackend === 'wasapi-shared' && !exclusive}
+        <p class="hint hint-soft">
+          Shared mode lets the OS mix OnScreen with other apps, but it
+          inserts a sample-rate converter between us and your DAC. For
+          bit-perfect output enable exclusive mode above.
+        </p>
+      {/if}
     </section>
 
     <section>
@@ -262,6 +370,17 @@
   h1 { font-size: 1.6rem; margin: 0 0 1.5rem; }
   h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
   .hint { color: var(--text-muted); }
+  .hint-warn {
+    background: color-mix(in oklab, var(--warning, orange) 12%, transparent);
+    border-left: 3px solid var(--warning, orange);
+    padding: 0.6rem 0.8rem;
+    margin-top: 0.5rem;
+    border-radius: 4px;
+  }
+  .hint-soft {
+    margin-top: 0.5rem;
+    font-size: 0.9em;
+  }
   .err { color: var(--danger, #f87171); margin-bottom: 1rem; }
   .desc { color: var(--text-secondary); line-height: 1.5; margin: 0 0 1.25rem; }
   .desc code { background: var(--surface); padding: 0 0.25rem; border-radius: 3px; }

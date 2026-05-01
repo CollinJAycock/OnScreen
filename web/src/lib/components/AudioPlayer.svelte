@@ -19,6 +19,7 @@
     replayGainSetMode,
     replayGainSetPreamp,
     audioSetExclusiveMode,
+    audioSetVolume,
     type ReplayGainMode,
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
@@ -68,13 +69,25 @@
   // track is loaded. Cached as a function so the reactive blocks
   // below can branch on it without repeated lookups.
   function nativeActive(): boolean {
-    return useNativeEngine && isTauri() && !!track;
+    if (!useNativeEngine || !isTauri() || !track) return false;
+    // If the engine rejected this exact URL, treat it as inactive so
+    // the <audio> fallback below takes over. Browsers handle the long
+    // tail of weird WAV/AIFF/codec variants that symphonia refuses.
+    const base = getApiBase().replace(/\/api\/v1\/?$/, '');
+    const desired = `${base}/media/stream/${track.fileId}`;
+    return nativeFailedUrl !== desired;
   }
   // Tracks the URL the engine was last asked to play so we don't
   // re-call audio_play_url on irrelevant reactive triggers (volume
   // changes, position scrubs, etc.). Mirrors the loadedSrc field
   // used by the <audio> path.
   let nativeLoadedUrl = '';
+  // The most recent URL the native engine rejected (probe failure,
+  // unsupported codec, etc.). Sticky for the lifetime of the track —
+  // when the queue advances to a new track this gets cleared via the
+  // track-change branch below. Without it, the catch handler's
+  // nativeLoadedUrl reset would tight-loop the IPC on every failure.
+  let nativeFailedUrl = '';
   // Polling handle for the engine→UI sync (position display +
   // auto-advance on EOS). 250 ms is the same cadence the existing
   // `<audio>` `timeupdate` event fires at — keeps the seek bar
@@ -117,18 +130,23 @@
     }
     // OS now-playing widget — fires on every track change, focused or
     // not (the widget is the persistent lockscreen / Bluetooth display,
-    // not a transient toast). Cover art URL routed through assetUrl
-    // so the helper appends `?token=` for the Tauri webview path; the
-    // OS shell fetches it with that token attached.
+    // not a transient toast). The art URL is sent *without* `?token=`;
+    // the bearer rides in a separate field so the Rust side can fetch
+    // with an Authorization header and write the bytes to a local
+    // cache file. We hand the OS shell a `file://` URI so the bearer
+    // never enters Windows SMTC / macOS NowPlayingInfoCenter / MPRIS
+    // caches.
     if (t && (!prevTrack || prevTrack.id !== t.id)) {
+      const base = getApiBase().replace(/\/api\/v1\/?$/, '');
       const artUrl = t.posterPath
-        ? assetUrl(`/artwork/${encodeURI(t.posterPath)}?w=600`)
+        ? `${base}/artwork/${encodeURI(t.posterPath)}?w=600`
         : null;
       void nowPlayingSetMetadata({
         title: t.title,
         artist: t.artist ?? null,
         album: t.album ?? null,
         artUrl,
+        artBearer: artUrl ? getBearerToken() : null,
         durationMs: t.durationMS ?? null,
       });
     }
@@ -285,27 +303,40 @@
     // dropping /api/v1 → /media/stream/<id> gives us the right URL.
     const base = getApiBase().replace(/\/api\/v1\/?$/, '');
     const desired = `${base}/media/stream/${track.fileId}`;
-    if (nativeLoadedUrl !== desired) {
+    if (nativeFailedUrl === desired) {
+      // Native engine already rejected this URL once — the <audio>
+      // fallback below handles it. Skip without re-firing the IPC,
+      // otherwise we tight-loop spamming the server.
+    } else if (nativeLoadedUrl !== desired) {
       nativeLoadedUrl = desired;
       positionMS = 0;
       durationMS = (track.durationMS ?? 0);
       // Pass the bearer so the engine's HTTP fetch can authenticate
       // — same auth as the api.ts wrapper uses for everything else.
-      // The play call is fire-and-forget; engine errors are logged
-      // to the console, the user sees the play button stuck on (no
-      // position update yet — Phase 2 polling fixes that).
       void audioPlayUrl(desired, getBearerToken(), null).then(() => {
         startNativePolling();
       }).catch((err) => {
         console.warn('native engine play failed:', err);
         stopNativePolling();
-        // On engine failure (most likely: non-FLAC source),
-        // disable native for this session so the <audio> fallback
-        // takes over on the next track change. User can re-enable
-        // via /native/server.
-        nativeEngine.set(false);
+        // Mark this URL as native-incompatible so the reactive block
+        // doesn't re-fire the IPC on the next reactivity tick. The
+        // <audio> element below picks it up via the same nativeActive
+        // gate (which now checks nativeFailedUrl too) — browsers
+        // handle the long tail of weird WAV/AIFF/etc. headers that
+        // symphonia rejects.
+        nativeFailedUrl = desired;
         nativeLoadedUrl = '';
       });
+    }
+  } else if (track && nativeFailedUrl !== '') {
+    // Track exists but native engine isn't active (toggle off, or
+    // the engine rejected this URL). Clear the sticky failure when
+    // the track has moved to a different file so a fresh attempt
+    // happens on the next track change.
+    const base = getApiBase().replace(/\/api\/v1\/?$/, '');
+    const desired = `${base}/media/stream/${track.fileId}`;
+    if (nativeFailedUrl !== desired) {
+      nativeFailedUrl = '';
     }
   } else if (!track && nativeLoadedUrl !== '') {
     nativeLoadedUrl = '';
@@ -450,6 +481,14 @@
     const preload = activeIsA ? audioElB : audioElA;
     active.volume = muted ? 0 : volume;
     preload.volume = 0;
+  }
+
+  // Mirror volume to the native engine so the slider works in Tauri
+  // builds where the HTML <audio> path is bypassed by audio_play_url.
+  // Fire-and-forget — the engine clamps + persists nothing, so a
+  // dropped call just means the next slider tick re-syncs.
+  $: if (isTauri()) {
+    void audioSetVolume(muted ? 0 : volume);
   }
 
   function persistVolume() {

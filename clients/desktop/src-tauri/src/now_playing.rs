@@ -99,24 +99,45 @@ fn action_for(event: MediaControlEvent) -> Option<&'static str> {
     }
 }
 
-/// Track metadata pushed by the frontend on every track change. art_url
-/// is an absolute https:// URL the OS shell can fetch — souvlaki hands
-/// the URL straight to the platform widget; the widget decodes off the
-/// main thread, so a slow art request doesn't stall playback.
+/// Track metadata pushed by the frontend on every track change.
+///
+/// The frontend passes the bearer separately (rather than baking
+/// `?token=<paseto>` into the URL) so the access token never reaches
+/// the OS shell — Windows SMTC, macOS NowPlayingInfoCenter, and the
+/// MPRIS bus all cache cover URLs in places that survive the
+/// process. With token-in-URL, an attacker with later read access to
+/// any of those caches recovers a 1 h general-purpose bearer.
+///
+/// We instead fetch the art on the Rust side with `Authorization:
+/// Bearer <token>`, write it to a per-app temp file, and hand
+/// souvlaki a `file://` URI. The OS shell sees only a local path.
 #[derive(Deserialize)]
 pub struct NowPlayingMetadata {
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
+    /// Absolute server-asset URL **without** any `?token=` query
+    /// parameter. Rust fetches with the bearer header below.
     pub art_url: Option<String>,
+    /// Bearer token for the art fetch. Held in memory only — never
+    /// written to disk, never logged.
+    pub art_bearer: Option<String>,
     pub duration_ms: Option<u64>,
 }
 
 #[tauri::command]
-pub fn now_playing_set_metadata(
+pub fn now_playing_set_metadata<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, NowPlayingState>,
     meta: NowPlayingMetadata,
 ) -> Result<(), String> {
+    // Resolve cover_url to a local file:// URI when an art URL is
+    // provided. Failures here are non-fatal — the widget shows
+    // metadata without art rather than skipping the metadata update.
+    let cover_uri = meta.art_url.as_deref().and_then(|u| {
+        cache_art_to_temp(&app, u, meta.art_bearer.as_deref()).ok()
+    });
+
     let Ok(mut slot) = state.0.lock() else {
         return Ok(());
     };
@@ -128,10 +149,61 @@ pub fn now_playing_set_metadata(
             title: Some(&meta.title),
             artist: meta.artist.as_deref(),
             album: meta.album.as_deref(),
-            cover_url: meta.art_url.as_deref(),
+            cover_url: cover_uri.as_deref(),
             duration: meta.duration_ms.map(Duration::from_millis),
         })
         .map_err(|e| format!("souvlaki: set_metadata: {e:?}"))
+}
+
+/// Fetch art with bearer header, write to `<app_cache>/now-playing.jpg`,
+/// return the `file://` URI souvlaki should display. The cache file is
+/// overwritten on every track change — only one image is on disk at a
+/// time, no growth, and replacing it under the OS shell is fine because
+/// the shell has already read the previous content into its own buffer
+/// before we overwrite.
+fn cache_art_to_temp<R: Runtime>(
+    app: &AppHandle<R>,
+    url: &str,
+    bearer: Option<&str>,
+) -> Result<String, String> {
+    use std::io::{Read, Write};
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(15))
+        // No redirects — same reasoning as the audio engine. The art
+        // URL was constructed by the frontend against the configured
+        // server origin; a 30x to anywhere else is suspicious and
+        // we'd rather fail fast than silently follow.
+        .redirects(0)
+        .build();
+    let mut req = agent.get(url);
+    if let Some(t) = bearer {
+        req = req.set("Authorization", &format!("Bearer {t}"));
+    }
+    let resp = req.call().map_err(|e| format!("art fetch: {e}"))?;
+    if resp.status() < 200 || resp.status() >= 300 {
+        return Err(format!("art fetch: HTTP {}", resp.status()));
+    }
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    resp.into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("art fetch read: {e}"))?;
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("art cache dir: {e}"))?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("art cache mkdir: {e}"))?;
+    let path = cache_dir.join("now-playing.jpg");
+    let mut f = std::fs::File::create(&path).map_err(|e| format!("art write: {e}"))?;
+    f.write_all(&bytes).map_err(|e| format!("art write: {e}"))?;
+    drop(f);
+
+    // souvlaki wants the URI form. Path::to_string_lossy is fine for
+    // the local cache dir (no non-UTF-8 segments under the app's own
+    // bundle id).
+    Ok(format!("file://{}", path.to_string_lossy().replace('\\', "/")))
 }
 
 /// Frontend pushes this on every play / pause / seek / stop. souvlaki

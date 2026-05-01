@@ -137,6 +137,14 @@ fn run_exclusive_loop(
 
     let device = wasapi::get_default_device(&Direction::Render)
         .map_err(|e| format!("audio: get default render device: {e:?}"))?;
+
+    // BT detection — the WASAPI exclusive open succeeds against the
+    // BT audio service, but the service still re-encodes samples
+    // through SBC/AAC/aptX/LDAC before transmission. The badge needs
+    // to reflect that bit-perfect is unattainable on this endpoint.
+    let is_bt = crate::audio::device_appears_to_be_bluetooth(&device);
+    crate::audio::OUTPUT_IS_BLUETOOTH.store(is_bt, Ordering::Release);
+
     let mut audio_client: AudioClient = device
         .get_iaudioclient()
         .map_err(|e| format!("audio: activate IAudioClient: {e:?}"))?;
@@ -278,6 +286,13 @@ fn run_exclusive_loop(
             continue;
         }
 
+        // Per-event volume snapshot. At unity (slider at max) the
+        // multiply is skipped so exclusive-mode output stays
+        // genuinely bit-perfect — the user's "audiophile" pillar is
+        // only honored when the volume is at 100%.
+        let vol = crate::audio::output_volume();
+        let apply_vol = (vol - 1.0).abs() > 1e-6;
+
         // Drain the ringbuf into copy_buf one sample at a time.
         // try_pop returns None when empty; we underrun-pad with
         // silence so the DAC doesn't glitch on a transient stall
@@ -288,6 +303,7 @@ fn run_exclusive_loop(
                 let mut byte_off = 0usize;
                 for _ in 0..total_samples {
                     let s = cons.try_pop().unwrap_or(0);
+                    let s = if apply_vol { ((s as f32) * vol) as i16 } else { s };
                     copy_buf[byte_off..byte_off + 2].copy_from_slice(&s.to_le_bytes());
                     byte_off += 2;
                 }
@@ -297,6 +313,7 @@ fn run_exclusive_loop(
                 let mut byte_off = 0usize;
                 for _ in 0..total_samples {
                     let s = cons.try_pop().unwrap_or(0);
+                    let s = if apply_vol { ((s as f32) * vol) as i32 } else { s };
                     copy_buf[byte_off..byte_off + 4].copy_from_slice(&s.to_le_bytes());
                     byte_off += 4;
                 }

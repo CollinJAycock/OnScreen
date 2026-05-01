@@ -21,6 +21,44 @@
   let fleetEmbeddedEnabled = true;
   let fleetEmbeddedDisabledByEnv = false;
   let fleetEmbeddedEncoder = '';
+
+  // Friendly codec names for the device-group label.
+  function codecForEncoder(enc: string): string {
+    if (enc.includes('av1')) return 'AV1';
+    if (enc.startsWith('hevc') || enc === 'libx265') return 'HEVC';
+    return 'H.264';
+  }
+
+  /** Group detected (encoder, label) entries by physical device.
+   *  Modern GPUs (NVIDIA RTX, Intel Arc, AMD RDNA3) hardware-encode
+   *  multiple codecs — h264_nvenc and hevc_nvenc on a 5080 are the
+   *  same physical card, just different output formats. The detect
+   *  probe surfaces them as separate entries with identical labels;
+   *  we collapse those into one selectable device whose value carries
+   *  every codec it supports, so the operator picks "RTX 5080" once
+   *  and the worker can transcode H.264 *or* HEVC depending on what
+   *  the session needs (h264 for 1080p, hevc for 4K bitrate savings).
+   *  The wire format stays a comma-separated string for backwards
+   *  compatibility with the existing `embedded_encoder` field. */
+  type DeviceGroup = { label: string; value: string; codecs: string[] };
+  function groupedDevices(): DeviceGroup[] {
+    if (!encoderInfo) return [];
+    const groups = new Map<string, { label: string; encs: string[] }>();
+    for (const entry of encoderInfo.detected) {
+      const key = entry.label;
+      let group = groups.get(key);
+      if (!group) {
+        group = { label: entry.label, encs: [] };
+        groups.set(key, group);
+      }
+      if (!group.encs.includes(entry.encoder)) group.encs.push(entry.encoder);
+    }
+    return Array.from(groups.values()).map((g) => ({
+      label: g.label,
+      value: g.encs.join(','),
+      codecs: g.encs.map(codecForEncoder).filter((c, i, a) => a.indexOf(c) === i),
+    }));
+  }
   let fleetEmbeddedOnline = false;
   let fleetEmbeddedActiveSessions = 0;
   let fleetEmbeddedMaxSessions = 0;
@@ -97,6 +135,8 @@
         .map(w => ({ addr: w.addr || '', name: w.name.trim(), encoder: w.encoder, max_sessions: w.max_sessions || undefined }));
       await settingsApi.updateFleet({
         embedded_enabled: fleetEmbeddedEnabled,
+        // Already a comma-separated string — the device dropdown
+        // emits all codecs for the picked card joined by commas.
         embedded_encoder: fleetEmbeddedEncoder,
         workers
       });
@@ -236,15 +276,18 @@
       {#if fleetEmbeddedEnabled && !fleetEmbeddedDisabledByEnv}
       <div class="fleet-row">
         <div class="field" style="flex:1;">
-          <label for="embedded-encoder">Encoder</label>
+          <label for="embedded-encoder">Device</label>
           <select id="embedded-encoder" bind:value={fleetEmbeddedEncoder}>
             <option value="">Auto-detect</option>
-            {#if encoderInfo}
-              {#each encoderInfo.detected as entry}
-                <option value={entry.encoder}>{entry.label}</option>
-              {/each}
-            {/if}
+            {#each groupedDevices() as g}
+              <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
+            {/each}
           </select>
+          <p class="hint">
+            Picking a device enables every codec it can hardware-encode
+            (H.264 for 1080p, HEVC for 4K bitrate savings, AV1 on
+            Ada/Blackwell). The worker picks the right codec per session.
+          </p>
         </div>
         {#if fleetEmbeddedOnline}
         <div class="fleet-live-info">
@@ -274,11 +317,9 @@
               <label>Encoder</label>
               <select bind:value={row.encoder}>
                 <option value="">Auto-detect</option>
-                {#if encoderInfo}
-                  {#each encoderInfo.detected as entry}
-                    <option value={entry.encoder}>{entry.label}</option>
-                  {/each}
-                {/if}
+                {#each groupedDevices() as g}
+                  <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
+                {/each}
               </select>
             </div>
             <div class="field" style="flex:1;">

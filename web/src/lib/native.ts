@@ -357,6 +357,21 @@ export async function audioSetExclusiveMode(enabled: boolean): Promise<void> {
   }
 }
 
+/** Set output volume for the native engine. 0..=1, clamped on the
+ *  Rust side. Applied at the WASAPI write loop so slider movements
+ *  take effect within ~20 ms regardless of how full the decoder
+ *  ringbuf is. The HTML <audio> path doesn't go through this — its
+ *  `audio.volume` property handles its own scaling. */
+export async function audioSetVolume(value: number): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('audio_set_volume', { value });
+  } catch (e) {
+    console.debug('audioSetVolume failed (non-fatal):', e);
+  }
+}
+
 export async function audioGetExclusiveMode(): Promise<boolean> {
   if (!isTauri()) return false;
   try {
@@ -376,11 +391,45 @@ export async function audioGetExclusiveMode(): Promise<boolean> {
  *  Wire identifiers stay stable across releases; the frontend maps
  *  them to user-facing labels:
  *    "wasapi-exclusive" — bit-perfect; OS mixer bypassed.
+ *    "wasapi-shared"    — raw WASAPI shared with AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
+ *                         the OS resamples but accepts any file rate.
+ *                         Default Windows non-exclusive path.
  *    "cpal-tight"       — EXCLUSIVE_MODE on but cpal fallback engaged
  *                         (10 ms buffer; OS mixer still resamples).
- *    "cpal-shared"      — EXCLUSIVE_MODE off; default cpal config.
+ *    "cpal-shared"      — cpal default config (macOS / Linux only).
  *    "none"             — nothing playing on the native engine. */
-export type ActiveBackend = 'wasapi-exclusive' | 'cpal-tight' | 'cpal-shared' | 'none';
+export type ActiveBackend = 'wasapi-exclusive' | 'wasapi-shared' | 'cpal-tight' | 'cpal-shared' | 'none';
+
+/** Reports whether the active output endpoint is a Bluetooth device.
+ *  BT audio always carries a lossy codec (SBC / AAC / aptX / LDAC)
+ *  in the chain — bit-perfect is unattainable regardless of WASAPI
+ *  mode. The settings UI uses this to soften the badge wording when
+ *  the user routes to AirPods, BT headsets, etc. */
+export async function audioGetOutputIsBluetooth(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return (await invoke('audio_get_output_is_bluetooth')) as boolean;
+  } catch {
+    return false;
+  }
+}
+
+/** Manual override for the BT auto-detection. Detection from Windows
+ *  device names is unreliable for many BT brands (Soundcore, Sony,
+ *  Bose etc. report the same string shape as wired headphones); the
+ *  override lets the user mark "this output is BT" so the badge and
+ *  warnings reflect reality. Persisted in localStorage on the
+ *  frontend; reapplied via this command on every launch. */
+export async function audioSetBluetoothOverride(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('audio_set_bluetooth_override', { enabled });
+  } catch (e) {
+    console.debug('audioSetBluetoothOverride failed (non-fatal):', e);
+  }
+}
 
 export async function audioGetActiveBackend(): Promise<ActiveBackend> {
   if (!isTauri()) return 'none';
@@ -406,7 +455,11 @@ export async function nowPlayingSetMetadata(meta: {
   title: string;
   artist?: string | null;
   album?: string | null;
+  /** Bare server URL — no `?token=`. Pair with `artBearer` so the
+   *  Rust side fetches with `Authorization` header and writes to a
+   *  local cache file. The token never reaches the OS shell. */
   artUrl?: string | null;
+  artBearer?: string | null;
   durationMs?: number | null;
 }): Promise<void> {
   if (!isTauri()) return;
@@ -418,6 +471,7 @@ export async function nowPlayingSetMetadata(meta: {
         artist: meta.artist ?? null,
         album: meta.album ?? null,
         art_url: meta.artUrl ?? null,
+        art_bearer: meta.artBearer ?? null,
         duration_ms: meta.durationMs ?? null,
       },
     });
