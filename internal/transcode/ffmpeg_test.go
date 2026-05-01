@@ -486,9 +486,13 @@ func TestBuildHLS_AMF_Flags(t *testing.T) {
 	})
 	argStr := strings.Join(args, " ")
 
-	// AMF uses d3d11va hardware decode.
-	if !strings.Contains(argStr, "-hwaccel d3d11va") {
-		t.Errorf("expected -hwaccel d3d11va in AMF args: %s", argStr)
+	// AMF must NOT auto-pick a D3D11 device for input — on dual-adapter
+	// hosts (NVIDIA dGPU + AMD iGPU on Ryzen X-series) `-hwaccel d3d11va`
+	// grabs the NVIDIA card and the AMF encoder then ENODEVs trying to
+	// use the same device. Software input decode is the only safe default
+	// without a per-host adapter-index probe.
+	if strings.Contains(argStr, "-hwaccel d3d11va") {
+		t.Errorf("AMF should NOT use -hwaccel d3d11va (dual-GPU adapter pickup hazard): %s", argStr)
 	}
 	// AMF encoder codec.
 	if !strings.Contains(argStr, "-c:v h264_amf") {
@@ -501,12 +505,15 @@ func TestBuildHLS_AMF_Flags(t *testing.T) {
 	if !strings.Contains(argStr, "-rc cbr") {
 		t.Errorf("expected -rc cbr in AMF args: %s", argStr)
 	}
-	// Fixed GOP like NVENC (not -force_key_frames).
-	if strings.Contains(argStr, "-force_key_frames") {
-		t.Errorf("AMF should use fixed GOP, not -force_key_frames: %s", argStr)
+	// AMF uses both: -g as a defensive upper bound + -force_key_frames
+	// to land segment boundaries on exact SegmentDuration multiples
+	// regardless of source fps. The previous -g-only approach baked in
+	// a 30fps assumption that broke on 24fps content.
+	if !strings.Contains(argStr, "-force_key_frames expr:gte(t,n_forced*4)") {
+		t.Errorf("expected -force_key_frames at segment boundaries for AMF: %s", argStr)
 	}
 	if !strings.Contains(argStr, "-g 120") {
-		t.Errorf("expected fixed GOP -g 120 for AMF: %s", argStr)
+		t.Errorf("expected GOP upper-bound -g 120 for AMF: %s", argStr)
 	}
 	// Should NOT have NVENC flags.
 	if strings.Contains(argStr, "-preset p4") {
@@ -566,12 +573,16 @@ func TestBuildHLS_NVENC_CudaHwaccel(t *testing.T) {
 	if !strings.Contains(argStr, "format=nv12") {
 		t.Errorf("expected format=nv12 in scale_cuda: %s", argStr)
 	}
-	// Fixed GOP (not expression-based).
-	if strings.Contains(argStr, "-force_key_frames") {
-		t.Errorf("NVENC should use fixed GOP, not -force_key_frames: %s", argStr)
+	// NVENC uses -force_key_frames at SegmentDuration boundaries so
+	// segments are exactly N seconds regardless of source fps. -g
+	// stays as a defensive GOP cap. The earlier -g-only approach
+	// baked in a 30fps assumption that produced 5-second segments
+	// for 24fps content, breaking the DASH MPD's timeline math.
+	if !strings.Contains(argStr, "-force_key_frames expr:gte(t,n_forced*4)") {
+		t.Errorf("expected -force_key_frames at segment boundaries: %s", argStr)
 	}
 	if !strings.Contains(argStr, "-g 120") {
-		t.Errorf("expected fixed GOP -g 120: %s", argStr)
+		t.Errorf("expected GOP upper-bound -g 120: %s", argStr)
 	}
 }
 
@@ -899,7 +910,13 @@ func TestBuildHLS_HEVC_NVENC(t *testing.T) {
 		t.Errorf("expected -tag:v hvc1 for browser HEVC playback: %s", argStr)
 	}
 	if !strings.Contains(argStr, "-hls_fmp4_init_filename init.mp4") {
-		t.Errorf("expected fMP4 init segment filename: %s", argStr)
+		t.Errorf("expected single-rendition fMP4 init filename (init.mp4): %s", argStr)
+	}
+	if strings.Contains(argStr, "-var_stream_map") {
+		t.Errorf("HLS-fMP4 should be single muxed rendition; var_stream_map demux is shaka-MSE residue: %s", argStr)
+	}
+	if strings.Contains(argStr, "-master_pl_name") {
+		t.Errorf("HLS-fMP4 should not need a master playlist (single rendition): %s", argStr)
 	}
 }
 

@@ -414,10 +414,10 @@ private fun applyAudioSelection(
     val stream = streams.getOrNull(idx) ?: return
     if (source is PlaybackSource.Hls) {
         // Transcoded HLS sessions carry a single audio stream — to
-        // switch we re-issue the session at the current position
-        // with a new audio_stream_index. Direct play falls through
-        // to ExoPlayer's track selector which sees every audio
-        // track in the source container.
+        // switch we re-issue the session at the current position with
+        // a new audio_stream_index. Direct play falls through to
+        // ExoPlayer's track selector which sees every audio track in
+        // the source container.
         vm.switchAudioStream(stream.index, player.currentPosition)
     } else {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()

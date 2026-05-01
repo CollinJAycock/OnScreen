@@ -10,9 +10,9 @@
 - ❌ Not supported
 - ❓ Unverified / depends on configuration
 
-**Snapshot date:** 2026-04-29. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
+**Snapshot date:** 2026-04-30. Plex / Emby / Jellyfin rows reflect widely-documented upstream behavior as of that date; premium tiering (Plex Pass / Emby Premiere) and plugin availability change over time.
 
-> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, trending row, library is_private + auto-grant + per-profile visibility (Track G complete), DASH manifest endpoint (server side), admin logs API, audiobook embedded-cover serving, **audiobook author/series hierarchy with typed shelf + cross-client author+series detail pages**, **in-player audio + subtitle pickers across every client (Android TV, phone, web, webOS, Tizen, Roku) with HLS re-issue for transcode-session audio switching**, per-file streaming token (24 h, file_id-bound, purpose-scoped), three TV clients at usable parity (Android TV / Fire TV verified, LG webOS feature-complete, Roku at flow parity). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
+> **v2.0 shipped, v2.1 in flight.** Cells flipped during v2.0 (music videos, audiobooks, podcasts, CAA fallback, NFO import, lyrics end-to-end, DVR purge, subtitle burn-in, AV1, HEVC on QSV/VAAPI/AMF, SAML, built-in HTTPS) are captured in the **v2 Closed** section below. v2.1 work in progress on `main`: home-video library, CBZ books + reader, smart playlists, trending row, library is_private + auto-grant + per-profile visibility (Track G complete), admin logs API, audiobook embedded-cover serving, **audiobook author/series hierarchy with typed shelf + cross-client author+series detail pages**, **in-player audio + subtitle pickers across every client (Android TV, phone, web, webOS, Tizen, Roku) with HLS re-issue for transcode-session audio switching**, per-file streaming token (24 h, file_id-bound, purpose-scoped), three TV clients at usable parity (Android TV / Fire TV verified, LG webOS feature-complete, Roku at flow parity). See [v2.1-roadmap.md](v2.1-roadmap.md) for the full track list.
 
 ---
 
@@ -40,14 +40,14 @@
 |--------------------------------|:--:|:--:|:--:|:--:|---|
 | H.264 encode (software)        | ✅ | ✅ | ✅ | ✅ | |
 | H.264 encode (NVENC)           | ✅ | 💎 | 💎 | ✅ | Plex/Emby HW transcoding is paid |
-| H.264 encode (QSV)             | ✅ | 💎 | 💎 | ✅ | |
-| H.264 encode (VAAPI)           | ✅ | 💎 | 💎 | ✅ | |
-| H.264 encode (AMF)             | ✅ | 💎 | 💎 | ✅ | |
+| H.264 encode (QSV)             | ⚠️ | 💎 | 💎 | ✅ | OnScreen: encoder path shipped + auto-detected; awaiting hardware validation on an Intel Quick Sync host |
+| H.264 encode (VAAPI)           | ⚠️ | 💎 | 💎 | ✅ | OnScreen: encoder path shipped + auto-detected; awaiting hardware validation on a Linux/VAAPI host |
+| H.264 encode (AMF)             | ✅ | 💎 | 💎 | ✅ | Validated 2026-04-30 on Ryzen 9900X iGPU (RDNA 2, VCN 3) end-to-end including HDR HEVC source → zscale tonemap → AMF encode |
 | H.264 encode (VideoToolbox)    | ❌ | 💎 | 💎 | ✅ | macOS/Apple Silicon only |
-| HEVC encode (NVENC)            | ✅ | 💎 | 💎 | ✅ | |
+| HEVC encode (NVENC)            | ✅ | 💎 | 💎 | ✅ | Validated 2026-04-30 on RTX 5080 (Windows dev box) and on RTX 5000 in production via TrueNAS Docker deploy (Linux) |
 | HEVC encode (software)         | ✅ | 💎 | 💎 | ✅ | libx265 |
-| HEVC encode (QSV/VAAPI/AMF)    | ⚠️ | 💎 | 💎 | ✅ | OnScreen: encoder paths added (commit `652b87e`); awaiting hardware validation on the beta |
-| AV1 encode                     | ⚠️ | 💎 | 💎 | ⚠️ | OnScreen: SVT-AV1 SW + AV1 NVENC + AV1 QSV paths (commit `652b87e`); SVT-AV1 preset 8 for live |
+| HEVC encode (QSV/VAAPI/AMF)    | ⚠️ | 💎 | 💎 | ✅ | OnScreen: encoder paths added (commit `652b87e`). **AMF validated** 2026-04-30 on Ryzen 9900X iGPU (auto-selected via embedded-worker device picker). QSV (Intel) + VAAPI (Linux) still awaiting hardware validation. |
+| AV1 encode                     | ✅ | 💎 | 💎 | ⚠️ | OnScreen: SVT-AV1 SW + AV1 NVENC + AV1 QSV paths (commit `652b87e`); SVT-AV1 preset 8 for live. AV1 NVENC validated 2026-04-30 on RTX 5080 against a real 4K AV1 anamorphic source — hardware decode (NVDEC AV1) → tonemap → AV1 encode round-trips end-to-end |
 | HDR → SDR tone mapping (GPU)   | ✅ | 💎 | 💎 | ✅ | OnScreen: tonemap_cuda → tonemap_opencl → zscale fallback ladder |
 | 10-bit HEVC source handling    | ✅ | ✅ | ✅ | ✅ | |
 | Subtitle burn-in                | ✅ | ✅ | ✅ | ✅ | OnScreen: software-encode only (commit `652b87e`); HW path skipped to preserve GPU throughput |
@@ -87,9 +87,9 @@
 | Hi-res badge (>44.1kHz/16-bit) | ✅ | ⚠️ | ❌ | ⚠️ | OnScreen: explicit UI badge |
 | ReplayGain track + album       | ✅ | ⚠️ | ✅ | ✅ | Plex uses its own loudness normalization |
 | MusicBrainz ID exposure        | ✅ | ❌ | ⚠️ | ✅ | OnScreen: all 5 MB ID types surfaced |
-| Bit-perfect playback           | ❌ | ✅ | ✅ | ⚠️ | Browsers force everything through the OS mixer (resampled to system rate); requires a native client with WASAPI-exclusive / CoreAudio hog / ALSA `hw:`. Plexamp and Emby Theater ship this; Jellyfin gets it via 3rd-party clients (Finamp, JMP). OnScreen is web-only today — lands with the native client phase. |
-| Gapless playback               | ✅ | ✅ | ✅ | ✅ | OnScreen: dual-`<audio>` preload rotation (commit `55612c8`); Chrome/Firefox sub-frame, Safari per-its-usual |
-| DSD (DoP) support              | ❌ | ❌ | ❌ | ❌ | |
+| Bit-perfect playback           | ⚠️ | ✅ | ✅ | ⚠️ | OnScreen: shipped on Windows via the Tauri native engine (raw `wasapi` IAudioClient in `AUDCLNT_SHAREMODE_EXCLUSIVE` — OS mixer bypassed, samples reach DAC at file's native bit-depth + rate). macOS HOG mode + Linux ALSA `hw:` deferred. Browser path stays mixer-resampled (Web Audio constraint); the native client is the bit-perfect path. |
+| Gapless playback               | ✅ | ✅ | ✅ | ✅ | OnScreen: native engine promotes a preloaded ringbuf consumer into the new active stream (sub-frame transition); web client uses dual-`<audio>` rotation (commit `55612c8`) |
+| DSD (DoP) support              | ✅ | ❌ | ❌ | ❌ | OnScreen: DSF parser + DoP packer in the native engine (DSD64/128/256 → 16 DSD samples per channel pack into a 24-bit PCM frame at sr/16). Compatible DACs see the DoP marker bytes and decode the original DSD; non-DoP DACs play the carrier as harmless low-level noise. Routes through the same WASAPI exclusive path. |
 | Release type (Album/EP/Single) | ✅ | ⚠️ | ✅ | ✅ | |
 | Original release year          | ✅ | ✅ | ✅ | ✅ | |
 | Compilation flag               | ✅ | ✅ | ✅ | ✅ | |
@@ -185,7 +185,7 @@
 | Feature                        | OnScreen | Plex | Emby | Jellyfin | Notes |
 |--------------------------------|:--:|:--:|:--:|:--:|---|
 | HLS streaming                  | ✅ | ✅ | ✅ | ✅ | |
-| DASH streaming                 | ⚠️ | ✅ | ✅ | ✅ | OnScreen: `manifest.mpd` endpoint over the existing fMP4 ladder for HEVC sessions, plus `manifest_url` surfaced on the session-start response so native clients consume it without URL construction (v2.1 Track H, server side complete); browser shaka-player swap + smart-TV test matrix deferred — real DASH leverage is the smart-TV native-client side (Track E) which goes through the MPD URL directly |
+| DASH streaming                 | ❌ | ✅ | ✅ | ✅ | OnScreen is HLS-only by design — same posture as Jellyfin (which tried DASH and reverted) and Plex (HLS-only for browser playback). Single-rendition transcode on demand maps cleanly onto hls.js's growing-playlist semantics; HEVC ships in fMP4 segments via HLS. Server-side DASH was built during v2.1-flight (Track H) and ripped out 2026-04-30 once the cost/benefit math was honest. |
 | Raw file serving + byte-range  | ✅ | ✅ | ✅ | ✅ | |
 | Signed segment URLs            | ✅ | ✅ | ✅ | ✅ | OnScreen: JWT query-param tokens |
 | Range requests (HTTP 206)      | ✅ | ✅ | ✅ | ✅ | |
@@ -299,17 +299,19 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 
 | Feature                         | OnScreen | Plex (Plexamp/HTPC) | Emby Theater | Jellyfin (JMP) | Notes |
 |---------------------------------|:--:|:--:|:--:|:--:|---|
-| Native audio engine (out-of-webview) | ✅ | ✅ | ✅ | ⚠️ | OnScreen: cpal + claxon over a lock-free ringbuf; JMP defers to mpv |
-| Bit-perfect / WASAPI exclusive (Windows) | ❌ | ✅ | ✅ | ✅ | OnScreen: cpal 0.16 hard-codes shared mode; needs a cpal fork or raw `wasapi` swap |
-| CoreAudio HOG mode (macOS)      | ❌ | ✅ | ⚠️ | ✅ | Same cpal limitation |
-| ALSA `hw:` device selection (Linux) | ❌ | ✅ | ⚠️ | ✅ | Same cpal limitation |
-| Gapless playback                | ✅ | ✅ | ✅ | ✅ | OnScreen native: preload slot promotes ringbuf into the new active stream — sub-frame; web client uses dual-`<audio>` rotation |
-| Native FLAC decode              | ✅ | ✅ | ✅ | ✅ | OnScreen: claxon (pure-Rust) |
-| Native ALAC / WAV / AIFF decode | ⚠️ | ✅ | ✅ | ✅ | OnScreen native engine is FLAC-only today; other formats fall through to the webview's `<audio>` |
-| DSD (DoP) playback              | ❌ | ⚠️ | ❌ | ⚠️ | Plexamp does DoP for compatible DACs; JMP via mpv |
-| ReplayGain enforced client-side | ⚠️ | ✅ | ✅ | ✅ | OnScreen: tags surfaced server-side, native engine doesn't apply gain yet |
+| Native audio engine (out-of-webview) | ✅ | ✅ | ✅ | ⚠️ | OnScreen: symphonia decoder + raw `wasapi` output over a lock-free SPSC ringbuf. cpal stays as the macOS/Linux fallback until per-platform exclusive backends land. JMP defers to mpv. |
+| Bit-perfect / WASAPI exclusive (Windows) | ✅ | ✅ | ✅ | ✅ | OnScreen: raw `wasapi` IAudioClient in `AUDCLNT_SHAREMODE_EXCLUSIVE`, event-driven on a dedicated thread. Shared-mode path uses `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` so any file rate plays even when device mix-format differs (cpal's WASAPI shared rejects non-mix rates outright; the autoconvert flag is what unblocks 24/192 on a 48 kHz-default device). Settings surface a "Currently: WASAPI exclusive · bit-perfect" badge so users know which path engaged. |
+| CoreAudio HOG mode (macOS)      | ❌ | ✅ | ⚠️ | ✅ | Deferred — Windows shipped first. macOS = `kAudioDevicePropertyHogMode`, ~250 LOC mirroring `windows_exclusive.rs`. |
+| ALSA `hw:` device selection (Linux) | ❌ | ✅ | ⚠️ | ✅ | Deferred. Linux ALSA `hw:` device + tuned period_size, same shape as the macOS lift. |
+| Gapless playback                | ✅ | ✅ | ✅ | ✅ | OnScreen native: preload slot promotes the decoder's ringbuf consumer into the next active stream (sub-frame transition validated against pre-cut tracks); web client uses dual-`<audio>` rotation |
+| Native FLAC decode              | ✅ | ✅ | ✅ | ✅ | OnScreen: symphonia 0.5 (FLAC bundle). Migrated from claxon for SEEKTABLE-driven seek — see scrub row. |
+| Native ALAC / WAV / AIFF decode | ✅ | ✅ | ✅ | ✅ | OnScreen: symphonia handles the entire lossless catalog through one pipeline (FLAC/ALAC-in-MP4/WAV/AIFF). |
+| DSD (DoP) playback              | ✅ | ⚠️ | ❌ | ⚠️ | OnScreen: native DSF parser + DoP packer (16 DSD samples per channel → one 24-bit PCM frame at sr/16). Compatible DACs decode the DoP marker bytes back to DSD; routes through the same WASAPI exclusive path. Plexamp does DoP for compatible DACs; JMP via mpv. |
+| ReplayGain enforced client-side | ✅ | ✅ | ✅ | ✅ | OnScreen: native engine reads `REPLAYGAIN_TRACK_GAIN/PEAK` + `REPLAYGAIN_ALBUM_GAIN/PEAK` from symphonia metadata, applies the gain factor in the decoder thread (track / album / off mode + ±15 dB preamp via `/native/audio` settings page) |
 | Per-device output picker        | ✅ | ✅ | ✅ | ✅ | OnScreen: cpal device enum + diagnostic test-tone page |
-| Hi-res / sample-rate switching  | ⚠️ | ✅ | ✅ | ✅ | OnScreen requests the FLAC's native rate from cpal but without exclusive mode the OS mixer may still resample |
+| Hi-res / sample-rate switching  | ✅ | ✅ | ✅ | ✅ | OnScreen exclusive mode opens IAudioClient at the file's exact rate (192/96/48 kHz, 24/16-bit) — DAC sees the source rate. Shared-mode path uses AUTOCONVERTPCM so the OS engine's SRC handles cross-rate adaptation without rejecting the format. |
+| Mid-track scrubbing on hi-res   | ✅ | ✅ | ✅ | ✅ | OnScreen: symphonia's FLAC demuxer binary-searches the SEEKTABLE block, then the HTTP body is satisfied via `Range: bytes=N-` against an `HttpSeekableSource` that implements `Read + Seek + MediaSource`. Sub-200 ms even on 24/192 content; the prior claxon path took ~6 s for a 60 s seek (decode-bound). |
+| Network resilience (mid-track)  | ✅ | ✅ | ✅ | ✅ | OnScreen: `HttpSeekableSource` recovers a dropped socket by reopening with `Range: bytes={offset}-` from the byte where the read died — survives proxy idle closes, Cloudflare Tunnel keepalive lapses, NAT timeouts. The decoder thread never sees the discontinuity. |
 
 ### 15c. Cross-device + power-user
 
@@ -318,10 +320,10 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | OS media keys (Play/Pause/Next/Prev) | ✅ | ✅ | ✅ | ✅ | OnScreen: `tauri-plugin-global-shortcut`, system-wide |
 | System tray (background play)   | ✅ | ✅ | ✅ | ⚠️ | OnScreen: tray menu for Show/Transport/Quit |
 | Native OS notifications         | ✅ | ✅ | ✅ | ⚠️ | OnScreen: now-playing on track change, gated on window blur |
-| OS now-playing widget (SMTC/MPRIS/MediaPlayer) | ❌ | ✅ | ✅ | ⚠️ | Lockscreen/taskbar art + transport; OnScreen punted (`souvlaki` swap) |
+| OS now-playing widget (SMTC/MPRIS/MediaPlayer) | ✅ | ✅ | ✅ | ⚠️ | OnScreen: `souvlaki` 0.8 abstracts SMTC (Windows) / MPRIS (Linux) / MediaPlayer (macOS); track metadata + cover art + transport buttons sync from the player on every state change. |
 | Secure credential storage       | ✅ | ✅ | ✅ | ⚠️ | OnScreen: Windows Credential Manager / macOS Keychain / Linux Secret Service via `keyring 3.x` |
 | Cross-device resume sync (push) | ✅ | ✅ | ✅ | ⚠️ | OnScreen: SSE `progress.updated` broadcast + watch-page consumer; Jellyfin polls |
-| "Play on this device" remote control | ❌ | ✅ | ✅ | ⚠️ | Pick another logged-in device from a "now playing" list and stream there |
+| "Play on this device" remote control | ✅ | ✅ | ✅ | ⚠️ | OnScreen: pick another logged-in device from the now-playing transfer menu; the target picks up the queue + position via the existing SSE channel and starts playback. Native client surfaces a friendly device label ("Desktop — Chrome on Windows" / "Web — Safari on macOS") so the picker isn't a list of UUIDs. |
 | Picture-in-picture mode         | ❌ | ✅ | ✅ | ⚠️ | |
 | Configurable server URL (no Plex.tv lock-in) | ✅ | ⚠️ | ✅ | ✅ | OnScreen: first-run picker + `/native/server` reset |
 
@@ -345,7 +347,7 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Decision                        | Android TV scaffold | Android phone scaffold | webOS scaffold | Tizen scaffold | Roku scaffold | Rationale |
 |---------------------------------|--------------------|------------------------|---------------|----------------|---------------|-----------|
 | Language / framework            | Kotlin + AndroidX Leanback | Kotlin + Jetpack Compose + Material 3 | SvelteKit SPA | SvelteKit SPA | BrightScript + SceneGraph | Phone client deliberately picks Compose over the TV's Leanback so touch + gesture + insets aren't fighting a remote-first framework; data layer is shared verbatim across the two Kotlin modules |
-| Video player                    | Media3 ExoPlayer (HLS + DASH) | Media3 ExoPlayer (HLS + DASH) | HTML5 `<video>` + hls.js | Tizen AVPlay JS API (HW HLS/DASH/MP4 + HEVC/AV1) | Firmware Video node (HLS + DASH + MP4) | The native option on each platform; AVPlay is the audiophile-pillar equivalent for video on Samsung — firmware decoders for HEVC/AV1, native 4K + HDR pipeline |
+| Video player                    | Media3 ExoPlayer (HLS) | Media3 ExoPlayer (HLS) | HTML5 `<video>` + hls.js | Tizen AVPlay JS API (HW HLS/MP4 + HEVC/AV1) | Firmware Video node (HLS + MP4) | The native option on each platform; AVPlay is the audiophile-pillar equivalent for video on Samsung — firmware decoders for HEVC/AV1, native 4K + HDR pipeline. OnScreen is HLS-only — DASH support in these frameworks is unused. |
 | Networking                      | Retrofit + Moshi + OkHttp + okhttp-sse | Retrofit + Moshi + OkHttp + okhttp-sse | reuses `web/src/lib/api.ts` shape | reuses `web/src/lib/api.ts` shape | `roUrlTransfer` + ParseJson | Roku has no SSE primitive — sync via long-poll fallback when wired |
 | DI                              | Hilt | Hilt | n/a (Svelte stores) | n/a (Svelte stores) | n/a (file-scoped functions) | BrightScript has no DI ecosystem; Singletons-by-convention is the norm |
 | Image loading                   | Coil | Coil (Compose) | browser-native | browser-native | Poster node (firmware) | Async + cached + diskbacked on Roku for free |
@@ -529,20 +531,23 @@ Compares OnScreen's Tauri 2 shell against the first-party desktop clients in eac
 | Feature                          | OnScreen (Tauri) | Plex (Plexamp / HTPC) | Emby Theater | Jellyfin (JMP) | Notes |
 |----------------------------------|:--:|:--:|:--:|:--:|---|
 | Single shared codebase with web  | ✅ | ⚠️ | ⚠️ | ✅ | |
-| Native audio engine              | ✅ | ✅ | ✅ | ⚠️ | OnScreen: cpal + claxon; JMP: mpv |
-| WASAPI exclusive (Win)           | ❌ | ✅ | ✅ | ✅ | cpal 0.16 limitation |
-| CoreAudio HOG (macOS)            | ❌ | ✅ | ⚠️ | ✅ | |
-| ALSA `hw:` (Linux)               | ❌ | ✅ | ⚠️ | ✅ | |
+| Native audio engine              | ✅ | ✅ | ✅ | ⚠️ | OnScreen: symphonia + raw `wasapi` over a lock-free SPSC ringbuf; JMP: mpv |
+| WASAPI exclusive (Win)           | ✅ | ✅ | ✅ | ✅ | OnScreen: raw `wasapi` IAudioClient in `AUDCLNT_SHAREMODE_EXCLUSIVE`; shared-mode path uses `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` for non-mix rates |
+| CoreAudio HOG (macOS)            | ❌ | ✅ | ⚠️ | ✅ | Deferred — Windows shipped first |
+| ALSA `hw:` (Linux)               | ❌ | ✅ | ⚠️ | ✅ | Deferred |
 | Gapless playback                 | ✅ | ✅ | ✅ | ✅ | |
-| Native FLAC                      | ✅ | ✅ | ✅ | ✅ | claxon |
-| Native ALAC / WAV / AIFF         | ⚠️ | ✅ | ✅ | ✅ | Webview fallback for non-FLAC |
+| Native FLAC                      | ✅ | ✅ | ✅ | ✅ | symphonia (migrated from claxon for SEEKTABLE-driven seek) |
+| Native ALAC / WAV / AIFF         | ✅ | ✅ | ✅ | ✅ | symphonia handles the entire lossless catalog through one pipeline |
+| DSD (DoP)                        | ✅ | ⚠️ | ❌ | ⚠️ | OnScreen: native DSF parser + DoP packer routed through WASAPI exclusive |
+| ReplayGain enforcement           | ✅ | ✅ | ✅ | ✅ | OnScreen: track / album / off mode + ±15 dB preamp via `/native/audio` |
+| Mid-track scrub on hi-res        | ✅ | ✅ | ✅ | ✅ | symphonia SEEKTABLE binary search + HTTP Range; sub-200 ms on 24/192 |
 | OS media keys                    | ✅ | ✅ | ✅ | ✅ | |
 | System tray                      | ✅ | ✅ | ✅ | ⚠️ | |
 | Native OS notifications          | ✅ | ✅ | ✅ | ⚠️ | |
-| OS now-playing widget (SMTC/MPRIS)| ❌ | ✅ | ✅ | ⚠️ | `souvlaki` swap pending |
+| OS now-playing widget (SMTC/MPRIS)| ✅ | ✅ | ✅ | ⚠️ | `souvlaki` 0.8 — SMTC / MPRIS / MediaPlayer |
 | Secure credential storage        | ✅ | ✅ | ✅ | ⚠️ | Keychain / Cred Mgr / Secret Service |
 | Cross-device resume sync (SSE)   | ✅ | ✅ | ✅ | ⚠️ | |
-| "Play on this device" remote     | ❌ | ✅ | ✅ | ⚠️ | |
+| "Play on this device" remote     | ✅ | ✅ | ✅ | ⚠️ | OnScreen: now-playing transfer menu picks another logged-in device, target picks up via SSE |
 | Picture-in-picture               | ❌ | ✅ | ✅ | ⚠️ | |
 | Configurable server URL          | ✅ | ⚠️ | ✅ | ✅ | No Plex.tv lock-in |
 
@@ -572,7 +577,7 @@ The web client is the universal fallback — runs in any modern browser with no 
 | Music: Synced lyrics (USLT/.lrc/LRCLIB) | ✅ | ✅ | ✅ | ✅ | |
 | Music: Gapless via dual-`<audio>`| ✅ | ✅ | ✅ | ✅ | |
 | Direct play (raw file + range)   | ✅ | ✅ | ✅ | ✅ | |
-| HLS transcode + DASH             | ✅ | ✅ | ✅ | ✅ | DASH server-side; frontend still uses hls.js |
+| HLS transcode                    | ✅ | ✅ | ✅ | ✅ | HLS-only by design (see DASH row in §3) |
 | Audio + subtitle pickers         | ✅ | ✅ | ✅ | ✅ | |
 | Skip-intro / skip-credits        | ✅ | 💎 | ✅ | 🧩 | |
 | Up Next overlay                  | ✅ | ✅ | ✅ | ✅ | |
@@ -595,17 +600,16 @@ The web client is the universal fallback — runs in any modern browser with no 
 - **Secret encryption at rest** for webhooks and plugin credentials (AES-256-GCM).
 - **NFO + Cover Art Archive fallback chain**: NFO overrides TMDB on the final write; CAA fills MusicBrainz-keyed album art that TheAudioDB doesn't have. Plex doesn't do CAA at all.
 
-## Where OnScreen Trails (as of 2026-04-29)
+## Where OnScreen Trails (as of 2026-04-30)
 
 - **EPUB / CBR books** — CBZ scan + reader shipped in v2.1 Stage 1, but the other two formats still need their parsers and explicitly slipped to Stage 2.
 - **No Tidal / Qobuz integration** for music streaming.
-- **No HEVC / AV1 hardware encode validated on real hardware** yet — code paths shipped, beta validation pending.
+- **NVENC (HEVC + AV1) validated** on Windows dev box (RTX 5080, 2026-04-30) for code paths *and* in production on Linux via the TrueNAS Docker deploy (RTX 5000) for OS+containerization shape. **AMF (H.264 + HEVC) validated** 2026-04-30 on Ryzen 9900X iGPU (HDR HEVC source → zscale tonemap → AMF encode). **QSV (Intel) + VAAPI (Linux Intel/AMD)** still pending hardware tests on those vendors.
 - **No direct cloud-storage integration** (S3/GCS); all four rely on local or NFS mounts.
-- **No bit-perfect playback** — the native Tauri shell ships with a cpal+claxon FLAC engine (out of webview), but cpal 0.16 hard-codes WASAPI shared mode so the OS mixer can still resample. Real exclusive output needs either a cpal fork or dropping to raw `wasapi`/`coreaudio`/`alsa` per platform — multi-day work behind the audiophile pillar.
+- **macOS / Linux exclusive output is deferred** — Windows ships bit-perfect WASAPI exclusive (raw `wasapi` IAudioClient in `AUDCLNT_SHAREMODE_EXCLUSIVE`, plus shared-mode `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` for non-mix rates). macOS HOG mode + Linux ALSA `hw:` not yet wired — both ~250 LOC mirroring `windows_exclusive.rs` when those platforms land in user-testing scope.
 - **TV / mobile coverage is uneven** — OnScreen has a Tauri 2 desktop client (Windows/macOS/Linux), a hardware-verified Android TV / Fire TV client (Leanback + Media3 ExoPlayer), a feature-complete LG webOS app (SvelteKit + ares-package), a Roku app at full flow parity (BrightScript + SceneGraph, including transcode negotiation), a Samsung Tizen app at flow parity (SvelteKit + AVPlay), and an Android phone app at full feature parity (Compose + Material 3, scaffold in `clients/android_native/`, including background audio + cross-device resume + PiP + photo viewer + offline downloads + OpenSubtitles search). webOS, Roku, Tizen, and the Android phone app still need real-hardware validation. iOS and Apple TV apps don't exist. The web frontend works in those browsers as a fallback.
-- **No "play on this device" remote control** — cross-device resume sync ships in v2.1 (SSE `progress.updated` broadcast + watch-page consumer), but transferring an active playback session from one device to another isn't wired.
-- **DASH on the client side** — `manifest.mpd` ships server-side in v2.1, but the frontend still uses `hls.js`. Smart-TV apps (Tizen, webOS, Roku) that prefer DASH won't see the benefit until the shaka-player swap lands.
 - **Picture-in-picture server signal** — handler/store has no PiP-mode flag yet.
+- **Picture-in-picture in the desktop shell** — Tauri 2 webview doesn't expose `requestPictureInPicture` on Windows. Lands when the upstream PR or a workaround lands.
 
 ## v2 Closed (since the prior snapshot)
 
@@ -617,8 +621,8 @@ The web client is the universal fallback — runs in any modern browser with no 
 - ✅ Cover Art Archive fallback for album art
 - ✅ DVR retention purge (closes the matcher → capture → cleanup loop)
 - ✅ Subtitle burn-in (software-encode path)
-- ✅ AV1 encode (SVT-AV1 SW + AV1 NVENC + AV1 QSV constants — beta hardware validation pending)
-- ✅ HEVC encode on QSV / VAAPI / AMF (beta hardware validation pending)
+- ✅ AV1 encode (SVT-AV1 SW + AV1 NVENC + AV1 QSV constants — **AV1 NVENC validated 2026-04-30** on RTX 5080 against real 4K AV1 source; QSV vendor pending)
+- ✅ HEVC encode on QSV / VAAPI / AMF (**HEVC NVENC validated 2026-04-30** on RTX 5080; **AMF validated same day** on Ryzen 9900X iGPU with HDR HEVC source → zscale tonemap → AMF encode; QSV/VAAPI still pending hardware tests on those vendors)
 - ✅ Schedules Direct as a second EPG source (token auth, batched fetch, callsign auto-match)
 - ✅ Gapless music playback (dual `<audio>` preload rotation)
 - ✅ SAML 2.0 SP-initiated SSO (JIT provisioning, admin-group sync, SP keypair auto-generate)
@@ -630,9 +634,9 @@ The web client is the universal fallback — runs in any modern browser with no 
 - ✅ **Track B — Media types**: home_video library + date-grouped page; CBZ books with paginated reader; **audiobook hierarchy complete** — `book_author → book_series → audiobook → audiobook_chapter` schema (migration 00069 with backfill from the v2.0 flat-grid `original_title` stash, no rescan needed for visibility); scanner detects 4 folder layouts (loose at root, author-only, multi-file book, author/series/book/file); `rootItemType("audiobook")` returns book_author so the library top-level renders authors as a typed shelf (mirrors music's artist row); server-side chapter-boundary resume snap on `GET /items/{id}` so every native client picks up snap-resume without per-client code; author + series detail pages on **all six clients** (web, Android phone + TV, webOS, Tizen, Roku); audiobook embedded covers + chapter scrubber UI in playback. Migration 00068 fixed a latent CHECK-constraint bug on `audiobook_chapter` that would have blocked any fresh DB scanning a multi-file book. Podcast show + episode detail UI also closed.
 - ✅ **Track F — Discovery**: smart playlists (rule JSONB, query-time evaluation); trending row (rolling watch_events aggregate). Watch-cooccurrence recommendations + "Because you watched X" were built (item-to-item collaborative filtering, replaced the planned pgvector pipeline) but removed from the home hub before release — the row didn't earn its space; trending stays. Cooccurrence table + sql kept dormant in case the row earns a comeback
 - ✅ **Track G — Per-user policy** (5/5): library `is_private` flag with public/private union semantics; `auto_grant_new_users` template wired into invite + OIDC + SAML + LDAP user-creation paths; per-profile inherit-or-override library access; content-rating gates closed in `ListCollectionItems`, `ListItemsByGenre`, `ListWatchHistory`; admin "view as" middleware (read-only, GET-only, IDOR-gated)
-- ✅ **Track H — Streaming format**: server-side DASH `manifest.mpd` endpoint over the existing fMP4 ladder (one segment ladder, two manifests) + `manifest_url` exposed on the session-start response; frontend shaka-player swap intentionally deferred — real DASH leverage is smart-TV native clients (Track E) consuming the URL directly
+- ❌ **Track H — Streaming format (cut)**: server-side DASH `manifest.mpd` endpoint shipped over the existing fMP4 ladder, then ripped out 2026-04-30 along with `shaka-player`, the `Dash` source variants in every native client, and the `media3-exoplayer-dash` Android dep. Cost/benefit didn't pencil out — single-rendition transcode-on-the-fly fights shaka's static-MPD seek model, and Plex/Jellyfin both chose HLS-only for the same reasons. HEVC continues to ship via HLS-fMP4.
 - ✅ **Track D — Quality + dev workflow** (3/3): `auth-providers.spec.ts` Playwright spec covering OIDC PKCE shape, SAML signed-AuthnRequest (locks the four-layer SAML signing fix behind a regression guard), LDAP end-to-end + negative path; gh CLI added to CONTRIBUTING.md prereqs (cuts release form to one command); 10-PR Dependabot triage doc grouping the v2.0-tag queue by risk with paste-ready merge commands
-- ✅ **Track E — Native desktop client** (most of the list): Tauri 2 shell for Windows/macOS/Linux reusing the SvelteKit bundle in a system webview; cpal + claxon native FLAC engine (play/pause/preload/seek/auto-advance) outside the webview; OS media keys via `tauri-plugin-global-shortcut`; system tray with transport menu; OS notifications on track change; refresh + access tokens in the OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service) with one-shot store-to-keychain migration; SSE `progress.updated` broadcast + watch-page consumer for cross-device resume. **Outstanding:** real WASAPI exclusive mode (cpal 0.16 limitation, multi-day platform work), OS now-playing widgets (`souvlaki` swap), "play on this device" remote control.
+- ✅ **Track E — Native desktop client** (most of the list): Tauri 2 shell for Windows/macOS/Linux reusing the SvelteKit bundle in a system webview; native audio engine outside the webview decoding FLAC/ALAC/WAV/AIFF through symphonia 0.5 (migrated from claxon for SEEKTABLE-driven seek; sub-200 ms scrubbing on 24/192) and DSD via a native DSF parser + DoP packer; output through raw `wasapi` IAudioClient in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect — OS mixer bypassed) with a shared-mode fallback that uses `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` so any file rate plays even when device mix-format differs; ReplayGain enforcement (track / album / off + ±15 dB preamp); OS now-playing widget via `souvlaki` (SMTC / MPRIS / MediaPlayer); "play on this device" cross-device remote control over the existing SSE channel; OS media keys via `tauri-plugin-global-shortcut`; system tray with transport menu; OS notifications on track change; refresh + access tokens in the OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service) with one-shot store-to-keychain migration; SSE `progress.updated` broadcast + watch-page consumer for cross-device resume; HTTP body wrapped in an `HttpSeekableSource` that satisfies symphonia's seek via `Range: bytes=N-` and recovers a dropped socket transparently (Cloudflare Tunnel idle close, NAT timeout, server `WriteTimeout`). **Outstanding:** macOS HOG mode + Linux ALSA `hw:` exclusive backends, picture-in-picture for video.
 - ✅ **Track E — TV clients**:
   - **Android TV / Fire TV** (hardware-verified): full Leanback + Media3 ExoPlayer client; device-pairing sign-in covers every auth provider via web browser PIN handoff; photo viewer with D-pad sibling navigation (auto-resolves siblings from parent album or library); music auto-advance through albums (silent EOS chain, no Up Next overlay); audiobook speed picker (0.75–2x); collections drill from search/hub; HLS retry policy + 60s read timeout for cold-start transcodes over Cloudflare Tunnel; screen-on flag during active playback.
   - **LG webOS** (SvelteKit + ares-package): setup → login → hub → library → item → search → watch + pairing flow + search type-filter chips + photo viewer + audiobook chapter list + collections + favorites + history + skip-intro/credits + Up Next + music auto-advance + SSE cross-device resume. Hardware validation on a real LG TV outstanding.
@@ -654,6 +658,7 @@ The web client is the universal fallback — runs in any modern browser with no 
 - ✅ **Android phone full feature parity wave**: closes the headline gaps from the prior snapshot. Browse: search type-filter chips (Movies / TV Shows / Episodes / Music, persisted via DataStore — same shape as the TV client; album/artist/season piggyback on existing chips), favorite-toggle in the item-detail TopAppBar with optimistic flip, photo viewer on a dedicated `/photo/{id}` route using `HorizontalPager` with parent-album-first sibling resolution, audiobook chapter list rendered on the detail page. Player: picture-in-picture (16:9 ratio, gated on `hasVideo` so audio-only items don't surface a useless button), in-player OpenSubtitles search reusing the `/items/{id}/subtitles/{search,download}` server proxy, cross-device resume sync consuming `progress.updated` SSE events with same-device echo dedupe (3 s window absorbs 10 s ticker jitter), background audio via `OnScreenMediaSessionService` mirroring the TV-client lifecycle (`AudioHandoff` slot + `NextSiblingResolver` for service-side auto-advance + 10 s progress reporter; re-entry rebuilds fresh rather than threading a bound-service binder through the Compose tree). 17 new unit tests across `SearchViewModel`, `NextSiblingResolver`, and `PlayerViewModel`'s SSE + OpenSubtitles paths. **Real-hardware validation is now the only outstanding item.**
 - ✅ **Android phone offline downloads**: WorkManager + Hilt-injected worker + on-disk JSON manifest. Player short-circuits to the local file before even running the direct/transcode decision when a completed download exists. The TV client deliberately stays online-only (couches near a network); this is the phone-only differentiator that flips the matrix cell from `❌` to `✅` against Plex/Emby's premium-tier downloads.
 - ✅ **Native desktop audio engine — phase 2**: gapless preload (the next track's ringbuf primes during the current track's tail; promotion is sub-frame on EOS), position polling with auto-advance on engine-side STATE_ENDED, asset URLs honour the configured server base, query-token carrier for asset routes (so the cpal engine works through the same `?token=` middleware path that ExoPlayer uses on TV).
+- ✅ **Native desktop audio engine — phase 3**: bit-perfect WASAPI exclusive mode on Windows (raw `wasapi` IAudioClient in `AUDCLNT_SHAREMODE_EXCLUSIVE`, event-driven on a dedicated thread; settings UI surfaces a "Currently: WASAPI exclusive · bit-perfect" badge), shared-mode fallback that passes `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` so any file rate plays even when the device mix-format differs (cpal's WASAPI shared rejected non-mix rates outright — the autoconvert flag is what unblocks 24/192 on a 48 kHz-default device); FLAC migrated from claxon to symphonia (one decoder pipeline now covers FLAC + ALAC + WAV + AIFF), enabling SEEKTABLE-backed mid-track scrub via `HttpSeekableSource` (HTTP Range over `Read + Seek + MediaSource`) — sub-200 ms on 24/192, where the prior claxon path took ~6 s decode-bound; ReplayGain enforcement in the engine (track / album / off + ±15 dB preamp) reading symphonia metadata; DSD playback via DSF parser + DoP packer (16 DSD samples per channel → 24-bit PCM frame at sr/16, routed through the same exclusive path); volume slider plumbs into the WASAPI write loops via an atomic so slider movements take effect within ~20 ms (skipped at unity for true bit-perfect output); OS now-playing widget shipped (`souvlaki` 0.8 — SMTC / MPRIS / MediaPlayer); "play on this device" cross-device remote control closes the last cell on the desktop matrix; HTTP body resilience (Range-resume on socket close — survives Cloudflare Tunnel idle close, NAT timeout, server `WriteTimeout`); server-side fix: API server's 60 s `WriteTimeout` was killing media bodies mid-track for clients that read at decode rate (browsers dodged it by buffering the whole body in <1 s on LAN); media-stream + direct-play handlers now clear the response write deadline before `http.ServeFile`. **Outstanding:** macOS HOG mode + Linux ALSA `hw:` exclusive backends, picture-in-picture for video.
 - ✅ **Test infrastructure restoration**: server settings test moved behind `//go:build integration` (testcontainers panicked locally without Docker), `lostcancel` fix in `worker/master.go`, race-detector CI job for concurrent packages. Android TV unit suite restored (HomeViewModel rewrite + `supervisorScope` so a hub-fetch failure doesn't cancel sibling fetches; SearchViewModel + PlaybackViewModel ctor patches; orphaned NotificationsViewModelTest deleted). Web `AudioPlayer.test.ts` mock extended with `getApiBase` + `getBearerToken`. Android phone client seeded with 29 unit tests across PlaybackHelper / HubViewModel / PairViewModel / PlayerViewModel — closes the "no test sources" gap.
 - ✅ **Per-file streaming token + auth hardening**: native players (ExoPlayer, Roku Video node, Tizen AVPlay, mpv) bypass the OkHttp / fetch token-refresh paths, so a 1 h access token expired mid-stream and surfaced as `ERROR_CODE_IO_BAD_HTTP_STATUS` on the next range request. `auth.IssueStreamToken(claims, fileID)` mints a 24 h PASETO with two new claims: `purpose="stream"` (rejected on the Bearer / cookie path so a leaked stream URL can't grant general API access) and `file_id=<uuid>` (asset middleware enforces the chi `{id}` URL param matches, so the leaked URL can't be repurposed across files). `ItemHandler.Get` returns one stream token per file in the response. `authService.Logout` now bumps `session_epoch` after deleting the session — closes a pre-existing weakness where outstanding access tokens kept working until natural TTL after logout. Android, webOS, and Roku all consume the token; older clients ignore the field and fall back to the access token.
 

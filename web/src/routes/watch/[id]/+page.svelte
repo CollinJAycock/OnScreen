@@ -381,6 +381,14 @@
   // *before* any frame decodes, and we'd spuriously escalate to a
   // brand-new transcode session that resets currentTime to 0.
   let codecEscalationArmed = true;
+  // True while switchToTranscode/switchToDirectPlay is mid-flight
+  // (between destroyHls and attachHls/source assignment). loadedmetadata
+  // events that fire in this window have stale videoEl state — both
+  // hlsActive and videoWidth are zeroed by the destroy step but the
+  // *new* attach hasn't run yet, so the codec-escalation heuristic
+  // would mistake the gap for a direct-play decode failure and
+  // downgrade a forced 4K HEVC transcode to remux mid-switch.
+  let switchingTranscode = false;
 
   // Audio codecs that browsers can decode natively.
   // Audio codecs browsers can decode natively in MP4/WebM containers.
@@ -1074,6 +1082,25 @@
     // Non-default audio track selected — must go through transcode even for direct-playable files.
     const needsAudioSwitch = selectedAudioIndex > 0;
 
+    // Default the quality picker to the source's resolution tier so a 4K
+    // movie shows "4K" selected from the start, regardless of which path
+    // (direct-play / remux / transcode) actually serves it. The picker
+    // label should reflect what's on the wire, not the playback strategy.
+    //
+    // Tier check uses width OR height: anamorphic UHD (2.40:1 / scope —
+    // most theatrical movies) lands at 3840×~1600, not 3840×2160, so a
+    // height-only check would misclassify a real 4K source as 1080p.
+    const sourceW = file.resolution_w ?? 0;
+    const sourceH = file.resolution_h ?? 0;
+    const tierHeight =
+      sourceW >= 3840 || sourceH >= 2160 ? 2160 :
+      sourceW >= 1920 || sourceH >= 1080 ? 1080 :
+      sourceW >= 1280 || sourceH >= 720 ? 720 : 0;
+    const tierMatch = tierHeight > 0
+      ? availableQualities.find(q => q.height === tierHeight)
+      : undefined;
+    if (tierMatch) selectedQuality = tierMatch;
+
     if (!file.video_codec) {
       // Audio-only file (FLAC, MP3, AAC, Opus) — browser <video> element can play
       // these natively from the raw stream without any transcoding.
@@ -1090,10 +1117,11 @@
       const posMs = item.view_offset_ms > 0 ? item.view_offset_ms : 0;
       await switchToTranscode(0, posMs, true);
     } else {
-      // Full transcode needed (non-browser video codec like HEVC/VC-1/MPEG-2).
-      // Match source resolution: 4K sources default to 4K, everything else to 1080p.
-      const sourceH = file.resolution_h ?? 0;
-      const defaultHeight = sourceH >= 2160 ? 2160 : 1080;
+      // Full transcode needed (non-browser video codec like HEVC/VC-1/MPEG-2/AV1).
+      // Match source resolution tier: 4K sources default to 4K (server's
+      // scale filter preserves source aspect, so anamorphic 3840×1604
+      // stays 3840×1604 even though we ask for height=2160).
+      const defaultHeight = sourceW >= 3840 || sourceH >= 2160 ? 2160 : 1080;
       const match = availableQualities.find(q => q.height === defaultHeight)
                  ?? availableQualities.find(q => q.height > 0)
                  ?? qualityOptions[2]; // 1080p fallback
@@ -1111,7 +1139,19 @@
   // ── Quality switching ────────────────────────────────────────────────────────
 
   async function selectQuality(q: QualityOption) {
-    if (q === selectedQuality) { showQualityMenu = false; return; }
+    // Short-circuit only when this click would truly change nothing.
+    // The picker is auto-initialized to the source's resolution tier so
+    // a 4K movie shows "4K" selected from the start — but the underlying
+    // playback may be direct-play or remux (HLS). A user clicking the
+    // explicit quality is asking for a real transcode at that height
+    // (which is the codepath that emits DASH on HEVC sessions); treat
+    // the click as a state-change request unless we're already in a
+    // forced transcode at that quality.
+    const inForcedTranscode = hlsActive && !hlsIsRemux;
+    if (q === selectedQuality && (q.height === 0 || inForcedTranscode)) {
+      showQualityMenu = false;
+      return;
+    }
     selectedQuality = q;
     showQualityMenu = false;
 
@@ -1128,8 +1168,14 @@
         // "Auto" but can't direct-play → remux (video copy + audio transcode).
         await switchToTranscode(0, posMs, true);
       } else {
-        // "Auto" but nothing is browser-compatible → full transcode at 1080p.
-        await switchToTranscode(1080, posMs);
+        // "Auto" but nothing is browser-compatible → full transcode.
+        // Match source resolution so 4K sources stay 4K instead of being
+        // silently downsampled to 1080p. Width-or-height check covers
+        // anamorphic UHD (3840×~1600) too.
+        const sourceW = item.files[0]?.resolution_w ?? 0;
+        const sourceH = item.files[0]?.resolution_h ?? 0;
+        const defaultHeight = sourceW >= 3840 || sourceH >= 2160 ? 2160 : 1080;
+        await switchToTranscode(defaultHeight, posMs);
       }
     } else {
       // Explicit resolution selected — full transcode.
@@ -1140,6 +1186,7 @@
   async function switchToDirectPlay(posMs: number) {
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
+    switchingTranscode = true; // gate codec-escalation during the destroy→attach gap
     destroyHls();
     await stopTranscodeSession();
     hlsOffsetSec = 0;
@@ -1149,10 +1196,14 @@
     videoEl.src = file.stream_url;
     videoEl.load();
 
-    // Restore position once metadata loads.
+    // Restore position once metadata loads. The codec-escalation gate
+    // (switchingTranscode=false) lifts here too — by loadedmetadata
+    // the new src is bound and any decode failure from this point on
+    // is real, not a destroy→attach race.
     const restorePos = () => {
       videoEl.currentTime = posMs / 1000;
       if (wasPlaying) videoEl.play().catch(() => {});
+      switchingTranscode = false;
       videoEl.removeEventListener('loadedmetadata', restorePos);
     };
     videoEl.addEventListener('loadedmetadata', restorePos);
@@ -1162,6 +1213,7 @@
     if (!item) return;
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
+    switchingTranscode = true; // gate codec-escalation during the destroy→attach gap
     // Surface a spinner during the API wait. The transcode start call
     // can block for several seconds while the server waits for seg 0 to
     // be finalized and probes its audio gap — without this flag the
@@ -1191,10 +1243,15 @@
       // for. seg0_audio_gap_sec (when non-zero) is how far into the
       // stream to begin playback so we skip silent video while the
       // AAC encoder warms up on a mid-stream -ss.
-      attachHls(sess.playlist_url, sess.start_offset_sec, wasPlaying, videoCopy, sess.seg0_audio_gap_sec);
+      const playlistUrl = sess.playlist_url;
+      const seg0Gap = sess.seg0_audio_gap_sec;
+      const offsetSec = sess.start_offset_sec;
+      attachHls(playlistUrl, offsetSec, wasPlaying, videoCopy, seg0Gap);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Transcode failed';
       buffering = false;
+    } finally {
+      switchingTranscode = false;
     }
     // buffering stays true until the video element fires `playing`,
     // so the spinner covers both the API wait AND the subsequent
@@ -1328,7 +1385,7 @@
     // recoverMediaError detaches/reattaches MediaSource which re-fires this
     // event before any frame has decoded, and a spurious escalation here
     // creates a brand-new session that resets currentTime to 0.
-    if (codecEscalationArmed && videoEl.videoWidth === 0 && item?.files?.[0] && item.files[0].video_codec) {
+    if (codecEscalationArmed && !switchingTranscode && videoEl.videoWidth === 0 && item?.files?.[0] && item.files[0].video_codec) {
       codecEscalationArmed = false;
       const file = item.files[0];
       const posMs = hlsActive
@@ -1692,11 +1749,10 @@
     }
   }
 
-  // hlsPlaylistDurationSec returns how far into the stream HLS.js knows
-  // it can seek, using the parsed playlist rather than the browser's
-  // seekable range (which tracks only buffered media). Falls back to
-  // seekable/buffered bounds when the playlist details haven't parsed
-  // yet (very early in a session).
+  // hlsPlaylistDurationSec returns how far into the stream the player
+  // can actually seek without outrunning ffmpeg — read out of the
+  // parsed HLS playlist (every fragment ffmpeg has produced is in
+  // hls.levels[i].details.fragments).
   function hlsPlaylistDurationSec(): number {
     const level = hlsInstance?.levels?.[hlsInstance.currentLevel];
     const frags = level?.details?.fragments;

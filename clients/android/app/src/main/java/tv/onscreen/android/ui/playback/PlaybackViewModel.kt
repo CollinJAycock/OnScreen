@@ -172,7 +172,7 @@ class PlaybackViewModel @Inject constructor(
         videoCopy: Boolean,
         serverUrl: String,
         audioStreamIndex: Int? = null,
-    ): PlaybackSource.Hls {
+    ): PlaybackSource {
         stopActiveTranscode()
 
         val session = transcodeRepo.start(
@@ -190,8 +190,7 @@ class PlaybackViewModel @Inject constructor(
         hlsOffsetMs = posMs
         lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
 
-        val fullUrl = "$serverUrl${session.playlist_url}"
-        return PlaybackSource.Hls(fullUrl, posMs)
+        return PlaybackSource.Hls("$serverUrl${session.playlist_url}", posMs)
     }
 
     /**

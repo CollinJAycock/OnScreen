@@ -1431,6 +1431,19 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		h.tracker.Touch(clientIP, file.FilePath, clientName)
 	}
 
+	// Clear the per-request WriteTimeout for streaming responses.
+	// The API server sets a 60 s WriteTimeout to bound regular JSON
+	// handlers, but a streamed media body legitimately holds the
+	// response open for the duration of playback. Browsers don't
+	// trip this — they download the whole body at LAN speed in
+	// well under a second — but the desktop native engine reads
+	// at decode rate (~600 KB/s for a 24/192 FLAC), so the server
+	// would close the connection at 60 s mid-track. Setting the
+	// deadline to the zero value disables it for this response only.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
+
 	http.ServeFile(w, r, file.FilePath)
 }
 

@@ -1,4 +1,4 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: OnScreen API
   version: "1.0.0"
@@ -1096,33 +1096,6 @@ paths:
             application/x-mpegURL: {}
         '401': { description: Bad or missing token. }
         '503': { description: Playlist not yet ready or request cancelled. }
-
-  /api/v1/transcode/sessions/{sid}/manifest.mpd:
-    parameters:
-      - { in: path, name: sid, required: true, schema: { type: string } }
-      - { in: query, name: token, required: true, schema: { type: string }, description: 'Segment token from `transcodeStart`. Same token used by playlist.m3u8 — bound to this session ID.' }
-    get:
-      summary: Serve the DASH MPD manifest (v2.1)
-      description: |
-        DASH counterpart to `playlist.m3u8` — references the same
-        init.mp4 + seg*.m4s files. Returns `application/dash+xml`.
-        Native clients (smart-TV apps in particular) consume this
-        directly; browsers continue using the HLS playlist.
-
-        fMP4 sessions only. MPEG-TS sessions return 415 with a hint
-        in the body pointing at `playlist.m3u8` — DASH cannot
-        describe TS segments.
-      tags: [Transcode]
-      security: []
-      responses:
-        '200':
-          description: MPD manifest.
-          content:
-            application/dash+xml: {}
-        '401': { description: Bad or missing token (or token bound to a different session). }
-        '404': { description: Session not found. }
-        '415': { description: Session uses MPEG-TS — fall back to playlist.m3u8. }
-        '503': { description: Manifest not yet ready or request cancelled. }
 
   /api/v1/transcode/sessions/{sid}/seg/{name}:
     parameters:
@@ -3223,15 +3196,6 @@ components:
       properties:
         session_id:   { type: string }
         playlist_url: { type: string }
-        manifest_url:
-          type: string
-          description: |
-            v2.1 Track H. DASH MPD URL parallel to `playlist_url` for
-            sessions that produce fMP4 segments (HEVC today, AV1 once
-            that path lands). Empty/omitted for MPEG-TS sessions where
-            DASH cannot describe the segments — clients fall back to
-            HLS via `playlist_url`. Native clients (smart-TV apps in
-            particular) consume this directly without URL construction.
         token:        { type: string }
         decision:     { type: string, enum: [direct, transcode] }
 

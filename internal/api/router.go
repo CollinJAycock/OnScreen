@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -153,10 +154,6 @@ func NewRouter(h *Handlers) http.Handler {
 	// not Bearer header, because HLS.js cannot attach arbitrary headers to segment fetches.
 	if h.NativeTranscode != nil {
 		r.Get("/api/v1/transcode/sessions/{sid}/playlist.m3u8", h.NativeTranscode.Playlist)
-		// DASH manifest for the same session, sharing the segment ladder.
-		// fMP4 sessions only — non-fMP4 sessions return 415 with a hint
-		// to fall back to playlist.m3u8.
-		r.Get("/api/v1/transcode/sessions/{sid}/manifest.mpd", h.NativeTranscode.ManifestMPD)
 		r.Get("/api/v1/transcode/sessions/{sid}/seg/{name}", h.NativeTranscode.Segment)
 	}
 
@@ -228,6 +225,13 @@ func NewRouter(h *Handlers) http.Handler {
 							return
 						}
 						w.Header().Set("Cache-Control", "private, max-age=86400, must-revalidate")
+						// Clear WriteTimeout — the 60 s server default
+						// kills mid-track for native clients that read
+						// at decode rate. Browsers dodge it by buffering
+						// the whole body in <1 s; native doesn't.
+						if rc := http.NewResponseController(w); rc != nil {
+							_ = rc.SetWriteDeadline(time.Time{})
+						}
 						http.ServeFile(w, req, abs)
 						return
 					}
@@ -785,6 +789,18 @@ func NewRouter(h *Handlers) http.Handler {
 		http.ServeContent(w, req, name, info.ModTime(), f.(io.ReadSeeker))
 	}
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		// API paths must NOT fall through to the SPA — clients (hls.js,
+		// shaka, native players) parse the response body as JSON / a
+		// manifest, and an HTML 200 looks like success until the parser
+		// chokes silently. This bit a HEVC fMP4 master+children path:
+		// the unrouted child playlist returned the SPA HTML and hls.js
+		// stalled instead of erroring cleanly.
+		if strings.HasPrefix(req.URL.Path, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
 		target := strings.TrimPrefix(req.URL.Path, "/")
 		if target != "" {
 			if info, err := fs.Stat(uiFS, target); err == nil && !info.IsDir() {

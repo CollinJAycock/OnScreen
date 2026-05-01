@@ -192,7 +192,7 @@ class PlayerViewModel @Inject constructor(
         videoCopy: Boolean,
         serverUrl: String,
         audioStreamIndex: Int? = null,
-    ): PlaybackSource.Hls {
+    ): PlaybackSource {
         stopActiveTranscode()
 
         val session = transcodeRepo.start(

@@ -33,7 +33,11 @@
   let controlsVisible = $state(true);
   let controlsTimer: ReturnType<typeof setTimeout> | null = null;
 
-  let session: { session_id: string; token: string; playlist_url: string } | null = null;
+  let session: {
+    session_id: string;
+    token: string;
+    playlist_url: string;
+  } | null = null;
   let reporter: ProgressReporter | null = null;
   let usingAvPlay = false;
 
@@ -541,8 +545,8 @@
         reporter.start(() => ({ positionMs: position, durationMs: duration }));
 
         if (avplay.available()) {
-          // Tizen hardware path. AVPlay handles HLS demux + hardware
-          // decode; the <video> element below stays unused.
+          // Tizen hardware path. AVPlay handles HLS demux +
+          // hardware decode; the <video> element below stays unused.
           usingAvPlay = true;
           avplay.open(
             {

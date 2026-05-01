@@ -195,13 +195,14 @@ sub onTranscodeTaskState()
     m.session = { session_id: sess.session_id, token: sess.token }
 
     ' Server returns playlist_url already-relative + already-tokenised
-    ' (?token=<seg-token>). Just prepend the origin to make absolute.
-    playlistUrl = serverUrl + sess.playlist_url
+    ' (?token=<seg-token>). Prepend the origin to make absolute.
+    streamUrl = serverUrl + sess.playlist_url
+    streamFormat = "hls"
 
     content = createObject("roSGNode", "ContentNode")
     content.title = m.item.title
-    content.url = playlistUrl
-    content.streamFormat = "hls"
+    content.url = streamUrl
+    content.streamFormat = streamFormat
     if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
     end if

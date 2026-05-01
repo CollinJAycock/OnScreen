@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -150,6 +151,13 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		respond.InternalError(w, r)
 		return
+	}
+
+	// SSE connections legitimately stay open indefinitely. The server's
+	// 60 s WriteTimeout would cut the stream every minute (Vite logs it
+	// as "socket hang up"); clear the per-response deadline.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")

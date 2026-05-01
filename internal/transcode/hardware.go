@@ -30,7 +30,10 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 	skipNVENC := runtime.GOOS == "linux" && !fileExists("/dev/nvidia0") && !fileExists("/dev/dxg")
 	skipDRI := runtime.GOOS == "linux" && !fileExists("/dev/dri/renderD128")
 
-	// NVENC (NVIDIA GPU — works on Linux and Windows).
+	// NVENC (NVIDIA GPU — works on Linux and Windows). Probe each
+	// codec the GPU might support; AV1 only lights up on Ada (40-series)
+	// and Blackwell (50-series) cards but the probe is cheap and the
+	// answer caches at startup.
 	if !skipNVENC {
 		if probeEncoder(ctx, "h264_nvenc") {
 			available = append(available, EncoderNVENC)
@@ -38,21 +41,39 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 		if probeEncoder(ctx, "hevc_nvenc") {
 			available = append(available, EncoderHEVCNVENC)
 		}
+		if probeEncoder(ctx, "av1_nvenc") {
+			available = append(available, EncoderAV1NVENC)
+		}
 	}
 
-	// AMF (AMD GPU — Windows only).
+	// AMF (AMD GPU — Windows only). RDNA2+ adds HEVC. AV1 AMF
+	// (RDNA3+) needs an EncoderAV1AMF constant that doesn't exist
+	// yet; deferred until AMD-AV1 hardware is on the test bench.
 	if runtime.GOOS == "windows" {
 		if probeEncoder(ctx, "h264_amf") {
 			available = append(available, EncoderAMF)
 		}
+		if probeEncoder(ctx, "hevc_amf") {
+			available = append(available, EncoderHEVCAMF)
+		}
 	}
 
-	// QSV / VAAPI (Intel — Linux only, requires DRI device).
+	// QSV / VAAPI (Intel — Linux only, requires DRI device). Intel Arc
+	// + 11th-gen+ iGPUs do AV1 encode via QSV.
 	if !skipDRI {
 		if probeEncoder(ctx, "h264_qsv") {
 			available = append(available, EncoderQSV)
+			if probeEncoder(ctx, "hevc_qsv") {
+				available = append(available, EncoderHEVCQSV)
+			}
+			if probeEncoder(ctx, "av1_qsv") {
+				available = append(available, EncoderAV1QSV)
+			}
 		} else if probeEncoder(ctx, "h264_vaapi") {
 			available = append(available, EncoderVAAPI)
+			if probeEncoder(ctx, "hevc_vaapi") {
+				available = append(available, EncoderHEVCVAAPI)
+			}
 		}
 	}
 
@@ -99,6 +120,44 @@ func probeEncoder(ctx context.Context, encoder string) bool {
 			"-t", "1", "-c:v", "hevc_nvenc",
 			"-f", "null", "-",
 		}
+	case "av1_nvenc":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1", "-c:v", "av1_nvenc",
+			"-f", "null", "-",
+		}
+	case "hevc_amf":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1", "-c:v", "hevc_amf",
+			"-f", "null", "-",
+		}
+	case "hevc_qsv":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1", "-c:v", "hevc_qsv",
+			"-f", "null", "-",
+		}
+	case "av1_qsv":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1", "-c:v", "av1_qsv",
+			"-f", "null", "-",
+		}
+	case "hevc_vaapi":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-vaapi_device", "/dev/dri/renderD128",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1",
+			"-vf", "format=nv12,hwupload",
+			"-c:v", "hevc_vaapi",
+			"-f", "null", "-",
+		}
 	case "h264_vaapi":
 		args = []string{
 			"-hide_banner", "-loglevel", "quiet",
@@ -135,20 +194,16 @@ func probeEncoder(ctx context.Context, encoder string) bool {
 // Used when the server doesn't have the GPU but a worker reports the capability.
 func EncoderLabel(enc Encoder) string {
 	switch enc {
-	case EncoderNVENC:
+	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
 		return "NVIDIA GPU"
-	case EncoderHEVCNVENC:
-		return "NVIDIA GPU (HEVC)"
-	case EncoderAMF:
+	case EncoderAMF, EncoderHEVCAMF:
 		return "AMD GPU"
-	case EncoderQSV:
+	case EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV:
 		return "Intel Quick Sync"
-	case EncoderVAAPI:
+	case EncoderVAAPI, EncoderHEVCVAAPI:
 		return "VA-API"
-	case EncoderSoftware:
+	case EncoderSoftware, EncoderHEVCSoftware, EncoderAV1Software:
 		return "Software (CPU)"
-	case EncoderHEVCSoftware:
-		return "Software (CPU, HEVC)"
 	default:
 		return string(enc)
 	}
@@ -179,7 +234,11 @@ func BestHEVCEncoder(encoders []Encoder) Encoder {
 // Falls back to a generic label based on the encoder type.
 func detectGPUName(ctx context.Context, enc Encoder) string {
 	switch enc {
-	case EncoderNVENC:
+	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
+		// All NVENC codec variants run on the same physical NVIDIA
+		// GPU — the UI groups them by label, so we return the same
+		// nvidia-smi output for all three. Picking the device in the
+		// dropdown enables every codec the GPU supports.
 		out, err := exec.CommandContext(ctx, "nvidia-smi",
 			"--query-gpu=name", "--format=csv,noheader").Output()
 		if err == nil {
@@ -189,7 +248,7 @@ func detectGPUName(ctx context.Context, enc Encoder) string {
 			}
 		}
 		return "NVIDIA GPU"
-	case EncoderAMF:
+	case EncoderAMF, EncoderHEVCAMF:
 		out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command",
 			"Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'AMD|Radeon' } | Select-Object -First 1 -ExpandProperty Name").Output()
 		if err == nil {
@@ -199,11 +258,11 @@ func detectGPUName(ctx context.Context, enc Encoder) string {
 			}
 		}
 		return "AMD GPU"
-	case EncoderQSV:
+	case EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV:
 		return "Intel Quick Sync"
-	case EncoderVAAPI:
+	case EncoderVAAPI, EncoderHEVCVAAPI:
 		return "VA-API"
-	case EncoderSoftware:
+	case EncoderSoftware, EncoderHEVCSoftware, EncoderAV1Software:
 		return "Software (CPU)"
 	default:
 		return string(enc)
@@ -241,6 +300,119 @@ func FilterAvailable(wanted, detected []Encoder) []Encoder {
 	return result
 }
 
+// OpenCLDevice represents a single (platform_index, device_index) pair
+// returned by ffmpeg's `-init_hw_device opencl=list`. The Name fields
+// are the human-readable strings ffmpeg prints — we match against them
+// to pick the platform whose vendor lines up with the encoder we're
+// going to use (NVIDIA-named platform for NVENC, Intel for QSV, AMD
+// for AMF). Without this, the bare `opencl=ocl` device init fails
+// (-19) on any host with more than one OpenCL platform visible.
+type OpenCLDevice struct {
+	Index        string // "N.M" suitable for `opencl=ocl:N.M`
+	PlatformName string
+	DeviceName   string
+}
+
+// ListOpenCLDevices runs ffmpeg's OpenCL platform listing and parses
+// the output. The listing is probed once per worker startup; the
+// process is fast (<100 ms) and the result is cached for the worker's
+// lifetime via PickOpenCLDevice.
+//
+// Output shape (one of many examples):
+//
+//	[OpenCL @ ...] 2 OpenCL platforms found.
+//	[OpenCL @ ...] 1 OpenCL devices found on platform "NVIDIA CUDA".
+//	[OpenCL @ ...] 0.0: NVIDIA CUDA / NVIDIA GeForce RTX 5080
+//	[OpenCL @ ...] 1 OpenCL devices found on platform "AMD ...".
+//	[OpenCL @ ...] 1.0: AMD Accelerated Parallel Processing / gfx1036
+func ListOpenCLDevices(ctx context.Context) []OpenCLDevice {
+	out, err := exec.CommandContext(ctx, "ffmpeg",
+		"-hide_banner", "-v", "verbose",
+		"-init_hw_device", "opencl=list",
+	).CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return nil
+	}
+	var devices []OpenCLDevice
+	for _, line := range strings.Split(string(out), "\n") {
+		// The platform/device-pair lines look like:
+		//   [OpenCL @ ...] 0.0: NVIDIA CUDA / NVIDIA GeForce RTX 5080
+		idx := strings.Index(line, "] ")
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(line[idx+2:])
+		colon := strings.Index(rest, ": ")
+		if colon < 0 {
+			continue
+		}
+		head := rest[:colon]
+		// head looks like "0.0" — verify shape so the "5 OpenCL
+		// platforms found" header line doesn't false-match.
+		if !strings.Contains(head, ".") {
+			continue
+		}
+		dot := strings.Index(head, ".")
+		if dot <= 0 || dot == len(head)-1 {
+			continue
+		}
+		body := rest[colon+2:]
+		var platform, device string
+		if slash := strings.Index(body, " / "); slash >= 0 {
+			platform = strings.TrimSpace(body[:slash])
+			device = strings.TrimSpace(body[slash+3:])
+		} else {
+			platform = strings.TrimSpace(body)
+		}
+		devices = append(devices, OpenCLDevice{
+			Index:        head,
+			PlatformName: platform,
+			DeviceName:   device,
+		})
+	}
+	return devices
+}
+
+// PickOpenCLDevice returns the platform.device index whose vendor
+// matches the active encoder. Falls back to "0.0" when no device is
+// found or no good match exists — works on single-vendor hosts where
+// 0.0 is by definition correct, and is the safest default elsewhere.
+//
+// Returns the index alone (e.g. "0.0") so callers can drop it into
+// `opencl=ocl:N.M` directly.
+func PickOpenCLDevice(devices []OpenCLDevice, enc Encoder) string {
+	if len(devices) == 0 {
+		return "0.0"
+	}
+	// Vendor keyword to look for in the OpenCL platform name. Picked
+	// to match the strings ffmpeg actually prints on Windows + Linux
+	// builds. NVIDIA's CUDA-OpenCL ICD reports as "NVIDIA CUDA";
+	// AMD APP reports as "AMD Accelerated Parallel Processing";
+	// Intel reports as "Intel(R) OpenCL" (or "Intel(R) OpenCL HD
+	// Graphics" on iGPUs).
+	var vendor string
+	switch enc {
+	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
+		vendor = "nvidia"
+	case EncoderAMF, EncoderHEVCAMF:
+		vendor = "amd"
+	case EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV, EncoderVAAPI, EncoderHEVCVAAPI:
+		vendor = "intel"
+	}
+	if vendor == "" {
+		return devices[0].Index
+	}
+	for _, d := range devices {
+		hay := strings.ToLower(d.PlatformName + " " + d.DeviceName)
+		if strings.Contains(hay, vendor) {
+			return d.Index
+		}
+	}
+	// No vendor match — fall through to first device, which is the
+	// platform ffmpeg would have picked anyway if there were only one.
+	return devices[0].Index
+}
+
 // ProbeFilter returns true if the named FFmpeg filter is available.
 func ProbeFilter(ctx context.Context, name string) bool {
 	out, err := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-filters").Output()
@@ -265,16 +437,28 @@ func ParseOverride(override string) []Encoder {
 			encoders = append(encoders, EncoderNVENC)
 		case "hevc_nvenc":
 			encoders = append(encoders, EncoderHEVCNVENC)
+		case "av1_nvenc":
+			encoders = append(encoders, EncoderAV1NVENC)
 		case "amf", "h264_amf":
 			encoders = append(encoders, EncoderAMF)
+		case "hevc_amf":
+			encoders = append(encoders, EncoderHEVCAMF)
 		case "vaapi", "h264_vaapi":
 			encoders = append(encoders, EncoderVAAPI)
+		case "hevc_vaapi":
+			encoders = append(encoders, EncoderHEVCVAAPI)
 		case "qsv", "h264_qsv":
 			encoders = append(encoders, EncoderQSV)
+		case "hevc_qsv":
+			encoders = append(encoders, EncoderHEVCQSV)
+		case "av1_qsv":
+			encoders = append(encoders, EncoderAV1QSV)
 		case "software", "libx264":
 			encoders = append(encoders, EncoderSoftware)
 		case "hevc_software", "libx265":
 			encoders = append(encoders, EncoderHEVCSoftware)
+		case "av1_software", "libsvtav1":
+			encoders = append(encoders, EncoderAV1Software)
 		}
 	}
 	if len(encoders) == 0 {

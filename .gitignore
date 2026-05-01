@@ -40,3 +40,15 @@ vendor/
 
 # Vite temp files
 web/vite.config.ts.timestamp-*
+clients/*/vite.config.ts.timestamp-*
+
+# Stray ffmpeg sidecars from manual smoke tests
+/init.mp4
+
+# Windows installer build outputs
+installer/.cache/
+installer/windows/.cache/
+installer/windows/.stage/
+installer/windows-msi/stage/
+installer/windows-msi/.stage/
+/dist/

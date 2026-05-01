@@ -37,6 +37,7 @@ type Worker struct {
 	hasTonemapCuda   bool              // tonemap_cuda filter available in FFmpeg
 	hasTonemapOpenCL bool              // tonemap_opencl filter available in FFmpeg
 	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
+	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
@@ -59,6 +60,16 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	hasTonemap := ProbeFilter(ctx, "tonemap_cuda")
 	hasTonemapOCL := ProbeFilter(ctx, "tonemap_opencl")
 	hasZscale := ProbeFilter(ctx, "zscale")
+	// Probe OpenCL platforms once at worker startup. Result is cached
+	// for the worker's lifetime; ffmpeg arg-builder reads
+	// PickOpenCLDevice(this list, encoder) at session-start to avoid
+	// the bare-`opencl=ocl` auto-picker that fails (-19) when more
+	// than one platform is visible. Only meaningful if tonemap_opencl
+	// is in the available filters — otherwise the field stays nil.
+	var openclDevices []OpenCLDevice
+	if hasTonemapOCL {
+		openclDevices = ListOpenCLDevices(ctx)
+	}
 	return &Worker{
 		id:               id,
 		addr:             addr,
@@ -68,6 +79,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasTonemapCuda:   hasTonemap,
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
+		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
 		maxSessions:      maxSessions,
 		logger:           logger,
@@ -88,6 +100,10 @@ func (w *Worker) Start(ctx context.Context) error {
 	go w.heartbeatLoop(ctx)
 	go w.startSegmentServer(ctx)
 
+	openclSummary := make([]string, 0, len(w.openclDevices))
+	for _, d := range w.openclDevices {
+		openclSummary = append(openclSummary, d.Index+":"+d.PlatformName)
+	}
 	w.logger.Info("transcode worker ready",
 		"id", w.id,
 		"addr", w.addr,
@@ -96,6 +112,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"tonemap_cuda", w.hasTonemapCuda,
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
+		"opencl_platforms", openclSummary,
 	)
 
 	return w.jobLoop(ctx)
@@ -243,6 +260,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			HasTonemapCuda:   w.hasTonemapCuda,
 			HasTonemapOpenCL: w.hasTonemapOpenCL,
 			HasZscale:        w.hasZscale,
+			OpenCLDevice:     PickOpenCLDevice(w.openclDevices, enc),
 			AudioCodec:       job.AudioCodec,
 			AudioChannels:    job.AudioChannels,
 			AudioStreamIndex: job.AudioStreamIndex,
@@ -261,6 +279,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// Anchor ffmpeg's working dir to the session dir so bare
+	// filenames in HLS muxer options (notably -hls_fmp4_init_filename)
+	// land where the segment server expects them. Without this, the
+	// fMP4 init segment is written to the server's launch dir and
+	// the segment proxy 502s on every init fetch.
+	cmd.Dir = SessionDir(job.SessionID)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start ffmpeg: %w", err)
@@ -319,6 +343,29 @@ loop:
 	w.mu.Lock()
 	delete(w.activeJobs, job.SessionID)
 	w.mu.Unlock()
+
+	// Clean up the session directory now that ffmpeg has exited.
+	// Three paths land here: client DELETE (API also calls RemoveAll —
+	// idempotent), ffmpeg natural completion, and ctx cancel from a
+	// worker shutdown. The API's per-session DELETE is the common
+	// case but isn't guaranteed to fire (browser tab closed, network
+	// drop before the unload handler ran), and without this the
+	// session's m4s/ts segments — hundreds of MB at 4K — sit on
+	// disk until the next worker restart sweeps them.
+	//
+	// Delay the wipe so any in-flight client prefetches against the
+	// just-killed session get a chance to drain. Without this, the
+	// player happily fetches segments from the previous session for
+	// a few hundred ms after a supersede and would 404 on a wiped
+	// dir instead of failing cleanly via the revoked seg token.
+	sessID := job.SessionID
+	go func() {
+		time.Sleep(30 * time.Second)
+		if err := os.RemoveAll(SessionDir(sessID)); err != nil {
+			w.logger.Warn("session dir cleanup",
+				"session_id", sessID, "err", err)
+		}
+	}()
 
 	return nil
 }

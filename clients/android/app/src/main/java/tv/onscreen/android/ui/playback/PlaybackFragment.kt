@@ -620,35 +620,7 @@ class PlaybackFragment : VideoSupportFragment() {
                 exo.playWhenReady = true
             }
             is PlaybackSource.Hls -> {
-                // Default DefaultHttpDataSource timeouts are 8 s
-                // connect / 8 s read. The first .ts segment waits
-                // for the ffmpeg transcoder to spin up server-side,
-                // which on remote / Cloudflare-Tunnel deployments
-                // routinely takes 10-20 s. Bump both to 30 s and
-                // allow cross-protocol redirects so the tunnel's
-                // HTTP→HTTPS handling doesn't kill the load.
-                val factory = DefaultHttpDataSource.Factory()
-                    .setConnectTimeoutMs(30_000)
-                    // 60 s read so a cold transcoder start (large
-                    // 4K HEVC segments, ~30 MB each, over a
-                    // Cloudflare Tunnel) doesn't trip the default
-                    // 8 s read budget mid-segment.
-                    .setReadTimeoutMs(60_000)
-                    .setAllowCrossProtocolRedirects(true)
-                    // Cloudflare Tunnel / WAF rules sometimes block
-                    // requests with no User-Agent (ExoPlayer's
-                    // default is empty), surfacing on the client as
-                    // a generic NETWORK_CONNECTION_FAILED. Send an
-                    // identifiable UA so the request looks like a
-                    // real client and we can grep tunnel logs.
-                    .setUserAgent("OnScreen-Android/1.0 (ExoPlayer)")
-                    .setDefaultRequestProperties(mapOf())
-                // Retry HTTP / IO failures up to 6 times with the
-                // default exponential backoff (1 s, 2 s, 4 s, 8 s,
-                // 8 s, 8 s ≈ 30 s total). Catches the case where
-                // the playlist isn't ready on the first poll
-                // because the transcoder is still warming up.
-                val errorPolicy = androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6)
+                val (factory, errorPolicy) = transcodeHttpFactory()
                 val hlsSource = HlsMediaSource.Factory(factory)
                     .setLoadErrorHandlingPolicy(errorPolicy)
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
@@ -657,6 +629,28 @@ class PlaybackFragment : VideoSupportFragment() {
                 exo.playWhenReady = true
             }
         }
+    }
+
+    /// Default DefaultHttpDataSource timeouts are 8 s connect / 8 s
+    /// read. The first segment waits for the ffmpeg transcoder to
+    /// spin up server-side, which on remote / Cloudflare-Tunnel
+    /// deployments routinely takes 10–20 s. Bump both, allow cross-
+    /// protocol redirects (Tunnel's HTTP→HTTPS handling), and send
+    /// an identifiable UA so requests look like a real client to any
+    /// WAF rules in front of the server. Used by the HLS branch above.
+    private fun transcodeHttpFactory(): Pair<DefaultHttpDataSource.Factory, androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy> {
+        val factory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(30_000)
+            .setReadTimeoutMs(60_000)
+            .setAllowCrossProtocolRedirects(true)
+            .setUserAgent("OnScreen-Android/1.0 (ExoPlayer)")
+            .setDefaultRequestProperties(mapOf())
+        // Retry HTTP / IO failures up to 6 times with the default
+        // exponential backoff (1 s, 2 s, 4 s, 8 s, 8 s, 8 s ≈ 30 s total).
+        // Catches the case where the manifest/playlist isn't ready on
+        // the first poll because the transcoder is still warming up.
+        val errorPolicy = androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6)
+        return factory to errorPolicy
     }
 
     private fun refreshSecondaryActions() {
@@ -774,8 +768,9 @@ class PlaybackFragment : VideoSupportFragment() {
     private fun applyAudioSelection(idx: Int) {
         val stream = audioStreams.getOrNull(idx) ?: return
         if (currentSource is PlaybackSource.Hls) {
-            // HLS / remux path — re-issue the transcode session
-            // with the new audio_stream_index. Server-side
+            // Transcode path (HLS) — emits a single audio track per
+            // session, so a swap requires re-issuing the session with
+            // the new audio_stream_index. Server-side
             // audio_stream_index is the FFmpeg stream index, which
             // the API exposes via AudioStream.index.
             val pos = player?.currentPosition ?: 0L

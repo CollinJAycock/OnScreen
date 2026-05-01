@@ -3,14 +3,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -74,7 +76,62 @@ func main() {
 	}
 }
 
+// loadDotEnv populates process env vars from a `.env` file if one exists.
+//
+// Search order: working directory first, then the directory the binary
+// itself lives in. Existing env vars always win — vars set by WinSW
+// (service deploy), Docker, or a shell `set`/`export` are not
+// overwritten. Missing file is silent; unreadable file is silent.
+//
+// Format mirrors `.env.dev` and the PowerShell start.ps1 parser:
+//   - blank lines and `#` comments are ignored
+//   - `KEY=value` and `export KEY=value` both work
+//   - surrounding double-or-single quotes are stripped
+func loadDotEnv() {
+	candidates := []string{".env"}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), ".env"))
+	}
+	for _, path := range candidates {
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			line = strings.TrimPrefix(line, "export ")
+			eq := strings.IndexByte(line, '=')
+			if eq <= 0 {
+				continue
+			}
+			key := strings.TrimSpace(line[:eq])
+			val := strings.TrimSpace(line[eq+1:])
+			if (strings.HasPrefix(val, `"`) && strings.HasSuffix(val, `"`)) ||
+				(strings.HasPrefix(val, `'`) && strings.HasSuffix(val, `'`)) {
+				val = val[1 : len(val)-1]
+			}
+			if _, set := os.LookupEnv(key); !set {
+				_ = os.Setenv(key, val)
+			}
+		}
+		_ = f.Close()
+		return // first hit wins
+	}
+}
+
 func run() error {
+	// Auto-load .env so the binary works out of the box from a fresh
+	// install dir without needing a wrapper script. Looks first in the
+	// current working directory (dev/start.ps1 case), then next to the
+	// executable (C:\OnScreen\server.exe invoked from anywhere else).
+	// Existing env vars always win — WinSW-injected service env and
+	// shell-exported vars take precedence over the file.
+	loadDotEnv()
+
 	// ── Config ────────────────────────────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {

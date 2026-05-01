@@ -68,6 +68,13 @@ type BuildArgs struct {
 	HasTonemapCuda   bool // tonemap_cuda filter available in FFmpeg
 	HasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
 	HasZscale        bool // zscale filter available (libzimg) for software tonemap
+	// OpenCL platform.device index for `-init_hw_device opencl=ocl:N.M`.
+	// Empty falls back to `0.0`. Probed once per worker startup so we
+	// pick the platform that matches the active encoder's vendor —
+	// hardcoded `0.0` is wrong on hosts where the iGPU registers an
+	// OpenCL platform before the dGPU (Intel + NVIDIA on a Windows
+	// laptop, AMD APP + Intel iGPU on a Ryzen workstation, etc.).
+	OpenCLDevice string
 	IsVAAPI          bool // VAAPI needs hwupload filter
 	IsHEVC           bool // source is HEVC (informational, NVDEC auto-selects decoder)
 
@@ -164,6 +171,7 @@ func BuildHLS(a BuildArgs) []string {
 		//   -threads 1  — prevents multi-threaded decode contention with the GPU
 		//   -hwaccel_output_format cuda  — keeps decoded frames in CUDA memory
 		//     so scale_cuda / tonemap_cuda can process them without CPU roundtrip
+		//
 		if useCudaHwaccel {
 			args = append(args,
 				"-hwaccel", "cuda",
@@ -173,19 +181,44 @@ func BuildHLS(a BuildArgs) []string {
 			)
 		}
 
-		// OpenCL tonemap: initialize the OpenCL device so hwupload/tonemap_opencl
-		// can use it. Must come before -i.
+		// OpenCL tonemap: initialize the OpenCL device so hwupload/
+		// tonemap_opencl can use it. Must come before -i.
+		//
+		// Platform.device index comes from a startup probe (see
+		// DetectOpenCLDevice) that picks the platform whose name
+		// matches the active encoder's vendor. Falls back to 0.0
+		// when the probe was inconclusive — works on most single-
+		// vendor boxes but breaks on dual-GPU machines where the
+		// "wrong" vendor sits at index 0. Bare `opencl=ocl` triggers
+		// the auto-picker which fails (-19) on any host with more
+		// than one OpenCL platform.
+		//
+		// `opencl@cu=...` (deriving OpenCL from CUDA) was tried first
+		// but the Windows ffmpeg builds we ship don't compile in the
+		// CUDA-OpenCL interop path — surface error is "Function not
+		// implemented" (-40).
 		if useOpenCLTonemap {
+			device := a.OpenCLDevice
+			if device == "" {
+				device = "0.0"
+			}
 			args = append(args,
-				"-init_hw_device", "opencl=ocl",
+				"-init_hw_device", "opencl=ocl:"+device,
 				"-filter_hw_device", "ocl",
 			)
 		}
 
-		// AMF: use D3D11VA hardware decode to keep the pipeline on the GPU.
-		if a.Encoder == EncoderAMF {
-			args = append(args, "-hwaccel", "d3d11va")
-		}
+		// AMF: software decode + AMF encode. Setting `-hwaccel d3d11va`
+		// here looked like a free win but it picks the *first* D3D11
+		// adapter — on a dual-GPU box (NVIDIA dGPU + AMD iGPU, common
+		// on Ryzen X-series desktops) that's NVIDIA, and the AMF
+		// encoder then refuses to bind to a non-AMD device with
+		// ENODEV (-19, ffmpeg surfaces it as exit 0xffffffed).
+		// Pinning d3d11va to the AMD adapter requires a per-host
+		// adapter-index probe that's brittle across reboots / driver
+		// updates; dropping input hwaccel for AMF lets AMF own its
+		// device unambiguously, and software decode is plenty on the
+		// CPU class that ships with an iGPU worth encoding through.
 	}
 
 	// Speed up container probing for files with many streams (e.g. Blu-ray
@@ -219,17 +252,34 @@ func BuildHLS(a BuildArgs) []string {
 
 		// Encoder-specific flags. NVENC preset/tune/rc are configurable via
 		// TRANSCODE_NVENC_PRESET, TRANSCODE_NVENC_TUNE, TRANSCODE_NVENC_RC.
+		//
+		// Keyframe scheduling: every encoder uses `-force_key_frames` at
+		// `SegmentDuration` boundaries so ffmpeg's HLS muxer cuts segments
+		// at *exactly* SegmentDuration seconds, independent of source fps.
+		// We keep `-g` as a defensive upper bound (a 4-second-without-
+		// scene-cut run at 60fps shouldn't end up with a 240-frame GOP
+		// nobody asked for) but DON'T set `-keyint_min`: with keyint_min
+		// pinned to gopUpperBound (= SegmentDuration*30 = 120 frames),
+		// force_key_frames was suppressed on any source < 30 fps. A 24
+		// fps film wants keyframes at frame 96 (4 s × 24 fps), but
+		// keyint_min=120 forbids them earlier than frame 120 — so
+		// segments cut at 4 s started mid-GOP, MSE rejected them, and
+		// the player's gap-jumper visibly skipped the playhead
+		// forward every few seconds.
+		gopUpperBound := fmt.Sprint(SegmentDuration * 30)
+		forceKey := []string{
+			"-force_key_frames",
+			fmt.Sprintf("expr:gte(t,n_forced*%d)", SegmentDuration),
+		}
 		switch a.Encoder {
 		case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
-			// Fixed GOP matching segment duration (assume ~30fps max → 120 frames
-			// for 4s segments). More reliable than -force_key_frames with NVENC.
-			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
 				"-preset", opts.NVENCPreset, "-tune", opts.NVENCTune,
 				"-rc", opts.NVENCRC,
-				"-g", gopSize, "-keyint_min", gopSize,
+				"-g", gopUpperBound,
 				"-sc_threshold:v:0", "0",
 			)
+			args = append(args, forceKey...)
 			// HEVC: main profile, let NVENC auto-select the level from resolution.
 			if a.Encoder == EncoderHEVCNVENC {
 				args = append(args, "-profile:v", "main")
@@ -238,12 +288,12 @@ func BuildHLS(a BuildArgs) []string {
 			// fails fast with "No NVENC capable device found" — that's
 			// the operator's GPU detection job, not ours.
 		case EncoderAMF, EncoderHEVCAMF:
-			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
 				"-quality", "balanced", "-rc", "cbr",
-				"-g", gopSize, "-keyint_min", gopSize,
+				"-g", gopUpperBound,
 				"-sc_threshold:v:0", "0",
 			)
+			args = append(args, forceKey...)
 			if a.Encoder == EncoderHEVCAMF {
 				args = append(args, "-profile:v", "main")
 			}
@@ -252,34 +302,34 @@ func BuildHLS(a BuildArgs) []string {
 			// for the bitrate-vs-speed sweet spot; "veryfast" cuts
 			// quality noticeably on 4K HEVC, "slow" eats the realtime
 			// budget on a NUC-class CPU.
-			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
 				"-preset", "medium",
-				"-g", gopSize, "-keyint_min", gopSize,
+				"-g", gopUpperBound,
 				"-sc_threshold:v:0", "0",
 			)
+			args = append(args, forceKey...)
 			if a.Encoder == EncoderHEVCQSV {
 				args = append(args, "-profile:v", "main")
 			}
 		case EncoderHEVCVAAPI:
-			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
-				"-g", gopSize, "-keyint_min", gopSize,
+				"-g", gopUpperBound,
 				"-sc_threshold:v:0", "0",
 				"-profile:v", "main",
 			)
+			args = append(args, forceKey...)
 		case EncoderAV1Software:
 			// libsvtav1 is the only realtime-capable AV1 software
 			// encoder. preset 8 is the live-streaming sweet spot per
 			// the SVT-AV1 maintainer guidance — preset 4 is film-
 			// archival quality but ~6× slower, preset 12 strips too
 			// much detail for the bitrate.
-			gopSize := fmt.Sprint(SegmentDuration * 30)
 			args = append(args,
 				"-preset", "8",
-				"-g", gopSize, "-keyint_min", gopSize,
+				"-g", gopUpperBound,
 				"-sc_threshold", "0",
 			)
+			args = append(args, forceKey...)
 		default:
 			// Software / VAAPI / QSV — expression-based keyframes work fine.
 			args = append(args,
@@ -362,6 +412,14 @@ func BuildHLS(a BuildArgs) []string {
 
 	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d"+segExt)
 	playlistPath := filepath.Join(a.SessionDir, "index.m3u8")
+	// Single muxed init + segs for fMP4 sessions. hls.js's transmuxer
+	// demuxes muxed fMP4 internally before appending to the per-track
+	// SourceBuffers, so we don't need ffmpeg's `-var_stream_map`
+	// audio/video split (that demux was a shaka-MSE workaround during
+	// the DASH era — gone now). Single-rendition muxed playlist also
+	// avoids the master+child two-step that would need a child-playlist
+	// route in the API; the existing `playlist.m3u8` endpoint serves
+	// the one m3u8 directly.
 
 	// Codec tag: HEVC → hvc1, AV1 → av01. Browser MSE requires the
 	// modern fourCC tag rather than the codec's native one to
@@ -404,6 +462,9 @@ func BuildHLS(a BuildArgs) []string {
 		args = append(args, "-avoid_negative_ts", "make_zero")
 	}
 	if needsFMP4 {
+		// Single muxed init segment alongside the segs. cmd.Dir is set
+		// to the session dir on the worker side; bare filename resolves
+		// there.
 		args = append(args, "-hls_fmp4_init_filename", "init.mp4")
 	}
 	// Mark remux sessions as EVENT so HLS.js starts from segment 0 rather than
@@ -513,7 +574,17 @@ func buildVideoFilter(a BuildArgs) string {
 	// HDR→SDR tone mapping — CPU-based fallback when tonemap_cuda is unavailable.
 	// Requires zscale (libzimg). If neither tonemap_cuda nor zscale is available,
 	// tonemapping is skipped entirely (HDR content will look washed out but will play).
-	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || (isNVENC && !a.HasTonemapCuda && !a.HasTonemapOpenCL))
+	//
+	// AMF + QSV included here unconditionally on HDR sources: neither
+	// has a vendor-specific tonemap filter in mainline ffmpeg
+	// (`tonemap_amf` / `tonemap_qsv` don't exist), so the only way to
+	// feed HDR HEVC into these encoders without a colorspace failure
+	// is the zscale software path. Slower than the GPU pipeline but
+	// the iGPUs these encoders run on aren't ABR-grade workhorses
+	// anyway, and an HDR-to-SDR transcode is the rarer case.
+	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF
+	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
+	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || isAMF || isQSV || (isNVENC && !a.HasTonemapCuda && !a.HasTonemapOpenCL))
 	if needsSoftwareTonemap {
 		// zscale-based tonemapping (libzimg required in FFmpeg build).
 		toneMap := strings.Join([]string{
@@ -525,6 +596,15 @@ func buildVideoFilter(a BuildArgs) string {
 			"format=yuv420p",
 		}, ",")
 		filters = append(filters, toneMap)
+	} else if a.Encoder == EncoderAMF || a.Encoder == EncoderQSV {
+		// h264_amf and h264_qsv both reject 10-bit input ("10-bit
+		// input video is not supported"). The tonemap chain above
+		// ends in format=yuv420p and covers HDR sources; this branch
+		// handles the rare 10-bit SDR source (some anime, archival
+		// masters) and is a no-op on 8-bit input. HEVC variants of
+		// both encoders accept 10-bit (Main10), so we don't strip
+		// for them.
+		filters = append(filters, "format=yuv420p")
 	}
 
 	// Subtitle burn-in. Appended last so the overlay sits on top of any

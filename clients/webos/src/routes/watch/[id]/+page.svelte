@@ -30,7 +30,11 @@
   let controlsTimer: ReturnType<typeof setTimeout> | null = null;
 
   let hls: { destroy: () => void } | null = null;
-  let session: { session_id: string; token: string; playlist_url: string } | null = null;
+  let session: {
+    session_id: string;
+    token: string;
+    playlist_url: string;
+  } | null = null;
   let reporter: ProgressReporter | null = null;
 
   // Chapters: surface as jump targets. Start offsets used for green-button cycling.
@@ -265,12 +269,13 @@
         supportsHEVC: true,
         audioStreamIndex,
       });
-      // Tear down the previous hls instance before swapping the
-      // source. Without destroy() the old fragments keep buffering
-      // in the background.
+      // Tear down the previous hls.js instance before swapping the
+      // source — fragments would otherwise keep buffering in the
+      // background until destroyed.
       hls?.destroy();
       hls = null;
       session = fresh;
+
       const Hls = await loadHls();
       const fullURL = fresh.playlist_url.startsWith('http')
         ? fresh.playlist_url
@@ -511,7 +516,7 @@
         } else if (video!.canPlayType('application/vnd.apple.mpegurl')) {
           video!.src = fullURL;
         } else {
-          error = 'HLS is not supported on this device.';
+          error = 'HLS playback is not supported on this device.';
           loading = false;
           return;
         }
