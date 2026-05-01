@@ -203,24 +203,33 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "hub: recently added", "err", err)
 	} else {
-		seen := make(map[string]bool)
+		seen := make(map[uuid.UUID]bool)
 		for _, row := range raRows {
 			if !libAllowed(row.LibraryID) {
 				continue
 			}
-			// Deduplicate by title+type (handles duplicate media_items rows).
-			key := row.Type + "|" + row.Title
-			if seen[key] {
+			// SQL already dedupes (one row per show via window function on
+			// grandparent.id, one row per movie/album/photo). The seen-set
+			// here is only a defensive guard against the same row appearing
+			// twice in the result set (shouldn't happen, but cheap to check).
+			if seen[row.ID] {
 				continue
 			}
-			seen[key] = true
+			seen[row.ID] = true
 			year := intPtrFrom32(row.Year)
+			// Episodes inherit the show's poster via fallback_poster — the
+			// episode's own poster_path is almost always NULL because TMDB
+			// gives us per-show artwork, not per-episode stills.
+			poster := row.PosterPath
+			if poster == nil && row.FallbackPoster != nil {
+				poster = row.FallbackPoster
+			}
 			out.RecentlyAdded = append(out.RecentlyAdded, HubItem{
 				ID:         row.ID.String(),
 				Title:      row.Title,
 				Type:       row.Type,
 				Year:       year,
-				PosterPath: row.PosterPath,
+				PosterPath: poster,
 				FanartPath: row.FanartPath,
 				DurationMS: row.DurationMs,
 				UpdatedAt:  timestamptzToMilli(row.UpdatedAt),
@@ -397,20 +406,28 @@ func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed fun
 	out := make([]HubLibraryRow, 0, len(slots))
 	for _, s := range slots {
 		items := make([]HubItem, 0, perLib)
-		seen := make(map[string]bool, perLib)
+		seen := make(map[uuid.UUID]bool, perLib)
 		for _, row := range s.rows {
-			key := row.Type + "|" + row.Title
-			if seen[key] {
+			// See note on the global Recently Added path: SQL already
+			// dedupes (per-show for episodes, per-item for movies/albums/
+			// photos); this seen-set is just a defensive duplicate-row
+			// guard. Keyed on row.ID so two different shows with the
+			// same most-recent-episode title don't collide.
+			if seen[row.ID] {
 				continue
 			}
-			seen[key] = true
+			seen[row.ID] = true
 			year := intPtrFrom32(row.Year)
+			poster := row.PosterPath
+			if poster == nil && row.FallbackPoster != nil {
+				poster = row.FallbackPoster
+			}
 			items = append(items, HubItem{
 				ID:         row.ID.String(),
 				Title:      row.Title,
 				Type:       row.Type,
 				Year:       year,
-				PosterPath: row.PosterPath,
+				PosterPath: poster,
 				FanartPath: row.FanartPath,
 				DurationMS: row.DurationMs,
 				UpdatedAt:  timestamptzToMilli(row.UpdatedAt),

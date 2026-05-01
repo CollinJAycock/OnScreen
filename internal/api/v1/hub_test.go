@@ -444,6 +444,90 @@ func TestHub_Get_PerLibraryRecentlyAdded(t *testing.T) {
 	}
 }
 
+// TestHub_Get_RecentlyAdded_EpisodeUsesFallbackPoster guards the v2.1
+// "Recently Added Episodes" change: ListRecentlyAdded now returns
+// episode rows for TV libraries (deduped per show via window function),
+// and episodes almost always have a NULL poster_path because TMDB gives
+// us per-show artwork, not per-episode stills. The handler must fall
+// back to the show poster from FallbackPoster so the tile actually
+// renders artwork.
+func TestHub_Get_RecentlyAdded_EpisodeUsesFallbackPoster(t *testing.T) {
+	showPoster := "/posters/foo-show.jpg"
+	db := &mockHubDB{
+		raRows: []gen.ListRecentlyAddedRow{
+			{
+				ID:             uuid.New(),
+				LibraryID:      uuid.New(),
+				Title:          "Pilot",
+				Type:           "episode",
+				PosterPath:     nil,         // episode has no poster
+				FallbackPoster: &showPoster, // show's poster, propagated by SQL
+				UpdatedAt:      pgtype.Timestamptz{Valid: false},
+			},
+		},
+	}
+	h := newHubHandler(db)
+
+	rec := httptest.NewRecorder()
+	req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp struct {
+		Data HubResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data.RecentlyAdded) != 1 {
+		t.Fatalf("recently_added: got %d, want 1", len(resp.Data.RecentlyAdded))
+	}
+	got := resp.Data.RecentlyAdded[0]
+	if got.PosterPath == nil || *got.PosterPath != showPoster {
+		t.Errorf("PosterPath: want show fallback %q, got %v", showPoster, got.PosterPath)
+	}
+	if got.Type != "episode" {
+		t.Errorf("Type: want episode, got %q", got.Type)
+	}
+}
+
+// TestHub_Get_RecentlyAdded_PreferOwnPosterOverFallback verifies the
+// fallback only kicks in when PosterPath is nil. Movies / albums /
+// photos always populate poster_path on themselves, and the SQL sets
+// fallback_poster = poster_path for the non-episode branch — so a movie
+// row with both fields set should use its own (already correct).
+func TestHub_Get_RecentlyAdded_PreferOwnPosterOverFallback(t *testing.T) {
+	moviePoster := "/posters/the-matrix.jpg"
+	db := &mockHubDB{
+		raRows: []gen.ListRecentlyAddedRow{
+			{
+				ID:             uuid.New(),
+				LibraryID:      uuid.New(),
+				Title:          "The Matrix",
+				Type:           "movie",
+				PosterPath:     &moviePoster,
+				FallbackPoster: &moviePoster, // SQL sets these equal for movies
+				UpdatedAt:      pgtype.Timestamptz{Valid: false},
+			},
+		},
+	}
+	h := newHubHandler(db)
+
+	rec := httptest.NewRecorder()
+	req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+	h.Get(rec, req)
+
+	var resp struct {
+		Data HubResponse `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if got := *resp.Data.RecentlyAdded[0].PosterPath; got != moviePoster {
+		t.Errorf("PosterPath: got %q, want %q", got, moviePoster)
+	}
+}
+
 // TestHub_Get_PerLibrary_HonoursLibraryACL verifies non-admin users
 // only see rows for libraries they've been granted access to.
 func TestHub_Get_PerLibrary_HonoursLibraryACL(t *testing.T) {

@@ -3549,15 +3549,56 @@ func (q *Queries) ListPrefixDuplicateTopLevelItems(ctx context.Context, arg List
 }
 
 const listRecentlyAdded = `-- name: ListRecentlyAdded :many
+WITH episodes AS (
+    SELECT e.id, e.library_id, e.type, e.title, e.sort_title, e.original_title,
+           e.year, e.summary, e.tagline, e.rating, e.audience_rating,
+           COALESCE(e.content_rating, grandparent.content_rating) AS content_rating,
+           e.duration_ms, e.genres, e.tags,
+           COALESCE(e.tmdb_id, grandparent.tmdb_id) AS tmdb_id,
+           COALESCE(e.tvdb_id, grandparent.tvdb_id) AS tvdb_id,
+           COALESCE(e.imdb_id, grandparent.imdb_id) AS imdb_id,
+           e.musicbrainz_id, e.parent_id, e.index,
+           e.poster_path, e.fanart_path, e.thumb_path,
+           e.originally_available_at, e.created_at, e.updated_at, e.deleted_at,
+           COALESCE(grandparent.poster_path, parent.poster_path, e.poster_path,
+                    grandparent.thumb_path, parent.thumb_path, e.thumb_path) AS fallback_poster,
+           ROW_NUMBER() OVER (PARTITION BY grandparent.id ORDER BY e.created_at DESC) AS rn
+    FROM media_items e
+    JOIN media_items parent ON parent.id = e.parent_id AND parent.deleted_at IS NULL
+    JOIN media_items grandparent ON grandparent.id = parent.parent_id
+        AND grandparent.deleted_at IS NULL
+        AND grandparent.type = 'show'
+    WHERE e.type = 'episode' AND e.deleted_at IS NULL
+)
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        parent_id, index, poster_path, fanart_path, thumb_path,
-       originally_available_at, created_at, updated_at, deleted_at
-FROM media_items
-WHERE deleted_at IS NULL
-  AND type IN ('movie', 'show', 'album', 'photo')
-  AND ($1::uuid IS NULL OR library_id = $1)
+       originally_available_at, created_at, updated_at, deleted_at,
+       fallback_poster
+FROM (
+    SELECT id, library_id, type, title, sort_title, original_title, year,
+           summary, tagline, rating, audience_rating, content_rating, duration_ms,
+           genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+           parent_id, index, poster_path, fanart_path, thumb_path,
+           originally_available_at, created_at, updated_at, deleted_at,
+           fallback_poster
+    FROM episodes
+    WHERE rn = 1
+
+    UNION ALL
+
+    SELECT id, library_id, type, title, sort_title, original_title, year,
+           summary, tagline, rating, audience_rating, content_rating, duration_ms,
+           genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+           parent_id, index, poster_path, fanart_path, thumb_path,
+           originally_available_at, created_at, updated_at, deleted_at,
+           poster_path AS fallback_poster
+    FROM media_items
+    WHERE deleted_at IS NULL
+      AND type IN ('movie', 'album', 'photo')
+) combined
+WHERE ($1::uuid IS NULL OR library_id = $1)
   AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
 ORDER BY created_at DESC
 LIMIT $3
@@ -3598,8 +3639,23 @@ type ListRecentlyAddedRow struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+	FallbackPoster        *string            `json:"fallback_poster"`
 }
 
+// "Recently Added" hub row, one row per logical content event:
+//   - For TV libraries: the most-recently-added episode per show, deduped
+//     via window function on the show id (grandparent → season → episode).
+//     The "user added a new episode of an existing show" case now surfaces;
+//     pre-v2.1 the filter was `type='show'` so only brand-new shows showed
+//     up. fallback_poster mirrors ContinueWatching's chain (show → season
+//     → episode → thumb fallbacks) because episode poster_path is usually
+//     NULL while the show always has art from enrichment.
+//   - For movies / albums / photos: unchanged — one row per item ordered
+//     by created_at DESC.
+//
+// The library_id and max_rating_rank filters apply post-union so the
+// caller-side semantics stay identical (per-library and global views both
+// consume the same rows).
 func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedParams) ([]ListRecentlyAddedRow, error) {
 	rows, err := q.db.Query(ctx, listRecentlyAdded, arg.LibraryID, arg.MaxRatingRank, arg.Limit)
 	if err != nil {
@@ -3638,6 +3694,7 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.FallbackPoster,
 		); err != nil {
 			return nil, err
 		}
