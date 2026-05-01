@@ -212,7 +212,7 @@ func EncoderLabel(enc Encoder) string {
 // HasHEVCEncoder returns true if the encoder list contains a HEVC-capable encoder.
 func HasHEVCEncoder(encoders []Encoder) bool {
 	for _, e := range encoders {
-		if e == EncoderHEVCNVENC || e == EncoderHEVCSoftware {
+		if IsHEVCEncoder(e) {
 			return true
 		}
 	}
@@ -220,10 +220,12 @@ func HasHEVCEncoder(encoders []Encoder) bool {
 }
 
 // BestHEVCEncoder returns the highest-priority HEVC encoder from the list,
-// or empty string if none available.
+// or empty string if none available. The input list is already in priority
+// order from DetectEncoders (or operator-specified order from a TRANSCODE_ENCODERS
+// override), so the first HEVC variant we hit is the right pick.
 func BestHEVCEncoder(encoders []Encoder) Encoder {
 	for _, e := range encoders {
-		if e == EncoderHEVCNVENC || e == EncoderHEVCSoftware {
+		if IsHEVCEncoder(e) {
 			return e
 		}
 	}
