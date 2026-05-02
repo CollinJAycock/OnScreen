@@ -81,6 +81,62 @@ func TestParseAudiobookPath_AuthorSeriesBookFile(t *testing.T) {
 	}
 }
 
+// TestCleanReleaseGroupAuthor covers the "scene/torrent folder name
+// got loaded as the author" case the user hit on dev: an audiobook
+// downloaded as `<root>/A.Court.of.Silver.Flames.1-2.by.Sarah.J.Maas/<book>/`
+// would otherwise create a book_author tile literally named
+// "A.Court.of.Silver.Flames.1-2.by.Sarah.J.Maas".
+func TestCleanReleaseGroupAuthor(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"dotted with by", "A.Court.of.Silver.Flames.1-2.by.Sarah.J.Maas", "Sarah J Maas"},
+		{"spaced with by", "A Court of Silver Flames 1-2 by Sarah J Maas", "Sarah J Maas"},
+		{"clean already", "Brandon Sanderson", "Brandon Sanderson"},
+		{"dots only, no by", "Sarah.J.Maas", "Sarah J Maas"},
+		{"single-word after by — preserve", "Bob By Smith", "Bob By Smith"},
+		{"empty input", "", ""},
+		{"by uppercase", "Title BY First Last", "First Last"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := cleanReleaseGroupAuthor(c.in); got != c.want {
+				t.Errorf("cleanReleaseGroupAuthor(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestCleanReleaseGroupBookTitle is the dual: the book folder's
+// "by AUTHOR" suffix and trailing volume markers come off so the book
+// tile shows "A Court of Silver Flames", not the whole release name.
+func TestCleanReleaseGroupBookTitle(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"by + range", "A Court of Silver Flames 1-2 by Sarah J Maas", "A Court of Silver Flames"},
+		{"dotted by + range", "A.Court.of.Silver.Flames.1-2.by.Sarah.J.Maas", "A Court of Silver Flames"},
+		{"trailing range only", "A Court of Silver Flames 1-2", "A Court of Silver Flames"},
+		{"trailing volume", "Mistborn vol 1", "Mistborn"},
+		{"trailing volume.", "Mistborn vol. 1", "Mistborn"},
+		{"trailing 1 of 2", "Mistborn part 1 of 2", "Mistborn"},
+		{"clean already", "Mistborn", "Mistborn"},
+		{"single-word after by — preserve", "Bob By Smith", "Bob By Smith"},
+		{"empty input", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := cleanReleaseGroupBookTitle(c.in); got != c.want {
+				t.Errorf("cleanReleaseGroupBookTitle(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 // TestIsAudiobookFile confirms m4b routes through the audiobook
 // branch and non-audio formats don't accidentally match.
 func TestIsAudiobookFile(t *testing.T) {

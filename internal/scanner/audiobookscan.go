@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +18,12 @@ import (
 	"github.com/onscreen/onscreen/internal/metadata/openlibrary"
 	"github.com/onscreen/onscreen/internal/metadata/wikipedia"
 )
+
+// trailingVolumeRangeRE strips trailing volume / part / book-range markers
+// from a book folder name: " 1-2", " 1 of 2", " vol 1", " volume 1",
+// " book 1". Case-insensitive. Used by cleanReleaseGroupBookTitle so
+// "A Court of Silver Flames 1-2" trims to "A Court of Silver Flames".
+var trailingVolumeRangeRE = regexp.MustCompile(`(?i)\s+(?:vol(?:ume)?|book|pt|part)\.?\s*\d+(?:\s*-\s*\d+|\s+of\s+\d+)?\s*$|\s+\d+\s*-\s*\d+\s*$`)
 
 // audiobookArtFilenames lists on-disk cover candidates checked in the
 // audiobook's directory. Same shape as albumArtFilenames; "cover.jpg"
@@ -55,6 +62,12 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 	if bookTitle == "" {
 		bookTitle = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
+	// Strip release-group encoding from folder-derived names so the UI
+	// doesn't show "A.Court.of.Silver.Flames.1-2.by.Sarah.J.Maas" as
+	// the author tile. No-op for already-clean folder names like
+	// "Brandon Sanderson" / "Mistborn".
+	author = cleanReleaseGroupAuthor(author)
+	bookTitle = cleanReleaseGroupBookTitle(bookTitle)
 
 	// Read embedded tags so the chapter row carries a useful title
 	// (taggers commonly write "Chapter 3: …") and the book row's
@@ -578,4 +591,68 @@ func parseAudiobookPath(path string, roots []string) (bookTitle, author, series 
 	// stem; no series guess.
 	author = parent
 	return
+}
+
+// cleanReleaseGroupAuthor extracts a human-readable author name from a
+// folder that may be release-group encoded. The two real-world sources
+// of bad author names are:
+//
+//  1. Dot-separated tokens with the actual author embedded as
+//     "by.First.Last" — e.g.
+//     "A.Court.of.Silver.Flames.1-2.by.Sarah.J.Maas". This is the
+//     scene/torrent convention; the author folder ends up as the whole
+//     release identifier instead of just "Sarah J. Maas".
+//  2. Hand-typed folders that include the author after the title:
+//     "A Court of Silver Flames by Sarah J Maas".
+//
+// Strategy: replace dots with spaces (so token boundaries become
+// whitespace), then look for " by " followed by a multi-word name. If
+// found, return the part after "by" as the author. Otherwise return
+// the de-dotted folder unchanged. The multi-word check guards against
+// false positives like a literal name "Bob By Smith" — we only strip
+// when what follows looks like a person's name.
+//
+// Idempotent: cleanReleaseGroupAuthor("Brandon Sanderson") returns
+// "Brandon Sanderson". Folders that are already well-formed pass
+// through untouched.
+func cleanReleaseGroupAuthor(folder string) string {
+	if folder == "" {
+		return ""
+	}
+	cleaned := strings.ReplaceAll(folder, ".", " ")
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	lc := strings.ToLower(cleaned)
+	if idx := strings.LastIndex(lc, " by "); idx > 0 {
+		candidate := strings.TrimSpace(cleaned[idx+len(" by "):])
+		if isMultiWordName(candidate) {
+			return candidate
+		}
+	}
+	return cleaned
+}
+
+// cleanReleaseGroupBookTitle is the dual of cleanReleaseGroupAuthor:
+// strips the trailing "by AUTHOR" tail and any trailing volume / part
+// markers so a book folder like "A Court of Silver Flames 1-2 by Sarah
+// J Maas" becomes "A Court of Silver Flames". Same multi-word guard so
+// "Up By Up" titles aren't truncated.
+func cleanReleaseGroupBookTitle(folder string) string {
+	if folder == "" {
+		return ""
+	}
+	cleaned := strings.ReplaceAll(folder, ".", " ")
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	lc := strings.ToLower(cleaned)
+	if idx := strings.LastIndex(lc, " by "); idx > 0 {
+		candidate := strings.TrimSpace(cleaned[idx+len(" by "):])
+		if isMultiWordName(candidate) {
+			cleaned = strings.TrimSpace(cleaned[:idx])
+		}
+	}
+	cleaned = trailingVolumeRangeRE.ReplaceAllString(cleaned, "")
+	return strings.TrimSpace(cleaned)
+}
+
+func isMultiWordName(s string) bool {
+	return len(strings.Fields(s)) >= 2
 }
