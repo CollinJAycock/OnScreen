@@ -32,7 +32,7 @@
           return;
         }
         if (detail.type === 'audiobook') {
-          goto(`/watch/${detail.id}`, { replaceState: true });
+          goto(`/audiobooks/${detail.id}`, { replaceState: true });
           return;
         }
         goto(`/libraries/${detail.library_id}`, { replaceState: true });
@@ -123,7 +123,7 @@
     {:else}
       <div class="grid">
         {#each books as b (b.id)}
-          <a class="card" href="/watch/{b.id}">
+          <a class="card" href="/audiobooks/{b.id}">
             <div class="poster">
               {#if b.poster_path}
                 <img src={assetUrl(`/artwork/${encodeURI(b.poster_path)}?v=${b.updated_at}&w=300`)}

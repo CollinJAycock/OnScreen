@@ -157,6 +157,7 @@
     if (item.type === 'book') return `/books/${item.id}`;
     if (item.type === 'book_author') return `/authors/${item.id}`;
     if (item.type === 'book_series') return `/series/${item.id}`;
+    if (item.type === 'audiobook') return `/audiobooks/${item.id}`;
     return `/watch/${item.id}`;
   }
 
