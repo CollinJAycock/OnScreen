@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { libraryApi, hubApi, assetUrl, type Library, type HubItem, type HubData, type HubLibraryRow } from '$lib/api';
+  import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
 
   let libraries: Library[] = [];
@@ -108,17 +109,16 @@
 
   // Hub items mix media types; route to the page that knows how to render each.
   function hubHref(item: HubItem): string {
-    switch (item.type) {
-      case 'album':  return `/albums/${item.id}`;
-      case 'artist': return `/artists/${item.id}`;
-      case 'photo':  return `/photos/${item.id}`;
-      default:       return `/watch/${item.id}`;
-    }
+    return itemHref(item.type, item.id);
   }
 
-  // Albums and photos look right as squares; movies/shows keep the 2:3 poster.
+  // Albums, photos, and audiobook-tree containers look right as
+  // squares; movies/shows keep the 2:3 poster.
   function isSquare(item: HubItem): boolean {
-    return item.type === 'album' || item.type === 'photo';
+    return item.type === 'album'
+      || item.type === 'photo'
+      || item.type === 'artist'
+      || item.type === 'book_author';
   }
 
 

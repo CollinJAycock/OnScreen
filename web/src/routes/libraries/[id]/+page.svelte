@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount } from '$lib/api';
+  import { itemHref as resolveItemHref } from '$lib/itemHref';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
   let playlistPickerItemId = '';
@@ -150,15 +151,7 @@
   // routes to a different detail view; everything else falls back to the
   // watch page (which itself bounces movie/episode-shaped types).
   function itemHref(item: MediaItem): string {
-    if (item.type === 'artist') return `/artists/${item.id}`;
-    if (item.type === 'album') return `/albums/${item.id}`;
-    if (item.type === 'photo') return `/photos/${item.id}`;
-    if (item.type === 'podcast') return `/podcasts/${item.id}`;
-    if (item.type === 'book') return `/books/${item.id}`;
-    if (item.type === 'book_author') return `/authors/${item.id}`;
-    if (item.type === 'book_series') return `/series/${item.id}`;
-    if (item.type === 'audiobook') return `/audiobooks/${item.id}`;
-    return `/watch/${item.id}`;
+    return resolveItemHref(item.type, item.id);
   }
 
   // Client-side text filter on already-loaded items

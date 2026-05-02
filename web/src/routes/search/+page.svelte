@@ -9,6 +9,7 @@
     type SearchResult,
     type DiscoverItem,
   } from '$lib/api';
+  import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
 
   let query = '';
@@ -147,7 +148,7 @@
   }
 
   function navigate(item: SearchResult) {
-    goto(`/watch/${item.id}`);
+    goto(itemHref(item.type, item.id));
   }
 
   async function requestItem(item: DiscoverItem) {
