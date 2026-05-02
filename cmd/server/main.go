@@ -1185,7 +1185,16 @@ func (e *scanEnqueuer) TriggerDirectoryScan(_ context.Context, libraryID uuid.UU
 		"library_id", libraryID, "dir", dirPath)
 	go func() {
 		scanCtx := context.WithoutCancel(e.serverCtx)
-		result, err := e.scanner.ScanLibrary(scanCtx, libraryID, lib.Type, []string{dirPath})
+		// ScanDirectory walks just dirPath but parses each file against
+		// the library's configured scan_paths. Calling ScanLibrary with
+		// [dirPath] as paths confuses parseAudiobookPath /
+		// parseMusicPath: they decide which ancestor is the library
+		// root from the slice we pass in, so a watcher event on
+		// `<lib>/<author>/<book>/` re-classified each file as a
+		// "loose at root" file with no author folder above it. Result:
+		// a totally different hierarchy than the manual scan, racing
+		// to attach files to fresh audiobook rows.
+		result, err := e.scanner.ScanDirectory(scanCtx, libraryID, lib.Type, dirPath, lib.Paths)
 		if err != nil {
 			e.logger.Error("directory scan failed",
 				"library_id", libraryID, "dir", dirPath, "err", err)

@@ -160,12 +160,35 @@ type ScanResult struct {
 // used when creating placeholder media_item records for newly discovered files.
 // It respects the configured file concurrency limit (ADR-024).
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryType string, paths []string) (*ScanResult, error) {
+	return s.scan(ctx, libraryID, libraryType, paths, paths)
+}
+
+// ScanDirectory walks a single directory under a library (typically triggered
+// by fsnotify on a content drop or a *arr post-import webhook) but parses each
+// file's hierarchy against the library's *configured* scan_paths, not the
+// changed dir. Why both: parseAudiobookPath and parseMusicPath bucket files
+// into <root>/<author>/<book>/<file> based on which ancestor matches a
+// configured root. If we passed [dirPath] as both the walk root *and* the
+// parsing roots (the prior behavior), a watcher event on
+// `<lib>/<author>/<book>/` re-parsed each m4b as a "loose at root" file with
+// no author folder above it — different shape from the manual scan, fresh
+// audiobook rows, race against the existing tree. Splitting the two inputs
+// keeps directory scans and full scans producing identical hierarchies.
+func (s *Scanner) ScanDirectory(ctx context.Context, libraryID uuid.UUID, libraryType, dirPath string, libraryRoots []string) (*ScanResult, error) {
+	return s.scan(ctx, libraryID, libraryType, []string{dirPath}, libraryRoots)
+}
+
+func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType string, walkPaths, parsingRoots []string) (*ScanResult, error) {
 	ctx, span := tracer.Start(ctx, "scanner.library", trace.WithAttributes(
 		attribute.String("library.id", libraryID.String()),
 		attribute.String("library.type", libraryType),
-		attribute.Int("library.path_count", len(paths)),
+		attribute.Int("library.path_count", len(walkPaths)),
 	))
 	defer span.End()
+
+	// All path-shape parsing inside the scan body uses parsingRoots. The
+	// walkPaths are only used to enumerate the files to process.
+	paths := parsingRoots
 
 	start := time.Now()
 	result := &ScanResult{LibraryID: libraryID}
@@ -173,12 +196,15 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 	s.logger.InfoContext(ctx, "scan starting",
 		"library_id", libraryID,
 		"library_type", libraryType,
-		"paths", paths,
+		"walk_paths", walkPaths,
+		"parsing_roots", parsingRoots,
 	)
 
-	// Collect all files from all paths.
+	// Collect all files from walkPaths. Hierarchy parsing inside processFile
+	// uses parsingRoots (passed via the closed-over `paths` alias) so a
+	// targeted watcher scan still produces the same shape as a full scan.
 	var filePaths []string
-	for _, root := range paths {
+	for _, root := range walkPaths {
 		if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				s.logger.WarnContext(ctx, "scan walk error", "path", path, "err", err)
