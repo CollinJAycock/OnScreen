@@ -1034,6 +1034,10 @@ export interface ItemDetail {
   library_id: string;
   title: string;
   type: string;
+  // Foreign-language title for movies, author name for audiobooks
+  // (re-purposed by the scanner). Used as a byline fallback when the
+  // parent author lookup fails.
+  original_title?: string;
   year?: number;
   summary?: string;
   rating?: number;

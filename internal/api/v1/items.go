@@ -349,6 +349,11 @@ type ItemDetailResponse struct {
 	LibraryID     string             `json:"library_id"`
 	Title         string             `json:"title"`
 	Type          string             `json:"type"`
+	// OriginalTitle: foreign-language title for movies, author name
+	// for audiobooks (re-purposed by the audiobook scanner). The detail
+	// page uses it as a byline fallback when the parent author lookup
+	// fails — same field surfaced on the grid response in libraries.go.
+	OriginalTitle *string            `json:"original_title,omitempty"`
 	Year          *int               `json:"year,omitempty"`
 	Summary       *string            `json:"summary,omitempty"`
 	Rating        *float64           `json:"rating,omitempty"`
@@ -477,6 +482,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		LibraryID:     item.LibraryID.String(),
 		Title:         item.Title,
 		Type:          item.Type,
+		OriginalTitle: item.OriginalTitle,
 		Year:          item.Year,
 		Summary:       item.Summary,
 		Rating:        item.Rating,
