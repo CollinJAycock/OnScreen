@@ -32,7 +32,6 @@
   let epubViewerEl: HTMLDivElement | null = null;
   let epubBook: any = null;          // ePub.Book instance
   let epubRendition: any = null;     // ePub.Rendition instance
-  let epubBlobUrl: string = '';      // revoked on destroy
 
   // Preload the next page invisibly so a click feels instant. CBZ/CBR only.
   let preload: HTMLImageElement | null = null;
@@ -66,7 +65,6 @@
     preload = null;
     if (epubRendition) { try { epubRendition.destroy(); } catch { /* swallow */ } epubRendition = null; }
     if (epubBook) { try { epubBook.destroy(); } catch { /* swallow */ } epubBook = null; }
-    if (epubBlobUrl) { URL.revokeObjectURL(epubBlobUrl); epubBlobUrl = ''; }
   });
 
   $: if (id && book && id !== book.id) load();
@@ -94,7 +92,11 @@
       // count couldn't be probed.
       pageCount = Math.max(1, detail.duration_ms ?? 1);
       pageNum = Math.min(Math.max(pageNum, 1), pageCount);
-      if (!isEpub) {
+      // Read `format` directly here, not the `isEpub` reactive — `$:`
+      // declarations don't update mid-function, so reading isEpub
+      // would see the stale false from initial render and the
+      // prefetcher would 404 against /book/page/N for an EPUB.
+      if (format !== 'epub') {
         schedulePreload();
       }
     } catch (e: unknown) {
@@ -123,14 +125,15 @@
         error = 'EPUB has no file';
         return;
       }
-      // Fetch the .epub with our Bearer auth, then hand epub.js a
-      // same-origin Blob URL of the bytes. Pure ArrayBuffer mode
-      // didn't reliably wire internal resources (images, fonts,
-      // stylesheets, intra-book links) into the iframe — chapter
-      // pages rendered as broken-image placeholders. With a Blob
-      // URL, epub.js range-requests the archive itself and resolves
-      // each `<img src="../OEBPS/Images/foo.jpg">` etc. through its
-      // standard URL-fetch path, which actually works.
+      // Fetch the .epub via /media/stream with our Bearer auth and
+      // hand the bytes to epub.js as an ArrayBuffer. Resources
+      // inside the archive (images, fonts, stylesheets) get served
+      // out of the in-memory archive map; the rendition's iframe
+      // needs allowScriptedContent (which translates to allow-
+      // scripts + allow-same-origin in the sandbox attribute) for
+      // those internal blob: references to actually load — without
+      // it Chromium silently blocks them and chapters render with
+      // broken-image placeholders.
       const token = getBearerToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -140,19 +143,12 @@
         return;
       }
       const buf = await resp.arrayBuffer();
-      const blob = new Blob([buf], { type: 'application/epub+zip' });
-      epubBlobUrl = URL.createObjectURL(blob);
-      epubBook = ePub(epubBlobUrl);
+      epubBook = ePub(buf);
       epubRendition = epubBook.renderTo(epubViewerEl, {
         width: '100%',
         height: '100%',
         flow: 'paginated',
         manager: 'default',
-        // allow-scripts/-same-origin in the rendered iframe so
-        // resource references (blob: URLs from the parent) load
-        // properly inside it. Without same-origin the browser
-        // refuses cross-origin blob loads even though they share
-        // the parent's origin.
         allowScriptedContent: true,
       });
       // Route external links to a new tab (epub.js handles internal
