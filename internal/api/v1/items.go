@@ -38,6 +38,7 @@ type ItemMediaService interface {
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error)
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*media.PhotoMetadata, error)
+	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
 }
 
 // ItemEnricher re-runs metadata enrichment for a single item on demand.
@@ -372,6 +373,12 @@ type ItemDetailResponse struct {
 	LastClientName *string `json:"last_client_name,omitempty"`
 	IsFavorite    bool               `json:"is_favorite"`
 	UpdatedAt     int64              `json:"updated_at"`
+	// TakenAt mirrors media_items.originally_available_at — for photos
+	// it's EXIF DateTimeOriginal, for home videos it's file mtime, for
+	// movies/episodes it's the TMDB release date. Surfaced so the
+	// metadata editor can pre-populate the date field without a second
+	// round-trip.
+	TakenAt       *time.Time         `json:"taken_at,omitempty"`
 	Files         []ItemFileResponse `json:"files"`
 	Markers       []MarkerJSON       `json:"markers,omitempty"`
 
@@ -496,6 +503,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		LastClientName: lastClientName,
 		IsFavorite:     isFavorite,
 		UpdatedAt:      item.UpdatedAt.UnixMilli(),
+		TakenAt:        item.OriginallyAvailableAt,
 		Files:          make([]ItemFileResponse, 0, len(files)),
 	}
 	if item.ParentID != nil {
@@ -620,6 +628,158 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.Success(w, r, out)
+}
+
+// updateMetadataRequest is the body for PATCH /api/v1/items/{id}.
+// Only the three fields users can usefully manage on items the
+// metadata agent doesn't enrich (home_video, photo): the displayed
+// title, a free-form summary, and the date used for the date-grouped
+// grid + photo timeline (originally_available_at on the row). Each
+// pointer field is "set when present"; omitting the field leaves the
+// stored value untouched. Sending an empty string for title clears
+// nothing — title is non-null in the schema, so the handler
+// short-circuits a blank-only payload as a 400.
+type updateMetadataRequest struct {
+	Title   *string `json:"title,omitempty"`
+	Summary *string `json:"summary,omitempty"`
+	TakenAt *string `json:"taken_at,omitempty"` // RFC3339 ("2024-04-15T00:00:00Z") or YYYY-MM-DD
+}
+
+// UpdateMetadata handles PATCH /api/v1/items/{id}.
+//
+// Admin-gated editor for the three fields users actually need to
+// manage on home_video + photo items (the two media types with no
+// external metadata source). Title, summary, and taken_at all flow
+// through media.UpdateItemMetadata so the same validation and audit
+// surface that the scanner enricher uses applies here too. Any other
+// field on the item — genres, rating, fanart, etc. — is intentionally
+// not editable; those belong to the TMDB-enriched flow which has its
+// own Fix Match path.
+func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+
+	var body updateMetadataRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			respond.BadRequest(w, r, "invalid JSON body")
+			return
+		}
+	}
+
+	existing, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for metadata update", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	p := media.UpdateItemMetadataParams{
+		ID:                    existing.ID,
+		Title:                 existing.Title,
+		SortTitle:             existing.SortTitle,
+		OriginalTitle:         existing.OriginalTitle,
+		Year:                  existing.Year,
+		Summary:               existing.Summary,
+		Tagline:               existing.Tagline,
+		Rating:                existing.Rating,
+		AudienceRating:        existing.AudienceRating,
+		ContentRating:         existing.ContentRating,
+		DurationMS:            existing.DurationMS,
+		Genres:                existing.Genres,
+		Tags:                  existing.Tags,
+		PosterPath:            existing.PosterPath,
+		FanartPath:            existing.FanartPath,
+		ThumbPath:             existing.ThumbPath,
+		OriginallyAvailableAt: existing.OriginallyAvailableAt,
+		TMDBID:                existing.TMDBID,
+		TVDBID:                existing.TVDBID,
+	}
+
+	if body.Title != nil {
+		t := strings.TrimSpace(*body.Title)
+		if t == "" {
+			respond.BadRequest(w, r, "title cannot be empty")
+			return
+		}
+		p.Title = t
+		p.SortTitle = t
+	}
+	if body.Summary != nil {
+		// Empty string clears the summary; the column is nullable but the
+		// service maps "" to nil for tidy semantics.
+		s := strings.TrimSpace(*body.Summary)
+		if s == "" {
+			p.Summary = nil
+		} else {
+			p.Summary = &s
+		}
+	}
+	if body.TakenAt != nil {
+		raw := strings.TrimSpace(*body.TakenAt)
+		if raw == "" {
+			p.OriginallyAvailableAt = nil
+		} else {
+			t, parseErr := parseTakenAt(raw)
+			if parseErr != nil {
+				respond.BadRequest(w, r, "taken_at: "+parseErr.Error())
+				return
+			}
+			p.OriginallyAvailableAt = &t
+		}
+	}
+
+	updated, err := h.media.UpdateItemMetadata(r.Context(), p)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "update item metadata", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	if h.audit != nil {
+		actor := claims.UserID
+		h.audit.Log(r.Context(), &actor, audit.ActionItemEnrich, id.String(),
+			map[string]any{
+				"action":      "manual_metadata_edit",
+				"title_set":   body.Title != nil,
+				"summary_set": body.Summary != nil,
+				"taken_set":   body.TakenAt != nil,
+			}, audit.ClientIP(r))
+	}
+
+	respond.Success(w, r, map[string]any{
+		"id":                      updated.ID.String(),
+		"title":                   updated.Title,
+		"summary":                 updated.Summary,
+		"originally_available_at": updated.OriginallyAvailableAt,
+	})
+}
+
+// parseTakenAt accepts either a full RFC3339 timestamp ("2024-04-15T00:00:00Z")
+// from a datetime-local form, or a date-only "YYYY-MM-DD" the metadata
+// editor's <input type="date"> emits. Date-only is normalised to
+// midnight UTC — the date-grouped grid keys on (year, month) so the
+// time-of-day component doesn't matter.
+func parseTakenAt(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, errors.New("must be RFC3339 or YYYY-MM-DD")
 }
 
 // Children handles GET /api/v1/items/{id}/children.

@@ -3,11 +3,14 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, mediaApi, assetUrl, type ItemDetail, type MediaItem, type PhotoEXIF } from '$lib/api';
+  import MetadataEditor from '$lib/components/MetadataEditor.svelte';
 
   let item: ItemDetail | null = null;
   let exif: PhotoEXIF | null = null;
   let loading = true;
   let error = '';
+  let isAdmin = false;
+  let editMetadataOpen = false;
 
   // Sibling photos in the same library, used for prev/next nav.
   let siblings: MediaItem[] = [];
@@ -208,7 +211,9 @@
   }
 
   onMount(() => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const raw = localStorage.getItem('onscreen_user');
+    if (!raw) { goto('/login'); return; }
+    try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     load(id);
     window.addEventListener('keydown', onKey);
   });
@@ -265,6 +270,9 @@
       title="Slideshow (Space)"
     >{slideshow ? '⏸' : '▶'}</button>
     <button class="icon-btn" class:on={showInfo} on:click={() => showInfo = !showInfo} title="Info (i)">i</button>
+    {#if isAdmin}
+      <button class="icon-btn" on:click={() => editMetadataOpen = true} title="Edit metadata" aria-label="Edit metadata">✎</button>
+    {/if}
   </header>
 
   {#if loading && !item}
@@ -337,6 +345,22 @@
     <div class="state">Photo not available</div>
   {/if}
 </div>
+
+{#if item}
+  <MetadataEditor
+    itemId={item.id}
+    initialTitle={item.title}
+    initialSummary={item.summary}
+    initialTakenAt={item.taken_at}
+    open={editMetadataOpen}
+    on:close={() => editMetadataOpen = false}
+    on:saved={(e) => {
+      if (item) {
+        item = { ...item, title: e.detail.title, summary: e.detail.summary ?? undefined, taken_at: e.detail.taken_at ?? undefined };
+      }
+    }}
+  />
+{/if}
 
 <style>
   .page {

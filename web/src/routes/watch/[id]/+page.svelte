@@ -6,6 +6,7 @@
   import { progressUpdates } from '$lib/stores/notifications';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
+  import MetadataEditor from '$lib/components/MetadataEditor.svelte';
 
   let showPlaylistPicker = false;
 
@@ -854,6 +855,12 @@
   // Two-step flow: pick a TMDB record (reuses the match search), then pick
   // one of its poster variants. Skips step 1 when the item already has a
   // tmdb_id — drops straight into the variants list.
+  // Metadata editor modal — title/summary/taken_at for home_video
+  // (and photo on the photo detail page; this page only opens it for
+  // home_video). Bound to MetadataEditor's `open` prop, closed via the
+  // modal's `close` event.
+  let editMetadataOpen = false;
+
   let showPosterModal = false;
   let posterStep: 'pick-tmdb' | 'pick-poster' = 'pick-tmdb';
   let posterTmdbId: number | null = null;
@@ -2734,6 +2741,20 @@
       </button>
     {/if}
 
+    <!-- Edit Metadata + Remove (home_video — no external metadata source,
+         so the user owns title/summary/taken_at outright). -->
+    {#if item.type === 'home_video' && isAdmin}
+      <button class="fix-match-btn" on:click={() => editMetadataOpen = true}
+              title="Edit title, summary, and recording date">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        Edit Metadata
+      </button>
+      <button class="fix-match-btn fix-match-btn--danger" on:click={removeItem} title="Soft-delete this item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Remove
+      </button>
+    {/if}
+
     {#if item.files?.length}
       <a
         class="download-btn"
@@ -3006,6 +3027,19 @@
     mediaItemId={item.id}
     open={showPlaylistPicker}
     on:close={() => showPlaylistPicker = false}
+  />
+  <MetadataEditor
+    itemId={item.id}
+    initialTitle={item.title}
+    initialSummary={item.summary}
+    initialTakenAt={item.taken_at}
+    open={editMetadataOpen}
+    on:close={() => editMetadataOpen = false}
+    on:saved={(e) => {
+      if (item) {
+        item = { ...item, title: e.detail.title, summary: e.detail.summary ?? undefined, taken_at: e.detail.taken_at ?? undefined };
+      }
+    }}
   />
 {/if}
 

@@ -1062,6 +1062,11 @@ export interface ItemDetail {
   view_offset_ms: number;
   updated_at: number;
   is_favorite: boolean;
+  // ISO timestamp of media_items.originally_available_at — populated
+  // for movies/episodes (TMDB release date), photos (EXIF taken),
+  // home videos (file mtime). The metadata editor pre-fills its date
+  // field from this when present.
+  taken_at?: string;
   files: ItemFile[];
   markers?: Marker[];
   tmdb_id?: number;
@@ -1260,6 +1265,15 @@ export const itemApi = {
     api.get<PosterCandidate[]>(`/items/${id}/posters?tmdb_id=${tmdbId}`),
   applyPoster: (id: string, url: string) =>
     api.post<void>(`/items/${id}/poster`, { url }),
+  // updateMetadata edits the title / summary / taken-at on items the
+  // metadata agent doesn't enrich (home_video + photo). Each field is
+  // "set when present" — pass undefined to leave a field unchanged,
+  // empty string to clear (title rejects empty server-side). taken_at
+  // accepts YYYY-MM-DD or full RFC3339; the server stores midnight UTC
+  // for date-only inputs since the date-grouped grid only keys on
+  // (year, month).
+  updateMetadata: (id: string, fields: { title?: string; summary?: string; taken_at?: string }) =>
+    api.patch<{ id: string; title: string; summary: string | null; originally_available_at: string | null }>(`/items/${id}`, fields),
   remove: (id: string) => api.delete(`/items/${id}`),
   // Cross-device transfer — list distinct clients the user has
   // recently scrobbled from (drives the "Play on…" picker), and

@@ -63,6 +63,9 @@ func (m *mockItemMedia) ListChildren(_ context.Context, _ uuid.UUID) ([]media.It
 func (m *mockItemMedia) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
 	return nil, media.ErrNotFound
 }
+func (m *mockItemMedia) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
+	return &media.Item{ID: p.ID, Title: p.Title, SortTitle: p.SortTitle, Summary: p.Summary, OriginallyAvailableAt: p.OriginallyAvailableAt}, nil
+}
 
 // ── mock watch service ───────────────────────────────────────────────────────
 

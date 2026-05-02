@@ -112,6 +112,9 @@ func (m *mockSubsMedia) ListChildren(_ context.Context, _ uuid.UUID) ([]media.It
 func (m *mockSubsMedia) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
 	return nil, media.ErrNotFound
 }
+func (m *mockSubsMedia) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
+	return &media.Item{ID: p.ID, Title: p.Title}, nil
+}
 
 // mockAccess denies access to libraries not in allow.
 type mockAccess struct {
