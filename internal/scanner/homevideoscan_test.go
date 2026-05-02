@@ -42,6 +42,34 @@ func TestParseHomeVideoTitle_EmptyAfterStrip(t *testing.T) {
 	}
 }
 
+// TestHomeVideoSeekTime locks the seek-target ladder used by
+// extractHomeVideoArt: long clips → 30s in (skips title cards),
+// mid-length → midpoint, short or unknown → first frame (the only
+// safe choice when -ss past EOF would error ffmpeg out).
+func TestHomeVideoSeekTime(t *testing.T) {
+	dur := func(ms int64) *int64 { return &ms }
+	cases := []struct {
+		name string
+		in   *int64
+		want string
+	}{
+		{"nil — unknown duration", nil, "0"},
+		{"under 10s — first frame", dur(5000), "0"},
+		{"exactly 10s — first frame edge", dur(9999), "0"},
+		{"30s — midpoint (15)", dur(30000), "15"},
+		{"50s — midpoint (25)", dur(50000), "25"},
+		{"60s — flips to 30s mark", dur(60000), "30"},
+		{"feature length — 30s mark", dur(7200000), "30"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := homeVideoSeekTime(c.in); got != c.want {
+				t.Errorf("homeVideoSeekTime(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 // TestEventFolderName covers the folder-derivation rules for the
 // auto event_folder collection feature: top-level subfolder of a
 // configured root wins, multi-level subfolders collapse to that same

@@ -730,7 +730,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// originally_available_at so the library page can sort by
 		// recording date (not scan date).
 		var hvErr error
-		item, hvErr = s.processHomeVideo(ctx, libraryID, path, roots, info.ModTime())
+		item, hvErr = s.processHomeVideo(ctx, libraryID, path, roots, info.ModTime(), probe.DurationMs)
 		if hvErr != nil {
 			return nil, nil, false, fmt.Errorf("home video for %s: %w", path, hvErr)
 		}

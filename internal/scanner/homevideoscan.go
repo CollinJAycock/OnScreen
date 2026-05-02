@@ -1,7 +1,11 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -30,7 +34,7 @@ import (
 // route the probe result back into the create-item path here, and
 // adding that plumbing is a v2.x polish — mtime is correct for the
 // "drop a file in and rescan" workflow most users follow.
-func (s *Scanner) processHomeVideo(ctx context.Context, libraryID uuid.UUID, path string, roots []string, mtime time.Time) (*media.Item, error) {
+func (s *Scanner) processHomeVideo(ctx context.Context, libraryID uuid.UUID, path string, roots []string, mtime time.Time, durationMS *int64) (*media.Item, error) {
 	title := parseHomeVideoTitle(path)
 	if title == "" {
 		title = "Home Video"
@@ -50,6 +54,8 @@ func (s *Scanner) processHomeVideo(ctx context.Context, libraryID uuid.UUID, pat
 		return nil, err
 	}
 
+	s.extractHomeVideoArt(ctx, item, path, roots, durationMS)
+
 	if event := eventFolderName(path, roots); event != "" {
 		colID, cerr := s.media.UpsertEventCollection(ctx, libraryID, event)
 		if cerr != nil {
@@ -62,6 +68,107 @@ func (s *Scanner) processHomeVideo(ctx context.Context, libraryID uuid.UUID, pat
 	}
 
 	return item, nil
+}
+
+// extractHomeVideoArt grabs a frame from the video and writes it as
+// `<videoDir>/<item.id>-poster.jpg`, then updates item.poster_path. No
+// external metadata source exists for personal footage, so a frame is
+// the best we can do — and a frame from somewhere into the clip is
+// usually better than the first frame (avoids title cards / black
+// intros / camera-mount fumbling).
+//
+// Seek target is picked from durationMS:
+//   - 60s+: 30s in (covers most clips, keeps the seek constant)
+//   - 10–60s: midpoint of the clip
+//   - <10s or unknown: 0s
+//
+// Idempotent: if the {id}-poster.jpg already exists on disk we skip
+// the ffmpeg call and just (re-)sync poster_path.
+func (s *Scanner) extractHomeVideoArt(ctx context.Context, item *media.Item, filePath string, roots []string, durationMS *int64) {
+	if item == nil {
+		return
+	}
+	videoDir := filepath.Dir(filePath)
+	posterFile := filepath.Join(videoDir, item.ID.String()+"-poster.jpg")
+
+	relPath := ""
+	for _, root := range roots {
+		if rel, err := filepath.Rel(root, posterFile); err == nil && !strings.HasPrefix(rel, "..") {
+			relPath = filepath.ToSlash(rel)
+			break
+		}
+	}
+	if relPath == "" {
+		relPath = filepath.ToSlash(filepath.Join(filepath.Base(videoDir), item.ID.String()+"-poster.jpg"))
+	}
+
+	if _, err := os.Stat(posterFile); err == nil {
+		s.syncHomeVideoPoster(ctx, item, relPath)
+		return
+	}
+
+	seek := homeVideoSeekTime(durationMS)
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-hide_banner", "-loglevel", "error",
+		"-ss", seek,
+		"-i", filePath,
+		"-frames:v", "1",
+		"-q:v", "2",
+		"-y", posterFile,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		s.logger.WarnContext(ctx, "extract home video frame failed",
+			"item_id", item.ID, "path", filePath, "err", err,
+			"stderr", strings.TrimSpace(stderr.String()))
+		// Clean up any zero-byte file ffmpeg may have left behind so a
+		// later re-scan re-attempts (the os.Stat short-circuit above
+		// would otherwise treat a 0-byte file as "already extracted").
+		if info, statErr := os.Stat(posterFile); statErr == nil && info.Size() == 0 {
+			_ = os.Remove(posterFile)
+		}
+		return
+	}
+
+	s.syncHomeVideoPoster(ctx, item, relPath)
+}
+
+// syncHomeVideoPoster writes relPath to item.poster_path when it
+// differs. Mirrors syncAudiobookPosterPaths' shape minus the author
+// cascade — home_video has no parent row to inherit the poster.
+func (s *Scanner) syncHomeVideoPoster(ctx context.Context, item *media.Item, relPath string) {
+	if item.PosterPath != nil && *item.PosterPath == relPath {
+		return
+	}
+	if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+		ID:         item.ID,
+		Title:      item.Title,
+		SortTitle:  item.SortTitle,
+		Year:       item.Year,
+		PosterPath: &relPath,
+	}); err != nil {
+		s.logger.WarnContext(ctx, "failed to update home_video poster_path",
+			"item_id", item.ID, "err", err)
+		return
+	}
+	item.PosterPath = &relPath
+}
+
+// homeVideoSeekTime picks an ffmpeg `-ss` argument given the clip
+// duration in milliseconds. Returns "0" when duration is unknown or
+// too short to meaningfully seek; otherwise either "30" (≥60s) or
+// the midpoint formatted as a whole-second decimal. Going past the
+// clip end errors ffmpeg out, hence the duration-aware ladder.
+func homeVideoSeekTime(durationMS *int64) string {
+	if durationMS == nil || *durationMS < 10000 {
+		return "0"
+	}
+	if *durationMS >= 60000 {
+		return "30"
+	}
+	mid := *durationMS / 2 / 1000 // whole seconds at the midpoint
+	return fmt.Sprintf("%d", mid)
 }
 
 // eventFolderName returns the immediate child of the library root that
