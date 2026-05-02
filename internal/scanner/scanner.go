@@ -113,6 +113,9 @@ type MediaService interface {
 	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
 	DedupeChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) (media.DedupeResult, error)
 	MergeCollabArtists(ctx context.Context, libraryID *uuid.UUID) (media.DedupeResult, error)
+	MergeCrossParentAudiobooks(ctx context.Context, libraryID uuid.UUID) (media.DedupeResult, error)
+	PrunePhantomAudiobooks(ctx context.Context, libraryID uuid.UUID) (int, error)
+	PruneEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID) (int, error)
 	ListItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]media.Item, error)
 	FindTopLevelItem(ctx context.Context, libraryID uuid.UUID, itemType, title string) (*media.Item, error)
 }
@@ -462,6 +465,42 @@ func (s *Scanner) dedupeAudiobookLibrary(ctx context.Context, libraryID uuid.UUI
 			"merged_series", totalSeriesMerged,
 			"reparented_rows", totalReparented,
 		)
+	}
+
+	// Cross-parent audiobook merge: collapses dupes that the same-parent
+	// pass can't see (chapters of a multi-file book scanned with
+	// inconsistent AlbumArtist tags land under two different authors).
+	// Survivor is the row with playable content; the loser's chapters
+	// reparent into the survivor before the loser is soft-deleted.
+	crossDedup, err := s.media.MergeCrossParentAudiobooks(ctx, libraryID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "cross-parent audiobook merge failed", "library_id", libraryID, "err", err)
+	} else if crossDedup.MergedItems > 0 || crossDedup.ReparentedRows > 0 {
+		s.logger.InfoContext(ctx, "cross-parent audiobook merge collapsed duplicates",
+			"library_id", libraryID,
+			"merged_items", crossDedup.MergedItems,
+			"reparented_rows", crossDedup.ReparentedRows,
+		)
+	}
+
+	// Prune phantom audiobook rows (no files, no chapters). These
+	// render as "No playable file found" tiles and are byproducts of
+	// misaligned scan passes.
+	phantoms, err := s.media.PrunePhantomAudiobooks(ctx, libraryID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "phantom audiobook prune failed", "library_id", libraryID, "err", err)
+	} else if phantoms > 0 {
+		s.logger.InfoContext(ctx, "phantom audiobooks pruned", "library_id", libraryID, "count", phantoms)
+	}
+
+	// Empty-author cleanup: book_author rows whose audiobooks all
+	// reparented away during the cross-parent merge are now orphans.
+	// Run last so the previous passes have a chance to drain them.
+	emptyAuthors, err := s.media.PruneEmptyBookAuthors(ctx, libraryID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "empty book_author prune failed", "library_id", libraryID, "err", err)
+	} else if emptyAuthors > 0 {
+		s.logger.InfoContext(ctx, "empty book_authors pruned", "library_id", libraryID, "count", emptyAuthors)
 	}
 }
 

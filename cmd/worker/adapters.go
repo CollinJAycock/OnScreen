@@ -546,6 +546,26 @@ func (a *mediaAdapter) ListDuplicateChildItems(ctx context.Context, itemType str
 	return out, nil
 }
 
+func (a *mediaAdapter) ListLibraryAudiobookDuplicates(ctx context.Context, libraryID uuid.UUID) ([]media.DuplicatePair, error) {
+	rows, err := a.q.ListLibraryAudiobookDuplicates(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.DuplicatePair, len(rows))
+	for i, r := range rows {
+		out[i] = media.DuplicatePair{LoserID: r.LoserID, SurvivorID: r.SurvivorID}
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ListPhantomAudiobooks(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListPhantomAudiobooks(ctx, libraryID)
+}
+
+func (a *mediaAdapter) ListEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListEmptyBookAuthors(ctx, libraryID)
+}
+
 func (a *mediaAdapter) ListCollabArtistMerges(ctx context.Context, libraryID *uuid.UUID) ([]media.DuplicatePair, error) {
 	var libParam pgtype.UUID
 	if libraryID != nil {

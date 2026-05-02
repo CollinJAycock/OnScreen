@@ -287,6 +287,114 @@ FROM ranked
 WHERE rn > 1
   AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year);
 
+-- name: ListLibraryAudiobookDuplicates :many
+-- Cross-parent dedup for audiobook rows in one library: finds
+-- audiobook rows whose normalized title collides regardless of which
+-- author/series they're parented under. Catches the case where the
+-- same physical book got scanned under two different book_author rows
+-- (the inconsistent-AlbumArtist case where some chapter files tag the
+-- author as "Graphic Audio LLC." and others as "Sarah J. Maas").
+--
+-- Survivor preference is "the row a user can actually play":
+--   1. has streamable content (own files OR chapter children with files)
+--   2. has poster_path
+--   3. has external IDs (tmdb)
+--   4. oldest (created_at)
+-- A phantom row (no files, no chapters) under the wrong author always
+-- loses to the working row under the right author, so the merge
+-- reparents the chapters into the rightful author's audiobook tile.
+WITH normalized AS (
+    SELECT mi.id, mi.parent_id, mi.year, mi.poster_path, mi.tmdb_id, mi.created_at,
+           lower(
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(
+                     regexp_replace(
+                       unaccent(replace(replace(coalesce(NULLIF(mi.original_title, ''), mi.title), '&amp;', '&'), '''', '')),
+                       '^\s*(the|a|an)\s+', '', 'i'
+                     ),
+                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                   ),
+                   '\s+(and|&)\s+', 'and', 'gi'
+                 ),
+                 '[^a-zA-Z0-9]+', '', 'g'
+               )
+           ) AS norm,
+           EXISTS (
+               SELECT 1 FROM media_files mf
+               WHERE mf.media_item_id = mi.id
+                 AND mf.status = 'active'
+           ) OR EXISTS (
+               SELECT 1 FROM media_items child
+               JOIN media_files mf ON mf.media_item_id = child.id AND mf.status = 'active'
+               WHERE child.parent_id = mi.id
+                 AND child.deleted_at IS NULL
+           ) AS has_content
+    FROM media_items mi
+    WHERE mi.type = 'audiobook'
+      AND mi.library_id = $1
+      AND mi.deleted_at IS NULL
+),
+ranked AS (
+    SELECT id, parent_id, year,
+           FIRST_VALUE(id)   OVER w AS survivor_id,
+           FIRST_VALUE(year) OVER w AS survivor_year,
+           ROW_NUMBER()      OVER w AS rn
+    FROM normalized
+    WHERE norm <> ''
+    WINDOW w AS (
+        PARTITION BY norm
+        ORDER BY has_content DESC,
+                 (poster_path IS NOT NULL) DESC,
+                 (tmdb_id IS NOT NULL) DESC,
+                 created_at ASC,
+                 id ASC
+    )
+)
+SELECT id AS loser_id, survivor_id::uuid AS survivor_id
+FROM ranked
+WHERE rn > 1
+  AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year);
+
+-- name: ListPhantomAudiobooks :many
+-- Audiobook rows in a library that have neither active files of their
+-- own nor any audiobook_chapter children with active files. These can
+-- exist after a misaligned scan (e.g. parent row created from one
+-- pass, files attached to a different parent on another pass) and
+-- show up as broken tiles in the UI. Soft-deleting them removes the
+-- ghost row without touching on-disk content.
+SELECT id
+FROM media_items mi
+WHERE mi.type = 'audiobook'
+  AND mi.library_id = $1
+  AND mi.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM media_files mf
+      WHERE mf.media_item_id = mi.id
+        AND mf.status = 'active'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM media_items child
+      WHERE child.parent_id = mi.id
+        AND child.deleted_at IS NULL
+  );
+
+-- name: ListEmptyBookAuthors :many
+-- book_author rows in a library with no remaining live children
+-- (audiobook or book_series). After cross-parent audiobook merges
+-- reparent chapters away from a duplicate author, that author is left
+-- empty — soft-deleting it removes the orphan author tile.
+SELECT id
+FROM media_items mi
+WHERE mi.type = 'book_author'
+  AND mi.library_id = $1
+  AND mi.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM media_items child
+      WHERE child.parent_id = mi.id
+        AND child.deleted_at IS NULL
+  );
+
 -- name: ListCollabArtistMerges :many
 -- Finds artists whose title matches a collaboration pattern and whose
 -- primary OR secondary name already exists as a separate standalone

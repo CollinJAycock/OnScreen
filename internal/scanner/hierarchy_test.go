@@ -187,6 +187,16 @@ func (m *mockMediaService) MergeCollabArtists(_ context.Context, libraryID *uuid
 	m.dedupeCalls = append(m.dedupeCalls, call)
 	return m.dedupeResult, m.dedupeErr
 }
+func (m *mockMediaService) MergeCrossParentAudiobooks(_ context.Context, libraryID uuid.UUID) (media.DedupeResult, error) {
+	m.dedupeCalls = append(m.dedupeCalls, dedupeCall{itemType: "cross-parent-audiobook", libraryID: libraryID})
+	return m.dedupeResult, m.dedupeErr
+}
+func (m *mockMediaService) PrunePhantomAudiobooks(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+func (m *mockMediaService) PruneEmptyBookAuthors(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
 func (m *mockMediaService) ListItems(_ context.Context, libraryID uuid.UUID, itemType string, _, _ int32) ([]media.Item, error) {
 	var out []media.Item
 	for _, it := range m.items {

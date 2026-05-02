@@ -188,6 +188,9 @@ type Querier interface {
 	ListDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ListPrefixDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ListDuplicateChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) ([]DuplicatePair, error)
+	ListLibraryAudiobookDuplicates(ctx context.Context, libraryID uuid.UUID) ([]DuplicatePair, error)
+	ListPhantomAudiobooks(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
+	ListEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
 	ListCollabArtistMerges(ctx context.Context, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error
 	ReparentMediaFilesByItem(ctx context.Context, fromItemID, toItemID uuid.UUID) error
@@ -1257,6 +1260,69 @@ func (s *Service) DedupeChildItems(ctx context.Context, itemType string, parentI
 		return res, err
 	}
 	return res, nil
+}
+
+// MergeCrossParentAudiobooks finds audiobook rows in a library whose
+// normalized title collides regardless of which book_author / book_series
+// they're parented under, and merges each duplicate into the survivor.
+// The survivor is chosen as the row a user can actually play (has files
+// or chapter children with files), tie-breaking by poster_path, tmdb_id,
+// then created_at. Chapters and files reparent to the survivor; the
+// loser audiobook is soft-deleted. Empty-author cleanup happens
+// separately via PruneEmptyBookAuthors.
+//
+// Why this exists alongside DedupeChildItems: the existing dedup pass
+// only collapses rows under the same parent. Multi-file audiobooks
+// whose chapter files carry inconsistent AlbumArtist tags can land
+// under two different authors, where same-parent dedup never sees
+// them as duplicates. Safe to run repeatedly.
+func (s *Service) MergeCrossParentAudiobooks(ctx context.Context, libraryID uuid.UUID) (DedupeResult, error) {
+	var res DedupeResult
+	pairs, err := s.rw.ListLibraryAudiobookDuplicates(ctx, libraryID)
+	if err != nil {
+		return res, fmt.Errorf("list cross-parent audiobook duplicates: %w", err)
+	}
+	if err := s.applyDedupePairs(ctx, pairs, "audiobook", &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// PrunePhantomAudiobooks soft-deletes audiobook rows in the library that
+// have neither active media_files of their own nor any audiobook_chapter
+// children with files. These appear as broken tiles in the UI ("No
+// playable file found" when clicked) and are scanner-byproducts of
+// misaligned tag passes. Returns the number of rows soft-deleted. Safe
+// to run repeatedly.
+func (s *Service) PrunePhantomAudiobooks(ctx context.Context, libraryID uuid.UUID) (int, error) {
+	ids, err := s.rw.ListPhantomAudiobooks(ctx, libraryID)
+	if err != nil {
+		return 0, fmt.Errorf("list phantom audiobooks: %w", err)
+	}
+	for _, id := range ids {
+		if err := s.rw.SoftDeleteMediaItem(ctx, id); err != nil {
+			return 0, fmt.Errorf("soft-delete phantom audiobook %s: %w", id, err)
+		}
+	}
+	return len(ids), nil
+}
+
+// PruneEmptyBookAuthors soft-deletes book_author rows in the library
+// that have no remaining live children (audiobook or book_series).
+// Run after MergeCrossParentAudiobooks so authors left empty by chapter
+// reparenting collapse cleanly. Returns the number of rows soft-deleted.
+// Safe to run repeatedly.
+func (s *Service) PruneEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID) (int, error) {
+	ids, err := s.rw.ListEmptyBookAuthors(ctx, libraryID)
+	if err != nil {
+		return 0, fmt.Errorf("list empty book_authors: %w", err)
+	}
+	for _, id := range ids {
+		if err := s.rw.SoftDeleteMediaItem(ctx, id); err != nil {
+			return 0, fmt.Errorf("soft-delete empty author %s: %w", id, err)
+		}
+	}
+	return len(ids), nil
 }
 
 func (s *Service) applyDedupePairs(ctx context.Context, pairs []DuplicatePair, itemType string, res *DedupeResult) error {
