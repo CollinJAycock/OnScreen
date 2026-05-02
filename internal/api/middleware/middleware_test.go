@@ -502,8 +502,9 @@ func TestSecurityHeaders_CSP(t *testing.T) {
 	// not have to know every entry.
 	exactDirectives := []string{
 		"default-src 'self'",
-		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: https:",
+		"style-src 'self' 'unsafe-inline' blob:",
+		"img-src 'self' data: https: blob:",
+		"font-src 'self' data: blob:",
 		"media-src 'self' blob:",
 		"frame-ancestors 'none'",
 	}

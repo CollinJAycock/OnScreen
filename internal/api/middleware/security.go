@@ -8,6 +8,13 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	// external images (TMDB posters), blob: media (HLS.js), and no framing.
 	// SvelteKit emits inline <script> tags for hydration, so script-src needs 'unsafe-inline'.
 	//
+	// blob: appears on img-src / style-src / font-src so the epub.js
+	// reader can render archive resources. epub.js extracts <img>,
+	// stylesheet, and font references from the EPUB into Blob URLs,
+	// then loads them inside its rendition iframe — without blob: in
+	// these directives Chromium silently blocks every chapter image
+	// and the book renders empty.
+	//
 	// static.cloudflareinsights.com / cloudflareinsights.com are allow-listed
 	// because Cloudflare auto-injects the Web Analytics beacon when a site is
 	// proxied through their network. The beacon is anonymous + privacy-
@@ -16,8 +23,10 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	// it surfaced as a console-noise CSP violation on the beta deployment.
 	const csp = "default-src 'self'; " +
 		"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; " +
-		"style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data: https:; media-src 'self' blob:; " +
+		"style-src 'self' 'unsafe-inline' blob:; " +
+		"img-src 'self' data: https: blob:; " +
+		"font-src 'self' data: blob:; " +
+		"media-src 'self' blob:; " +
 		"connect-src 'self' https://cloudflareinsights.com; " +
 		"frame-ancestors 'none'"
 
