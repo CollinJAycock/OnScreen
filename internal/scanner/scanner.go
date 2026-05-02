@@ -383,6 +383,85 @@ func (s *Scanner) dedupeLibrary(ctx context.Context, libraryID uuid.UUID, librar
 		}
 	case "music":
 		s.dedupeMusicLibrary(ctx, libraryID)
+	case "audiobook":
+		s.dedupeAudiobookLibrary(ctx, libraryID)
+	}
+}
+
+// dedupeAudiobookLibrary collapses duplicate book_author rows at the top
+// level, then walks each surviving author and merges duplicate
+// audiobooks (and book_series) under it. Mirrors dedupeMusicLibrary's
+// shape — both libraries share the artist/album-style hierarchy where
+// children scan-order can produce variant rows. Common dupes the dedup
+// pass collapses:
+//
+//   - Two book_author rows from inconsistent AlbumArtist tags across
+//     files of the same book (the multi-file-book case the
+//     processAudiobook tag-author carve-out now prevents at scan time;
+//     this dedup pass cleans up rows that pre-date the fix).
+//   - Two audiobook rows under the same author from
+//     "Foo & Bar" vs "Foo and Bar" tag-title variants.
+//   - book_series rows with normalized-equivalent names ("Mistborn"
+//     vs "Mistborn Saga") under the same author.
+func (s *Scanner) dedupeAudiobookLibrary(ctx context.Context, libraryID uuid.UUID) {
+	// Top-level: book_author rows.
+	authorDedup, err := s.media.DedupeTopLevelItems(ctx, "book_author", &libraryID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "book_author dedupe failed", "library_id", libraryID, "err", err)
+	} else if authorDedup.MergedItems > 0 || authorDedup.ReparentedRows > 0 {
+		s.logger.InfoContext(ctx, "book_author dedupe merged duplicates",
+			"library_id", libraryID,
+			"merged_items", authorDedup.MergedItems,
+			"reparented_rows", authorDedup.ReparentedRows,
+		)
+	}
+
+	// Per-author children: audiobook rows directly under the author
+	// (single-file or no-series layouts) plus any book_series rows.
+	// Walk surviving authors in pages so a library with thousands of
+	// authors doesn't run out of memory.
+	var totalBookMerged, totalSeriesMerged, totalReparented int
+	const pageSize int32 = 500
+	for offset := int32(0); ; offset += pageSize {
+		authors, err := s.media.ListItems(ctx, libraryID, "book_author", pageSize, offset)
+		if err != nil {
+			s.logger.WarnContext(ctx, "list book_authors for child dedupe failed",
+				"library_id", libraryID, "err", err)
+			break
+		}
+		if len(authors) == 0 {
+			break
+		}
+		for i := range authors {
+			authorID := authors[i].ID
+			bookDedup, berr := s.media.DedupeChildItems(ctx, "audiobook", &authorID)
+			if berr != nil {
+				s.logger.WarnContext(ctx, "audiobook dedupe failed",
+					"author_id", authorID, "err", berr)
+			} else {
+				totalBookMerged += bookDedup.MergedItems
+				totalReparented += bookDedup.ReparentedRows
+			}
+			seriesDedup, serr := s.media.DedupeChildItems(ctx, "book_series", &authorID)
+			if serr != nil {
+				s.logger.WarnContext(ctx, "book_series dedupe failed",
+					"author_id", authorID, "err", serr)
+			} else {
+				totalSeriesMerged += seriesDedup.MergedItems
+				totalReparented += seriesDedup.ReparentedRows
+			}
+		}
+		if int32(len(authors)) < pageSize {
+			break
+		}
+	}
+	if totalBookMerged > 0 || totalSeriesMerged > 0 || totalReparented > 0 {
+		s.logger.InfoContext(ctx, "audiobook child dedupe merged duplicates",
+			"library_id", libraryID,
+			"merged_books", totalBookMerged,
+			"merged_series", totalSeriesMerged,
+			"reparented_rows", totalReparented,
+		)
 	}
 }
 

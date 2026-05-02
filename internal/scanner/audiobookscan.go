@@ -58,7 +58,8 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 
 	// Read embedded tags so the chapter row carries a useful title
 	// (taggers commonly write "Chapter 3: …") and the book row's
-	// author can override the folder guess if the artist tag is set.
+	// author can override the folder guess for the no-folder case
+	// (loose .m4b at the library root, where there's no author dir).
 	var tagTitle, tagAuthor string
 	if f, err := os.Open(path); err == nil {
 		if m, err := readTagFrom(f); err == nil {
@@ -71,7 +72,18 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 		}
 		_ = f.Close()
 	}
-	if tagAuthor != "" {
+	// Tag-author override is restricted to layouts with NO folder author
+	// (loose .m4b at the root). For author-organized layouts —
+	// <root>/<Author>/<file>, <root>/<Author>/<Book>/<file>, and
+	// <root>/<Author>/<Series>/<Book>/<file> — the folder is
+	// authoritative. Why: m4b/mp3 AlbumArtist tags are wildly
+	// inconsistent across files in the same book (Graphic Audio
+	// productions use "Graphic Audio LLC." for some chapters and
+	// "<Real Author>" for others), and accepting the per-file tag
+	// would split a single logical author into N separate book_author
+	// rows, breaking the author hub tile and creating audiobook dupes
+	// — exactly the QA bug that prompted this carve-out.
+	if tagAuthor != "" && author == "" {
 		author = tagAuthor
 	}
 
