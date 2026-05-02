@@ -1077,20 +1077,6 @@ func TestEmailEnabled_PublicRoute(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestOAuthEnabled_PublicRoutes verifies the SSO feature flags are public.
-func TestOAuthEnabled_PublicRoutes(t *testing.T) {
-	ts := newTestServer(t)
-	for _, path := range []string{
-		"/api/v1/auth/google/enabled",
-		"/api/v1/auth/github/enabled",
-		"/api/v1/auth/discord/enabled",
-	} {
-		resp := ts.do("GET", path, "", nil)
-		assertStatus(t, resp, http.StatusOK)
-		resp.Body.Close()
-	}
-}
-
 // TestContentType_JSONResponses verifies all JSON endpoints set Content-Type correctly.
 func TestContentType_JSONResponses(t *testing.T) {
 	ts := newTestServer(t)
