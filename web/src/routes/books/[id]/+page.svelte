@@ -32,6 +32,7 @@
   let epubViewerEl: HTMLDivElement | null = null;
   let epubBook: any = null;          // ePub.Book instance
   let epubRendition: any = null;     // ePub.Rendition instance
+  let epubBlobUrl: string = '';      // revoked on destroy
 
   // Preload the next page invisibly so a click feels instant. CBZ/CBR only.
   let preload: HTMLImageElement | null = null;
@@ -65,6 +66,7 @@
     preload = null;
     if (epubRendition) { try { epubRendition.destroy(); } catch { /* swallow */ } epubRendition = null; }
     if (epubBook) { try { epubBook.destroy(); } catch { /* swallow */ } epubBook = null; }
+    if (epubBlobUrl) { URL.revokeObjectURL(epubBlobUrl); epubBlobUrl = ''; }
   });
 
   $: if (id && book && id !== book.id) load();
@@ -121,12 +123,14 @@
         error = 'EPUB has no file';
         return;
       }
-      // Fetch the .epub bytes ourselves so the existing Bearer auth
-      // applies — handing epub.js a URL would have it re-fetch
-      // without the token. ArrayBuffer keeps the whole file in
-      // memory; fine for typical novels (a few MB), tight for an
-      // omnibus 100 MB EPUB but matches what every browser-side
-      // EPUB reader does.
+      // Fetch the .epub with our Bearer auth, then hand epub.js a
+      // same-origin Blob URL of the bytes. Pure ArrayBuffer mode
+      // didn't reliably wire internal resources (images, fonts,
+      // stylesheets, intra-book links) into the iframe — chapter
+      // pages rendered as broken-image placeholders. With a Blob
+      // URL, epub.js range-requests the archive itself and resolves
+      // each `<img src="../OEBPS/Images/foo.jpg">` etc. through its
+      // standard URL-fetch path, which actually works.
       const token = getBearerToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -136,12 +140,30 @@
         return;
       }
       const buf = await resp.arrayBuffer();
-      epubBook = ePub(buf);
+      const blob = new Blob([buf], { type: 'application/epub+zip' });
+      epubBlobUrl = URL.createObjectURL(blob);
+      epubBook = ePub(epubBlobUrl);
       epubRendition = epubBook.renderTo(epubViewerEl, {
         width: '100%',
         height: '100%',
         flow: 'paginated',
         manager: 'default',
+        // allow-scripts/-same-origin in the rendered iframe so
+        // resource references (blob: URLs from the parent) load
+        // properly inside it. Without same-origin the browser
+        // refuses cross-origin blob loads even though they share
+        // the parent's origin.
+        allowScriptedContent: true,
+      });
+      // Route external links to a new tab (epub.js handles internal
+      // anchors automatically — fragment + chapter-relative hrefs
+      // resolve through the rendition). Without this, http:// links
+      // either no-op (sandboxed iframe) or land on a blank inside
+      // the reader.
+      epubRendition.on('linkClicked', (href: string) => {
+        if (/^https?:\/\//i.test(href)) {
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }
       });
       // Once locations are generated we can map page-number ↔
       // location, but generation is slow on big books — kick it off
