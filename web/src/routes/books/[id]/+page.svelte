@@ -18,6 +18,7 @@
   let pageCount = 0;
   let loading = true;
   let error = '';
+  let isAdmin = false;
 
   // Preload the next page invisibly so a click feels instant.
   let preload: HTMLImageElement | null = null;
@@ -25,10 +26,27 @@
   $: id = $page.params.id!;
 
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const raw = localStorage.getItem('onscreen_user');
+    if (!raw) { goto('/login'); return; }
+    try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     pageNum = parseInt($page.url.searchParams.get('p') ?? '1', 10) || 1;
     await load();
   });
+
+  async function removeItem() {
+    if (!book) return;
+    const confirmed = confirm(
+      `Soft-delete "${book.title}"?\n\n` +
+      `This hides the book from the library. The on-disk file is not touched.`
+    );
+    if (!confirmed) return;
+    try {
+      await itemApi.remove(book.id);
+      goto(`/libraries/${book.library_id}`);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Remove failed');
+    }
+  }
 
   onDestroy(() => {
     preload = null;
@@ -119,7 +137,16 @@
 
     <header class="topbar">
       <h1>{book.title}</h1>
-      <div class="page-counter">Page {pageNum} of {pageCount}</div>
+      <div class="topbar-right">
+        <div class="page-counter">Page {pageNum} of {pageCount}</div>
+        {#if isAdmin}
+          <button class="btn-remove" on:click={removeItem}
+                  title="Soft-delete this book">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Remove
+          </button>
+        {/if}
+      </div>
     </header>
 
     <div class="reader">
@@ -187,6 +214,17 @@
     font-size: 0.85rem; color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
   }
+  .topbar-right { display: flex; align-items: center; gap: 0.75rem; }
+  .btn-remove {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    background: var(--input-bg, transparent);
+    border: 1px solid rgba(204,102,102,0.3);
+    border-radius: 6px;
+    color: #c66; font-size: 0.72rem; font-weight: 500;
+    cursor: pointer; padding: 0.3rem 0.6rem;
+    transition: all 0.12s;
+  }
+  .btn-remove:hover { color: #e88; border-color: rgba(232,136,136,0.5); background: var(--bg-hover, rgba(204,102,102,0.06)); }
 
   .reader {
     flex: 1;

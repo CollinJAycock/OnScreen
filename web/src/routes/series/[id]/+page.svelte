@@ -9,13 +9,33 @@
   let author: { id: string; title: string } | null = null;
   let loading = true;
   let error = '';
+  let isAdmin = false;
 
   $: id = $page.params.id!;
 
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const raw = localStorage.getItem('onscreen_user');
+    if (!raw) { goto('/login'); return; }
+    try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     await load();
   });
+
+  async function removeItem() {
+    if (!series) return;
+    const confirmed = confirm(
+      `Soft-delete the series "${series.title}" and all ${books.length} book(s) in it?\n\n` +
+      `This hides the series and every book under it from the library. ` +
+      `On-disk files are not touched.`
+    );
+    if (!confirmed) return;
+    try {
+      await itemApi.remove(series.id);
+      if (author) goto(`/authors/${author.id}`);
+      else goto(`/libraries/${series.library_id}`);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Remove failed');
+    }
+  }
 
   $: if (id && series && id !== series.id) {
     load();
@@ -115,6 +135,15 @@
         {#if series.summary}
           <p class="bio">{series.summary}</p>
         {/if}
+        {#if isAdmin}
+          <div class="actions">
+            <button class="btn-remove" on:click={removeItem}
+                    title="Soft-delete this series and every book in it">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Remove
+            </button>
+          </div>
+        {/if}
       </div>
     </header>
 
@@ -193,6 +222,18 @@
 
   .empty, .loading, .err { color: var(--text-muted); padding: 2rem 0; }
   .err { color: var(--danger, #f87171); }
+
+  .actions { margin-top: 1rem; }
+  .btn-remove {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--input-bg, transparent);
+    border: 1px solid rgba(204,102,102,0.3);
+    border-radius: 6px;
+    color: #c66; font-size: 0.78rem; font-weight: 500;
+    cursor: pointer; padding: 0.45rem 0.9rem;
+    transition: all 0.12s;
+  }
+  .btn-remove:hover { color: #e88; border-color: rgba(232,136,136,0.5); background: var(--bg-hover, rgba(204,102,102,0.06)); }
 
   @media (max-width: 600px) {
     .page { padding: 1.5rem 1rem 4rem; }

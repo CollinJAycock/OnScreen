@@ -25,14 +25,35 @@
   let series: { id: string; title: string } | null = null;
   let loading = true;
   let error = '';
+  let isAdmin = false;
 
   $: id = $page.params.id!;
   $: nowPlayingId = $currentTrack?.id ?? null;
 
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const raw = localStorage.getItem('onscreen_user');
+    if (!raw) { goto('/login'); return; }
+    try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     await load();
   });
+
+  async function removeItem() {
+    if (!book) return;
+    const confirmed = confirm(
+      `Soft-delete "${book.title}" and all its chapters?\n\n` +
+      `This hides the book from the library. The on-disk files are not touched. ` +
+      `Use this to clear ghost rows from misorganised content.`
+    );
+    if (!confirmed) return;
+    try {
+      await itemApi.remove(book.id);
+      if (series) goto(`/series/${series.id}`);
+      else if (author) goto(`/authors/${author.id}`);
+      else goto(`/libraries/${book.library_id}`);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Remove failed');
+    }
+  }
 
   $: if (id && book && id !== book.id) {
     load();
@@ -231,6 +252,13 @@
                   disabled={chapters.length === 0 ? !bookFile : chapterDetails.size === 0}>
             <span class="ico">▶</span> Play
           </button>
+          {#if isAdmin}
+            <button class="btn-remove" on:click={removeItem}
+                    title="Soft-delete this book and its chapters">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Remove
+            </button>
+          {/if}
         </div>
         {#if book.summary}<p class="bio">{book.summary}</p>{/if}
       </div>
@@ -292,7 +320,7 @@
   .counts { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem; }
   .bio { color: var(--text-secondary); line-height: 1.5; max-width: 70ch; }
 
-  .actions { margin-bottom: 1rem; }
+  .actions { margin-bottom: 1rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
   .btn-play {
     display: inline-flex; align-items: center; gap: 0.5rem;
     background: var(--accent); color: white; border: 0; padding: 0.6rem 1.4rem;
@@ -301,6 +329,17 @@
   .btn-play:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-play:hover:not(:disabled) { filter: brightness(1.1); }
   .btn-play .ico { font-size: 0.7rem; }
+
+  .btn-remove {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--input-bg, transparent);
+    border: 1px solid rgba(204,102,102,0.3);
+    border-radius: 6px;
+    color: #c66; font-size: 0.78rem; font-weight: 500;
+    cursor: pointer; padding: 0.45rem 0.9rem;
+    transition: all 0.12s;
+  }
+  .btn-remove:hover { color: #e88; border-color: rgba(232,136,136,0.5); background: var(--bg-hover, rgba(204,102,102,0.06)); }
 
   .tracks { list-style: none; padding: 0; margin: 0;
             border-top: 1px solid var(--border, rgba(255,255,255,0.08)); }
