@@ -310,12 +310,12 @@
         <div class="worker-card">
           <div class="fleet-row">
             <div class="field" style="flex:2;">
-              <label>Name</label>
-              <input type="text" bind:value={row.name} placeholder="e.g. NVIDIA Box" />
+              <label for="worker-name-{row.id}">Name</label>
+              <input id="worker-name-{row.id}" type="text" bind:value={row.name} placeholder="e.g. NVIDIA Box" />
             </div>
             <div class="field" style="flex:2;">
-              <label>Encoder</label>
-              <select bind:value={row.encoder}>
+              <label for="worker-encoder-{row.id}">Encoder</label>
+              <select id="worker-encoder-{row.id}" bind:value={row.encoder}>
                 <option value="">Auto-detect</option>
                 {#each groupedDevices() as g}
                   <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
@@ -323,8 +323,8 @@
               </select>
             </div>
             <div class="field" style="flex:1;">
-              <label>Max Sessions</label>
-              <input type="number" bind:value={row.max_sessions} min="0" max="100" placeholder="auto" />
+              <label for="worker-max-{row.id}">Max Sessions</label>
+              <input id="worker-max-{row.id}" type="number" bind:value={row.max_sessions} min="0" max="100" placeholder="auto" />
             </div>
             {#if !row.online}
               <button type="button" class="btn-remove" title="Remove worker"

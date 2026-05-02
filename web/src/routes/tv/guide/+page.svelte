@@ -241,8 +241,10 @@
 {/if}
 
 {#if selected}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="modal-backdrop" on:click={() => selected = null} role="presentation">
-    <div class="modal" on:click|stopPropagation role="dialog">
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-meta">{fmtSelectedDate(selected)} · {fmtSelectedTime(selected)}</div>
       <h2 class="modal-title">{selected.title}</h2>
       {#if selected.subtitle}

@@ -286,6 +286,7 @@
 
     {#if declineFor}
       <div class="modal-overlay" on:click={() => (declineFor = null)} on:keydown={e => e.key === 'Escape' && (declineFor = null)} role="button" tabindex="-1">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div class="modal" on:click|stopPropagation role="dialog" aria-label="Decline request">
           <p class="modal-text">Decline "{declineFor.title}"?</p>
           <textarea bind:value={declineReason} placeholder="Optional reason — shown to the requester" rows="3"></textarea>

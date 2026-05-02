@@ -232,8 +232,8 @@
           />
           <div class="hint">Used to sign payloads with HMAC-SHA256. The signature is sent in the X-OnScreen-Signature header.</div>
         </div>
-        <div class="field">
-          <label>Events</label>
+        <fieldset class="field event-fieldset">
+          <legend>Events</legend>
           <div class="event-grid">
             {#each ALL_EVENTS as event}
               <label class="event-check">
@@ -242,7 +242,7 @@
               </label>
             {/each}
           </div>
-        </div>
+        </fieldset>
         <div class="form-actions">
           <button class="btn-cancel" on:click={cancelAdd}>Cancel</button>
           <button class="btn-save" on:click={submitAdd} disabled={addSaving}>
@@ -295,8 +295,8 @@
                 spellcheck="false"
               />
             </div>
-            <div class="field">
-              <label>Events</label>
+            <fieldset class="field event-fieldset">
+              <legend>Events</legend>
               <div class="event-grid">
                 {#each ALL_EVENTS as event}
                   <label class="event-check">
@@ -305,7 +305,7 @@
                   </label>
                 {/each}
               </div>
-            </div>
+            </fieldset>
             <div class="field">
               <label class="toggle-label">
                 <span>Enabled</span>
@@ -314,6 +314,9 @@
                   class:toggle-on={editEnabled}
                   on:click={() => editEnabled = !editEnabled}
                   type="button"
+                  title="Enabled"
+                  aria-label="Enabled"
+                  aria-pressed={editEnabled}
                 >
                   <span class="toggle-knob"></span>
                 </button>
@@ -380,6 +383,7 @@
         <!-- Delete confirmation modal -->
         {#if deleteId === wh.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
             <div class="modal" on:click|stopPropagation role="dialog" aria-label="Confirm delete">
               <p class="modal-text">Delete this webhook?</p>
               <p class="modal-sub">{wh.url}</p>
@@ -444,6 +448,11 @@
 
   /* Form fields */
   .field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 1rem; }
+  /* fieldset variant is for accessible checkbox-group labelling.
+     Strip the browser-default border + inset padding so the visual
+     matches a plain .field container. */
+  .event-fieldset { border: 0; padding: 0; min-width: 0; }
+  .event-fieldset legend { padding: 0; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
 
   label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
   .optional { font-weight: 400; color: var(--text-muted); }

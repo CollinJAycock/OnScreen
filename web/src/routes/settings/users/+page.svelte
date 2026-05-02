@@ -271,9 +271,9 @@
       </form>
       {#if inviteURL}
         <div class="invite-url-box">
-          <label>Invite Link</label>
+          <label for="invite-url-input">Invite Link</label>
           <div class="url-row">
-            <input type="text" readonly value={inviteURL} class="url-input" />
+            <input id="invite-url-input" type="text" readonly value={inviteURL} class="url-input" />
             <button class="btn-copy" on:click={copyInviteURL}>
               {copied ? 'Copied!' : 'Copy'}
             </button>

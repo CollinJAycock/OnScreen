@@ -156,7 +156,7 @@
           <input id="name" bind:value={name} autocomplete="off" />
         </div>
         <div class="field">
-          <label>Type</label>
+          <span class="field-heading">Type</span>
           <div class="readonly">{library?.type}</div>
         </div>
       </section>
@@ -295,8 +295,10 @@
 <DirPicker bind:open={pickerOpen} on:select={onPickerSelect} />
 
 {#if showDelete}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="overlay" role="presentation" on:click={() => showDelete = false}>
-    <div class="dialog" role="dialog" on:click|stopPropagation>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation>
       <p class="dlg-title">Delete "{library?.name}"?</p>
       <p class="dlg-body">All metadata for this library will be permanently removed. Files on disk will not be deleted. This cannot be undone.</p>
       <div class="dlg-foot">
@@ -364,7 +366,7 @@
   .check-help { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
   .check-help a { color: var(--accent); text-decoration: none; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-  label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+  label, .field-heading { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
 
   input, select {
     background: var(--bg-hover);

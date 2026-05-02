@@ -196,8 +196,8 @@
             <div class="name">{profile.username}</div>
             {#if profile.has_pin}<div class="badge">PIN</div>{/if}
             <div class="rating-row">
-              <label class="rating-label">Max rating</label>
-              <select class="rating-select-sm" value={profileRatings[profile.id] || ''}
+              <label class="rating-label" for="prof-rating-{profile.id}">Max rating</label>
+              <select id="prof-rating-{profile.id}" class="rating-select-sm" value={profileRatings[profile.id] || ''}
                 on:change={(e) => setRating(profile.id, e.currentTarget.value)}>
                 {#each ratings as r}
                   <option value={r}>{ratingLabels[r]}</option>
@@ -205,8 +205,8 @@
               </select>
             </div>
             <div class="lib-row">
-              <label class="rating-label">Library access</label>
-              <select class="rating-select-sm"
+              <label class="rating-label" for="prof-libaccess-{profile.id}">Library access</label>
+              <select id="prof-libaccess-{profile.id}" class="rating-select-sm"
                 value={profile.inherit_library_access ? 'inherit' : 'custom'}
                 on:change={(e) => setInherit(profile.id, e.currentTarget.value === 'inherit')}>
                 <option value="inherit">Same as owner</option>

@@ -444,6 +444,9 @@
                 class:toggle-on={addForm.skipExisting}
                 on:click={() => addForm.skipExisting = !addForm.skipExisting}
                 type="button"
+                title="Skip files already OCR'd"
+                aria-label="Skip files already OCR'd"
+                aria-pressed={addForm.skipExisting}
               >
                 <span class="toggle-knob"></span>
               </button>
@@ -464,6 +467,9 @@
               class:toggle-on={addForm.enabled}
               on:click={() => addForm.enabled = !addForm.enabled}
               type="button"
+              title="Enabled"
+              aria-label="Enabled"
+              aria-pressed={addForm.enabled}
             >
               <span class="toggle-knob"></span>
             </button>
@@ -569,6 +575,9 @@
                     class:toggle-on={editForm.skipExisting}
                     on:click={() => editForm.skipExisting = !editForm.skipExisting}
                     type="button"
+                    title="Skip files already OCR'd"
+                    aria-label="Skip files already OCR'd"
+                    aria-pressed={editForm.skipExisting}
                   >
                     <span class="toggle-knob"></span>
                   </button>
@@ -589,6 +598,9 @@
                   class:toggle-on={editForm.enabled}
                   on:click={() => editForm.enabled = !editForm.enabled}
                   type="button"
+                  title="Enabled"
+                  aria-label="Enabled"
+                  aria-pressed={editForm.enabled}
                 >
                   <span class="toggle-knob"></span>
                 </button>
@@ -685,6 +697,7 @@
 
         {#if deleteId === t.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
             <div class="modal" on:click|stopPropagation role="dialog" aria-label="Confirm delete">
               <p class="modal-text">Delete this task?</p>
               <p class="modal-sub">{t.name}</p>

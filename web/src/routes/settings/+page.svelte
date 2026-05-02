@@ -316,7 +316,7 @@
         </div>
         {#if arrWebhookUrl}
           <div class="field">
-            <label>Radarr Webhook URL</label>
+            <span class="field-heading">Radarr Webhook URL</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=radarr</code>
               <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=radarr'); toast.success('Copied'); }}>Copy</button>
@@ -328,7 +328,7 @@
             </div>
           </div>
           <div class="field">
-            <label>Sonarr Webhook URL</label>
+            <span class="field-heading">Sonarr Webhook URL</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=sonarr</code>
               <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=sonarr'); toast.success('Copied'); }}>Copy</button>
@@ -340,7 +340,7 @@
             </div>
           </div>
           <div class="field">
-            <label>Lidarr Webhook URL</label>
+            <span class="field-heading">Lidarr Webhook URL</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=lidarr</code>
               <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=lidarr'); toast.success('Copied'); }}>Copy</button>
@@ -353,7 +353,7 @@
           </div>
         {/if}
         <div class="field">
-          <label>Path Mappings</label>
+          <span class="field-heading">Path Mappings</span>
           <div class="hint" style="margin-bottom: 0.4rem;">
             If your arr apps run in Docker, their file paths won't match local paths.
             Map the remote prefix (e.g. <code>/Media/TV Shows</code>) to the local prefix (e.g. <code>C:\TV</code>).
@@ -668,7 +668,10 @@
     accent-color: var(--accent);
   }
 
-  label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+  label, .field-heading { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+  /* .field-heading is for visual labels above read-only display
+     blocks (the {service} webhook URL boxes) — they're not labelling
+     a single form control, so a bare <label> would be a11y noise. */
 
   input, select {
     background: var(--bg-hover);

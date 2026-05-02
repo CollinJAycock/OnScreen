@@ -322,8 +322,16 @@
 </div>
 
 {#if confirmDelete}
+  <!-- Backdrop click dismisses; the inner dialog stops propagation
+       so clicks on the dialog body don't dismiss. The svelte-ignore
+       comment skips the keyboard-handler warning because the dialog
+       has its own focusable buttons (Cancel/Delete) and Escape is
+       handled by the modal's natural focus trap — there's nothing
+       useful for a keyboard handler on the wrapper. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="overlay" role="presentation" on:click={() => confirmDelete = null}>
-    <div class="dialog" role="dialog" on:click|stopPropagation>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation>
       <p class="dialog-title">Delete "{confirmDelete.name}"?</p>
       <p class="dialog-body">Metadata will be permanently removed. Files on disk are not affected.</p>
       <div class="dialog-actions">

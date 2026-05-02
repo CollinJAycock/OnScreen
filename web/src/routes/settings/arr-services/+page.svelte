@@ -322,7 +322,10 @@
             <div class="field">
               <label class="toggle-label">
                 <span>Use season folders</span>
-                <button class="toggle" class:toggle-on={formSeasonFolder} on:click={() => (formSeasonFolder = !formSeasonFolder)} type="button">
+                <button class="toggle" class:toggle-on={formSeasonFolder}
+                        on:click={() => (formSeasonFolder = !formSeasonFolder)} type="button"
+                        title="Use season folders" aria-label="Use season folders"
+                        aria-pressed={formSeasonFolder}>
                   <span class="toggle-knob"></span>
                 </button>
               </label>
@@ -334,7 +337,9 @@
           <div class="field">
             <label class="toggle-label">
               <span>Enabled</span>
-              <button class="toggle" class:toggle-on={formEnabled} on:click={() => (formEnabled = !formEnabled)} type="button">
+              <button class="toggle" class:toggle-on={formEnabled}
+                      on:click={() => (formEnabled = !formEnabled)} type="button"
+                      title="Enabled" aria-label="Enabled" aria-pressed={formEnabled}>
                 <span class="toggle-knob"></span>
               </button>
             </label>
@@ -342,7 +347,11 @@
           <div class="field">
             <label class="toggle-label">
               <span>Set as default for {formKind}</span>
-              <button class="toggle" class:toggle-on={formIsDefault} on:click={() => (formIsDefault = !formIsDefault)} type="button">
+              <button class="toggle" class:toggle-on={formIsDefault}
+                      on:click={() => (formIsDefault = !formIsDefault)} type="button"
+                      title="Set as default for {formKind}"
+                      aria-label="Set as default for {formKind}"
+                      aria-pressed={formIsDefault}>
                 <span class="toggle-knob"></span>
               </button>
             </label>
@@ -406,6 +415,7 @@
   {#if deleteId}
     {@const target = services.find(s => s.id === deleteId)}
     <div class="modal-overlay" on:click={() => (deleteId = null)} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="modal" on:click|stopPropagation role="dialog" aria-label="Confirm delete">
         <p class="modal-text">Delete this arr service?</p>
         <p class="modal-sub">{target?.name ?? ''}</p>

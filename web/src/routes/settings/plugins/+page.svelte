@@ -287,7 +287,7 @@
               />
             </div>
             <div class="field">
-              <label>Role</label>
+              <span class="field-heading">Role</span>
               <div class="readonly-field">
                 <span class="role-pill role-{p.role}">{p.role}</span>
                 <span class="hint inline">Role is fixed after creation</span>
@@ -322,6 +322,9 @@
                   class:toggle-on={editEnabled}
                   on:click={() => editEnabled = !editEnabled}
                   type="button"
+                  title="Enabled"
+                  aria-label="Enabled"
+                  aria-pressed={editEnabled}
                 >
                   <span class="toggle-knob"></span>
                 </button>
@@ -390,6 +393,7 @@
 
         {#if deleteId === p.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
             <div class="modal" on:click|stopPropagation role="dialog" aria-label="Confirm delete">
               <p class="modal-text">Delete this plugin?</p>
               <p class="modal-sub">{p.name}</p>
@@ -459,7 +463,7 @@
   .form-card { border-color: rgba(124,106,247,0.2); }
 
   .field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 1rem; }
-  label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+  label, .field-heading { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
   .optional { font-weight: 400; color: var(--text-muted); }
 
   input[type="url"],
