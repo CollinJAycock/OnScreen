@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/nwaples/rardecode/v2"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
@@ -110,12 +112,28 @@ func (h *BookHandler) Page(w http.ResponseWriter, r *http.Request) {
 // client can react cleanly.
 var errBookPageNotFound = errors.New("book: page not found")
 
-// servePage opens the CBZ at file.FilePath, finds the pageNum-th image
-// entry (sorted lexicographically), and streams it to w with the
-// appropriate Content-Type header. Cacheable for an hour — pages
-// don't change without the underlying file changing, and the URL
-// embeds the page number so a different page is a different URL.
+// servePage routes to the right archive reader based on the file
+// extension. CBZ uses stdlib archive/zip; CBR uses nwaples/rardecode/v2;
+// EPUB doesn't go through this path at all (the client streams the
+// whole .epub via /media/stream and renders it with epub.js — chapter
+// pagination happens in the browser, not the server).
+//
+// "page N" is 1-indexed and resolved against the alphabetical sort of
+// image entries, the convention every comic reader follows. Out-of-
+// range yields errBookPageNotFound which the caller maps to 404.
 func (h *BookHandler) servePage(_ context.Context, w http.ResponseWriter, file media.File, pageNum int) error {
+	ext := strings.ToLower(filepath.Ext(file.FilePath))
+	switch ext {
+	case ".cbr":
+		return servePageFromCBR(w, file.FilePath, pageNum)
+	case ".epub":
+		// EPUB pages aren't image-extracted server-side; the client
+		// renders chapters via epub.js. Return 404 so a client that
+		// somehow asks /book/page/N for an EPUB sees the same
+		// "out of range" code path as a CBZ asking for page 999.
+		return errBookPageNotFound
+	}
+
 	r, err := zip.OpenReader(file.FilePath)
 	if err != nil {
 		return err
@@ -148,6 +166,64 @@ func (h *BookHandler) servePage(_ context.Context, w http.ResponseWriter, file m
 	w.Header().Set("Content-Type", contentTypeForBookPage(entry.Name))
 	w.Header().Set("Cache-Control", "private, max-age=3600, immutable")
 	_, err = io.Copy(w, rc)
+	return err
+}
+
+// servePageFromCBR mirrors servePage's CBZ branch but for RAR
+// archives. rardecode v2 is streaming-only (no random access) so we
+// walk the archive once collecting (name, body) pairs for every image
+// entry and pick the requested one after sorting. Modest peak memory
+// — comic pages are typically a few MB; an N-page CBR holds N pages
+// in RAM during the request. Acceptable for personal libraries; if
+// this ever needs to handle 500-page omnibus CBRs we can switch to
+// a name-only first pass + targeted re-open for the chosen page.
+func servePageFromCBR(w http.ResponseWriter, cbrPath string, pageNum int) error {
+	f, err := os.Open(cbrPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	rr, err := rardecode.NewReader(f)
+	if err != nil {
+		return err
+	}
+
+	type cbrEntry struct {
+		name string
+		data []byte
+	}
+	var entries []cbrEntry
+	for {
+		header, err := rr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if header == nil {
+			break
+		}
+		if !isCBZPageEntryAPI(header.Name) {
+			continue
+		}
+		data, rerr := io.ReadAll(rr)
+		if rerr != nil {
+			continue
+		}
+		entries = append(entries, cbrEntry{name: header.Name, data: data})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+
+	if pageNum < 1 || pageNum > len(entries) {
+		return errBookPageNotFound
+	}
+
+	entry := entries[pageNum-1]
+	w.Header().Set("Content-Type", contentTypeForBookPage(entry.name))
+	w.Header().Set("Cache-Control", "private, max-age=3600, immutable")
+	_, err = w.Write(entry.data)
 	return err
 }
 

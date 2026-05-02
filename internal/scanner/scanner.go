@@ -50,12 +50,16 @@ var imageExtensions = map[string]bool{
 	".heic": true, ".avif": true,
 }
 
-// bookExtensions: CBZ today (Stage 1 of v2.1 books). CBR (RAR-based)
-// and EPUB are deferred until we pick the parser deps. Kept separate
-// from validExtensions so it can grow without polluting the
-// movie/music detection paths.
+// bookExtensions: comic archives (CBZ + CBR) and reflowable EPUB.
+// CBZ uses the stdlib archive/zip; CBR uses nwaples/rardecode/v2
+// (pure-Go RAR reader, no cgo); EPUB is parsed for cover + spine
+// count server-side and rendered client-side via epub.js.
+// Kept separate from validExtensions so it can grow without polluting
+// the movie/music detection paths.
 var bookExtensions = map[string]bool{
-	".cbz": true,
+	".cbz":  true,
+	".cbr":  true,
+	".epub": true,
 }
 
 // yearRE matches a 4-digit year, optionally surrounded by parentheses, square

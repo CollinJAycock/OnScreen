@@ -20,6 +20,10 @@ func TestParseBookTitle(t *testing.T) {
 		{"/comics/saga_vol_1.cbz", "saga vol 1"},
 		{"/comics/Saga.Vol.1.cbz", "Saga Vol 1"},
 		{"/comics/single.cbz", "single"},
+		// CBR + EPUB share the same filename normalisation — the
+		// dispatch happens later via countBookPages / readFirstBookCover.
+		{"/comics/Saga.Vol.2.cbr", "Saga Vol 2"},
+		{"/books/A_Wizard_of_Earthsea.epub", "A Wizard of Earthsea"},
 	}
 	for _, c := range cases {
 		got := parseBookTitle(c.path)
@@ -98,5 +102,101 @@ func TestCountCBZPages_RoundTrip(t *testing.T) {
 
 	if got := countCBZPages(cbzPath); got != 4 {
 		t.Errorf("countCBZPages = %d, want 4 (filter should exclude __MACOSX, .txt, dir entry)", got)
+	}
+}
+
+// TestIsCBR + TestIsEPUB lock the per-format dispatch so a renamed
+// extension still routes to the right path. Both are pure-string
+// helpers; failures usually mean someone changed the extension list
+// in scanner.go without updating the dispatcher.
+func TestIsCBR(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/comics/Saga.cbr", true},
+		{"/comics/Saga.CBR", true},
+		{"/comics/Saga.cbz", false},
+		{"/books/Earthsea.epub", false},
+	}
+	for _, c := range cases {
+		if got := isCBR(c.path); got != c.want {
+			t.Errorf("isCBR(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+func TestIsEPUB(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/books/Earthsea.epub", true},
+		{"/books/Earthsea.EPUB", true},
+		{"/books/Earthsea.pdf", false},
+		{"/comics/Saga.cbz", false},
+	}
+	for _, c := range cases {
+		if got := isEPUB(c.path); got != c.want {
+			t.Errorf("isEPUB(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+// TestCountEpubPages_RoundTrip builds a minimal valid EPUB (mimetype +
+// container.xml + a 3-itemref OPF) in a temp dir and verifies the
+// spine count is what we report as page count.
+func TestCountEpubPages_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	epubPath := filepath.Join(dir, "tiny.epub")
+
+	f, err := os.Create(epubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+
+	write := func(name, body string) {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(body))
+	}
+
+	write("mimetype", "application/epub+zip")
+	write("META-INF/container.xml", `<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>`)
+	write("OEBPS/content.opf", `<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
+  <manifest>
+    <item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="c1"/>
+    <itemref idref="c2"/>
+    <itemref idref="c3"/>
+  </spine>
+</package>`)
+	write("OEBPS/ch1.xhtml", "<html><body>1</body></html>")
+	write("OEBPS/ch2.xhtml", "<html><body>2</body></html>")
+	write("OEBPS/ch3.xhtml", "<html><body>3</body></html>")
+
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := countEpubPages(epubPath); got != 3 {
+		t.Errorf("countEpubPages = %d, want 3", got)
+	}
+	if got := countBookPages(epubPath); got != 3 {
+		t.Errorf("countBookPages dispatch = %d, want 3 (epub branch)", got)
 	}
 }

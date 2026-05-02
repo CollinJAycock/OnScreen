@@ -2,16 +2,19 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, type ItemDetail } from '$lib/api';
+  import { itemApi, assetUrl, getBearerToken, type ItemDetail } from '$lib/api';
 
-  // v2.1 Stage 1 reader. CBZ-only — pages come from the backend's
-  // GET /items/{id}/book/page/{n} endpoint, which streams the n-th
-  // sorted image entry from the zip. Bookmarks, full-text search,
-  // and reading progress are deferred to a follow-up; the bare
-  // minimum here is "open it, flip pages, see the cover."
+  // v2.1 reader for CBZ / CBR / EPUB.
+  //
+  //   - CBZ + CBR: pages come from GET /items/{id}/book/page/{n},
+  //     which streams the n-th alphabetically-sorted image entry
+  //     from the archive.
+  //   - EPUB: the whole .epub is fetched via /media/stream and
+  //     handed to epub.js, which renders chapters with real
+  //     reflowable pagination (font size, themes, page-flips).
   //
   // Pagination state lives in the URL query (?p=N) so a refresh /
-  // share preserves the current page.
+  // share preserves the current page (CBZ/CBR) or chapter (EPUB).
 
   let book: ItemDetail | null = null;
   let pageNum = 1;
@@ -20,7 +23,17 @@
   let error = '';
   let isAdmin = false;
 
-  // Preload the next page invisibly so a click feels instant.
+  // Format dispatch — set after the item detail loads. EPUB hands
+  // off to a different render path entirely (epub.js).
+  let format: 'cbz' | 'cbr' | 'epub' = 'cbz';
+  $: isEpub = format === 'epub';
+
+  // EPUB state — undefined for cbz/cbr.
+  let epubViewerEl: HTMLDivElement | null = null;
+  let epubBook: any = null;          // ePub.Book instance
+  let epubRendition: any = null;     // ePub.Rendition instance
+
+  // Preload the next page invisibly so a click feels instant. CBZ/CBR only.
   let preload: HTMLImageElement | null = null;
 
   $: id = $page.params.id!;
@@ -50,6 +63,8 @@
 
   onDestroy(() => {
     preload = null;
+    if (epubRendition) { try { epubRendition.destroy(); } catch { /* swallow */ } epubRendition = null; }
+    if (epubBook) { try { epubBook.destroy(); } catch { /* swallow */ } epubBook = null; }
   });
 
   $: if (id && book && id !== book.id) load();
@@ -64,16 +79,93 @@
         return;
       }
       book = detail;
+      // Container is stamped from the file extension (api/v1/items.go
+      // backfills it for book items when ffprobe doesn't). Falls back
+      // to cbz so older rows from before this code shipped still
+      // render via the image-page path.
+      const c = (detail.files[0]?.container ?? 'cbz').toLowerCase();
+      format = (c === 'epub' || c === 'cbr') ? c : 'cbz';
       // The scanner stashes page count on duration_ms (re-purposed —
-      // see migration 00059's notes). Fall back to 1 so the reader
-      // doesn't degenerate when the page count couldn't be probed.
+      // see migration 00059's notes). For EPUB it's the spine length
+      // (chapter count), for CBZ/CBR it's image-entry count. Fall
+      // back to 1 so the reader doesn't degenerate when the page
+      // count couldn't be probed.
       pageCount = Math.max(1, detail.duration_ms ?? 1);
       pageNum = Math.min(Math.max(pageNum, 1), pageCount);
-      schedulePreload();
+      if (!isEpub) {
+        schedulePreload();
+      }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load book';
     } finally {
       loading = false;
+    }
+  }
+
+  // mountEpub fires once the book has loaded AND the viewer div has
+  // been bound. epub.js fetches the .epub via the same /media/stream
+  // URL the player uses for video — we add the bearer token as a
+  // query param fallback because epub.js doesn't expose a header
+  // hook on its internal XHR. The token is short-lived per session.
+  $: if (book && isEpub && epubViewerEl && !epubRendition) {
+    void mountEpub();
+  }
+
+  async function mountEpub() {
+    if (!book || !epubViewerEl) return;
+    try {
+      const ePubMod = await import('epubjs');
+      const ePub = (ePubMod.default ?? ePubMod) as any;
+      const fileId = book.files[0]?.id;
+      if (!fileId) {
+        error = 'EPUB has no file';
+        return;
+      }
+      // Fetch the .epub bytes ourselves so the existing Bearer auth
+      // applies — handing epub.js a URL would have it re-fetch
+      // without the token. ArrayBuffer keeps the whole file in
+      // memory; fine for typical novels (a few MB), tight for an
+      // omnibus 100 MB EPUB but matches what every browser-side
+      // EPUB reader does.
+      const token = getBearerToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const resp = await fetch(assetUrl(`/media/stream/${fileId}`), { headers });
+      if (!resp.ok) {
+        error = `Failed to fetch EPUB: ${resp.status}`;
+        return;
+      }
+      const buf = await resp.arrayBuffer();
+      epubBook = ePub(buf);
+      epubRendition = epubBook.renderTo(epubViewerEl, {
+        width: '100%',
+        height: '100%',
+        flow: 'paginated',
+        manager: 'default',
+      });
+      // Once locations are generated we can map page-number ↔
+      // location, but generation is slow on big books — kick it off
+      // in the background and just rely on spine progress until it
+      // finishes.
+      epubBook.ready.then(() => {
+        epubBook.locations.generate(1024).catch(() => {});
+      });
+      epubRendition.on('relocated', (loc: any) => {
+        const idx = (loc?.start?.index ?? 0) + 1;
+        if (idx !== pageNum) {
+          pageNum = idx;
+          const url = new URL(window.location.href);
+          url.searchParams.set('p', String(pageNum));
+          window.history.replaceState({}, '', url.toString());
+        }
+        if (epubBook?.spine?.length) pageCount = epubBook.spine.length;
+      });
+      // Initial display — honour ?p= when present (1-indexed spine).
+      const start = Math.max(1, pageNum) - 1;
+      const target = epubBook.spine?.get?.(start) ?? undefined;
+      await epubRendition.display(target?.href);
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : 'Failed to render EPUB';
     }
   }
 
@@ -83,6 +175,23 @@
 
   function go(n: number) {
     if (n < 1 || n > pageCount) return;
+    if (isEpub) {
+      // Prefer the rendition's own next/prev when stepping by one —
+      // they advance by viewport-width, not by spine entry, so the
+      // user gets actual page-flip behaviour inside long chapters.
+      // For larger jumps (slider scrub, Home/End), fall through to
+      // a spine-index display.
+      if (epubRendition && Math.abs(n - pageNum) === 1) {
+        if (n > pageNum) epubRendition.next();
+        else epubRendition.prev();
+        return;
+      }
+      if (epubBook && epubRendition) {
+        const target = epubBook.spine?.get?.(n - 1);
+        if (target) epubRendition.display(target.href);
+      }
+      return;
+    }
     pageNum = n;
     const url = new URL(window.location.href);
     url.searchParams.set('p', String(n));
@@ -138,7 +247,9 @@
     <header class="topbar">
       <h1>{book.title}</h1>
       <div class="topbar-right">
-        <div class="page-counter">Page {pageNum} of {pageCount}</div>
+        <div class="page-counter">
+          {isEpub ? 'Section' : 'Page'} {pageNum} of {pageCount}
+        </div>
         {#if isAdmin}
           <button class="btn-remove" on:click={removeItem}
                   title="Soft-delete this book">
@@ -153,20 +264,24 @@
       <button
         class="nav-btn left"
         on:click={() => go(pageNum - 1)}
-        disabled={pageNum <= 1}
+        disabled={!isEpub && pageNum <= 1}
         aria-label="Previous page"
       >‹</button>
 
       <div class="page-frame">
-        {#key pageNum}
-          <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
-        {/key}
+        {#if isEpub}
+          <div class="epub-viewer" bind:this={epubViewerEl}></div>
+        {:else}
+          {#key pageNum}
+            <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
+          {/key}
+        {/if}
       </div>
 
       <button
         class="nav-btn right"
         on:click={() => go(pageNum + 1)}
-        disabled={pageNum >= pageCount}
+        disabled={!isEpub && pageNum >= pageCount}
         aria-label="Next page"
       >›</button>
     </div>
@@ -247,6 +362,15 @@
     object-fit: contain;
     user-select: none;
   }
+  .epub-viewer {
+    width: 100%; height: 100%;
+    background: #fdfcf7;
+    color: #111;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  /* epub.js injects its own iframe inside .epub-viewer; the iframe
+     manages page-flip rendering, so we just give it the box. */
   .nav-btn {
     background: var(--surface);
     border: 1px solid var(--border);

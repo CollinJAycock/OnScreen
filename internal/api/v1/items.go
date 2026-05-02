@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -552,11 +553,23 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "issue stream token", "err", err, "user_id", claims.UserID, "file_id", f.ID)
 			}
 		}
+		// ffprobe doesn't surface a useful container for the
+		// archive-shaped book formats (cbz/cbr/epub), so fall back
+		// to the file extension when the DB Container is empty —
+		// the web reader uses this to dispatch to image-page mode
+		// (cbz/cbr) vs epub.js (epub).
+		container := f.Container
+		if (container == nil || *container == "") && item.Type == "book" {
+			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(f.FilePath), "."))
+			if ext != "" {
+				container = &ext
+			}
+		}
 		fr := ItemFileResponse{
 			ID:                  f.ID.String(),
 			StreamURL:           "/media/stream/" + f.ID.String(),
 			StreamToken:         streamToken,
-			Container:           f.Container,
+			Container:           container,
 			VideoCodec:          f.VideoCodec,
 			AudioCodec:          f.AudioCodec,
 			ResolutionW:         f.ResolutionW,
