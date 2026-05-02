@@ -166,7 +166,7 @@ type ScanResult struct {
 // used when creating placeholder media_item records for newly discovered files.
 // It respects the configured file concurrency limit (ADR-024).
 func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryType string, paths []string) (*ScanResult, error) {
-	return s.scan(ctx, libraryID, libraryType, paths, paths)
+	return s.scan(ctx, libraryID, libraryType, paths, paths, true /* full library scan */)
 }
 
 // ScanDirectory walks a single directory under a library (typically triggered
@@ -181,10 +181,10 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID uuid.UUID, libraryT
 // audiobook rows, race against the existing tree. Splitting the two inputs
 // keeps directory scans and full scans producing identical hierarchies.
 func (s *Scanner) ScanDirectory(ctx context.Context, libraryID uuid.UUID, libraryType, dirPath string, libraryRoots []string) (*ScanResult, error) {
-	return s.scan(ctx, libraryID, libraryType, []string{dirPath}, libraryRoots)
+	return s.scan(ctx, libraryID, libraryType, []string{dirPath}, libraryRoots, false /* directory scope only */)
 }
 
-func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType string, walkPaths, parsingRoots []string) (*ScanResult, error) {
+func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType string, walkPaths, parsingRoots []string, fullScan bool) (*ScanResult, error) {
 	ctx, span := tracer.Start(ctx, "scanner.library", trace.WithAttributes(
 		attribute.String("library.id", libraryID.String()),
 		attribute.String("library.type", libraryType),
@@ -319,13 +319,22 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	// wasn't encountered on disk (e.g. after a scan-path change) gets marked
 	// missing so the frontend stops serving broken stream URLs.
 	//
-	// Safety: skip orphan detection when the walk found very few files
-	// compared to what the DB expects. This prevents mass-marking files
-	// missing when the media volume is briefly unmounted (e.g. during
-	// container restarts). Threshold: walk must find at least 50% of
-	// known active files, otherwise it's likely a mount failure.
+	// Two safeguards layered:
+	//
+	//  1. Only run orphan detection on a *full* library scan.
+	//     ScanDirectory walks one folder for an fsnotify event; the
+	//     unwalked rest of the library is invisible to that pass and
+	//     would always be flagged as orphaned. (Real bug from QA: a
+	//     2-file library with one EPUB + one CBZ — opening the EPUB
+	//     triggered a directory scan of that EPUB's folder, the CBZ
+	//     in a different folder got marked orphan and soft-deleted.)
+	//
+	//  2. Within a full scan, require the walk to find at least 50%
+	//     of known active files. Prevents mass-marking files missing
+	//     when the media volume is briefly unmounted (e.g. during
+	//     container restarts).
 	activeFiles, _ := s.media.ListActiveFilesForLibrary(ctx, libraryID)
-	if len(activeFiles) == 0 || len(filePaths) >= len(activeFiles)/2 {
+	if fullScan && (len(activeFiles) == 0 || len(filePaths) >= len(activeFiles)/2) {
 		s.markOrphanedFiles(ctx, libraryID, filePaths)
 	} else {
 		s.logger.WarnContext(ctx, "skipping orphan detection — walk found far fewer files than expected (possible mount issue)",
