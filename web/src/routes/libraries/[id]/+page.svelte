@@ -5,9 +5,25 @@
   import { libraryApi, mediaApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection } from '$lib/api';
   import { itemHref as resolveItemHref } from '$lib/itemHref';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
+  import MetadataEditor from '$lib/components/MetadataEditor.svelte';
 
   let playlistPickerItemId = '';
   let showPlaylistPicker = false;
+
+  // Per-tile metadata editor — admin-only, triggered by the ✎ overlay
+  // button on home_video tiles (no external metadata source so the
+  // user owns title/summary/taken_at). Bound to a single shared modal
+  // instance so we don't spawn one per tile.
+  let isAdmin = false;
+  let editingItem: MediaItem | null = null;
+  let editMetadataOpen = false;
+
+  function openMetadataEditor(e: MouseEvent, item: MediaItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    editingItem = item;
+    editMetadataOpen = true;
+  }
 
   function openPlaylistPicker(e: MouseEvent, itemId: string) {
     e.preventDefault();
@@ -196,7 +212,9 @@
   }
 
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const raw = localStorage.getItem('onscreen_user');
+    if (!raw) { goto('/login'); return; }
+    try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     prevId = id;
     readFiltersFromURL();
     // Await library first so we can pick the right default sort before listing.
@@ -542,6 +560,11 @@
                     {#if item.duration_ms} · {dur(item.duration_ms)}{/if}
                   </div>
                 </div>
+                {#if isAdmin}
+                  <button class="edit-meta-btn" title="Edit title, summary, date"
+                          aria-label="Edit metadata"
+                          on:click={(e) => openMetadataEditor(e, item)}>✎</button>
+                {/if}
               </div>
             </a>
           {/each}
@@ -630,6 +653,29 @@
   open={showPlaylistPicker}
   on:close={() => showPlaylistPicker = false}
 />
+
+{#if editingItem}
+  <MetadataEditor
+    itemId={editingItem.id}
+    initialTitle={editingItem.title}
+    initialSummary={editingItem.summary}
+    initialTakenAt={editingItem.taken_at}
+    open={editMetadataOpen}
+    on:close={() => { editMetadataOpen = false; editingItem = null; }}
+    on:saved={(e) => {
+      // Reflect the edit in the local grid without re-fetching the
+      // whole list. Date changes can re-bucket the item; the
+      // dateBuckets reactive picks that up automatically when
+      // allItems changes.
+      if (editingItem) {
+        const id = editingItem.id;
+        allItems = allItems.map(x => x.id === id
+          ? { ...x, title: e.detail.title, summary: e.detail.summary ?? undefined, taken_at: e.detail.taken_at ?? undefined }
+          : x);
+      }
+    }}
+  />
+{/if}
 
 <style>
   .page { padding: 2.5rem 2.5rem 5rem; }
@@ -910,6 +956,30 @@
   .refresh-art:hover { color: #fff; }
   .refresh-art.spinning { animation: spin 0.8s linear infinite; opacity: 1; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  .edit-meta-btn {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    background: rgba(0,0,0,0.65);
+    border: none;
+    border-radius: 50%;
+    color: rgba(255,255,255,0.75);
+    font-size: 0.85rem;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+    line-height: 1;
+    padding: 0;
+    z-index: 2;
+  }
+  .item:hover .edit-meta-btn { opacity: 1; }
+  .edit-meta-btn:hover { color: var(--accent); }
 
   .add-playlist-btn {
     position: absolute;
