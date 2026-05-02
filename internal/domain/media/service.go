@@ -216,6 +216,15 @@ type Querier interface {
 	SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error
 	SoftDeleteEmptyContainerItems(ctx context.Context, libraryID uuid.UUID) error
 
+	// Event-folder collections — auto-created by the home_video scanner
+	// when files live under a non-root folder. UpsertEventCollection is
+	// keyed on (library_id, name) per the partial unique index from
+	// migration 00071. AddItemToCollection is idempotent (ON CONFLICT
+	// DO NOTHING in the underlying query — re-scans don't dupe).
+	UpsertEventCollection(ctx context.Context, libraryID uuid.UUID, name string) (uuid.UUID, error)
+	AddItemToCollection(ctx context.Context, collectionID, mediaItemID uuid.UUID) error
+	ListEventCollectionsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]EventCollection, error)
+
 	UpsertPhotoMetadata(ctx context.Context, p PhotoMetadataParams) error
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*PhotoMetadata, error)
 	ListPhotosByLibrary(ctx context.Context, p ListPhotosParams) ([]PhotoListItem, error)
@@ -225,6 +234,18 @@ type Querier interface {
 	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error)
 	SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error)
 	CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error)
+}
+
+// EventCollection is a thin domain view of one event_folder collection
+// row scoped to a library. The home_video library page renders an
+// "Events" shelf from the result of ListEventCollectionsForLibrary;
+// PosterPath is best-effort (NULL until something downstream populates
+// it — there's no scanner-side art lookup for event folders today).
+type EventCollection struct {
+	ID         uuid.UUID
+	LibraryID  uuid.UUID
+	Name       string
+	PosterPath *string
 }
 
 // ListPhotosParams filters and paginates a photo-list query. From/To
@@ -1323,6 +1344,39 @@ func (s *Service) PruneEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID
 		}
 	}
 	return len(ids), nil
+}
+
+// UpsertEventCollection finds-or-creates the event_folder collection
+// for (libraryID, name). Used by the home_video scanner to attach
+// every file under `<root>/<EventFolder>/...` to the same collection,
+// so the library page can render an "Events" shelf without forcing the
+// user to hand-build collections.
+func (s *Service) UpsertEventCollection(ctx context.Context, libraryID uuid.UUID, name string) (uuid.UUID, error) {
+	id, err := s.rw.UpsertEventCollection(ctx, libraryID, name)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("upsert event collection %s/%s: %w", libraryID, name, err)
+	}
+	return id, nil
+}
+
+// AddItemToCollection inserts the (collection, item) pair if absent.
+// Idempotent — safe to call on every scan pass.
+func (s *Service) AddItemToCollection(ctx context.Context, collectionID, mediaItemID uuid.UUID) error {
+	if err := s.rw.AddItemToCollection(ctx, collectionID, mediaItemID); err != nil {
+		return fmt.Errorf("add item %s to collection %s: %w", mediaItemID, collectionID, err)
+	}
+	return nil
+}
+
+// ListEventCollectionsForLibrary returns the auto-created event_folder
+// collections under one library. Used by the home_video library page
+// to render an "Events" shelf above the date-bucketed grid.
+func (s *Service) ListEventCollectionsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]EventCollection, error) {
+	out, err := s.rw.ListEventCollectionsForLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list event collections %s: %w", libraryID, err)
+	}
+	return out, nil
 }
 
 func (s *Service) applyDedupePairs(ctx context.Context, pairs []DuplicatePair, itemType string, res *DedupeResult) error {

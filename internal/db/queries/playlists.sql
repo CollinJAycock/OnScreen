@@ -4,7 +4,7 @@
 -- the rules JSONB at query time) — surface them in the same list so
 -- the user sees all of theirs in one place. The handler renders the
 -- smart-vs-static distinction via the type field.
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 FROM collections
 WHERE user_id = $1 AND type IN ('playlist', 'smart_playlist')
 ORDER BY updated_at DESC, name;

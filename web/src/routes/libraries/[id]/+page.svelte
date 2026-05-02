@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, mediaApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount } from '$lib/api';
+  import { libraryApi, mediaApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection } from '$lib/api';
   import { itemHref as resolveItemHref } from '$lib/itemHref';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
 
@@ -49,6 +49,10 @@
   // library landing page renders them as a separate shelf above the
   // artists. Empty for any non-music library.
   let musicVideos: MediaItem[] = [];
+  // eventCollections renders an "Events" shelf on home_video libraries:
+  // one tile per non-root subfolder under the library root, auto-
+  // created by the scanner. Empty for any other library type.
+  let eventCollections: EventCollection[] = [];
   let loadingLib = true;
   let loadingItems = false;
   let scanning = false;
@@ -197,7 +201,7 @@
     readFiltersFromURL();
     // Await library first so we can pick the right default sort before listing.
     await loadLibrary();
-    await Promise.all([loadItems(), loadGenres(), loadMusicVideos()]);
+    await Promise.all([loadItems(), loadGenres(), loadMusicVideos(), loadEventCollections()]);
     mounted = true;
   });
 
@@ -207,6 +211,7 @@
     prevId = id;
     allItems = [];
     musicVideos = [];
+    eventCollections = [];
     offset = 0;
     total = 0;
     hasMore = true;
@@ -221,6 +226,7 @@
       loadItems();
       loadGenres();
       loadMusicVideos();
+      loadEventCollections();
     });
   }
 
@@ -244,6 +250,20 @@
   async function loadGenres() {
     try { genres = await mediaApi.genres(id); }
     catch { /* non-critical */ }
+  }
+
+  // Home-video libraries get a separate "Events" shelf above the
+  // date-bucketed grid. Skipped on every other library type. The
+  // /event-collections endpoint returns [] for any non-home-video
+  // library, but skipping the call avoids a useless round-trip.
+  async function loadEventCollections() {
+    if (library?.type !== 'home_video') {
+      eventCollections = [];
+      return;
+    }
+    try {
+      eventCollections = await mediaApi.eventCollections(id);
+    } catch { /* non-critical — shelf just won't render */ }
   }
 
   // Music libraries get a separate Music Videos shelf above the artist
@@ -466,6 +486,31 @@
                 <div class="mv-title">{v.title}</div>
                 {#if v.duration_ms}<div class="mv-dur">{dur(v.duration_ms)}</div>{/if}
               </div>
+            </a>
+          {/each}
+        </div>
+      </section>
+    {/if}
+    {#if isHomeVideoLibrary && eventCollections.length > 0}
+      <!-- Events shelf: one tile per non-root subfolder under the
+           library root (e.g. "Yellowstone 2024"). Auto-created by
+           the scanner; clicking lands on the collection detail page
+           which renders the bundled clips. Skipped when the library
+           is fully flat (every file at root). -->
+      <section class="events-shelf">
+        <h2 class="events-title">Events</h2>
+        <div class="events-row">
+          {#each eventCollections as ev (ev.id)}
+            <a class="event-card" href="/collections/{ev.id}" title={ev.name}>
+              <div class="event-thumb">
+                {#if ev.poster_path}
+                  <img src={assetUrl(`/artwork/${encodeURI(ev.poster_path)}?w=320`)}
+                       alt={ev.name} loading="lazy" />
+                {:else}
+                  <div class="event-thumb-blank">{ev.name[0]?.toUpperCase() ?? '◇'}</div>
+                {/if}
+              </div>
+              <div class="event-name">{ev.name}</div>
             </a>
           {/each}
         </div>
@@ -918,6 +963,32 @@
   }
   .bucket-title:first-child { margin-top: 0; }
   .bucket-grid { margin-bottom: 0.5rem; }
+
+  .events-shelf { margin: 0 0 2rem; }
+  .events-title {
+    font-size: 0.95rem; font-weight: 600; color: var(--text-secondary);
+    margin: 0 0 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .events-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1rem;
+  }
+  .event-card { color: inherit; text-decoration: none; min-width: 0; }
+  .event-thumb {
+    aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden;
+    background: var(--bg-elevated);
+  }
+  .event-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .event-thumb-blank {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-muted); font-size: 1.8rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
+  }
+  .event-name {
+    padding: 0.45rem 0.1rem 0; font-size: 0.82rem; color: var(--text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
   .mv-shelf { margin: 0 0 2rem; }
   .mv-shelf-title {

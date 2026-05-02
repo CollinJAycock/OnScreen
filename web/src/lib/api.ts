@@ -875,9 +875,20 @@ export const mediaApi = {
     api.get<GenreCount[]>(`/libraries/${libraryId}/genres`),
   years: (libraryId: string) =>
     api.get<YearCount[]>(`/libraries/${libraryId}/years`),
+  // eventCollections returns the auto-created event_folder collections
+  // for a home_video library — one per non-root subfolder under the
+  // library's scan paths. Empty for any other library type.
+  eventCollections: (libraryId: string) =>
+    api.get<EventCollection[]>(`/libraries/${libraryId}/event-collections`),
   enrichItem: (id: string) =>
     api.post<void>(`/items/${id}/enrich`)
 };
+
+export interface EventCollection {
+  id: string;
+  name: string;
+  poster_path?: string;
+}
 
 export interface LyricsResponse {
   plain: string;

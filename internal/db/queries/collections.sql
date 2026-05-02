@@ -1,11 +1,11 @@
 -- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 FROM collections
 WHERE user_id IS NULL OR user_id = sqlc.narg('user_id')
 ORDER BY sort_order, name;
 
 -- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 FROM collections WHERE id = $1;
 
 -- name: CreateCollection :one
@@ -14,12 +14,12 @@ FROM collections WHERE id = $1;
 -- filter shape that resolves at query time.
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id;
 
 -- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id;
 
 -- name: DeleteCollection :exec
 DELETE FROM collections WHERE id = $1;
@@ -81,10 +81,36 @@ DELETE FROM collection_items WHERE collection_id = $1 AND media_item_id = $2;
 INSERT INTO collections (name, type, genre)
 VALUES ($1, 'auto_genre', $1)
 ON CONFLICT DO NOTHING
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, library_id;
 
 -- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 FROM collections
 WHERE type = 'auto_genre'
+ORDER BY name;
+
+-- name: UpsertEventCollection :one
+-- Find-or-create the event_folder collection for (libraryID, name).
+-- The home_video scanner calls this once per file under a non-root
+-- folder, so the same collection gets reused across scan passes and
+-- across concurrent goroutines processing files in the same folder.
+-- Idempotent via the partial unique index from migration 00071.
+--
+-- ON CONFLICT DO UPDATE on a no-op (updated_at = updated_at) lets the
+-- RETURNING clause fire for both insert and conflict — a bare DO
+-- NOTHING would return no rows on conflict, forcing a separate
+-- SELECT round-trip just to fetch the existing id.
+INSERT INTO collections (library_id, name, type)
+VALUES ($1, $2, 'event_folder')
+ON CONFLICT (library_id, name) WHERE type = 'event_folder'
+DO UPDATE SET updated_at = collections.updated_at
+RETURNING id, library_id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules;
+
+-- name: ListEventCollectionsForLibrary :many
+-- Auto-created event collections under one library, used by the
+-- home_video library page to render the "Events" shelf above the
+-- date-bucketed grid.
+SELECT id, library_id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+FROM collections
+WHERE type = 'event_folder' AND library_id = $1
 ORDER BY name;

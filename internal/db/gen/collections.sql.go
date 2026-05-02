@@ -62,7 +62,7 @@ func (q *Queries) CountItemsByGenre(ctx context.Context, arg CountItemsByGenrePa
 const createCollection = `-- name: CreateCollection :one
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 `
 
 type CreateCollectionParams struct {
@@ -99,6 +99,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Rules,
+		&i.LibraryID,
 	)
 	return i, err
 }
@@ -113,7 +114,7 @@ func (q *Queries) DeleteCollection(ctx context.Context, id uuid.UUID) error {
 }
 
 const getCollection = `-- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 FROM collections WHERE id = $1
 `
 
@@ -132,12 +133,13 @@ func (q *Queries) GetCollection(ctx context.Context, id uuid.UUID) (Collection, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Rules,
+		&i.LibraryID,
 	)
 	return i, err
 }
 
 const listAutoGenreCollections = `-- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name
@@ -164,6 +166,7 @@ func (q *Queries) ListAutoGenreCollections(ctx context.Context) ([]Collection, e
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Rules,
+			&i.LibraryID,
 		); err != nil {
 			return nil, err
 		}
@@ -249,7 +252,7 @@ func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionIte
 }
 
 const listCollections = `-- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 FROM collections
 WHERE user_id IS NULL OR user_id = $1
 ORDER BY sort_order, name
@@ -266,6 +269,65 @@ func (q *Queries) ListCollections(ctx context.Context, userID pgtype.UUID) ([]Co
 		var i Collection
 		if err := rows.Scan(
 			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.Description,
+			&i.Type,
+			&i.Genre,
+			&i.PosterPath,
+			&i.SortOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Rules,
+			&i.LibraryID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventCollectionsForLibrary = `-- name: ListEventCollectionsForLibrary :many
+SELECT id, library_id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+FROM collections
+WHERE type = 'event_folder' AND library_id = $1
+ORDER BY name
+`
+
+type ListEventCollectionsForLibraryRow struct {
+	ID          uuid.UUID          `json:"id"`
+	LibraryID   pgtype.UUID        `json:"library_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Name        string             `json:"name"`
+	Description *string            `json:"description"`
+	Type        string             `json:"type"`
+	Genre       *string            `json:"genre"`
+	PosterPath  *string            `json:"poster_path"`
+	SortOrder   int32              `json:"sort_order"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Rules       []byte             `json:"rules"`
+}
+
+// Auto-created event collections under one library, used by the
+// home_video library page to render the "Events" shelf above the
+// date-bucketed grid.
+func (q *Queries) ListEventCollectionsForLibrary(ctx context.Context, libraryID pgtype.UUID) ([]ListEventCollectionsForLibraryRow, error) {
+	rows, err := q.db.Query(ctx, listEventCollectionsForLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEventCollectionsForLibraryRow{}
+	for rows.Next() {
+		var i ListEventCollectionsForLibraryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
 			&i.UserID,
 			&i.Name,
 			&i.Description,
@@ -375,7 +437,7 @@ func (q *Queries) RemoveCollectionItem(ctx context.Context, arg RemoveCollection
 const updateCollection = `-- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
 `
 
 type UpdateCollectionParams struct {
@@ -399,6 +461,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Rules,
+		&i.LibraryID,
 	)
 	return i, err
 }
@@ -407,7 +470,7 @@ const upsertAutoGenreCollection = `-- name: UpsertAutoGenreCollection :one
 INSERT INTO collections (name, type, genre)
 VALUES ($1, 'auto_genre', $1)
 ON CONFLICT DO NOTHING
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, library_id
 `
 
 type UpsertAutoGenreCollectionRow struct {
@@ -421,6 +484,7 @@ type UpsertAutoGenreCollectionRow struct {
 	SortOrder   int32              `json:"sort_order"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	LibraryID   pgtype.UUID        `json:"library_id"`
 }
 
 func (q *Queries) UpsertAutoGenreCollection(ctx context.Context, name string) (UpsertAutoGenreCollectionRow, error) {
@@ -437,6 +501,65 @@ func (q *Queries) UpsertAutoGenreCollection(ctx context.Context, name string) (U
 		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LibraryID,
+	)
+	return i, err
+}
+
+const upsertEventCollection = `-- name: UpsertEventCollection :one
+INSERT INTO collections (library_id, name, type)
+VALUES ($1, $2, 'event_folder')
+ON CONFLICT (library_id, name) WHERE type = 'event_folder'
+DO UPDATE SET updated_at = collections.updated_at
+RETURNING id, library_id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules
+`
+
+type UpsertEventCollectionParams struct {
+	LibraryID pgtype.UUID `json:"library_id"`
+	Name      string      `json:"name"`
+}
+
+type UpsertEventCollectionRow struct {
+	ID          uuid.UUID          `json:"id"`
+	LibraryID   pgtype.UUID        `json:"library_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Name        string             `json:"name"`
+	Description *string            `json:"description"`
+	Type        string             `json:"type"`
+	Genre       *string            `json:"genre"`
+	PosterPath  *string            `json:"poster_path"`
+	SortOrder   int32              `json:"sort_order"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Rules       []byte             `json:"rules"`
+}
+
+// Find-or-create the event_folder collection for (libraryID, name).
+// The home_video scanner calls this once per file under a non-root
+// folder, so the same collection gets reused across scan passes and
+// across concurrent goroutines processing files in the same folder.
+// Idempotent via the partial unique index from migration 00071.
+//
+// ON CONFLICT DO UPDATE on a no-op (updated_at = updated_at) lets the
+// RETURNING clause fire for both insert and conflict — a bare DO
+// NOTHING would return no rows on conflict, forcing a separate
+// SELECT round-trip just to fetch the existing id.
+func (q *Queries) UpsertEventCollection(ctx context.Context, arg UpsertEventCollectionParams) (UpsertEventCollectionRow, error) {
+	row := q.db.QueryRow(ctx, upsertEventCollection, arg.LibraryID, arg.Name)
+	var i UpsertEventCollectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.UserID,
+		&i.Name,
+		&i.Description,
+		&i.Type,
+		&i.Genre,
+		&i.PosterPath,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Rules,
 	)
 	return i, err
 }

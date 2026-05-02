@@ -78,6 +78,7 @@ type MediaItemLister interface {
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.GenreCount, error)
 	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error)
+	ListEventCollectionsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.EventCollection, error)
 }
 
 // MediaItemResponse is the JSON shape for a media item in the v1 API.
@@ -605,6 +606,59 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 type GenreCountResponse struct {
 	Name  string `json:"name"`
 	Count int64  `json:"count"`
+}
+
+// EventCollectionResponse is one row of /libraries/{id}/event-collections.
+type EventCollectionResponse struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	PosterPath *string `json:"poster_path,omitempty"`
+}
+
+// EventCollections handles GET /api/v1/libraries/{id}/event-collections.
+// Returns the auto-created event_folder collections for a home_video
+// library (the home-video scanner upserts one per non-root subfolder).
+// Surface for the library page's "Events" shelf.
+func (h *LibraryHandler) EventCollections(w http.ResponseWriter, r *http.Request) {
+	if h.media == nil {
+		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid library id")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !ok {
+		respond.NotFound(w, r)
+		return
+	}
+	rows, err := h.media.ListEventCollectionsForLibrary(r.Context(), id)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list event collections", "library_id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := make([]EventCollectionResponse, len(rows))
+	for i, c := range rows {
+		out[i] = EventCollectionResponse{
+			ID:         c.ID.String(),
+			Name:       c.Name,
+			PosterPath: c.PosterPath,
+		}
+	}
+	respond.Success(w, r, out)
 }
 
 // YearCountResponse is one row of /libraries/{id}/years.

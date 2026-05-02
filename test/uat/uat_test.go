@@ -223,6 +223,9 @@ func (s *stubMediaItemLister) ListGenresWithCounts(_ context.Context, _ uuid.UUI
 func (s *stubMediaItemLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]media.YearCount, error) {
 	return nil, nil
 }
+func (s *stubMediaItemLister) ListEventCollectionsForLibrary(_ context.Context, _ uuid.UUID) ([]media.EventCollection, error) {
+	return nil, nil
+}
 
 // stubItemMediaService implements v1.ItemMediaService.
 type stubItemMediaService struct {

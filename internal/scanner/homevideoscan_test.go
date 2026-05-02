@@ -41,3 +41,68 @@ func TestParseHomeVideoTitle_EmptyAfterStrip(t *testing.T) {
 		t.Errorf("expected empty title for date-only filename, got %q", got)
 	}
 }
+
+// TestEventFolderName covers the folder-derivation rules for the
+// auto event_folder collection feature: top-level subfolder of a
+// configured root wins, multi-level subfolders collapse to that same
+// top-level (so a "Yellowstone 2024/Day 1/" trip stays one collection
+// instead of splitting per day), and files at root return "" so they
+// don't create a junk single-file collection.
+func TestEventFolderName(t *testing.T) {
+	cases := []struct {
+		name  string
+		path  string
+		roots []string
+		want  string
+	}{
+		{
+			name:  "single-level event folder",
+			path:  "/media/Home Videos/Yellowstone 2024/clip.mp4",
+			roots: []string{"/media/Home Videos"},
+			want:  "Yellowstone 2024",
+		},
+		{
+			name:  "multi-level — top-level wins",
+			path:  "/media/Home Videos/Yellowstone 2024/Day 1/clip.mp4",
+			roots: []string{"/media/Home Videos"},
+			want:  "Yellowstone 2024",
+		},
+		{
+			name:  "deeper nesting still collapses to top-level",
+			path:  "/media/Home Videos/Yellowstone 2024/Day 1/Sub/clip.mp4",
+			roots: []string{"/media/Home Videos"},
+			want:  "Yellowstone 2024",
+		},
+		{
+			name:  "loose at root — no collection",
+			path:  "/media/Home Videos/orphan.mp4",
+			roots: []string{"/media/Home Videos"},
+			want:  "",
+		},
+		{
+			name:  "file outside any root — no collection",
+			path:  "/elsewhere/clip.mp4",
+			roots: []string{"/media/Home Videos"},
+			want:  "",
+		},
+		{
+			name:  "trailing slash on root — normalises",
+			path:  "/media/Home Videos/Trip/clip.mp4",
+			roots: []string{"/media/Home Videos/"},
+			want:  "Trip",
+		},
+		{
+			name:  "multiple roots — picks the matching one",
+			path:  "/mnt/b/Trip/clip.mp4",
+			roots: []string{"/mnt/a", "/mnt/b"},
+			want:  "Trip",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := eventFolderName(c.path, c.roots); got != c.want {
+				t.Errorf("eventFolderName(%q, %v) = %q, want %q", c.path, c.roots, got, c.want)
+			}
+		})
+	}
+}

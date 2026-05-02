@@ -132,6 +132,9 @@ func (m *mockMediaLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _
 func (m *mockMediaLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]media.YearCount, error) {
 	return nil, nil
 }
+func (m *mockMediaLister) ListEventCollectionsForLibrary(_ context.Context, _ uuid.UUID) ([]media.EventCollection, error) {
+	return nil, nil
+}
 
 func newLibHandler(svc *mockLibraryService) *LibraryHandler {
 	return NewLibraryHandler(svc, slog.Default())

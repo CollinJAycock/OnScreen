@@ -370,6 +370,7 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/libraries/{id}/items", h.Library.Items)
 			r.Get("/libraries/{id}/genres", h.Library.Genres)
 			r.Get("/libraries/{id}/years", h.Library.Years)
+			r.Get("/libraries/{id}/event-collections", h.Library.EventCollections)
 
 			// Library mutations — admin only.
 			r.Group(func(r chi.Router) {

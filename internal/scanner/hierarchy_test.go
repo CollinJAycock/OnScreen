@@ -197,6 +197,12 @@ func (m *mockMediaService) PrunePhantomAudiobooks(_ context.Context, _ uuid.UUID
 func (m *mockMediaService) PruneEmptyBookAuthors(_ context.Context, _ uuid.UUID) (int, error) {
 	return 0, nil
 }
+func (m *mockMediaService) UpsertEventCollection(_ context.Context, _ uuid.UUID, _ string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+func (m *mockMediaService) AddItemToCollection(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
 func (m *mockMediaService) ListItems(_ context.Context, libraryID uuid.UUID, itemType string, _, _ int32) ([]media.Item, error) {
 	var out []media.Item
 	for _, it := range m.items {

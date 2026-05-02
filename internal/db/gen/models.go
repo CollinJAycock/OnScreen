@@ -67,6 +67,7 @@ type Collection struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	Rules       []byte             `json:"rules"`
+	LibraryID   pgtype.UUID        `json:"library_id"`
 }
 
 type CollectionItem struct {

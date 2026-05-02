@@ -116,6 +116,8 @@ type MediaService interface {
 	MergeCrossParentAudiobooks(ctx context.Context, libraryID uuid.UUID) (media.DedupeResult, error)
 	PrunePhantomAudiobooks(ctx context.Context, libraryID uuid.UUID) (int, error)
 	PruneEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID) (int, error)
+	UpsertEventCollection(ctx context.Context, libraryID uuid.UUID, name string) (uuid.UUID, error)
+	AddItemToCollection(ctx context.Context, collectionID, mediaItemID uuid.UUID) error
 	ListItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]media.Item, error)
 	FindTopLevelItem(ctx context.Context, libraryID uuid.UUID, itemType, title string) (*media.Item, error)
 }
@@ -728,7 +730,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// originally_available_at so the library page can sort by
 		// recording date (not scan date).
 		var hvErr error
-		item, hvErr = s.processHomeVideo(ctx, libraryID, path, info.ModTime())
+		item, hvErr = s.processHomeVideo(ctx, libraryID, path, roots, info.ModTime())
 		if hvErr != nil {
 			return nil, nil, false, fmt.Errorf("home video for %s: %w", path, hvErr)
 		}

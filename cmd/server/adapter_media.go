@@ -416,6 +416,54 @@ func (a *mediaAdapter) SoftDeleteEmptyContainerItems(ctx context.Context, librar
 	return a.q.SoftDeleteEmptyContainerItems(ctx, libraryID)
 }
 
+func (a *mediaAdapter) UpsertEventCollection(ctx context.Context, libraryID uuid.UUID, name string) (uuid.UUID, error) {
+	row, err := a.q.UpsertEventCollection(ctx, gen.UpsertEventCollectionParams{
+		LibraryID: pgtype.UUID{Bytes: [16]byte(libraryID), Valid: true},
+		Name:      name,
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return row.ID, nil
+}
+
+func (a *mediaAdapter) AddItemToCollection(ctx context.Context, collectionID, mediaItemID uuid.UUID) error {
+	_, err := a.q.AddCollectionItem(ctx, gen.AddCollectionItemParams{
+		CollectionID: collectionID,
+		MediaItemID:  mediaItemID,
+	})
+	// AddCollectionItem uses ON CONFLICT DO NOTHING, so the RETURNING
+	// clause yields no row when the pair already exists. pgx surfaces
+	// that as ErrNoRows; treat it as a successful no-op since the
+	// caller's intent ("ensure this item is in the collection") is
+	// already satisfied.
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func (a *mediaAdapter) ListEventCollectionsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.EventCollection, error) {
+	rows, err := a.q.ListEventCollectionsForLibrary(ctx, pgtype.UUID{Bytes: [16]byte(libraryID), Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.EventCollection, 0, len(rows))
+	for _, r := range rows {
+		var libID uuid.UUID
+		if r.LibraryID.Valid {
+			libID = uuid.UUID(r.LibraryID.Bytes)
+		}
+		out = append(out, media.EventCollection{
+			ID:         r.ID,
+			LibraryID:  libID,
+			Name:       r.Name,
+			PosterPath: r.PosterPath,
+		})
+	}
+	return out, nil
+}
+
 func (a *mediaAdapter) UpsertPhotoMetadata(ctx context.Context, p media.PhotoMetadataParams) error {
 	return a.q.UpsertPhotoMetadata(ctx, photoMetadataParamsToGen(p))
 }

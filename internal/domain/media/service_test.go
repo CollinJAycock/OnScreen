@@ -97,6 +97,15 @@ func (m *mockQuerier) ListDuplicateChildItems(_ context.Context, _ string, _ *uu
 func (m *mockQuerier) ListLibraryAudiobookDuplicates(_ context.Context, _ uuid.UUID) ([]DuplicatePair, error) {
 	return nil, nil
 }
+func (m *mockQuerier) UpsertEventCollection(_ context.Context, _ uuid.UUID, _ string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+func (m *mockQuerier) AddItemToCollection(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
+func (m *mockQuerier) ListEventCollectionsForLibrary(_ context.Context, _ uuid.UUID) ([]EventCollection, error) {
+	return nil, nil
+}
 func (m *mockQuerier) ListPhantomAudiobooks(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
 }
