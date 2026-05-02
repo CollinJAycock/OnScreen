@@ -256,6 +256,15 @@ func (s *stubItemMediaService) ListChildren(_ context.Context, _ uuid.UUID) ([]m
 func (s *stubItemMediaService) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
 	return nil, media.ErrNotFound
 }
+func (s *stubItemMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
+	return &media.Item{ID: p.ID, Title: p.Title}, nil
+}
+func (s *stubItemMediaService) RenameItemFile(_ context.Context, _ uuid.UUID, _ string) (string, bool, error) {
+	return "", false, nil
+}
+func (s *stubItemMediaService) TouchItemFileMtime(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return nil
+}
 
 // stubItemWatchService implements v1.ItemWatchService.
 type stubItemWatchService struct{ recorded bool }

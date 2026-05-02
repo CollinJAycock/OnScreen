@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -65,6 +66,12 @@ func (m *mockItemMedia) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media
 }
 func (m *mockItemMedia) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
 	return &media.Item{ID: p.ID, Title: p.Title, SortTitle: p.SortTitle, Summary: p.Summary, OriginallyAvailableAt: p.OriginallyAvailableAt}, nil
+}
+func (m *mockItemMedia) RenameItemFile(_ context.Context, _ uuid.UUID, _ string) (string, bool, error) {
+	return "", false, nil
+}
+func (m *mockItemMedia) TouchItemFileMtime(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return nil
 }
 
 // ── mock watch service ───────────────────────────────────────────────────────

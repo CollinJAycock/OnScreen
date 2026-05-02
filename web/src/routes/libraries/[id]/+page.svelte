@@ -619,6 +619,14 @@
                 on:click={(e) => openPlaylistPicker(e, item.id)}
               >+</button>
             {/if}
+            {#if isAdmin && isPhotoLibrary}
+              <button
+                class="edit-meta-btn"
+                title="Edit title, summary, date"
+                aria-label="Edit metadata"
+                on:click={(e) => openMetadataEditor(e, item)}
+              >✎</button>
+            {/if}
           </div>
           <div class="item-foot">
             <div class="item-title">{item.title}</div>

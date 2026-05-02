@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -815,6 +817,89 @@ func (s *Service) UpdateItemMetadata(ctx context.Context, p UpdateItemMetadataPa
 		return nil, fmt.Errorf("update item metadata %s: %w", p.ID, err)
 	}
 	return &item, nil
+}
+
+// RenameItemFile renames the on-disk file for an item to match a new
+// title — the user-facing half of the metadata editor's "manage your
+// collection in perpetuity" promise. The new filename is the
+// sanitised title plus the original extension; collisions in the
+// same directory get suffixed " (2)", " (3)", … so the rename never
+// stomps an unrelated file. media_files.file_path is updated to the
+// new path on success.
+//
+// Single-file types only (home_video, photo). Items with multiple
+// files (audiobook chapters, etc.) are skipped — the title→filename
+// mapping is ambiguous when N files share one item.
+//
+// Best-effort: on any failure the on-disk state is left as-is and
+// the caller logs a warning. The DB-side title update has already
+// committed by the time this runs, so the user sees their edit even
+// if the rename couldn't proceed (read-only mount, permission denied,
+// etc.).
+//
+// Returns the new path on success and (existingPath, true) when no
+// rename was needed (filename already matches the title).
+func (s *Service) RenameItemFile(ctx context.Context, itemID uuid.UUID, newTitle string) (newPath string, renamed bool, err error) {
+	files, err := s.ro.ListMediaFilesForItem(ctx, itemID)
+	if err != nil {
+		return "", false, fmt.Errorf("list files for rename: %w", err)
+	}
+	if len(files) != 1 {
+		// Multi-file: ambiguous which file to rename. Single-file
+		// (home_video, photo) is the only supported case.
+		return "", false, nil
+	}
+	f := files[0]
+	if f.FilePath == "" {
+		return "", false, nil
+	}
+	dir := filepath.Dir(f.FilePath)
+	ext := filepath.Ext(f.FilePath)
+	newStem := sanitizeFilenameStem(newTitle)
+	target := filepath.Join(dir, newStem+ext)
+	if target == f.FilePath {
+		return f.FilePath, false, nil
+	}
+	target = uniqueRenamePath(dir, newStem, ext, func(p string) bool {
+		_, statErr := os.Stat(p)
+		return statErr == nil
+	})
+	if err := os.Rename(f.FilePath, target); err != nil {
+		return "", false, fmt.Errorf("rename %s -> %s: %w", f.FilePath, target, err)
+	}
+	if err := s.rw.UpdateMediaFilePath(ctx, f.ID, target); err != nil {
+		// Filesystem rename succeeded, DB update failed — try to roll
+		// the rename back so the next scan doesn't see two ghosts.
+		if rbErr := os.Rename(target, f.FilePath); rbErr != nil {
+			s.logger.WarnContext(ctx, "rollback rename after DB update failure",
+				"orig", f.FilePath, "target", target, "err", rbErr)
+		}
+		return "", false, fmt.Errorf("update file_path: %w", err)
+	}
+	return target, true, nil
+}
+
+// TouchItemFileMtime sets the on-disk mtime + atime of the item's
+// file(s) to `taken`. Mirrors the date the user typed into the
+// metadata editor onto the actual file so any other tool that sorts
+// by file date (Finder, Photos.app, Plex's own scanner) sees the
+// same value. No-op when the item has no files. Best-effort: per-
+// file failures log but don't abort the whole batch.
+func (s *Service) TouchItemFileMtime(ctx context.Context, itemID uuid.UUID, taken time.Time) error {
+	files, err := s.ro.ListMediaFilesForItem(ctx, itemID)
+	if err != nil {
+		return fmt.Errorf("list files for mtime touch: %w", err)
+	}
+	for _, f := range files {
+		if f.FilePath == "" {
+			continue
+		}
+		if err := os.Chtimes(f.FilePath, taken, taken); err != nil {
+			s.logger.WarnContext(ctx, "chtimes failed",
+				"file", f.FilePath, "err", err)
+		}
+	}
+	return nil
 }
 
 // UpdateItemLyrics stores tag- or sidecar-derived lyrics on a track.

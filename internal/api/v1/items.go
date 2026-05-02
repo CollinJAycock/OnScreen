@@ -39,6 +39,14 @@ type ItemMediaService interface {
 	ListChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error)
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*media.PhotoMetadata, error)
 	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
+	// RenameItemFile + TouchItemFileMtime are best-effort filesystem
+	// reflections of the metadata editor: rename the file when the
+	// title changes, set the mtime when taken_at changes. Single-file
+	// items only (home_video, photo). The persistence-in-perpetuity
+	// goal — edits survive a tool migration because they're written
+	// to the file too, not just the DB.
+	RenameItemFile(ctx context.Context, itemID uuid.UUID, newTitle string) (newPath string, renamed bool, err error)
+	TouchItemFileMtime(ctx context.Context, itemID uuid.UUID, taken time.Time) error
 }
 
 // ItemEnricher re-runs metadata enrichment for a single item on demand.
@@ -746,6 +754,28 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "update item metadata", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+
+	// Reflect the edit onto the file itself for home_video + photo —
+	// the two types whose user-visible identity *is* the filename
+	// (no external metadata source). Best-effort: any per-file error
+	// is logged, the response still reports success because the DB
+	// edit committed. Other types (movies, episodes, music) skip the
+	// file-side write — their filenames carry season/episode markers
+	// and external IDs we don't want to clobber.
+	if updated.Type == "home_video" || updated.Type == "photo" {
+		if body.Title != nil {
+			if _, _, rerr := h.media.RenameItemFile(r.Context(), updated.ID, updated.Title); rerr != nil {
+				h.logger.WarnContext(r.Context(), "rename file after metadata edit",
+					"id", id, "err", rerr)
+			}
+		}
+		if body.TakenAt != nil && updated.OriginallyAvailableAt != nil {
+			if terr := h.media.TouchItemFileMtime(r.Context(), updated.ID, *updated.OriginallyAvailableAt); terr != nil {
+				h.logger.WarnContext(r.Context(), "touch mtime after metadata edit",
+					"id", id, "err", terr)
+			}
+		}
 	}
 
 	if h.audit != nil {

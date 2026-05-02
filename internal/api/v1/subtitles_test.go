@@ -115,6 +115,12 @@ func (m *mockSubsMedia) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media
 func (m *mockSubsMedia) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
 	return &media.Item{ID: p.ID, Title: p.Title}, nil
 }
+func (m *mockSubsMedia) RenameItemFile(_ context.Context, _ uuid.UUID, _ string) (string, bool, error) {
+	return "", false, nil
+}
+func (m *mockSubsMedia) TouchItemFileMtime(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return nil
+}
 
 // mockAccess denies access to libraries not in allow.
 type mockAccess struct {
