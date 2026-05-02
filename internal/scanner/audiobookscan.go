@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"image/jpeg"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/metadata/openlibrary"
+	"github.com/onscreen/onscreen/internal/metadata/wikipedia"
 )
 
 // audiobookArtFilenames lists on-disk cover candidates checked in the
@@ -109,6 +114,7 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 			return nil, err
 		}
 		s.extractAudiobookArt(ctx, book, authorRow, path, roots)
+		s.fetchExternalAudiobookArt(ctx, book, authorRow, path, roots, author)
 		return book, nil
 	}
 
@@ -119,6 +125,7 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 		return nil, err
 	}
 	s.extractAudiobookArt(ctx, book, authorRow, path, roots)
+	s.fetchExternalAudiobookArt(ctx, book, authorRow, path, roots, author)
 
 	chapterTitle := tagTitle
 	if chapterTitle == "" {
@@ -248,6 +255,176 @@ func (s *Scanner) syncAudiobookPosterPaths(ctx context.Context, book *media.Item
 			author.PosterPath = &relPath
 		}
 	}
+}
+
+// externalArtHTTPClient is shared across openlibrary/wikipedia metadata
+// lookups + cover image downloads. 15s is generous enough for slow
+// upload.wikimedia.org responses on first-fetch (their CDN warmup),
+// short enough that a stuck scan doesn't hang the library scan loop.
+var externalArtHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+// fetchExternalAudiobookArt fills in book + author posters from
+// OpenLibrary (book covers) and Wikipedia (author portraits) when
+// extractAudiobookArt didn't find anything local. Skipped silently
+// for any field that already has poster_path set — both upstream
+// services are best-effort fallbacks, never authoritative over
+// hand-curated cover.jpg / m4b embedded art.
+//
+// Each lookup is idempotent: the saved file is named with the row's
+// UUID so re-scans see the cover already on disk and reuse it (the
+// audiobookArtFilenames disk-scan picks the {id}-poster.jpg back up
+// on the next pass via syncAudiobookPosterPaths). The actual
+// HTTP fetches only happen on the first scan that lands an empty
+// poster_path; once a row has art, we never re-query.
+func (s *Scanner) fetchExternalAudiobookArt(ctx context.Context, book, author *media.Item, filePath string, roots []string, parsedAuthor string) {
+	bookDir := filepath.Dir(filePath)
+
+	if book != nil && (book.PosterPath == nil || *book.PosterPath == "") {
+		olAuthor := parsedAuthor
+		if olAuthor == "" && book.OriginalTitle != nil {
+			olAuthor = *book.OriginalTitle
+		}
+		if olAuthor == "" && author != nil {
+			olAuthor = author.Title
+		}
+
+		olClient := openlibrary.NewWithClient(externalArtHTTPClient)
+		coverURL, err := olClient.SearchBookCoverURL(ctx, book.Title, olAuthor)
+		if err != nil {
+			s.logger.WarnContext(ctx, "OpenLibrary lookup failed",
+				"book_id", book.ID, "title", book.Title, "err", err)
+		} else if coverURL != "" {
+			if relPath, ok := s.downloadAndStorePoster(ctx, book.ID, coverURL, bookDir, roots); ok {
+				s.syncAudiobookPosterPaths(ctx, book, author, relPath)
+				s.logger.InfoContext(ctx, "OpenLibrary cover applied",
+					"book_id", book.ID, "title", book.Title, "url", coverURL)
+			}
+		}
+	}
+
+	// Author portrait. Skip if author already has art (either from
+	// cascading book cover via syncAudiobookPosterPaths above, or from
+	// an earlier scan, or from Fix Match).
+	if author != nil && (author.PosterPath == nil || *author.PosterPath == "") {
+		// Authors live in their own directory at <root>/<Author>/...; we
+		// store the portrait there so the /artwork/* route can resolve
+		// {author.id}-poster.jpg the same way book covers resolve
+		// {book.id}-poster.jpg next to the book.
+		authorDir := filepath.Dir(bookDir)
+		if !isLibraryRoot(authorDir, roots) && !isLibraryRoot(filepath.Dir(authorDir), roots) {
+			// Path is too deep to safely guess the author dir
+			// (series-layout grandchild, deeper-than-supported folder
+			// layout). Fall back to bookDir's parent which is
+			// authorDir for the standard layouts and a near-miss for
+			// the rest — worst case we write a portrait that's
+			// adjacent to the wrong folder; the relPath is still
+			// valid for /artwork/* serving.
+		}
+		wikiClient := wikipedia.NewWithClient(externalArtHTTPClient)
+		portraitURL, err := wikiClient.GetThumbnailURL(ctx, author.Title)
+		if err != nil {
+			s.logger.WarnContext(ctx, "Wikipedia lookup failed",
+				"author_id", author.ID, "name", author.Title, "err", err)
+		} else if portraitURL != "" {
+			if relPath, ok := s.downloadAndStorePoster(ctx, author.ID, portraitURL, authorDir, roots); ok {
+				if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
+					ID:         author.ID,
+					Title:      author.Title,
+					SortTitle:  author.SortTitle,
+					PosterPath: &relPath,
+				}); err != nil {
+					s.logger.WarnContext(ctx, "failed to update author poster_path",
+						"author_id", author.ID, "err", err)
+				} else {
+					author.PosterPath = &relPath
+					s.logger.InfoContext(ctx, "Wikipedia portrait applied",
+						"author_id", author.ID, "name", author.Title, "url", portraitURL)
+				}
+			}
+		}
+	}
+}
+
+// downloadAndStorePoster fetches an image URL, re-encodes through
+// stdlib JPEG when possible (consistent quality + size across PNG /
+// WEBP / weird formats some sources serve), writes it to
+// {targetDir}/{itemID}-poster.jpg, and returns the relative path the
+// /artwork/* route resolves against. Returns ok=false when the
+// fetch fails, the response is non-2xx, the bytes can't be written,
+// or the image is suspiciously small (< 1KB suggests an error page
+// or sentinel pixel).
+//
+// Idempotent: when {itemID}-poster.jpg already exists on disk, just
+// returns its path without re-fetching. Re-scans of an unchanged
+// library don't re-spam upstream services.
+func (s *Scanner) downloadAndStorePoster(ctx context.Context, itemID uuid.UUID, imageURL, targetDir string, roots []string) (string, bool) {
+	posterFile := filepath.Join(targetDir, itemID.String()+"-poster.jpg")
+
+	relPath := ""
+	for _, root := range roots {
+		if rel, err := filepath.Rel(root, posterFile); err == nil && !strings.HasPrefix(rel, "..") {
+			relPath = filepath.ToSlash(rel)
+			break
+		}
+	}
+	if relPath == "" {
+		relPath = filepath.ToSlash(filepath.Join(filepath.Base(targetDir), itemID.String()+"-poster.jpg"))
+	}
+
+	// Idempotent: if we already wrote this poster, skip the network hop.
+	if _, err := os.Stat(posterFile); err == nil {
+		return relPath, true
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("User-Agent", "OnScreen/2.1 (https://github.com/onscreen/onscreen)")
+	resp, err := externalArtHTTPClient.Do(req)
+	if err != nil {
+		s.logger.WarnContext(ctx, "external art GET failed", "url", imageURL, "err", err)
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		s.logger.WarnContext(ctx, "external art bad status", "url", imageURL, "status", resp.StatusCode)
+		return "", false
+	}
+
+	// Cap the read at 10 MB. Wikipedia originals are typically 200KB-3MB;
+	// OpenLibrary L-size covers are under 200KB. A 10 MB ceiling is
+	// generous for either source while still preventing a misconfigured
+	// upstream from filling our disk.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		s.logger.WarnContext(ctx, "external art read failed", "url", imageURL, "err", err)
+		return "", false
+	}
+	if len(raw) < 1024 {
+		// Smaller than 1KB — most likely an error page or transparent
+		// sentinel pixel. Reject so we don't leave bogus art on disk.
+		return "", false
+	}
+
+	// Re-encode through stdlib JPEG when possible (uniform quality 90,
+	// drops alpha channels, normalises to JPEG); fall through to raw
+	// bytes when the source isn't a stdlib-decodable image.
+	var outData []byte
+	if img, imgErr := decodeImageBytes(raw); imgErr == nil {
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err == nil {
+			outData = buf.Bytes()
+		}
+	}
+	if outData == nil {
+		outData = raw
+	}
+	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+		s.logger.WarnContext(ctx, "external art write failed", "path", posterFile, "err", err)
+		return "", false
+	}
+	return relPath, true
 }
 
 // findOrCreateAuthor looks up (or creates) the book_author row for an
