@@ -58,14 +58,18 @@ function createAudioStore() {
   return {
     subscribe,
 
-    // Replace the queue and start from startIndex.
-    play(queue: AudioTrack[], startIndex = 0) {
+    // Replace the queue and start from startIndex. startMS lets the
+    // caller resume mid-track — the audiobook detail page uses it to
+    // pick up where the user left off in the saved chapter (per-
+    // chapter view_offset_ms read from the items API). 0 = start of
+    // track (the music + fresh-play case).
+    play(queue: AudioTrack[], startIndex = 0, startMS = 0) {
       const i = Math.max(0, Math.min(startIndex, queue.length - 1));
       update((s) => ({
         ...s,
         queue,
         index: i,
-        positionMS: 0,
+        positionMS: Math.max(0, startMS),
         playing: queue.length > 0,
         shuffleOrder: s.shuffle ? fisherYates(queue.length, i) : [],
         shufflePos: s.shuffle ? 0 : -1

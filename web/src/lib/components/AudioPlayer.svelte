@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
   import { itemApi, getApiBase, getBearerToken, assetUrl } from '$lib/api';
   import {
@@ -49,6 +50,15 @@
   let scrubMS = 0;
   let volume = 1;
   let muted = false;
+
+  // pendingSeekMS holds a resume target captured when a track is
+  // loaded with audio.play(queue, idx, startMS) > 0. The element
+  // can't honor `currentTime = X` reliably until loadedmetadata
+  // fires (browsers silently clamp pre-metadata seeks to 0). We
+  // stash the target here and apply it in onLoadedMeta. The audiobook
+  // detail page is currently the only caller — music albums always
+  // start at 0.
+  let pendingSeekMS: number | null = null;
 
   let track: AudioTrack | null = null;
   let upcoming: AudioTrack | null = null;
@@ -402,6 +412,13 @@
     // same-origin builds get the path back unchanged.
     const desired = assetUrl(`/media/stream/${track.fileId}`);
     if (loadedSrc !== desired) {
+      // Capture the resume target the store carries (set by
+      // audio.play(queue, idx, startMS) — non-zero only for
+      // audiobook resume). Applied in onLoadedMeta because pre-
+      // metadata seeks get silently clamped to 0 in some browsers.
+      const resumeMS = get(audio).positionMS;
+      pendingSeekMS = resumeMS > 0 ? resumeMS : null;
+
       if (preloadSrc === desired) {
         // Gapless path: the next-track element is already primed —
         // flip roles and play. The browser's already done codec init
@@ -410,9 +427,7 @@
         activeIsA = !activeIsA;
         loadedSrc = desired;
         preloadSrc = '';
-        // The newly-active element keeps whatever currentTime it had
-        // (typically 0 since it was idle). Reset position display.
-        positionMS = 0;
+        positionMS = resumeMS;
         durationMS = (track.durationMS ?? 0);
       } else {
         // Cold path: src= load on the active element. Same code as
@@ -421,8 +436,8 @@
         loadedSrc = desired;
         const el = activeEl();
         el.src = desired;
-        el.currentTime = 0;
-        positionMS = 0;
+        el.currentTime = resumeMS / 1000;
+        positionMS = resumeMS;
         durationMS = (track.durationMS ?? 0);
       }
     }
@@ -515,6 +530,19 @@
     if (!el) return;
     if (Number.isFinite(el.duration) && el.duration > 0) {
       durationMS = Math.round(el.duration * 1000);
+    }
+    // Apply any deferred resume seek now that metadata is in. The
+    // load reactive block sets el.currentTime optimistically, but
+    // browsers can clamp pre-metadata seeks to 0; re-applying here
+    // is the safety net.
+    if (pendingSeekMS !== null && pendingSeekMS > 0) {
+      const target = pendingSeekMS;
+      pendingSeekMS = null;
+      if (Number.isFinite(el.duration) && target / 1000 < el.duration - 1) {
+        el.currentTime = target / 1000;
+        positionMS = target;
+        audio.setPosition(target);
+      }
     }
   }
 

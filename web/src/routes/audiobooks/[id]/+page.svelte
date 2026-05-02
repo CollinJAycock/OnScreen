@@ -159,24 +159,54 @@
     return { queue, index };
   }
 
-  function playChapter(idx: number) {
+  function playChapter(idx: number, startMS = 0) {
     const c = chapters[idx];
     if (!chapterDetails.has(c.id)) return;
     const { queue, index } = buildQueue(idx);
-    audio.play(queue, index);
+    audio.play(queue, index, startMS);
   }
 
+  // findResumePoint scans chapters back-to-front looking for the most
+  // recently-progressed one. The latest chapter with view_offset_ms > 0
+  // wins — earlier chapters are presumed finished. Returns null when
+  // no chapter has progress (fresh book).
+  function findResumePoint(): { chapterIdx: number; positionMS: number } | null {
+    for (let i = chapters.length - 1; i >= 0; i--) {
+      const cd = chapterDetails.get(chapters[i].id);
+      if (cd && cd.view_offset_ms > 0) {
+        return { chapterIdx: i, positionMS: cd.view_offset_ms };
+      }
+    }
+    return null;
+  }
+
+  $: resumePoint = chapterDetails.size > 0 ? findResumePoint() : null;
+
   function playBook() {
-    // Multi-file: start from chapter 0. Single-file: route to the
-    // watch page where the embedded chapter-marker resume-snap and
-    // full HLS pipeline live (audio store doesn't yet handle the
-    // single-file-with-chapter-markers case).
+    // Multi-file: start from the resume point if any, otherwise the
+    // first playable chapter. Single-file: route to the watch page
+    // where the embedded chapter-marker resume-snap and full HLS
+    // pipeline live (audio store doesn't yet handle the single-file-
+    // with-chapter-markers case).
     if (chapters.length > 0) {
+      if (resumePoint) {
+        playChapter(resumePoint.chapterIdx, resumePoint.positionMS);
+        return;
+      }
       const firstPlayable = chapters.findIndex((c) => chapterDetails.has(c.id));
       if (firstPlayable >= 0) playChapter(firstPlayable);
       return;
     }
     if (book) goto(`/watch/${book.id}`);
+  }
+
+  function startFromBeginning() {
+    if (chapters.length > 0) {
+      const firstPlayable = chapters.findIndex((c) => chapterDetails.has(c.id));
+      if (firstPlayable >= 0) playChapter(firstPlayable);
+    } else if (book) {
+      goto(`/watch/${book.id}`);
+    }
   }
 
   function formatDuration(ms?: number): string {
@@ -249,9 +279,27 @@
         </div>
         <div class="actions">
           <button class="btn-play" on:click={playBook}
-                  disabled={chapters.length === 0 ? !bookFile : chapterDetails.size === 0}>
-            <span class="ico">▶</span> Play
+                  disabled={chapters.length === 0 ? !bookFile : chapterDetails.size === 0}
+                  title={resumePoint
+                    ? `Resume "${chapters[resumePoint.chapterIdx]?.title ?? ''}" at ${formatDuration(resumePoint.positionMS)}`
+                    : 'Play from the first chapter'}>
+            <span class="ico">▶</span>
+            {#if resumePoint}
+              Resume
+              <span class="resume-meta">
+                · ch&nbsp;{(chapters[resumePoint.chapterIdx]?.index ?? resumePoint.chapterIdx + 1)} · {formatDuration(resumePoint.positionMS)}
+              </span>
+            {:else}
+              Play
+            {/if}
           </button>
+          {#if resumePoint}
+            <button class="btn-restart" on:click={startFromBeginning}
+                    title="Start from chapter 1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              Start over
+            </button>
+          {/if}
           {#if isAdmin}
             <button class="btn-remove" on:click={removeItem}
                     title="Soft-delete this book and its chapters">
@@ -329,6 +377,21 @@
   .btn-play:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-play:hover:not(:disabled) { filter: brightness(1.1); }
   .btn-play .ico { font-size: 0.7rem; }
+  .resume-meta {
+    font-size: 0.78rem; font-weight: 400; opacity: 0.85;
+    margin-left: 0.15rem;
+  }
+
+  .btn-restart {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--input-bg, transparent);
+    border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
+    border-radius: 999px;
+    color: var(--text-secondary); font-size: 0.8rem; font-weight: 500;
+    cursor: pointer; padding: 0.45rem 0.95rem;
+    transition: all 0.12s;
+  }
+  .btn-restart:hover { color: var(--text-primary); background: var(--bg-hover, rgba(255,255,255,0.05)); }
 
   .btn-remove {
     display: inline-flex; align-items: center; gap: 0.35rem;
