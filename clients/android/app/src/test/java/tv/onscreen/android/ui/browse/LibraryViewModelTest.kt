@@ -50,6 +50,42 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun `load applies per-type default sort for home_video`() = runTest(dispatcher) {
+        // home_video / photo / dvr libraries default to "Recently
+        // added" (created_at DESC) instead of title-ASC. Locks the
+        // Path-A library-screen home_video specialization.
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("hv", 50, 0, "created_at", "desc", null) } returns
+            (listOf(item("clip-1")) to 1)
+        coEvery { repo.getGenres("hv") } returns emptyList()
+
+        val vm = LibraryViewModel(repo)
+        vm.load("hv", "home_video")
+        advanceUntilIdle()
+
+        assertThat(vm.sort.value.sort).isEqualTo("created_at")
+        assertThat(vm.sort.value.sortDir).isEqualTo("desc")
+        assertThat(vm.items.value).hasSize(1)
+    }
+
+    @Test
+    fun `load keeps title-asc default for movie libraries`() = runTest(dispatcher) {
+        // Belt-and-braces — make sure the home_video branch doesn't
+        // accidentally bleed into other library types.
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("mov", 50, 0, "title", "asc", null) } returns
+            (listOf(item("a")) to 1)
+        coEvery { repo.getGenres("mov") } returns emptyList()
+
+        val vm = LibraryViewModel(repo)
+        vm.load("mov", "movie")
+        advanceUntilIdle()
+
+        assertThat(vm.sort.value.sort).isEqualTo("title")
+        assertThat(vm.sort.value.sortDir).isEqualTo("asc")
+    }
+
+    @Test
     fun `loadMore appends pages and stops at total`() = runTest(dispatcher) {
         val repo = mockk<LibraryRepository>()
         coEvery { repo.getItems("lib", 50, 0, "title", "asc", null) } returns

@@ -21,6 +21,8 @@ import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.NavCard
 import tv.onscreen.android.ui.common.NavCardPresenter
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.common.ViewAllCard
+import tv.onscreen.android.ui.common.ViewAllCardPresenter
 import tv.onscreen.android.ui.favorites.FavoritesFragment
 import tv.onscreen.android.ui.history.HistoryFragment
 import tv.onscreen.android.ui.livetv.LiveTVFragment
@@ -113,6 +115,15 @@ class HomeFragment : BrowseSupportFragment() {
                         .addToBackStack(null)
                         .commit()
                 }
+                is ViewAllCard -> {
+                    parentFragmentManager.beginTransaction()
+                        .replace(
+                            R.id.main_container,
+                            LibraryFragment.newInstance(item.libraryId, item.libraryName, item.libraryType),
+                        )
+                        .addToBackStack(null)
+                        .commit()
+                }
                 is NavCard -> {
                     val fragment = when (item.id) {
                         NAV_FAVORITES -> FavoritesFragment()
@@ -192,10 +203,27 @@ class HomeFragment : BrowseSupportFragment() {
             rowsAdapter.add(ListRow(header, listAdapter))
         }
 
+        // ClassPresenterSelector lets a single adapter mix item types —
+        // cards for MediaItems plus a trailing "View all" tile that
+        // routes into the dedicated LibraryFragment. Without the
+        // selector, ArrayObjectAdapter falls back to the single
+        // presenter passed to its constructor and renders ViewAllCard
+        // entries with the wrong layout.
+        val viewAllPresenter = ViewAllCardPresenter(requireContext())
+        val libraryRowSelector = ClassPresenterSelector().apply {
+            addClassPresenter(MediaItem::class.java, cardPresenter)
+            addClassPresenter(ViewAllCard::class.java, viewAllPresenter)
+        }
         state.libraryPreviews.forEach { (library, items) ->
             if (items.isNotEmpty()) {
-                val listAdapter = ArrayObjectAdapter(cardPresenter)
+                val listAdapter = ArrayObjectAdapter(libraryRowSelector)
                 items.forEach { listAdapter.add(it) }
+                // Trailing tile that routes into the full library
+                // grid. Carries the library type so LibraryFragment
+                // can branch behaviour by type (home_video uses a
+                // newest-first sort default; movies/shows stay on
+                // the historic title-asc default).
+                listAdapter.add(ViewAllCard(library.id, library.name, library.type))
                 val header = HeaderItem(headerId++, library.name)
                 rowsAdapter.add(ListRow(header, listAdapter))
             }

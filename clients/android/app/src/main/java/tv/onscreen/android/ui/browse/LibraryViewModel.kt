@@ -13,6 +13,20 @@ import javax.inject.Inject
 data class LibrarySort(val sort: String, val sortDir: String) {
     companion object {
         val DEFAULT = LibrarySort("title", "asc")
+
+        /** Per-library-type sort default. Most types want title-ASC
+         *  (browse alphabetically). Home video + photo + DVR are
+         *  date-driven content where "what I shot/recorded most
+         *  recently" is the natural top-of-grid — `created_at` DESC
+         *  is the closest the server's sort enum gets to date-taken
+         *  ordering today. The server doesn't support sorting by
+         *  `originally_available_at` yet (sort enum is fixed at
+         *  title/year/rating/created_at/updated_at), so this is a
+         *  reasonable approximation until that lands. */
+        fun defaultFor(libraryType: String): LibrarySort = when (libraryType) {
+            "home_video", "photo", "dvr" -> LibrarySort("created_at", "desc")
+            else -> DEFAULT
+        }
     }
 }
 
@@ -42,8 +56,16 @@ class LibraryViewModel @Inject constructor(
     private var loading = false
     private val pageSize = 50
 
-    fun load(libraryId: String) {
+    fun load(libraryId: String, libraryType: String = "") {
         this.libraryId = libraryId
+        // Pick a per-type sort default the FIRST time this ViewModel
+        // sees a library — re-loads keep whatever the user has
+        // chosen via the sort menu. The fragment instance is per-
+        // library (newInstance creates a fresh one), so this branch
+        // only fires on the initial load.
+        if (_items.value.isEmpty() && _sort.value == LibrarySort.DEFAULT) {
+            _sort.value = LibrarySort.defaultFor(libraryType)
+        }
         offset = 0
         total = Int.MAX_VALUE
         _items.value = emptyList()

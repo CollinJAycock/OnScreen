@@ -38,6 +38,7 @@ class LibraryFragment : VerticalGridSupportFragment() {
     companion object {
         private const val ARG_LIBRARY_ID = "library_id"
         private const val ARG_LIBRARY_NAME = "library_name"
+        private const val ARG_LIBRARY_TYPE = "library_type"
         private const val NUM_COLUMNS = 5
 
         // (sort key, sort_dir, label)
@@ -50,11 +51,16 @@ class LibraryFragment : VerticalGridSupportFragment() {
             Triple("rating", "desc", "Highest rated"),
         )
 
-        fun newInstance(libraryId: String, libraryName: String): LibraryFragment {
+        fun newInstance(
+            libraryId: String,
+            libraryName: String,
+            libraryType: String = "",
+        ): LibraryFragment {
             return LibraryFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_LIBRARY_ID, libraryId)
                     putString(ARG_LIBRARY_NAME, libraryName)
+                    putString(ARG_LIBRARY_TYPE, libraryType)
                 }
             }
         }
@@ -85,13 +91,14 @@ class LibraryFragment : VerticalGridSupportFragment() {
         viewModel = ViewModelProvider(this)[LibraryViewModel::class.java]
 
         val libraryId = arguments?.getString(ARG_LIBRARY_ID) ?: return
+        val libraryType = arguments?.getString(ARG_LIBRARY_TYPE) ?: ""
 
         viewLifecycleOwner.lifecycleScope.launch {
             val serverUrl = prefs.serverUrl.first() ?: ""
             gridAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             adapter = gridAdapter
 
-            viewModel.load(libraryId)
+            viewModel.load(libraryId, libraryType)
 
             launch {
                 viewModel.items.collectLatest { items ->
