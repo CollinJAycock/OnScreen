@@ -150,6 +150,12 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
 		}
 	})
+	// Catch any /media/stream/* path that doesn't match {id} (e.g. encoded-slash
+	// traversal probes producing a single path segment). Return 400 so these
+	// never fall through to the SvelteKit shell.
+	r.Get("/media/stream/*", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+	})
 
 	// Native HLS playlist + segment endpoints — auth via segment token in query param,
 	// not Bearer header, because HLS.js cannot attach arbitrary headers to segment fetches.
@@ -258,6 +264,12 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/trickplay/{id}/{file}", h.Trickplay.ServeFile)
 		})
 	}
+	// Catch any /trickplay/* path that doesn't match {id}/{file} (e.g. encoded-slash
+	// traversal probes that produce a single path segment). Return 400 so these
+	// never fall through to the SvelteKit shell.
+	r.Get("/trickplay/*", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+	})
 
 	// ── Arr notification webhook (API-key auth, outside user auth) ───────────
 	if h.Arr != nil {
