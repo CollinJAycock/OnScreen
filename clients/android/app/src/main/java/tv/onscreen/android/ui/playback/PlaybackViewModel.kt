@@ -20,7 +20,33 @@ import javax.inject.Inject
 
 sealed class PlaybackSource {
     data class DirectPlay(val url: String, val startMs: Long) : PlaybackSource()
-    data class Hls(val playlistUrl: String, val offsetMs: Long) : PlaybackSource()
+    /**
+     * Server-issued HLS session.
+     *
+     * @property playlistUrl absolute URL of the M3U8 (already carries
+     *   `?token=…`).
+     * @property offsetMs absolute content-time position the HLS stream
+     *   actually opens at — used for scrubber-time mapping (display
+     *   position = player position + offsetMs). Server-reported
+     *   `start_offset_sec * 1000` when present (the keyframe-snapped
+     *   position the muxer chose, which may be earlier than the
+     *   resume position the client asked for); falls back to the
+     *   requested resume position when the server didn't return the
+     *   field (older builds).
+     * @property initialSeekMs in-stream seek (in HLS-stream-relative
+     *   ms) to skip silent video at the head of segment 0. Set when
+     *   the server returns a non-zero `seg0_audio_gap_sec` — happens
+     *   on mid-stream seek with AC3 → AAC re-encode, where the AAC
+     *   encoder's first valid frame lands a few seconds after video's
+     *   first packet. The player should `exo.seekTo(initialSeekMs)`
+     *   on first start so the first thing the user sees coincides
+     *   with the first audible frame instead of silent video.
+     */
+    data class Hls(
+        val playlistUrl: String,
+        val offsetMs: Long,
+        val initialSeekMs: Long = 0L,
+    ) : PlaybackSource()
 }
 
 data class PlaybackUiState(
@@ -188,10 +214,34 @@ class PlaybackViewModel @Inject constructor(
 
         transcodeSessionId = session.session_id
         transcodeToken = session.token
-        hlsOffsetMs = posMs
+        // Prefer the server-reported open position (start_offset_sec —
+        // keyframe-aligned, may be earlier than what we asked for) over
+        // the requested posMs. Without this, the scrubber-time mapping
+        // is off by a couple of seconds whenever the input -ss snaps
+        // back to a keyframe — visible to the user as "I scrubbed to
+        // 0:00 but the video is at 1:58". Falls back to posMs when the
+        // server didn't return the field (omitempty / older builds).
+        val openOffsetMs = if (session.start_offset_sec > 0.0) {
+            (session.start_offset_sec * 1000.0).toLong()
+        } else {
+            posMs
+        }
+        // Initial in-stream seek to skip the silent-video gap at seg 0
+        // head. Non-zero only after a mid-stream seek with AC3 → AAC
+        // re-encode; the player jumps this far in on first start so
+        // the first frame the user sees lands together with the first
+        // audible audio frame instead of silent video while the AAC
+        // encoder warms up. Same omitempty fallback.
+        val seg0SkipMs = (session.seg0_audio_gap_sec * 1000.0).toLong()
+
+        hlsOffsetMs = openOffsetMs
         lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
 
-        return PlaybackSource.Hls("$serverUrl${session.playlist_url}", posMs)
+        return PlaybackSource.Hls(
+            playlistUrl = "$serverUrl${session.playlist_url}",
+            offsetMs = openOffsetMs,
+            initialSeekMs = seg0SkipMs,
+        )
     }
 
     /**

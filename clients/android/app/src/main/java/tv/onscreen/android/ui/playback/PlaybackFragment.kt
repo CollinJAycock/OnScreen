@@ -626,6 +626,18 @@ class PlaybackFragment : VideoSupportFragment() {
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
                 exo.setMediaSource(hlsSource)
                 exo.prepare()
+                // seg0AudioGapSec compensation. After a mid-stream
+                // resume with AC3 → AAC re-encode, the first audible
+                // AAC frame lands a few seconds into segment 0. Seek
+                // there before play starts so the user sees the first
+                // video frame and hears the first audio frame at the
+                // same instant — without this, the screen shows
+                // silent video while the audio pipeline warms up.
+                // Zero on the legacy / direct-resume path; the seek
+                // is a no-op there.
+                if (source.initialSeekMs > 0) {
+                    exo.seekTo(source.initialSeekMs)
+                }
                 exo.playWhenReady = true
             }
         }

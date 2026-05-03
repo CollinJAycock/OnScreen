@@ -139,6 +139,7 @@ class PlaybackViewModelTest {
                 fileId = "f2",
                 videoCopy = false,
                 supportsHevc = true,
+                supportsAv1 = true,
             )
         } returns TranscodeSession(
             session_id = "sess-1",
@@ -273,7 +274,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         coEvery {
-            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any())
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(
             session_id = "sess-9",
             playlist_url = "/transcode/sess-9.m3u8",
