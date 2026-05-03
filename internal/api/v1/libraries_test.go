@@ -278,7 +278,10 @@ func TestLibrary_Create_Defaults(t *testing.T) {
 
 func TestLibrary_Update_Success(t *testing.T) {
 	id := uuid.New()
-	svc := &mockLibraryService{}
+	// PATCH now reads the existing row first so partial bodies can fall
+	// back to current values — seed the mock with one to mimic real
+	// service behaviour.
+	svc := &mockLibraryService{lib: &library.Library{ID: id, Name: "Movies", Paths: []string{"/old/path"}}}
 	h := newLibHandler(svc)
 
 	body := `{"name":"Updated Movies","scan_paths":["/new/path"]}`
@@ -292,7 +295,9 @@ func TestLibrary_Update_Success(t *testing.T) {
 }
 
 func TestLibrary_Update_NotFound(t *testing.T) {
-	svc := &mockLibraryService{updateErr: library.ErrNotFound}
+	// Update now does GET-then-PATCH — the not-found surface fires on
+	// the initial GET, not the UpdateLibrary call.
+	svc := &mockLibraryService{getErr: library.ErrNotFound}
 	h := newLibHandler(svc)
 
 	body := `{"name":"X"}`
@@ -306,16 +311,54 @@ func TestLibrary_Update_NotFound(t *testing.T) {
 }
 
 func TestLibrary_Update_ScanIntervalMinutes(t *testing.T) {
-	svc := &mockLibraryService{}
+	id := uuid.New()
+	svc := &mockLibraryService{lib: &library.Library{ID: id, Name: "Movies", Paths: []string{"/m"}}}
 	h := newLibHandler(svc)
 
-	body := `{"name":"Movies","scan_interval_minutes":60}`
+	body := `{"scan_interval_minutes":60}`
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("PATCH", "/", strings.NewReader(body)), "id", uuid.New().String())
+	req := withChiParam(httptest.NewRequest("PATCH", "/", strings.NewReader(body)), "id", id.String())
 	h.Update(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// Partial-update semantics: sending only is_private must not require a
+// name. Previously the handler treated empty Name as set-to-empty, which
+// the SQL layer rejected with a 500. Locks the v2.1 fix that drove the
+// e2e policy.spec.ts is_private flow.
+func TestLibrary_Update_OnlyIsPrivate(t *testing.T) {
+	id := uuid.New()
+	svc := &mockLibraryService{lib: &library.Library{ID: id, Name: "Existing", Paths: []string{"/a"}}}
+	h := newLibHandler(svc)
+
+	body := `{"is_private":true}`
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("PATCH", "/", strings.NewReader(body)), "id", id.String())
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+// Unknown fields must 400 — without DisallowUnknownFields a typo like
+// `is-private` (hyphen) silently decodes into nothing and the caller's
+// intent is lost without any signal.
+func TestLibrary_Update_UnknownFieldRejected(t *testing.T) {
+	id := uuid.New()
+	svc := &mockLibraryService{lib: &library.Library{ID: id, Name: "X"}}
+	h := newLibHandler(svc)
+
+	body := `{"is-private":true}` // hyphen instead of underscore
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("PATCH", "/", strings.NewReader(body)), "id", id.String())
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 }
 

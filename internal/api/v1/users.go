@@ -1047,8 +1047,17 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		MaxContentRating *string `json:"max_content_rating"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.BadRequest(w, r, "invalid request body")
+	// Reject unknown fields. Without this, a client typo like
+	// `content_rating` (instead of `max_content_rating`) silently
+	// decodes into nothing, the handler updates the user with
+	// MaxContentRating=nil (clearing the ceiling), and returns 204
+	// — looking exactly like a successful set from the caller's
+	// perspective. The wrong field stays silently broken until
+	// someone notices the ceiling isn't enforced.
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body: "+err.Error())
 		return
 	}
 	if err := h.db.UpdateUserContentRating(r.Context(), gen.UpdateUserContentRatingParams{

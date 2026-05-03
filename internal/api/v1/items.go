@@ -690,8 +690,16 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 
 	var body updateMetadataRequest
 	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			respond.BadRequest(w, r, "invalid JSON body")
+		// Reject unknown fields so callers (or tests) sending
+		// unsupported fields like `content_rating` get an explicit 400
+		// instead of a silent 200 that "succeeded" but updated nothing.
+		// The endpoint is admin-curated metadata for home_video / photo
+		// items; if a future field belongs here it should be added to
+		// updateMetadataRequest deliberately, not slipped in by accident.
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&body); err != nil {
+			respond.BadRequest(w, r, "invalid JSON body: "+err.Error())
 			return
 		}
 	}

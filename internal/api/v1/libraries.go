@@ -284,6 +284,16 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update handles PATCH /api/v1/libraries/:id.
+//
+// Real partial-update semantics: each field omitted from the body keeps
+// its current value. Previously the handler treated empty-string Name /
+// nil ScanPaths as "set to empty," which (a) didn't match the documented
+// PATCH contract and (b) caused the underlying UpdateLibrary SQL to fail
+// validation with an unhelpful 500 when callers sent only the field they
+// wanted to change. The fix fetches the existing row first and falls back
+// to its values for any field the client didn't send. Unknown fields are
+// rejected (DisallowUnknownFields) so a typo like `is-private` returns a
+// clear 400 instead of silently being ignored.
 func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -291,37 +301,88 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body struct {
-		Name                    string        `json:"name"`
-		ScanPaths               []string      `json:"scan_paths"`
-		Agent                   string        `json:"agent"`
-		Language                string        `json:"language"`
-		ScanIntervalMinutes     *int          `json:"scan_interval_minutes"`
-		ScanInterval            time.Duration `json:"scan_interval_ns"`
-		MetadataRefreshInterval time.Duration `json:"metadata_refresh_interval_ns"`
-		// Pointer for PATCH semantics: omitting the key keeps the
-		// current value, sending true/false flips it.
-		IsPrivate         *bool `json:"is_private,omitempty"`
-		AutoGrantNewUsers *bool `json:"auto_grant_new_users,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.BadRequest(w, r, "invalid request body")
+	// Fetch existing first so we can merge partial updates into it.
+	existing, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get library for update", "id", id, "err", err)
+		respond.InternalError(w, r)
 		return
 	}
 
-	scanInterval := body.ScanInterval
+	// All fields are pointers so we can distinguish "not sent" from
+	// "sent as empty" — the latter is a meaningful clear for some
+	// fields (e.g. clearing the agent), the former must preserve.
+	var body struct {
+		Name                    *string        `json:"name,omitempty"`
+		ScanPaths               *[]string      `json:"scan_paths,omitempty"`
+		Agent                   *string        `json:"agent,omitempty"`
+		Language                *string        `json:"language,omitempty"`
+		ScanIntervalMinutes     *int           `json:"scan_interval_minutes,omitempty"`
+		ScanInterval            *time.Duration `json:"scan_interval_ns,omitempty"`
+		MetadataRefreshInterval *time.Duration `json:"metadata_refresh_interval_ns,omitempty"`
+		IsPrivate               *bool          `json:"is_private,omitempty"`
+		AutoGrantNewUsers       *bool          `json:"auto_grant_new_users,omitempty"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Resolve scan interval: prefer minutes if provided, else explicit
+	// duration, else fall back to existing (Library.ScanInterval is a
+	// nullable pointer; UpdateLibraryParams.ScanInterval is a plain
+	// duration with zero meaning "no override," so deref carefully).
+	var scanInterval time.Duration
+	if existing.ScanInterval != nil {
+		scanInterval = *existing.ScanInterval
+	}
 	if body.ScanIntervalMinutes != nil {
 		scanInterval = time.Duration(*body.ScanIntervalMinutes) * time.Minute
+	} else if body.ScanInterval != nil {
+		scanInterval = *body.ScanInterval
+	}
+
+	var metadataInterval time.Duration
+	if existing.MetadataRefreshInterval != nil {
+		metadataInterval = *existing.MetadataRefreshInterval
+	}
+	if body.MetadataRefreshInterval != nil {
+		metadataInterval = *body.MetadataRefreshInterval
+	}
+
+	name := existing.Name
+	if body.Name != nil {
+		// Empty name still rejected by the service layer downstream;
+		// only short-circuit non-nil values onto the patch.
+		name = *body.Name
+	}
+	paths := existing.Paths
+	if body.ScanPaths != nil {
+		paths = *body.ScanPaths
+	}
+	agent := existing.Agent
+	if body.Agent != nil {
+		agent = *body.Agent
+	}
+	lang := existing.Lang
+	if body.Language != nil {
+		lang = *body.Language
 	}
 
 	lib, err := h.svc.Update(r.Context(), library.UpdateLibraryParams{
 		ID:                      id,
-		Name:                    body.Name,
-		Paths:                   body.ScanPaths,
-		Agent:                   body.Agent,
-		Lang:                    body.Language,
+		Name:                    name,
+		Paths:                   paths,
+		Agent:                   agent,
+		Lang:                    lang,
 		ScanInterval:            scanInterval,
-		MetadataRefreshInterval: body.MetadataRefreshInterval,
+		MetadataRefreshInterval: metadataInterval,
 		IsPrivate:               body.IsPrivate,
 		AutoGrantNewUsers:       body.AutoGrantNewUsers,
 	})
