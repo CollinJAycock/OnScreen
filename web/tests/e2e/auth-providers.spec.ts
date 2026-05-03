@@ -48,7 +48,11 @@ test.describe('Auth providers — OIDC', () => {
     // to whatever comes back. Auto-redirect would mask a misconfiguration
     // (e.g. fall-through to a wrong issuer).
     const r = await request.get('/api/v1/auth/oidc', { maxRedirects: 0 });
-    expect(r.status()).toBe(302);
+    // 302 (Found) and 307 (Temporary Redirect) are both valid for the
+    // OIDC authorization redirect — the OnScreen handler currently
+    // emits 307 via http.StatusTemporaryRedirect; both keep the GET
+    // method and are accepted by all browsers per RFC 7231.
+    expect([302, 307]).toContain(r.status());
     const loc = r.headers()['location'];
     expect(loc, 'OIDC redirect must include a Location header').toBeTruthy();
     if (process.env.E2E_OIDC_ISSUER_HOST) {
