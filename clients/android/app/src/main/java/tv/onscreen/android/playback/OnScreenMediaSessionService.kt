@@ -47,10 +47,9 @@ import javax.inject.Inject
  *    instead of building a fresh ExoPlayer, so playback is
  *    seamless.
  *
- * Video playback intentionally skips this path — the floating PiP
- * window is the right "keep watching outside the player" UX for
- * video, and the surface-view rendering doesn't translate to a
- * service notification.
+ * Video playback intentionally skips this path — the surface-view
+ * rendering doesn't translate to a service notification, so video
+ * is released when the activity stops rather than handed off here.
  */
 @UnstableApi
 @AndroidEntryPoint

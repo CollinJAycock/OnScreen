@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -43,12 +44,13 @@ import tv.onscreen.android.data.repository.NotificationsRepository
 import android.widget.Toast
 import tv.onscreen.android.data.repository.OnlineSubtitleRepository
 import tv.onscreen.android.data.repository.TrickplayRepository
+import tv.onscreen.android.ui.KeyEventHandler
 import javax.inject.Inject
 import kotlin.math.abs
 
 @AndroidEntryPoint
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-class PlaybackFragment : VideoSupportFragment() {
+class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var itemRepo: ItemRepository
@@ -272,30 +274,6 @@ class PlaybackFragment : VideoSupportFragment() {
      *  VideoSupportFragment view — the surface view sits at the
      *  bottom of the z-order and our album-cover ImageView paints on
      *  top of it. Controls draw above both. */
-    /** Aspect ratio of the active video for picture-in-picture, or
-     *  null when audio. PictureInPictureParams accepts ratios
-     *  roughly between 0.42 and 2.39; we coerce to a safe default
-     *  rather than throw if the player hasn't reported a video size
-     *  yet. */
-    fun activePiPAspect(): Pair<Int, Int>? {
-        if (currentItemType == "track" || currentItemType == "audiobook") return null
-        val exo = player ?: return null
-        val w = exo.videoSize.width.takeIf { it > 0 } ?: 16
-        val h = exo.videoSize.height.takeIf { it > 0 } ?: 9
-        return w to h
-    }
-
-    /** Toggle the Leanback transport overlay based on PiP state. The
-     *  controls would draw across the small floating window awkwardly
-     *  and consume D-pad focus when the PiP window doesn't have
-     *  input focus — better to hide them entirely and let the system
-     *  PiP chrome handle play/pause. */
-    fun onPiPModeChanged(inPiP: Boolean) {
-        glue?.host?.let { host ->
-            if (inPiP) host.hideControlsOverlay(false) else host.showControlsOverlay(false)
-        }
-    }
-
     private fun bindAudioBackdrop(item: tv.onscreen.android.data.model.ItemDetail?) {
         val root = view as? android.view.ViewGroup ?: return
         val isAudio = currentItemType == "track" || currentItemType == "audiobook"
@@ -785,6 +763,31 @@ class PlaybackFragment : VideoSupportFragment() {
         if (exo.isPlaying) exo.pause() else exo.play()
     }
 
+    /**
+     * Activity-level key dispatch for D-pad LEFT / RIGHT during
+     * playback. Routed through KeyEventHandler (intercepted in
+     * MainActivity.dispatchKeyEvent) so we run before Leanback's
+     * focus-search consumes the keys for transport-button
+     * navigation.
+     *
+     * Gated on [isControlsOverlayVisible]: when the overlay is up
+     * the user is interacting with the transport row, so we let
+     * Leanback handle LEFT/RIGHT to move focus between Rewind /
+     * PlayPause / FastForward. When the overlay is hidden the
+     * surface is the active surface and TV-PC requires LEFT/RIGHT
+     * to seek directly — so we step the player ±SKIP_BACK_MS /
+     * SKIP_FORWARD_MS without invoking the overlay.
+     */
+    override fun onActivityKeyEvent(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        if (isControlsOverlayVisible) return false
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> { seekRelative(-SKIP_BACK_MS); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { seekRelative(SKIP_FORWARD_MS); true }
+            else -> false
+        }
+    }
+
     /** Build the ExoPlayer with a buffer profile chosen by the
      *  device's available RAM. Low-RAM Fire TV / Android TV devices
      *  (1 GB and similar — `ActivityManager.isLowRamDevice()` true)
@@ -1164,6 +1167,20 @@ class PlaybackFragment : VideoSupportFragment() {
     override fun onStop() {
         super.onStop()
         progressTracker?.onStop()
+        // Tear down video playback as soon as the activity stops so
+        // backing out of an episode kills the audio decoder
+        // immediately. On some Google TV builds onDestroyView fires
+        // late enough that the user is already on the previous
+        // screen with audio still playing. Music intentionally
+        // survives onStop — the handoff to the MediaSessionService
+        // runs in onDestroyView so a track keeps playing across
+        // in-app navigation.
+        val isAudio = currentItemType == "track" || currentItemType == "audiobook"
+        if (!isAudio) {
+            player?.run { stop(); release() }
+            player = null
+            viewModel.stopActiveTranscode()
+        }
     }
 
     override fun onDestroyView() {
@@ -1185,11 +1202,12 @@ class PlaybackFragment : VideoSupportFragment() {
         progressTracker?.stop()
         progressTracker = null
 
-        // For music: hand the player to the MediaSessionService
-        // instead of releasing it, so audio continues under the
-        // system media controls when the user navigates away.
-        // Video releases as before — PiP is the right "keep going"
-        // surface for video.
+        // Music: hand the player to the MediaSessionService instead
+        // of releasing it, so audio continues under the system media
+        // controls when the user navigates away. Video has already
+        // been torn down in onStop; the release call below is a
+        // safety net for state-restore edge cases where onStop ran
+        // but the player was rebuilt before reaching here.
         val handedOff = handOffAudioPlayerToService()
         if (!handedOff) {
             player?.release()
@@ -1205,8 +1223,8 @@ class PlaybackFragment : VideoSupportFragment() {
      *  handoff happened (caller should NOT release the player).
      *
      *  Skipped for video: the surface-view rendering doesn't
-     *  translate to a service notification and the floating PiP
-     *  window already covers the "keep watching" use case. */
+     *  translate to a service notification, and the video player
+     *  has already been released in onStop. */
     private fun handOffAudioPlayerToService(): Boolean {
         val exo = player ?: return false
         val isAudio = currentItemType == "track" || currentItemType == "audiobook"

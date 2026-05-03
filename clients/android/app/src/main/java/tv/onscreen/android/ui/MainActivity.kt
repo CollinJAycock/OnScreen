@@ -1,11 +1,7 @@
 package tv.onscreen.android.ui
 
-import android.app.PictureInPictureParams
 import android.content.Intent
-import android.content.res.Configuration
 import android.os.Bundle
-import android.os.Build
-import android.util.Rational
 import android.view.KeyEvent
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
@@ -113,34 +109,6 @@ class MainActivity : FragmentActivity() {
      * the interface (the default — most fragments rely on focus +
      * OnKeyListener) see no behavioural change.
      */
-    /** Hook the user-leave gesture (Home button on Android TV remote)
-     *  and pop the active video into picture-in-picture instead of
-     *  pausing it outright. Skipped for music — the audio backdrop
-     *  doesn't need a floating window, and the upcoming media-session
-     *  service keeps audio playing whether or not the activity is
-     *  foreground. */
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val current = supportFragmentManager.findFragmentById(R.id.main_container)
-        val pip = (current as? tv.onscreen.android.ui.playback.PlaybackFragment)?.activePiPAspect()
-        if (pip != null) {
-            val params = PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(pip.first, pip.second))
-                .build()
-            try { enterPictureInPictureMode(params) } catch (_: Exception) { }
-        }
-    }
-
-    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        // Forward into the active fragment so it can hide the
-        // Leanback transport controls in PiP (the chrome wouldn't
-        // fit in a 240×135 window anyway).
-        val current = supportFragmentManager.findFragmentById(R.id.main_container)
-        (current as? tv.onscreen.android.ui.playback.PlaybackFragment)?.onPiPModeChanged(isInPictureInPictureMode)
-    }
-
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             val current = supportFragmentManager.findFragmentById(R.id.main_container)
