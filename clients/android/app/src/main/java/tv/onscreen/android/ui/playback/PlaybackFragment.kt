@@ -146,6 +146,35 @@ class PlaybackFragment : VideoSupportFragment() {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[PlaybackViewModel::class.java]
 
+        // Explicit hardware-media-key handler so Google's TV app
+        // quality requirement TV-PP (toggle play/pause on
+        // KEYCODE_MEDIA_PLAY_PAUSE) holds without depending on
+        // Leanback's transport controls being focused. ExoPlayer +
+        // MediaSession typically catch these via MediaButtonReceiver,
+        // but registering an explicit listener is defensive belt-and-
+        // braces — remotes whose media keys arrive as
+        // KeyEvents-only (without a media-button intent) still work.
+        // Rewind / fast-forward keys reuse the existing seekRelative
+        // helper so the step size matches the on-screen actions.
+        // D-pad center is intentionally NOT intercepted here — the
+        // Leanback overlay handles "press to show, second press to
+        // activate" which is the standard Android TV UX.
+        view.isFocusableInTouchMode = true
+        view.setOnKeyListener { _, keyCode, event ->
+            if (event.action != android.view.KeyEvent.ACTION_DOWN) {
+                return@setOnKeyListener false
+            }
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayPause(); true }
+                android.view.KeyEvent.KEYCODE_MEDIA_PLAY       -> { player?.play(); true }
+                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE      -> { player?.pause(); true }
+                android.view.KeyEvent.KEYCODE_MEDIA_STOP       -> { player?.pause(); true }
+                android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekRelative(SKIP_FORWARD_MS); true }
+                android.view.KeyEvent.KEYCODE_MEDIA_REWIND       -> { seekRelative(-SKIP_BACK_MS); true }
+                else -> false
+            }
+        }
+
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
         val startMs = arguments?.getLong(ARG_START_MS, 0) ?: 0
 
@@ -478,7 +507,7 @@ class PlaybackFragment : VideoSupportFragment() {
         // fragment's life.
         val itemId = arguments?.getString(ARG_ITEM_ID)
         val parked = itemId?.let { tv.onscreen.android.playback.AudioHandoff.take(it) }
-        val exo = parked ?: ExoPlayer.Builder(requireContext()).build()
+        val exo = parked ?: buildExoPlayer()
         if (parked != null) {
             // Reused-parked-player flag suppresses the next
             // setMediaSource/prepare on the first state emission so
@@ -698,6 +727,43 @@ class PlaybackFragment : VideoSupportFragment() {
         val dur = exo.duration
         val clamped = if (dur > 0 && dur != Long.MAX_VALUE && target > dur) dur else target
         exo.seekTo(clamped)
+    }
+
+    /** Toggle the player between playing and paused. Driven by the
+     *  hardware-media-key handler installed in onViewCreated. */
+    private fun togglePlayPause() {
+        val exo = player ?: return
+        if (exo.isPlaying) exo.pause() else exo.play()
+    }
+
+    /** Build the ExoPlayer with a buffer profile chosen by the
+     *  device's available RAM. Low-RAM Fire TV / Android TV devices
+     *  (1 GB and similar — `ActivityManager.isLowRamDevice()` true)
+     *  get tighter LoadControl bounds: ~halved buffer durations and
+     *  a lower target byte cap. Without this, the default 50 s
+     *  buffer pulls 30-60 MB of decoded video per session, which on
+     *  a 1 GB box leaves the rest of the app fighting the OOM
+     *  killer for what's left. Matches Google's TV-ME quality
+     *  guideline for memory limits on low-RAM devices. */
+    private fun buildExoPlayer(): ExoPlayer {
+        val ctx = requireContext()
+        val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+            as? android.app.ActivityManager
+        val builder = ExoPlayer.Builder(ctx)
+        if (am?.isLowRamDevice == true) {
+            val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    /* minBufferMs */ 15_000,
+                    /* maxBufferMs */ 30_000,
+                    /* bufferForPlaybackMs */ 1_500,
+                    /* bufferForPlaybackAfterRebufferMs */ 3_000,
+                )
+                .setTargetBufferBytes(16 * 1024 * 1024) // 16 MB cap (default ~64 MB)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+            builder.setLoadControl(loadControl)
+        }
+        return builder.build()
     }
 
     private fun showSpeedPicker() {

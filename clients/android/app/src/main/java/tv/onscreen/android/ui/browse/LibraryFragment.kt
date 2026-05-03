@@ -90,6 +90,22 @@ class LibraryFragment : VerticalGridSupportFragment() {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[LibraryViewModel::class.java]
 
+        // Visible Sort / Filter affordance for users on basic Android
+        // TV remotes that have no MENU button (Google TV-DM quality
+        // requirement: app must not depend on the remote's MENU
+        // button to access UI controls). Reuses Leanback's title-bar
+        // search-orb slot — focusable via D-pad UP from the grid —
+        // but swaps the magnifying-glass icon for a sort glyph and
+        // wires it to a 2-item Sort/Filter chooser. The original
+        // MENU + Y / X + F2 key shortcuts still work for remotes
+        // that have them.
+        setOnSearchClickedListener { showSortFilterChooser() }
+        view.findViewById<androidx.leanback.widget.SearchOrbView>(androidx.leanback.R.id.title_orb)
+            ?.apply {
+                setOrbIcon(androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.ic_sort))
+                contentDescription = getString(R.string.sort_and_filter)
+            }
+
         val libraryId = arguments?.getString(ARG_LIBRARY_ID) ?: return
         val libraryType = arguments?.getString(ARG_LIBRARY_TYPE) ?: ""
 
@@ -197,6 +213,25 @@ class LibraryFragment : VerticalGridSupportFragment() {
         val genre = viewModel.genre.value
         val genrePart = if (genre != null) "  ·  $genre" else ""
         title = "$baseTitle  ·  $label$genrePart  (MENU sort / X filter)"
+    }
+
+    /** Two-step chooser shown when the user activates the title-bar
+     *  Sort/Filter orb: first pick "Sort by…" or "Filter by
+     *  genre…", then drill into the corresponding existing menu.
+     *  This is the no-MENU-button entry point for TV-DM
+     *  compliance. */
+    private fun showSortFilterChooser() {
+        val labels = arrayOf(getString(R.string.sort_by), getString(R.string.filter_by_genre))
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(R.string.sort_and_filter)
+            .setItems(labels) { d, idx ->
+                d.dismiss()
+                when (idx) {
+                    0 -> showSortMenu()
+                    1 -> showGenreMenu()
+                }
+            }
+            .show()
     }
 
     private fun showGenreMenu() {

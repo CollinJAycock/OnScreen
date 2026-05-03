@@ -95,6 +95,9 @@
     <string name="retry">Retry</string>
     <string name="confirm_log_out">Sign out of this device? You\'ll need to log in again to use OnScreen.</string>
     <string name="confirm_change_server">Disconnect from this server and choose another? You\'ll be signed out.</string>
+    <string name="sort_and_filter">Sort and filter</string>
+    <string name="sort_by">Sort by…</string>
+    <string name="filter_by_genre">Filter by genre…</string>
     <string name="all_libraries">All libraries</string>
     <string name="search_in">Search in</string>
     <string name="content_restricted">This title is outside your content rating limit.</string>
