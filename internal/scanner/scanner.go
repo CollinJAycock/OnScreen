@@ -620,10 +620,13 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		return nil, nil, false, fmt.Errorf("stat %s: %w", path, err)
 	}
 
-	hash, err := HashFile(ctx, path, info)
-	if err != nil {
-		s.logger.WarnContext(ctx, "hash failed, proceeding without", "path", path, "err", err)
-	}
+	// Look up the existing file row once. Used three ways below:
+	// (1) tombstone short-circuit, (2) mtime+size fast skip (avoids hash
+	// + ffprobe entirely for unchanged files), (3) the hash-based fast
+	// path further down. Lifting it here means at most one DB lookup per
+	// processed file instead of two on every slow-path call.
+	existing, existingErr := s.media.GetFileByPath(ctx, path)
+	haveExisting := existingErr == nil
 
 	// Sticky tombstone: if a file row already exists with status='deleted',
 	// the user explicitly deleted this content from the library (typically
@@ -638,16 +641,50 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// the new item. Net effect from the user's perspective: deleted shows
 	// reappear in Recently Added under a new ID. Recovery from a tombstone
 	// requires an explicit restore action, not just leaving the file on disk.
-	if existing, err := s.media.GetFileByPath(ctx, path); err == nil && existing.Status == "deleted" {
+	if haveExisting && existing.Status == "deleted" {
 		return nil, nil, false, nil
 	}
 
-	// Fast path: if the file is already known, the hash hasn't changed,
-	// and we already have probe metadata (duration_ms), skip ffprobe
-	// entirely — just mark the file active and return.
-	// We still load the parent item to check whether it needs enrichment
-	// (e.g. a file scanned before the TMDB key was configured).
-	// Photos, music, audiobook, book, home_video skip the fast path:
+	// Fast skip: if the file on disk is unchanged since the last scan
+	// (size matches AND mtime predates ScannedAt), skip hash + ffprobe
+	// + DB upsert entirely. Cheap stat-only check; saves nearly all of
+	// the per-file scan cost on write-once libraries (music, audiobook,
+	// home video) where periodic re-scans would otherwise re-hash
+	// gigabytes of unchanged audio every cycle. Applies to ALL library
+	// types — the per-type carve-outs in the hash fast path below exist
+	// because that path skips ffprobe-derived fields without re-running
+	// per-type processors; here we skip everything because nothing has
+	// changed at all, so no processor needs to re-run.
+	//
+	// Mtime is compared against the previous ScannedAt. Both UPSERT
+	// (CreateMediaFile / UpdateMediaFileTechnicalMetadata) and
+	// MarkMediaFileActive set scanned_at = NOW(), so the timestamp
+	// always reflects the most recent successful processing of this row.
+	if haveExisting &&
+		existing.FileHash != nil &&
+		existing.FileSize == info.Size() &&
+		info.ModTime().Before(existing.ScannedAt) {
+		if existing.Status != "active" {
+			if err := s.media.MarkFileActive(ctx, existing.ID); err != nil {
+				s.logger.WarnContext(ctx, "mark file active failed", "path", path, "err", err)
+			}
+			if err := s.media.RestoreItemAncestry(ctx, existing.MediaItemID); err != nil {
+				s.logger.WarnContext(ctx, "restore ancestry failed", "path", path, "err", err)
+			}
+		}
+		return nil, nil, false, nil
+	}
+
+	hash, err := HashFile(ctx, path, info)
+	if err != nil {
+		s.logger.WarnContext(ctx, "hash failed, proceeding without", "path", path, "err", err)
+	}
+
+	// Hash-based fast path: when mtime advanced (file was touched / synced)
+	// but the cryptographic content is identical to what we already have,
+	// we can still skip ffprobe and item creation. Catches restore-from-
+	// backup and rsync-without-times patterns.
+	// Photos, music, audiobook, book, home_video skip this path:
 	// photos need per-file items, music needs album art + track duration
 	// propagated, and audiobook / book / home_video need cover extraction
 	// (the {id}-poster.jpg lookup is idempotent so a re-scan of an
@@ -658,10 +695,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	if hash != nil && libraryType != "photo" && libraryType != "music" &&
 		libraryType != "audiobook" && libraryType != "book" &&
 		libraryType != "home_video" {
-		if existing, err := s.media.GetFileByPath(ctx, path); err == nil &&
+		if haveExisting &&
 			existing.FileHash != nil && *existing.FileHash == *hash &&
-			(existing.DurationMS != nil || isImageFile(path)) &&
-			existing.Status != "deleted" {
+			(existing.DurationMS != nil || isImageFile(path)) {
 			wasInactive := existing.Status != "active"
 			if err := s.media.MarkFileActive(ctx, existing.ID); err != nil {
 				s.logger.WarnContext(ctx, "mark file active failed", "path", path, "err", err)
