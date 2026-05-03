@@ -183,6 +183,7 @@ class PlaybackViewModel @Inject constructor(
             videoCopy = videoCopy,
             audioStreamIndex = audioStreamIndex,
             supportsHevc = PlaybackHelper.supportsHevc(),
+            supportsAv1 = PlaybackHelper.supportsAv1(),
         )
 
         transcodeSessionId = session.session_id

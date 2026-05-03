@@ -3410,12 +3410,23 @@ components:
     # ── Transcode ──────────────────────────────────────────────────────────
     TranscodeStartRequest:
       type: object
+      description: |
+        Body may be an empty object `{}` for "use defaults" — the
+        server picks file_id (item's primary file), height (source
+        height), and codec preferences from the source. Fields below
+        are all optional.
       properties:
-        file_id:        { type: string, format: uuid, description: 'Optional — defaults to the item''s primary file.' }
-        max_height:     { type: integer }
-        max_bitrate:    { type: integer, format: int64 }
-        prefer_hevc:    { type: boolean }
-        prefer_av1:     { type: boolean, description: 'When the source is AV1 and the client supports AV1, prefer the av01 fMP4 remux path over an H.264 transcode.' }
+        file_id:
+          type: string
+          format: uuid
+          description: 'Optional — defaults to the item''s primary file (highest-quality version per ADR-031).'
+        height:
+          type: integer
+          description: 'Output height cap. 0 = no constraint (use source height).'
+        position_ms:
+          type: integer
+          format: int64
+          description: 'Resume position in milliseconds. The audio-picker re-issue path uses this so the new session lands at the same point.'
         video_copy:
           type: boolean
           description: |
@@ -3423,12 +3434,24 @@ components:
             audio re-encoded if needed). Required for AV1 source remux —
             without it the server picks H.264 NVENC/QSV/AMF re-encode
             for browser compat, even on AV1-capable clients. The AV1
-            fMP4 e2e test sets this true to validate the
-            `#EXT-X-MAP` + `.m4s` segment shape.
-        audio_index:    { type: integer, description: 'Source audio stream index. Re-issuing with a different index from the same position drives the in-player audio picker.' }
-        subtitle_index: { type: integer }
-        position_ms:    { type: integer, format: int64, description: 'Resume position. Used by the audio-picker re-issue path so the new session lands at the same point.' }
-        start_offset_sec: { type: integer, description: 'Same intent as position_ms, in seconds. The old wire shape — clients should prefer position_ms.' }
+            fMP4 e2e test sets this true to validate the `#EXT-X-MAP`
+            + `.m4s` segment shape.
+        audio_stream_index:
+          type: integer
+          description: 'Source audio stream index. nil/omitted = default (first) audio stream. Re-issuing the session with a different index drives the in-player audio picker.'
+        supports_hevc:
+          type: boolean
+          description: 'Client can decode HEVC (H.265). Server uses this to pick HEVC output when transcoding (saves bandwidth) and to enable the HEVC-source remux path.'
+        supports_av1:
+          type: boolean
+          description: |
+            v2.1. Client can decode AV1. When the source is AV1 and
+            this is true, the server picks the AV1 fMP4 remux path
+            (av01 tag, .m4s segments, #EXT-X-MAP) over an H.264
+            re-encode. Equivalent to setting `video_copy:true` for
+            the AV1-source case but works generically: the server
+            decides remux vs. re-encode from the source codec + this
+            flag.
     TranscodeStartResponse:
       type: object
       description: |
@@ -3439,11 +3462,37 @@ components:
         present AND `manifest_url` is absent.
       properties:
         session_id:   { type: string, format: uuid }
-        playlist_url: { type: string, description: 'Already includes ?token=… — clients pass the URL through unchanged to fetch the M3U8.' }
-        token:        { type: string, description: 'Per-session token for segment fetches. Different from the per-file stream_token; this one is bound to the session id, not a file id.' }
-        start_offset_sec:    { type: integer, description: 'The actual position the session opened at — may be clamped to the nearest keyframe.' }
-        seg0_audio_gap_sec:  { type: number, format: float, description: 'Gap between video start and first audio packet in segment 0; used by the player to compensate for mid-stream-seek audio-sync drift.' }
-        decision:     { type: string, enum: [direct, remux, transcode], description: 'How the server decided to serve. `direct` = no session needed (browser plays the file); `remux` = video stream copied; `transcode` = full re-encode.' }
+        playlist_url:
+          type: string
+          description: |
+            Already includes `?token=…` — clients pass the URL through
+            unchanged to fetch the M3U8. Relative path; clients
+            prepend the server base URL.
+        token:
+          type: string
+          description: 'Per-session token for segment fetches. Different from the per-file ItemFile.stream_token; this one is bound to the session id, not a file id.'
+        start_offset_sec:
+          type: number
+          format: double
+          description: |
+            v2.1. Content position the stream actually opens at —
+            keyframe-aligned. May be earlier than the requested
+            `position_ms` when video is being stream-copied (input-
+            side `-ss` snaps back to the previous keyframe). Use this
+            for scrubber-time mapping so the seek bar matches what's
+            on screen instead of advertising an exact resume the
+            codec can't honour.
+        seg0_audio_gap_sec:
+          type: number
+          format: double
+          description: |
+            v2.1. Skip this many seconds of segment 0 on startup.
+            With AC3 → AAC re-encode after a mid-stream `-ss`, the
+            AAC encoder's first valid frame lands a few seconds
+            after video's first packet — starting playback here
+            gets A/V synced from the first audible frame instead of
+            showing silent video while the audio pipeline warms up.
+            0 when no gap was measurable.
 
     # ── Notifications / Sessions ───────────────────────────────────────────
     Notification:

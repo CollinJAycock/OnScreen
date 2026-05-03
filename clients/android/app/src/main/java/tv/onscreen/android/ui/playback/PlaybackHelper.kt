@@ -77,4 +77,29 @@ object PlaybackHelper {
         // transcoding, saving bandwidth.
         return true
     }
+
+    /** Whether the device likely supports AV1 hardware decode. v2.1.
+     *
+     * When true and the source file is AV1, the server prefers the
+     * AV1 fMP4 remux path (av01 tag, .m4s segments, #EXT-X-MAP) over
+     * an H.264 NVENC/QSV/AMF re-encode — same bytes off disk to the
+     * client, no GPU encode work on the server.
+     *
+     * AV1 hardware decode landed broadly on Android TV devices from
+     * 2022 onward (Fire TV Cube 3rd gen, Chromecast 4K, Shield 2024,
+     * any TV with MediaTek MT9602 / Realtek RTD2843 / Amlogic S905X4
+     * or newer SoC). On older boxes ExoPlayer can still software-
+     * decode AV1 but the CPU cost makes 4K stutter — better to let
+     * the server H.264-transcode in those cases.
+     *
+     * Conservative default: true. ExoPlayer's MediaCodec selection
+     * will fall back to software decode if hardware is missing, and
+     * the AV1 software decoder ships with libgav1; 1080p AV1 plays
+     * fine on basically every Android TV box. The corner case is 4K
+     * AV1 on a 2018-era Fire TV — uncommon enough that we'd rather
+     * default-on and let users opt out via settings if it ever
+     * matters than default-off and lose the remux fast-path. */
+    fun supportsAv1(): Boolean {
+        return true
+    }
 }

@@ -18,6 +18,7 @@ class TranscodeRepository @Inject constructor(
         videoCopy: Boolean = false,
         audioStreamIndex: Int? = null,
         supportsHevc: Boolean = true,
+        supportsAv1: Boolean = false,
     ): TranscodeSession {
         return api.startTranscode(
             itemId,
@@ -28,6 +29,7 @@ class TranscodeRepository @Inject constructor(
                 video_copy = videoCopy,
                 audio_stream_index = audioStreamIndex,
                 supports_hevc = supportsHevc,
+                supports_av1 = supportsAv1,
             )
         ).data
     }
