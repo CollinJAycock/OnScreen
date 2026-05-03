@@ -44,16 +44,14 @@ android {
 
     buildTypes {
         release {
-            // Minification disabled for the initial Play upload —
-            // R8 was silently stripping a Hilt / prefs init path
-            // that left MainActivity rendering a blank window even
-            // with the keep rules we have. The proguard-rules.pro
-            // file stays in the repo for the eventual re-enable;
-            // turning this back on is a single-line change once we
-            // can soak-test on a real Google TV device. Resource
-            // shrinking is gated on minification so it's also off.
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // Minification + resource shrinking on. The previous
+            // soak failure (blank MainActivity window) was a
+            // missing keep rule — fixed in proguard-rules.pro
+            // (Hilt entry points without `allowobfuscation`,
+            // explicit DataStore + ServerPrefs keeps). See the
+            // header comments in that file for the failure mode.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

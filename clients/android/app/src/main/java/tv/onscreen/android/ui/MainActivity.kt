@@ -59,9 +59,18 @@ class MainActivity : FragmentActivity() {
                 else -> HomeFragment()
             }
 
+            // Guard against the activity having already saved state
+            // by the time the prefs flow emits — `am start` from a
+            // launcher tile can race with the lifecycle so the
+            // coroutine resumes after onSaveInstanceState, where a
+            // plain commit() throws IllegalStateException. State-loss
+            // is acceptable here: this is the initial-route decision,
+            // and if the activity is recreated it will re-run this
+            // exact branch from a fresh onCreate.
+            if (supportFragmentManager.isStateSaved) return@launch
             supportFragmentManager.beginTransaction()
                 .replace(R.id.main_container, fragment)
-                .commit()
+                .commitAllowingStateLoss()
         }
     }
 
