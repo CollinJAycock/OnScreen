@@ -104,20 +104,53 @@ class DetailViewModel @Inject constructor(
                     }
 
                     "artist" -> {
-                        // Children are albums (containers). Render the
-                        // grid; clicks should drill, not play. The
-                        // Play-on-artist UX is "play first track of
-                        // first album" but that's a two-level traversal;
-                        // skip for now and rely on the user picking an
-                        // album.
-                        val albums = itemRepo.getChildren(itemId)
-                        val parent = ChildItem(
+                        // Children are albums + standalone music videos
+                        // (per the v2.0 music_video work — videos hang
+                        // off the artist with no album parent so they
+                        // can appear as their own shelf on the artist
+                        // page). Render albums in the primary "Albums"
+                        // tab; if any music_video children exist,
+                        // render them in a secondary "Music Videos"
+                        // tab. DetailFragment's tabs surface picks up
+                        // every entry in the map automatically — the
+                        // tabs were originally show-only but the UI
+                        // works for any type with multiple groups.
+                        val children = itemRepo.getChildren(itemId)
+                        val albums = children.filter { it.type == "album" }
+                        val musicVideos = children.filter { it.type == "music_video" }
+                        // Anything that isn't an album or music_video
+                        // (defensive — future child types should still
+                        // show up rather than silently disappear).
+                        val other = children.filter { it.type != "album" && it.type != "music_video" }
+
+                        val albumsParent = ChildItem(
                             id = item.id,
-                            title = item.title,
+                            // "Albums" is the pill label rendered by
+                            // DetailFragment when item.type == "artist".
+                            // (Shows use season.index → "Season N"; for
+                            // artist tabs the title field is the literal
+                            // text shown, see the type-conditional pill
+                            // text in DetailFragment.configureEpisodes.)
+                            title = "Albums",
                             type = "artist",
-                            index = item.index,
+                            index = 0,
                         )
-                        mapOf(parent to albums)
+                        val mvParent = ChildItem(
+                            id = item.id + "#music_videos",
+                            title = "Music Videos",
+                            type = "artist",
+                            // Index 1 keeps the Music Videos tab to the
+                            // right of Albums in DetailFragment's
+                            // index-sorted tab strip.
+                            index = 1,
+                        )
+
+                        buildMap {
+                            put(albumsParent, albums + other)
+                            if (musicVideos.isNotEmpty()) {
+                                put(mvParent, musicVideos)
+                            }
+                        }
                     }
 
                     else -> emptyMap()

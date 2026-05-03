@@ -279,9 +279,15 @@ class DetailFragment : Fragment() {
             else -> R.string.episodes
         })
         header.visibility = View.VISIBLE
-        // Season tabs are show-specific. Albums and podcasts have a
-        // single child group; rendering tabs there is meaningless.
-        tabsScroll.visibility = if (seasons.size > 1 && item.type == "show") View.VISIBLE else View.GONE
+        // Tabs render whenever the children fall into more than one
+        // group: shows with seasons (the original case), and artists
+        // with both albums and music videos (per v2.0 — music_video
+        // items hang off the artist with no album parent so they get
+        // their own "Music Videos" tab next to "Albums"). Single-
+        // group types (album, podcast, audiobook chapters, book
+        // series) keep the bare list with no tabs above it.
+        tabsScroll.visibility =
+            if (seasons.size > 1 && (item.type == "show" || item.type == "artist")) View.VISIBLE else View.GONE
         list.visibility = View.VISIBLE
 
         if (episodeAdapter == null) {
@@ -306,7 +312,16 @@ class DetailFragment : Fragment() {
             val pill = LayoutInflater.from(requireContext()).inflate(android.R.layout.simple_list_item_1, tabsContainer, false) as TextView
             pill.apply {
                 background = resources.getDrawable(R.drawable.tab_pill, null)
-                text = season.index?.let { getString(R.string.season_n, it) } ?: season.title
+                // Pill label: shows use "Season N" formatting (the
+                // original case — `season.index` is the season number).
+                // Artists use the synthetic group title verbatim
+                // ("Albums" / "Music Videos") because the index field
+                // there is just a sort key, not a number to display.
+                text = if (item.type == "show") {
+                    season.index?.let { getString(R.string.season_n, it) } ?: season.title
+                } else {
+                    season.title
+                }
                 setTextColor(resources.getColor(R.color.text_primary, null))
                 textSize = 13f
                 setPadding(36, 16, 36, 16)
