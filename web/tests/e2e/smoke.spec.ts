@@ -97,4 +97,52 @@ test.describe('Tier 1 — library + admin smoke', () => {
     // the metadata-key field has been there since v1.0.
     await expect(page.getByText(/tmdb/i).first()).toBeVisible();
   });
+
+  test('API stays responsive while a library scan is in flight', async ({ request }) => {
+    // Fires a scan against the first library, then immediately hits two
+    // unrelated GET endpoints and asserts they both respond in under 2s.
+    // The scanner should never block the API — historic regressions have
+    // been DB-pool starvation under heavy scan load (see TrueNAS QA
+    // "high CPU/memory" incident, fixed in scanner mtime+size short-
+    // circuit).
+    const login = await request.post('/api/v1/auth/login', {
+      data: { username: USERNAME, password: PASSWORD },
+    });
+    expect(login.status()).toBe(200);
+    const { data } = await login.json();
+    const token = data.access_token as string;
+
+    const libs = await request.get('/api/v1/libraries', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(libs.status()).toBe(200);
+    const { data: libList } = await libs.json();
+    if (!Array.isArray(libList) || libList.length === 0) {
+      test.skip(true, 'No libraries available — seed media first');
+      return;
+    }
+    const libId = libList[0].id;
+
+    // Kick off the scan (fire-and-forget — don't await completion).
+    await request.post(`/api/v1/libraries/${libId}/scan`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    // Immediately probe two unrelated endpoints. Both must respond within
+    // 2s even with the scan running in the background.
+    const t0 = Date.now();
+    const r1 = await request.get('/api/v1/libraries', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const t1 = Date.now();
+    const r2 = await request.get('/api/v1/hub', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const t2 = Date.now();
+
+    expect(r1.status(), '/api/v1/libraries during scan').toBe(200);
+    expect(r2.status(), '/api/v1/hub during scan').toBe(200);
+    expect(t1 - t0, '/api/v1/libraries took longer than 2s during scan').toBeLessThan(2_000);
+    expect(t2 - t1, '/api/v1/hub took longer than 2s during scan').toBeLessThan(2_000);
+  });
 });
