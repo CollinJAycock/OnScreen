@@ -11,7 +11,7 @@ VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo
 BUILD_TIME   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS      := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build installer-windows
+.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build installer-windows installer-windows-msi installer-linux
 
 ## all: build everything (frontend + server + worker)
 all: build
@@ -40,6 +40,10 @@ installer-windows:
 ## installer-windows-msi: build the all-in-one Windows installer .exe (dist/OnScreen-Setup-<ver>.exe)
 installer-windows-msi:
 	powershell -NoProfile -ExecutionPolicy Bypass -File installer/windows-msi/build.ps1
+
+## installer-linux: build the portable Linux test tarball (dist/onscreen-linux-amd64-<ver>.tar.gz)
+installer-linux:
+	powershell -NoProfile -ExecutionPolicy Bypass -File installer/linux/build.ps1
 
 ## frontend: build SvelteKit SPA and sync into Go embed directory
 frontend:

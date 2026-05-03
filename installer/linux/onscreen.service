@@ -1,0 +1,47 @@
+# systemd unit for OnScreen.
+#
+# Drop-in pattern — install-service.sh copies this to /etc/systemd/system/
+# and replaces ${INSTALL_DIR} + ${RUN_USER} with the values resolved at
+# install time (current dir + invoking user). That keeps the unit file
+# shipped in the tarball completely declarative — no platform-specific
+# absolute paths baked in.
+
+[Unit]
+Description=OnScreen Media Server
+After=network-online.target
+Wants=network-online.target
+# postgresql and redis/valkey are commonly local services; if they're
+# managed by systemd on the same box, list them here so OnScreen waits
+# for them. Harmless if they're container-hosted — systemd just skips.
+After=postgresql.service redis-server.service valkey-server.service
+
+[Service]
+Type=simple
+User=${RUN_USER}
+WorkingDirectory=${INSTALL_DIR}
+EnvironmentFile=${INSTALL_DIR}/.env
+# Prepend bundled ffmpeg to PATH so the encoder probe picks it up
+# before any system install. Mirror of start.sh.
+Environment="PATH=${INSTALL_DIR}/ffmpeg:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=${INSTALL_DIR}/server
+# Graceful shutdown: SIGTERM lets Go run its signal handler (close DB
+# pool, drain in-flight transcodes, etc.). 30 s is generous; bump if
+# you have long-running transcodes you don't want clipped.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+# Hardening — keeps the unit reasonable without going so far that
+# library scans of /mnt/* fail. Adjust if your media is somewhere
+# the default sandboxes block (e.g. NoNewPrivileges trips capabilities
+# you actually use).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+# stdout/stderr go to journald — view with: journalctl -u onscreen -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

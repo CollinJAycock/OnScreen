@@ -38,8 +38,29 @@ Set-Location $root
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
 
 if (-not $Version) {
-    try { $Version = (git describe --tags --always --dirty 2>$null).Trim() } catch { }
-    if (-not $Version) { $Version = "dev" }
+    # Source of truth: the VERSION file at the repo root. `git describe`
+    # is unreliable here because v2.0.0 was tagged on a sidetrack
+    # commit that isn't in main's history, so describe falls back to
+    # the old v1.1.2 tag and stamps installers with the wrong major.
+    # The VERSION file is a flat semantic-version string the team
+    # bumps explicitly when shipping; the short SHA + dirty marker
+    # are appended for traceability without changing the leading
+    # major.minor.
+    $verFile = Join-Path $root "VERSION"
+    if (Test-Path $verFile) {
+        $base = (Get-Content $verFile -Raw).Trim()
+        $sha = ""
+        try { $sha = (git rev-parse --short HEAD 2>$null).Trim() } catch { }
+        $dirty = ""
+        try {
+            $dirtyOut = (git status --porcelain 2>$null)
+            if ($dirtyOut) { $dirty = "-dirty" }
+        } catch { }
+        if ($sha) { $Version = "$base-$sha$dirty" } else { $Version = $base }
+    } else {
+        try { $Version = (git describe --tags --always --dirty 2>$null).Trim() } catch { }
+        if (-not $Version) { $Version = "dev" }
+    }
 }
 
 $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")

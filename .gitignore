@@ -51,5 +51,7 @@ installer/windows/.cache/
 installer/windows/.stage/
 installer/windows-msi/stage/
 installer/windows-msi/.stage/
+installer/linux/.cache/
+installer/linux/.stage/
 /dist/
 .playwright-mcp/

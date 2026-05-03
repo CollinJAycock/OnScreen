@@ -22,8 +22,23 @@ if (Test-Path internal\webui\dist) { Remove-Item -Recurse -Force internal\webui\
 Copy-Item -Recurse web\dist internal\webui\dist
 
 Write-Host "==> Building server..." -ForegroundColor Cyan
-try { $version = git describe --tags --always --dirty 2>$null } catch { }
-if (-not $version) { $version = "dev" }
+# Prefer the VERSION file at repo root — `git describe` falls back to
+# v1.1.2 because v2.0.0 was tagged on a sidetrack not in main's
+# history, which would stamp the wrong major on the dev binary.
+if (Test-Path "VERSION") {
+    $base = (Get-Content "VERSION" -Raw).Trim()
+    $sha = ""
+    try { $sha = (git rev-parse --short HEAD 2>$null).Trim() } catch { }
+    $dirty = ""
+    try {
+        $dirtyOut = (git status --porcelain 2>$null)
+        if ($dirtyOut) { $dirty = "-dirty" }
+    } catch { }
+    if ($sha) { $version = "$base-$sha$dirty" } else { $version = $base }
+} else {
+    try { $version = git describe --tags --always --dirty 2>$null } catch { }
+    if (-not $version) { $version = "dev" }
+}
 $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 go build -ldflags "-X main.version=$version -X main.buildTime=$buildTime" -o bin\server.exe .\cmd\server
 if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
