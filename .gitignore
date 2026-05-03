@@ -52,3 +52,4 @@ installer/windows/.stage/
 installer/windows-msi/stage/
 installer/windows-msi/.stage/
 /dist/
+.playwright-mcp/
