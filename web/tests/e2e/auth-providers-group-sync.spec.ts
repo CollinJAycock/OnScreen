@@ -381,6 +381,142 @@ test.describe('Auth providers — OIDC second-login dedup', () => {
   });
 });
 
+// ── LDAP group sync ───────────────────────────────────────────────────────
+
+const LLDAP_URL = process.env.LLDAP_URL ?? 'http://localhost:17170';
+const LLDAP_ADMIN_USER = process.env.LLDAP_ADMIN_USER ?? 'admin';
+const LLDAP_ADMIN_PASS = process.env.LLDAP_ADMIN_PASS ?? 'testpass';
+const LDAP_GROUP_DN_TEMPLATE =
+  process.env.LDAP_ADMIN_GROUP_DN ?? 'cn=onscreen-admins,ou=groups,dc=test,dc=onscreen,dc=local';
+
+async function lldapAdminToken(req: APIRequestContext): Promise<string> {
+  const r = await req.post(`${LLDAP_URL}/auth/simple/login`, {
+    data: { username: LLDAP_ADMIN_USER, password: LLDAP_ADMIN_PASS },
+  });
+  if (!r.ok()) throw new Error(`lldap admin login: ${r.status()} ${await r.text()}`);
+  return (await r.json()).token;
+}
+
+async function lldapGraphQL(req: APIRequestContext, token: string, query: string): Promise<any> {
+  const r = await req.post(`${LLDAP_URL}/api/graphql`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { query },
+  });
+  if (!r.ok()) throw new Error(`lldap graphql: ${r.status()} ${await r.text()}`);
+  const body = await r.json();
+  if (body.errors && !/already exists|duplicate|unique constraint|constraint failed/i.test(JSON.stringify(body.errors))) {
+    throw new Error(`lldap graphql errors: ${JSON.stringify(body.errors)}`);
+  }
+  return body.data;
+}
+
+test.describe('Auth providers — LDAP admin group sync', () => {
+  test.skip(!process.env.E2E_LDAP_GROUP_SYNC_ENABLED, 'set E2E_LDAP_GROUP_SYNC_ENABLED to run');
+  test.skip(!ONSCREEN_PASSWORD, 'set E2E_PASSWORD');
+
+  const ldapUser = process.env.E2E_LDAP_USERNAME ?? 'ldapuser';
+  const ldapPass = process.env.E2E_LDAP_PASSWORD ?? 'ldappass';
+
+  test('lldap group membership maps to is_admin=true on the JIT user', async ({ request }) => {
+    // ── lldap fixtures ───────────────────────────────────────────────
+    const lldapToken = await lldapAdminToken(request);
+    // Create the admin group (idempotent — lldap returns "already exists"
+    // on the second run, which lldapGraphQL absorbs).
+    await lldapGraphQL(
+      request,
+      lldapToken,
+      `mutation { createGroup(name: "onscreen-admins") { id displayName } }`,
+    );
+    // Look up the group's id (we always need it; lldap doesn't return id
+    // on the second create because the mutation errored).
+    const groupsData = await lldapGraphQL(
+      request,
+      lldapToken,
+      `{ groups { id displayName } }`,
+    );
+    const adminGroup = (groupsData.groups as any[]).find(
+      (g) => g.displayName === 'onscreen-admins',
+    );
+    expect(adminGroup, 'onscreen-admins group must exist after createGroup').toBeTruthy();
+    // Add ldapuser to the group.
+    await lldapGraphQL(
+      request,
+      lldapToken,
+      `mutation { addUserToGroup(userId: "${ldapUser}", groupId: ${adminGroup.id}) { ok } }`,
+    );
+
+    // ── OnScreen settings: tell LDAP where to look for the admin group
+    const adminToken = await onscreenAdminToken(request);
+    const settingsR = await request.patch('/api/v1/settings', {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: {
+        ldap: {
+          enabled: true,
+          host: 'localhost:3890',
+          start_tls: false,
+          use_ldaps: false,
+          skip_tls_verify: false,
+          bind_dn: 'uid=admin,ou=people,dc=test,dc=onscreen,dc=local',
+          bind_password: 'testpass',
+          user_search_base: 'ou=people,dc=test,dc=onscreen,dc=local',
+          user_filter: '(uid={username})',
+          username_attr: 'uid',
+          email_attr: 'mail',
+          admin_group_dn: LDAP_GROUP_DN_TEMPLATE,
+        },
+      },
+    });
+    expect(settingsR.status(), `settings PATCH: ${await settingsR.text()}`).toBeLessThan(300);
+
+    // Reset prior JIT user so we measure a clean re-provision.
+    const stale = await findOnScreenUser(request, adminToken, ldapUser);
+    if (stale) await deleteOnScreenUser(request, adminToken, stale.id);
+
+    try {
+      // ── LDAP login ────────────────────────────────────────────────
+      const loginR = await request.post('/api/v1/auth/ldap/login', {
+        data: { username: ldapUser, password: ldapPass },
+      });
+      expect(loginR.status(), `ldap login: ${await loginR.text()}`).toBe(200);
+
+      // ── Verify is_admin on the JIT user ──────────────────────────
+      const provisioned = await findOnScreenUser(request, adminToken, ldapUser);
+      expect(provisioned, `OnScreen must have JIT-created the LDAP user "${ldapUser}"`).not.toBeNull();
+      expect(
+        provisioned!.is_admin,
+        `lldap group "onscreen-admins" must map to is_admin=true on the JIT user`,
+      ).toBe(true);
+    } finally {
+      const u = await findOnScreenUser(request, adminToken, ldapUser);
+      if (u) await deleteOnScreenUser(request, adminToken, u.id);
+      // Restore OnScreen LDAP config back to the no-admin-group baseline
+      // so other LDAP tests in the suite that don't expect group sync
+      // see the original shape.
+      await request
+        .patch('/api/v1/settings', {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          data: {
+            ldap: {
+              enabled: true,
+              host: 'localhost:3890',
+              start_tls: false,
+              use_ldaps: false,
+              skip_tls_verify: false,
+              bind_dn: 'uid=admin,ou=people,dc=test,dc=onscreen,dc=local',
+              bind_password: 'testpass',
+              user_search_base: 'ou=people,dc=test,dc=onscreen,dc=local',
+              user_filter: '(uid={username})',
+              username_attr: 'uid',
+              email_attr: 'mail',
+              admin_group_dn: '',
+            },
+          },
+        })
+        .catch(() => {});
+    }
+  });
+});
+
 // ── SAML AuthnRequest single-use replay ───────────────────────────────────
 
 test.describe('Auth providers — SAML AuthnRequest single-use', () => {
