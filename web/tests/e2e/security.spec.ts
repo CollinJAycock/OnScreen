@@ -41,7 +41,14 @@ test.describe('Security re-probe', () => {
   });
 
   test('path traversal on /media/stream rejected', async ({ request }) => {
-    for (const probe of ['/media/stream/..', '/media/stream/..%2F..%2Fetc%2Fpasswd']) {
+    // Only encoded variants — a bare `/media/stream/..` is normalized
+    // client-side (curl, fetch, Playwright's request fixture all collapse
+    // `..`) so it never reaches the server in that form. Encoded slashes
+    // survive normalization and are the meaningful traversal vector.
+    for (const probe of [
+      '/media/stream/..%2F..%2Fetc%2Fpasswd',
+      '/media/stream/%2e%2e%2f%2e%2e%2fetc%2fpasswd',
+    ]) {
       const r = await request.get(probe, { maxRedirects: 0 });
       expect.soft([400, 401, 403, 404], `${probe} status`).toContain(r.status());
       expect.soft(r.status(), probe).not.toBe(200);
@@ -193,9 +200,13 @@ test.describe('Security — XSS reflection', () => {
     }
 
     // Browser check: navigate to search with the payload as a query param
-    // and assert the script was never executed.
-    await page.goto(`/search?q=${encodeURIComponent(payload)}`);
-    await page.waitForLoadState('networkidle');
+    // and assert the script was never executed. Use 'domcontentloaded'
+    // not 'networkidle' — the notifications SSE stream stays open and
+    // 'networkidle' would time out forever.
+    await page.goto(`/search?q=${encodeURIComponent(payload)}`, { waitUntil: 'domcontentloaded' });
+    // Brief settle: any reflected <script> would execute synchronously
+    // during HTML parse, but allow a tick for any async hydration too.
+    await page.waitForTimeout(500);
     const fired = await page.evaluate(() => (window as any).__xss_fired);
     expect(fired, 'Script tag must not execute — XSS reflected in search route').toBe(false);
   });
@@ -207,9 +218,12 @@ test.describe('Security — admin endpoint authorization', () => {
   test('unauthenticated request to admin endpoints returns 401', async ({ request }) => {
     // These endpoints require admin privileges. Without any auth header the
     // server must return 401 (or 403). A 200 with no auth is a critical bug.
+    // Each path here exists in the router — adding a bogus path would just
+    // return 404 and tell us nothing.
     const adminEndpoints = [
       { method: 'GET', path: '/api/v1/users' },
-      { method: 'GET', path: '/api/v1/admin/system' },
+      { method: 'GET', path: '/api/v1/admin/logs' },
+      { method: 'GET', path: '/api/v1/admin/tasks' },
       { method: 'POST', path: '/api/v1/libraries' },
     ];
     for (const { method, path } of adminEndpoints) {

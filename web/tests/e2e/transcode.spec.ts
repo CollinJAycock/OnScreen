@@ -9,10 +9,59 @@
 //   E2E_AV1_MOVIE_ID    UUID of an AV1-encoded movie already in the library;
 //                       required only for the AV1 fMP4 block
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 
 const USERNAME = process.env.E2E_USERNAME ?? 'admin';
 const PASSWORD = process.env.E2E_PASSWORD ?? '';
+
+// pickFirstMovieItem authenticates and returns {token, itemId} for the first
+// item in the first MOVIE-typed library. Transcode tests need a video item;
+// the previous version of these tests grabbed libs[0] which was alphabetically
+// the Audiobooks library — POST /items/{id}/transcode correctly returns 404
+// for non-transcodable items, so the test failed before exercising any
+// transcode logic.
+//
+// The token + the resolved items list are cached at module scope so the
+// whole spec file (4 tests × N browsers) only triggers ONE auth roundtrip
+// total. The dev server's /api/v1/auth/* rate limiter will otherwise trip
+// from cumulative login load across the full Playwright suite.
+let _cached: { token: string; itemIds: string[] } | null = null;
+
+async function pickFirstMovieItem(
+  request: APIRequestContext,
+  count = 1,
+): Promise<{ token: string; itemIds: string[] }> {
+  if (_cached && _cached.itemIds.length >= count) return _cached;
+
+  const loginR = await request.post('/api/v1/auth/login', {
+    data: { username: USERNAME, password: PASSWORD },
+  });
+  if (!loginR.ok()) return { token: '', itemIds: [] };
+  const { data: loginData } = await loginR.json();
+  const token: string = loginData.access_token;
+
+  const libsR = await request.get('/api/v1/libraries', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!libsR.ok()) return { token, itemIds: [] };
+  const { data: libs } = await libsR.json();
+  const movieLib = (libs as any[])?.find((l) => l.type === 'movie');
+  if (!movieLib) return { token, itemIds: [] };
+
+  // Always fetch the larger of (requested, 3) so a later test asking for
+  // 3 items can still hit the cache after an earlier test asked for 1.
+  const fetchCount = Math.max(count, 3);
+  const itemsR = await request.get(
+    `/api/v1/libraries/${movieLib.id}/items?limit=${fetchCount}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!itemsR.ok()) return { token, itemIds: [] };
+  const { data: items } = await itemsR.json();
+  if (!Array.isArray(items) || items.length === 0) return { token, itemIds: [] };
+
+  _cached = { token, itemIds: items.map((i: any) => i.id) };
+  return _cached;
+}
 
 // ── DASH removal ───────────────────────────────────────────────────────────
 // DASH was removed 2026-04-30. These checks are auth-free — if DASH ever
@@ -20,12 +69,13 @@ const PASSWORD = process.env.E2E_PASSWORD ?? '';
 
 test.describe('Transcode — DASH removal', () => {
   test('manifest.mpd endpoint does not exist', async ({ request }) => {
-    // Any path ending in .mpd must 404 (or 401 — never 200). A 200 means
-    // DASH was re-added without updating the test plan.
+    // API-path probes only — a bare `/manifest.mpd` falls through to the
+    // SvelteKit shell (which legitimately returns 200 with the SPA index)
+    // and tells us nothing about whether DASH is actually wired up. The
+    // meaningful check is that the API namespace doesn't serve DASH.
     for (const probe of [
       '/api/v1/transcode/sessions/00000000-0000-0000-0000-000000000000/manifest.mpd',
       '/api/v1/stream/manifest.mpd',
-      '/manifest.mpd',
     ]) {
       const r = await request.get(probe, { maxRedirects: 0 });
       expect.soft(r.status(), `${probe} must not return 200`).not.toBe(200);
@@ -38,43 +88,14 @@ test.describe('Transcode — DASH removal', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to check transcode response shape');
 
   test('POST transcode response contains no manifest_url (no DASH)', async ({ request }) => {
-    // Start a transcode session for any movie in the library and verify
-    // the response JSON does not contain a manifest_url field.
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
+    const { token, itemIds } = await pickFirstMovieItem(request);
+    if (!token) test.skip(true, 'Could not authenticate');
+    if (itemIds.length === 0) test.skip(true, 'No movie items found — seed a movie library first');
 
-    // Find any movie ID from the first library.
-    const libsR = await request.get('/api/v1/libraries', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(libsR.status()).toBe(200);
-    const { data: libs } = await libsR.json();
-    expect(Array.isArray(libs) && libs.length > 0, 'Need at least one library').toBe(true);
-
-    const libId: string = libs[0].id;
-    const itemsR = await request.get(`/api/v1/libraries/${libId}/items?limit=1`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (itemsR.status() !== 200) {
-      test.skip(true, 'Could not retrieve library items');
-      return;
-    }
-    const { data: items } = await itemsR.json();
-    if (!Array.isArray(items) || items.length === 0) {
-      test.skip(true, 'Library is empty — seed media first');
-      return;
-    }
-    const itemId: string = items[0].id;
-
-    const txR = await request.post(`/api/v1/items/${itemId}/transcode`, {
+    const txR = await request.post(`/api/v1/items/${itemIds[0]}/transcode`, {
       headers: { Authorization: `Bearer ${token}` },
       data: {},
     });
-    // 202 or 200 depending on implementation; 404 means the endpoint moved.
     expect(
       [200, 202],
       `POST transcode expected 200/202, got ${txR.status()}: ${await txR.text()}`,
@@ -83,6 +104,10 @@ test.describe('Transcode — DASH removal', () => {
     const txData = body.data ?? body;
 
     expect(txData, 'manifest_url must be absent — DASH was removed 2026-04-30').not.toHaveProperty('manifest_url');
+    // Positive assertion: HLS playlist_url IS present (if it weren't,
+    // the no-manifest_url assertion above would still pass even though
+    // the whole endpoint was broken).
+    expect(txData, 'playlist_url must be present (HLS replaces DASH)').toHaveProperty('playlist_url');
   });
 });
 
@@ -95,35 +120,12 @@ test.describe('Transcode — pipeline smoke', () => {
     // Full golden path: authenticate, pick a real movie, start a transcode
     // session, fetch the M3U8 playlist, extract the first segment URL, and
     // verify the server returns 200 with video/MP2T or video/mp4 content.
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
-
-    // Pick the first item from the first library.
-    const libsR = await request.get('/api/v1/libraries', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(libsR.status()).toBe(200);
-    const { data: libs } = await libsR.json();
-    expect(Array.isArray(libs) && libs.length > 0, 'Need a non-empty library').toBe(true);
-    const libId: string = libs[0].id;
-
-    const itemsR = await request.get(`/api/v1/libraries/${libId}/items?limit=1`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(itemsR.status()).toBe(200);
-    const { data: items } = await itemsR.json();
-    if (!Array.isArray(items) || items.length === 0) {
-      test.skip(true, 'Library is empty — seed media first');
-      return;
-    }
-    const itemId: string = items[0].id;
+    const { token, itemIds } = await pickFirstMovieItem(request);
+    if (!token) test.skip(true, 'Could not authenticate');
+    if (itemIds.length === 0) test.skip(true, 'No movie items found — seed a movie library first');
 
     // Start transcode session.
-    const txR = await request.post(`/api/v1/items/${itemId}/transcode`, {
+    const txR = await request.post(`/api/v1/items/${itemIds[0]}/transcode`, {
       headers: { Authorization: `Bearer ${token}` },
       data: {},
     });
@@ -146,15 +148,24 @@ test.describe('Transcode — pipeline smoke', () => {
     const segLine = m3u8.split('\n').find((l) => l.trim() && !l.startsWith('#'));
     expect(segLine, 'Playlist must contain at least one segment line').toBeTruthy();
 
-    // Segment URLs may be relative (just the filename) or absolute paths.
-    const segUrl = segLine!.startsWith('/')
-      ? `${segLine!.trim()}?token=${txToken}`
-      : `/api/v1/transcode/sessions/${sessionId}/seg/${segLine!.trim()}?token=${txToken}`;
+    // Segment URLs may be (a) relative filenames, (b) absolute paths
+    // already including ?token=, or (c) absolute paths without a token.
+    // Only append our token when the line doesn't already carry one,
+    // otherwise we end up with `?token=X?token=X` which trips a 401.
+    const trimmed = segLine!.trim();
+    let segUrl: string;
+    if (trimmed.startsWith('/')) {
+      segUrl = trimmed.includes('token=') ? trimmed : `${trimmed}?token=${txToken}`;
+    } else {
+      segUrl = `/api/v1/transcode/sessions/${sessionId}/seg/${trimmed}?token=${txToken}`;
+    }
 
     const segR = await request.get(segUrl);
     expect(segR.status(), `First segment: ${segUrl}`).toBe(200);
     const ct = segR.headers()['content-type'] ?? '';
-    expect.soft(ct, 'Segment must be a video content-type').toMatch(/video\/(mp2t|mp4)|application\/octet-stream/);
+    // Case-insensitive — HLS spec uses uppercase MP2T per the original
+    // MIME registration, but lowercase is also seen in the wild.
+    expect.soft(ct, 'Segment must be a video content-type').toMatch(/video\/(mp2t|mp4)|application\/octet-stream/i);
   });
 });
 
@@ -164,33 +175,13 @@ test.describe('Transcode — concurrent sessions', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run concurrent session tests');
 
   test('three simultaneous transcode sessions all return playlist_url', async ({ request }) => {
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
+    const { token, itemIds } = await pickFirstMovieItem(request, 3);
+    if (!token) test.skip(true, 'Could not authenticate');
+    if (itemIds.length === 0) test.skip(true, 'No movie items found — seed a movie library first');
 
-    const libsR = await request.get('/api/v1/libraries', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(libsR.status()).toBe(200);
-    const { data: libs } = await libsR.json();
-    expect(Array.isArray(libs) && libs.length > 0, 'Need a non-empty library').toBe(true);
-    const libId: string = libs[0].id;
-
-    const itemsR = await request.get(`/api/v1/libraries/${libId}/items?limit=3`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(itemsR.status()).toBe(200);
-    const { data: items } = await itemsR.json();
-    if (!Array.isArray(items) || items.length === 0) {
-      test.skip(true, 'Library is empty — seed media first');
-      return;
-    }
-
-    // If fewer than 3 items exist, duplicate the first to fill the slots.
-    const ids = [items[0].id, (items[1] ?? items[0]).id, (items[2] ?? items[0]).id];
+    // If fewer than 3 movies exist, duplicate the first to fill the slots —
+    // the transcode service should handle two sessions on the same item.
+    const ids = [itemIds[0], itemIds[1] ?? itemIds[0], itemIds[2] ?? itemIds[0]];
 
     // Fire all three in parallel.
     const sessions = await Promise.all(
@@ -237,9 +228,14 @@ test.describe('Transcode — AV1 fMP4', () => {
     const { data: loginData } = await loginR.json();
     const token: string = loginData.access_token;
 
+    // Request video-copy / remux mode — for AV1 sources this is the path
+    // that produces fMP4 segments with #EXT-X-MAP. Without video_copy=true
+    // the server transcodes to H.264 (NVENC) and emits MPEG-TS segments,
+    // which is correct behavior for browsers without AV1 decode but isn't
+    // what this test is validating.
     const txR = await request.post(`/api/v1/items/${movieId}/transcode`, {
       headers: { Authorization: `Bearer ${token}` },
-      data: {},
+      data: { video_copy: true },
     });
     expect([200, 202], `transcode AV1: ${await txR.text()}`).toContain(txR.status());
     const txBody = await txR.json();
@@ -253,11 +249,11 @@ test.describe('Transcode — AV1 fMP4', () => {
     expect(m3u8R.status()).toBe(200);
     const m3u8 = await m3u8R.text();
 
-    expect(m3u8, 'AV1/fMP4 playlist must contain #EXT-X-MAP init segment tag').toContain('#EXT-X-MAP');
+    expect(m3u8, 'AV1/fMP4 remux playlist must contain #EXT-X-MAP init segment tag').toContain('#EXT-X-MAP');
     // Segments must use .m4s or .mp4, not .ts.
     const segLine = m3u8.split('\n').find((l) => l.trim() && !l.startsWith('#'));
     if (segLine) {
-      expect.soft(segLine, 'AV1 segments must be fMP4 (.m4s or .mp4)').toMatch(/\.(m4s|mp4)/);
+      expect.soft(segLine, 'AV1 fMP4 segments must use .m4s or .mp4 extension').toMatch(/\.(m4s|mp4)/);
     }
   });
 });

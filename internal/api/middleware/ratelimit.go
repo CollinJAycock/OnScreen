@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/onscreen/onscreen/internal/auth"
@@ -17,21 +19,57 @@ type RateLimitConfig struct {
 	Window time.Duration
 }
 
+// Production defaults. The E2E test suite easily exceeds the auth +
+// transcode caps during a full Playwright run, so both are overridable via
+// env vars for local dev / CI:
+//
+//   OS_AUTH_RATE_LIMIT_PER_MIN            overrides AuthLimit
+//   OS_TRANSCODE_START_RATE_LIMIT_PER_MIN overrides TranscodeStartLimit
+//
+// Defaults stay tight so production is unaffected.
+const (
+	authLimitDefault           = 10
+	transcodeStartLimitDefault = 10
+)
+
 var (
-	// AuthLimit applies to /auth/login — 10 req/min per IP.
-	AuthLimit = RateLimitConfig{Limit: 10, Window: time.Minute}
+	// AuthLimit applies to /auth/login — 10 req/min per IP by default.
+	// Loose enough for legitimate human users (login, password change, MFA),
+	// tight enough that brute-force attempts trip 429 quickly.
+	AuthLimit = RateLimitConfig{
+		Limit:  resolveLimit("OS_AUTH_RATE_LIMIT_PER_MIN", authLimitDefault),
+		Window: time.Minute,
+	}
 	// SessionLimit applies to all authenticated endpoints — 1000 req/min per token.
 	SessionLimit = RateLimitConfig{Limit: 1000, Window: time.Minute}
 	// TranscodeStartLimit caps how often a session can spin up new ffmpeg
 	// transcode jobs. Each Start kicks off a hardware encoder and writes a
 	// segment directory; a runaway client (or a bug in the player) shouldn't
 	// be able to DoS the host by hammering the endpoint.
-	TranscodeStartLimit = RateLimitConfig{Limit: 10, Window: time.Minute}
+	TranscodeStartLimit = RateLimitConfig{
+		Limit:  resolveLimit("OS_TRANSCODE_START_RATE_LIMIT_PER_MIN", transcodeStartLimitDefault),
+		Window: time.Minute,
+	}
 	// DiscoverLimit caps TMDB-backed search hits per session. The Discover
 	// endpoint proxies every keystroke to TMDB; even with debouncing in the
 	// UI a noisy client could burn the operator's TMDB budget.
 	DiscoverLimit = RateLimitConfig{Limit: 60, Window: time.Minute}
 )
+
+// resolveLimit reads the named env var at package init. Falls back to the
+// supplied default on any parse failure or empty value so a typo in the env
+// can't accidentally disable a limiter.
+func resolveLimit(envVar string, fallback int) int {
+	raw := os.Getenv(envVar)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
 
 // RateLimit returns a middleware that enforces the given rate limit config.
 // keyFn extracts the rate limit key from the request (e.g. client IP or session hash).
