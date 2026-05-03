@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: OnScreen API
-  version: "1.0.0"
+  version: "2.1.0-dev"
   description: |
     HTTP API for the OnScreen media server.
 
@@ -20,8 +20,8 @@ info:
   license:
     name: AGPL-3.0
 servers:
-  - url: http://localhost:8080
-    description: Local development server
+  - url: http://localhost:7070
+    description: Local development server (default OnScreen API port)
   - url: https://onscreen.example.com
     description: Production deployment (replace with your origin)
 
@@ -680,6 +680,60 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/ItemDetail' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update item metadata (admin)
+      tags: [Items]
+      description: |
+        Admin-curated metadata editor. Intentionally narrow: only the
+        three fields below are editable, because they're the only
+        ones that don't have an external metadata agent owning them
+        (home_video and photo libraries have no TMDB-equivalent, so
+        the user owns title / summary / taken_at outright). Any other
+        field — genres, rating, fanart, **content_rating**, etc. —
+        belongs to the TMDB-enriched flow and has its own Fix Match
+        path. Unknown fields are rejected with HTTP 400
+        (DisallowUnknownFields) so a misnamed key like
+        `content_rating` returns a clear error instead of silently
+        being dropped.
+
+        For home_video items, setting `title` also renames the file
+        on disk (sanitized + collision-suffixed) and stamps the
+        file's mtime to `taken_at`, so user edits travel with the
+        file across tools (Finder, Photos.app, Plex/Jellyfin
+        scanners) instead of being locked into OnScreen's DB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:    { type: string, description: 'Empty string is rejected with 400.' }
+                summary:  { type: string, description: 'Empty string clears the summary.' }
+                taken_at:
+                  type: string
+                  description: |
+                    RFC3339 timestamp ("2024-04-15T00:00:00Z") or
+                    bare YYYY-MM-DD. Empty string clears the date.
+                    For home_video items, this also drives the file
+                    mtime stamp so external tools sort by recording
+                    date rather than scan date.
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ItemDetail' }
+        '400':
+          description: 'Invalid body, empty title, or unknown field.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/items/{id}/children:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -1056,6 +1110,24 @@ paths:
     post:
       summary: Start a HLS transcode session
       tags: [Transcode]
+      description: |
+        Spins up an HLS session for the item. The server picks one of
+        three decisions: **direct** (no session, client plays the
+        file directly), **remux** (video stream copied, audio
+        re-encoded if needed — this is the path AV1 sources take
+        with `video_copy:true`), or **transcode** (full re-encode).
+        The response shape is the same regardless, but `direct` is
+        rare from this endpoint — typically the client checks the
+        item's file metadata first and skips the session start
+        entirely.
+
+        Body may be an empty object `{}` for "use defaults". For an
+        AV1 source on an AV1-capable client, send `{"video_copy": true}`
+        to get the fMP4 remux path with `#EXT-X-MAP` + `.m4s`
+        segments instead of H.264 NVENC/QSV/AMF re-encode.
+
+        Subject to the per-session `TranscodeStartLimit` rate limit
+        (default 10/min, override via `OS_TRANSCODE_START_RATE_LIMIT_PER_MIN`).
       requestBody:
         required: true
         content:
@@ -1063,7 +1135,7 @@ paths:
             schema:
               $ref: '#/components/schemas/TranscodeStartRequest'
       responses:
-        '201':
+        '200':
           description: Session created.
           content:
             application/json:
@@ -1071,6 +1143,10 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/TranscodeStartResponse' }
+        '404':
+          description: 'Item not found, or item type is not transcodable (e.g. audiobook / book / photo).'
+        '429':
+          description: 'TranscodeStartLimit exceeded for this session.'
 
   /api/v1/transcode/sessions/{sid}:
     parameters: [{ in: path, name: sid, required: true, schema: { type: string } }]
@@ -1627,17 +1703,46 @@ paths:
     put:
       summary: Set max content rating for a user (admin)
       tags: [Users]
+      description: |
+        The ceiling is enforced server-side on every user-facing
+        aggregation surface (`/api/v1/hub` including the trending
+        row, `/api/v1/search`, `/collections/{id}/items`,
+        `/items/{id}/children`, `/history`). Items above the
+        ceiling are filtered out at the SQL layer, not just hidden
+        in the UI. Setting the ceiling on the user takes effect on
+        their NEXT login — the value is baked into the access-token
+        claims at issuance.
+
+        Field name is **`max_content_rating`** (not
+        `content_rating`). Unknown fields return HTTP 400
+        (DisallowUnknownFields) — without that, a wrong key would
+        decode into `null` and silently CLEAR the ceiling, which
+        looked like a successful set from the caller's perspective.
+
+        Rank ordering (lower is more restrictive): G/TV-Y/TV-G=0,
+        PG/TV-Y7/TV-PG=1, PG-13/TV-14=2, R/NC-17/TV-MA=3, NR/empty=4.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [max_content_rating]
               properties:
-                max_content_rating: { type: string, description: 'e.g. PG-13, TV-MA, or "" to clear.' }
+                max_content_rating:
+                  type: string
+                  nullable: true
+                  description: |
+                    e.g. "PG-13", "TV-MA", "" or null to clear the
+                    ceiling (user sees everything). Omit the field
+                    entirely to leave the current value untouched.
       responses:
         '204': { description: Set. }
+        '400':
+          description: 'Invalid body or unknown field (e.g. "content_rating" instead of "max_content_rating").'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/users/{id}/libraries:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -1998,6 +2103,46 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+
+  # ── Admin observability ───────────────────────────────────────────────────
+  /api/v1/admin/logs:
+    get:
+      summary: Read recent server log entries (admin)
+      tags: [Admin]
+      description: |
+        v2.1 (Track J). Returns recent slog records from the
+        process-local 2000-entry ring buffer attached to the slog
+        handler chain at boot. No file tail, no shell. Useful when
+        the server runs in a container the operator can't easily
+        exec into (TrueNAS Apps, Cloud Run). Newest-last ordering.
+      parameters:
+        - in: query
+          name: level
+          schema: { type: string, enum: [debug, info, warn, warning, error] }
+          description: Minimum slog level to include (default info).
+        - in: query
+          name: limit
+          schema: { type: integer, default: 200, minimum: 1, maximum: 2000 }
+          description: Max entries to return (default 200, hard cap 2000).
+      responses:
+        '200':
+          description: Log entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time:  { type: string, format: date-time }
+                        level: { type: string, enum: [DEBUG, INFO, WARN, ERROR] }
+                        msg:   { type: string }
+                        attrs: { type: object, additionalProperties: true, description: 'Structured attrs (request_id, library_id, err, etc). Errors are stringified for diagnostic readability.' }
+        '503':
+          description: Log buffer not configured on this build.
 
   # ── Plugins (admin) ────────────────────────────────────────────────────────
   /api/v1/admin/plugins:
@@ -2913,9 +3058,22 @@ components:
           description: Server silently drops to false on public libraries (is_private=false).
     LibraryUpdate:
       type: object
+      description: |
+        True PATCH semantics (since 2026-05-03): every field is
+        optional and falls back to the current row's value. Sending
+        `{"is_private": true}` alone is sufficient to flip the flag;
+        no need to round-trip the whole library. Unknown fields are
+        rejected with HTTP 400 (DisallowUnknownFields) so a typo
+        like `is-private` returns a clear error instead of silently
+        being dropped.
       properties:
         name:       { type: string }
         scan_paths: { type: array, items: { type: string } }
+        agent:      { type: string, description: 'Metadata agent slug (e.g. tmdb, tvdb, musicbrainz, openlibrary, none).' }
+        language:   { type: string, description: 'ISO 639-1 code, e.g. "en" / "ja". Used by the metadata agent.' }
+        scan_interval_minutes:        { type: integer, description: 'Minutes between auto-scans. Mutually exclusive with scan_interval_ns; minutes wins if both set.' }
+        scan_interval_ns:             { type: integer, format: int64, description: 'Scan interval in nanoseconds (Go time.Duration).' }
+        metadata_refresh_interval_ns: { type: integer, format: int64, description: 'Metadata refresh interval in nanoseconds (Go time.Duration).' }
         is_private:
           type: boolean
           nullable: true
@@ -2999,6 +3157,24 @@ components:
       properties:
         id:                { type: string, format: uuid }
         stream_url:        { type: string }
+        stream_token:
+          type: string
+          description: |
+            v2.1. PASETO v4.local token, 24 h TTL, file_id-bound, with
+            `purpose="stream"` claim. Native players (ExoPlayer, Roku
+            Video, Tizen AVPlay, mpv) bypass the OkHttp / fetch token-
+            refresh paths, so a 1 h access token used to expire mid-
+            stream and surface as ERROR_CODE_IO_BAD_HTTP_STATUS on the
+            next range request — this token replaces it on
+            `?token=…` query auth (no Bearer header on the asset
+            routes). Boundaries enforced server-side: (1) the embedded
+            file_id claim must match the URL `{id}`, so a leaked URL
+            can't be repurposed across files; (2) the purpose=stream
+            claim is rejected on `/api/v1/*` Bearer auth, so a leaked
+            stream URL grants only file-scoped read, not general API
+            access. A fresh token is minted on every `/items/{id}`
+            response (no server-side caching) so clients can refresh
+            without a server restart.
         container:         { type: string, nullable: true }
         video_codec:       { type: string, nullable: true }
         audio_codec:       { type: string, nullable: true }
@@ -3100,10 +3276,60 @@ components:
         thumb_path:  { type: string, nullable: true }
     Hub:
       type: object
+      description: |
+        Home-hub aggregation. v2.1 split Continue-Watching into three
+        kinds (TV / movies / other) so clients can render the per-
+        kind rows the test plan + native clients expect. The legacy
+        combined `continue_watching` is retained on the response for
+        older clients; new clients should prefer the per-kind arrays.
+        `cooccurrence` / `because_you_watched` were built then
+        removed before v2.1 ship — the response will not surface
+        them; the absence is locked behind an e2e contract test.
+        Every hub section honours the caller's `max_content_rating`
+        ceiling (set via PUT /users/{id}/content-rating).
       properties:
-        continue_watching: { type: array, items: { $ref: '#/components/schemas/ChildItem' } }
-        recently_added:    { type: array, items: { $ref: '#/components/schemas/MediaItem' } }
-        on_deck:           { type: array, items: { $ref: '#/components/schemas/ChildItem' } }
+        continue_watching:
+          type: array
+          items: { $ref: '#/components/schemas/ChildItem' }
+          description: Legacy combined feed (movies + episodes interleaved). Kept for older clients.
+        continue_watching_tv:
+          type: array
+          items: { $ref: '#/components/schemas/ChildItem' }
+          description: |
+            v2.1. TV-only continue-watching, deduped to one tile per
+            series (the most recently watched episode).
+        continue_watching_movies:
+          type: array
+          items: { $ref: '#/components/schemas/ChildItem' }
+          description: v2.1. Movies-only continue-watching.
+        continue_watching_other:
+          type: array
+          items: { $ref: '#/components/schemas/ChildItem' }
+          description: v2.1. Audiobooks / podcasts / home video / other types.
+        recently_added:
+          type: array
+          items: { $ref: '#/components/schemas/MediaItem' }
+        recently_added_by_library:
+          type: array
+          items: { $ref: '#/components/schemas/HubLibraryRow' }
+          description: |
+            v2.1. One row per visible library, latest-N items each.
+            Lets clients render a "Recently added in <Library>"
+            shelf without a separate per-library API call.
+        trending:
+          type: array
+          items: { $ref: '#/components/schemas/ChildItem' }
+          description: |
+            v2.1. Global "what others are watching" row over the last
+            7 days. Same content for every user (no personalisation),
+            filtered by the caller's library access + parental
+            ceiling. 30 raw rows narrowed to 12 after access-filter.
+    HubLibraryRow:
+      type: object
+      properties:
+        library_id:   { type: string, format: uuid }
+        library_name: { type: string }
+        items:        { type: array, items: { $ref: '#/components/schemas/ChildItem' } }
     WatchHistoryItem:
       type: object
       properties:
@@ -3185,19 +3411,39 @@ components:
     TranscodeStartRequest:
       type: object
       properties:
-        file_id:       { type: string, format: uuid }
-        max_height:    { type: integer }
-        max_bitrate:   { type: integer, format: int64 }
-        prefer_hevc:   { type: boolean }
-        audio_index:   { type: integer }
+        file_id:        { type: string, format: uuid, description: 'Optional — defaults to the item''s primary file.' }
+        max_height:     { type: integer }
+        max_bitrate:    { type: integer, format: int64 }
+        prefer_hevc:    { type: boolean }
+        prefer_av1:     { type: boolean, description: 'When the source is AV1 and the client supports AV1, prefer the av01 fMP4 remux path over an H.264 transcode.' }
+        video_copy:
+          type: boolean
+          description: |
+            v2.1. Force the remux path (video stream copied unchanged,
+            audio re-encoded if needed). Required for AV1 source remux —
+            without it the server picks H.264 NVENC/QSV/AMF re-encode
+            for browser compat, even on AV1-capable clients. The AV1
+            fMP4 e2e test sets this true to validate the
+            `#EXT-X-MAP` + `.m4s` segment shape.
+        audio_index:    { type: integer, description: 'Source audio stream index. Re-issuing with a different index from the same position drives the in-player audio picker.' }
         subtitle_index: { type: integer }
+        position_ms:    { type: integer, format: int64, description: 'Resume position. Used by the audio-picker re-issue path so the new session lands at the same point.' }
+        start_offset_sec: { type: integer, description: 'Same intent as position_ms, in seconds. The old wire shape — clients should prefer position_ms.' }
     TranscodeStartResponse:
       type: object
+      description: |
+        DASH was removed 2026-04-30; this response **does not** contain
+        a `manifest_url` field. The contract is HLS-only: callers use
+        `playlist_url` + `token` to fetch the M3U8 and segments. Locked
+        behind an e2e regression test that asserts `playlist_url` is
+        present AND `manifest_url` is absent.
       properties:
-        session_id:   { type: string }
-        playlist_url: { type: string }
-        token:        { type: string }
-        decision:     { type: string, enum: [direct, transcode] }
+        session_id:   { type: string, format: uuid }
+        playlist_url: { type: string, description: 'Already includes ?token=… — clients pass the URL through unchanged to fetch the M3U8.' }
+        token:        { type: string, description: 'Per-session token for segment fetches. Different from the per-file stream_token; this one is bound to the session id, not a file id.' }
+        start_offset_sec:    { type: integer, description: 'The actual position the session opened at — may be clamped to the nearest keyframe.' }
+        seg0_audio_gap_sec:  { type: number, format: float, description: 'Gap between video start and first audio packet in segment 0; used by the player to compensate for mid-stream-seek audio-sync drift.' }
+        decision:     { type: string, enum: [direct, remux, transcode], description: 'How the server decided to serve. `direct` = no session needed (browser plays the file); `remux` = video stream copied; `transcode` = full re-encode.' }
 
     # ── Notifications / Sessions ───────────────────────────────────────────
     Notification:
