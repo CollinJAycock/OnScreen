@@ -168,19 +168,55 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 			}
 			year := intPtrFrom32(row.Year)
 			offset := row.ViewOffset
+			title := row.Title
+			displayType := row.Type
+			displayID := row.ID.String()
+			poster := row.FallbackPoster
+			fanart := row.FanartPath
+			thumb := row.ThumbPath
+			// Roll an episode row up to its show ancestor: the tile
+			// renders the show (matches Plex Continue Watching TV)
+			// and the click target navigates to the show detail page
+			// instead of jumping into a specific episode the user may
+			// not have started. view_offset_ms / duration_ms stay the
+			// episode's so the tile's progress bar still reflects
+			// "where I am in the next episode".
+			if row.ShowID.Valid {
+				displayID = uuid.UUID(row.ShowID.Bytes).String()
+				displayType = "show"
+				if row.ShowTitle != nil {
+					title = *row.ShowTitle
+				}
+				if row.ShowYear != nil {
+					y := int(*row.ShowYear)
+					year = &y
+				}
+				if row.ShowPosterPath != nil {
+					poster = row.ShowPosterPath
+				}
+				if row.ShowFanartPath != nil {
+					fanart = row.ShowFanartPath
+				}
+				if row.ShowThumbPath != nil {
+					thumb = row.ShowThumbPath
+				}
+			}
 			item := HubItem{
-				ID:           row.ID.String(),
-				Title:        row.Title,
-				Type:         row.Type,
+				ID:           displayID,
+				Title:        title,
+				Type:         displayType,
 				Year:         year,
-				PosterPath:   row.FallbackPoster,
-				FanartPath:   row.FanartPath,
-				ThumbPath:    row.ThumbPath,
+				PosterPath:   poster,
+				FanartPath:   fanart,
+				ThumbPath:    thumb,
 				ViewOffsetMS: &offset,
 				DurationMS:   row.DurationMs,
 				UpdatedAt:    timestamptzToMilli(row.UpdatedAt),
 			}
 			out.ContinueWatching = append(out.ContinueWatching, item)
+			// Dispatch on the original row.Type (not displayType) so
+			// orphan episodes whose show-ancestor lookup failed still
+			// land in the TV bucket rather than Other.
 			switch row.Type {
 			case "episode":
 				out.ContinueWatchingTV = append(out.ContinueWatchingTV, item)

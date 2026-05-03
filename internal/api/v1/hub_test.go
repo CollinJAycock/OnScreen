@@ -452,6 +452,125 @@ func TestHub_Get_PerLibraryRecentlyAdded(t *testing.T) {
 	}
 }
 
+// TestHub_Get_CW_EpisodeRollsUpToShow locks the v2.1 Continue Watching
+// TV behaviour: episode rows surfaced by ListContinueWatching carry
+// the show ancestor's id / title / type / poster on a dedicated
+// show_* set of columns, and the handler swaps them into the
+// displayed item so the tile renders the show and the click target
+// navigates to the show detail page (not the specific episode).
+// view_offset_ms is preserved from the episode so the tile's
+// progress bar still reflects "where I am in the next episode".
+func TestHub_Get_CW_EpisodeRollsUpToShow(t *testing.T) {
+	episodeID := uuid.New()
+	showID := uuid.New()
+	libraryID := uuid.New()
+	showTitle := "Severance"
+	showPoster := "/posters/severance.jpg"
+	showFanart := "/fanart/severance.jpg"
+	showThumb := "/thumbs/severance.jpg"
+	showYear := int32(2022)
+	episodeYear := int32(2022)
+	offsetMs := int64(1234567)
+	episodePoster := "/posters/episode-still.jpg"
+
+	db := &mockHubDB{
+		cwRows: []gen.ListContinueWatchingRow{
+			{
+				ID:        episodeID,
+				LibraryID: libraryID,
+				Title:     "S2 E5: Trojan's Horse",
+				Type:      "episode",
+				Year:      &episodeYear,
+				// Episode's own poster (rare but possible — may differ
+				// from the show poster). Should be hidden by the swap.
+				PosterPath: &episodePoster,
+				ViewOffset: offsetMs,
+				UpdatedAt:  pgtype.Timestamptz{Valid: false},
+				// Show rollup payload from the LEFT JOIN.
+				ShowID:         pgtype.UUID{Bytes: showID, Valid: true},
+				ShowTitle:      &showTitle,
+				ShowYear:       &showYear,
+				ShowPosterPath: &showPoster,
+				ShowFanartPath: &showFanart,
+				ShowThumbPath:  &showThumb,
+			},
+		},
+	}
+	h := newHubHandler(db)
+
+	rec := httptest.NewRecorder()
+	req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d", rec.Code)
+	}
+	var resp struct {
+		Data HubResponse `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Data.ContinueWatchingTV) != 1 {
+		t.Fatalf("continue_watching_tv: got %d, want 1", len(resp.Data.ContinueWatchingTV))
+	}
+	got := resp.Data.ContinueWatchingTV[0]
+	if got.ID != showID.String() {
+		t.Errorf("ID: got %q, want show ID %q", got.ID, showID.String())
+	}
+	if got.Type != "show" {
+		t.Errorf("Type: got %q, want %q", got.Type, "show")
+	}
+	if got.Title != showTitle {
+		t.Errorf("Title: got %q, want %q", got.Title, showTitle)
+	}
+	if got.PosterPath == nil || *got.PosterPath != showPoster {
+		t.Errorf("PosterPath: got %v, want %q", got.PosterPath, showPoster)
+	}
+	if got.ViewOffsetMS == nil || *got.ViewOffsetMS != offsetMs {
+		t.Errorf("ViewOffsetMS: got %v, want %d (episode progress preserved)", got.ViewOffsetMS, offsetMs)
+	}
+	// Movie / Other buckets must stay untouched.
+	if len(resp.Data.ContinueWatchingMovies) != 0 {
+		t.Errorf("continue_watching_movies should be empty, got %d", len(resp.Data.ContinueWatchingMovies))
+	}
+	if len(resp.Data.ContinueWatchingOther) != 0 {
+		t.Errorf("continue_watching_other should be empty, got %d", len(resp.Data.ContinueWatchingOther))
+	}
+}
+
+// TestHub_Get_CW_OrphanEpisodeStaysInTV verifies the defensive path:
+// an episode row whose ancestor chain didn't resolve (ShowID NULL)
+// still lands in the TV bucket — clients render the episode-as-is
+// rather than the row going missing.
+func TestHub_Get_CW_OrphanEpisodeStaysInTV(t *testing.T) {
+	db := &mockHubDB{
+		cwRows: []gen.ListContinueWatchingRow{
+			{
+				ID:        uuid.New(),
+				LibraryID: uuid.New(),
+				Title:     "Pilot (orphan)",
+				Type:      "episode",
+				UpdatedAt: pgtype.Timestamptz{Valid: false},
+				ShowID:    pgtype.UUID{Valid: false}, // no ancestor
+			},
+		},
+	}
+	h := newHubHandler(db)
+	rec := httptest.NewRecorder()
+	req := hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil))
+	h.Get(rec, req)
+	var resp struct {
+		Data HubResponse `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Data.ContinueWatchingTV) != 1 {
+		t.Fatalf("continue_watching_tv: got %d, want 1", len(resp.Data.ContinueWatchingTV))
+	}
+	got := resp.Data.ContinueWatchingTV[0]
+	if got.Type != "episode" {
+		t.Errorf("Type: got %q, want %q (no rollup means no swap)", got.Type, "episode")
+	}
+}
+
 // TestHub_Get_RecentlyAdded_EpisodeUsesFallbackPoster guards the v2.1
 // "Recently Added Episodes" change: ListRecentlyAdded now returns
 // episode rows for TV libraries (deduped per show via window function),

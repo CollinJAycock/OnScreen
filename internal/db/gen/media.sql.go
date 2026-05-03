@@ -1197,7 +1197,10 @@ WITH rows AS (
                WHEN m.type = 'episode'
                    THEN COALESCE(grandparent.id, parent.id, m.id)
                ELSE m.id
-           END AS show_key
+           END AS show_key,
+           -- Anchor for the outer LEFT JOIN. NULL for movies (no
+           -- rollup) — outer JOIN then misses, leaving show_* NULL.
+           CASE WHEN m.type = 'episode' THEN COALESCE(grandparent.id, parent.id) END AS show_anchor_id
     FROM watch_state ws
     JOIN media_items m ON m.id = ws.media_id
     LEFT JOIN media_items parent ON parent.id = m.parent_id
@@ -1213,21 +1216,29 @@ deduped AS (
            rating, audience_rating, content_rating, duration_ms, genres, tags,
            tmdb_id, tvdb_id, imdb_id, musicbrainz_id, parent_id, index, poster_path,
            fanart_path, thumb_path, originally_available_at, created_at, updated_at, deleted_at,
-           view_offset, view_duration, last_watched_at, fallback_poster
+           view_offset, view_duration, last_watched_at, fallback_poster, show_anchor_id
     FROM (
-        SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline, rating, audience_rating, content_rating, duration_ms, genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id, parent_id, index, poster_path, fanart_path, thumb_path, originally_available_at, created_at, updated_at, deleted_at, view_offset, view_duration, last_watched_at, fallback_poster, show_key,
+        SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline, rating, audience_rating, content_rating, duration_ms, genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id, parent_id, index, poster_path, fanart_path, thumb_path, originally_available_at, created_at, updated_at, deleted_at, view_offset, view_duration, last_watched_at, fallback_poster, show_key, show_anchor_id,
                ROW_NUMBER() OVER (PARTITION BY show_key ORDER BY last_watched_at DESC) AS rn
         FROM rows
     ) t
     WHERE t.rn = 1
 )
-SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline,
-       rating, audience_rating, content_rating, duration_ms, genres, tags,
-       tmdb_id, tvdb_id, imdb_id, musicbrainz_id, parent_id, index, poster_path,
-       fanart_path, thumb_path, originally_available_at, created_at, updated_at, deleted_at,
-       view_offset, view_duration, fallback_poster
-FROM deduped
-ORDER BY last_watched_at DESC
+SELECT d.id, d.library_id, d.type, d.title, d.sort_title, d.original_title, d.year,
+       d.summary, d.tagline, d.rating, d.audience_rating, d.content_rating, d.duration_ms,
+       d.genres, d.tags, d.tmdb_id, d.tvdb_id, d.imdb_id, d.musicbrainz_id, d.parent_id,
+       d.index, d.poster_path, d.fanart_path, d.thumb_path, d.originally_available_at,
+       d.created_at, d.updated_at, d.deleted_at, d.view_offset, d.view_duration,
+       d.fallback_poster,
+       show.id          AS show_id,
+       show.title       AS show_title,
+       show.year        AS show_year,
+       show.poster_path AS show_poster_path,
+       show.fanart_path AS show_fanart_path,
+       show.thumb_path  AS show_thumb_path
+FROM deduped d
+LEFT JOIN media_items show ON show.id = d.show_anchor_id AND show.deleted_at IS NULL
+ORDER BY d.last_watched_at DESC
 LIMIT $2
 `
 
@@ -1269,6 +1280,12 @@ type ListContinueWatchingRow struct {
 	ViewOffset            int64              `json:"view_offset"`
 	ViewDuration          *int64             `json:"view_duration"`
 	FallbackPoster        *string            `json:"fallback_poster"`
+	ShowID                pgtype.UUID        `json:"show_id"`
+	ShowTitle             *string            `json:"show_title"`
+	ShowYear              *int32             `json:"show_year"`
+	ShowPosterPath        *string            `json:"show_poster_path"`
+	ShowFanartPath        *string            `json:"show_fanart_path"`
+	ShowThumbPath         *string            `json:"show_thumb_path"`
 }
 
 // For movies, every in-progress row passes through. For episodes,
@@ -1279,6 +1296,16 @@ type ListContinueWatchingRow struct {
 // show → season → episode chain) and falls back to parent.id for
 // the rare flat-layout episode that hangs directly off a show
 // without a season row.
+//
+// Episode rows additionally surface show_id / show_title /
+// show_year / show_poster_path / show_fanart_path / show_thumb_path
+// as separate columns. The hub handler swaps these into the
+// displayed item's identity so the tile renders the show (matching
+// Plex's Continue Watching TV) and the click target lands on the
+// show detail page instead of a specific episode. Sourced via a
+// LEFT JOIN to media_items so the columns are naturally nullable —
+// sqlc generates them as pointer / pgtype types, and a NULL show_id
+// in Go means "no rollup, render the row's own identity".
 func (q *Queries) ListContinueWatching(ctx context.Context, arg ListContinueWatchingParams) ([]ListContinueWatchingRow, error) {
 	rows, err := q.db.Query(ctx, listContinueWatching, arg.UserID, arg.Limit, arg.MaxRatingRank)
 	if err != nil {
@@ -1320,6 +1347,12 @@ func (q *Queries) ListContinueWatching(ctx context.Context, arg ListContinueWatc
 			&i.ViewOffset,
 			&i.ViewDuration,
 			&i.FallbackPoster,
+			&i.ShowID,
+			&i.ShowTitle,
+			&i.ShowYear,
+			&i.ShowPosterPath,
+			&i.ShowFanartPath,
+			&i.ShowThumbPath,
 		); err != nil {
 			return nil, err
 		}
@@ -3937,27 +3970,46 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 }
 
 const listTrending = `-- name: ListTrending :many
-SELECT m.id, m.library_id, m.type, m.title,
-       m.year, m.poster_path, m.fanart_path, m.thumb_path,
-       m.duration_ms, m.updated_at,
-       COUNT(DISTINCT we.user_id) AS unique_viewers,
-       COUNT(*) AS total_events
-FROM media_items m
-JOIN watch_events we ON we.media_id = m.id
-WHERE m.deleted_at IS NULL
-  AND m.type IN ('movie', 'episode')
-  AND we.event_type IN ('play', 'scrobble', 'stop')
-  AND we.occurred_at >= NOW() - make_interval(days => $1::int)
-  AND ($2::int IS NULL OR content_rating_rank(m.content_rating) <= $2)
-GROUP BY m.id
-ORDER BY unique_viewers DESC, total_events DESC, m.updated_at DESC
-LIMIT $3::int
+WITH watched AS (
+    SELECT
+        CASE
+            WHEN m.type = 'episode'
+                THEN COALESCE(grandparent.id, parent.id, m.id)
+            ELSE m.id
+        END AS bucket_id,
+        we.user_id, we.event_type, we.occurred_at
+    FROM media_items m
+    JOIN watch_events we ON we.media_id = m.id
+    LEFT JOIN media_items parent ON parent.id = m.parent_id
+    LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
+    WHERE m.deleted_at IS NULL
+      AND m.type IN ('movie', 'episode')
+      AND we.event_type IN ('play', 'scrobble', 'stop')
+      AND we.occurred_at >= NOW() - make_interval(days => $2::int)
+      AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
+),
+agg AS (
+    SELECT bucket_id,
+           COUNT(DISTINCT user_id) AS unique_viewers,
+           COUNT(*)                AS total_events
+    FROM watched
+    GROUP BY bucket_id
+)
+SELECT t.id, t.library_id, t.type, t.title,
+       t.year, t.poster_path, t.fanart_path, t.thumb_path,
+       t.duration_ms, t.updated_at,
+       agg.unique_viewers, agg.total_events
+FROM agg
+JOIN media_items t ON t.id = agg.bucket_id
+WHERE t.deleted_at IS NULL
+ORDER BY agg.unique_viewers DESC, agg.total_events DESC, t.updated_at DESC
+LIMIT $1::int
 `
 
 type ListTrendingParams struct {
+	ResultLimit   int32  `json:"result_limit"`
 	WindowDays    int32  `json:"window_days"`
 	MaxRatingRank *int32 `json:"max_rating_rank"`
-	ResultLimit   int32  `json:"result_limit"`
 }
 
 type ListTrendingRow struct {
@@ -3977,19 +4029,32 @@ type ListTrendingRow struct {
 
 // Top-N items watched across all users within a rolling window. Counts
 // distinct users per item so one binge-watcher can't dominate the row;
-// ties broken by total event count. Filters mirror ContinueWatching:
-// only playable types (movie / episode), only items still present
-// (deleted_at IS NULL), parental rating ceiling enforced.
+// ties broken by total event count.
 //
-// The trending row is global (not per-user) — same content shown to
-// every user. Library access is filtered out in the handler since
-// the query doesn't know the caller's grant set.
+// Episodes are rolled up to their show before the count, so three
+// viewers each watching one episode of the same series count as a
+// single show with three viewers (matches Plex / Jellyfin trending
+// behaviour) and the surfaced row is the show — its poster, its
+// title, type='show'. Clicks on the trending tile go to the show
+// detail page instead of dropping the user into a specific episode
+// they may not have started yet.
+//
+// Filters mirror ContinueWatching: only playable types (movie /
+// episode) feed the rollup, only items still present (deleted_at IS
+// NULL), parental rating ceiling enforced. The rating ceiling is
+// applied at the episode/movie level — a show whose episodes are
+// all over the ceiling drops out entirely; if any episode is within
+// reach, the show surfaces.
+//
+// The trending row is global (not per-user). Library access is
+// filtered out in the handler since the query doesn't know the
+// caller's grant set.
 //
 // Window is passed as an integer day count (typed via int4) so
 // callers can swap 7 / 30 / 365 without a query rewrite. make_interval
 // gives postgres the typed interval the comparison needs.
 func (q *Queries) ListTrending(ctx context.Context, arg ListTrendingParams) ([]ListTrendingRow, error) {
-	rows, err := q.db.Query(ctx, listTrending, arg.WindowDays, arg.MaxRatingRank, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listTrending, arg.ResultLimit, arg.WindowDays, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}
