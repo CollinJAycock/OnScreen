@@ -169,6 +169,44 @@ func TestWatchEvents_Integration_LatestEventWins(t *testing.T) {
 	}
 }
 
+// TestWatchEvents_Integration_StickyWatchedSurvivesRewatchFromStart
+// pins the v2.1 fix that addresses "I finished this episode but the
+// info page says it's in_progress." Plex / Jellyfin keep the watched
+// flag sticky once any session reaches >90% — re-opening the title
+// from the start (which lands a tiny-position event in watch_events)
+// should NOT demote the show back to in_progress. Pre-fix, the
+// status was decided purely by the latest event's position.
+func TestWatchEvents_Integration_StickyWatchedSurvivesRewatchFromStart(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	user := seedUser(ctx, t, q, "we-sticky-"+uuid.New().String()[:8])
+	lib := seedLibrary(ctx, t, q, "we-sticky-lib-"+uuid.New().String()[:8])
+	item := seedMediaItem(ctx, t, q, lib, "Movie Sticky")
+
+	now := time.Now()
+	// Past session reached the end — clearly past 90%.
+	insertWatchWithDuration(t, q, user, item, "stop", 580_000, 600_000, now.Add(-2*time.Hour))
+	// Latest session: user re-opened the title and watched 15 seconds.
+	// On its own this would classify as in_progress.
+	insertWatchWithDuration(t, q, user, item, "play", 15_000, 600_000, now.Add(-1*time.Minute))
+
+	state, err := q.GetWatchState(ctx, gen.GetWatchStateParams{UserID: user, MediaID: item})
+	if err != nil {
+		t.Fatalf("GetWatchState: %v", err)
+	}
+	if state.Status != "watched" {
+		t.Errorf("status = %q, want watched (sticky after past completion)", state.Status)
+	}
+	// Resume position still reflects the latest event so a user
+	// rewatching from the start picks up where they're sitting now,
+	// not where they finished the prior session.
+	if state.PositionMs != 15_000 {
+		t.Errorf("position_ms = %d, want 15000 (latest event)", state.PositionMs)
+	}
+}
+
 // TestWatchEvents_Integration_HistoryCollapsesDuplicates proves the
 // history query's window-function dedup: a stop event followed by a
 // scrobble within 30 minutes for the same item returns one row, not two.

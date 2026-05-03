@@ -1105,6 +1105,11 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  // Per-user playback state populated by the server's children
+  // endpoint. Used by show / season detail pages to render the
+  // watched indicator + in-progress bar on each episode row.
+  view_offset_ms?: number;
+  watched?: boolean;
   created_at: string;
   updated_at: number;
 }

@@ -15,22 +15,29 @@ import (
 
 const getWatchState = `-- name: GetWatchState :one
 SELECT
-    we.user_id,
-    we.media_id,
-    we.position_ms,
-    we.duration_ms,
+    l.user_id,
+    l.media_id,
+    l.position_ms,
+    l.duration_ms,
     CASE
-        WHEN we.duration_ms IS NULL OR we.duration_ms = 0 THEN 'unwatched'
-        WHEN we.position_ms::float / NULLIF(we.duration_ms, 0) > 0.9 THEN 'watched'
-        WHEN we.position_ms > 0 THEN 'in_progress'
-        ELSE 'unwatched'
+        WHEN EXISTS (
+            SELECT 1 FROM watch_events ec
+            WHERE ec.user_id = $1 AND ec.media_id = $2
+              AND ec.duration_ms IS NOT NULL AND ec.duration_ms > 0
+              AND ec.position_ms::float / NULLIF(ec.duration_ms, 0) > 0.9
+            LIMIT 1
+        )                                                       THEN 'watched'
+        WHEN l.duration_ms IS NULL OR l.duration_ms = 0         THEN 'unwatched'
+        WHEN l.position_ms::float / NULLIF(l.duration_ms, 0) > 0.9 THEN 'watched'
+        WHEN l.position_ms > 0                                  THEN 'in_progress'
+        ELSE                                                         'unwatched'
     END AS status,
-    we.occurred_at AS last_watched_at,
-    we.client_id   AS last_client_id,
-    we.client_name AS last_client_name
-FROM watch_events we
-WHERE we.user_id = $1 AND we.media_id = $2
-ORDER BY we.occurred_at DESC
+    l.occurred_at AS last_watched_at,
+    l.client_id   AS last_client_id,
+    l.client_name AS last_client_name
+FROM watch_events l
+WHERE l.user_id = $1 AND l.media_id = $2
+ORDER BY l.occurred_at DESC
 LIMIT 1
 `
 
@@ -63,6 +70,16 @@ type GetWatchStateRow struct {
 // detail-page fetch always reflects the latest known position.
 // The view is still used by ListWatchStateForUser (history bulk
 // read) where eventual consistency is fine.
+//
+// "watched" is sticky: once *any* past session for this (user,
+// media) reached past 90% completion, the status stays "watched"
+// even if the user later rewatched from the start (which would
+// otherwise overwrite the latest event with a tiny position and
+// demote the show back to in_progress). This matches Plex /
+// Jellyfin's behaviour — the watched indicator is meant to mean
+// "the user has finished this at least once," not "the latest
+// click landed past the 90% mark." Only a manual mark-as-unwatched
+// (separate flow) should clear it.
 func (q *Queries) GetWatchState(ctx context.Context, arg GetWatchStateParams) (GetWatchStateRow, error) {
 	row := q.db.QueryRow(ctx, getWatchState, arg.UserID, arg.MediaID)
 	var i GetWatchStateRow

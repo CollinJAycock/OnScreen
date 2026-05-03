@@ -2799,12 +2799,32 @@
     {#if item.type === 'show' || item.type === 'season'}
       <div class="episode-list">
         {#each selectedEpisodes as ep}
-          <a href="/watch/{ep.id}" class="episode-row">
+          {@const epProgressPct = (!ep.watched && ep.view_offset_ms && ep.duration_ms)
+            ? Math.min(100, Math.max(0, (ep.view_offset_ms / ep.duration_ms) * 100))
+            : 0}
+          <a href="/watch/{ep.id}" class="episode-row" class:ep-watched={ep.watched}>
             <div class="ep-number">{ep.index ?? '—'}</div>
             <div class="ep-info">
-              <div class="ep-title">{ep.title}</div>
+              <div class="ep-title">
+                {ep.title}
+                {#if ep.watched}
+                  <!-- Inline check + "Watched" pill: Plex / Jellyfin
+                       convention so a finished episode is obvious at
+                       a glance without focusing on the row. -->
+                  <span class="ep-watched-pill" aria-label="Watched">
+                    <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11"
+                         aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
+                    Watched
+                  </span>
+                {/if}
+              </div>
               {#if ep.summary}
                 <div class="ep-summary">{ep.summary}</div>
+              {/if}
+              {#if epProgressPct > 0}
+                <div class="ep-progress" aria-hidden="true">
+                  <div class="ep-progress-fill" style="width: {epProgressPct}%"></div>
+                </div>
               {/if}
             </div>
             {#if ep.duration_ms}
@@ -3883,6 +3903,39 @@
   .ep-empty {
     padding: 2rem; text-align: center;
     font-size: 0.85rem; color: var(--text-muted);
+  }
+  /* Watched-treatment for the episode row: dim the whole row so a
+     finished episode is obvious at a glance even without focusing on
+     the inline pill. Pill itself stays full-opacity (overridden
+     below) so it remains the obvious affordance. Matches Plex /
+     Jellyfin convention. */
+  .episode-row.ep-watched { opacity: 0.55; }
+  .episode-row.ep-watched:hover { opacity: 0.85; }
+  .ep-watched-pill {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    margin-left: 0.5rem;
+    padding: 0.05rem 0.45rem 0.1rem;
+    background: var(--accent); color: white;
+    border-radius: 999px;
+    font-size: 0.65rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    vertical-align: middle;
+    opacity: 1;
+  }
+  .episode-row.ep-watched .ep-watched-pill { opacity: 1; }
+  /* In-progress bar under the title for episodes the user has
+     started but not finished. Hidden for watched episodes. */
+  .ep-progress {
+    margin-top: 0.4rem;
+    height: 3px; width: 100%;
+    background: var(--bg-elevated);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .ep-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
   }
 
   /* Fix Match button */
