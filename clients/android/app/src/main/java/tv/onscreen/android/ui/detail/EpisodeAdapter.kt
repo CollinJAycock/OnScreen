@@ -63,6 +63,16 @@ class EpisodeAdapter(
                 thumb.setImageDrawable(null)
             }
 
+            // Watched treatment: dim the thumbnail + dull the title row
+            // so the user can see at a glance which episodes they've
+            // already finished, even without focusing on the small
+            // corner check badge. Matches Plex / Jellyfin convention.
+            // The badge itself stays full-opacity (overlaid on the
+            // dimmed thumb) so it remains the obvious affordance.
+            thumb.alpha = if (ep.watched) 0.45f else 1f
+            title.alpha = if (ep.watched) 0.6f else 1f
+            index.alpha = if (ep.watched) 0.6f else 1f
+            duration.alpha = if (ep.watched) 0.6f else 1f
             watchedBadge.visibility = if (ep.watched) View.VISIBLE else View.GONE
             val dur = ep.duration_ms ?: 0L
             val shouldShowProgress = !ep.watched && ep.view_offset_ms > 0 && dur > 0
