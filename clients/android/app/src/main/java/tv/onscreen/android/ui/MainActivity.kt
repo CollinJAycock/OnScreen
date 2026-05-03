@@ -1,6 +1,7 @@
 package tv.onscreen.android.ui
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Build
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.ui.playback.PlaybackFragment
 import tv.onscreen.android.ui.setup.ServerSetupFragment
 import tv.onscreen.android.ui.setup.LoginFragment
 import tv.onscreen.android.ui.setup.PairingFragment
@@ -45,6 +47,12 @@ class MainActivity : FragmentActivity() {
 
         if (savedInstanceState != null) return // Fragment state restored by system.
 
+        // Watch Next deep link first — when the system "Continue
+        // Watching" tile launches us, jump straight into playback so
+        // the user picks up where they left off without traversing
+        // home → library → episode.
+        if (handleWatchNextDeepLink(intent)) return
+
         lifecycleScope.launch {
             val hasServer = prefs.hasServer.first()
             val isLoggedIn = prefs.isLoggedIn.first()
@@ -59,6 +67,38 @@ class MainActivity : FragmentActivity() {
                 .replace(R.id.main_container, fragment)
                 .commit()
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Re-launch from the launcher's Watch Next tile while the
+        // activity is already alive — replace the current fragment
+        // with PlaybackFragment for the requested item.
+        handleWatchNextDeepLink(intent)
+    }
+
+    /**
+     * If [intent] carries an `onscreen://watch/<item_id>?position=<ms>`
+     * URI, route into PlaybackFragment for that item and return true.
+     * Otherwise return false so the caller can fall through to the
+     * normal startup path. Auth / server checks are skipped here —
+     * if the user can't reach the server PlaybackFragment will
+     * surface that in its own error overlay rather than us silently
+     * dropping the deep link on the floor.
+     */
+    private fun handleWatchNextDeepLink(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
+        if (data.scheme != "onscreen" || data.host != "watch") return false
+        val itemId = data.lastPathSegment ?: return false
+        val position = data.getQueryParameter("position")?.toLongOrNull() ?: 0L
+        supportFragmentManager.popBackStack(
+            null,
+            androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
+        )
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, position))
+            .commit()
+        return true
     }
 
     /**

@@ -1,8 +1,21 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+}
+
+// Release-signing config sourced from local.properties (gitignored).
+// Add `release.keystore`, `release.keystorePassword`, `release.keyAlias`,
+// `release.keyPassword` entries to local.properties to enable signed
+// builds for Play Console upload. When the file is missing or any
+// field is unset (CI / fresh checkout) the release variant falls back
+// to the debug-signing config so it still builds locally.
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -17,13 +30,42 @@ android {
         versionName = "1.0.1"
     }
 
+    signingConfigs {
+        val storePath = keystoreProperties["release.keystore"] as String?
+        if (storePath != null && rootProject.file(storePath).exists()) {
+            create("release") {
+                storeFile = rootProject.file(storePath)
+                storePassword = keystoreProperties["release.keystorePassword"] as String?
+                keyAlias = keystoreProperties["release.keyAlias"] as String?
+                keyPassword = keystoreProperties["release.keyPassword"] as String?
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = true
+            // Minification disabled for the initial Play upload —
+            // R8 was silently stripping a Hilt / prefs init path
+            // that left MainActivity rendering a blank window even
+            // with the keep rules we have. The proguard-rules.pro
+            // file stays in the repo for the eventual re-enable;
+            // turning this back on is a single-line change once we
+            // can soak-test on a real Google TV device. Resource
+            // shrinking is gated on minification so it's also off.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Use the configured release-signing config when one was
+            // built above; otherwise fall back to debug so a fresh
+            // checkout (no keystore on disk) can still produce a
+            // working APK for testing. Play uploads require the real
+            // release keystore — the fallback is a developer escape
+            // hatch, never the upload artifact.
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -54,6 +96,11 @@ dependencies {
     // Leanback (TV UI framework)
     implementation("androidx.leanback:leanback:1.0.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    // TV provider — drives the system's "Watch Next" row that shows
+    // resumable items across Google TV / Android TV launchers,
+    // independent of any one app's home screen. Required for TV-PN
+    // quality compliance.
+    implementation("androidx.tvprovider:tvprovider:1.0.0")
 
     // Media3 / ExoPlayer
     implementation("androidx.media3:media3-exoplayer:1.3.1")

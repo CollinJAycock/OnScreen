@@ -7,6 +7,14 @@
          (setWakeMode(WAKE_MODE_LOCAL) in PlaybackFragment). The
          screen-on flag is window-level and doesn't need a permission. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets WatchNextManager publish + remove rows in the system's
+         WatchNextPrograms content provider so resumable items show
+         up in Google TV's "Continue Watching" row across launchers
+         (TV-PN quality compliance). The READ permission is only
+         needed when querying for our own existing rows; without it
+         we'd insert duplicate entries on every progress tick. -->
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
+    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
     <uses-feature
         android:name="android.software.leanback"
@@ -49,6 +57,17 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <!-- Deep-link entry point. Watch Next launcher tiles
+                 publish onscreen://watch/<item_id>?position=<ms>
+                 URIs; MainActivity reads the path + query in
+                 onCreate / onNewIntent and routes straight into
+                 PlaybackFragment with a resume offset. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="onscreen" android:host="watch" />
             </intent-filter>
         </activity>
 

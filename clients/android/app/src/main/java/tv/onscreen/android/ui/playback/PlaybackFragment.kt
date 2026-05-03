@@ -55,6 +55,7 @@ class PlaybackFragment : VideoSupportFragment() {
     @Inject lateinit var notificationsRepo: NotificationsRepository
     @Inject lateinit var trickplayRepo: TrickplayRepository
     @Inject lateinit var onlineSubtitleRepo: OnlineSubtitleRepository
+    @Inject lateinit var watchNext: tv.onscreen.android.playback.WatchNextManager
 
     private lateinit var viewModel: PlaybackViewModel
     private var player: ExoPlayer? = null
@@ -108,6 +109,14 @@ class PlaybackFragment : VideoSupportFragment() {
     private var skipMarkerOverlay: Button? = null
     private var skipMarkerJob: Job? = null
     private var markers: List<tv.onscreen.android.data.model.Marker> = emptyList()
+
+    /** Most recent item detail emitted by the ViewModel. Used by the
+     *  Watch Next publisher to upsert title / poster / type metadata
+     *  into the system Continue Watching row. */
+    private var currentItem: tv.onscreen.android.data.model.ItemDetail? = null
+    /** Periodic publisher that re-asserts the Watch Next row every
+     *  ~30 s during playback. Cancelled on pause / end / view destroy. */
+    private var watchNextJob: Job? = null
     /** Per-marker dismissal: once the user clicks Skip (or the credits
      *  overlay's auto-disappear fires past end_ms), don't re-show that
      *  same marker for the rest of this playback session. Keyed by
@@ -228,6 +237,7 @@ class PlaybackFragment : VideoSupportFragment() {
                 dismissedMarkers.clear()
                 chapters = state.item?.files?.firstOrNull()?.chapters ?: emptyList()
                 currentItemType = state.item?.type.orEmpty()
+                currentItem = state.item
 
                 refreshSecondaryActions()
                 startUpNextWatcher()
@@ -235,6 +245,7 @@ class PlaybackFragment : VideoSupportFragment() {
                 startSkipMarkerWatcher()
                 installTrickplaySeekProvider(itemId)
                 bindAudioBackdrop(state.item)
+                startWatchNextWatcher()
             }
         }
     }
@@ -381,6 +392,37 @@ class PlaybackFragment : VideoSupportFragment() {
      * content-time) line up regardless of which transcode window is
      * loaded.
      */
+    /**
+     * Periodically upsert the system Watch Next row so the launcher's
+     * Continue Watching strip always reflects an up-to-date position.
+     * Republishes every 30 s while the player is alive — the
+     * underlying [WatchNextManager] short-circuits cheaply when
+     * nothing has actually changed, and the time keeps the
+     * `last_engagement_time_utc_millis` field fresh so the launcher
+     * sorts our tile near the top of the row. Cancelled on
+     * STATE_ENDED and onDestroyView.
+     */
+    private fun startWatchNextWatcher() {
+        watchNextJob?.cancel()
+        watchNextJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                val item = currentItem
+                val exo = player
+                if (item != null && exo != null) {
+                    val pos = exo.currentPosition + viewModel.hlsOffsetMs
+                    val dur = exo.duration.takeIf { it > 0 && it != Long.MAX_VALUE }
+                        ?: item.duration_ms
+                        ?: item.files.firstOrNull()?.duration_ms
+                        ?: 0L
+                    if (dur > 0L && pos > 0L) {
+                        watchNext.publishContinueWatching(item, pos, dur)
+                    }
+                }
+                delay(30_000)
+            }
+        }
+    }
+
     private fun startSkipMarkerWatcher() {
         skipMarkerJob?.cancel()
         if (markers.isEmpty()) return
@@ -606,6 +648,13 @@ class PlaybackFragment : VideoSupportFragment() {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     progressTracker?.onStop()
+                    // Pull the row out of the system Continue Watching
+                    // list — the user finished this title and shouldn't
+                    // keep seeing it offered as resumable. The next
+                    // episode (if any) will publish its own row when
+                    // playback starts on it.
+                    currentItem?.let { watchNext.remove(it.id) }
+                    watchNextJob?.cancel()
                     val next = nextEpisode
                     when {
                         next == null -> parentFragmentManager.popBackStack()
@@ -1131,6 +1180,8 @@ class PlaybackFragment : VideoSupportFragment() {
         skipMarkerOverlay = null
         trickplayJob?.cancel()
         trickplayJob = null
+        watchNextJob?.cancel()
+        watchNextJob = null
         progressTracker?.stop()
         progressTracker = null
 

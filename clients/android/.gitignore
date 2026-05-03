@@ -8,3 +8,7 @@
 /captures
 .externalNativeBuild
 .cxx
+# Release signing artefacts — never commit. local.properties points
+# at the keystore; both stay out of git.
+*.keystore
+*.jks
