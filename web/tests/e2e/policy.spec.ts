@@ -67,26 +67,12 @@ test.describe('Policy — is_private library', () => {
       libId = libs[0].id;
     }
 
-    // Step 3 — mark the library private. The PATCH endpoint requires
-    // a full body (Name, ScanPaths, etc.) — sending only is_private
-    // returns 500 because empty Name fails validation. Fetch the
-    // current row, mutate is_private, and send the whole shape back.
-    const getR = await request.get(`/api/v1/libraries/${libId}`, {
-      headers: { Authorization: `Bearer ${adminTok}` },
-    });
-    expect(getR.status(), `GET library: ${await getR.text()}`).toBe(200);
-    const { data: current } = await getR.json();
+    // Step 3 — mark the library private. PATCH supports partial-body
+    // updates (every field is optional and falls back to current state),
+    // so we can send just the flag we want to flip.
     const patchR = await request.patch(`/api/v1/libraries/${libId}`, {
       headers: { Authorization: `Bearer ${adminTok}` },
-      data: {
-        name: current.name,
-        scan_paths: current.scan_paths,
-        agent: current.agent,
-        language: current.language,
-        scan_interval_minutes: current.scan_interval_minutes,
-        metadata_refresh_interval_ns: current.metadata_refresh_interval_ns,
-        is_private: true,
-      },
+      data: { is_private: true },
     });
     expect(patchR.status(), `PATCH library to set is_private: ${await patchR.text()}`).toBeLessThan(300);
 
@@ -127,28 +113,13 @@ test.describe('Policy — is_private library', () => {
       const found = Array.isArray(userLibs) && userLibs.some((l: any) => l.id === libId);
       expect(found, `Private library ${libId} must NOT be visible to non-admin user`).toBe(false);
     } finally {
-      // Step 7 — restore the library to public regardless of test outcome.
-      // Same full-body shape as the set-private call above.
-      const getRestoreR = await request.get(`/api/v1/libraries/${libId}`, {
-        headers: { Authorization: `Bearer ${adminTok}` },
-      });
-      if (getRestoreR.ok()) {
-        const { data: cur } = await getRestoreR.json();
-        await request.patch(`/api/v1/libraries/${libId}`, {
+      // Step 7 — restore library to public + delete the throwaway user.
+      await request
+        .patch(`/api/v1/libraries/${libId}`, {
           headers: { Authorization: `Bearer ${adminTok}` },
-          data: {
-            name: cur.name,
-            scan_paths: cur.scan_paths,
-            agent: cur.agent,
-            language: cur.language,
-            scan_interval_minutes: cur.scan_interval_minutes,
-            metadata_refresh_interval_ns: cur.metadata_refresh_interval_ns,
-            is_private: false,
-          },
-        });
-      }
-
-      // Step 8 — delete the test user.
+          data: { is_private: false },
+        })
+        .catch(() => {});
       if (!testUserId) {
         // Resolve ID via admin user list if registration didn't return it.
         const listR = await request.get('/api/v1/users', {
@@ -161,9 +132,11 @@ test.describe('Policy — is_private library', () => {
         }
       }
       if (testUserId) {
-        await request.delete(`/api/v1/users/${testUserId}`, {
-          headers: { Authorization: `Bearer ${adminTok}` },
-        });
+        await request
+          .delete(`/api/v1/users/${testUserId}`, {
+            headers: { Authorization: `Bearer ${adminTok}` },
+          })
+          .catch(() => {});
       }
     }
   });
@@ -229,27 +202,20 @@ test.describe('Policy — auto-grant template', () => {
       libId = libs[0].id;
     }
 
-    // Capture current state so the finally block can restore it
-    // verbatim instead of guessing flags.
+    // Capture original is_private + auto_grant_new_users so the finally
+    // block can restore them. PATCH supports partial updates so we only
+    // need the two flags we're flipping (and reading back).
     const getR = await request.get(`/api/v1/libraries/${libId}`, {
       headers: { Authorization: `Bearer ${adminTok}` },
     });
     expect(getR.status()).toBe(200);
-    const { data: original } = await getR.json();
+    const original = (await getR.json()).data as { is_private?: boolean; auto_grant_new_users?: boolean };
 
-    // Mark library private + auto-grant ON.
+    // Mark library private + auto-grant ON. Partial PATCH — no need
+    // to re-send name / scan_paths / etc.
     const patchR = await request.patch(`/api/v1/libraries/${libId}`, {
       headers: { Authorization: `Bearer ${adminTok}` },
-      data: {
-        name: original.name,
-        scan_paths: original.scan_paths,
-        agent: original.agent,
-        language: original.language,
-        scan_interval_minutes: original.scan_interval_minutes,
-        metadata_refresh_interval_ns: original.metadata_refresh_interval_ns,
-        is_private: true,
-        auto_grant_new_users: true,
-      },
+      data: { is_private: true, auto_grant_new_users: true },
     });
     expect(patchR.status(), `set is_private+auto_grant: ${await patchR.text()}`).toBeLessThan(300);
 
@@ -286,17 +252,12 @@ test.describe('Policy — auto-grant template', () => {
         `auto_grant_new_users library ${libId} must appear in the new user's library list (libs returned: ${(userLibs as any[])?.map((l) => l.id).join(', ')})`,
       ).toBe(true);
     } finally {
-      // Restore library to its original flags.
+      // Restore the two flags we flipped. Partial PATCH; no need to
+      // touch name / scan_paths.
       await request
         .patch(`/api/v1/libraries/${libId}`, {
           headers: { Authorization: `Bearer ${adminTok}` },
           data: {
-            name: original.name,
-            scan_paths: original.scan_paths,
-            agent: original.agent,
-            language: original.language,
-            scan_interval_minutes: original.scan_interval_minutes,
-            metadata_refresh_interval_ns: original.metadata_refresh_interval_ns,
             is_private: original.is_private ?? false,
             auto_grant_new_users: original.auto_grant_new_users ?? false,
           },
@@ -406,11 +367,13 @@ test.describe('Policy — view-as', () => {
 test.describe('Policy — content-rating ceiling', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run content-rating specs');
 
-  test('user with PG-13 ceiling does not see an R-rated item in their library list', async ({ request }) => {
-    // Setup: pick a movie, PATCH it with content_rating=R, create a
-    // non-admin user with content_rating=PG-13 ceiling, log in as them,
-    // assert the R-rated item does NOT appear in the library items list.
-    // Restores the item rating + deletes the user in finally.
+  test('user with PG-13 ceiling does not see an R-rated item via search', async ({ request }) => {
+    // Locks the content-rating ceiling on /search. Needs an item whose
+    // content_rating is already > PG-13 (e.g. R, NC-17, TV-MA, or NR
+    // which the SQL function ranks as 4 — most restrictive). PATCH
+    // /items/{id} only accepts title/summary/taken_at by design, so we
+    // can't set the rating from the test — find an existing rated item,
+    // or skip cleanly when the dev library has none.
     const adminTok = await adminToken(request);
     expect(adminTok).toBeTruthy();
 
@@ -423,26 +386,26 @@ test.describe('Policy — content-rating ceiling', () => {
       test.skip(true, 'No movie library available');
       return;
     }
-    const itemsR = await request.get(`/api/v1/libraries/${movieLib.id}/items?limit=1`, {
-      headers: { Authorization: `Bearer ${adminTok}` },
-    });
+    // Pull a generous page so we have a fair chance of hitting a
+    // rated item if any exist.
+    const itemsR = await request.get(
+      `/api/v1/libraries/${movieLib.id}/items?limit=200`,
+      { headers: { Authorization: `Bearer ${adminTok}` } },
+    );
     const { data: items } = await itemsR.json();
-    if (!items?.length) {
-      test.skip(true, 'Movie library is empty');
+    // Look for an item with a rating that ranks > PG-13 (SQL ranks: G/TV-Y/TV-G=0,
+    // PG/TV-Y7/TV-PG=1, PG-13/TV-14=2, R/NC-17/TV-MA=3, NR/empty=4).
+    const overPG13 = new Set(['R', 'NC-17', 'TV-MA']);
+    const targetItem = (items as any[])?.find((i) =>
+      overPG13.has(((i.content_rating ?? '') as string).toUpperCase()),
+    );
+    if (!targetItem) {
+      test.skip(
+        true,
+        'No item rated above PG-13 in the library — content-rating ceiling test needs a rated fixture (and PATCH /items/{id} intentionally cannot set content_rating, so we cannot fabricate one)',
+      );
       return;
     }
-    const targetItem = items[0];
-    const originalRating = targetItem.content_rating ?? null;
-
-    // Mark the item R via the admin metadata-update endpoint.
-    const ratePatchR = await request.patch(`/api/v1/items/${targetItem.id}`, {
-      headers: { Authorization: `Bearer ${adminTok}` },
-      data: { content_rating: 'R' },
-    });
-    expect(
-      ratePatchR.status(),
-      `set item content_rating=R: ${await ratePatchR.text()}`,
-    ).toBeLessThan(300);
 
     const ts = Date.now();
     const tempUser = `e2e_rating_${ts}`;
@@ -508,37 +471,30 @@ test.describe('Policy — content-rating ceiling', () => {
         `R-rated item "${targetItem.title}" (${targetItem.id}) must NOT appear in search results for a PG-13-ceiling user`,
       ).toBe(false);
 
-      // Soft-check the same item against /hub. If it surfaces there,
-      // log the section but DON'T fail — the trending row currently
-      // doesn't apply the ceiling (real gap, see follow-up). Hard-
-      // failing here would make the test a contract for a behaviour
-      // the product doesn't yet enforce; soft is right until trending
-      // is fixed.
+      // Hub check: assert the same item doesn't appear in any /hub
+      // section either. The content_rating_rank() SQL function + the
+      // narg('max_rating_rank') filter is wired into ListTrending +
+      // ContinueWatching + RecentlyAdded queries already, so this
+      // should hold. If a hub section ever leaks, we want to know.
       const hubR = await request.get('/api/v1/hub', {
         headers: { Authorization: `Bearer ${userTok}` },
       });
-      if (hubR.ok()) {
-        const { data: hub } = await hubR.json();
-        for (const sectionKey of Object.keys(hub || {})) {
-          const items = hub[sectionKey];
-          if (!Array.isArray(items)) continue;
-          if (items.some((i: any) => i?.id === targetItem.id)) {
-            // eslint-disable-next-line no-console
-            console.warn(
-              `Note: R-rated item leaked into /hub section "${sectionKey}" for a PG-13-ceiling user. The content-rating filter is not yet enforced on every hub surface (trending is a known gap).`,
-            );
-          }
+      expect(hubR.status()).toBe(200);
+      const { data: hub } = await hubR.json();
+      let leakedIn: string | null = null;
+      for (const sectionKey of Object.keys(hub || {})) {
+        const sectionItems = hub[sectionKey];
+        if (!Array.isArray(sectionItems)) continue;
+        if (sectionItems.some((i: any) => i?.id === targetItem.id)) {
+          leakedIn = sectionKey;
+          break;
         }
       }
+      expect(
+        leakedIn,
+        `over-PG-13 item "${targetItem.title}" (${targetItem.id}) leaked into /hub section "${leakedIn}" for a PG-13-ceiling user`,
+      ).toBeNull();
     } finally {
-      // Restore item content_rating. content_rating accepts null/empty
-      // — send an empty string to clear if it was originally unset.
-      await request
-        .patch(`/api/v1/items/${targetItem.id}`, {
-          headers: { Authorization: `Bearer ${adminTok}` },
-          data: { content_rating: originalRating ?? '' },
-        })
-        .catch(() => {});
       if (tempUserId) {
         await request
           .delete(`/api/v1/users/${tempUserId}`, {
