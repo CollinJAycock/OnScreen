@@ -165,4 +165,43 @@ test.describe('Token scoping — per-file stream token', () => {
       await anon.dispose();
     }
   });
+
+  test('item endpoint mints a fresh stream token per call (no caching)', async ({ request }) => {
+    // The 24h expiry on the PASETO can't be checked client-side
+    // (v4.local is encrypted, opaque without the server key). What we
+    // CAN check as a contract is that each /items/{id} call returns a
+    // freshly-minted token rather than echoing a cached one — that's
+    // the gate that lets clients refresh on demand without a server
+    // restart. If a cache silently shipped, every call would return
+    // the same string and we'd never catch the staleness.
+    const loginR = await request.post('/api/v1/auth/login', {
+      data: { username: USERNAME, password: PASSWORD },
+    });
+    expect(loginR.status()).toBe(200);
+    const { data: loginData } = await loginR.json();
+    const token: string = loginData.access_token;
+
+    const pair = await findTwoFiles(request, token);
+    if (!pair) {
+      test.skip(true, 'No file with a stream_token available');
+      return;
+    }
+
+    const seen = new Set<string>();
+    for (let i = 0; i < 3; i++) {
+      const r = await request.get(`/api/v1/items/${pair.a.itemId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(r.status()).toBe(200);
+      const { data: detail } = await r.json();
+      const tok = (detail.files as any[])?.[0]?.stream_token;
+      expect(tok, 'every file response must include a stream_token').toBeTruthy();
+      expect(tok, 'tokens must be PASETO v4.local').toMatch(/^v4\.local\./);
+      seen.add(tok);
+    }
+    expect(
+      seen.size,
+      `expected 3 distinct tokens across 3 calls; got ${seen.size} unique. Caching the stream token defeats the per-call mint that lets clients refresh without server restart.`,
+    ).toBe(3);
+  });
 });
