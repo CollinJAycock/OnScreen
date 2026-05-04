@@ -1,10 +1,10 @@
 # OnScreen
 
-A modern, open-source media server. PostgreSQL-native. Single binary. Native web + Android TV clients.
+A modern, open-source media server. PostgreSQL-native. Single binary. Native clients across web, desktop, TV, and phone.
 
 ![OnScreen hub page](screenshots/hero.png)
 
-> **Beta:** actively deployed and in use. Public API is stable; breaking changes will be called out in [CHANGELOG.md](CHANGELOG.md).
+> **Status:** v2.1.0 tagged 2026-05-04 (beta running at https://onscreen.wolverscreen.com). Public API is stable; breaking changes are called out in [CHANGELOG.md](CHANGELOG.md).
 
 ## Why another media server?
 
@@ -14,67 +14,78 @@ Plex, Jellyfin, and Emby are all great — OnScreen exists because we wanted som
 - Ships as a **single Go binary** plus a static SvelteKit bundle — no plugin host, no runtime metadata server, no Python.
 - Treats **watch state as an event log** (immutable play/pause/seek/stop), not a mutable `last_viewed_at` column. Rewind a week with `DELETE FROM watch_events WHERE ts > ...`.
 - Has a **native web player** built around HLS with hardware-accelerated transcoding (NVENC, QSV, VAAPI), HDR tonemapping, and proper mobile gestures — not a third-party web-only skin over Plex's stream URLs.
+- **Live TV, DVR, and hardware transcoding ship in core**, no Plex Pass / Emby Premiere gate.
+- **OIDC, OAuth, SAML, and LDAP** are first-class auth providers, no plugin install.
+- A **native bit-perfect audio engine** (Windows WASAPI exclusive + DSD-via-DoP + ReplayGain enforcement) ships in the desktop client today.
 - Is **AGPLv3**. Forks and self-hosters get the same freedom the code was written with.
+
+For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Where OnScreen leads / trails"), see [docs/comparison-matrix.md](docs/comparison-matrix.md). Highlights:
 
 | | OnScreen | Plex | Jellyfin | Emby |
 |--|--|--|--|--|
 | Database | PostgreSQL | SQLite | SQLite | SQLite |
 | License | AGPLv3 | Proprietary | GPLv2 | GPLv2 + proprietary server |
-| Account system | Self-hosted | plex.tv cloud | Self-hosted | Self-hosted + paid tier |
-| Native clients | Web, Android TV | Many | Many (community) | Many |
-| Hardware transcode | NVENC, QSV, VAAPI | Yes (paid Pass) | Yes | Yes (paid Premiere) |
-| HDR tonemap | CUDA / OpenCL / zscale | Paid | Yes | Paid |
-| API stability | Plain REST, documented in [API.md](API.md) | Semi-public | Public | Public |
+| Live TV / DVR | ✅ core | 💎 paid | ✅ core | 💎 paid |
+| OIDC / SAML / LDAP | ✅ core | ❌ | 🧩 plugin | 💎 paid |
+| Hardware transcode | ✅ core | 💎 paid | ✅ core | 💎 paid |
+| Bit-perfect WASAPI | ✅ core | 💎 Plexamp | ❌ | ❌ |
+| All books (CBZ + CBR + EPUB) | ✅ core | ❌ | ⚠ partial | ⚠ partial |
 
 ## Features
 
 **Library**
-- Scan movies and TV shows from local directories; ffprobe extracts duration, streams, HDR type, and chapter markers
-- TMDB + TVDB metadata enrichment (posters, fanart, ratings, genres, summaries, content ratings)
-- Audiophile-grade music: ID3/Vorbis/MP4 tag reading via dhowden/tag, MusicBrainz cross-reference IDs, ReplayGain (track + album), bit depth, sample rate, channel layout, and lossless detection — exposed on the API as `bit_depth`, `sample_rate`, `lossless`, `replaygain_*`, and `musicbrainz_*` fields
-- Photo libraries with EXIF extraction (camera, lens, GPS, capture time)
-- Flexible matching with manual override when TMDB gets it wrong
-- Admin dedupe endpoints for duplicate shows/movies (two-pass normalization — handles `"Title"` vs `"Title YYYY"`, apostrophes, `&` vs `and`, HTML entities, prefix-extension folder names)
+- Movies, TV shows, music, photos, **audiobooks**, **books / comics** (CBZ + CBR + EPUB), **music videos**, **home videos**, podcasts (local files); all scanned with ffprobe / EXIF / tag readers
+- TMDB + TVDB + MusicBrainz metadata enrichment with Cover Art Archive fallback
+- Audiophile-grade music: ID3/Vorbis/MP4 tag reading, MusicBrainz IDs, ReplayGain (track + album), bit depth, sample rate, channel layout, lossless detection
+- Audiobook hierarchy: `book_author → book_series → audiobook → audiobook_chapter` with multi-file resume snapping to chapter boundary
+- Photo libraries with EXIF (camera, lens, GPS, capture time), date-grouped browsing, EXIF search, map view, user-curated photo albums
+- Home videos as a distinct type with on-disk metadata edits (rename file + stamp mtime so user titles travel across tools)
+- Two-pass admin dedupe for shows/movies (handles `"Title"` vs `"Title YYYY"`, apostrophes, `&` vs `and`, HTML entities, prefix-extension folder names)
 
 **Playback**
 - Native SvelteKit web player with direct play, remux, and full transcode fallback
-- HLS transcoding via FFmpeg with hardware encoder auto-detection (NVENC, QuickSync, VAAPI)
+- HLS transcoding via FFmpeg with hardware encoder auto-detection (NVENC, QuickSync, AMF, VAAPI), AV1 encode on supported hardware
 - HDR → SDR tonemapping (CUDA, OpenCL, or software zscale fallback)
 - HEVC direct play on Safari and other HEVC-capable browsers
 - JavaScript subtitle renderer with PTS offset detection and ±0.5s sync adjust
-- Subtitle OCR for image-based formats (PGS, VOBSUB, DVB) — ffmpeg + tesseract converts cues to WebVTT so any client can render them. Runs on-demand or as a nightly `ocr_subtitles` task
-- OpenSubtitles search and download from the player; OCR'd and downloaded subs share one `external_subtitles` table
-- Web audio player with album browsing, Hi-Res / Lossless quality badges, and a track-detail panel showing codec, bit depth, sample rate, ReplayGain, and MusicBrainz links
+- Subtitle OCR for image-based formats (PGS, VOBSUB, DVB) — ffmpeg + tesseract converts cues to WebVTT
+- OpenSubtitles search and download from inside the player; OCR'd and downloaded subs share one `external_subtitles` table
+- Per-session supersede — one stream per user/item; opening the same item on a phone stops the in-progress TV session
 - Trickplay seek-bar thumbnails generated from the source file
 - Intro / credits markers (auto + manual) with per-episode skip prompts
-- Chapter navigation (jump-to-chapter, next/prev buttons) from ffprobe-parsed chapter markers
-- Per-user default audio/subtitle language preferences — auto-selects matching tracks on load
-- Continue Watching + Recently Added hubs backed by materialized views
+- Chapter navigation (jump-to-chapter, next/prev buttons)
+- Continue Watching split into TV / Movies / Other rows; Recently Added per library; Trending row; smart playlists (rule-based, query-time eval)
 - Event-sourced watch state (immutable `watch_events` partitioned by month)
 
-**Mobile & clients**
-- Touch-optimized player: horizontal swipe to seek, vertical swipe for volume/brightness, double-tap ±10s, swipe-down to dismiss
-- Bottom-sheet menus for subtitle/quality/audio on mobile
-- Orientation lock to landscape on fullscreen
-- Safe-area insets for notched displays
-- Android TV (Leanback) client with browse rows, episode picker, and direct-play streaming
+**Native clients**
+- **Web** (SvelteKit) — touch-optimised player, bottom-sheet menus, orientation lock, safe-area insets
+- **Desktop** (Tauri 2 on Windows / macOS / Linux) — reuses the SvelteKit bundle in a system webview; native Rust audio engine outside the webview decodes through symphonia 0.5 and writes raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect, OS mixer bypassed); DSD-via-DoP; ReplayGain enforcement; OS now-playing widget; OS media keys; system tray
+- **Android TV / Google TV / Fire TV** (Leanback + Media3) — browse rows, episode picker, direct-play + transcode, OpenSubtitles in player, Watch Next launcher integration, MediaSessionService for background music, D-pad seek
+- **Android phone** (Compose + Material 3) — pairing PIN sign-in, picture-in-picture for video, offline downloads
+- **LG webOS / Samsung Tizen / Roku** — feature-complete (pairing → hub → search → playback → audio/subtitle pickers → cross-device resume)
+- See [docs/comparison-matrix.md](docs/comparison-matrix.md) for current per-platform validation status.
 
-**Social & multi-user**
-- Multi-user auth: PASETO v4 local tokens, refresh rotation, admin/user roles, optional PIN lock
-- Managed profiles (up to 6 per account) with per-profile watch state, favorites, and language prefs
-- Parental content filtering with configurable max rating per profile
-- User favorites with hub-page surfacing
-- In-app notifications (SSE real-time) with unread badge and mark-read
+**Multi-user & policy**
+- OIDC, OAuth (Google / GitHub / Discord), SAML 2.0 SP-initiated SSO with JIT provisioning, LDAP with group sync — all core, no plugin install
+- PASETO v4 local tokens, refresh rotation, per-file streaming token (24h, file_id-bound, purpose-scoped) so native players don't drop streams at access-token expiry
+- Managed profiles (up to 6 per account) with per-profile watch state, favorites, language prefs
+- Library `is_private` flag with public/private union semantics; auto-grant template for new users; admin "view as" middleware
+- Parental content-rating ceiling per profile, enforced in hub queries, search, and items
+- User favorites, in-app SSE notifications
 
 **Operations**
 - Theme toggle (light/dark) with system-preference detection and FOUC prevention
 - Image proxy / thumbnailer with `?w=` resize, responsive `srcset`, CDN-friendly cache headers
-- Transcode fleet management UI: worker status, encoder info, live session monitoring, configurable NVENC tuning
+- Transcode fleet management UI: worker status, encoder info, live session monitoring
 - Multi-worker Docker Compose deployment support
 - Webhooks with HMAC-SHA256 signing and retry (compatible with Overseerr/Tautulli receivers)
+- TMDB discover + request workflow inline in search — no Overseerr / Ombi / Jellyseerr companion needed
 - `/health/ready` gated on schema-vs-code parity — container stays unhealthy until `goose up` has run
+- Backup/restore round-trip with schema-version gating (`409 DUMP_NEWER_THAN_SERVER` on a too-new dump; `pg_restore --clean --if-exists` + `goose up` on an older one)
 - Prometheus metrics on a separate port
-- OpenTelemetry tracing (OTLP/gRPC) — auto-instruments HTTP + Postgres; logs carry trace IDs for pivoting from log → trace
+- OpenTelemetry tracing (OTLP/gRPC) — auto-instruments HTTP + Postgres; logs carry trace IDs
+- Admin logs API (in-process 2000-entry slog ring buffer) for environments without SSH/kubectl access
+- Audit log of admin / playback / auth events
 - Analytics dashboard (play counts, bandwidth, codec distribution, top played)
 
 ## Screenshots
@@ -130,21 +141,22 @@ Navigate to `http://localhost:5173`, create your admin account, add a library, a
 
 ## Configuration
 
+Bootstrap-class settings — needed before the admin Settings UI exists — live in env vars:
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | ✓ | PostgreSQL connection string |
 | `VALKEY_URL` | ✓ | Valkey/Redis connection string |
 | `SECRET_KEY` | ✓ | 32+ byte secret for token encryption |
 | `MEDIA_PATH` | ✓ | Root path to media files |
-| `TMDB_API_KEY` | | TMDB v3 API key for metadata enrichment |
-| `TVDB_API_KEY` | | TVDB v4 API key for show-level fallback |
-| `API_PORT` | | API server listen port (default `7070`) |
-| `METRICS_PORT` | | Prometheus metrics port (default `7071`) |
+| `DATABASE_RO_URL` | | Read replica DSN (falls back to `DATABASE_URL`) |
+| `LISTEN_ADDR` | | API server bind address (default `:7070`) |
+| `METRICS_ADDR` | | Prometheus metrics bind (default `:7071`) |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | | Built-in HTTPS (operator-provided PEM) |
+| `TMDB_API_KEY` | | TMDB v3 key — seeded into Settings on first run |
+| `TVDB_API_KEY` | | TVDB v4 key — seeded into Settings on first run |
 
-OpenTelemetry tracing (OTLP/gRPC), SMTP, OIDC, LDAP and other integrations are
-now configured from the admin Settings UI rather than env vars. Tracing
-config is read at process startup, so a server/worker restart is required for
-changes to take effect.
+Everything else — public URL, log level, CORS allow-list, OIDC / OAuth / SAML / LDAP, SMTP, OpenTelemetry endpoint, transcode tuning — is configured from the admin Settings UI, stored in `server_settings`, and bootstrap-read at startup. Restart required after changes; the UI surfaces this notice.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full configuration reference and design notes.
 
