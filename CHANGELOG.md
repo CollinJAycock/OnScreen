@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-05-04
+
 ### Added
 
 - Live TV (Phase A): pluggable tuner abstraction with HDHomeRun and M3U/IPTV backends. HDHomeRun discovers via `/discover.json` + `/lineup.json`, filters DRM=1 channels, maps `503` to a stable `ALL_TUNERS_BUSY` error code. M3U accepts an HTTP URL or local file, parses Extended M3U with `tvg-id`/`tvg-chno`/`tvg-name`/`tvg-logo`, optional `User-Agent` passthrough for IPTV providers. Migration `00042_live_tv.sql` adds `tuner_devices`, `channels`, `epg_sources`, `epg_programs` tables with cascading deletes. Endpoints: `GET /api/v1/tv/channels` (with optional `?enabled=false` for the admin UI), `GET /api/v1/tv/channels/now-next` (LATERAL join surfaces current+next program per channel), admin-gated tuner CRUD under `/api/v1/tv/tuners` plus `POST /tuners/{id}/rescan`. Live HLS proxy at `GET /api/v1/tv/channels/{id}/stream.m3u8` + `/segments/{name}` runs ffmpeg `-c copy` (stream-copy keeps CPU near zero) with refcounted shared sessions — multiple viewers on the same channel share one tuner slot, with a 30s grace window after the last viewer disconnects so navigation churn doesn't burn re-tunes. Web UI: `/tv` channels page with now/next + progress bars; `/tv/{id}` player with hls.js, channel info banner, P/N keyboard channel switching. Phase B (Schedules Direct EPG + DVR scheduler) is the next milestone — the schema is in place
@@ -32,6 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Audio-only safeguard in transcode decision logic so music files with empty video codec aren't forced to transcode
 - OpenTelemetry distributed tracing (OTLP/gRPC) — disabled when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so instrumentation is free. Auto-instruments HTTP (otelchi, spans named by chi route template) and pgx (otelpgx). Custom spans on `scanner.library` and `transcode.run_job`. Slog records carry `trace_id`/`span_id` when a span is active. Server and worker register as separate services. Config: `OTEL_TRACES_SAMPLER_ARG` (sample ratio), `DEPLOYMENT_ENV` (resource attribute)
 - Jaeger all-in-one in `docker/docker-compose.yml` under the `tracing` profile (`docker compose --profile tracing up`) — UI at `:16686`, OTLP gRPC at `:4317`
+
+### Android TV client
+
+- Live TV: channel grid, channel player with hls.js-equivalent ExoPlayer HLS, recordings list
+- Music: Plexamp-style Play All and Shuffle on the artist page; album-art backdrop on the now-playing surface; Media3 `MediaSessionService` takes ownership of the ExoPlayer when you back out so audio continues under the system media controls; re-entering the player for the same track picks the parked session back up instead of starting fresh; auto-advance across album boundaries
+- OpenSubtitles search and download from inside the player's subtitle picker — downloaded subs flow through the same `external_subtitles` table as OCR'd image-based tracks
+- Subtitle and audio-track pickers work across direct-play AND transcoded HLS sessions; HLS audio swaps re-issue the transcode with the new `audio_stream_index` so language switches survive the transcoder's "one audio per session" constraint
+- Multi-file audiobook support in the detail page
+- Movies route through the detail page (with Resume / Play From Start buttons) instead of skipping straight to playback
+- Music videos shelf on the artist detail page; watched-episode dimming on the show detail page; Continue Watching split into TV / Movies / Other rows on the home hub
+- Transport-control polish: rewind / fast-forward primary actions, hardware media-key handler (TV-PP), D-pad LEFT/RIGHT seek when the overlay is hidden (TV-PC)
+- Low-RAM `DefaultLoadControl` profile on devices reporting `isLowRamDevice() == true` (TV-ME) — halved buffer durations and 16 MB byte cap to stay within Google's TV memory guidelines
+- Watch Next launcher integration (TV-PN): publishes resumable items to the system "Continue Watching" row via `WatchNextPrograms`, with a custom `onscreen://watch/<item_id>?position=<ms>` deep link that resumes at the exact second from any launcher tile
+- Per-file 24h `stream_token` for direct play so 90+ minute movies don't drop with `ERROR_CODE_IO_BAD_HTTP_STATUS` at the 1h access-token expiry
+- Persistent on-disk artwork cache (Coil disk cache) so library re-browse after an app restart doesn't re-fetch every poster
+- HLS hardening: 30s connect / 60s read timeouts so cold-start transcodes (10–20s ffmpeg warm-up over Cloudflare Tunnel) succeed; consume `start_offset_sec` and `seg0_audio_gap_sec` from the transcode session so the scrubber stays accurate after a mid-stream seek with AC3→AAC re-encode
+- Modernised cards + detail-page hero; empty / error overlays across browse fragments
+- Screen-on flag held while playing so the system screensaver doesn't kick in mid-show
+
+### Fixed
+
+- Android TV: video playback releases the player on Back press (was leaving audio playing in the background after the user returned to the pick list)
 
 ### Changed
 
