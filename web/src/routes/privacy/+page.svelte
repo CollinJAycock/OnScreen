@@ -121,6 +121,14 @@
       the project's source code.
     </p>
 
+    <h2>Account and data deletion</h2>
+
+    <p>
+      To delete your OnScreen account and the data associated with it,
+      see the <a href="/account-deletion">Account &amp; Data Deletion</a>
+      page for instructions.
+    </p>
+
     <h2>Children's privacy</h2>
 
     <p>

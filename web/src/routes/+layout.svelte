@@ -39,7 +39,8 @@
   const isAuthPage = derived(page, $p =>
     $p.url.pathname === '/login' ||
     $p.url.pathname.startsWith('/setup') ||
-    $p.url.pathname === '/privacy'
+    $p.url.pathname === '/privacy' ||
+    $p.url.pathname === '/account-deletion'
   );
 
   // Admin "view as" impersonation state — per-tab via sessionStorage.
