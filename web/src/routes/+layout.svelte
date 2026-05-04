@@ -37,7 +37,9 @@
   let serverUrlSaving = false;
 
   const isAuthPage = derived(page, $p =>
-    $p.url.pathname === '/login' || $p.url.pathname.startsWith('/setup')
+    $p.url.pathname === '/login' ||
+    $p.url.pathname.startsWith('/setup') ||
+    $p.url.pathname === '/privacy'
   );
 
   // Admin "view as" impersonation state — per-tab via sessionStorage.
