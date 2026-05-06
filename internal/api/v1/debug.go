@@ -7,6 +7,7 @@ import (
 	httppprof "net/http/pprof"
 	"runtime"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/onscreen/onscreen/internal/api/respond"
 )
 
@@ -83,13 +84,21 @@ func (h *DebugHandler) Runtime(w http.ResponseWriter, r *http.Request) {
 // The standard set + the named profiles (heap, goroutine, allocs, …)
 // — chi-routed under /admin/debug/pprof/{name}.
 //
-// Wraps Index for the empty-name case so the operator sees the standard
-// pprof landing page.
+// httppprof.Index dispatches profiles by stripping the literal prefix
+// "/debug/pprof/" from r.URL.Path. Our route is mounted at
+// /api/v1/admin/debug/pprof/{name}, so we rewrite the path on a
+// shallow request clone to feed Index the prefix it expects. Without
+// this, Index would always render the HTML index page.
 func (h *DebugHandler) Pprof(w http.ResponseWriter, r *http.Request) {
-	// Force JSON-mode disable (chi may inject a content-type header
-	// upstream); pprof handlers set their own.
 	w.Header().Del("Content-Type")
-	httppprof.Index(w, r)
+	name := chi.URLParam(r, "name")
+	r2 := r.Clone(r.Context())
+	if name == "" {
+		r2.URL.Path = "/debug/pprof/"
+	} else {
+		r2.URL.Path = "/debug/pprof/" + name
+	}
+	httppprof.Index(w, r2)
 }
 
 func (h *DebugHandler) PprofCmdline(w http.ResponseWriter, r *http.Request) {
