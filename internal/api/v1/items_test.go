@@ -600,6 +600,181 @@ func TestStreamFile_Range(t *testing.T) {
 	}
 }
 
+// ── DownloadFile ─────────────────────────────────────────────────────────────
+//
+// Mirrors the StreamFile coverage but layers Content-Disposition checks
+// so a regression that drops the attachment header (and silently
+// reverts to inline playback) gets caught here.
+
+func TestDownloadFile_NotFound(t *testing.T) {
+	ms := &mockItemMedia{fileErr: media.ErrNotFound}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	h.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestDownloadFile_InactiveFile(t *testing.T) {
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "missing", FilePath: "/gone.mkv"},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	h.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestDownloadFile_Success_HeadersAndBody(t *testing.T) {
+	// Active file + viewable item → 200 with the file body AND a
+	// Content-Disposition: attachment header. The disposition bit is
+	// the new contract — it's the difference between this route and
+	// StreamFile, and the regression to guard against is "developer
+	// re-uses StreamFile internally and forgets the header."
+	tmp := filepath.Join(t.TempDir(), "movie.mkv")
+	body := []byte("fake-mkv-data\x00\x01\x02")
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "The Movie"},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	h.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), body) {
+		t.Errorf("body: got %q, want %q", rec.Body.Bytes(), body)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment;") {
+		t.Errorf("Content-Disposition must start with `attachment;`; got %q", cd)
+	}
+	// Filename derives from the item title + the on-disk extension.
+	if !strings.Contains(cd, `filename="The Movie.mkv"`) {
+		t.Errorf("Content-Disposition filename: got %q, want it to contain `filename=\"The Movie.mkv\"`", cd)
+	}
+	// UTF-8 form must be present too so non-ASCII titles survive.
+	if !strings.Contains(cd, "filename*=UTF-8''") {
+		t.Errorf("Content-Disposition must include filename*= form; got %q", cd)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("Content-Type: got %q, want application/octet-stream", ct)
+	}
+}
+
+func TestDownloadFile_Range(t *testing.T) {
+	// Mobile download managers (Android Download Manager, iOS Safari)
+	// use Range to resume an interrupted download. http.ServeFile
+	// honours Range when called normally, but if the handler ever
+	// gets refactored to write the body itself this test catches a
+	// regression to 200-not-206.
+	tmp := filepath.Join(t.TempDir(), "movie.mp4")
+	body := bytes.Repeat([]byte("0123456789"), 100)
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "Test"},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req.Header.Set("Range", "bytes=500-599")
+	h.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status: got %d, want 206 PartialContent", rec.Code)
+	}
+	if rec.Body.Len() != 100 {
+		t.Errorf("body length: got %d, want 100", rec.Body.Len())
+	}
+}
+
+func TestDownloadFilename(t *testing.T) {
+	// Direct unit test for the filename helper. The handler test above
+	// exercises the happy path — these cover the sanitisation rules in
+	// isolation (header injection, OS-illegal chars, fallbacks).
+	cases := []struct {
+		name       string
+		title      string
+		sourcePath string
+		want       string
+	}{
+		{
+			name:       "title preferred over basename",
+			title:      "The Matrix",
+			sourcePath: "/data/abc123.mkv",
+			want:       "The Matrix.mkv",
+		},
+		{
+			name:       "empty title falls back to basename without extension",
+			title:      "",
+			sourcePath: "/data/Movie.Name.2024.mkv",
+			want:       "Movie.Name.2024.mkv",
+		},
+		{
+			name:       "CRLF stripped (header injection guard); colon also Windows-illegal so it goes too",
+			title:      "Evil\r\nX-Injected: bad",
+			sourcePath: "/data/x.mp4",
+			want:       "EvilX-Injected_ bad.mp4",
+		},
+		{
+			name:       "quote and backslash stripped (quoted-string termination)",
+			title:      `Some "quoted" \name`,
+			sourcePath: "/data/x.mp4",
+			want:       "Some quoted name.mp4",
+		},
+		{
+			name:       "Windows-illegal chars replaced with underscore",
+			title:      "a/b:c*d?e<f>g|h",
+			sourcePath: "/data/x.mp4",
+			want:       "a_b_c_d_e_f_g_h.mp4",
+		},
+		{
+			name:       "200-char cap",
+			title:      strings.Repeat("a", 250),
+			sourcePath: "/data/x.mp4",
+			want:       strings.Repeat("a", 200) + ".mp4",
+		},
+		{
+			name:       "empty title with dotfile source — base trims ext to empty, falls through to `download`",
+			title:      "",
+			sourcePath: "/data/.hidden",
+			// filepath.Ext(".hidden") = ".hidden" (whole basename), so
+			// trimming the extension yields "" → "download" fallback.
+			want:       "download.hidden",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := downloadFilename(tc.title, tc.sourcePath)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // ── itemStateToEventType ─────────────────────────────────────────────────────
 
 func TestItemStateToEventType(t *testing.T) {
