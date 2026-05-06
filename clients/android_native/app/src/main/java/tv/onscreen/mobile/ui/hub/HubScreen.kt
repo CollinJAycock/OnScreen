@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
@@ -56,6 +58,8 @@ fun HubScreen(
     onOpenHistory: () -> Unit,
     onOpenCollections: () -> Unit,
     onOpenDownloads: () -> Unit,
+    onOpenDiscover: () -> Unit,
+    onOpenPlaylists: () -> Unit,
     vm: HubViewModel = hiltViewModel(),
 ) {
     val ui by vm.state.collectAsState()
@@ -74,8 +78,14 @@ fun HubScreen(
                     IconButton(onClick = onOpenCollections) {
                         Icon(Icons.Default.Bookmarks, contentDescription = "Collections")
                     }
+                    IconButton(onClick = onOpenPlaylists) {
+                        Icon(Icons.Default.QueueMusic, contentDescription = "Playlists")
+                    }
                     IconButton(onClick = onOpenDownloads) {
                         Icon(Icons.Default.Download, contentDescription = "Downloads")
+                    }
+                    IconButton(onClick = onOpenDiscover) {
+                        Icon(Icons.Default.Explore, contentDescription = "Discover")
                     }
                     IconButton(onClick = onOpenSearch) {
                         Icon(Icons.Default.Search, contentDescription = "Search")

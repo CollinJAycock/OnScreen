@@ -21,6 +21,20 @@ class OnScreenApp : Application(), ImageLoaderFactory, Configuration.Provider {
             .setWorkerFactory(workerFactory)
             .build()
 
+    override fun onCreate() {
+        super.onCreate()
+        // OSMDroid one-time init. Sets the User-Agent OSM's tile
+        // policy requires (avoid the bare "okhttp" default that
+        // gets rate-limited) and tells OSMDroid to use the app's
+        // private cache dir for tiles — no external-storage
+        // permission needed on API 29+.
+        org.osmdroid.config.Configuration.getInstance().apply {
+            userAgentValue = packageName
+            osmdroidBasePath = cacheDir.resolve("osmdroid")
+            osmdroidTileCache = cacheDir.resolve("osmdroid/tiles")
+        }
+    }
+
 
     // Coil shares the OkHttp client with the Retrofit stack so the
     // AuthInterceptor + token-refresh authenticator apply uniformly

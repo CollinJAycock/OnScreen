@@ -46,6 +46,14 @@ android {
     }
 }
 
+// JUnit forks its own JVM per test task; the default heap (256m on
+// Windows) trips OOM once the suite grows past ~150 classes with
+// MockK + coroutines instrumentation loaded. 2g matches the daemon
+// JVM ceiling and gives plenty of headroom for the suite.
+tasks.withType<Test>().configureEach {
+    maxHeapSize = "2g"
+}
+
 dependencies {
     // Compose BOM keeps the runtime/UI/material/foundation versions
     // aligned without manual pinning. Material 3 = Material You.
@@ -76,6 +84,28 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-session:1.3.1")
 
+    // Google Cast SDK — `MediaRouteButton` for the Cast picker, plus
+    // `CastContext` / `CastSession` for sending LOAD requests to the
+    // Default Media Receiver. We don't ship a custom receiver app
+    // (that needs a Google Cast Developer Console registration); the
+    // Default Receiver handles the MP4 / HLS direct-play set we serve
+    // from /media/stream/{id}.
+    //
+    // androidx.mediarouter brings the route-discovery UI; cast-framework
+    // is the sender glue. Both pin to versions known stable on Android
+    // 7+ (our minSdk).
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
+    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
+
+    // Chrome Custom Tabs — used by the SSO bridge to open the
+    // server's web /pair page in an in-app browser tab. The user
+    // signs in via OIDC / SAML / LDAP / local through the full web
+    // login UI, the tab auto-claims the pair PIN, and the app polls
+    // the existing pair-poll endpoint to receive the token pair.
+    // No deep-link callback or token-in-URL leakage — the server
+    // handshake stays in HTTPS land.
+    implementation("androidx.browser:browser:1.8.0")
+
     // Networking
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
@@ -87,6 +117,15 @@ dependencies {
 
     // Image loading — Coil's compose integration.
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // OSMDroid — OpenStreetMap tile renderer for the photo-map view.
+    // No API key, no Google Play Services dependency, no billing
+    // setup — just pulls public OSM raster tiles. Embedded in a
+    // Compose tree via AndroidView; the lifecycle integration lives
+    // in OsmMap.kt. Picked over MapLibre + Google Maps because it
+    // avoids an account/key handshake the user shouldn't have to
+    // configure for a basic geotagged-photo map.
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     // Dependency injection
     implementation("com.google.dagger:hilt-android:2.56.2")

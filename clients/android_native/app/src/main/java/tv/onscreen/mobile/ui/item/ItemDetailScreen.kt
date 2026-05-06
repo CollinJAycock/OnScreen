@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
@@ -27,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +56,7 @@ import tv.onscreen.mobile.data.downloads.DownloadEntry
 import tv.onscreen.mobile.data.downloads.DownloadWorker
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.ItemDetail
+import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.repository.FavoritesRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
 import javax.inject.Inject
@@ -93,10 +96,65 @@ class ItemDetailViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = ItemDetailUi(loading = true)
             try {
-                _state.value = ItemDetailUi(loading = false, detail = repo.getItem(itemId))
+                val detail = repo.getItem(itemId)
+                _state.value = ItemDetailUi(loading = false, detail = detail)
                 downloads.store.load()
+                // Watching-status is best-effort — the detail page is
+                // useful even when the server is on an older build that
+                // 404s the route. Fetched after the main detail so the
+                // page renders without waiting on it.
+                refreshWatchStatus(itemId)
             } catch (e: Exception) {
                 _state.value = ItemDetailUi(loading = false, error = e.message)
+            }
+        }
+    }
+
+    /** Re-pull the watching-status row. Called after a load and after
+     *  every set/clear so the dropdown reflects post-write state. */
+    private fun refreshWatchStatus(itemId: String) {
+        viewModelScope.launch {
+            try {
+                val s = repo.getWatchStatus(itemId)
+                _state.value = _state.value.copy(watchStatus = s)
+            } catch (_: Exception) {
+                // Old server / network blip — leave the previous value
+                // alone. The user can re-enter the screen to retry.
+            }
+        }
+    }
+
+    /**
+     * Set the watching status. Optimistic — we flip the local state
+     * first so the dropdown reacts immediately, then fire the PUT.
+     * On failure we revert.
+     */
+    fun setWatchStatus(status: WatchStatus) {
+        val itemId = _state.value.detail?.id ?: return
+        val previous = _state.value.watchStatus
+        _state.value = _state.value.copy(watchStatus = status)
+        viewModelScope.launch {
+            try {
+                repo.setWatchStatus(itemId, status)
+            } catch (_: Exception) {
+                _state.value = _state.value.copy(watchStatus = previous)
+            }
+        }
+    }
+
+    /** Clear the watching-status row. Server is idempotent so we don't
+     *  bother with optimistic-on-failure rollback the same way set does
+     *  — a concurrent set+clear race is a UX corner the user can fix
+     *  by tapping again. */
+    fun clearWatchStatus() {
+        val itemId = _state.value.detail?.id ?: return
+        val previous = _state.value.watchStatus
+        _state.value = _state.value.copy(watchStatus = null)
+        viewModelScope.launch {
+            try {
+                repo.clearWatchStatus(itemId)
+            } catch (_: Exception) {
+                _state.value = _state.value.copy(watchStatus = previous)
             }
         }
     }
@@ -132,6 +190,10 @@ class ItemDetailViewModel @Inject constructor(
 data class ItemDetailUi(
     val loading: Boolean = false,
     val detail: ItemDetail? = null,
+    /** Per-user watching-status row. Null = not yet set, or the server
+     *  doesn't expose the route (older build). The dropdown reads this
+     *  to highlight the active selection. */
+    val watchStatus: WatchStatus? = null,
     val error: String? = null,
 )
 
@@ -293,6 +355,39 @@ fun ItemDetailScreen(
                                 )
                             }
                         }
+                        // Watching-status picker. Renders for the
+                        // types where the v2.2 anime track surfaces
+                        // mean a "where am I in this" question is
+                        // meaningful — TV show containers and seasons.
+                        // Movies have a different mental model (watched
+                        // vs not), and music / books / photos don't
+                        // belong on the queue.
+                        if (d.type == "show" || d.type == "season" || d.type == "anime") {
+                            Spacer(Modifier.height(16.dp))
+                            WatchStatusPicker(
+                                active = ui.watchStatus,
+                                onPick = vm::setWatchStatus,
+                                onClear = vm::clearWatchStatus,
+                            )
+                        }
+                        // Audio-quality badges. Hidden when the item
+                        // isn't audio-bearing (movie file, no useful
+                        // audiophile metadata) so the row doesn't sit
+                        // empty on every video page. Logic is in
+                        // AudioQualityBadges (unit-tested).
+                        val audioBadges = AudioQualityBadges.badges(d.files.firstOrNull())
+                        if (audioBadges.isNotEmpty()) {
+                            Spacer(Modifier.height(12.dp))
+                            Row {
+                                audioBadges.forEach { label ->
+                                    AssistChip(
+                                        onClick = {},
+                                        label = { Text(label) },
+                                        modifier = Modifier.padding(end = 6.dp),
+                                    )
+                                }
+                            }
+                        }
                         if (!d.summary.isNullOrEmpty()) {
                             Spacer(Modifier.height(16.dp))
                             Text(d.summary, style = MaterialTheme.typography.bodyMedium)
@@ -335,4 +430,50 @@ fun ItemDetailScreen(
             }
         }
     }
+}
+
+/**
+ * Five-state watching-status picker. Mirrors the v2.2 server enum:
+ * Plan to Watch / Watching / On Hold / Completed / Dropped. The active
+ * choice highlights with the primary colour; tapping the active one a
+ * second time clears it (idempotent on the server side).
+ */
+@Composable
+private fun WatchStatusPicker(
+    active: WatchStatus?,
+    onPick: (WatchStatus) -> Unit,
+    onClear: () -> Unit,
+) {
+    Column {
+        Text(
+            "Watching status",
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Spacer(Modifier.height(4.dp))
+        Row {
+            WatchStatus.values().forEach { s ->
+                val isActive = active == s
+                TextButton(
+                    onClick = { if (isActive) onClear() else onPick(s) },
+                ) {
+                    Text(
+                        text = labelFor(s),
+                        color = if (isActive) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Display label for a [WatchStatus]. Lives next to the picker so a
+ *  future i18n pass can swap to stringResource without touching the
+ *  enum definition. */
+private fun labelFor(s: WatchStatus): String = when (s) {
+    WatchStatus.PLAN_TO_WATCH -> "Plan"
+    WatchStatus.WATCHING -> "Watching"
+    WatchStatus.ON_HOLD -> "Hold"
+    WatchStatus.COMPLETED -> "Done"
+    WatchStatus.DROPPED -> "Dropped"
 }

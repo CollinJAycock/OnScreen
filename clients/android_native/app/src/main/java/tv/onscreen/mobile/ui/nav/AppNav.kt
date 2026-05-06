@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.stateIn
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.ui.collections.CollectionDetailScreen
 import tv.onscreen.mobile.ui.collections.CollectionsScreen
+import tv.onscreen.mobile.ui.discover.DiscoverScreen
 import tv.onscreen.mobile.ui.downloads.DownloadsScreen
 import tv.onscreen.mobile.ui.favorites.FavoritesScreen
 import tv.onscreen.mobile.ui.history.HistoryScreen
@@ -27,7 +28,9 @@ import tv.onscreen.mobile.ui.item.ItemDetailScreen
 import tv.onscreen.mobile.ui.library.LibraryScreen
 import tv.onscreen.mobile.ui.author.AuthorScreen
 import tv.onscreen.mobile.ui.pair.PairScreen
+import tv.onscreen.mobile.ui.photo.PhotoExtrasScreen
 import tv.onscreen.mobile.ui.photo.PhotoViewerScreen
+import tv.onscreen.mobile.ui.playlists.PlaylistsScreen
 import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
 import tv.onscreen.mobile.ui.series.SeriesScreen
@@ -70,6 +73,24 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 onOpenHistory = { nav.navigate(Routes.HISTORY) },
                 onOpenCollections = { nav.navigate(Routes.COLLECTIONS) },
                 onOpenDownloads = { nav.navigate(Routes.DOWNLOADS) },
+                onOpenDiscover = { nav.navigate(Routes.DISCOVER) },
+                onOpenPlaylists = { nav.navigate(Routes.PLAYLISTS) },
+            )
+        }
+        composable(Routes.DISCOVER) {
+            DiscoverScreen(onBack = { nav.popBackStack() })
+        }
+        composable(Routes.PLAYLISTS) {
+            PlaylistsScreen(onBack = { nav.popBackStack() })
+        }
+        composable(
+            Routes.PHOTO_EXTRAS,
+            arguments = listOf(navArgument("libraryId") { type = NavType.StringType }),
+        ) { entry ->
+            PhotoExtrasScreen(
+                libraryId = entry.arguments!!.getString("libraryId")!!,
+                onOpenItem = { id -> nav.navigate(Routes.photo(id)) },
+                onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.DOWNLOADS) {
@@ -113,6 +134,7 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
             LibraryScreen(
                 libraryId = entry.arguments!!.getString("id")!!,
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenPhotoExtras = { libId -> nav.navigate(Routes.photoExtras(libId)) },
                 onBack = { nav.popBackStack() },
             )
         }

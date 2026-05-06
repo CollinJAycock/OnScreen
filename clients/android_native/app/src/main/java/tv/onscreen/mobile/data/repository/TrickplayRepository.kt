@@ -7,6 +7,7 @@ import okhttp3.Request
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.TrickplayCue
 import tv.onscreen.mobile.data.model.TrickplayStatus
+import tv.onscreen.mobile.trickplay.TrickplayVtt
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,7 +42,8 @@ open class TrickplayRepository @Inject constructor(
 
     /** Fetches /trickplay/{id}/index.vtt and parses out the cues.
      *  Returns null on any failure (network, parse) so the caller
-     *  silently falls back to no-preview seek. */
+     *  silently falls back to no-preview seek. Parsing is delegated
+     *  to [TrickplayVtt.parse] — pure module, fully unit-tested. */
     open suspend fun fetchCues(itemId: String): List<TrickplayCue>? {
         return try {
             val req = Request.Builder()
@@ -50,7 +52,7 @@ open class TrickplayRepository @Inject constructor(
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
                 val body = resp.body?.string() ?: return null
-                parseVtt(body)
+                TrickplayVtt.parse(body).takeIf { it.isNotEmpty() }
             }
         } catch (_: Exception) { null }
     }
@@ -71,47 +73,8 @@ open class TrickplayRepository @Inject constructor(
         } catch (_: Exception) { null }
     }
 
-    companion object {
-        /** WebVTT trickplay parser. Cues look like:
-         *
-         *      00:00:10.000 --> 00:00:20.000
-         *      sprite_000.jpg#xywh=0,0,320,180
-         *
-         *  Lines without a payload, malformed timecodes, or missing
-         *  #xywh fragments are skipped silently — partial parse is
-         *  preferable to bailing on the whole file because of one
-         *  bad cue. */
-        internal fun parseVtt(text: String): List<TrickplayCue> {
-            val out = mutableListOf<TrickplayCue>()
-            val lines = text.split('\n')
-            var i = 0
-            while (i < lines.size) {
-                val line = lines[i].trim()
-                val arrow = line.indexOf("-->")
-                if (arrow < 0) { i++; continue }
-                val start = parseVttTime(line.substring(0, arrow).trim())
-                val end = parseVttTime(line.substring(arrow + 3).trim())
-                val payload = lines.getOrNull(i + 1)?.trim().orEmpty()
-                val hash = payload.indexOf("#xywh=")
-                if (start < 0 || end < 0 || hash < 0) { i++; continue }
-                val file = payload.substring(0, hash)
-                val coords = payload.substring(hash + 6).split(',').mapNotNull { it.toIntOrNull() }
-                if (coords.size < 4) { i++; continue }
-                out += TrickplayCue(start, end, file, coords[0], coords[1], coords[2], coords[3])
-                i += 2
-            }
-            return out
-        }
-
-        /** Accepts HH:MM:SS.mmm or MM:SS.mmm. Returns -1 on bad input. */
-        private fun parseVttTime(s: String): Long {
-            val m = Regex("""^(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?$""").matchEntire(s) ?: return -1
-            val (hStr, mStr, secStr, msStr) = m.destructured
-            val h = if (hStr.isEmpty()) 0L else hStr.toLong()
-            val mi = mStr.toLong()
-            val se = secStr.toLong()
-            val ms = if (msStr.isEmpty()) 0L else msStr.padEnd(3, '0').substring(0, 3).toLong()
-            return h * 3_600_000 + mi * 60_000 + se * 1_000 + ms
-        }
-    }
+    // VTT parsing + cue-at-position lookup live in
+    // [tv.onscreen.mobile.trickplay.TrickplayVtt] so the pure
+    // string→List<TrickplayCue> mapping is unit-testable in the JVM
+    // sourceset without mocking OkHttp or BitmapFactory.
 }

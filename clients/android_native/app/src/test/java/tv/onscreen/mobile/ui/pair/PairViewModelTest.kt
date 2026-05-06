@@ -135,4 +135,81 @@ class PairViewModelTest {
         vm.reset()
         assertThat(vm.state.value).isEqualTo(PairState.NeedsServer)
     }
+
+    // ── SSO bridge ───────────────────────────────────────────────────────
+
+    @Test
+    fun `startSsoBridge requests pair code, queues custom-tabs URL, polls`() =
+        runTest(dispatcher) {
+            val auth = mockk<AuthRepository>()
+            coEvery { auth.getServerUrl() } returns "https://server.example"
+            coEvery { auth.startPairing() } returns PairCodeResponse(
+                pin = "987654",
+                device_token = "dev-tok",
+                expires_at = "2026-01-01T00:00:00Z",
+            )
+            // First poll already done — simulates the auto-claim
+            // landing immediately after Custom Tabs opens.
+            coEvery { auth.pollPairing("dev-tok") } returns
+                AuthRepository.PollResult.Done(tokenPair())
+            coEvery { auth.completePairing(any()) } returns Unit
+
+            val vm = PairViewModel(auth)
+            vm.startSsoBridge(deviceName = "Pixel 8")
+            advanceUntilIdle()
+
+            // SSO URL surfaced for the screen to feed Custom Tabs.
+            assertThat(vm.ssoLaunchUrl.value).isEqualTo(
+                "https://server.example/pair?code=987654&auto=1&device_name=Pixel+8",
+            )
+            // Polling resolved → Done.
+            assertThat(vm.state.value).isEqualTo(PairState.Done)
+        }
+
+    @Test
+    fun `startSsoBridge surfaces Error when server URL is unset`() =
+        runTest(dispatcher) {
+            val auth = mockk<AuthRepository>()
+            coEvery { auth.getServerUrl() } returns null
+
+            val vm = PairViewModel(auth)
+            vm.startSsoBridge()
+            advanceUntilIdle()
+
+            assertThat(vm.state.value).isInstanceOf(PairState.Error::class.java)
+            assertThat(vm.ssoLaunchUrl.value).isNull()
+        }
+
+    @Test
+    fun `startSsoBridge refuses non-http server URLs`() = runTest(dispatcher) {
+        // Defensive — server URL came from an earlier PairScreen
+        // submission so should already be http(s), but guard against
+        // a corrupted prefs blob (e.g. a downgraded build wrote
+        // something weird).
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.getServerUrl() } returns "file:///etc/hosts"
+
+        val vm = PairViewModel(auth)
+        vm.startSsoBridge()
+        advanceUntilIdle()
+
+        assertThat(vm.state.value).isInstanceOf(PairState.Error::class.java)
+    }
+
+    @Test
+    fun `consumeSsoLaunchUrl clears the one-shot URL`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.getServerUrl() } returns "https://server.example"
+        coEvery { auth.startPairing() } returns PairCodeResponse(
+            pin = "111111", device_token = "tok", expires_at = "2026-01-01T00:00:00Z",
+        )
+        coEvery { auth.pollPairing(any()) } returns AuthRepository.PollResult.Pending
+
+        val vm = PairViewModel(auth)
+        vm.startSsoBridge()
+        advanceUntilIdle()
+        assertThat(vm.ssoLaunchUrl.value).isNotNull()
+        vm.consumeSsoLaunchUrl()
+        assertThat(vm.ssoLaunchUrl.value).isNull()
+    }
 }

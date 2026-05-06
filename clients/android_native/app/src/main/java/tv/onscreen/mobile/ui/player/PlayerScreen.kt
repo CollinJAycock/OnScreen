@@ -7,20 +7,32 @@ import android.os.Build
 import android.util.Rational
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Lyrics
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -44,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -68,6 +81,9 @@ import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.OnlineSubtitle
 import tv.onscreen.mobile.data.model.SubtitleStream
+import tv.onscreen.mobile.cast.CastMediaInfo
+import tv.onscreen.mobile.cast.CastSender
+import tv.onscreen.mobile.data.prefs.SubtitleStyle
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -276,7 +292,45 @@ private fun PlayerHost(
 
     var showAudioPicker by remember { mutableStateOf(false) }
     var showSubtitlePicker by remember { mutableStateOf(false) }
+    var showSubtitleStyle by remember { mutableStateOf(false) }
+    var showSleepTimer by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(false) }
+    var showChapters by remember { mutableStateOf(false) }
+    val sleepTimer by vm.sleepTimer.collectAsState()
+    val sleepTimerFired by vm.sleepTimerFired.collectAsState()
+    // When the sleep-timer countdown ends, the VM raises the
+    // sleepTimerFired edge. We pause the player from the UI side
+    // (the VM doesn't reach into ExoPlayer), then ack so the next
+    // timer can fire cleanly.
+    LaunchedEffect(sleepTimerFired) {
+        if (sleepTimerFired) {
+            player.pause()
+            vm.consumeSleepTimerFired()
+        }
+    }
+    // EndOfTrack mode: subscribe to player state and forward STATE_ENDED
+    // to the VM so it can raise the fired edge. Listener removed on
+    // composition leave so we don't double-attach.
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) vm.onPlayerEnded()
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     val activeAudioIndex = remember { mutableIntStateOf(-1) }
+
+    // Subtitle style is read once per render and pushed into the
+    // SubtitleView on every change. The PlayerView reference is held
+    // in a remember so the AndroidView factory and the LaunchedEffect
+    // both see the same instance.
+    val subtitleStyle by vm.subtitleStyle.collectAsState(initial = SubtitleStyle.DEFAULT)
+    val playerViewRef = remember { mutableStateOf<PlayerView?>(null) }
+    LaunchedEffect(subtitleStyle, playerViewRef.value) {
+        playerViewRef.value?.applySubtitleStyle(subtitleStyle)
+    }
 
     AndroidView(
         modifier = Modifier.fillMaxSize(),
@@ -284,9 +338,88 @@ private fun PlayerHost(
             PlayerView(ctx).apply {
                 this.player = player
                 useController = true
+                playerViewRef.value = this
+                applySubtitleStyle(subtitleStyle)
+                // Hook the built-in TimeBar to drive trickplay
+                // previews. The id is part of Media3's public layout —
+                // exo_progress is the DefaultTimeBar inside the
+                // controller. addListener takes an OnScrubListener
+                // whose onScrubMove fires continuously while the user
+                // drags, perfect for thumbnail lookup.
+                val timeBar = findViewById<androidx.media3.ui.DefaultTimeBar?>(
+                    androidx.media3.ui.R.id.exo_progress,
+                )
+                timeBar?.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
+                    override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) {
+                        vm.onScrubMove(position)
+                    }
+                    override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) {
+                        vm.onScrubMove(position)
+                    }
+                    override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) {
+                        vm.onScrubStop()
+                    }
+                })
             }
         },
     )
+
+    // Trickplay scrub-preview overlay. Renders above the seekbar when
+    // the user is dragging — disappears on scrub-end. Position-only
+    // label always shown; bitmap shows once the sprite loads (it's
+    // typically near-instant since trickplay sheets are <100 KB JPGs).
+    val scrubPreview = ui.scrubPreview
+    if (scrubPreview != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = 96.dp),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            androidx.compose.foundation.layout.Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .background(
+                        color = Color(0xCC000000),
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                    .padding(8.dp),
+            ) {
+                if (scrubPreview.bitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = scrubPreview.bitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.width(160.dp),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                Text(
+                    text = formatScrubMs(scrubPreview.positionMs),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+    }
+
+    // Lyrics overlay. Renders only when the user has toggled it on
+    // and the VM has lyrics. Polls the player's currentPosition on a
+    // short cadence so synced LRC cues land near the active line.
+    if (showLyrics && (ui.lyricsCues != null || ui.lyricsPlain != null)) {
+        var positionMs by remember { mutableStateOf(0L) }
+        LaunchedEffect(player) {
+            while (isActive) {
+                positionMs = player.currentPosition + vm.hlsOffsetMs
+                delay(250)
+            }
+        }
+        LyricsOverlay(
+            cues = ui.lyricsCues,
+            plain = ui.lyricsPlain,
+            positionMs = positionMs,
+            onDismiss = { showLyrics = false },
+        )
+    }
 
     // Skip-intro / skip-credits overlay. Polls the player position
     // on a short cadence and shows the button when position lands
@@ -304,11 +437,145 @@ private fun PlayerHost(
                 Icon(Icons.Default.Audiotrack, contentDescription = "Audio", tint = Color.White)
             }
         }
+        // Cast / Chromecast. The MediaRouteButton is owned by the Cast
+        // SDK — it handles device discovery, picker UI, and connection
+        // state itself. We layer a separate "Cast this item" tap on
+        // top: when the user is connected and presses it, build a LOAD
+        // payload from the active item + file and send it to the
+        // receiver. Only surfaces when the file is direct-play castable
+        // (matches the web isCastable predicate).
+        val castFile = ui.item?.files?.firstOrNull()?.let { f ->
+            CastMediaInfo.File(
+                id = f.id,
+                // ItemFile carries no status field — files surfaced
+                // through the player are by definition active (the
+                // scanner filters missing rows out before the API
+                // serialises). Hardcode "active" so isCastable's
+                // status gate doesn't reject it.
+                status = "active",
+                container = f.container,
+                videoCodec = f.video_codec,
+                audioCodec = f.audio_codec,
+                // ItemFile uses ms; CastMediaInfo wants seconds.
+                durationSeconds = f.duration_ms?.let { ms -> ms / 1000L },
+                streamToken = f.stream_token,
+            )
+        }
+        if (castFile != null && CastMediaInfo.isCastable(castFile)) {
+            // The route button itself — Cast SDK draws it.
+            AndroidView(
+                factory = { ctx ->
+                    androidx.mediarouter.app.MediaRouteButton(ctx).also {
+                        com.google.android.gms.cast.framework.CastButtonFactory
+                            .setUpMediaRouteButton(ctx.applicationContext, it)
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            // "Send this item" — only useful once the user has picked
+            // a device via the route button. We don't try to gate on
+            // session state here because connect/disconnect is async;
+            // the load() call no-ops when there's no session.
+            IconButton(
+                onClick = {
+                    val item = ui.item ?: return@IconButton
+                    val origin = vm.serverOrigin() ?: return@IconButton
+                    val payload = CastMediaInfo.build(
+                        CastMediaInfo.Item(
+                            id = item.id,
+                            type = item.type,
+                            title = item.title,
+                            posterPath = item.poster_path,
+                            // ItemDetail doesn't yet carry parent_title;
+                            // future enhancement: thread show.title for
+                            // episodes through the API model so the Cast
+                            // metadata gets a "Show · Episode" subtitle.
+                            parentTitle = null,
+                        ),
+                        castFile,
+                        origin,
+                    ) ?: return@IconButton
+                    if (CastSender.load(context, payload)) {
+                        // Stop local audio/video so we don't double-play.
+                        player.pause()
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Default.Send,
+                    contentDescription = "Send to Cast",
+                    tint = Color.White,
+                )
+            }
+        }
         if (ui.subtitles.isNotEmpty()) {
             IconButton(onClick = { showSubtitlePicker = true }) {
                 Icon(Icons.Default.Subtitles, contentDescription = "Subtitles", tint = Color.White)
             }
+            // Style adjuster — separate from the track picker because
+            // they're orthogonal concerns. Always offered when at
+            // least one subtitle track exists; hidden when there's no
+            // text to style.
+            IconButton(onClick = { showSubtitleStyle = true }) {
+                Icon(
+                    Icons.Default.FormatSize,
+                    contentDescription = "Subtitle style",
+                    tint = Color.White,
+                )
+            }
         }
+        // Chapter picker. Only surfaces when the active file carries
+        // chapter markers — meaningful for audiobooks (per-chapter
+        // jump), some movies, and shows with chapter encoding.
+        val chapters = ui.item?.files?.firstOrNull()?.chapters.orEmpty()
+        if (chapters.isNotEmpty()) {
+            IconButton(onClick = { showChapters = true }) {
+                Icon(
+                    Icons.Default.Bookmarks,
+                    contentDescription = "Chapters",
+                    tint = Color.White,
+                )
+            }
+        }
+
+        // Lyrics toggle. Only surfaces when the VM has lyrics for
+        // this track (synced or plain). Tap toggles a full-screen
+        // overlay that auto-scrolls to the current line for synced
+        // lyrics, or scrolls statically for plain.
+        if (ui.lyricsCues != null || ui.lyricsPlain != null) {
+            IconButton(onClick = { showLyrics = !showLyrics }) {
+                Icon(
+                    Icons.Default.Lyrics,
+                    contentDescription = "Lyrics",
+                    tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White,
+                )
+            }
+        }
+
+        // Sleep-timer button. Always offered — users want to sleep on
+        // music, audiobooks, AND that "one more episode" Netflix
+        // habit equally. Active timer shows the remaining countdown
+        // as a label on the chip; otherwise just the icon.
+        IconButton(onClick = { showSleepTimer = true }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Bedtime,
+                    contentDescription = "Sleep timer",
+                    tint = if (sleepTimer != null) MaterialTheme.colorScheme.primary else Color.White,
+                )
+                sleepTimer?.let { st ->
+                    if (st.mode is SleepTimer.Minutes) {
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = SleepTimerMath.formatRemaining(st.remainingMs),
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+        }
+
         // Picture-in-picture only makes sense for video — audio-only
         // playback gets the (forthcoming) MediaSession service for
         // backgrounding instead. Gate on resolution_h so audiobooks
@@ -346,6 +613,44 @@ private fun PlayerHost(
                 showOnlineSubtitleSearch = true
             },
             onDismiss = { showSubtitlePicker = false },
+        )
+    }
+
+    if (showChapters) {
+        val activeChapters = ui.item?.files?.firstOrNull()?.chapters.orEmpty()
+        ChapterPickerDialog(
+            chapters = activeChapters,
+            currentPositionMs = player.currentPosition + vm.hlsOffsetMs,
+            onSeek = { ms ->
+                // Seek into the chapter; the small +1 ms keeps us
+                // strictly inside the chapter (matches activeIndex's
+                // inclusive-start contract).
+                player.seekTo(ms + 1)
+                showChapters = false
+            },
+            onDismiss = { showChapters = false },
+        )
+    }
+
+    if (showSleepTimer) {
+        SleepTimerDialog(
+            active = sleepTimer,
+            onPick = { mode ->
+                vm.setSleepTimer(mode)
+                showSleepTimer = false
+            },
+            onDismiss = { showSleepTimer = false },
+        )
+    }
+
+    if (showSubtitleStyle) {
+        SubtitleStyleDialog(
+            style = subtitleStyle,
+            onSize = vm::setSubtitleSize,
+            onColor = vm::setSubtitleColor,
+            onBackground = vm::setSubtitleBackground,
+            onOutline = vm::setSubtitleOutline,
+            onDismiss = { showSubtitleStyle = false },
         )
     }
 
@@ -650,11 +955,18 @@ private fun SkipMarkerOverlay(
     if (markers.isEmpty()) return
 
     var activeMarker by remember { mutableStateOf<Marker?>(null) }
+    // Session-scoped dismissed-marker set. A user who long-presses
+    // the Skip button (or taps the × next to it) is saying "I want to
+    // watch this; don't show me the button for this marker again."
+    // Common case: post-credits scenes the user actually wants to see.
+    // Keyed by SkipMarkers.markerKey so two markers at the same position
+    // (intro + credits on a clip-show episode) don't shadow each other.
+    val dismissed = remember { mutableStateOf(setOf<String>()) }
 
     LaunchedEffect(markers) {
         while (isActive) {
             val contentPos = player.currentPosition + hlsOffsetMs
-            activeMarker = markers.firstOrNull { contentPos in it.start_ms..it.end_ms }
+            activeMarker = SkipMarkers.activeAt(markers, contentPos, dismissed.value)
             delay(500)
         }
     }
@@ -666,17 +978,36 @@ private fun SkipMarkerOverlay(
             .padding(32.dp),
         contentAlignment = Alignment.BottomEnd,
     ) {
-        Button(
-            onClick = {
-                // Seek slightly past the end so we don't immediately
-                // re-enter the same marker window on the next tick.
-                val target = (marker.end_ms - hlsOffsetMs + 500).coerceAtLeast(0)
-                player.seekTo(target)
-                activeMarker = null
-            },
-            shape = RoundedCornerShape(24.dp),
-        ) {
-            Text(if (marker.kind == "intro") "Skip intro" else "Skip credits")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    // Seek slightly past the end so we don't immediately
+                    // re-enter the same marker window on the next tick.
+                    val target = (marker.end_ms - hlsOffsetMs + 500).coerceAtLeast(0)
+                    player.seekTo(target)
+                    activeMarker = null
+                },
+                shape = RoundedCornerShape(24.dp),
+            ) {
+                Text(if (marker.kind == "intro") "Skip intro" else "Skip credits")
+            }
+            Spacer(Modifier.width(8.dp))
+            // × to dismiss for the session. Smaller hit target than the
+            // Skip button by design — accidental dismissals are worse
+            // than accidental skips.
+            IconButton(
+                onClick = {
+                    dismissed.value = dismissed.value + SkipMarkers.markerKey(marker)
+                    activeMarker = null
+                },
+                modifier = Modifier
+                    .background(
+                        color = Color(0x66000000),
+                        shape = RoundedCornerShape(50),
+                    ),
+            ) {
+                Text("×", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            }
         }
     }
 }
@@ -709,11 +1040,307 @@ private fun formatAudioLabel(s: AudioStream): String {
     return parts.joinToString(" · ")
 }
 
+/** Format a millisecond position as `H:MM:SS` (or `MM:SS` when under
+ *  one hour). Used by the trickplay scrub-preview overlay so the label
+ *  reads `1:23:45` not `5025000ms`. */
+private fun formatScrubMs(ms: Long): String {
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
 private fun formatSubtitleLabel(s: SubtitleStream): String {
     val parts = mutableListOf<String>()
     if (s.language.isNotEmpty()) parts += s.language
     if (s.title.isNotEmpty()) parts += s.title
     if (s.forced) parts += "forced"
     return parts.joinToString(" · ")
+}
+
+/**
+ * Subtitle styling dialog. Mirrors the web client's panel: four pickers
+ * (size, colour, background, outline) each driving a one-shot setter on
+ * the VM that persists to DataStore. Style change reflects immediately
+ * because [PlayerHost] subscribes to the prefs flow and re-applies on
+ * each emission.
+ */
+@Composable
+private fun SubtitleStyleDialog(
+    style: SubtitleStyle,
+    onSize: (SubtitleStyle.Size) -> Unit,
+    onColor: (SubtitleStyle.TextColor) -> Unit,
+    onBackground: (SubtitleStyle.Background) -> Unit,
+    onOutline: (SubtitleStyle.Outline) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Subtitle style") },
+        text = {
+            Column {
+                StylePickerRow(
+                    label = "Size",
+                    options = SubtitleStyle.Size.values().toList(),
+                    active = style.size,
+                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    onPick = onSize,
+                )
+                StylePickerRow(
+                    label = "Color",
+                    options = SubtitleStyle.TextColor.values().toList(),
+                    active = style.color,
+                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    onPick = onColor,
+                )
+                StylePickerRow(
+                    label = "Background",
+                    options = SubtitleStyle.Background.values().toList(),
+                    active = style.background,
+                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    onPick = onBackground,
+                )
+                StylePickerRow(
+                    label = "Outline",
+                    options = SubtitleStyle.Outline.values().toList(),
+                    active = style.outline,
+                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    onPick = onOutline,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun <T> StylePickerRow(
+    label: String,
+    options: List<T>,
+    active: T,
+    labelOf: (T) -> String,
+    onPick: (T) -> Unit,
+) {
+    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(4.dp))
+        Row {
+            options.forEach { option ->
+                val isActive = option == active
+                TextButton(
+                    onClick = { onPick(option) },
+                ) {
+                    Text(
+                        text = labelOf(option),
+                        // Active token gets the accent colour; the rest
+                        // stay onSurfaceVariant so the row reads as
+                        // "click any to change", not "this one's
+                        // disabled".
+                        color = if (isActive) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Chapter list picker. Audiobooks especially benefit from this — a
+ * 12-hour book with 24 chapters needs a "jump to chapter 7" surface
+ * that the seekbar alone can't deliver. Active chapter is highlighted
+ * in the primary colour; tap any row to seek there.
+ */
+@Composable
+private fun ChapterPickerDialog(
+    chapters: List<tv.onscreen.mobile.data.model.Chapter>,
+    currentPositionMs: Long,
+    onSeek: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val activeIdx = remember(chapters, currentPositionMs) {
+        ChapterNav.activeIndex(chapters, currentPositionMs)
+    }
+    val listState = rememberLazyListState()
+    // Auto-scroll so the user sees their current chapter on open.
+    LaunchedEffect(activeIdx) {
+        if (activeIdx >= 0) {
+            val target = (activeIdx - 2).coerceAtLeast(0)
+            listState.animateScrollToItem(target)
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Chapters") },
+        text = {
+            LazyColumn(state = listState) {
+                itemsIndexed(chapters) { idx, chapter ->
+                    val isActive = idx == activeIdx
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSeek(chapter.start_ms) }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = ChapterNav.formatStart(chapter.start_ms),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isActive) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.width(72.dp),
+                        )
+                        Text(
+                            text = ChapterNav.displayTitle(chapter, idx),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (isActive) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        },
+    )
+}
+
+/**
+ * Synced + plain lyrics overlay. When [cues] is non-null the renderer
+ * highlights the cue covering [positionMs] (LRC line-by-line); when
+ * only [plain] is present we show a static scroll. Tap-anywhere
+ * dismisses so the overlay never traps the user.
+ */
+@Composable
+private fun LyricsOverlay(
+    cues: List<tv.onscreen.mobile.lyrics.LrcParser.Cue>?,
+    plain: String?,
+    positionMs: Long,
+    onDismiss: () -> Unit,
+) {
+    val activeIndex = remember(cues, positionMs) {
+        if (cues.isNullOrEmpty()) -1
+        else {
+            val active = tv.onscreen.mobile.lyrics.LrcParser.cueAt(cues, positionMs)
+            if (active != null) cues.indexOf(active) else -1
+        }
+    }
+    val listState = rememberLazyListState()
+    // Auto-scroll to keep the active line near the top third of the
+    // overlay. Skip when there's no active line yet (intro before
+    // first cue) or when the user is dragging — they probably want
+    // to read ahead.
+    LaunchedEffect(activeIndex) {
+        if (activeIndex >= 0) {
+            // Place the active cue ~3 lines down so the user sees a
+            // bit of context above (just-finished line).
+            val target = (activeIndex - 3).coerceAtLeast(0)
+            listState.animateScrollToItem(target)
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xE6000000))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!cues.isNullOrEmpty()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                itemsIndexed(cues) { idx, cue ->
+                    val isActive = idx == activeIndex
+                    Text(
+                        text = if (cue.text.isEmpty()) "♪" else cue.text,
+                        color = if (isActive) Color.White
+                            else Color(0x99FFFFFF),
+                        style = if (isActive) MaterialTheme.typography.titleMedium
+                            else MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        } else if (plain != null) {
+            // Plain-text fallback: simple scrollable column. No
+            // line-by-line highlight since we have no timing.
+            val scroll = rememberScrollState()
+            Text(
+                text = plain,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 96.dp)
+                    .verticalScroll(scroll),
+            )
+        }
+    }
+}
+
+/**
+ * Sleep-timer picker. Quick-pick chips for the common minute durations
+ * plus an "End of track" chip and an "Off" cancel. Active selection
+ * is highlighted with the primary colour. Dismiss without picking
+ * leaves the timer unchanged.
+ */
+@Composable
+private fun SleepTimerDialog(
+    active: SleepTimerState?,
+    onPick: (SleepTimer) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Sleep timer") },
+        text = {
+            Column {
+                if (active != null) {
+                    Text(
+                        text = "Active: " + when (active.mode) {
+                            is SleepTimer.Minutes -> SleepTimerMath.formatRemaining(active.remainingMs)
+                            SleepTimer.EndOfTrack -> "End of track"
+                            SleepTimer.Off -> "Off"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                // Quick-pick row. FlowRow would be ideal here; the
+                // pickers fit on one phone-portrait line so a regular
+                // Row keeps things terse.
+                Row {
+                    SleepTimerMath.QUICK_PICKS_MIN.forEach { mins ->
+                        val isActive = (active?.mode as? SleepTimer.Minutes)?.total == mins
+                        TextButton(onClick = { onPick(SleepTimer.Minutes(mins)) }) {
+                            Text(
+                                text = "${mins}m",
+                                color = if (isActive) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Row {
+                    val isEot = active?.mode == SleepTimer.EndOfTrack
+                    TextButton(onClick = { onPick(SleepTimer.EndOfTrack) }) {
+                        Text(
+                            "End of track",
+                            color = if (isEot) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { onPick(SleepTimer.Off) }) {
+                        Text("Off", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        },
+    )
 }
 

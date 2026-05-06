@@ -1,6 +1,10 @@
 package tv.onscreen.mobile.data.repository
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import tv.onscreen.mobile.data.api.OnScreenApi
+import tv.onscreen.mobile.data.model.AuthProviders
+import tv.onscreen.mobile.data.model.AuthProviderStatus
 import tv.onscreen.mobile.data.model.LoginRequest
 import tv.onscreen.mobile.data.model.LogoutRequest
 import tv.onscreen.mobile.data.model.PairCodeResponse
@@ -10,16 +14,51 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class AuthRepository @Inject constructor(
+open class AuthRepository @Inject constructor(
     private val api: OnScreenApi,
     private val prefs: ServerPrefs,
 ) {
-    suspend fun login(username: String, password: String): TokenPair {
+    open suspend fun login(username: String, password: String): TokenPair {
         val pair = api.login(LoginRequest(username, password)).data
         prefs.setTokens(pair.access_token, pair.refresh_token)
         prefs.setUser(pair.user_id, pair.username)
         return pair
     }
+
+    /** LDAP login — same shape as local but hits the alternate
+     *  endpoint. Server JIT-provisions a user row on first success
+     *  and returns the same TokenPair. Persistence side-effect mirrors
+     *  [login] so the UI is unchanged downstream. */
+    open suspend fun loginLdap(username: String, password: String): TokenPair {
+        val pair = api.loginLdap(LoginRequest(username, password)).data
+        prefs.setTokens(pair.access_token, pair.refresh_token)
+        prefs.setUser(pair.user_id, pair.username)
+        return pair
+    }
+
+    /** Discover which federated auth providers the server has
+     *  enabled. Fans out the three /enabled endpoints in parallel —
+     *  each is independent and one failing shouldn't fail the rest.
+     *  Failed individual probes return null in the aggregate so the
+     *  UI hides the corresponding row instead of misreporting. */
+    open suspend fun getAuthProviders(): AuthProviders = coroutineScope {
+        val ldapDeferred = async { safeProbe { api.getLdapEnabled().data } }
+        val oidcDeferred = async { safeProbe { api.getOidcEnabled().data } }
+        val samlDeferred = async { safeProbe { api.getSamlEnabled().data } }
+        AuthProviders(
+            ldap = ldapDeferred.await(),
+            oidc = oidcDeferred.await(),
+            saml = samlDeferred.await(),
+        )
+    }
+
+    private suspend fun safeProbe(block: suspend () -> AuthProviderStatus): AuthProviderStatus? =
+        try { block() } catch (_: Exception) { null }
+
+    /** Current server URL (no trailing slash). Used by the SSO bridge
+     *  to build the Custom-Tabs target URL. Returns null when not yet
+     *  set — caller skips the launch. */
+    open suspend fun getServerUrl(): String? = prefs.getServerUrl()?.trimEnd('/')
 
     suspend fun logout() {
         try {

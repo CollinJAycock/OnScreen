@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -69,6 +70,7 @@ data class LibraryUi(
 fun LibraryScreen(
     libraryId: String,
     onOpenItem: (String) -> Unit,
+    onOpenPhotoExtras: ((String) -> Unit)? = null,
     onBack: () -> Unit,
     vm: LibraryViewModel = hiltViewModel(),
 ) {
@@ -82,6 +84,21 @@ fun LibraryScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    // Photo-extras (timeline / geotagged) entry point.
+                    // Shown on every library — the extras screen
+                    // gracefully empties on non-photo libraries since
+                    // the timeline + map endpoints just return empty
+                    // for those, no client-side type check needed.
+                    if (onOpenPhotoExtras != null) {
+                        IconButton(onClick = { onOpenPhotoExtras(libraryId) }) {
+                            Icon(
+                                Icons.Default.Place,
+                                contentDescription = "Photo timeline / map",
+                            )
+                        }
                     }
                 },
             )

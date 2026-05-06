@@ -17,6 +17,27 @@ interface OnScreenApi {
     @POST("api/v1/auth/logout")
     suspend fun logout(@Body body: LogoutRequest)
 
+    // ── Federated auth discovery ────────────────────────────────────────────
+
+    /** Per-provider enabled flag + display name. Server emits these
+     *  individually rather than a combined endpoint; client fans out
+     *  three calls in parallel. */
+    @GET("api/v1/auth/oidc/enabled")
+    suspend fun getOidcEnabled(): ApiResponse<AuthProviderStatus>
+
+    @GET("api/v1/auth/saml/enabled")
+    suspend fun getSamlEnabled(): ApiResponse<AuthProviderStatus>
+
+    @GET("api/v1/auth/ldap/enabled")
+    suspend fun getLdapEnabled(): ApiResponse<AuthProviderStatus>
+
+    /** LDAP directly accepts a username/password from the phone — no
+     *  browser handoff needed. The server binds to the LDAP server
+     *  with these credentials, JIT-provisions the user on first
+     *  success, and returns the same TokenPair shape as local login. */
+    @POST("api/v1/auth/ldap/login")
+    suspend fun loginLdap(@Body body: LoginRequest): ApiResponse<TokenPair>
+
     /** Start a device-pairing session. The TV displays the returned
      *  PIN; the user signs in via the web at /pair on a phone /
      *  laptop and types the PIN to finish the link. */
@@ -82,6 +103,39 @@ interface OnScreenApi {
     @GET("api/v1/items/{id}/trickplay")
     suspend fun getTrickplayStatus(@Path("id") id: String): ApiResponse<TrickplayStatus>
 
+    @GET("api/v1/items/{id}/lyrics")
+    suspend fun getLyrics(@Path("id") id: String): ApiResponse<LyricsResponse>
+
+    // ── Photos: EXIF / timeline / map ───────────────────────────────────────
+
+    @GET("api/v1/items/{id}/exif")
+    suspend fun getPhotoExif(@Path("id") id: String): ApiResponse<PhotoExif>
+
+    @GET("api/v1/photos/timeline")
+    suspend fun getPhotoTimeline(
+        @Query("library_id") libraryId: String,
+    ): ApiListResponse<PhotoTimelineBucket>
+
+    @GET("api/v1/photos/map")
+    suspend fun getPhotoMap(
+        @Query("library_id") libraryId: String,
+        @Query("limit") limit: Int = 1000,
+    ): ApiListResponse<PhotoMapPoint>
+
+    // ── Watching-status mirror (anime track, but works on every type) ───────
+
+    @GET("api/v1/items/{id}/watch-status")
+    suspend fun getWatchStatus(@Path("id") id: String): ApiResponse<WatchStatusResponse>
+
+    @PUT("api/v1/items/{id}/watch-status")
+    suspend fun setWatchStatus(
+        @Path("id") id: String,
+        @Body body: WatchStatusRequest,
+    ): ApiResponse<WatchStatusResponse>
+
+    @DELETE("api/v1/items/{id}/watch-status")
+    suspend fun clearWatchStatus(@Path("id") id: String)
+
     // ── Online subtitles (OpenSubtitles proxy) ──────────────────────────────
 
     @GET("api/v1/items/{id}/subtitles/search")
@@ -132,6 +186,17 @@ interface OnScreenApi {
     suspend fun createRequest(
         @Body body: CreateRequestBody,
     ): ApiResponse<MediaRequest>
+
+    // ── Playlists (incl. smart) ─────────────────────────────────────────────
+
+    @GET("api/v1/playlists")
+    suspend fun listPlaylists(): ApiListResponse<Playlist>
+
+    @POST("api/v1/playlists")
+    suspend fun createPlaylist(@Body body: CreatePlaylistRequest): ApiResponse<Playlist>
+
+    @DELETE("api/v1/playlists/{id}")
+    suspend fun deletePlaylist(@Path("id") id: String)
 
     // ── Favorites ───────────────────────────────────────────────────────────
 
