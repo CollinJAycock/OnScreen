@@ -17,6 +17,7 @@
   import { avplay } from '$lib/player/avplay';
   import { ProgressReporter } from '$lib/player/progress-reporter';
   import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
+  import type { OnlineSubtitle } from '$lib/api';
 
   const itemID = page.params.id!;
   // Fallback HTML5 video element — used only when AVPlay isn't
@@ -93,6 +94,20 @@
   const trickplayCue = $derived(
     trickplayCues.length > 0 ? findCue(trickplayCues, position) : null,
   );
+
+  // Online subtitle search overlay. Opened from the subtitle
+  // picker via "Find more online…" — searches OpenSubtitles via
+  // the server, lets the user download a pick, and reloads the
+  // item so the new external_subtitle row surfaces in
+  // subtitle_streams. Tracked separately from the local subtitle
+  // picker so the two can be open in sequence without state
+  // overlap.
+  let onlineSubsOpen = $state(false);
+  let onlineSubsLoading = $state(false);
+  let onlineSubsResults = $state<OnlineSubtitle[]>([]);
+  let onlineSubsCursor = $state(0);
+  let onlineSubsError = $state('');
+  let onlineSubsDownloading = $state(false);
 
   function showControls() {
     controlsVisible = true;
@@ -241,9 +256,19 @@
   }
 
   function pickerKey(k: RemoteKey): boolean {
+    // Online subtitle overlay takes priority — runs its own cursor
+    // separate from the local-track picker because it has its own
+    // open/close lifecycle (search → results → download).
+    if (onlineSubsOpen) return onlineSubsKey(k);
     if (!audioPickerOpen && !subtitlePickerOpen) return false;
     if (k === 'back') { closePickers(); return true; }
-    const len = audioPickerOpen ? audioStreams.length : subtitleStreams.length + 1;
+    // Subtitle picker rows: Off (0), each stream (1..N), then a
+    // synthetic "Find more online…" row when the server has the
+    // OpenSubtitles search wired (which the picker doesn't gate on
+    // — the search call returns an empty list if the server isn't
+    // configured, falling through harmlessly).
+    const subtitleLen = subtitleStreams.length + 1 + 1; // +Off, +FindMore
+    const len = audioPickerOpen ? audioStreams.length : subtitleLen;
     if (k === 'up') {
       pickerCursor = (pickerCursor - 1 + len) % len;
       return true;
@@ -258,13 +283,89 @@
         if (stream && pickerCursor !== activeAudioIndex) {
           void switchAudioStream(stream.index, pickerCursor);
         }
+        closePickers();
       } else {
+        // Find-more row is the last index. Other rows: 0 = Off,
+        // 1..N = local streams (1-shifted by the synthetic Off row).
+        const findMoreIdx = subtitleStreams.length + 1;
+        if (pickerCursor === findMoreIdx) {
+          closePickers();
+          openOnlineSubtitleSearch();
+          return true;
+        }
         applySubtitleSelection(pickerCursor === 0 ? -1 : pickerCursor - 1);
+        closePickers();
       }
-      closePickers();
       return true;
     }
     return false;
+  }
+
+  // ── Online subtitle search ─────────────────────────────────────────
+
+  async function openOnlineSubtitleSearch() {
+    onlineSubsOpen = true;
+    onlineSubsCursor = 0;
+    onlineSubsError = '';
+    onlineSubsLoading = true;
+    onlineSubsResults = [];
+    showControls();
+    try {
+      // No lang filter — the server enriches the query with the
+      // item's title / year / IMDB id internally, so a "wide net"
+      // search is the right default. Tightening to a specific
+      // language is a follow-up that needs a per-user pref read
+      // (the language picker UI doesn't exist on Tizen yet).
+      onlineSubsResults = await endpoints.onlineSubtitles.search(itemID);
+    } catch (e) {
+      onlineSubsError = (e as Error).message ?? 'Search failed';
+    } finally {
+      onlineSubsLoading = false;
+    }
+  }
+
+  function closeOnlineSubtitleSearch() {
+    onlineSubsOpen = false;
+    onlineSubsResults = [];
+    onlineSubsError = '';
+    onlineSubsCursor = 0;
+  }
+
+  function onlineSubsKey(k: RemoteKey): boolean {
+    if (k === 'back') { closeOnlineSubtitleSearch(); return true; }
+    if (onlineSubsLoading || onlineSubsDownloading) return true;
+    const len = onlineSubsResults.length;
+    if (len === 0) return true;
+    if (k === 'up') { onlineSubsCursor = (onlineSubsCursor - 1 + len) % len; return true; }
+    if (k === 'down') { onlineSubsCursor = (onlineSubsCursor + 1) % len; return true; }
+    if (k === 'enter') {
+      const pick = onlineSubsResults[onlineSubsCursor];
+      if (pick) void downloadOnlineSubtitle(pick);
+      return true;
+    }
+    return false;
+  }
+
+  async function downloadOnlineSubtitle(pick: OnlineSubtitle) {
+    if (!item) return;
+    const file = item.files[0];
+    if (!file) return;
+    onlineSubsDownloading = true;
+    onlineSubsError = '';
+    try {
+      await endpoints.onlineSubtitles.download(itemID, file.id, pick);
+      // Re-fetch the item so the fresh external_subtitle row shows
+      // up in subtitle_streams — caller can then open the local
+      // picker and select it. We don't auto-select because language
+      // / track-ordering can shuffle once the new entry lands.
+      const refreshed = await endpoints.items.get(itemID);
+      item = refreshed;
+      closeOnlineSubtitleSearch();
+    } catch (e) {
+      onlineSubsError = (e as Error).message ?? 'Download failed';
+    } finally {
+      onlineSubsDownloading = false;
+    }
   }
 
   // Re-issue the active transcode session with a new
@@ -734,6 +835,42 @@
           {s.language || 'und'}{#if s.forced}{' · forced'}{/if}{#if s.title}{` · ${s.title}`}{/if}
         </div>
       {/each}
+      <div class="picker-row picker-row-action"
+           class:active={pickerCursor === subtitleStreams.length + 1}>
+        Find more online…
+      </div>
+    </div>
+  {/if}
+
+  {#if onlineSubsOpen}
+    <div class="picker online-subs">
+      <div class="picker-title">Online subtitles</div>
+      {#if onlineSubsLoading}
+        <div class="picker-row">Searching…</div>
+      {:else if onlineSubsError}
+        <div class="picker-row picker-row-error">{onlineSubsError}</div>
+      {:else if onlineSubsResults.length === 0}
+        <div class="picker-row">No results — Back to close.</div>
+      {:else}
+        {#each onlineSubsResults as r, i (r.provider_file_id)}
+          <div class="picker-row" class:active={onlineSubsCursor === i}>
+            <div class="online-sub-line">
+              <span class="online-sub-lang">{r.language || 'und'}</span>
+              <span class="online-sub-name">{r.file_name}</span>
+            </div>
+            <div class="online-sub-meta">
+              {#if r.from_trusted}<span>trusted</span>{/if}
+              {#if r.hd}<span>hd</span>{/if}
+              {#if r.hearing_impaired}<span>SDH</span>{/if}
+              {#if r.download_count}<span>{r.download_count.toLocaleString()} dl</span>{/if}
+              {#if r.uploader_name}<span>by {r.uploader_name}</span>{/if}
+            </div>
+          </div>
+        {/each}
+      {/if}
+      {#if onlineSubsDownloading}
+        <div class="picker-row">Downloading…</div>
+      {/if}
     </div>
   {/if}
 
@@ -976,6 +1113,55 @@
   }
   .picker-row.current:not(.active) {
     color: var(--accent);
+  }
+  .picker-row-action {
+    margin-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 12px;
+    font-style: italic;
+    color: var(--text-secondary);
+  }
+  .picker-row-action.active {
+    color: white;
+    font-style: normal;
+  }
+  .picker-row-error {
+    color: #fca5a5;
+  }
+  .online-subs {
+    /* Wider than the local picker — file names + uploader chips
+       are longer than language tags. */
+    min-width: 560px;
+    max-width: 760px;
+  }
+  .online-sub-line {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .online-sub-lang {
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .online-sub-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .picker-row.active .online-sub-lang {
+    color: white;
+  }
+  .online-sub-meta {
+    display: flex;
+    gap: 12px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+  .picker-row.active .online-sub-meta {
+    color: rgba(255, 255, 255, 0.85);
   }
 
   .up-next {

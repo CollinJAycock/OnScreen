@@ -156,6 +156,25 @@ earlier "not done" list had drifted from the source:
   same xywh cue shape). Watch screen renders a sprite-cropped
   thumbnail above the seek bar via CSS `background-position`
   (no canvas, no per-frame work).
+- **Online subtitle search** — subtitle picker has a "Find more
+  online…" entry that hits OpenSubtitles via the server's
+  `/items/{id}/subtitles/search` + `/download` endpoints.
+  Picked result lands as a new external_subtitle row on the
+  next item refetch.
+- **TMDB Discover + in-app requests** —
+  `routes/discover/+page.svelte` searches via
+  `/api/v1/discover/search`, surfaces in-library /
+  active-request state per row, submits requests via
+  `/api/v1/requests`.
+- **Live TV** — `routes/livetv/+page.svelte` lists enabled
+  channels with now/next EPG, plays via AVPlay against
+  `/api/v1/tv/channels/{id}/stream.m3u8`. Single-page model
+  (grid ↔ player) so channel surfing doesn't re-fetch the
+  list.
+- **DVR Recordings** — `routes/recordings/+page.svelte` groups
+  scheduled / recording / completed / failed / cancelled.
+  Completed rows with `item_id` route through the standard
+  `/item/[id]` flow.
 
 ## What's still not done
 

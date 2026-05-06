@@ -1,8 +1,10 @@
 import { api } from './client';
 import type { TokenPair } from './client';
 import type {
+  Channel,
   ChildItem,
   CollectionItem,
+  DiscoverItem,
   FavoriteItem,
   HistoryItem,
   HubData,
@@ -12,7 +14,11 @@ import type {
   Marker,
   MediaCollection,
   MediaItem,
+  MediaRequest,
+  NowNext,
+  OnlineSubtitle,
   PairCodeResponse,
+  Recording,
   SearchResult,
   TranscodeSession
 } from './types';
@@ -206,4 +212,61 @@ export const favorites = {
 
 export const history = {
   list: (limit = 50) => api.get<HistoryItem[]>(`/api/v1/history?limit=${limit}`)
+};
+
+// ── Discover (TMDB) + Requests ─────────────────────────────────────────────
+
+export const discover = {
+  search: (query: string, limit = 12) =>
+    api.get<DiscoverItem[]>(
+      `/api/v1/discover/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+    ),
+  createRequest: (type: 'movie' | 'show', tmdbID: number) =>
+    api.post<MediaRequest>('/api/v1/requests', { type, tmdb_id: tmdbID }),
+};
+
+// ── Online subtitle search (OpenSubtitles via server) ──────────────────────
+
+export const onlineSubtitles = {
+  search: (itemID: string, lang?: string, query?: string) => {
+    const params = new URLSearchParams();
+    if (lang) params.set('lang', lang);
+    if (query) params.set('query', query);
+    const qs = params.toString();
+    return api.get<OnlineSubtitle[]>(
+      `/api/v1/items/${itemID}/subtitles/search${qs ? `?${qs}` : ''}`,
+    );
+  },
+  /** Download a search result onto the named file. Server fetches
+   *  the .srt from OpenSubtitles, persists it next to the media
+   *  file, and emits a new external_subtitle row that the next
+   *  item-fetch surfaces in subtitle_streams. */
+  download: (itemID: string, fileID: string, candidate: OnlineSubtitle) =>
+    api.post<void>(`/api/v1/items/${itemID}/subtitles/download`, {
+      file_id: fileID,
+      provider_file_id: candidate.provider_file_id,
+      language: candidate.language,
+      title: candidate.file_name,
+      hearing_impaired: candidate.hearing_impaired ?? false,
+      rating: candidate.rating ?? 0,
+      download_count: candidate.download_count ?? 0,
+    }),
+};
+
+// ── Live TV / DVR ──────────────────────────────────────────────────────────
+
+export const livetv = {
+  /** Enabled-only by default; the disabled-channel curation lives in
+   *  the web settings UI and the TV client wants to match what the
+   *  user expects to see. */
+  channels: () => api.get<Channel[]>('/api/v1/tv/channels?enabled_only=true'),
+  /** Up to two rows per channel (current + next). Channels missing
+   *  from the response have no EPG data — caller renders "no guide
+   *  data" rather than dropping the row. */
+  nowNext: () => api.get<NowNext[]>('/api/v1/tv/channels/now-next'),
+  /** Recordings filtered by status. status=undefined = all. */
+  recordings: (status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}&limit=100` : '?limit=100';
+    return api.get<Recording[]>(`/api/v1/tv/recordings${qs}`);
+  },
 };

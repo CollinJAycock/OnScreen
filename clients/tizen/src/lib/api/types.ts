@@ -228,3 +228,121 @@ export interface CollectionItem {
   duration_ms?: number;
   position?: number;
 }
+
+// ── Discover (TMDB-backed) + Requests ──────────────────────────────────────
+//
+// `/api/v1/discover/search` is a TMDB proxy that also annotates each
+// row with `in_library` + active-request status so the UI can hide
+// titles the user already has and surface "Already requested"
+// states on titles they've asked for. A user submitting a request
+// goes through `POST /api/v1/requests` which an admin then routes
+// to the configured Sonarr / Radarr.
+
+export interface DiscoverItem {
+  type: string; // "movie" | "show"
+  tmdb_id: number;
+  title: string;
+  year?: number;
+  overview?: string;
+  rating?: number;
+  poster_url?: string;
+  fanart_url?: string;
+  in_library?: boolean;
+  library_item_id?: string;
+  has_active_request?: boolean;
+  active_request_id?: string;
+  /** "pending" | "approved" | "declined" | "downloading" |
+   *  "available" | "failed". UI maps each to a chip colour. */
+  active_request_status?: string;
+}
+
+export interface MediaRequest {
+  id: string;
+  user_id: string;
+  type: string; // "movie" | "show"
+  tmdb_id: number;
+  title: string;
+  year?: number;
+  poster_url?: string;
+  overview?: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ── Online subtitle search (OpenSubtitles) ─────────────────────────────────
+//
+// In-player feature: when the file's bundled subtitle tracks miss
+// the user's preferred language (or when a sub-quality replacement
+// is wanted), search OpenSubtitles via the server and download a
+// pick into the file's external_subtitles. The newly-downloaded
+// track surfaces in the next `/items/{id}` fetch's
+// subtitle_streams list.
+
+export interface OnlineSubtitle {
+  provider_file_id: number;
+  file_name: string;
+  language: string;
+  release?: string;
+  hearing_impaired?: boolean;
+  hd?: boolean;
+  from_trusted?: boolean;
+  rating?: number;
+  download_count?: number;
+  uploader_name?: string;
+}
+
+// ── Live TV / DVR ──────────────────────────────────────────────────────────
+//
+// Channels come from the configured tuner (HDHomeRun, xTeVe, etc.).
+// now-next pairs each channel with its current + next program for
+// the EPG row. Recordings are the DVR queue + completed history;
+// `item_id` is set once the recording lands in a media_item and
+// can be played through the standard /watch flow.
+
+export interface Channel {
+  id: string;
+  tuner_id: string;
+  tuner_name: string;
+  tuner_type: string;
+  number: string;
+  callsign?: string;
+  name: string;
+  logo_url?: string;
+  enabled?: boolean;
+  sort_order?: number;
+  epg_channel_id?: string;
+}
+
+export interface NowNext {
+  channel_id: string;
+  program_id: string;
+  title: string;
+  subtitle?: string;
+  starts_at: string; // ISO8601
+  ends_at: string;
+  season_num?: number;
+  episode_num?: number;
+}
+
+export interface Recording {
+  id: string;
+  schedule_id?: string;
+  channel_id: string;
+  channel_number: string;
+  channel_name: string;
+  channel_logo?: string;
+  program_id?: string;
+  title: string;
+  subtitle?: string;
+  season_num?: number;
+  episode_num?: number;
+  /** "scheduled" | "recording" | "completed" | "failed" |
+   *  "cancelled". When status=completed and item_id is set,
+   *  the recording is playable via the standard /watch flow. */
+  status: string;
+  starts_at: string;
+  ends_at: string;
+  item_id?: string;
+  error?: string;
+}
