@@ -153,6 +153,17 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-user subscriber cap (notification.MaxSubscribersPerUser).
+	// Subscribe returns nil when the cap is exceeded — reject before
+	// any header is written so the client gets a clean 429.
+	ch := h.broker.Subscribe(claims.UserID)
+	if ch == nil {
+		respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SSE",
+			"too many open notification streams; close one before opening another")
+		return
+	}
+	defer h.broker.Unsubscribe(claims.UserID, ch)
+
 	// SSE connections legitimately stay open indefinitely. The server's
 	// 60 s WriteTimeout would cut the stream every minute (Vite logs it
 	// as "socket hang up"); clear the per-response deadline.
@@ -164,9 +175,6 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-
-	ch := h.broker.Subscribe(claims.UserID)
-	defer h.broker.Unsubscribe(claims.UserID, ch)
 
 	// Send initial keepalive.
 	fmt.Fprintf(w, ": keepalive\n\n")

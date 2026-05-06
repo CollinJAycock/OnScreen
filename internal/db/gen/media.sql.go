@@ -748,6 +748,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
+       anilist_id, mal_id, kind, reading_direction,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
@@ -783,6 +784,10 @@ type GetMediaItemRow struct {
 	OriginalYear              *int32             `json:"original_year"`
 	Compilation               bool               `json:"compilation"`
 	ReleaseType               *string            `json:"release_type"`
+	AnilistID                 *int32             `json:"anilist_id"`
+	MalID                     *int32             `json:"mal_id"`
+	Kind                      *string            `json:"kind"`
+	ReadingDirection          *string            `json:"reading_direction"`
 	ParentID                  pgtype.UUID        `json:"parent_id"`
 	Index                     *int32             `json:"index"`
 	PosterPath                *string            `json:"poster_path"`
@@ -826,6 +831,10 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.OriginalYear,
 		&i.Compilation,
 		&i.ReleaseType,
+		&i.AnilistID,
+		&i.MalID,
+		&i.Kind,
+		&i.ReadingDirection,
 		&i.ParentID,
 		&i.Index,
 		&i.PosterPath,
@@ -1879,6 +1888,7 @@ const listMediaItemChildren = `-- name: ListMediaItemChildren :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
+       anilist_id, mal_id, kind,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
@@ -1907,6 +1917,9 @@ type ListMediaItemChildrenRow struct {
 	TvdbID                *int32             `json:"tvdb_id"`
 	ImdbID                *string            `json:"imdb_id"`
 	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	AnilistID             *int32             `json:"anilist_id"`
+	MalID                 *int32             `json:"mal_id"`
+	Kind                  *string            `json:"kind"`
 	ParentID              pgtype.UUID        `json:"parent_id"`
 	Index                 *int32             `json:"index"`
 	PosterPath            *string            `json:"poster_path"`
@@ -1947,6 +1960,9 @@ func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUI
 			&i.TvdbID,
 			&i.ImdbID,
 			&i.MusicbrainzID,
+			&i.AnilistID,
+			&i.MalID,
+			&i.Kind,
 			&i.ParentID,
 			&i.Index,
 			&i.PosterPath,
@@ -4574,6 +4590,28 @@ func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaIte
 	return items, nil
 }
 
+const setMediaItemKind = `-- name: SetMediaItemKind :exec
+UPDATE media_items
+SET kind = NULLIF($2::text, ''),
+    updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type SetMediaItemKindParams struct {
+	ID   uuid.UUID `json:"id"`
+	Kind string    `json:"kind"`
+}
+
+// Sets the subtype on a media item. The scanner calls this on episode
+// rows after detecting OVA / ONA / special keywords in the filename
+// or season 0 folder placement. Pass an empty string to clear (null
+// the column out — used when re-scanning a previously-tagged file
+// whose name no longer matches a kind pattern).
+func (q *Queries) SetMediaItemKind(ctx context.Context, arg SetMediaItemKindParams) error {
+	_, err := q.db.Exec(ctx, setMediaItemKind, arg.ID, arg.Kind)
+	return err
+}
+
 const softDeleteEmptyContainerItems = `-- name: SoftDeleteEmptyContainerItems :exec
 UPDATE media_items AS parent
 SET deleted_at = NOW(), updated_at = NOW()
@@ -4870,6 +4908,19 @@ SET title                   = $2,
     originally_available_at = $17,
     tmdb_id                 = COALESCE($18, tmdb_id),
     tvdb_id                 = COALESCE($19, tvdb_id),
+    -- COALESCE on the anime IDs matches the tmdb_id / tvdb_id shape:
+    -- anilist_id and mal_id are only written when the AniList agent
+    -- actually returned them. A non-anime refresh path passes nil and
+    -- existing values are preserved. Read-side surfacing happens in a
+    -- follow-up — this iteration just persists the IDs so future
+    -- refresh-by-id paths can find their way back to the right
+    -- AniList Media row.
+    anilist_id              = COALESCE($20, anilist_id),
+    mal_id                  = COALESCE($21, mal_id),
+    -- Reading direction is manga-only metadata. COALESCE so a
+    -- non-manga refresh (where the param is null) preserves any
+    -- prior operator override.
+    reading_direction       = COALESCE($22, reading_direction),
     updated_at              = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, library_id, type, title, sort_title, original_title, year,
@@ -4899,6 +4950,9 @@ type UpdateMediaItemMetadataParams struct {
 	OriginallyAvailableAt pgtype.Date    `json:"originally_available_at"`
 	TmdbID                *int32         `json:"tmdb_id"`
 	TvdbID                *int32         `json:"tvdb_id"`
+	AnilistID             *int32         `json:"anilist_id"`
+	MalID                 *int32         `json:"mal_id"`
+	ReadingDirection      *string        `json:"reading_direction"`
 }
 
 type UpdateMediaItemMetadataRow struct {
@@ -4953,6 +5007,9 @@ func (q *Queries) UpdateMediaItemMetadata(ctx context.Context, arg UpdateMediaIt
 		arg.OriginallyAvailableAt,
 		arg.TmdbID,
 		arg.TvdbID,
+		arg.AnilistID,
+		arg.MalID,
+		arg.ReadingDirection,
 	)
 	var i UpdateMediaItemMetadataRow
 	err := row.Scan(

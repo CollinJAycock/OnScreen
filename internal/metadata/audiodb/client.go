@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 const baseURL = "https://www.theaudiodb.com/api/v1/json/2"
@@ -23,10 +24,13 @@ type Client struct {
 	http *http.Client
 }
 
-// New returns a TheAudioDB client.
+// New returns a TheAudioDB client. The underlying HTTP client is
+// wrapped in safehttp so dial-time connections to private / loopback /
+// link-local addresses are refused, the same posture every other
+// public-API client uses.
 func New() *Client {
 	return &Client{
-		http: &http.Client{Timeout: 10 * time.Second},
+		http: safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 	}
 }
 

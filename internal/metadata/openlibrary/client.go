@@ -23,6 +23,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 const (
@@ -41,9 +43,13 @@ type Client struct {
 }
 
 // New returns a Client with a 10 s timeout and the default User-Agent.
+// The HTTP client is wrapped in safehttp so dial-time connections to
+// loopback / RFC1918 / link-local addresses are refused — defense in
+// depth against DNS rebinding and against any future feature that
+// might let an admin override the OpenLibrary endpoint.
 func New() *Client {
 	return &Client{
-		http:      &http.Client{Timeout: 10 * time.Second},
+		http:      safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 		userAgent: defaultUserAgent,
 	}
 }

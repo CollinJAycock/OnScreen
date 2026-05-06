@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/email"
 )
 
@@ -22,7 +23,13 @@ type PasswordResetDB interface {
 	GetUserByEmail(ctx context.Context, email *string) (PRUser, error)
 	CreateResetToken(ctx context.Context, userID uuid.UUID, tokenHash string, expiresAt time.Time) error
 	GetResetToken(ctx context.Context, tokenHash string) (PRToken, error)
-	MarkResetTokenUsed(ctx context.Context, id uuid.UUID) error
+	// MarkResetTokenUsed atomically claims the token. Returns
+	// (true, nil) when this caller won the race; (false, nil) when
+	// another concurrent submission already consumed it. The handler
+	// MUST call this BEFORE UpdatePassword so two concurrent reset
+	// requests can't both pass GetResetToken's used_at IS NULL check
+	// and run last-write-wins on the password column.
+	MarkResetTokenUsed(ctx context.Context, id uuid.UUID) (bool, error)
 	UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error
 	// BumpSessionEpoch + DeleteSessionsForUser together revoke all
 	// outstanding credentials for the user — see ResetPassword for why
@@ -51,6 +58,7 @@ type PasswordResetHandler struct {
 	baseURL   string
 	logger    *slog.Logger
 	segTokens SegmentTokenRevoker // optional; nil means HLS tokens age out via TTL
+	audit     *audit.Logger       // optional; nil disables audit on successful reset
 }
 
 // NewPasswordResetHandler creates a PasswordResetHandler.
@@ -67,6 +75,13 @@ func (h *PasswordResetHandler) WithSegmentTokenRevoker(r SegmentTokenRevoker) *P
 	return h
 }
 
+// WithAudit attaches an audit logger so successful password resets are
+// recorded. Returns the handler for chaining.
+func (h *PasswordResetHandler) WithAudit(a *audit.Logger) *PasswordResetHandler {
+	h.audit = a
+	return h
+}
+
 // Enabled returns whether the forgot password flow is available.
 func (h *PasswordResetHandler) Enabled(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, map[string]bool{"enabled": h.sender.Enabled(r.Context())})
@@ -74,13 +89,15 @@ func (h *PasswordResetHandler) Enabled(w http.ResponseWriter, r *http.Request) {
 
 // ForgotPassword handles POST /api/v1/auth/forgot-password.
 // Sends a password reset email if the email exists. Always returns 200
-// to prevent email enumeration.
+// to prevent email + SMTP-config enumeration.
+//
+// The previous version returned 400 ("Email is not configured on this
+// server") when SMTP was off, which let an unauthenticated probe
+// distinguish "this server has email enabled" from "this server
+// doesn't." Combined with the existing /auth/forgot-password/enabled
+// admin endpoint, that's redundant — but cheap enough to fix here so
+// the failure-mode timing/response shape stays uniform.
 func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
-	if !h.sender.Enabled(r.Context()) {
-		respond.BadRequest(w, r, "Email is not configured on this server")
-		return
-	}
-
 	var body struct {
 		Email string `json:"email"`
 	}
@@ -89,8 +106,16 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Always respond success to prevent email enumeration.
+	// Always respond success to prevent email + SMTP-state enumeration.
 	defer respond.Success(w, r, map[string]string{"message": "If an account with that email exists, a password reset link has been sent."})
+
+	// Email disabled on this server: log so the operator can spot the
+	// stuck flow, but return generic success so the response shape is
+	// indistinguishable from "user doesn't exist."
+	if !h.sender.Enabled(r.Context()) {
+		h.logger.InfoContext(r.Context(), "forgot password: SMTP not configured; silently dropping request")
+		return
+	}
 
 	user, err := h.db.GetUserByEmail(r.Context(), &body.Email)
 	if err != nil {
@@ -160,6 +185,24 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Atomically claim the token BEFORE writing the password. This
+	// closes the race where two concurrent submissions of the same
+	// token both pass GetResetToken's "used_at IS NULL" check, both
+	// run UpdatePassword last-write-wins, and both fire the
+	// session-revocation cascade. With the conditional UPDATE, only
+	// the first request's claim affects rows; the loser sees won=false
+	// and bails with the same generic "invalid or expired" message.
+	won, err := h.db.MarkResetTokenUsed(r.Context(), token.ID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "password reset: claim token", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !won {
+		respond.BadRequest(w, r, "Invalid or expired reset link")
+		return
+	}
+
 	if err := h.db.UpdatePassword(r.Context(), token.UserID, string(pwHash)); err != nil {
 		h.logger.ErrorContext(r.Context(), "password reset: update password", "err", err)
 		respond.InternalError(w, r)
@@ -191,8 +234,10 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	if err := h.db.MarkResetTokenUsed(r.Context(), token.ID); err != nil {
-		h.logger.ErrorContext(r.Context(), "password reset: mark used", "err", err)
+	// Token was already claimed atomically before UpdatePassword above.
+	if h.audit != nil {
+		uid := token.UserID
+		h.audit.Log(r.Context(), &uid, audit.ActionPasswordReset, uid.String(), nil, audit.ClientIP(r))
 	}
 
 	respond.Success(w, r, map[string]string{"message": "Password has been reset. You can now sign in."})

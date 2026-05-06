@@ -83,3 +83,17 @@ WHERE deleted_at IS NULL
 
 -- name: CountLibraries :one
 SELECT COUNT(*) FROM libraries WHERE deleted_at IS NULL;
+
+-- name: IsLibraryAnime :one
+-- Targeted single-bool lookup the show-enricher uses to decide
+-- whether AniList runs primary or fallback. The library type is the
+-- single source of truth — `anime` libraries use AniList primary,
+-- everything else uses TMDB primary with AniList as fallback.
+SELECT (type = 'anime')::bool FROM libraries WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: IsLibraryManga :one
+-- Same shape as IsLibraryAnime but for the book / manga split.
+-- Book libraries use whatever book agent ships in v2.x; manga
+-- libraries route through AniList for mangaka, demographic, magazine,
+-- and reading direction.
+SELECT (type = 'manga')::bool FROM libraries WHERE id = $1 AND deleted_at IS NULL;

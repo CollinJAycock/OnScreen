@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 )
@@ -69,6 +70,7 @@ type OIDCHandler struct {
 	svc     OIDCAuthService
 	baseURL string
 	logger  *slog.Logger
+	audit   *audit.Logger // optional; nil disables SSO login audit trail
 
 	mu       sync.RWMutex
 	cached   settings.OIDCConfig // last-built config (for cache-key comparison)
@@ -81,6 +83,13 @@ type OIDCHandler struct {
 // construct the redirect URI (e.g. "https://onscreen.example.com").
 func NewOIDCHandler(cfgSrc OIDCSettingsReader, svc OIDCAuthService, baseURL string, logger *slog.Logger) *OIDCHandler {
 	return &OIDCHandler{cfgSrc: cfgSrc, svc: svc, baseURL: baseURL, logger: logger}
+}
+
+// WithAudit attaches an audit logger so successful OIDC logins are
+// recorded. Returns the handler for chaining.
+func (h *OIDCHandler) WithAudit(a *audit.Logger) *OIDCHandler {
+	h.audit = a
+	return h
 }
 
 const oidcStateCookie = "onscreen_oidc_state"
@@ -299,6 +308,10 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setAuthCookies(w, r, pair)
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &pair.UserID, audit.ActionLoginSuccess, pair.Username,
+			map[string]any{"method": "oidc"}, audit.ClientIP(r))
+	}
 	http.Redirect(w, r, "/?oidc_auth=1", http.StatusTemporaryRedirect)
 }
 

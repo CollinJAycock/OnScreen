@@ -163,6 +163,9 @@ func (m *mockQuerier) UpdateMediaItemMetadata(_ context.Context, p UpdateItemMet
 func (m *mockQuerier) UpdateMediaItemLyrics(_ context.Context, _ uuid.UUID, _, _ *string) error {
 	return nil
 }
+func (m *mockQuerier) SetMediaItemKind(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
 func (m *mockQuerier) SoftDeleteMediaItem(_ context.Context, id uuid.UUID) error {
 	delete(m.items, id)
 	return nil

@@ -270,7 +270,15 @@ type ImpersonatedUser struct {
 //
 // When the param is absent the middleware is a pass-through; safe to
 // mount unconditionally on any router that already runs Required.
-func (a *Authenticator) ViewAs(lookup ImpersonationLookup) func(http.Handler) http.Handler {
+//
+// auditor may be nil; when set, every successful impersonation emits
+// a single audit.ActionImpersonateBegin record with the *real* admin's
+// UserID as actor and the target user's ID in the target column. The
+// downstream request log line otherwise attributes the GETs to the
+// target user (since the synthetic claims carry their identity), so
+// without this trail an admin can browse another user's home page,
+// history, libraries, etc. with no forensic record.
+func (a *Authenticator) ViewAs(lookup ImpersonationLookup, auditor ViewAsAuditor) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := r.URL.Query().Get("view_as")
@@ -303,6 +311,16 @@ func (a *Authenticator) ViewAs(lookup ImpersonationLookup) func(http.Handler) ht
 				http.Error(w, "view_as: lookup failed", http.StatusInternalServerError)
 				return
 			}
+			// Stamp the audit trail before context swap so the actor is
+			// the *real* admin, not the synthetic target. The auditor
+			// gets the raw request and can pull whatever client-IP /
+			// header context it needs (the audit package already has
+			// ClientIP; importing it here would couple middleware to
+			// audit's deps).
+			if auditor != nil {
+				adminID := caller.UserID
+				auditor.LogImpersonate(r, &adminID, target.ID)
+			}
 			synth := *caller // copy so we don't mutate the cached claims
 			synth.UserID = target.ID
 			synth.Username = target.Username
@@ -311,6 +329,15 @@ func (a *Authenticator) ViewAs(lookup ImpersonationLookup) func(http.Handler) ht
 			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), &synth)))
 		})
 	}
+}
+
+// ViewAsAuditor is the narrow audit-write interface ViewAs depends on.
+// Defined here (instead of importing internal/audit) so the middleware
+// package stays free of the audit package's transitive deps. The
+// adapter on the cmd/server side wraps audit.Logger.Log and pulls
+// client IP via audit.ClientIP from the raw request.
+type ViewAsAuditor interface {
+	LogImpersonate(r *http.Request, adminID *uuid.UUID, targetID uuid.UUID)
 }
 
 // WithClaims returns a copy of ctx with the given claims attached.

@@ -52,7 +52,8 @@ type stubPasswordResetDB struct {
 	user    v1.PRUser
 	userErr error
 
-	createTokenErr error
+	createTokenErr    error
+	createTokenCalled bool
 
 	token    v1.PRToken
 	tokenErr error
@@ -67,12 +68,15 @@ func (s *stubPasswordResetDB) GetUserByEmail(_ context.Context, _ *string) (v1.P
 	return s.user, s.userErr
 }
 func (s *stubPasswordResetDB) CreateResetToken(_ context.Context, _ uuid.UUID, _ string, _ time.Time) error {
+	s.createTokenCalled = true
 	return s.createTokenErr
 }
 func (s *stubPasswordResetDB) GetResetToken(_ context.Context, _ string) (v1.PRToken, error) {
 	return s.token, s.tokenErr
 }
-func (s *stubPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
 func (s *stubPasswordResetDB) UpdatePassword(_ context.Context, _ uuid.UUID, _ string) error {
 	return s.updateErr
 }
@@ -450,19 +454,27 @@ func TestForgotPassword_EnabledFlagPublicWithoutSMTP(t *testing.T) {
 	}
 }
 
-func TestForgotPassword_RequiresSMTPToSubmit(t *testing.T) {
-	// With no SMTP configured, POST /forgot-password should refuse rather
-	// than appearing to send a (never-arriving) email.
+func TestForgotPassword_NoSMTP_StillReturns200(t *testing.T) {
+	// /forgot-password must always return 200 regardless of SMTP state —
+	// otherwise an attacker probing for valid emails sees an obvious
+	// differential between "configured-and-sent" and "not-configured".
+	// The handler short-circuits before creating a reset token when SMTP
+	// is off, so we assert createTokenCalled stays false too: response
+	// is generic, side effects are zero.
+	db := &stubPasswordResetDB{}
 	ts := newExtrasServer(t, func(h *api.Handlers) {
 		h.PasswordReset = v1.NewPasswordResetHandler(
-			&stubPasswordResetDB{}, email.NewSender(nil), "http://localhost", slog.Default())
+			db, email.NewSender(nil), "http://localhost", slog.Default())
 	})
 
 	resp := ts.do("POST", "/api/v1/auth/forgot-password", "", map[string]any{
 		"email": "alice@example.com",
 	})
-	if resp.StatusCode == http.StatusOK {
-		t.Errorf("status = %d, want non-200 when SMTP off", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 (must not differentiate on SMTP state)", resp.StatusCode)
+	}
+	if db.createTokenCalled {
+		t.Error("CreateResetToken must not be called when SMTP is off")
 	}
 }
 

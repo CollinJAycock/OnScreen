@@ -17,17 +17,25 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
 // LibraryResponse is the JSON shape for a library in the v1 API.
+//
+// ScanPaths leaks server filesystem layout (`/mnt/storage/movies` etc.)
+// and is admin-only — non-admin members of a library see the row but
+// not its on-disk roots, since absolute paths are useful only to the
+// operator and double as recon for path-traversal/SSRF chaining. The
+// `omitempty` here pairs with toLibraryResponse's per-call decision
+// to populate the slice or leave it nil.
 type LibraryResponse struct {
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
 	Type                string   `json:"type"`
-	ScanPaths           []string `json:"scan_paths"`
+	ScanPaths           []string `json:"scan_paths,omitempty"`
 	Agent               string   `json:"agent"`
 	Language            string   `json:"language"`
 	ScanIntervalMinutes *int     `json:"scan_interval_minutes,omitempty"`
@@ -45,22 +53,28 @@ type LibraryResponse struct {
 	UpdatedAt         string `json:"updated_at"`
 }
 
-func toLibraryResponse(lib *library.Library) LibraryResponse {
-	paths := lib.Paths
-	if paths == nil {
-		paths = []string{}
-	}
+// toLibraryResponse converts a domain Library into the API response.
+// includeScanPaths is true only for admin callers: regular users see
+// the library row (name/type/etc.) but not the absolute on-disk paths,
+// which would leak server filesystem layout to non-admins.
+func toLibraryResponse(lib *library.Library, includeScanPaths bool) LibraryResponse {
 	r := LibraryResponse{
 		ID:                lib.ID.String(),
 		Name:              lib.Name,
 		Type:              lib.Type,
-		ScanPaths:         paths,
 		Agent:             lib.Agent,
 		Language:          lib.Lang,
 		IsPrivate:         lib.IsPrivate,
 		AutoGrantNewUsers: lib.AutoGrantNewUsers,
 		CreatedAt:         lib.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         lib.UpdatedAt.Format(time.RFC3339),
+	}
+	if includeScanPaths {
+		paths := lib.Paths
+		if paths == nil {
+			paths = []string{}
+		}
+		r.ScanPaths = paths
 	}
 	if lib.ScanInterval != nil {
 		mins := int(lib.ScanInterval.Minutes())
@@ -131,6 +145,7 @@ type LibraryHandler struct {
 	media    MediaItemLister // optional; enables GET /libraries/:id/items
 	detector IntroDetectorRunner
 	logger   *slog.Logger
+	audit    *audit.Logger // optional; nil disables admin-action audit logging
 }
 
 // NewLibraryHandler creates a LibraryHandler.
@@ -151,6 +166,14 @@ func (h *LibraryHandler) WithDetector(d IntroDetectorRunner) *LibraryHandler {
 	return h
 }
 
+// WithAudit attaches an audit logger so admin actions on libraries
+// (Create, Delete, Scan, DetectIntros) leave a forensic trail.
+// Returns the handler for chaining.
+func (h *LibraryHandler) WithAudit(a *audit.Logger) *LibraryHandler {
+	h.audit = a
+	return h
+}
+
 // List handles GET /api/v1/libraries.
 func (h *LibraryHandler) List(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
@@ -166,7 +189,7 @@ func (h *LibraryHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]LibraryResponse, len(libs))
 	for i := range libs {
-		out[i] = toLibraryResponse(&libs[i])
+		out[i] = toLibraryResponse(&libs[i], claims.IsAdmin)
 	}
 	respond.List(w, r, out, int64(len(out)), "")
 }
@@ -204,7 +227,7 @@ func (h *LibraryHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.Success(w, r, toLibraryResponse(lib))
+	respond.Success(w, r, toLibraryResponse(lib, claims.IsAdmin))
 }
 
 // Create handles POST /api/v1/libraries.
@@ -280,7 +303,17 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.Created(w, r, toLibraryResponse(lib))
+	if h.audit != nil {
+		var actor *uuid.UUID
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			a := claims.UserID
+			actor = &a
+		}
+		h.audit.Log(r.Context(), actor, audit.ActionLibraryCreate, lib.ID.String(),
+			map[string]any{"name": lib.Name, "type": lib.Type}, audit.ClientIP(r))
+	}
+	// Create is admin-only at the router; admins always see scan_paths.
+	respond.Created(w, r, toLibraryResponse(lib, true))
 }
 
 // Update handles PATCH /api/v1/libraries/:id.
@@ -395,7 +428,8 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.Success(w, r, toLibraryResponse(lib))
+	// Update is admin-only at the router; admins always see scan_paths.
+	respond.Success(w, r, toLibraryResponse(lib, true))
 }
 
 // Delete handles DELETE /api/v1/libraries/:id.
@@ -414,6 +448,14 @@ func (h *LibraryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "delete library", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	if h.audit != nil {
+		var actor *uuid.UUID
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			a := claims.UserID
+			actor = &a
+		}
+		h.audit.Log(r.Context(), actor, audit.ActionLibraryDelete, id.String(), nil, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }
@@ -434,6 +476,14 @@ func (h *LibraryHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "enqueue scan", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	if h.audit != nil {
+		var actor *uuid.UUID
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			a := claims.UserID
+			actor = &a
+		}
+		h.audit.Log(r.Context(), actor, audit.ActionLibraryScan, id.String(), nil, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }
@@ -466,8 +516,8 @@ func (h *LibraryHandler) DetectIntros(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if lib.Type != "show" {
-		respond.BadRequest(w, r, "intro detection only applies to show libraries")
+	if lib.Type != "show" && lib.Type != "anime" {
+		respond.BadRequest(w, r, "intro detection only applies to show / anime libraries")
 		return
 	}
 	detectCtx := context.WithoutCancel(r.Context())
@@ -786,7 +836,10 @@ func rootItemType(libraryType string) string {
 	switch libraryType {
 	case "music":
 		return "artist"
-	case "show":
+	case "show", "anime":
+		// Anime libraries share the show → season → episode shape
+		// with `show` libraries. The library type only flips which
+		// metadata agent the enricher prefers, not the hierarchy.
 		return "show"
 	case "photo":
 		return "photo"
@@ -815,7 +868,7 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 		case "artist", "album", "track", "music_video":
 			return true
 		}
-	case "show":
+	case "show", "anime":
 		switch itemType {
 		case "show", "season", "episode":
 			return true

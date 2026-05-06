@@ -614,9 +614,14 @@ func TestToLibraryResponse_NilPaths(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	resp := toLibraryResponse(lib)
+	resp := toLibraryResponse(lib, true)
 	if resp.ScanPaths == nil {
-		t.Error("ScanPaths should not be nil (should be empty slice)")
+		t.Error("ScanPaths should not be nil for admin (should be empty slice)")
+	}
+	// Non-admin sees no scan_paths at all (omitempty drops the field).
+	respUser := toLibraryResponse(lib, false)
+	if respUser.ScanPaths != nil {
+		t.Errorf("non-admin ScanPaths should be nil; got %v", respUser.ScanPaths)
 	}
 }
 
@@ -629,7 +634,7 @@ func TestToLibraryResponse_WithScanInterval(t *testing.T) {
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
-	resp := toLibraryResponse(lib)
+	resp := toLibraryResponse(lib, true)
 	if resp.ScanIntervalMinutes == nil {
 		t.Fatal("ScanIntervalMinutes should not be nil")
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/email"
 )
 
@@ -56,11 +57,19 @@ type InviteHandler struct {
 	sender  *email.Sender // always non-nil; live SMTP state via sender.Enabled(ctx)
 	baseURL string
 	logger  *slog.Logger
+	audit   *audit.Logger // optional; nil disables audit on invite create
 }
 
 // NewInviteHandler creates an InviteHandler.
 func NewInviteHandler(db InviteDB, sender *email.Sender, baseURL string, logger *slog.Logger) *InviteHandler {
 	return &InviteHandler{db: db, sender: sender, baseURL: baseURL, logger: logger}
+}
+
+// WithAudit attaches an audit logger so admin invite creations are
+// recorded. Returns the handler for chaining.
+func (h *InviteHandler) WithAudit(a *audit.Logger) *InviteHandler {
+	h.audit = a
+	return h
 }
 
 // Create handles POST /api/v1/invites (admin only).
@@ -114,6 +123,15 @@ func (h *InviteHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.audit != nil {
+		actor := claims.UserID
+		var emailDetail string
+		if body.Email != nil {
+			emailDetail = *body.Email
+		}
+		h.audit.Log(r.Context(), &actor, audit.ActionInviteCreate, id.String(),
+			map[string]any{"email": emailDetail}, audit.ClientIP(r))
+	}
 	respond.Success(w, r, map[string]string{
 		"id":         id.String(),
 		"invite_url": inviteURL,

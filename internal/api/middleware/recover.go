@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,6 +28,38 @@ func (rw *recoverWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
 
+// sanitizePanicValue extracts a safe-to-log representation of a panic
+// value. The full value can be a third-party error wrapping sensitive
+// state — e.g. an LDAP `Bind` error includes the bind DN and (in some
+// adapters) the password attempt; a database driver panic could carry
+// query parameters. Logging the raw value into the admin-visible
+// /admin/logs ring buffer leaks those into anyone who reads logs.
+//
+// Strategy: log the type unconditionally (always safe; aids triage),
+// plus the message ONLY for the small set of types we know are safe
+// to surface verbatim (errors with our own controlled messages,
+// runtime errors, plain strings panicked from our own code). Anything
+// else gets the type alone — operator can reproduce in dev with full
+// detail if needed.
+func sanitizePanicValue(v any) string {
+	switch x := v.(type) {
+	case string:
+		// Likely a panic("…") from our own code — safe.
+		return x
+	case error:
+		// runtime.Error covers nil-pointer / index-out-of-range / etc.
+		// Their messages are deterministic strings ("runtime error:
+		// invalid memory address or nil pointer dereference"), no
+		// secret material. Other error types we treat as opaque.
+		if _, ok := x.(interface{ RuntimeError() }); ok {
+			return x.Error()
+		}
+		return fmt.Sprintf("error type=%T", v)
+	default:
+		return fmt.Sprintf("type=%T", v)
+	}
+}
+
 // Recover catches panics in downstream handlers and returns a 500 response
 // rather than crashing the process. Panics are logged with a stack trace.
 func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
@@ -37,7 +70,7 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 				if v := recover(); v != nil {
 					stack := debug.Stack()
 					logger.ErrorContext(r.Context(), "panic recovered",
-						"panic", v,
+						"panic", sanitizePanicValue(v),
 						"stack", string(stack),
 						"request_id", requestIDFromContext(r.Context()),
 						"method", r.Method,

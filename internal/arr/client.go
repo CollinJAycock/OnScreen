@@ -18,6 +18,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // Errors returned across the package.
@@ -42,11 +44,21 @@ type Client struct {
 
 // New constructs a Client with a sensible default timeout. baseURL is trimmed
 // of trailing slashes so callers can pass either form.
+//
+// The HTTP client uses the safehttp LocalDevice policy: it allows RFC1918,
+// loopback, and link-local addresses because Radarr/Sonarr typically run on
+// the operator's LAN or in a sibling Docker container. Multicast / unspecified
+// addresses are still refused — those aren't valid arr targets and would
+// otherwise be free SSRF surface for an admin-level config bug.
 func New(baseURL, apiKey string) *Client {
 	return &Client{
-		BaseURL:    strings.TrimRight(baseURL, "/"),
-		APIKey:     apiKey,
-		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		APIKey:  apiKey,
+		HTTPClient: safehttp.NewClient(safehttp.DialPolicy{
+			AllowPrivate:   true,
+			AllowLoopback:  true,
+			AllowLinkLocal: true,
+		}, 15*time.Second),
 	}
 }
 

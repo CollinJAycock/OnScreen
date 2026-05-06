@@ -77,6 +77,22 @@ func (a *libraryAdapter) GetLibrary(ctx context.Context, id uuid.UUID) (library.
 	return genLibToLib(g), nil
 }
 
+// IsLibraryAnime implements scanner.LibraryAnimeChecker. Single-bool
+// lookup the show-enricher uses to decide whether AniList runs
+// primary or fallback.
+func (a *libraryAdapter) IsLibraryAnime(ctx context.Context, libraryID uuid.UUID) (bool, error) {
+	return a.q.IsLibraryAnime(ctx, libraryID)
+}
+
+// IsLibraryManga is the same shape as IsLibraryAnime but for the
+// book / manga split. The book enricher reads it to flip AniList from
+// "fallback for manga rows" to "primary for everything in this
+// library" — the operator's library-type pick is the single source
+// of truth.
+func (a *libraryAdapter) IsLibraryManga(ctx context.Context, libraryID uuid.UUID) (bool, error) {
+	return a.q.IsLibraryManga(ctx, libraryID)
+}
+
 func (a *libraryAdapter) ListLibraries(ctx context.Context) ([]library.Library, error) {
 	gs, err := a.q.ListLibraries(ctx)
 	if err != nil {

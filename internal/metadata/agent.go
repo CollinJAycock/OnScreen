@@ -11,8 +11,10 @@ import (
 
 // MovieResult holds movie metadata returned by an agent.
 type MovieResult struct {
-	TMDBID        int
-	IMDBID        string
+	TMDBID    int
+	IMDBID    string
+	AniListID int // AniList Media ID (0 if unknown — anime films only)
+	MALID     int // MyAnimeList ID (0 if unknown — anime films only)
 	Title         string
 	OriginalTitle string
 	Year          int
@@ -29,9 +31,11 @@ type MovieResult struct {
 
 // TVShowResult holds TV show metadata returned by an agent.
 type TVShowResult struct {
-	TMDBID        int
-	TVDBID        int // TheTVDB series ID (0 if unknown)
-	IMDBID        string
+	TMDBID    int
+	TVDBID    int    // TheTVDB series ID (0 if unknown)
+	IMDBID    string
+	AniListID int // AniList Media ID (0 if unknown — anime only)
+	MALID     int // MyAnimeList ID (0 if unknown — anime only)
 	Title         string
 	OriginalTitle string
 	FirstAirYear  int
@@ -63,6 +67,59 @@ type EpisodeResult struct {
 	DurationMS int64
 	Rating     float64
 	ThumbURL   string
+}
+
+// MangaResult holds manga metadata returned by an agent (AniList).
+// One row per series — chapter / volume splits live in the
+// scanner's hierarchy (manga_volume / manga_chapter under the
+// matched book_series row), not in this struct.
+//
+// Mangaka splits author + artist when AniList exposes both staff
+// roles; ReadingDirection comes from countryOfOrigin (JP→rtl,
+// KR/CN→ttb for webtoons / manhua, otherwise ltr). Demographic
+// (Shōnen / Shōjo / Seinen / Josei) and Magazine (Weekly Shōnen
+// Jump etc.) ride on Tags + Source — exposed as tags rather than
+// dedicated columns to avoid a schema explosion.
+type MangaResult struct {
+	AniListID  int
+	MALID      int
+	Title         string
+	OriginalTitle string // native (Japanese / Korean / Chinese) title
+	StartYear     int
+	Summary       string
+	Rating        float64
+	ContentRating string
+
+	// Mangaka. Author writes the story; Artist illustrates. Often
+	// the same person; AniList's staff list can split or fuse them.
+	// Empty when AniList didn't expose a staff role match.
+	Author string
+	Artist string
+
+	// SerializationStatus: "FINISHED" | "RELEASING" | "NOT_YET_RELEASED" |
+	// "CANCELLED" | "HIATUS" — AniList's MediaStatus enum verbatim so the
+	// UI can render its own labels.
+	SerializationStatus string
+
+	// Demographic + Magazine come through as tags. Genres are the
+	// AniList genre list; tags carry the more specific classifications
+	// (Shounen, Slice of Life, etc.).
+	Genres []string
+	Tags   []string
+
+	// ReadingDirection: "ltr" | "rtl" | "ttb" derived from
+	// countryOfOrigin. Reader uses this as the default unless the
+	// per-item override is set.
+	ReadingDirection string
+
+	// VolumeCount / ChapterCount from AniList. -1 = ongoing
+	// (status RELEASING) so we don't pretend an in-flight series
+	// has a final count.
+	Volumes  int
+	Chapters int
+
+	PosterURL string
+	BannerURL string
 }
 
 // CreditMember is one cast or crew entry on a media item.

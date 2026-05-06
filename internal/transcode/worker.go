@@ -262,27 +262,29 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		)
 
 		ffArgs = BuildHLS(BuildArgs{
-			InputPath:        job.FilePath,
-			StartOffset:      job.StartOffsetSec,
-			Encoder:          enc,
-			IsVAAPI:          enc == EncoderVAAPI || enc == EncoderHEVCVAAPI,
-			IsHEVC:           job.IsHEVC,
-			IsAV1:            job.IsAV1,
-			Width:            job.Width,
-			Height:           job.Height,
-			BitrateKbps:      bitrate,
-			NeedsToneMap:     job.NeedsToneMap,
-			HasTonemapCuda:   w.hasTonemapCuda,
-			HasTonemapOpenCL: w.hasTonemapOpenCL,
-			HasZscale:        w.hasZscale,
-			OpenCLDevice:     PickOpenCLDevice(w.openclDevices, enc),
-			AudioCodec:       job.AudioCodec,
-			AudioChannels:    job.AudioChannels,
-			AudioStreamIndex: job.AudioStreamIndex,
-			SubtitleStreams:  job.SubtitleStreams,
-			EncoderOpts:      w.encoderOpts,
-			SessionDir:       job.SessionDir,
-			SegmentPrefix:    "seg",
+			InputPath:            job.FilePath,
+			StartOffset:          job.StartOffsetSec,
+			Encoder:              enc,
+			IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI,
+			IsHEVC:               job.IsHEVC,
+			IsAV1:                job.IsAV1,
+			Width:                job.Width,
+			Height:               job.Height,
+			BitrateKbps:          bitrate,
+			NeedsToneMap:         job.NeedsToneMap,
+			HasTonemapCuda:       w.hasTonemapCuda,
+			HasTonemapOpenCL:     w.hasTonemapOpenCL,
+			HasZscale:            w.hasZscale,
+			OpenCLDevice:         PickOpenCLDevice(w.openclDevices, enc),
+			AudioCodec:           job.AudioCodec,
+			AudioChannels:        job.AudioChannels,
+			AudioStreamIndex:     job.AudioStreamIndex,
+			SubtitleStreams:      job.SubtitleStreams,
+			EncoderOpts:          w.encoderOpts,
+			ReadRate:             1.0,
+			ReadRateInitialBurst: 30,
+			SessionDir:           job.SessionDir,
+			SegmentPrefix:        "seg",
 		})
 		actualEncoder = enc
 	}
@@ -350,8 +352,34 @@ loop:
 		case <-t.C:
 			bg := context.Background()
 			// If the session no longer exists in Valkey (client stopped it), kill FFmpeg.
-			if _, err := w.store.Get(bg, job.SessionID); err != nil {
+			sess, err := w.store.Get(bg, job.SessionID)
+			if err != nil {
 				w.logger.Info("session deleted — killing ffmpeg", "session_id", job.SessionID)
+				_ = cmd.Process.Kill()
+				break loop
+			}
+			// Idle-kill: a client that closes its tab without firing
+			// DELETE leaves ffmpeg encoding for the full 4 h session
+			// TTL with `-readrate 1.0`. The Segment endpoint stamps
+			// LastActivityAt on every segment fetch (~every 4 s of
+			// playback), so a 60 s gap means the client crashed,
+			// network dropped, or the user navigated away. Kill the
+			// process to free the GPU and stop disk-fill.
+			//
+			// Grace period for the start-of-session window: until the
+			// player has fetched its first segment, LastActivityAt is
+			// zero. Use CreatedAt as the anchor so we don't kill a
+			// session that's still buffering seg 0.
+			const idleKillThreshold = 60 * time.Second
+			anchor := sess.LastActivityAt
+			if anchor.IsZero() {
+				anchor = sess.CreatedAt
+			}
+			if !anchor.IsZero() && time.Since(anchor) > idleKillThreshold {
+				w.logger.Info("client idle — killing ffmpeg",
+					"session_id", job.SessionID,
+					"last_activity_at", sess.LastActivityAt,
+					"idle_for", time.Since(anchor).Round(time.Second))
 				_ = cmd.Process.Kill()
 				break loop
 			}

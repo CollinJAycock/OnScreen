@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -35,7 +36,24 @@ type TrickplayHandler struct {
 	media  TrickplayMediaLookup
 	access LibraryAccessChecker
 	logger *slog.Logger
+	// genSlots bounds concurrent in-flight generations across the
+	// process. Each Generate call spawns ffmpeg + image-encoder work
+	// at full CPU, so an admin POSTing /generate in a tight loop can
+	// pin every core. Buffered channel = N-permit semaphore: take a
+	// slot before kicking off, release in the goroutine's defer.
+	genSlots chan struct{}
+	// genInFlight tracks item IDs currently generating so a flurry of
+	// POSTs for the same item collapses to one job (idempotent re-
+	// trigger). Keyed by item UUID; entries cleared when the goroutine
+	// exits.
+	genInFlight   map[uuid.UUID]struct{}
+	genInFlightMu sync.Mutex
 }
+
+// MaxConcurrentTrickplayGenerations bounds in-flight ffmpeg sprite jobs
+// across the process. 2 covers typical admin "regenerate everything"
+// batches without saturating CPU; tune via env if needed.
+const MaxConcurrentTrickplayGenerations = 2
 
 // TrickplayMediaLookup is the minimal media interface the handler uses to
 // resolve an item's library for access checks. Satisfied by media.Service.
@@ -46,7 +64,13 @@ type TrickplayMediaLookup interface {
 // NewTrickplayHandler wires a handler. svc may be nil — the handler then
 // returns 404 for all trickplay routes, which matches how WithMarkers works.
 func NewTrickplayHandler(svc TrickplayService, media TrickplayMediaLookup, logger *slog.Logger) *TrickplayHandler {
-	return &TrickplayHandler{svc: svc, media: media, logger: logger}
+	return &TrickplayHandler{
+		svc:         svc,
+		media:       media,
+		logger:      logger,
+		genSlots:    make(chan struct{}, MaxConcurrentTrickplayGenerations),
+		genInFlight: make(map[uuid.UUID]struct{}),
+	}
 }
 
 // WithLibraryAccess enforces per-library ACLs on trickplay reads.
@@ -110,9 +134,32 @@ func (h *TrickplayHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dedup: if a generation for this item is already running, just
+	// return 202 — the caller will see "pending" via Status. Without
+	// this, an admin POST loop on the same item would queue N copies
+	// behind the semaphore, all stomping each other's output dir.
+	h.genInFlightMu.Lock()
+	if _, running := h.genInFlight[id]; running {
+		h.genInFlightMu.Unlock()
+		respond.JSON(w, r, http.StatusAccepted, TrickplayStatusJSON{Status: "pending"})
+		return
+	}
+	h.genInFlight[id] = struct{}{}
+	h.genInFlightMu.Unlock()
+
 	// Detached context: the HTTP request ctx will cancel when we return the
 	// 202. Generation takes seconds to minutes, so it must outlive the call.
+	// Bounded by genSlots — a buffered channel acts as an N-permit
+	// semaphore so an admin POST loop can't pin every CPU core with
+	// concurrent ffmpeg sprite jobs.
 	go func(itemID uuid.UUID) {
+		defer func() {
+			h.genInFlightMu.Lock()
+			delete(h.genInFlight, itemID)
+			h.genInFlightMu.Unlock()
+		}()
+		h.genSlots <- struct{}{}
+		defer func() { <-h.genSlots }()
 		bg := context.Background()
 		if err := h.svc.Generate(bg, itemID); err != nil {
 			h.logger.Error("trickplay generate", "id", itemID, "err", err)

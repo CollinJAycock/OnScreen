@@ -101,6 +101,7 @@ type MediaService interface {
 	GetItem(ctx context.Context, id uuid.UUID) (*media.Item, error)
 	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
 	UpdateItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
+	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
 	DeleteFile(ctx context.Context, id uuid.UUID) error
@@ -410,8 +411,16 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 // swallowed so a dedupe failure never fails the scan.
 func (s *Scanner) dedupeLibrary(ctx context.Context, libraryID uuid.UUID, libraryType string) {
 	switch libraryType {
-	case "show", "movie":
-		dedup, err := s.media.DedupeTopLevelItems(ctx, libraryType, &libraryID)
+	case "show", "movie", "anime":
+		// Anime libraries dedupe through the show path — same
+		// hierarchy (show → season → episode), same merge behaviour.
+		// Pass libraryType straight through; the dedup only branches
+		// on hierarchy shape, not on origin.
+		canonicalType := libraryType
+		if libraryType == "anime" {
+			canonicalType = "show"
+		}
+		dedup, err := s.media.DedupeTopLevelItems(ctx, canonicalType, &libraryID)
 		if err != nil {
 			s.logger.WarnContext(ctx, "post-scan dedupe failed", "library_id", libraryID, "err", err)
 			return
@@ -694,7 +703,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// processHomeVideo, same shape as the prior audiobook bug).
 	if hash != nil && libraryType != "photo" && libraryType != "music" &&
 		libraryType != "audiobook" && libraryType != "book" &&
-		libraryType != "home_video" {
+		libraryType != "manga" && libraryType != "home_video" {
 		if haveExisting &&
 			existing.FileHash != nil && *existing.FileHash == *hash &&
 			(existing.DurationMS != nil || isImageFile(path)) {
@@ -785,16 +794,26 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if hvErr != nil {
 			return nil, nil, false, fmt.Errorf("home video for %s: %w", path, hvErr)
 		}
-	} else if libraryType == "book" && isBookFile(path) {
-		// Books: CBZ in v2.1 Stage 1 (CBR + EPUB land later). One
+	} else if (libraryType == "book" || libraryType == "manga") && isBookFile(path) {
+		// Books / manga: same scanner path. CBZ / CBR / EPUB → one
 		// file = one row, page count probed via archive/zip and
 		// stashed on duration_ms ("duration" for a book = pages).
+		// Manga libraries differ from book libraries only at
+		// enrichment time (AniList primary instead of OpenLibrary)
+		// and at reader time (RTL / spread / vertical-scroll modes
+		// pre-selected from countryOfOrigin).
 		var bkErr error
 		item, bkErr = s.processBook(ctx, libraryID, path, roots)
 		if bkErr != nil {
 			return nil, nil, false, fmt.Errorf("book for %s: %w", path, bkErr)
 		}
-	} else if libraryType == "show" {
+	} else if libraryType == "show" || libraryType == "anime" {
+		// Anime libraries share the show → season → episode hierarchy
+		// with `show` libraries; the library type only flips which
+		// metadata agent the enricher prefers (AniList primary), not
+		// the scanner's content shape. processShowHierarchy already
+		// falls through to ParseAnimeAbsoluteFilename for fansub-style
+		// "Title - NN" files when the S##E## pattern misses.
 		var showErr error
 		item, showErr = s.processShowHierarchy(ctx, libraryID, path)
 		if showErr != nil {
@@ -994,15 +1013,29 @@ func (s *Scanner) persistPhotoEXIF(ctx context.Context, item *media.Item, path s
 func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID, path string) (*media.Item, error) {
 	showTitle, seasonNum, episodeNum, ok := ParseTVFilename(path)
 	if !ok {
-		// Could not parse S##E## — fall back to flat episode.
-		title, year := parseFilename(path)
-		return s.media.FindOrCreateItem(ctx, media.CreateItemParams{
-			LibraryID: libraryID,
-			Type:      "episode",
-			Title:     title,
-			SortTitle: title,
-			Year:      year,
-		})
+		// No S##E## or 1x03 pattern — try the anime-absolute style
+		// ("Show - 245.mkv", "[Group] Show - 1071 [1080p].mkv").
+		// Common anime fansub layout: a single flat folder per show
+		// with absolute-numbered files. Slot the file into a
+		// synthetic Season 1 so the existing show / season / episode
+		// hierarchy works — anime users browse the flat episode list
+		// by absolute number anyway, and a single season feels
+		// natural for that.
+		if animeTitle, animeEp, animeOK := ParseAnimeAbsoluteFilename(path); animeOK {
+			showTitle = animeTitle
+			seasonNum = 1
+			episodeNum = animeEp
+		} else {
+			// Neither parser matched — fall back to flat episode.
+			title, year := parseFilename(path)
+			return s.media.FindOrCreateItem(ctx, media.CreateItemParams{
+				LibraryID: libraryID,
+				Type:      "episode",
+				Title:     title,
+				SortTitle: title,
+				Year:      year,
+			})
+		}
 	}
 
 	// 1. Find or create the "show" item (parent_id=null). When the
@@ -1068,6 +1101,18 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 	if err != nil {
 		return nil, fmt.Errorf("find or create episode %d for season %d of %q: %w",
 			episodeNum, seasonNum, showTitle, err)
+	}
+
+	// 4. Detect OVA / ONA / special / etc. subtype from the
+	// filename + folder + season-0 convention. Set the row's `kind`
+	// column. Empty kind clears (the SetItemKind impl maps "" to
+	// SQL NULL). Best-effort: any failure here doesn't block the
+	// scan — the episode row is already in a usable state.
+	if kind := DetectEpisodeKind(path, seasonNum); kind != "" {
+		if err := s.media.SetItemKind(ctx, episode.ID, kind); err != nil {
+			s.logger.WarnContext(ctx, "set episode kind failed",
+				"episode_id", episode.ID, "kind", kind, "err", err)
+		}
 	}
 
 	return episode, nil
@@ -1159,7 +1204,11 @@ func cleanTitle(name string) (title string, year *int) {
 // fileTypeForLibrary maps library type to the media_item type used for top-level items.
 func fileTypeForLibrary(libraryType string) string {
 	switch libraryType {
-	case "show":
+	case "show", "anime":
+		// Anime contents are shows with episodes — same media-item
+		// hierarchy as `show`, just enriched against AniList instead
+		// of TMDB by default. The library type is the only signal
+		// the enricher reads for that flip.
 		return "episode"
 	case "music":
 		return "track"
@@ -1169,6 +1218,12 @@ func fileTypeForLibrary(libraryType string) string {
 		return "audiobook"
 	case "podcast":
 		return "podcast_episode"
+	case "book", "manga":
+		// Both routed through processBook → "book" type. Manga
+		// inherits the same row shape; the library type alone is
+		// what enables the manga-specific enrichment + reader
+		// modes downstream.
+		return "book"
 	default:
 		return "movie"
 	}

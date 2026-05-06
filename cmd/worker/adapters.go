@@ -143,12 +143,16 @@ func itemFromGenFields(
 }
 
 func genGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
-	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+	item := itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
 		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
 		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
 		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+	item.AniListID = int32PtrToIntPtr(r.AnilistID)
+	item.MalID = int32PtrToIntPtr(r.MalID)
+	item.Kind = r.Kind
+	return item
 }
 
 func genGetItemByTMDBIDRowToItem(r gen.GetMediaItemByTMDBIDRow) media.Item {
@@ -188,12 +192,16 @@ func genListMissingArtRowToItem(r gen.ListMediaItemsMissingArtRow) media.Item {
 }
 
 func genListChildrenRowToItem(r gen.ListMediaItemChildrenRow) media.Item {
-	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+	item := itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
 		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
 		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
 		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+	item.AniListID = int32PtrToIntPtr(r.AnilistID)
+	item.MalID = int32PtrToIntPtr(r.MalID)
+	item.Kind = r.Kind
+	return item
 }
 
 func genSearchRowToItem(r gen.SearchMediaItemsRow) media.Item {
@@ -263,6 +271,9 @@ func updateItemMetadataParamsToGen(p media.UpdateItemMetadataParams) gen.UpdateM
 		OriginallyAvailableAt: timePtrToPGDate(p.OriginallyAvailableAt),
 		TmdbID:                intPtrToInt32Ptr(p.TMDBID),
 		TvdbID:                intPtrToInt32Ptr(p.TVDBID),
+		AnilistID:             intPtrToInt32Ptr(p.AniListID),
+		MalID:                 intPtrToInt32Ptr(p.MALID),
+		ReadingDirection:      p.ReadingDirection,
 	}
 }
 
@@ -408,6 +419,13 @@ func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, 
 		ID:           id,
 		LyricsPlain:  plain,
 		LyricsSynced: synced,
+	})
+}
+
+func (a *mediaAdapter) SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error {
+	return a.q.SetMediaItemKind(ctx, gen.SetMediaItemKindParams{
+		ID:   id,
+		Kind: kind,
 	})
 }
 

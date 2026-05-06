@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	httppprof "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -35,12 +36,14 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/people"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/domain/watchstatus"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/lyrics"
 	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/metadata/anilist"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/coverartarchive"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
@@ -251,7 +254,12 @@ func run() error {
 	mediaSvc := media.NewService(rwMQ, roMQ, logger)
 
 	// ── Settings service ─────────────────────────────────────────────────────
-	settingsSvc := settings.New(rwPool, logger)
+	// WithEncryptor turns on AES-256-GCM at-rest for secret-bearing keys
+	// (TMDB/TVDB API keys, OIDC client_secret, SAML SP private key, LDAP
+	// bind password, SMTP password, OpenSubtitles password). Existing
+	// plaintext rows keep working — they migrate to encrypted form on
+	// the next admin save of that setting.
+	settingsSvc := settings.New(rwPool, logger).WithEncryptor(encryptor)
 
 	// Seed TMDB key from environment on first run (won't overwrite a DB value).
 	if cfg.TMDBAPIKey != "" {
@@ -334,6 +342,24 @@ func run() error {
 		return tvdbCache
 	})
 
+	// Wire AniList anime metadata client. No API key required (read
+	// queries are open). AniList sits between TMDB and TVDB in the
+	// show-enrichment fallback chain — anime is the most common
+	// reason TMDB returns no result for a TV show, and AniList is
+	// anime-native. Singleton client; lazy factory shape kept for
+	// parity with TVDB and future per-library opt-out.
+	anilistClient := anilist.New()
+	metaAgent.SetAniListFn(func() scanner.AniListAgent { return anilistClient })
+
+	// Per-library is_anime flag promotes AniList from fallback to
+	// primary on libraries the admin has flagged as anime. Reads
+	// against the read replica (the flag is only updated from the
+	// library settings PATCH path; staleness across replication lag
+	// just means the next scan picks the new value up). The
+	// libraryAdapter satisfies scanner.LibraryAnimeChecker via its
+	// IsLibraryAnime method.
+	metaAgent.SetLibraryAnimeCheckerFn(func() scanner.LibraryAnimeChecker { return roQ })
+
 	// Wire TheAudioDB for music enrichment — no API key required.
 	audiodbClient := audiodb.New()
 	metaAgent.SetMusicAgentFn(func() metadata.MusicAgent { return audiodbClient })
@@ -403,26 +429,39 @@ func run() error {
 	roWQ := &watchEventAdapter{q: gen.New(roPool)}
 	watchSvc := watchevent.NewService(rwWQ, roWQ, logger)
 
+	// Watching-status mirror — Plan to Watch / Watching / Completed /
+	// On Hold / Dropped. Generic per-(user, item) feature shipped to
+	// land anime-tracker UX while applying to every type.
+	watchStatusSvc := watchstatus.New(&watchStatusAdapter{q: gen.New(rwPool)})
+
 	// ── Transcode session store + segment token (Phase 2) ─────────────────────
 	sessionStore := transcode.NewSessionStore(valkeyClient)
 	segTokenMgr := transcode.NewSegmentTokenManager(valkeyClient)
 
 	// ── API handlers ──────────────────────────────────────────────────────────
 	authSvc := &authService{
-		db:     gen.New(rwPool),
-		tokens: tokenMaker,
-		logger: logger,
+		db:          gen.New(rwPool),
+		tokens:      tokenMaker,
+		logger:      logger,
+		rateLimiter: rateLimiter, // per-username brute-force throttle
+		// usernamePepper keys the HMAC used for Valkey rate-limit keys
+		// and any operator-log fields that would otherwise carry raw
+		// attempted usernames. SECRET_KEY is already a per-deployment
+		// secret so re-using it as the pepper costs nothing and avoids
+		// introducing a separate config knob.
+		usernamePepper: secretKey,
 	}
 
 	authMiddleware := middleware.NewAuthenticator(tokenMaker).
 		WithEpochReader(&sessionEpochAdapter{q: gen.New(roPool)})
 
+	auditLogger := audit.New(gen.New(rwPool), logger)
 	libHandler := v1.NewLibraryHandler(libSvc, logger).
 		WithMedia(mediaSvc).
-		WithDetector(libEnqueuer.introDetector)
+		WithDetector(libEnqueuer.introDetector).
+		WithAudit(auditLogger)
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
-	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger)
-	auditLogger := audit.New(gen.New(rwPool), logger)
+	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 
 	authHandler := v1.NewAuthHandler(authSvc, logger).WithAudit(auditLogger)
 
@@ -738,15 +777,16 @@ func run() error {
 	emailHandler := v1.NewEmailHandler(emailSender, logger)
 	passwordResetDB := &passwordResetAdapter{q: gen.New(rwPool)}
 	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, baseURL, logger).
-		WithSegmentTokenRevoker(segTokenMgr)
+		WithSegmentTokenRevoker(segTokenMgr).
+		WithAudit(auditLogger)
 	inviteDB := &inviteAdapter{q: gen.New(rwPool)}
-	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, baseURL, logger)
+	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, baseURL, logger).WithAudit(auditLogger)
 
 	// ── OIDC + SAML + LDAP (settings-driven, always wired) ────────────────────
 	// All three pull config from server_settings on each request, so admins
 	// enable and reconfigure them through the UI without a restart.
 	oidcSvc := v1.NewOIDCAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
-	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, baseURL, logger)
+	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, baseURL, logger).WithAudit(auditLogger)
 	samlSvc := v1.NewSAMLAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
 	// HA-aware SAML request tracker — Valkey-backed so an AuthnRequest
 	// minted on one OnScreen instance can be validated by an ACS
@@ -756,9 +796,10 @@ func run() error {
 	// shape identical and removes the "works locally, breaks in HA"
 	// surprise.
 	samlAuthHandler := v1.NewSAMLHandler(settingsSvc, samlSvc, baseURL, logger).
-		WithRequestTracker(v1.NewValkeySAMLRequestTracker(valkeyClient))
+		WithRequestTracker(v1.NewValkeySAMLRequestTracker(valkeyClient)).
+		WithAudit(auditLogger)
 	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger)
-	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger)
+	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger).WithAudit(auditLogger)
 
 	// ── Notifications ────────────────────────────────────────────────────────
 	_ = notifServiceEarly // used by scanEnqueuer above
@@ -861,6 +902,7 @@ func run() error {
 		History:            historyHandler,
 		Items:              itemHandler,
 		ItemsAdmin:         v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
+		WatchStatus:        v1.NewWatchStatusHandler(watchStatusSvc, logger),
 		Photos:             photosHandler,
 		Books:              booksHandler,
 		Trickplay:          trickplayHandler,
@@ -888,6 +930,7 @@ func run() error {
 		Plugins:            pluginHandler,
 		Pair:               pairHandler,
 		Logs:               v1.NewLogsHandler(logBuffer),
+		Debug:              v1.NewDebugHandler(logger),
 		Capabilities:       capabilitiesHandler,
 		ArrServices:        arrServicesHandler,
 		Requests:           requestsHandler,
@@ -901,6 +944,7 @@ func run() error {
 		Metrics:            metrics,
 		Auth_mw:            authMiddleware,
 		Impersonate:        &impersonationAdapter{q: gen.New(rwPool)},
+		ViewAsAuditor:      &viewAsAuditAdapter{audit: auditLogger},
 		RateLimiter:        rateLimiter,
 		CORSAllowedOrigins: corsAllowedOrigins,
 	}
@@ -946,6 +990,26 @@ func run() error {
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", observability.MetricsHandler(promReg))
 	metricsMux.HandleFunc("/health/live", liveH)
+
+	// pprof handlers — registered on the metrics port (NOT the public
+	// API port) so they share the same operator-only attack surface
+	// as Prometheus scrapes. Operators expose this port to the
+	// monitoring network, never to the internet.
+	//
+	// Endpoints (under /debug/pprof/):
+	//   - heap, allocs       — RSS / allocation profiling
+	//   - goroutine          — find leaked goroutines + blocked sites
+	//   - profile?seconds=30 — CPU sampling profile
+	//   - trace?seconds=5    — execution trace for blocking analysis
+	//
+	// Registering by hand instead of `_ "net/http/pprof"` so the
+	// handlers attach to our metricsMux, not the global DefaultServeMux
+	// (which the API server doesn't use either way).
+	metricsMux.HandleFunc("/debug/pprof/", httppprof.Index)
+	metricsMux.HandleFunc("/debug/pprof/cmdline", httppprof.Cmdline)
+	metricsMux.HandleFunc("/debug/pprof/profile", httppprof.Profile)
+	metricsMux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
+	metricsMux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
 
 	// ── Background workers ────────────────────────────────────────────────────
 	partitionWorker := worker.NewPartitionWorker(rwPool, cfg.RetainMonths, logger)
@@ -1099,6 +1163,14 @@ type scanEnqueuer struct {
 	watchMu      sync.Mutex
 	watchers     map[uuid.UUID]*scanner.Watcher // one watcher per library
 	scanInFlight sync.Map                       // uuid.UUID → struct{} — libraries currently scanning
+	// detectInFlight collapses concurrent intro-detection runs for the
+	// same library. A flapping fsnotify event over a large library
+	// can trigger overlapping scan-completes; without this dedup,
+	// each one spawns runIntroDetection in a fresh goroutine and the
+	// detector ends up fingerprinting the same episodes N times in
+	// parallel — burning CPU and writing competing intro_markers
+	// rows for the same episode.
+	detectInFlight sync.Map // uuid.UUID → struct{}
 }
 
 func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) error {
@@ -1145,10 +1217,13 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		if e.notifService != nil && result.New > 0 {
 			e.notifService.NotifyScanComplete(context.WithoutCancel(e.serverCtx), lib.Name, result.New)
 		}
-		// Intro/credits detection runs only on show libraries, and only when
-		// the admin has left detection on auto. Movies are excluded — users
-		// typically mark them manually if at all.
-		if lib.Type == "show" && e.introDetector != nil && e.settingsSvc != nil {
+		// Intro/credits detection runs on show + anime libraries, and only
+		// when the admin has left detection on auto. Movies are excluded —
+		// users typically mark them manually if at all. Anime libraries
+		// share the show → season → episode hierarchy and benefit even
+		// more from auto-detection (every cour has its own OP/ED, and
+		// fansub releases routinely vary intro length by ±2 s).
+		if (lib.Type == "show" || lib.Type == "anime") && e.introDetector != nil && e.settingsSvc != nil {
 			mode := e.settingsSvc.IntroDetectionMode(context.WithoutCancel(e.serverCtx))
 			if mode == settings.IntroDetectionOnScan {
 				go e.runIntroDetection(libraryID)
@@ -1166,7 +1241,19 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 // runIntroDetection walks every season in a show library and kicks off
 // intro + credits detection. Fire-and-forget: errors are logged per-season
 // and never block or retry. Called only after a successful scan.
+//
+// Dedups concurrent calls per library via detectInFlight so a flapping
+// scan-complete sequence (fsnotify storm during mass copy, manual
+// rescan triggered while auto-scan is still finishing) doesn't stack
+// overlapping detection runs on the same library.
 func (e *scanEnqueuer) runIntroDetection(libraryID uuid.UUID) {
+	if _, loaded := e.detectInFlight.LoadOrStore(libraryID, struct{}{}); loaded {
+		e.logger.Info("intro detection already in flight; skipping duplicate run",
+			"library_id", libraryID)
+		return
+	}
+	defer e.detectInFlight.Delete(libraryID)
+
 	detectCtx := context.WithoutCancel(e.serverCtx)
 	if err := e.introDetector.DetectLibrary(detectCtx, libraryID); err != nil {
 		e.logger.Warn("intro detection library",

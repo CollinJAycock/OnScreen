@@ -492,6 +492,160 @@ func TestBuildHLS_AV1Source_Remux_FMP4(t *testing.T) {
 	}
 }
 
+// TestBuildHLS_ReadRate_PacingFlags verifies the input-rate pacing
+// flags appear before `-i` when ReadRate is set. Production worker
+// sets ReadRate=1.0 so ffmpeg stays alive for the full playback
+// duration; without pacing, NVDEC + NVENC encodes a 24 min episode
+// in ~65 s and the post-completion cleanup wipes segments before
+// the player has finished.
+func TestBuildHLS_ReadRate_PacingFlags(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:            "/media/movie.mkv",
+		Encoder:              EncoderNVENC,
+		Width:                1920,
+		Height:               1080,
+		BitrateKbps:           8000,
+		AudioCodec:           "aac",
+		ReadRate:             1.0,
+		ReadRateInitialBurst: 30,
+		SessionDir:           "/tmp/sessions/x",
+		SegmentPrefix:        "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-readrate 1.00") {
+		t.Errorf("expected -readrate 1.00 with ReadRate=1.0: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-readrate_initial_burst 30") {
+		t.Errorf("expected -readrate_initial_burst 30: %s", argStr)
+	}
+	// readrate must come BEFORE -i to apply to input reading.
+	rrIdx := strings.Index(argStr, "-readrate")
+	iIdx := strings.Index(argStr, " -i ")
+	if rrIdx < 0 || iIdx < 0 || rrIdx > iIdx {
+		t.Errorf("readrate must precede -i: %s", argStr)
+	}
+}
+
+// TestBuildHLS_ReadRate_ZeroSkips verifies the pacing flag is omitted
+// entirely when ReadRate is unset. Integration tests rely on this so
+// `-t 8` can bound a multi-output run without the WebVTT extraction
+// context waiting real-time for a 2.5 h subtitle stream.
+func TestBuildHLS_ReadRate_ZeroSkips(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		Width:         1280,
+		Height:        720,
+		BitrateKbps:   2000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "-readrate") {
+		t.Errorf("ReadRate=0 must omit -readrate flag: %s", argStr)
+	}
+}
+
+// TestBuildHLS_AV1Source_NVENC_UsesCUDADecode verifies AV1 source +
+// NVENC encode pins the decode path to NVDEC (`-hwaccel cuda
+// -hwaccel_output_format cuda`) and routes scaling through scale_cuda
+// so frames stay in VRAM. dav1d software decode runs at 3-5× real-time
+// on 1080p and falls behind the encoder after ~60-70 s of output —
+// surfaces as ffmpeg producing seg 0-13 then stalling.
+func TestBuildHLS_AV1Source_NVENC_UsesCUDADecode(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/sololeveling.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		IsAV1:         true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("AV1 + NVENC must use -hwaccel cuda for NVDEC: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hwaccel_output_format cuda") {
+		t.Errorf("AV1 + NVENC must keep frames in VRAM (-hwaccel_output_format cuda): %s", argStr)
+	}
+	if !strings.Contains(argStr, "scale_cuda=w=1920:h=1080") {
+		t.Errorf("AV1 + NVENC must use scale_cuda to stay in VRAM: %s", argStr)
+	}
+	// scale_cuda emits nv12 (8-bit) directly — the CPU `format=yuv420p`
+	// strip would force a hwdownload that defeats the VRAM pipeline.
+	if strings.Contains(argStr, "format=yuv420p") {
+		t.Errorf("AV1 + NVENC CUDA path must not append CPU format=yuv420p strip: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-c:v h264_nvenc") {
+		t.Errorf("expected -c:v h264_nvenc: %s", argStr)
+	}
+}
+
+// TestBuildHLS_AV1Source_NVENC_HDRSkipsCUDADecode verifies the CUDA
+// decode carve-out does NOT activate when HDR tonemapping is required.
+// scale_cuda + the zscale software tonemap chain don't compose without
+// extra hwdownload/hwupload plumbing the broader pipeline doesn't yet
+// guarantee — HDR + AV1 stays on the software-decode path.
+func TestBuildHLS_AV1Source_NVENC_HDRSkipsCUDADecode(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/hdr_av1.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		IsAV1:         true,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("AV1 + NVENC + HDR must stay on software decode: %s", argStr)
+	}
+	if strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("AV1 + NVENC + HDR must not use scale_cuda: %s", argStr)
+	}
+	if !strings.Contains(argStr, "zscale") {
+		t.Errorf("AV1 + NVENC + HDR should still tonemap via zscale: %s", argStr)
+	}
+}
+
+// TestBuildHLS_H264_NVENC_NoCUDADecode guards the inverse: H.264 source
+// + NVENC must NOT trigger the CUDA decode carve-out (the AV1 fix
+// should not regress the uniform software-decode pipeline that NVENC
+// uses for HEVC / H.264 sources to dodge mainline-ffmpeg + driver
+// fragility).
+func TestBuildHLS_H264_NVENC_NoCUDADecode(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		IsAV1:         false,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("H.264 + NVENC must not activate CUDA decode (AV1-only carve-out): %s", argStr)
+	}
+	if strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("H.264 + NVENC must use software scale: %s", argStr)
+	}
+}
+
 // TestBuildHLS_H264_Remux_StaysMpegTS guards the inverse: regular
 // H.264 source remux still uses mpegts (the AV1 fix should not flip
 // every video-copy session into fMP4).

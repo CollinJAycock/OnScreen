@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: OnScreen API
-  version: "2.1.0-dev"
+  version: "2.1.1-dev"
   description: |
     HTTP API for the OnScreen media server.
 
@@ -69,7 +69,30 @@ tags:
   - name: Settings
     description: Server-wide settings (admin only).
   - name: Webhooks
-    description: Outbound webhooks (admin only).
+    description: |
+      Outbound webhooks (admin only).
+
+      **Signing (when a `secret` was configured on the endpoint):** every
+      delivery carries two headers — `X-OnScreen-Timestamp: <unix-seconds>`
+      and `X-OnScreen-Signature: sha256=<hex(HMAC(secret, "{ts}.{body}"))>`.
+      Stripe-shaped: the timestamp is part of the signed input, so an
+      attacker can't change `X-OnScreen-Timestamp` without invalidating
+      the MAC. Receivers MUST (1) reject timestamps outside a small drift
+      window (±5 minutes is typical) to defeat replay of a captured
+      request, and (2) recompute the HMAC over `{header_ts}.{request_body}`
+      and compare with constant-time equality.
+
+      **SSRF protection:** the outbound HTTP client refuses connections
+      to private, loopback, link-local, multicast, and unspecified IP
+      addresses post-resolution, and `CheckRedirect` returns
+      `ErrUseLastResponse` so a 3xx to a different host can't be used to
+      leak the signed POST body.
+
+      **Audit:** create / update / delete on a webhook endpoint emit
+      `webhook.create` / `webhook.update` / `webhook.delete` rows in the
+      audit log. The detail field carries the URL host (not the full
+      URL — keeps path tokens out of the audit trail), the events list,
+      and a `has_secret` / `secret_changed` flag.
   - name: Maintenance
     description: One-shot admin operations (artwork backfill, dedupe).
   - name: Plugins
@@ -177,6 +200,24 @@ paths:
   /api/v1/auth/login:
     post:
       summary: Local username/password login
+      description: |
+        Two layered rate limits:
+          - **Per-IP** (chi `httprate`): cap on calls from one source IP
+            inside a sliding window — defeats single-host brute force.
+          - **Per-username** (Valkey, failure-only counter): caps total
+            *failed* logins across all source IPs against one username
+            inside the same window — defeats credential stuffing from
+            CGNAT pools or botnets where per-IP wouldn't bite. The cap
+            counts failures only, so a power-user who logs in 10× in a
+            day legitimately won't lock themselves out. Counter clears
+            on a successful login. The Valkey key is keyed on a
+            HMAC-SHA256 of the lowercased attempted username with
+            `SECRET_KEY` as pepper, so the keyspace can't be scanned for
+            real usernames.
+
+        Both bcrypt-compare (real password) and a dummy bcrypt-compare
+        (user-not-found, federated-only user) run at cost 12 so login
+        latency doesn't reveal which case applied.
       tags: [Auth]
       security: []
       requestBody:
@@ -197,7 +238,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/TokenPairEnvelope'
         '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401':
+          description: |
+            Bad credentials, or the per-username failure cap was reached.
+            Both paths return the same generic envelope so the response
+            doesn't reveal which one fired.
 
   /api/v1/auth/refresh:
     post:
@@ -277,8 +322,22 @@ paths:
               properties:
                 email: { type: string, format: email }
       responses:
-        '204':
-          description: Always 204 — never reveals whether the address exists.
+        '200':
+          description: |
+            Always 200 with a generic message envelope. The response is
+            identical whether the address exists, doesn't exist, or SMTP
+            is disabled — closing the enumeration / SMTP-state differential
+            an attacker would otherwise probe with timing or status-code
+            comparison.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message: { type: string, example: 'If an account with that email exists, a password reset link has been sent.' }
 
   /api/v1/auth/reset-password:
     post:
@@ -294,10 +353,24 @@ paths:
               required: [token, password]
               properties:
                 token:    { type: string }
-                password: { type: string, format: password, minLength: 8 }
+                password: { type: string, format: password, minLength: 12 }
       responses:
-        '204': { description: Password reset. }
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '200':
+          description: Password reset. New password is enforced at 12-char minimum and the token is single-use (claimed atomically before the password write — a second concurrent submit of the same token loses the race and gets 400 Invalid).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message: { type: string, example: 'Password has been reset. You can now sign in.' }
+        '400':
+          description: |
+            Token invalid, expired, already used, or password fails the
+            12-char floor. Body shape matches the standard error envelope
+            (see `#/components/responses/BadRequest`).
 
   /api/v1/auth/oidc:
     get:
@@ -1194,10 +1267,22 @@ paths:
 
   # ── Direct play / subtitles ────────────────────────────────────────────────
   /media/stream/{id}:
-    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - in: query
+        name: token
+        required: false
+        schema: { type: string }
+        description: |
+          Optional Paseto v4 stream token (purpose=stream) bound to this
+          file ID. Used by native players that can't carry a Bearer
+          header on a media-element fetch (Android `<video>`, iOS Safari
+          `<audio>`). Token is 24 h, file_id-pinned, and rejected on
+          any non-file-scoped route. Falls through to the standard
+          Bearer / cookie auth when omitted.
     get:
       summary: Direct-play a media file
-      description: Serves the raw container with HTTP range support. Auth via cookie or bearer.
+      description: Serves the raw container with HTTP range support. Auth via cookie, bearer, or `?token=<stream_token>`.
       tags: [Items]
       responses:
         '200':
@@ -1206,6 +1291,55 @@ paths:
             'video/*': {}
         '206':
           description: Partial content (range request).
+        '401': { description: 'Bad or missing auth.' }
+        '403': { description: "Caller's content-rating ceiling forbids this item, or per-library ACL denies access." }
+        '404': { description: 'File not found, soft-deleted, or item lookup failed.' }
+
+  /media/download/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - in: query
+        name: token
+        required: false
+        schema: { type: string }
+        description: |
+          Same stream-token semantics as `/media/stream/{id}` — required
+          when the caller can't carry cookies (mobile webview download
+          managers, share-sheet handoff to a downloader app).
+    get:
+      summary: Download the raw file with a save-as disposition
+      description: |
+        Same auth + per-library ACL + content-rating gate as `/media/stream/{id}`,
+        but adds `Content-Disposition: attachment; filename="..."; filename*=UTF-8''...`
+        and `Content-Type: application/octet-stream` so the browser triggers a
+        save-as dialog instead of inline playback. Body bytes are the original
+        on-disk file (no transcode); `Range` is honoured so an interrupted
+        download can resume.
+
+        Filename is built from the item title + the on-disk extension and
+        sanitised against header injection (CRLF strip), shell-illegal
+        characters, and quoted-string termination (`"`, `\`). Capped at 200
+        chars. Both the ASCII `filename=` fallback and the UTF-8
+        `filename*=UTF-8''<percent-encoded>` form are emitted so non-ASCII
+        titles survive on every browser.
+
+        Direct-play files only — transcoded-for-download (re-encode to a
+        smaller / device-specific format) is a future feature.
+      tags: [Items]
+      responses:
+        '200':
+          description: Full body with attachment disposition.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: 'Always begins with `attachment;` and includes both `filename=` and `filename*=UTF-8''` forms.'
+          content:
+            application/octet-stream: {}
+        '206':
+          description: Partial content (resume after interrupted download).
+        '401': { description: Bad or missing auth. }
+        '403': { description: Content-rating or per-library ACL denial. }
+        '404': { description: File not found or soft-deleted. }
 
   /media/subtitles/{fileId}/{streamIndex}:
     parameters:
@@ -3017,7 +3151,7 @@ components:
         name:         { type: string }
         type:
           type: string
-          enum: [movie, show, music, photo, mixed, audiobook, podcast, music_video, home_video, book, dvr]
+          enum: [movie, show, anime, music, photo, mixed, audiobook, podcast, music_video, home_video, book, dvr]
         scan_paths:   { type: array, items: { type: string } }
         item_count:   { type: integer, format: int64 }
         is_private:
@@ -3049,7 +3183,7 @@ components:
         name:       { type: string }
         type:
           type: string
-          enum: [movie, show, music, photo, mixed, audiobook, podcast, music_video, home_video, book, dvr]
+          enum: [movie, show, anime, music, photo, mixed, audiobook, podcast, music_video, home_video, book, dvr]
         scan_paths: { type: array, items: { type: string } }
         is_private: { type: boolean, default: false }
         auto_grant_new_users:
@@ -3680,9 +3814,29 @@ components:
       properties:
         id:         { type: string, format: uuid }
         user_id:    { type: string, format: uuid, nullable: true }
-        action:     { type: string }
-        target:     { type: string, nullable: true }
-        detail:     { type: object, additionalProperties: true }
+        action:
+          type: string
+          description: |
+            Stable action code. Known values:
+              - `auth.login_success`, `auth.login_failed`
+              - `user.create`, `user.delete`, `user.role_change`, `user.password_reset`
+              - `invite.create`
+              - `library.create`, `library.delete`, `library.scan`
+              - `settings.update`
+              - `item.enrich`, `item.match_apply`, `item.delete`
+              - `transcode.start`, `transcode.stop`
+              - `backup.download`, `backup.restore`
+              - `arr_service.create` / `.update` / `.delete` / `.set_default`
+              - `request.approve`, `request.decline`, `request.delete`
+              - `webhook.create`, `webhook.update`, `webhook.delete`
+              - `admin.impersonate`
+            Unknown values are passed through verbatim — never reject on
+            this field. New actions arrive without a schema bump.
+        target:     { type: string, nullable: true, description: 'Resource id or name; shape varies per action.' }
+        detail:
+          type: object
+          additionalProperties: true
+          description: 'Action-specific JSON detail. Webhook CRUD entries carry only the URL host (not the full URL) plus events + has_secret/secret_changed flags so path tokens never end up in the audit trail.'
         ip_addr:    { type: string, nullable: true }
         created_at: { type: string, format: date-time }
     Invite:

@@ -90,6 +90,28 @@ type Item struct {
 	Compilation  bool
 	ReleaseType  *string
 
+	// Anime-native external IDs and per-row subtype.
+	//
+	// AniListID / MalID identify the row on AniList and MyAnimeList. The
+	// scanner records them when the show / movie was matched via the
+	// AniList agent (anime libraries) so the read side can deep-link back
+	// to either tracker without a second lookup.
+	//
+	// Kind is the per-row subtype within `episode` — one of `episode`,
+	// `ova`, `ona`, `special`, `movie`. Anime conventions use Specials
+	// folders + filename markers (e.g. `S00E01`, `OVA1`, `[Special]`)
+	// that the scanner detects via DetectEpisodeKind. UI surfaces this
+	// as a badge on episode lists. Nil = ordinary episode.
+	AniListID *int
+	MalID     *int
+	Kind      *string
+
+	// ReadingDirection: "ltr" | "rtl" | "ttb". Manga / book reader
+	// page-flip direction. Populated by the manga enricher from
+	// AniList countryOfOrigin; nil falls back to the reader's
+	// library-type default (manga → rtl, everything else → ltr).
+	ReadingDirection *string
+
 	OriginallyAvailableAt *time.Time
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
@@ -176,6 +198,7 @@ type Querier interface {
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
 	UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
+	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
 	RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error
@@ -441,6 +464,18 @@ type UpdateItemMetadataParams struct {
 	OriginallyAvailableAt *time.Time
 	TMDBID                *int // optional; when non-nil, updates tmdb_id on the item
 	TVDBID                *int // optional; when non-nil, updates tvdb_id on the item
+	// AniListID and MALID are anime cross-references populated by the
+	// AniList agent in the show-enrichment fallback chain. nil for
+	// non-anime items (TMDB and TVDB don't supply these), so the
+	// COALESCE in the SQL preserves any prior value.
+	AniListID *int
+	MALID     *int
+	// ReadingDirection: "ltr" | "rtl" | "ttb" — manga / book reader
+	// page-flip direction. Set by the manga enricher from AniList's
+	// countryOfOrigin (JP→rtl, KR/CN→ttb, otherwise ltr); operator
+	// can override via the metadata editor. Nil leaves the existing
+	// value alone (COALESCE in SQL).
+	ReadingDirection *string
 }
 
 // CreateFileParams holds the input for creating a media file record.
@@ -910,6 +945,17 @@ func (s *Service) TouchItemFileMtime(ctx context.Context, itemID uuid.UUID, take
 func (s *Service) UpdateItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error {
 	if err := s.rw.UpdateMediaItemLyrics(ctx, id, plain, synced); err != nil {
 		return fmt.Errorf("update item lyrics %s: %w", id, err)
+	}
+	return nil
+}
+
+// SetItemKind writes the row's subtype column. Used by the scanner
+// to flag OVAs / ONAs / specials on episode rows. Pass an empty
+// kind to clear the flag (NULL the column out — the underlying
+// query handles "" → NULL via NULLIF).
+func (s *Service) SetItemKind(ctx context.Context, id uuid.UUID, kind string) error {
+	if err := s.rw.SetMediaItemKind(ctx, id, kind); err != nil {
+		return fmt.Errorf("set item kind %s: %w", id, err)
 	}
 	return nil
 }

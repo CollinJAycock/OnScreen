@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onscreen/onscreen/internal/auth"
 )
 
 // ErrInvalidSetting is returned when a caller tries to persist a value that
@@ -41,14 +44,56 @@ const (
 )
 
 // Service reads and writes server settings to the server_settings table.
+//
+// When an Encryptor is wired via WithEncryptor, values for keys in the
+// secretKeys allowlist are AES-256-GCM-encrypted at rest with the
+// `encv1:` sentinel prefix. Reads transparently decrypt; reads of
+// unencrypted (legacy) rows for allowlisted keys return the value
+// as-is and log a one-shot warning so the operator can re-save the
+// setting to migrate it to the encrypted form.
 type Service struct {
 	db     *pgxpool.Pool
 	logger *slog.Logger
+	enc    *auth.Encryptor // optional; nil disables at-rest encryption
 }
 
 // New creates a Service.
 func New(db *pgxpool.Pool, logger *slog.Logger) *Service {
 	return &Service{db: db, logger: logger}
+}
+
+// WithEncryptor enables at-rest encryption for the secret-bearing
+// settings keys. Without it, values land in server_settings as
+// plaintext (back-compat for installs predating this change). Returns
+// the service for chaining.
+func (s *Service) WithEncryptor(enc *auth.Encryptor) *Service {
+	s.enc = enc
+	return s
+}
+
+// encPrefix marks a value as AES-GCM-encrypted-with-the-server-key. The
+// version suffix (`v1`) lets a future cipher swap migrate cleanly:
+// new writes get the new prefix, old reads dispatch on the prefix
+// string to pick the right Decrypt path.
+const encPrefix = "encv1:"
+
+// secretKeys lists the settings keys whose stored values must be
+// encrypted at rest. Keys not in this set stay as plaintext (paths,
+// config blobs, encoder lists — operational data, not credentials).
+var secretKeys = map[string]struct{}{
+	keyTMDBAPIKey:          {},
+	keyTVDBAPIKey:          {},
+	keyArrAPIKey:           {},
+	keyOpenSubtitlesConfig: {}, // contains user/password
+	keyOIDCConfig:          {}, // contains client_secret
+	keySAMLConfig:          {}, // contains SP private key PEM
+	keyLDAPConfig:          {}, // contains bind password
+	keySMTPConfig:          {}, // contains password
+}
+
+func (s *Service) isSecretKey(key string) bool {
+	_, ok := secretKeys[key]
+	return ok
 }
 
 // TMDBAPIKey returns the stored TMDB API key, or "" if not set.
@@ -524,15 +569,54 @@ func (s *Service) get(ctx context.Context, key string) string {
 	if err != nil {
 		return ""
 	}
+	// Encrypted-at-rest path: anything with the encv1: sentinel passes
+	// through Decrypt regardless of allowlist, so removing a key from
+	// secretKeys later doesn't strand previously-encrypted rows. Decrypt
+	// failure (wrong key, corrupted ciphertext) returns "" + a logged
+	// error rather than handing the cipher back to the caller.
+	if strings.HasPrefix(val, encPrefix) {
+		if s.enc == nil {
+			s.logger.ErrorContext(ctx, "settings get: encrypted value but no encryptor wired",
+				"key", key)
+			return ""
+		}
+		plain, err := s.enc.Decrypt(strings.TrimPrefix(val, encPrefix))
+		if err != nil {
+			s.logger.ErrorContext(ctx, "settings get: decrypt failed",
+				"key", key, "err", err)
+			return ""
+		}
+		return plain
+	}
+	// Legacy plaintext on a secret-bearing key: keep working, but flag
+	// it so an operator who re-saves the setting migrates the row to
+	// encrypted form.
+	if s.isSecretKey(key) && val != "" && s.enc != nil {
+		s.logger.WarnContext(ctx, "settings get: legacy plaintext for secret key; re-save in admin UI to encrypt",
+			"key", key)
+	}
 	return val
 }
 
 func (s *Service) set(ctx context.Context, key, value string) error {
+	stored := value
+	// Encrypt at write time for secret-bearing keys when an Encryptor is
+	// wired. Empty value → store empty (lets the admin clear a secret
+	// without leaving a ciphertext blob).
+	if value != "" && s.isSecretKey(key) && s.enc != nil {
+		ct, err := s.enc.Encrypt(value)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "settings set: encrypt failed",
+				"key", key, "err", err)
+			return err
+		}
+		stored = encPrefix + ct
+	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO server_settings (key, value, updated_at)
 		VALUES ($1, $2, NOW())
 		ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-	`, key, value)
+	`, key, stored)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "settings set", "key", key, "err", err)
 	}

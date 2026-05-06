@@ -55,11 +55,24 @@ type SearchResult struct {
 	ThumbPath  *string `json:"thumb_path,omitempty"`
 }
 
+// maxSearchQueryLen caps the `q` parameter at the typical UI length.
+// Postgres `websearch_to_tsquery` is robust against syntax abuse, but a
+// 50 KB query string still has to be parsed and tokenized per request,
+// and there's no realistic UI that types more than a movie/show title.
+// 256 covers the longest titles + a reasonable margin for hand-typed
+// searches; longer payloads are rejected as 400 with a clear message
+// rather than silently truncated.
+const maxSearchQueryLen = 256
+
 // Search handles GET /api/v1/search?q=...&library_id=...&limit=20.
 func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
 		respond.BadRequest(w, r, "search query required")
+		return
+	}
+	if len(query) > maxSearchQueryLen {
+		respond.BadRequest(w, r, "search query too long")
 		return
 	}
 

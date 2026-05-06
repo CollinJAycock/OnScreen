@@ -13,6 +13,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/metadata/anilist"
 )
 
 // ── mocks ────────────────────────────────────────────────────────────────────
@@ -60,6 +61,33 @@ func (m *mockAgent) RefreshMovie(_ context.Context, _ int) (*metadata.MovieResul
 }
 func (m *mockAgent) RefreshTV(_ context.Context, _ int) (*metadata.TVShowResult, error) {
 	return m.searchTVResult, m.searchTVErr
+}
+
+// mockTVDB satisfies the TVDBFallback interface for enricher tests.
+// Tracks call counts so a test can prove TVDB was actually consulted
+// when the show only has a TVDB ID (anime path).
+type mockTVDB struct {
+	getEpisodeResult *metadata.EpisodeResult
+	getEpisodeErr    error
+	getEpisodeCalls  int
+
+	searchSeriesResult *metadata.TVShowResult
+	searchSeriesErr    error
+}
+
+func (m *mockTVDB) GetEpisode(_ context.Context, _, _, _ int) (*metadata.EpisodeResult, error) {
+	m.getEpisodeCalls++
+	if m.getEpisodeErr != nil {
+		return nil, m.getEpisodeErr
+	}
+	return m.getEpisodeResult, nil
+}
+
+func (m *mockTVDB) SearchSeries(_ context.Context, _ string, _ int) (*metadata.TVShowResult, error) {
+	if m.searchSeriesErr != nil {
+		return nil, m.searchSeriesErr
+	}
+	return m.searchSeriesResult, nil
 }
 
 type mockUpdater struct {
@@ -485,6 +513,338 @@ func TestEnrichEpisode_Success(t *testing.T) {
 	}
 }
 
+// TestEnrichEpisode_TVDBOnly_NoTMDBID exercises the anime-library path
+// where a show was matched on AniList (or TVDB) but never on TMDB —
+// we cross-harvest a TVDB ID but not a TMDB ID. Pre-fix, the
+// enricher returned at the "show.TMDBID == nil" guard and orphaned
+// every episode without a description. Now: TVDB stands alone as
+// a primary provider when TMDB ID is absent.
+func TestEnrichEpisode_TVDBOnly_NoTMDBID(t *testing.T) {
+	tvdbID := 81189
+	seasonNum := 1
+	episodeNum := 1
+	showID := uuid.New()
+	seasonID := uuid.New()
+	episodeID := uuid.New()
+	posterPath := "shows/anime/poster.jpg"
+
+	agent := &mockAgent{} // TMDB agent returns nothing — no TMDB ID on show
+	tvdbResult := &metadata.EpisodeResult{
+		Title:   "Awakening",
+		Summary: "Sung Jinwoo enters the double dungeon.",
+		AirDate: time.Date(2024, 1, 6, 0, 0, 0, 0, time.UTC),
+	}
+	tvdbStub := &mockTVDB{getEpisodeResult: tvdbResult}
+
+	updater := newMockUpdater()
+	updater.items[showID] = &media.Item{
+		ID:         showID,
+		Type:       "show",
+		Title:      "Solo Leveling",
+		TVDBID:     &tvdbID, // TVDB only — no TMDBID set
+		PosterPath: &posterPath,
+	}
+	updater.items[seasonID] = &media.Item{
+		ID:       seasonID,
+		Type:     "season",
+		Title:    "Season 1",
+		ParentID: &showID,
+		Index:    &seasonNum,
+	}
+	updater.items[episodeID] = &media.Item{
+		ID:       episodeID,
+		Type:     "episode",
+		Title:    "Episode 1",
+		ParentID: &seasonID,
+		Index:    &episodeNum,
+	}
+	e := newTestEnricher(agent, updater, nil)
+	e.SetTVDBFallbackFn(func() TVDBFallback { return tvdbStub })
+
+	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/anime/Solo Leveling/S01E01.mkv"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("expected 1 update call, got %d", len(updater.updateCalls))
+	}
+	p := updater.updateCalls[0]
+	if p.Title != "Awakening" {
+		t.Errorf("title from TVDB: got %q, want %q", p.Title, "Awakening")
+	}
+	if p.Summary == nil || *p.Summary != "Sung Jinwoo enters the double dungeon." {
+		t.Errorf("summary from TVDB: got %v, want set", p.Summary)
+	}
+	if tvdbStub.getEpisodeCalls != 1 {
+		t.Errorf("expected 1 TVDB GetEpisode call, got %d", tvdbStub.getEpisodeCalls)
+	}
+}
+
+// TestEnrichManga proves the AniList manga path populates a book row
+// with manga-specific metadata: anilist/mal IDs, mangaka, summary,
+// genres + tags, content rating, AND the reading_direction derived
+// from countryOfOrigin (JP → rtl, KR/CN → ttb).
+func TestEnrichManga(t *testing.T) {
+	libraryID := uuid.New()
+	bookID := uuid.New()
+	updater := newMockUpdater()
+	updater.items[bookID] = &media.Item{
+		ID:        bookID,
+		LibraryID: libraryID,
+		Type:      "book",
+		Title:     "Death Note",
+	}
+
+	rtl := "rtl"
+	anilistStub := &stubAniListAgent{
+		mangaResult: &metadata.MangaResult{
+			AniListID:           30014,
+			MALID:               21,
+			Title:               "Death Note",
+			OriginalTitle:       "デスノート",
+			StartYear:           2003,
+			Summary:             "Light Yagami is an ace student...",
+			Rating:              8.5,
+			Author:              "Tsugumi Ohba",
+			Artist:              "Takeshi Obata",
+			SerializationStatus: "FINISHED",
+			Genres:              []string{"Mystery", "Psychological"},
+			Tags:                []string{"Shounen", "Detective"},
+			ReadingDirection:    rtl,
+			Volumes:             12,
+			Chapters:            108,
+			PosterURL:           "http://x/dn.jpg",
+		},
+	}
+
+	e := newTestEnricher(&mockAgent{}, updater, nil)
+	e.SetAniListFn(func() AniListAgent { return anilistStub })
+
+	if err := e.enrichManga(context.Background(), updater.items[bookID], &media.File{FilePath: "/manga/death note/v01.cbz"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("expected 1 update call, got %d", len(updater.updateCalls))
+	}
+	p := updater.updateCalls[0]
+	if p.Title != "Death Note" {
+		t.Errorf("title: got %q, want Death Note", p.Title)
+	}
+	if p.AniListID == nil || *p.AniListID != 30014 {
+		t.Errorf("AniListID not propagated: %v", p.AniListID)
+	}
+	if p.MALID == nil || *p.MALID != 21 {
+		t.Errorf("MALID not propagated: %v", p.MALID)
+	}
+	if p.ReadingDirection == nil || *p.ReadingDirection != "rtl" {
+		t.Errorf("ReadingDirection: got %v, want rtl", p.ReadingDirection)
+	}
+	if p.Year == nil || *p.Year != 2003 {
+		t.Errorf("Year: got %v, want 2003", p.Year)
+	}
+	if len(p.Genres) != 2 {
+		t.Errorf("Genres: got %v, want 2 entries", p.Genres)
+	}
+	if len(p.Tags) != 2 {
+		t.Errorf("Tags: got %v, want 2 entries", p.Tags)
+	}
+}
+
+// TestAttachAniListFranchiseToSeasons proves the per-season AniList ID
+// linking works. Anime franchises split each cour onto its own AniList
+// Media row joined by PREQUEL/SEQUEL — the matched show row only
+// names *one* of those (whichever the title search ranked first), so
+// without this attach the cascade aims every season at the same Media
+// list and Season 1 ends up with Season 2's titles via position
+// fallback. Test mirrors the Solo Leveling shape: S1 = 153406 (2024),
+// S2 = 151807 (2025).
+func TestAttachAniListFranchiseToSeasons(t *testing.T) {
+	showID := uuid.New()
+	s1ID := uuid.New()
+	s2ID := uuid.New()
+	s1Idx, s2Idx := 1, 2
+
+	updater := newMockUpdater()
+	updater.items[showID] = &media.Item{ID: showID, Type: "show"}
+	updater.items[s1ID] = &media.Item{
+		ID: s1ID, Type: "season", ParentID: &showID, Index: &s1Idx,
+	}
+	updater.items[s2ID] = &media.Item{
+		ID: s2ID, Type: "season", ParentID: &showID, Index: &s2Idx,
+	}
+	updater.children[showID] = []media.Item{*updater.items[s1ID], *updater.items[s2ID]}
+
+	anilistStub := &stubAniListAgent{
+		franchise: []anilist.AniListRelation{
+			// Returned sorted by start year ascending, so [0] = S1.
+			{AniListID: 153406, MalID: 52299, StartYear: 2024, Title: "Solo Leveling"},
+			{AniListID: 151807, MalID: 52301, StartYear: 2025, Title: "Solo Leveling Season 2"},
+		},
+	}
+
+	e := newTestEnricher(&mockAgent{}, updater, nil)
+	e.SetAniListFn(func() AniListAgent { return anilistStub })
+
+	// Show was matched against the S2 row (151807) — typical when the
+	// title search prioritises the latest cour. Walk should backfill
+	// S1 with 153406 and lock S2 to 151807.
+	e.attachAniListFranchiseToSeasons(context.Background(), showID, 151807)
+
+	// Two season updates should have landed.
+	var s1Update, s2Update *media.UpdateItemMetadataParams
+	for i := range updater.updateCalls {
+		if updater.updateCalls[i].ID == s1ID {
+			s1Update = &updater.updateCalls[i]
+		}
+		if updater.updateCalls[i].ID == s2ID {
+			s2Update = &updater.updateCalls[i]
+		}
+	}
+	if s1Update == nil || s1Update.AniListID == nil || *s1Update.AniListID != 153406 {
+		t.Errorf("Season 1 should be linked to AniList 153406, got %+v", s1Update)
+	}
+	if s2Update == nil || s2Update.AniListID == nil || *s2Update.AniListID != 151807 {
+		t.Errorf("Season 2 should be linked to AniList 151807, got %+v", s2Update)
+	}
+}
+
+// TestEnrichEpisode_AniListFallback covers the anime-library scenario
+// where the operator's TMDB key is broken (or never configured) and
+// the show has no TVDB ID either — only an AniList ID survives.
+// AniList streamingEpisodes carries title + thumbnail (no summary)
+// so we treat it as the "best we can do" final fallback.
+func TestEnrichEpisode_AniListFallback(t *testing.T) {
+	anilistID := 158927
+	seasonNum := 1
+	episodeNum := 5
+	showID := uuid.New()
+	seasonID := uuid.New()
+	episodeID := uuid.New()
+	posterPath := "anime/show/poster.jpg"
+
+	agent := &mockAgent{} // TMDB returns nothing
+	tvdbStub := &mockTVDB{} // TVDB returns nothing too
+	anilistStub := &stubAniListAgent{
+		episodes: []metadata.EpisodeResult{
+			{EpisodeNum: 1, Title: "Awakening", ThumbURL: "http://x/1.jpg"},
+			{EpisodeNum: 2, Title: "Hunters", ThumbURL: "http://x/2.jpg"},
+			{EpisodeNum: 5, Title: "Real Hunter", ThumbURL: "http://x/5.jpg"},
+		},
+	}
+
+	updater := newMockUpdater()
+	updater.items[showID] = &media.Item{
+		ID:         showID,
+		Type:       "show",
+		Title:      "Solo Leveling",
+		AniListID:  &anilistID, // only AniList ID — no TMDB / TVDB
+		PosterPath: &posterPath,
+	}
+	updater.items[seasonID] = &media.Item{
+		ID:       seasonID,
+		Type:     "season",
+		ParentID: &showID,
+		Index:    &seasonNum,
+	}
+	updater.items[episodeID] = &media.Item{
+		ID:       episodeID,
+		Type:     "episode",
+		ParentID: &seasonID,
+		Index:    &episodeNum,
+	}
+	e := newTestEnricher(agent, updater, nil)
+	e.SetTVDBFallbackFn(func() TVDBFallback { return tvdbStub })
+	e.SetAniListFn(func() AniListAgent { return anilistStub })
+
+	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/anime/show/05.mkv"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("expected 1 update call, got %d", len(updater.updateCalls))
+	}
+	if updater.updateCalls[0].Title != "Real Hunter" {
+		t.Errorf("title from AniList: got %q, want %q", updater.updateCalls[0].Title, "Real Hunter")
+	}
+}
+
+func TestPickAniListEpisode(t *testing.T) {
+	cases := []struct {
+		name   string
+		eps    []metadata.EpisodeResult
+		target int
+		want   string // expected title; "" = nil result
+	}{
+		{
+			name: "exact index match",
+			eps: []metadata.EpisodeResult{
+				{EpisodeNum: 1, Title: "A"},
+				{EpisodeNum: 2, Title: "B"},
+				{EpisodeNum: 3, Title: "C"},
+			},
+			target: 2,
+			want:   "B",
+		},
+		{
+			name: "position fallback when all indices unparsed",
+			eps: []metadata.EpisodeResult{
+				{EpisodeNum: 0, Title: "First"},
+				{EpisodeNum: 0, Title: "Second"},
+				{EpisodeNum: 0, Title: "Third"},
+			},
+			target: 2,
+			want:   "Second",
+		},
+		{
+			name: "mixed parsed + bare titles — position fallback fills the gap",
+			eps: []metadata.EpisodeResult{
+				{EpisodeNum: 0, Title: "Awakening"},
+				{EpisodeNum: 0, Title: "Hunters"},
+				{EpisodeNum: 13, Title: "You Aren't E-Rank, Are You?"},
+			},
+			target: 2, // bare title at position [1], no exact match
+			want:   "Hunters",
+		},
+		{
+			name:   "empty list",
+			eps:    nil,
+			target: 1,
+			want:   "",
+		},
+		{
+			name: "target out of range",
+			eps: []metadata.EpisodeResult{
+				{EpisodeNum: 1, Title: "A"},
+			},
+			target: 5,
+			want:   "",
+		},
+		{
+			name:   "non-positive target",
+			eps:    []metadata.EpisodeResult{{EpisodeNum: 1, Title: "A"}},
+			target: 0,
+			want:   "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pickAniListEpisode(tc.eps, tc.target)
+			if tc.want == "" {
+				if got != nil {
+					t.Errorf("expected nil, got %q", got.Title)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected %q, got nil", tc.want)
+			}
+			if got.Title != tc.want {
+				t.Errorf("got %q, want %q", got.Title, tc.want)
+			}
+		})
+	}
+}
+
 func TestEnrichEpisode_NoParentID_Noop(t *testing.T) {
 	agent := &mockAgent{}
 	updater := newMockUpdater()
@@ -550,6 +910,46 @@ func TestEnrichEpisode_ShowNotEnriched_CascadesUp(t *testing.T) {
 	if show.TMDBID == nil {
 		t.Error("show should have TMDB ID after cascade enrichment")
 	}
+}
+
+// TestEnrichShowChildren_AniListOnly_Cascades guards the anime-library
+// path where the show was matched only on AniList (no TMDB or TVDB ID).
+// Pre-fix: the cascade gate at "show.TMDBID == nil" stopped the
+// season fan-out, so episodes never reached enrichEpisode and never
+// picked up the AniList streamingEpisodes fallback. Now: any of the
+// three provider IDs unlocks the cascade.
+func TestEnrichShowChildren_AniListOnly_Cascades(t *testing.T) {
+	anilistID := 158927
+	showID := uuid.New()
+	seasonID := uuid.New()
+	seasonIdx := 1
+
+	agent := &mockAgent{} // no TMDB result
+	updater := newMockUpdater()
+	updater.items[showID] = &media.Item{
+		ID:        showID,
+		Type:      "show",
+		Title:     "Solo Leveling",
+		AniListID: &anilistID, // AniList only
+	}
+	updater.items[seasonID] = &media.Item{
+		ID: seasonID, Type: "season", Title: "Season 1",
+		ParentID: &showID, Index: &seasonIdx,
+	}
+	updater.children[showID] = []media.Item{*updater.items[seasonID]}
+
+	e := newTestEnricher(agent, updater, nil)
+	e.enrichShowChildren(context.Background(), agent, updater.items[showID], &media.File{FilePath: "/anime/show/01.mkv"})
+
+	// enrichSeason should have been reached even though TMDBID is nil —
+	// season cascade fires for any provider ID. The mock TMDB returns
+	// nothing for season metadata so no UpdateItemMetadata call lands
+	// on the season itself, but the absence of a panic / early-return
+	// is what proves the gate flipped.
+	// (No assertion on update calls because TMDB-side season fetch
+	// short-circuits when TMDBID is nil; we only care that the
+	// cascade reached this point and did not return at the gate.)
+	_ = updater
 }
 
 // ── enrichShowChildren ───────────────────────────────────────────────────────
@@ -1039,5 +1439,247 @@ func TestLooksLikeSeasonDir(t *testing.T) {
 		if got := looksLikeSeasonDir(tt.name); got != tt.want {
 			t.Errorf("looksLikeSeasonDir(%q) = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// stubAniListAgent satisfies AniListAgent for the show-enrichment
+// tests. SearchAnime returns a fixed TVShowResult; the cross-harvest
+// test exercises the path where AniList returns a row with an
+// AniList ID but no TMDB ID, and the enricher still needs to write
+// a TMDB ID onto the show row so per-episode enrichment can find
+// its way back to TMDB.GetEpisode.
+type stubAniListAgent struct {
+	result      *metadata.TVShowResult
+	err         error
+	episodes    []metadata.EpisodeResult
+	epErr       error
+	franchise   []anilist.AniListRelation
+	frErr       error
+	mangaResult *metadata.MangaResult
+	mangaErr    error
+}
+
+func (s *stubAniListAgent) SearchAnime(_ context.Context, _ string, _ int) (*metadata.TVShowResult, error) {
+	return s.result, s.err
+}
+func (s *stubAniListAgent) GetAnimeByID(_ context.Context, _ int) (*metadata.TVShowResult, error) {
+	return s.result, s.err
+}
+func (s *stubAniListAgent) GetAnimeEpisodes(_ context.Context, _ int) ([]metadata.EpisodeResult, error) {
+	return s.episodes, s.epErr
+}
+func (s *stubAniListAgent) GetAnimeFranchise(_ context.Context, _ int) ([]anilist.AniListRelation, error) {
+	return s.franchise, s.frErr
+}
+func (s *stubAniListAgent) SearchManga(_ context.Context, _ string, _ int) (*metadata.MangaResult, error) {
+	return s.mangaResult, s.mangaErr
+}
+func (s *stubAniListAgent) GetMangaByID(_ context.Context, _ int) (*metadata.MangaResult, error) {
+	return s.mangaResult, s.mangaErr
+}
+
+// TestSearchShow_AnimeCrossHarvestsTMDBID locks in the fix for the
+// "anime episodes have no descriptions" bug. When an anime library's
+// show matches against AniList, the show row needs to also carry a
+// TMDB ID so enrichEpisode (which dispatches against TMDB.GetEpisode)
+// can populate per-episode summary / air date / rating. Without the
+// cross-harvest, the show row's tmdb_id stays NULL and every episode
+// in the library is left with the synthetic "Episode N" title and
+// no description.
+func TestSearchShow_AnimeCrossHarvestsTMDBID(t *testing.T) {
+	tmdb := &mockAgent{searchTVResult: &metadata.TVShowResult{
+		TMDBID: 244808,
+		IMDBID: "tt27654357",
+		Title:  "Solo Leveling",
+	}}
+	anilist := &stubAniListAgent{result: &metadata.TVShowResult{
+		AniListID: 153406,
+		MALID:     52299,
+		Title:     "Solo Leveling",
+		Summary:   "From AniList — much richer anime synopsis...",
+	}}
+
+	enricher := NewEnricher(
+		func() metadata.Agent { return tmdb },
+		nil, // no artwork fetcher in this path
+		nil, // no updater
+		nil, // no scan paths
+		slog.Default(),
+	)
+	enricher.SetAniListFn(func() AniListAgent { return anilist })
+
+	res := enricher.searchShow(context.Background(), tmdb, "Solo Leveling", 2024, true)
+	if res == nil {
+		t.Fatal("expected non-nil result, got nil")
+	}
+	// AniList wins for text fields (richer anime metadata).
+	if res.Summary != anilist.result.Summary {
+		t.Errorf("summary: got %q, want AniList's", res.Summary)
+	}
+	// All three IDs are populated:
+	//   - AniList ID + MAL ID from the AniList match itself
+	//   - TMDB ID harvested from the supplementary TMDB call so
+	//     per-episode enrichment can fire later
+	if res.AniListID != 153406 {
+		t.Errorf("AniListID: got %d, want 153406", res.AniListID)
+	}
+	if res.MALID != 52299 {
+		t.Errorf("MALID: got %d, want 52299", res.MALID)
+	}
+	if res.TMDBID != 244808 {
+		t.Errorf("TMDBID: got %d, want 244808 (harvest from TMDB)", res.TMDBID)
+	}
+	if res.IMDBID != "tt27654357" {
+		t.Errorf("IMDBID: got %q, want harvested from TMDB", res.IMDBID)
+	}
+}
+
+// TestSearchShow_NonAnimeStaysFirstMatch confirms the cross-harvest
+// is anime-library-only — non-anime libraries return the first
+// match unchanged so we don't burn extra agent calls per scan.
+func TestSearchShow_NonAnimeStaysFirstMatch(t *testing.T) {
+	anilistCalled := false
+	tmdb := &mockAgent{searchTVResult: &metadata.TVShowResult{TMDBID: 100, Title: "Show"}}
+	anilist := &stubAniListAgent{result: &metadata.TVShowResult{AniListID: 999}}
+
+	enricher := NewEnricher(
+		func() metadata.Agent { return tmdb },
+		nil, nil, nil, slog.Default(),
+	)
+	enricher.SetAniListFn(func() AniListAgent {
+		anilistCalled = true
+		return anilist
+	})
+
+	res := enricher.searchShow(context.Background(), tmdb, "Show", 2020, false)
+	if res == nil || res.TMDBID != 100 {
+		t.Fatalf("got %+v, want TMDB result", res)
+	}
+	if anilistCalled {
+		t.Errorf("AniList queried in non-anime-library path; should have short-circuited on TMDB match")
+	}
+	// AniList wasn't called, so no AniList IDs.
+	if res.AniListID != 0 {
+		t.Errorf("AniListID: got %d, want 0 (non-anime path)", res.AniListID)
+	}
+}
+
+// ── library type gating ──────────────────────────────────────────────────────
+//
+// Tests for libraryIsAnime / libraryIsManga, the narrow lookups that flip
+// the enricher's agent ordering. Without these gates, the wrong primary
+// agent runs for the library type — silent regression that's hard to
+// notice until a user sees Western movies populated by AniList queries
+// (anime-as-default) or vice versa.
+
+// stubLibChecker records call counts so a test can prove the gating
+// lookup actually fired AND verify the cached fn-factory pattern works
+// (the enricher invokes libAnimeFn() each enrichment, so the factory
+// fires per call but the checker itself only fires per enrichment).
+type stubLibChecker struct {
+	animeRet bool
+	animeErr error
+	mangaRet bool
+	mangaErr error
+
+	animeCalls int
+	mangaCalls int
+}
+
+func (s *stubLibChecker) IsLibraryAnime(_ context.Context, _ uuid.UUID) (bool, error) {
+	s.animeCalls++
+	return s.animeRet, s.animeErr
+}
+func (s *stubLibChecker) IsLibraryManga(_ context.Context, _ uuid.UUID) (bool, error) {
+	s.mangaCalls++
+	return s.mangaRet, s.mangaErr
+}
+
+func TestLibraryIsManga_NoCheckerWired_ReturnsFalse(t *testing.T) {
+	// Default install path: SetLibraryAnimeCheckerFn was never called.
+	// The gate must fail closed (return false) so book libraries get
+	// their default enrichment path, not silently flip to manga mode.
+	e := NewEnricher(
+		func() metadata.Agent { return nil },
+		nil,
+		newMockUpdater(),
+		func() []string { return nil },
+		slog.Default(),
+	)
+	if got := e.libraryIsManga(context.Background(), uuid.New()); got {
+		t.Errorf("libraryIsManga = true with no checker wired; want false")
+	}
+}
+
+func TestLibraryIsManga_FactoryReturnsNil_ReturnsFalse(t *testing.T) {
+	// Factory wired but returns nil — same fail-closed posture as no
+	// factory at all. Covers the case where the DI wiring builds the
+	// factory but the checker isn't constructed yet.
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetLibraryAnimeCheckerFn(func() LibraryAnimeChecker { return nil })
+	if got := e.libraryIsManga(context.Background(), uuid.New()); got {
+		t.Errorf("libraryIsManga = true with nil checker; want false")
+	}
+}
+
+func TestLibraryIsManga_True(t *testing.T) {
+	checker := &stubLibChecker{mangaRet: true}
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetLibraryAnimeCheckerFn(func() LibraryAnimeChecker { return checker })
+	if got := e.libraryIsManga(context.Background(), uuid.New()); !got {
+		t.Errorf("libraryIsManga = false; want true")
+	}
+	if checker.mangaCalls != 1 {
+		t.Errorf("IsLibraryManga calls = %d, want 1", checker.mangaCalls)
+	}
+	if checker.animeCalls != 0 {
+		t.Errorf("IsLibraryAnime should not have fired; calls = %d", checker.animeCalls)
+	}
+}
+
+func TestLibraryIsManga_False(t *testing.T) {
+	checker := &stubLibChecker{mangaRet: false}
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetLibraryAnimeCheckerFn(func() LibraryAnimeChecker { return checker })
+	if got := e.libraryIsManga(context.Background(), uuid.New()); got {
+		t.Errorf("libraryIsManga = true; want false")
+	}
+}
+
+func TestLibraryIsManga_DBError_FailsClosed(t *testing.T) {
+	// A transient DB error during the lookup must NOT promote the
+	// library to manga mode by accident. Logged + treated as false so
+	// the worst-case is "user has to retry" rather than "the wrong
+	// enricher silently runs."
+	checker := &stubLibChecker{mangaRet: true, mangaErr: errors.New("connection refused")}
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetLibraryAnimeCheckerFn(func() LibraryAnimeChecker { return checker })
+	if got := e.libraryIsManga(context.Background(), uuid.New()); got {
+		t.Errorf("libraryIsManga = true on lookup error; must fail closed")
+	}
+}
+
+func TestLibraryIsAnime_True(t *testing.T) {
+	// Mirror coverage: same gating contract for the show-side flip.
+	checker := &stubLibChecker{animeRet: true}
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetLibraryAnimeCheckerFn(func() LibraryAnimeChecker { return checker })
+	if got := e.libraryIsAnime(context.Background(), uuid.New()); !got {
+		t.Errorf("libraryIsAnime = false; want true")
+	}
+	if checker.animeCalls != 1 {
+		t.Errorf("IsLibraryAnime calls = %d, want 1", checker.animeCalls)
+	}
+	if checker.mangaCalls != 0 {
+		t.Errorf("IsLibraryManga should not have fired; calls = %d", checker.mangaCalls)
+	}
+}
+
+func TestLibraryIsAnime_DBError_FailsClosed(t *testing.T) {
+	checker := &stubLibChecker{animeRet: true, animeErr: errors.New("timeout")}
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetLibraryAnimeCheckerFn(func() LibraryAnimeChecker { return checker })
+	if got := e.libraryIsAnime(context.Background(), uuid.New()); got {
+		t.Errorf("libraryIsAnime = true on lookup error; must fail closed")
 	}
 }

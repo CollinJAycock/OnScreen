@@ -135,14 +135,53 @@ func TestMaxRatingRank_ReturnsRank(t *testing.T) {
 
 func TestAllRatings(t *testing.T) {
 	ratings := AllRatings()
-	if len(ratings) != 5 {
-		t.Fatalf("AllRatings() len = %d, want 5", len(ratings))
+	if len(ratings) < 5 {
+		t.Fatalf("AllRatings() len = %d, want at least 5", len(ratings))
 	}
 	// Should be in non-descending order of restrictiveness.
 	for i := 0; i < len(ratings)-1; i++ {
 		if Rank(ratings[i]) > Rank(ratings[i+1]) {
 			t.Errorf("AllRatings() not ordered: Rank(%q)=%d > Rank(%q)=%d",
 				ratings[i], Rank(ratings[i]), ratings[i+1], Rank(ratings[i+1]))
+		}
+	}
+}
+
+func TestRank_AnimeRatings(t *testing.T) {
+	tests := []struct {
+		rating string
+		want   int
+	}{
+		{"R-15", 2},   // Japanese 15+ ≈ TV-14 / PG-13
+		{"R-17+", 3},  // MAL "R" tier ≈ R / TV-MA
+		{"R+", 3},     // MAL "Mild Nudity" ≈ NC-17 / TV-MA
+		{"R-18+", 3},  // Japanese 18+ ≈ NC-17 / TV-MA
+		{"Rx", 4},     // MAL "Hentai" — most restrictive bucket
+	}
+	for _, tt := range tests {
+		if got := Rank(tt.rating); got != tt.want {
+			t.Errorf("Rank(%q) = %d, want %d", tt.rating, got, tt.want)
+		}
+	}
+}
+
+func TestIsAllowed_AnimeRatingsRespectCeiling(t *testing.T) {
+	// Anime rows tagged R-18+ must be blocked when the parental
+	// ceiling is the family-safe bucket — the new codes plug into
+	// the existing rank ladder rather than creating an escape hatch.
+	cases := []struct {
+		content, max string
+		want         bool
+	}{
+		{"R-15", "PG-13", true},   // R-15 = rank 2 ≤ PG-13 (rank 2)
+		{"R-15", "PG", false},     // R-15 = rank 2 > PG (rank 1)
+		{"R-18+", "TV-14", false}, // R-18+ = rank 3 > TV-14 (rank 2)
+		{"R-18+", "TV-MA", true},  // R-18+ = rank 3 ≤ TV-MA (rank 3)
+		{"Rx", "NC-17", false},    // hentai blocked even by NC-17 ceiling
+	}
+	for _, tc := range cases {
+		if got := IsAllowed(tc.content, tc.max); got != tc.want {
+			t.Errorf("IsAllowed(%q, %q) = %v, want %v", tc.content, tc.max, got, tc.want)
 		}
 	}
 }

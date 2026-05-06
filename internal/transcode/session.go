@@ -157,6 +157,57 @@ func (s *SessionStore) ListByUserItem(ctx context.Context, userID, mediaItemID u
 	return out, nil
 }
 
+// TouchActivity stamps LastActivityAt = now on the session, signalling
+// that the client is still actively consuming. Called by the segment-
+// fetch endpoint so the worker's idle-kill path can distinguish "client
+// is watching" from "client crashed; keep encoding for nothing." Cheap
+// fire-and-forget update — silent no-op if the session is gone.
+//
+// Position is preserved as-is. UpdatePosition* writes the player's
+// reported position from a separate progress beacon; this just stamps
+// the activity timestamp from segment-fetch traffic, which is more
+// reliable (segments fetch every ~4s; progress beacons every ~5s, but
+// progress also fires from non-watching tabs).
+func (s *SessionStore) TouchActivity(ctx context.Context, sessionID string) {
+	raw, err := s.v.Get(ctx, sessionKey(sessionID))
+	if err != nil {
+		return
+	}
+	var sess Session
+	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		return
+	}
+	sess.LastActivityAt = time.Now()
+	b, err := json.Marshal(sess)
+	if err != nil {
+		return
+	}
+	ttl := s.v.Raw().TTL(ctx, sessionKey(sessionID)).Val()
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	_ = s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
+}
+
+// CountByUser returns the number of active sessions for the given user
+// across all media items. Used by the per-user concurrency cap so a
+// single account can't pin every GPU/CPU slot by spamming Start with
+// different item IDs (each one bypasses supersedeUserItem because the
+// match key is (user, item), not (user)).
+func (s *SessionStore) CountByUser(ctx context.Context, userID uuid.UUID) (int, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, sess := range all {
+		if sess.UserID == userID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // DeleteByMedia removes all sessions for the given media item.
 // Called by the progress endpoint on "stopped" to clean up even if the client
 // never explicitly hits the Stop endpoint (e.g. tab closed after playback ends).

@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/metadata/openlibrary"
 	"github.com/onscreen/onscreen/internal/metadata/wikipedia"
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // trailingVolumeRangeRE strips trailing volume / part / book-range markers
@@ -286,7 +287,15 @@ func (s *Scanner) syncAudiobookPosterPaths(ctx context.Context, book *media.Item
 // lookups + cover image downloads. 15s is generous enough for slow
 // upload.wikimedia.org responses on first-fetch (their CDN warmup),
 // short enough that a stuck scan doesn't hang the library scan loop.
-var externalArtHTTPClient = &http.Client{Timeout: 15 * time.Second}
+//
+// Routed through safehttp so a compromised or hostile upstream
+// (poisoned OpenLibrary mirror, MITM'd Wikipedia thumbnail CDN)
+// can't redirect us at internal services — 169.254.169.254 (cloud
+// metadata), 127.0.0.1, RFC1918 ranges, etc. are rejected at the
+// dialer's Control hook (post-resolution, pre-connect, immune to
+// DNS rebinding). Mirrors the policy on artwork.Manager and
+// internal/subtitles/opensubtitles.
+var externalArtHTTPClient = safehttp.NewClient(safehttp.DialPolicy{}, 15*time.Second)
 
 // fetchExternalAudiobookArt fills in book + author posters from
 // OpenLibrary (book covers) and Wikipedia (author portraits) when

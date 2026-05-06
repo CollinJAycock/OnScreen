@@ -96,9 +96,10 @@ func TestDeliver_Non2xxReturnsError(t *testing.T) {
 }
 
 func TestDeliver_HMACSignature(t *testing.T) {
-	var gotSignature string
+	var gotSignature, gotTimestamp string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSignature = r.Header.Get("X-OnScreen-Signature")
+		gotTimestamp = r.Header.Get("X-OnScreen-Timestamp")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -116,8 +117,17 @@ func TestDeliver_HMACSignature(t *testing.T) {
 		t.Fatalf("Deliver: %v", err)
 	}
 
-	// Verify the HMAC.
+	// Stripe-shaped signature: HMAC over "{ts}.{body}" with the
+	// timestamp echoed in X-OnScreen-Timestamp. Receivers reject
+	// timestamps outside their drift window AND verify the MAC over
+	// the timestamp+body together — this defeats indefinite replay
+	// of a captured (sig, body) pair.
+	if gotTimestamp == "" {
+		t.Fatal("X-OnScreen-Timestamp header missing")
+	}
 	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(gotTimestamp))
+	mac.Write([]byte("."))
 	mac.Write(body)
 	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	if gotSignature != want {

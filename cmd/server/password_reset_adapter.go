@@ -44,8 +44,16 @@ func (a *passwordResetAdapter) GetResetToken(ctx context.Context, tokenHash stri
 	return v1.PRToken{ID: t.ID, UserID: t.UserID}, nil
 }
 
-func (a *passwordResetAdapter) MarkResetTokenUsed(ctx context.Context, id uuid.UUID) error {
-	return a.q.MarkPasswordResetTokenUsed(ctx, id)
+// MarkResetTokenUsed atomically claims the token. Returns true when
+// THIS caller won the race (rows=1); false means another concurrent
+// request already consumed the token. Handler treats false as "token
+// already used" and returns the same generic error as expired-or-bad.
+func (a *passwordResetAdapter) MarkResetTokenUsed(ctx context.Context, id uuid.UUID) (bool, error) {
+	rows, err := a.q.MarkPasswordResetTokenUsed(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 func (a *passwordResetAdapter) UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error {

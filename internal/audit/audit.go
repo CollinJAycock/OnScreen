@@ -32,6 +32,20 @@ const (
 	ActionLoginFailed    = "auth.login_failed"
 	ActionItemEnrich     = "item.enrich"
 	ActionItemMatchApply = "item.match_apply"
+	// ActionItemDelete is the soft-delete-subtree admin action on
+	// /items/{id}. Earlier code labelled this as item.match_apply, which
+	// is the wrong action — match_apply is the metadata re-match action
+	// and an admin reviewing the audit log can't distinguish a delete
+	// from a re-match. Distinct action so retention/alerting on
+	// destructive ops actually works.
+	ActionItemDelete = "item.delete"
+
+	// Webhook CRUD audit actions. Webhooks carry an encrypted secret
+	// and an outbound URL — both privileged config — so create/update/
+	// delete are recorded the same way library and arr-service CRUD are.
+	ActionWebhookCreate = "webhook.create"
+	ActionWebhookUpdate = "webhook.update"
+	ActionWebhookDelete = "webhook.delete"
 	ActionTranscodeStart = "transcode.start"
 	ActionTranscodeStop  = "transcode.stop"
 	ActionBackupDownload = "backup.download"
@@ -48,6 +62,14 @@ const (
 	ActionRequestApprove = "request.approve"
 	ActionRequestDecline = "request.decline"
 	ActionRequestDelete  = "request.delete"
+
+	// Admin impersonation. ViewAs lets an admin browse the home/library/etc.
+	// surfaces as another user; without an audit trail the request log
+	// attributes the GETs to the *target* user (since the synthetic claims
+	// carry their identity), giving an admin a privacy-violating read
+	// without any forensic record. Logged once per (admin, target, request)
+	// tuple by the ViewAs middleware.
+	ActionImpersonateBegin = "admin.impersonate"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

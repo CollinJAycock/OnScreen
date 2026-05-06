@@ -633,7 +633,7 @@ func TestViewAs_NoParam_PassesThrough(t *testing.T) {
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)
 	target := ImpersonatedUser{ID: uuid.New(), Username: "kid", IsAdmin: false, MaxContentRating: "PG"}
-	mw := a.ViewAs(stubImpersonationLookup{user: target})
+	mw := a.ViewAs(stubImpersonationLookup{user: target}, nil)
 
 	var seen *auth.Claims
 	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -658,7 +658,7 @@ func TestViewAs_AdminSwapsClaims(t *testing.T) {
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)
 	target := ImpersonatedUser{ID: uuid.New(), Username: "kid", IsAdmin: false, MaxContentRating: "PG"}
-	mw := a.ViewAs(stubImpersonationLookup{user: target})
+	mw := a.ViewAs(stubImpersonationLookup{user: target}, nil)
 
 	var seen *auth.Claims
 	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -695,7 +695,7 @@ func TestViewAs_NonAdminCallerIsForbidden(t *testing.T) {
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)
 	target := ImpersonatedUser{ID: uuid.New(), Username: "kid"}
-	mw := a.ViewAs(stubImpersonationLookup{user: target})
+	mw := a.ViewAs(stubImpersonationLookup{user: target}, nil)
 
 	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called when non-admin tries to view_as")
@@ -718,7 +718,7 @@ func TestViewAs_NonGETIsForbidden(t *testing.T) {
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)
 	target := ImpersonatedUser{ID: uuid.New(), Username: "kid"}
-	mw := a.ViewAs(stubImpersonationLookup{user: target})
+	mw := a.ViewAs(stubImpersonationLookup{user: target}, nil)
 
 	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called for POST + view_as")
@@ -737,7 +737,7 @@ func TestViewAs_NonGETIsForbidden(t *testing.T) {
 func TestViewAs_UnknownTargetIs404(t *testing.T) {
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)
-	mw := a.ViewAs(stubImpersonationLookup{err: ErrUserNotFound})
+	mw := a.ViewAs(stubImpersonationLookup{err: ErrUserNotFound}, nil)
 
 	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called for unknown target")

@@ -227,6 +227,24 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// we don't pile up GPU slots and orphan playlists.
 	h.supersedeUserItem(ctx, claims.UserID, itemID)
 
+	// Per-user concurrent-session cap. supersedeUserItem only kills
+	// sessions for the SAME (user, item); a script that POSTs Start
+	// repeatedly with different item IDs sails past it and accumulates
+	// up to AuthLimit's 10/min × sessionTTL's 4 h = 2400 simultaneous
+	// ffmpeg jobs per account. Each one pins a GPU slot and writes
+	// segments to disk at real-time. Cap at 5 concurrent sessions per
+	// user — 4 devices in a household plus a small slack — and reject
+	// further Start requests with 429 until the user tears one down.
+	const maxSessionsPerUser = 5
+	if active, err := h.sessions.CountByUser(ctx, claims.UserID); err == nil && active >= maxSessionsPerUser {
+		h.logger.WarnContext(ctx, "per-user transcode session cap reached",
+			"user_id", claims.UserID, "active", active, "cap", maxSessionsPerUser)
+		respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS",
+			fmt.Sprintf("you already have %d active streams (cap %d); stop one before starting another",
+				active, maxSessionsPerUser))
+		return
+	}
+
 	// Video-copy mode: remux video (no re-encode), only transcode audio.
 	// Used when the source video is already browser-compatible (H.264) but the
 	// audio codec or container is not.
@@ -658,6 +676,14 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 	if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
 		workerAddr = sess.WorkerAddr
 	}
+
+	// Stamp client-side activity. Lets the worker's idle-kill loop
+	// distinguish "client still consuming" from "client crashed." A
+	// browser tab closed without firing DELETE leaves the session
+	// alive otherwise, and ffmpeg keeps encoding for the full 4 h
+	// session TTL — wasting GPU + filling disk with segments nobody
+	// will ever fetch.
+	h.sessions.TouchActivity(ctx, sessionID)
 
 	if workerAddr != "" {
 		proxyWorkerFile(w, r, workerAddr, sessID, segName)

@@ -180,8 +180,13 @@ func TestSettings_Get(t *testing.T) {
 		} `json:"data"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp.Data.TMDBAPIKey != "abc1****" {
-		t.Errorf("tmdb_api_key: got %q, want %q", resp.Data.TMDBAPIKey, "abc1****")
+	// Mask returns bare "****" — the prior `key[:4] + "****"` form leaked
+	// 16 bits of entropy on a 32-hex TMDB v3 key. The other secret fields
+	// in this handler (SMTP password, OIDC client secret, LDAP bind
+	// password, SAML private key) all return bare "****"; the API keys
+	// are now consistent with that posture.
+	if resp.Data.TMDBAPIKey != "****" {
+		t.Errorf("tmdb_api_key: got %q, want %q", resp.Data.TMDBAPIKey, "****")
 	}
 }
 

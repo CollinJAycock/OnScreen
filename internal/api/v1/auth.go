@@ -139,15 +139,28 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 // Logout handles POST /api/v1/auth/logout.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	// Read refresh token from JSON body (legacy/API clients) or httpOnly cookie.
+	// Browser logout always takes the cookie path — SameSite=Strict on
+	// the refresh cookie means it's only attached to first-party POST
+	// /auth/logout calls, which is the intended use.
 	var refreshToken string
-	var body struct {
-		RefreshToken string `json:"refresh_token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.RefreshToken != "" {
-		refreshToken = body.RefreshToken
-	} else if c, err := r.Cookie(cookieRefreshToken); err == nil {
+	if c, err := r.Cookie(cookieRefreshToken); err == nil {
 		refreshToken = c.Value
+	}
+	// JSON-body path is for native clients (Tauri / Android TV) that
+	// don't have cookies. Require an authenticated request so an
+	// unauthenticated POST with a stolen refresh token (briefly observed
+	// in a log line, screenshot, etc.) can't force-revoke a victim's
+	// session — the prior unauthenticated path was a low-effort DOS
+	// against any user whose token was momentarily exposed.
+	if refreshToken == "" {
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			var body struct {
+				RefreshToken string `json:"refresh_token"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.RefreshToken != "" {
+				refreshToken = body.RefreshToken
+			}
+		}
 	}
 	if refreshToken != "" {
 		_ = h.svc.Logout(r.Context(), refreshToken)

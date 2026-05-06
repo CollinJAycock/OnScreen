@@ -54,6 +54,11 @@ var (
 	// endpoint proxies every keystroke to TMDB; even with debouncing in the
 	// UI a noisy client could burn the operator's TMDB budget.
 	DiscoverLimit = RateLimitConfig{Limit: 60, Window: time.Minute}
+	// SubtitlesLimit caps OpenSubtitles-backed search + download per
+	// user. Each call burns the operator's OS quota and is gated by
+	// the OS client's own 1 req/s limiter — a noisy user can stall
+	// the queue for everyone else if uncapped at the API layer.
+	SubtitlesLimit = RateLimitConfig{Limit: 30, Window: time.Minute}
 )
 
 // resolveLimit reads the named env var at package init. Falls back to the

@@ -271,6 +271,10 @@ type MediaItem struct {
 	ReleaseType               *string            `json:"release_type"`
 	LyricsPlain               *string            `json:"lyrics_plain"`
 	LyricsSynced              *string            `json:"lyrics_synced"`
+	AnilistID                 *int32             `json:"anilist_id"`
+	MalID                     *int32             `json:"mal_id"`
+	Kind                      *string            `json:"kind"`
+	ReadingDirection          *string            `json:"reading_direction"`
 }
 
 type MediaRequest struct {
@@ -510,6 +514,14 @@ type UserFavorite struct {
 	UserID    uuid.UUID          `json:"user_id"`
 	MediaID   uuid.UUID          `json:"media_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type UserWatchStatus struct {
+	UserID      uuid.UUID          `json:"user_id"`
+	MediaItemID uuid.UUID          `json:"media_item_id"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WatchEvent struct {

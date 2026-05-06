@@ -369,13 +369,20 @@ func validateCreateParams(p CreateLibraryParams) error {
 	if p.Name == "" {
 		return &ValidationError{Field: "name", Message: "required"}
 	}
+	// `manga` is parked: the schema CHECK constraint still allows it
+	// (migration 00077) and the AniList manga agent + reader code stay
+	// in tree for future revival, but new libraries can't be created
+	// with type=manga because the volume/chapter hierarchy and the
+	// production reader UX both need more work than v2.2 had budget
+	// for. Re-enabling is a one-line addition here once that work
+	// lands.
 	validTypes := map[string]bool{
-		"movie": true, "show": true, "music": true,
+		"movie": true, "show": true, "music": true, "anime": true,
 		"photo": true, "dvr": true, "audiobook": true, "podcast": true,
 		"home_video": true, "book": true,
 	}
 	if !validTypes[p.Type] {
-		return &ValidationError{Field: "type", Message: "must be movie, show, music, audiobook, podcast, photo, home_video, book, or dvr"}
+		return &ValidationError{Field: "type", Message: "must be movie, show, anime, music, audiobook, podcast, photo, home_video, book, or dvr"}
 	}
 	if len(p.Paths) == 0 {
 		return &ValidationError{Field: "scan_paths", Message: "at least one path required"}

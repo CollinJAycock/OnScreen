@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -34,22 +35,36 @@ type SubtitleService interface {
 // SubtitleHandler exposes search/download/list endpoints for external subtitles.
 // Library access is enforced via the items the subtitles attach to.
 type SubtitleHandler struct {
-	svc      SubtitleService
-	media    ItemMediaService
-	access   LibraryAccessChecker
-	ocrJobs  *subtitles.OCRJobStore
-	logger   *slog.Logger
+	svc     SubtitleService
+	media   ItemMediaService
+	access  LibraryAccessChecker
+	ocrJobs *subtitles.OCRJobStore
+	logger  *slog.Logger
+	// ocrInFlight tracks concurrent OCR jobs per user. Tesseract is
+	// CPU-heavy; without a cap a single user can spawn N concurrent
+	// jobs and pin every core. Decremented in runOCRJob's defer so
+	// the slot frees up regardless of how the goroutine exits
+	// (success, panic, ctx cancel).
+	ocrInFlight   map[uuid.UUID]int
+	ocrInFlightMu sync.Mutex
 }
+
+// MaxConcurrentOCRJobsPerUser caps how many simultaneous OCR jobs a
+// single authenticated user may run. Tesseract is CPU-heavy and runs
+// for tens of seconds per subtitle stream; this prevents a runaway
+// client (or hostile script) from consuming every core.
+const MaxConcurrentOCRJobsPerUser = 2
 
 // NewSubtitleHandler constructs a SubtitleHandler. The OCR job store is
 // created internally — it's per-process state with no shared dependency
 // to surface in the constructor signature.
 func NewSubtitleHandler(svc SubtitleService, media ItemMediaService, logger *slog.Logger) *SubtitleHandler {
 	return &SubtitleHandler{
-		svc:     svc,
-		media:   media,
-		ocrJobs: subtitles.NewOCRJobStore(),
-		logger:  logger,
+		svc:         svc,
+		media:       media,
+		ocrJobs:     subtitles.NewOCRJobStore(),
+		logger:      logger,
+		ocrInFlight: make(map[uuid.UUID]int),
 	}
 }
 
@@ -351,8 +366,32 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-user concurrent-OCR cap. Tesseract is CPU-heavy and runs
+	// for tens of seconds per subtitle stream — without this cap a
+	// runaway client (or hostile script) can spawn arbitrary
+	// concurrent OCR jobs and pin every core. The rate-limit on the
+	// route gates start frequency; this gates concurrent in-flight.
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	h.ocrInFlightMu.Lock()
+	if h.ocrInFlight[claims.UserID] >= MaxConcurrentOCRJobsPerUser {
+		h.ocrInFlightMu.Unlock()
+		respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_OCR_JOBS",
+			"you already have the maximum number of OCR jobs running; wait for one to finish")
+		return
+	}
+	h.ocrInFlight[claims.UserID]++
+	h.ocrInFlightMu.Unlock()
+
 	job, err := h.ocrJobs.Create(fileID, body.StreamIndex)
 	if err != nil {
+		// Roll back the in-flight increment on early failure.
+		h.ocrInFlightMu.Lock()
+		h.ocrInFlight[claims.UserID]--
+		h.ocrInFlightMu.Unlock()
 		h.logger.ErrorContext(r.Context(), "ocr: create job", "err", err)
 		respond.InternalError(w, r)
 		return
@@ -362,15 +401,26 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 	// disconnects (Cloudflare 100 s, browser cancel, network blip)
 	// don't kill the tesseract subprocess. The job store is the
 	// single source of truth; the client polls it on its own clock.
-	go h.runOCRJob(job.ID, subtitles.OCROpts{
-		FileID:         fileID,
-		InputPath:      inputPath,
-		AbsStreamIndex: body.StreamIndex,
-		Language:       body.Language,
-		Title:          body.Title,
-		Forced:         body.Forced,
-		SDH:            body.SDH,
-	})
+	uid := claims.UserID
+	go func() {
+		defer func() {
+			h.ocrInFlightMu.Lock()
+			h.ocrInFlight[uid]--
+			if h.ocrInFlight[uid] <= 0 {
+				delete(h.ocrInFlight, uid)
+			}
+			h.ocrInFlightMu.Unlock()
+		}()
+		h.runOCRJob(job.ID, subtitles.OCROpts{
+			FileID:         fileID,
+			InputPath:      inputPath,
+			AbsStreamIndex: body.StreamIndex,
+			Language:       body.Language,
+			Title:          body.Title,
+			Forced:         body.Forced,
+			SDH:            body.SDH,
+		})
+	}()
 
 	respond.Accepted(w, r, toOCRJobJSON(*job))
 }

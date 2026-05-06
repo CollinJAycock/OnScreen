@@ -30,6 +30,18 @@ type Event struct {
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 
+// MaxSubscribersPerUser caps the number of simultaneous SSE
+// connections a single authenticated user may hold. Without a cap, a
+// buggy or hostile client can open thousands of /notifications/stream
+// connections, each holding 16-event buffers + per-connection HTTP
+// resources, until the server runs out of file descriptors.
+//
+// 8 covers the realistic upper bound (4 devices × 2 tabs each) with
+// slack. Subscribe returns a closed channel when the cap is hit so
+// the SSE handler can return 429 instead of holding a connection
+// open with a never-firing reader.
+const MaxSubscribersPerUser = 8
+
 // Broker manages per-user SSE subscriptions. It is safe for concurrent use.
 type Broker struct {
 	mu   sync.RWMutex
@@ -42,10 +54,16 @@ func NewBroker() *Broker {
 }
 
 // Subscribe registers a client channel for the given user.
-// The caller must call Unsubscribe when done.
+// The caller must call Unsubscribe when done. Returns nil when the
+// per-user subscriber cap is hit; the SSE handler should treat nil
+// as "too many subscribers" and reject the request.
 func (b *Broker) Subscribe(userID uuid.UUID) chan Event {
-	ch := make(chan Event, 16)
 	b.mu.Lock()
+	if existing := b.subs[userID]; len(existing) >= MaxSubscribersPerUser {
+		b.mu.Unlock()
+		return nil
+	}
+	ch := make(chan Event, 16)
 	if b.subs[userID] == nil {
 		b.subs[userID] = make(map[chan Event]struct{})
 	}
@@ -54,8 +72,15 @@ func (b *Broker) Subscribe(userID uuid.UUID) chan Event {
 	return ch
 }
 
-// Unsubscribe removes a client channel and closes it.
+// Unsubscribe removes a client channel and closes it. No-op when ch is
+// nil — callers can route the Subscribe result through `defer
+// Unsubscribe(...)` without checking for nil first; Subscribe returns
+// nil when the per-user cap is hit and the SSE handler bails before
+// accepting any events.
 func (b *Broker) Unsubscribe(userID uuid.UUID, ch chan Event) {
+	if ch == nil {
+		return
+	}
 	b.mu.Lock()
 	if set, ok := b.subs[userID]; ok {
 		delete(set, ch)

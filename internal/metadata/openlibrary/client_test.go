@@ -28,7 +28,7 @@ func TestSearchBookCoverURL_HitsCoverEndpoint(t *testing.T) {
 	testSearchURL = srv.URL
 	defer func() { testSearchURL = "" }()
 
-	c := New()
+	c := NewWithClient(srv.Client())
 	url, err := c.SearchBookCoverURL(context.Background(), "The Way of Kings", "Brandon Sanderson")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -53,7 +53,7 @@ func TestSearchBookCoverURL_FirstWithCoverWins(t *testing.T) {
 	testSearchURL = srv.URL
 	defer func() { testSearchURL = "" }()
 
-	url, err := New().SearchBookCoverURL(context.Background(), "Test", "")
+	url, err := NewWithClient(srv.Client()).SearchBookCoverURL(context.Background(), "Test", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestSearchBookCoverURL_NoDocs_ReturnsEmpty(t *testing.T) {
 	testSearchURL = srv.URL
 	defer func() { testSearchURL = "" }()
 
-	url, err := New().SearchBookCoverURL(context.Background(), "Some Obscure Title", "Unknown Author")
+	url, err := NewWithClient(srv.Client()).SearchBookCoverURL(context.Background(), "Some Obscure Title", "Unknown Author")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestSearchBookCoverURL_AllDocsCoverless(t *testing.T) {
 	testSearchURL = srv.URL
 	defer func() { testSearchURL = "" }()
 
-	url, err := New().SearchBookCoverURL(context.Background(), "Title", "")
+	url, err := NewWithClient(srv.Client()).SearchBookCoverURL(context.Background(), "Title", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestSearchBookCoverURL_EmptyTitle_NoNetwork(t *testing.T) {
 	testSearchURL = srv.URL
 	defer func() { testSearchURL = "" }()
 
-	url, err := New().SearchBookCoverURL(context.Background(), "  ", "Author")
+	url, err := NewWithClient(srv.Client()).SearchBookCoverURL(context.Background(), "  ", "Author")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

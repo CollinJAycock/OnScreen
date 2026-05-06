@@ -111,6 +111,36 @@ func (q *Queries) GetLibrary(ctx context.Context, id uuid.UUID) (Library, error)
 	return i, err
 }
 
+const isLibraryAnime = `-- name: IsLibraryAnime :one
+SELECT (type = 'anime')::bool FROM libraries WHERE id = $1 AND deleted_at IS NULL
+`
+
+// Targeted single-bool lookup the show-enricher uses to decide
+// whether AniList runs primary or fallback. The library type is the
+// single source of truth — `anime` libraries use AniList primary,
+// everything else uses TMDB primary with AniList as fallback.
+func (q *Queries) IsLibraryAnime(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isLibraryAnime, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const isLibraryManga = `-- name: IsLibraryManga :one
+SELECT (type = 'manga')::bool FROM libraries WHERE id = $1 AND deleted_at IS NULL
+`
+
+// Same shape as IsLibraryAnime but for the book / manga split.
+// Book libraries use whatever book agent ships in v2.x; manga
+// libraries route through AniList for mangaka, demographic, magazine,
+// and reading direction.
+func (q *Queries) IsLibraryManga(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isLibraryManga, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listLibraries = `-- name: ListLibraries :many
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,

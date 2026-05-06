@@ -188,6 +188,40 @@ func (q *Queries) RotateSession(ctx context.Context, arg RotateSessionParams) (S
 	return i, err
 }
 
+const rotateSessionConditional = `-- name: RotateSessionConditional :execrows
+UPDATE sessions
+SET token_hash = $2,
+    expires_at = $3,
+    last_seen  = NOW()
+WHERE id = $1 AND token_hash = $4
+`
+
+type RotateSessionConditionalParams struct {
+	ID          uuid.UUID          `json:"id"`
+	TokenHash   string             `json:"token_hash"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	TokenHash_2 string             `json:"token_hash_2"`
+}
+
+// Compare-and-swap rotation: only rewrites token_hash when the row's
+// current token_hash matches `expected_token_hash`. Used by the
+// refresh-token reuse-detection path — if the previous hash doesn't
+// match, somebody else has already rotated the token (i.e. a thief
+// used it before the legitimate client could), and the row count is 0.
+// The caller then invalidates the entire session family for the user.
+func (q *Queries) RotateSessionConditional(ctx context.Context, arg RotateSessionConditionalParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateSessionConditional,
+		arg.ID,
+		arg.TokenHash,
+		arg.ExpiresAt,
+		arg.TokenHash_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const touchSession = `-- name: TouchSession :exec
 UPDATE sessions SET last_seen = NOW() WHERE id = $1
 `

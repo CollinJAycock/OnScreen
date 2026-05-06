@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 const baseURL = "https://api4.thetvdb.com/v4"
@@ -33,8 +34,12 @@ type Client struct {
 // New creates a TVDB client. apiKey is the project API key from thetvdb.com.
 func New(apiKey string) *Client {
 	return &Client{
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		apiKey: apiKey,
+		// safehttp.NewClient blocks dial-time connections to private,
+		// loopback, link-local, multicast, and unspecified addresses.
+		// api4.thetvdb.com is public; this is defense in depth against
+		// DNS rebinding or a hijacked apex record.
+		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 	}
 }
 

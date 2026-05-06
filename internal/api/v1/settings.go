@@ -509,14 +509,18 @@ func toOpenSubtitlesDTO(cfg settings.OpenSubtitlesConfig) openSubtitlesSettingDT
 	}
 }
 
-// maskAPIKey returns the first 4 chars + "****" if the key is longer than 4,
-// "****" if 1-4 chars, or empty if empty.
+// maskAPIKey returns "****" when a key is set, "" when not.
+//
+// Earlier versions returned `key[:4] + "****"` to surface a recognisable
+// prefix, but that's meaningful entropy disclosure once paired with a
+// log line, screenshot shared with support, or a backup snapshot —
+// 4 hex chars of a 32-hex TMDB v3 key narrows a brute-force search
+// space. Other secret fields in this same handler (SMTP password,
+// OIDC client secret, LDAP bind password, SAML SP private key) all
+// return bare `****`; align the API keys with that posture.
 func maskAPIKey(key string) string {
 	if key == "" {
 		return ""
-	}
-	if len(key) > 4 {
-		return key[:4] + "****"
 	}
 	return "****"
 }

@@ -100,6 +100,13 @@ func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, 
 	})
 }
 
+func (a *mediaAdapter) SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error {
+	return a.q.SetMediaItemKind(ctx, gen.SetMediaItemKindParams{
+		ID:   id,
+		Kind: kind,
+	})
+}
+
 func (a *mediaAdapter) SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error {
 	return a.q.SoftDeleteMediaItem(ctx, id)
 }

@@ -100,3 +100,77 @@ func (r *RateLimiter) Allow(ctx context.Context, key string, limit int, window t
 	resetAt = time.Now().Add(window)
 	return allowed, remaining, resetAt, nil
 }
+
+// failureCounterScript atomically reads the current failure count at `key`
+// and refuses (returns -1) if it's already at or above `limit`. Otherwise
+// returns the current count. Used by the brute-force throttle's pre-auth
+// gate — the *check* must not increment, because that would count successful
+// logins toward the lockout. Increments happen only after a confirmed failure
+// (see IncrFailure).
+//
+// KEYS[1] = failure counter key
+// ARGV[1] = limit (string)
+//
+// Returns: current count, or -1 if already at limit.
+var failureCounterScript = redis.NewScript(`
+local key   = KEYS[1]
+local limit = tonumber(ARGV[1])
+local v = redis.call('GET', key)
+local count = tonumber(v) or 0
+if count >= limit then
+    return -1
+end
+return count
+`)
+
+// CheckFailures returns whether the caller is under the failure cap for `key`.
+// If allowed=false, the caller has hit the limit and should be rejected
+// without performing the expensive operation (bcrypt compare). Fails open
+// when Valkey is unavailable (matches Allow's posture).
+//
+// CheckFailures does NOT increment the counter. Pair it with IncrFailure on
+// the failure path and ResetFailures on the success path. This split is the
+// fix for the prior bug where Allow() counted successes toward the cap, so
+// a user logging in `limit` times legitimately got locked out.
+func (r *RateLimiter) CheckFailures(ctx context.Context, key string, limit int) (allowed bool, err error) {
+	res, err := failureCounterScript.Run(ctx, r.client.rdb, []string{key}, fmt.Sprintf("%d", limit)).Int64()
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, err
+		}
+		r.logger.Error("rate limiter Valkey error, failing open", "key", key, "err", err)
+		if r.failOpenCounter != nil {
+			r.failOpenCounter()
+		}
+		return true, nil
+	}
+	return res >= 0, nil
+}
+
+// IncrFailure increments the failure counter at `key` and (re)sets its TTL
+// to `window`. The counter naturally expires after `window` of inactivity,
+// so a slow drip below the cap never trips the lockout. Errors are logged
+// and swallowed — failing to record a single failure shouldn't abort the
+// auth response.
+func (r *RateLimiter) IncrFailure(ctx context.Context, key string, window time.Duration) {
+	if _, err := r.client.rdb.Incr(ctx, key).Result(); err != nil {
+		r.logger.Warn("incr failure counter", "key", key, "err", err)
+		return
+	}
+	// EXPIRE on every increment is a small over-write but keeps the
+	// window sliding — the counter expires `window` after the last
+	// failure rather than after the first. Same posture as a typical
+	// "lockout for 15 min from your last bad attempt" UX.
+	if err := r.client.rdb.Expire(ctx, key, window).Err(); err != nil {
+		r.logger.Warn("expire failure counter", "key", key, "err", err)
+	}
+}
+
+// ResetFailures clears the failure counter at `key`. Call on successful auth
+// so a user who eventually got their password right starts fresh next time.
+// Errors are logged and swallowed.
+func (r *RateLimiter) ResetFailures(ctx context.Context, key string) {
+	if err := r.client.rdb.Del(ctx, key).Err(); err != nil {
+		r.logger.Warn("reset failure counter", "key", key, "err", err)
+	}
+}

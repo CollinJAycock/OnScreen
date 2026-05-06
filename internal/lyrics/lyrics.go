@@ -19,6 +19,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // Result holds lyrics for a single track in both plain and synced forms.
@@ -59,17 +61,25 @@ type LRCLIBClient struct {
 }
 
 // NewLRCLIBClient returns a fetcher pointed at lrclib.net. baseURL is
-// injected so tests can substitute an httptest server.
+// injected so tests can substitute an httptest server. The HTTP client
+// is wrapped in safehttp so the dialer rejects post-resolution loopback
+// / RFC1918 / link-local addresses — defense in depth against DNS
+// rebinding for every public-API client uniformly.
 func NewLRCLIBClient() *LRCLIBClient {
 	return &LRCLIBClient{
 		baseURL: "https://lrclib.net",
-		http:    &http.Client{Timeout: 10 * time.Second},
+		http:    safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 	}
 }
 
-// WithBaseURL overrides the base URL — for tests.
+// WithBaseURL overrides the base URL — for tests. Also swaps the HTTP
+// client back to a stock one so httptest.NewServer (which serves on
+// loopback) isn't blocked by the safehttp dialer baked into
+// NewLRCLIBClient. WithBaseURL is documented as a test seam; operators
+// don't get to override the LRCLIB endpoint, so this swap is safe.
 func (c *LRCLIBClient) WithBaseURL(u string) *LRCLIBClient {
 	c.baseURL = strings.TrimRight(u, "/")
+	c.http = &http.Client{Timeout: 10 * time.Second}
 	return c
 }
 

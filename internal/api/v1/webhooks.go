@@ -12,8 +12,21 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 )
+
+// urlHost extracts the hostname from a URL string for audit-log entries.
+// Returns the raw URL on parse failure so the audit entry isn't blank — the
+// detail field is best-effort context, not security-critical.
+func urlHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	return u.Host
+}
 
 // validateWebhookURL checks that a webhook URL is a valid HTTPS/HTTP URL pointing
 // to a public (non-private, non-loopback, non-link-local) IP address.
@@ -80,11 +93,33 @@ var ErrWebhookNotFound = errors.New("webhook not found")
 type WebhookHandler struct {
 	svc    WebhookService
 	logger *slog.Logger
+	audit  *audit.Logger // optional; nil disables CRUD audit trail
 }
 
 // NewWebhookHandler creates a WebhookHandler.
 func NewWebhookHandler(svc WebhookService, logger *slog.Logger) *WebhookHandler {
 	return &WebhookHandler{svc: svc, logger: logger}
+}
+
+// WithAudit attaches an audit logger so webhook CRUD events are recorded.
+// Webhooks carry an encrypted secret and an outbound URL — both privileged
+// config — so create/update/delete should be auditable on the same footing
+// as library and arr-service CRUD. Returns the handler for chaining.
+func (h *WebhookHandler) WithAudit(a *audit.Logger) *WebhookHandler {
+	h.audit = a
+	return h
+}
+
+// auditActor extracts the requesting admin's user ID for audit attribution.
+// Returns nil if there are no claims (defensive — admin-only routes already
+// guarantee claims, but the audit call shouldn't panic if that ever changes).
+func (h *WebhookHandler) auditActor(r *http.Request) *uuid.UUID {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		return nil
+	}
+	uid := claims.UserID
+	return &uid
 }
 
 // List handles GET /api/v1/webhooks.
@@ -127,6 +162,18 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "create webhook", "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	if h.audit != nil {
+		// Log the URL host (not full URL) so the audit detail isn't a
+		// vector for path-token leaks (e.g. webhook URLs of the form
+		// https://hook.example/abc-secret-token-xyz). Host is enough to
+		// answer "which integration was wired up".
+		h.audit.Log(r.Context(), h.auditActor(r), audit.ActionWebhookCreate, ep.ID.String(),
+			map[string]any{
+				"host":        urlHost(ep.URL),
+				"events":      ep.Events,
+				"has_secret":  body.Secret != "",
+			}, audit.ClientIP(r))
 	}
 	respond.Created(w, r, ep)
 }
@@ -193,6 +240,15 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), h.auditActor(r), audit.ActionWebhookUpdate, id.String(),
+			map[string]any{
+				"host":           urlHost(ep.URL),
+				"events":         ep.Events,
+				"enabled":        ep.Enabled,
+				"secret_changed": body.Secret != "",
+			}, audit.ClientIP(r))
+	}
 	respond.Success(w, r, ep)
 }
 
@@ -211,6 +267,10 @@ func (h *WebhookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "delete webhook", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), h.auditActor(r), audit.ActionWebhookDelete, id.String(),
+			nil, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }

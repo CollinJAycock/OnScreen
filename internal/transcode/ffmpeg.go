@@ -104,6 +104,19 @@ type BuildArgs struct {
 	// Encoder tuning
 	EncoderOpts EncoderOpts
 
+	// ReadRate paces ffmpeg's input-reading speed in source-time per
+	// wall-time (1.0 = real-time, 1.5 = 50 % faster). Zero disables
+	// the flag entirely. Production transcodes set 1.0 so ffmpeg
+	// stays alive for the full playback duration; without pacing,
+	// NVDEC + NVENC encodes a 24 min episode in ~65 s and the
+	// worker's post-completion session-dir cleanup wipes segments
+	// while the player is still consuming them. Integration tests
+	// leave this zero so a multi-output `-t 8` test (HLS + WebVTT
+	// extraction) doesn't wait real-time for the WebVTT context to
+	// drain a 2.5 h subtitle stream.
+	ReadRate              float64
+	ReadRateInitialBurst  int // seconds of input read at full speed before pacing kicks in
+
 	// Output
 	SessionDir    string // abs path, e.g. /tmp/onscreen/sessions/{id}
 	SegmentPrefix string // relative prefix for .ts files, e.g. "seg"
@@ -146,8 +159,49 @@ func BuildHLS(a BuildArgs) []string {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", a.StartOffset))
 	}
 
+	// Pace ffmpeg input so the encoder doesn't finish faster than the
+	// player consumes. NVDEC + NVENC for AV1 hits 22× real-time on a
+	// desktop GPU, which means a 24-minute episode finishes encoding
+	// in ~65 seconds wall time. ffmpeg then exits cleanly and the
+	// worker's post-completion session-dir cleanup (worker.go) wipes
+	// the segment dir 30 s later — long before the player has consumed
+	// past seg ~17. Player gets a 404 wall on the next segment fetch.
+	//
+	// ReadRate=1.0 keeps ffmpeg alive for the whole playback duration;
+	// ReadRateInitialBurst=30 lets the first 30 s of source burst at
+	// full speed for fast seg0 / initial buffer. Standard pattern Plex
+	// / Jellyfin both use. Caller decides whether to enable — e.g.
+	// integration tests using `-t 8` skip this so a multi-output run
+	// doesn't wait real-time for ancillary contexts.
+	if a.ReadRate > 0 {
+		args = append(args, "-readrate", fmt.Sprintf("%.2f", a.ReadRate))
+		if a.ReadRateInitialBurst > 0 {
+			args = append(args, "-readrate_initial_burst", fmt.Sprint(a.ReadRateInitialBurst))
+		}
+	}
+
 	isNVENC := !videoCopy && (a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC)
-	_ = isNVENC // retained for tonemap-gate / filter-graph branches below
+
+	// NVDEC for AV1 sources is a narrow exception to the
+	// software-decode default. The mainline-ffmpeg + driver
+	// fragility documented below is HEVC-specific (decoder-surfaces
+	// pool exhaustion, 10-bit cuda-frame chain failures); AV1 NVDEC
+	// has a cleaner path on RTX 30+ generations and survives mainline
+	// ffmpeg 8.x without those failure modes.
+	//
+	// Why we *need* this for AV1: software AV1 decode (dav1d) runs
+	// at ~3-5× real-time on 1080p on a fast desktop CPU — narrow
+	// margin once you add NVENC encode in the same process.
+	// In practice this surfaces as the encoder falling behind the
+	// player after ~60-70 seconds of buffered content (segments
+	// 0-13 burst-produced, then encoder stalls and player times
+	// out at seg14). HEVC software decode runs at 17× real-time
+	// for comparison — 4× the headroom AV1 has.
+	//
+	// HDR + AV1 paths still skip cuda decode (would need scale_cuda
+	// + tonemap_cuda chain that the broader pipeline doesn't yet
+	// guarantee). Tonemap branches stay on the software path.
+	useCUDADecode := isNVENC && a.IsAV1 && !a.NeedsToneMap
 
 	if !videoCopy {
 		// VAAPI init filter (must come before input for hardware decode).
@@ -155,8 +209,15 @@ func BuildHLS(a BuildArgs) []string {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		// NVENC: software decode + NVENC encode. Setting `-hwaccel cuda
-		// -hwaccel_output_format cuda` here is the textbook Jellyfin /
+		if useCUDADecode {
+			// Pin AV1 decode to NVDEC and keep frames in VRAM through
+			// the encoder. scale filter switches to scale_cuda below.
+			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda")
+		}
+
+		// NVENC: software decode + NVENC encode (default path).
+		// Setting `-hwaccel cuda -hwaccel_output_format cuda` for
+		// HEVC / 10-bit sources is the textbook Jellyfin /
 		// nvidia-recommended pattern, but on mainline ffmpeg 8.x +
 		// recent NVIDIA drivers it's fragile across source files —
 		// we hit "[hevc] No decoder surfaces left" on x265 BDRip
@@ -168,12 +229,14 @@ func BuildHLS(a BuildArgs) []string {
 		// jellyfin-ffmpeg patches around these driver quirks; mainline
 		// + Gyan.dev does not. Until we ship a Jellyfin-fork ffmpeg in
 		// our installer, software input decode is the only way to make
-		// NVENC reliable across every source / driver / mainline build.
-		// Software HEVC decode runs at 17× real-time on 1080p sources
-		// and 3-4× on 4K on the CPUs that ship with NVENC-capable
-		// boxes — plenty of headroom for live transcoding. NVENC encode
-		// itself is unaffected (it gets nv12 frames over PCIe instead
-		// of straight from VRAM; trivial copy on modern PCIe-4/5).
+		// NVENC reliable across HEVC sources, drivers, and mainline
+		// builds. Software HEVC decode runs at 17× real-time on 1080p
+		// sources and 3-4× on 4K on the CPUs that ship with NVENC-
+		// capable boxes — plenty of headroom for live transcoding.
+		// NVENC encode itself is unaffected (it gets nv12 frames over
+		// PCIe instead of straight from VRAM; trivial copy on modern
+		// PCIe-4/5). The AV1 carve-out above gets the cuda decode
+		// path because dav1d software decode is too slow for parity.
 
 		// AMF: software decode + AMF encode. Setting `-hwaccel d3d11va`
 		// here looked like a free win but it picks the *first* D3D11
@@ -474,6 +537,10 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 	if startOffset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", startOffset))
 	}
+	// Real-time read pacing — see BuildHLS for rationale. Container
+	// remux runs at 50-100× real-time which would race the worker's
+	// post-completion cleanup just as hard as the transcode path.
+	args = append(args, "-readrate", "1.0", "-readrate_initial_burst", "30")
 	args = append(args,
 		"-i", inputPath,
 		"-c", "copy", // copy all streams
@@ -494,6 +561,7 @@ func buildVideoFilter(a BuildArgs) string {
 	var filters []string
 
 	isNVENC := a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC
+	useCUDADecode := isNVENC && a.IsAV1 && !a.NeedsToneMap
 
 	if a.IsVAAPI {
 		filters = append(filters, "format=nv12", "hwupload")
@@ -515,6 +583,13 @@ func buildVideoFilter(a BuildArgs) string {
 		switch {
 		case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI:
 			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
+		case useCUDADecode:
+			// AV1 NVDEC path: keep frames in VRAM through scaling.
+			// scale_cuda outputs nv12 (8-bit) so 10-bit AV1 sources
+			// are downconverted in GPU memory — no CPU touch, no
+			// pad filter (no pad_cuda exists; aspect ratio is
+			// preserved by the decrease flag).
+			filters = append(filters, fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
 		default:
 			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", a.Width, a.Height, a.Width, a.Height))
 		}
@@ -545,7 +620,7 @@ func buildVideoFilter(a BuildArgs) string {
 			"format=yuv420p",
 		}, ",")
 		filters = append(filters, toneMap)
-	} else if a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware {
+	} else if !useCUDADecode && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
 		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
 		// ("10-bit input video is not supported"). libx264 *accepts*
 		// 10-bit input but emits 10-bit High 10 profile H.264 — valid
@@ -555,7 +630,10 @@ func buildVideoFilter(a BuildArgs) string {
 		// the rare 10-bit SDR source (some anime, AV1 10-bit archival
 		// masters) and is a no-op on 8-bit input. HEVC variants of
 		// these encoders accept 10-bit (Main10), so we don't strip
-		// for them.
+		// for them. Skipped on the CUDA-decode path: scale_cuda
+		// already emits nv12 (8-bit) in VRAM, and inserting a CPU
+		// format filter would force a hwdownload that defeats the
+		// purpose of keeping the pipeline in GPU memory.
 		filters = append(filters, "format=yuv420p")
 	}
 

@@ -6,6 +6,14 @@ package contentrating
 // Lower values are more restrictive. Empty/unrated is rank 4 (most restrictive)
 // so restricted profiles are protected until a rating is populated.
 // Unknown ratings (NR, UNRATED, X, etc.) also rank 4.
+//
+// Anime ratings: MAL publishes "R", "R+", "Rx" plus the Japanese
+// classification codes ("R-15", "R-17+", "R-18+"). We slot them into
+// the existing rank ladder so a parental-control profile maxed at
+// "TV-14" still blocks a row tagged "R-18+". AniList itself only
+// exposes a Boolean `isAdult`; an explicit tier shows up here only
+// when a future MAL agent populates it, when an NFO carries it, or
+// when an operator sets it by hand.
 func Rank(rating string) int {
 	switch rating {
 	case "":
@@ -14,12 +22,17 @@ func Rank(rating string) int {
 		return 0
 	case "PG", "TV-Y7", "TV-PG":
 		return 1
-	case "PG-13", "TV-14":
+	case "PG-13", "TV-14", "R-15":
 		return 2
-	case "R":
+	case "R", "R-17+":
 		return 3
-	case "NC-17", "TV-MA":
+	case "NC-17", "TV-MA", "R+", "R-18+":
 		return 3
+	case "Rx":
+		// Hentai. Most restrictive bucket so a parental ceiling of
+		// TV-MA / NC-17 still blocks; only an unconstrained adult
+		// profile (no max set) sees these rows.
+		return 4
 	default:
 		return 4 // NR, UNRATED, X, empty, etc.
 	}
@@ -47,6 +60,10 @@ func MaxRatingRank(maxRating string) *int {
 }
 
 // AllRatings returns the ordered list of valid content ratings for UI display.
+// Ordered non-descending by Rank so a UI that draws this as a list /
+// slider naturally surfaces "more permissive → more restrictive".
+// Anime ratings (R-15, R-17+, R+, R-18+, Rx) interleave with the
+// Western codes at their matching rank.
 func AllRatings() []string {
-	return []string{"G", "PG", "PG-13", "R", "NC-17"}
+	return []string{"G", "PG", "PG-13", "R-15", "R", "R-17+", "NC-17", "R+", "R-18+", "Rx"}
 }

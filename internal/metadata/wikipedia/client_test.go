@@ -27,7 +27,7 @@ func TestGetThumbnailURL_PrefersOriginalImage(t *testing.T) {
 	testBaseURL = srv.URL
 	defer func() { testBaseURL = "" }()
 
-	url, err := New().GetThumbnailURL(context.Background(), "Brandon Sanderson")
+	url, err := NewWithClient(srv.Client()).GetThumbnailURL(context.Background(), "Brandon Sanderson")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestGetThumbnailURL_FallsBackToThumbnail(t *testing.T) {
 	testBaseURL = srv.URL
 	defer func() { testBaseURL = "" }()
 
-	url, err := New().GetThumbnailURL(context.Background(), "X")
+	url, err := NewWithClient(srv.Client()).GetThumbnailURL(context.Background(), "X")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestGetThumbnailURL_NotFound_ReturnsEmpty(t *testing.T) {
 	testBaseURL = srv.URL
 	defer func() { testBaseURL = "" }()
 
-	url, err := New().GetThumbnailURL(context.Background(), "Some Obscure Author")
+	url, err := NewWithClient(srv.Client()).GetThumbnailURL(context.Background(), "Some Obscure Author")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestGetThumbnailURL_DisambiguationReturnsEmpty(t *testing.T) {
 	testBaseURL = srv.URL
 	defer func() { testBaseURL = "" }()
 
-	url, err := New().GetThumbnailURL(context.Background(), "John Smith")
+	url, err := NewWithClient(srv.Client()).GetThumbnailURL(context.Background(), "John Smith")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestGetThumbnailURL_NoLeadImage_ReturnsEmpty(t *testing.T) {
 	testBaseURL = srv.URL
 	defer func() { testBaseURL = "" }()
 
-	url, err := New().GetThumbnailURL(context.Background(), "X")
+	url, err := NewWithClient(srv.Client()).GetThumbnailURL(context.Background(), "X")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestGetThumbnailURL_EmptyName_NoNetwork(t *testing.T) {
 	testBaseURL = srv.URL
 	defer func() { testBaseURL = "" }()
 
-	url, err := New().GetThumbnailURL(context.Background(), "  ")
+	url, err := NewWithClient(srv.Client()).GetThumbnailURL(context.Background(), "  ")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

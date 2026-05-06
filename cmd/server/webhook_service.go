@@ -37,10 +37,12 @@ func newWebhookService(db webhookQuerier, enc *auth.Encryptor, logger *slog.Logg
 	return &webhookService{
 		db:  db,
 		enc: enc,
-		// SafeTransport rejects private/loopback/link-local IPs at dial time —
-		// keeps the admin-facing "Test Webhook" button from turning into an SSRF
-		// pivot into cloud metadata or same-host admin endpoints.
-		client: &http.Client{Timeout: 10 * time.Second, Transport: webhook.SafeTransport()},
+		// SafeClient rejects private/loopback/link-local IPs at dial time
+		// AND refuses to follow 3xx redirects. The admin-facing "Test
+		// Webhook" button can't be turned into an SSRF pivot, and a
+		// receiver can't 307 the signed POST body to a different host
+		// the operator never approved.
+		client: webhook.SafeClient(10 * time.Second),
 		logger: logger,
 	}
 }

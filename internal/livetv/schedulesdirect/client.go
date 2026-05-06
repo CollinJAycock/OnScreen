@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 const defaultBaseURL = "https://json.schedulesdirect.org/20141201"
@@ -44,9 +46,13 @@ type Client struct {
 // New constructs a client with a shared HTTP client (10 s per request).
 // passwordSHA1 is the lowercased hex sha1 of the SD account password —
 // SD's auth contract takes the hash, not the raw password.
+//
+// The HTTP client is wrapped in safehttp so dial-time connections to
+// private / loopback / link-local addresses are refused — defense in
+// depth against DNS rebinding for json.schedulesdirect.org.
 func New(username, passwordSHA1 string) *Client {
 	return &Client{
-		http:     &http.Client{Timeout: 10 * time.Second},
+		http:     safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 		baseURL:  defaultBaseURL,
 		username: username,
 		passSHA1: strings.ToLower(passwordSHA1),

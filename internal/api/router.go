@@ -51,6 +51,7 @@ type Handlers struct {
 	History         *v1.HistoryHandler
 	Items           *v1.ItemHandler
 	ItemsAdmin      *v1.ItemBulkAdminHandler // admin bulk re-enrich / cleanup
+	WatchStatus     *v1.WatchStatusHandler   // per-user Plan to Watch / Watching / etc.
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
 	Trickplay       *v1.TrickplayHandler
@@ -79,6 +80,7 @@ type Handlers struct {
 	Plugins         *v1.PluginHandler
 	Pair            *v1.PairHandler
 	Logs            *v1.LogsHandler
+	Debug           *v1.DebugHandler // admin runtime + pprof
 	Capabilities    *v1.CapabilitiesHandler
 	ArrServices     *v1.ArrServicesHandler // outbound arr instance CRUD (admin)
 	Requests        *v1.RequestHandler     // user + admin request workflow
@@ -96,7 +98,12 @@ type Handlers struct {
 	// since it short-circuits on missing param anyway, but skipping
 	// the Use() call avoids the dead lookup wiring on dev setups).
 	Impersonate middleware.ImpersonationLookup
-	RateLimiter *valkey.RateLimiter
+	// ViewAsAuditor logs every successful impersonation so the GETs the
+	// admin runs as another user are forensically attributable. Nil
+	// disables audit logging for impersonation; the middleware still
+	// works, just without a paper trail (acceptable in dev, not in prod).
+	ViewAsAuditor middleware.ViewAsAuditor
+	RateLimiter   *valkey.RateLimiter
 	// CORSAllowedOrigins enables cross-origin API access (TV app, third-party
 	// native clients). Empty disables CORS — same-origin only.
 	CORSAllowedOrigins []string
@@ -144,6 +151,12 @@ func NewRouter(h *Handlers) http.Handler {
 		r.Use(h.Auth_mw.RequiredAllowQueryToken)
 		if h.Items != nil {
 			r.Get("/media/stream/{id}", h.Items.StreamFile)
+			// Same auth + ACL + content-rating gate as StreamFile, plus a
+			// Content-Disposition header so browsers trigger save-as.
+			// Lives under the same RequiredAllowQueryToken group so a
+			// stream-purpose token (24 h, file_id-bound) authenticates a
+			// download from a mobile webview that can't carry cookies.
+			r.Get("/media/download/{id}", h.Items.DownloadFile)
 			r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
 		}
 		if h.Subtitles != nil {
@@ -371,7 +384,7 @@ func NewRouter(h *Handlers) http.Handler {
 			// downstream code (handlers see exactly what the target
 			// user would see).
 			if h.Impersonate != nil {
-				r.Use(h.Auth_mw.ViewAs(h.Impersonate))
+				r.Use(h.Auth_mw.ViewAs(h.Impersonate, h.ViewAsAuditor))
 			}
 			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
 				middleware.SessionKey("ratelimit:session")))
@@ -507,6 +520,28 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/logs", h.Logs.List)
+				})
+			}
+
+			// Runtime diagnostics — admin only. JSON snapshot for
+			// at-a-glance leak detection + the standard pprof tree
+			// so `go tool pprof` works against the public API
+			// without a tunnel to the metrics port.
+			if h.Debug != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/debug/runtime", h.Debug.Runtime)
+					r.Get("/admin/debug/pprof/", h.Debug.Pprof)
+					// pprof.Index walks /debug/pprof/<name> via the
+					// last URL segment, so the wildcard route covers
+					// heap / goroutine / allocs / block / mutex /
+					// threadcreate without per-name handlers.
+					r.Get("/admin/debug/pprof/{name}", h.Debug.Pprof)
+					r.Get("/admin/debug/pprof/cmdline", h.Debug.PprofCmdline)
+					r.Get("/admin/debug/pprof/profile", h.Debug.PprofProfile)
+					r.Get("/admin/debug/pprof/symbol", h.Debug.PprofSymbol)
+					r.Post("/admin/debug/pprof/symbol", h.Debug.PprofSymbol)
+					r.Get("/admin/debug/pprof/trace", h.Debug.PprofTrace)
 				})
 			}
 
@@ -729,6 +764,14 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/exif", h.Items.GetEXIF)
 			}
 
+			// Per-user watching-status mirror — Plan to Watch /
+			// Watching / On Hold / Completed / Dropped.
+			if h.WatchStatus != nil {
+				r.Get("/items/{id}/watch-status", h.WatchStatus.Get)
+				r.Put("/items/{id}/watch-status", h.WatchStatus.Put)
+				r.Delete("/items/{id}/watch-status", h.WatchStatus.Delete)
+			}
+
 			// Cross-device "play on this device" remote control.
 			// Devices lists distinct clients the user has scrobbled
 			// from; Transfer broadcasts a `playback.transfer` SSE
@@ -766,9 +809,16 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 
 			// External subtitle search and download (OpenSubtitles, etc.).
+			// Per-user rate limit on search/download — each call hits the
+			// operator's OpenSubtitles quota and is gated by a 1 req/s
+			// upstream limiter; a noisy user could stall the queue for
+			// everyone otherwise. OCR / Delete don't proxy outbound and
+			// stay on the wider SessionLimit.
 			if h.Subtitles != nil {
-				r.Get("/items/{id}/subtitles/search", h.Subtitles.Search)
-				r.Post("/items/{id}/subtitles/download", h.Subtitles.Download)
+				subRL := middleware.RateLimit(h.RateLimiter, middleware.SubtitlesLimit,
+					middleware.SessionKey("ratelimit:subtitles"))
+				r.With(subRL).Get("/items/{id}/subtitles/search", h.Subtitles.Search)
+				r.With(subRL).Post("/items/{id}/subtitles/download", h.Subtitles.Download)
 				r.Post("/items/{id}/subtitles/ocr", h.Subtitles.OCR)
 				r.Get("/items/{id}/subtitles/ocr/{jobId}", h.Subtitles.OCRStatus)
 				r.Delete("/items/{id}/subtitles/{subId}", h.Subtitles.Delete)

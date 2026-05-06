@@ -20,6 +20,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 const baseURL = "https://api.themoviedb.org/3"
@@ -58,7 +59,13 @@ func New(apiKey string, rateLimit int, language string) *Client {
 	}
 	return &Client{
 		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		// safehttp wraps the dialer in a Control hook that rejects
+		// post-resolution loopback / RFC1918 / link-local / metadata
+		// addresses — closes the DNS-rebinding TOCTOU window. Defense
+		// in depth even though api.themoviedb.org resolves to a public
+		// CDN today; cheap to keep on by default for every outbound
+		// fetch the server makes.
+		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 		limiter:    rate.NewLimiter(rate.Limit(rateLimit), rateLimit),
 		language:   language,
 	}

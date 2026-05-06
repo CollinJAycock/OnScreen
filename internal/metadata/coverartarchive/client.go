@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 const defaultBaseURL = "https://coverartarchive.org"
@@ -32,9 +34,12 @@ type Client struct {
 }
 
 // New returns a Client using a shared HTTP client with a 10 s timeout.
+// The HTTP client is wrapped in safehttp so dial-time connections to
+// private / loopback / link-local addresses are refused — defense in
+// depth against DNS rebinding for every public-API client.
 func New() *Client {
 	return &Client{
-		http: &http.Client{Timeout: 10 * time.Second},
+		http: safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 	}
 }
 

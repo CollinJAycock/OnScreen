@@ -26,8 +26,10 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // SAMLSettingsReader is the slice of settings.Service the SAML handler
@@ -82,6 +84,7 @@ type SAMLHandler struct {
 	svc     SAMLAuthService
 	baseURL string
 	logger  *slog.Logger
+	audit   *audit.Logger // optional; nil disables SSO login audit trail
 
 	// tracker overrides the in-memory RequestTracker built lazily in
 	// buildMiddleware. cmd/server installs a Valkey-backed tracker
@@ -101,6 +104,13 @@ type SAMLHandler struct {
 // to construct the ACS + metadata endpoints (e.g. "https://onscreen.example.com").
 func NewSAMLHandler(cfgSrc SAMLSettingsReader, svc SAMLAuthService, baseURL string, logger *slog.Logger) *SAMLHandler {
 	return &SAMLHandler{cfgSrc: cfgSrc, svc: svc, baseURL: baseURL, logger: logger}
+}
+
+// WithAudit attaches an audit logger so successful SAML logins are
+// recorded. Returns the handler for chaining.
+func (h *SAMLHandler) WithAudit(a *audit.Logger) *SAMLHandler {
+	h.audit = a
+	return h
 }
 
 // WithRequestTracker installs a custom samlsp.RequestTracker in place
@@ -234,6 +244,10 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	// version also discarded the refresh token, so even with the correct
 	// name a SAML user would be evicted after the 1h access TTL.
 	setAuthCookies(w, r, tokens)
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &tokens.UserID, audit.ActionLoginSuccess, tokens.Username,
+			map[string]any{"method": "saml"}, audit.ClientIP(r))
+	}
 	// Marker query param so the SPA's layout knows to bootstrap user info
 	// from /api/v1/auth/refresh on first load — without it, the auth gate
 	// at every page checks localStorage.onscreen_user, finds nothing
@@ -381,8 +395,14 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 // crewjam EntityDescriptor that samlsp.New consumes. 30 s timeout —
 // SAML setups are usually inside a corporate network where the IdP
 // is fast, but a flaky link shouldn't hang the OnScreen process.
+//
+// Routed through safehttp so an admin who pastes a malformed IdP URL
+// (or whose admin session is hijacked) can't pivot the metadata fetch
+// at a cloud-metadata service / RFC1918 internal HTTP endpoint. SAML
+// IdPs commonly live inside operator networks; for the genuinely-
+// private-IP case, switch to safehttp.LocalDevice() per-deployment.
 func fetchIdPMetadata(ctx context.Context, idpURL string) (*saml.EntityDescriptor, error) {
-	hc := &http.Client{Timeout: 30 * time.Second}
+	hc := safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, idpURL, nil)
 	if err != nil {
 		return nil, err

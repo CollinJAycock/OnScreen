@@ -36,6 +36,10 @@ type mockPasswordResetDB struct {
 	// MarkResetTokenUsed
 	markUsedErr    error
 	markUsedCalled bool
+	// markUsedNotWon=true simulates "another caller already claimed
+	// this token" — the conditional UPDATE returned 0 rows. Default
+	// (false) means this caller wins the race.
+	markUsedNotWon bool
 
 	// UpdatePassword
 	updatePwErr    error
@@ -67,9 +71,14 @@ func (m *mockPasswordResetDB) GetResetToken(_ context.Context, _ string) (PRToke
 	return m.token, m.tokenErr
 }
 
-func (m *mockPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) error {
+func (m *mockPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) (bool, error) {
 	m.markUsedCalled = true
-	return m.markUsedErr
+	if m.markUsedErr != nil {
+		return false, m.markUsedErr
+	}
+	// Default = won (common case). Tests exercising the race-loser
+	// path set markUsedNotWon=true explicitly.
+	return !m.markUsedNotWon, nil
 }
 
 func (m *mockPasswordResetDB) UpdatePassword(_ context.Context, userID uuid.UUID, hash string) error {
@@ -209,6 +218,12 @@ func TestForgotPassword_UserNotFound(t *testing.T) {
 }
 
 func TestForgotPassword_SMTPNotConfigured(t *testing.T) {
+	// Hardened response shape: SMTP-disabled servers must respond
+	// identically to "user not found" so an unauthenticated probe
+	// can't distinguish "this server has email enabled" from "this
+	// account exists." (Was 400 with a leaky message; now 200 with
+	// the same generic body the success / user-not-found paths
+	// return.)
 	db := &mockPasswordResetDB{}
 	h := newPRHandler(db, disabledSender())
 
@@ -219,12 +234,11 @@ func TestForgotPassword_SMTPNotConfigured(t *testing.T) {
 
 	h.ForgotPassword(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusOK)
 	}
-	env := decodeError(t, rec)
-	if !strings.Contains(env.Error.Message, "not configured") {
-		t.Errorf("unexpected error message: %q", env.Error.Message)
+	if db.createTokenCalled {
+		t.Error("CreateResetToken should NOT be called when SMTP disabled")
 	}
 }
 

@@ -1,6 +1,6 @@
 # OnScreen vs Plex / Emby / Jellyfin
 
-**Snapshot:** 2026-05-04 against v2.1.1-dev (server v2.1.0 tagged; Play Store internal-testing track active for the Android TV client).
+**Snapshot:** 2026-05-05 against v2.1.1-dev on `main` (server v2.1.0 tagged; v2.2 anime track landed 2026-05-04 ahead of the v2.2 cut; Play Store internal-testing track active for the Android TV client).
 
 **Legend** — ✅ in core · 💎 paid tier · 🧩 official plugin · ⚠ partial · ❌ not supported
 
@@ -14,6 +14,7 @@
 | ------------------------------------------- | :------: | :--: | :--: | :------: |
 | Live TV                                     |    ✅    |  💎  |  💎  |    ✅    |
 | DVR                                         |    ✅    |  💎  |  💎  |    ✅    |
+| Anime library type (AniList primary)        |    ✅    |  ❌  |  🧩  |    🧩    |
 | Books / comics (CBZ + CBR + EPUB)           |    ✅    |  ❌  |  ⚠   |    ⚠    |
 | Audiobook author / series hierarchy         |    ✅    |  ⚠   |  ⚠   |    ⚠    |
 | Music videos (typed)                        |    ✅    |  ✅  |  ✅  |    ✅    |
@@ -22,6 +23,8 @@
 | Podcasts (RSS subscription)                 |    ❌    |  ✅  |  ❌  |    🧩    |
 
 OnScreen native books reader handles all three formats with one in-browser UI (image-page mode for CBZ/CBR; epub.js for EPUB with reflowable pagination). Audiobooks: full `book_author → book_series → audiobook → audiobook_chapter` schema with multi-file resume snapping to chapter boundary, embedded cover serving, and author/series detail pages on every native client.
+
+Anime is a first-class library type — AniList runs primary instead of fallback, with a per-season franchise walk that maps "Show / Season 2 / Season 3" on disk onto the distinct AniList Media rows (the cours that AniList tracks separately). Episode metadata falls through TMDB → TVDB → AniList streamingEpisodes so unmainstream / unlicensed shows still land titles + thumbnails, and a watching-status mirror (Plan to Watch / Watching / Completed / On Hold / Dropped) ships with the track. Plex has no anime-aware path; Emby and Jellyfin rely on community plugins (Shoko, jellyfin-plugin-anime) that vary in upstream-source coverage.
 
 ---
 
@@ -37,10 +40,16 @@ OnScreen native books reader handles all three formats with one in-browser UI (i
 | AV1 encode (QSV, Arc / Xe2)                        |    ✅    |  💎  |  ❌  |    ⚠    |
 | HDR → SDR tonemap                                  |    ✅    |  💎  |  💎  |    ✅    |
 | Subtitle burn-in (PGS / VOBSUB)                    |    ✅    |  ✅  |  ✅  |    ✅    |
+| Subtitle OCR (PGS / VOBSUB → text WebVTT)          |    ✅    |  ❌  |  ❌  |    ⚠    |
+| Trickplay sprite sheets (BIF-shape)                |    ✅    |  💎  |  💎  |    ✅    |
+| fMP4 HLS for HEVC + AV1 (vs MPEG-TS)               |    ✅    |  ✅  |  ✅  |    ✅    |
+| Adaptive bitrate ladder (multi-rendition HLS)      |    ❌    |  ✅  |  ✅  |    ✅    |
 | Multi-worker fleet (separate worker binary)        |    ✅    |  ❌  |  ❌  |    ❌    |
 | Per-session supersede (one stream per user / item) |    ✅    |  ✅  |  ⚠   |    ⚠    |
 
 VAAPI is the last encoder family pending hardware validation — TrueNAS GPU box is NVIDIA-only, an Intel Arc test rig is in the v2.1 backlog. AV1 NVENC was end-to-end-validated 2026-04-30 on RTX 5080. AMD AV1 encode requires an RDNA3 dGPU (Ryzen 9900X iGPU's RDNA2 VCN3 doesn't have an AV1 encoder block).
+
+OnScreen runs Tesseract on PGS / VOBSUB / DVB / XSUB streams and persists the results as `external_subtitles` rows so every client gets text-based playback (smaller bandwidth, restyleable, searchable) rather than burning the bitmap into the video stream. Plex and Emby only do burn-in; Jellyfin has community-plugin OCR. Trickplay generates 10-per-row sprite sheets at 10 s intervals with WebVTT `xywh` cues — same shape Plex Pass / Emby Premiere ship paid; OnScreen ships in core.
 
 ---
 
@@ -89,14 +98,35 @@ Plex and Emby gate the entire Live TV / DVR feature set behind paid tiers (Plex 
 | Recently Added per library                         |    ✅    |  ✅  |  ✅  |    ✅    |
 | Trending row (rolling watch_events aggregate)      |    ✅    |  ✅  |  ✅  |    ❌    |
 | Smart playlists (rule-based, query-time eval)      |    ✅    |  ⚠   |  ✅  |    ⚠    |
+| Auto-genre collections (rule-based)                |    ✅    |  ✅  |  ✅  |    ⚠    |
+| Intro / credits auto-detection (AcoustID-FP)       |    ✅    |  💎  |  🧩  |    🧩    |
 | In-app TMDB discover + request                     |    ✅    |  ❌  |  ❌  |    ❌    |
 | "Because you watched X" / personalised row         |    ❌    |  ✅  |  ✅  |    ❌    |
 
-OnScreen's home hub serves the request flow inline — no Overseerr / Ombi / Jellyseerr companion needed. The personalised row was scaffolded (item-to-item collaborative filtering) but pulled before release because it didn't earn the home-hub real estate; trending stays.
+OnScreen's home hub serves the request flow inline — no Overseerr / Ombi / Jellyseerr companion needed. The personalised row was scaffolded (item-to-item collaborative filtering) but pulled before release because it didn't earn the home-hub real estate; trending stays. Intro / credits detection runs `fpcalc` (AcoustID) over a 600 s leading window to find the shared intro fingerprint across episodes of a season, plus `ffmpeg blackdetect` over the trailing 360 s for the credits boundary; both are stored as chapter rows and exposed via `GET /items/{id}` so clients can render skip buttons. Plex Pass ships this as "Intro & Credit Markers"; Emby + Jellyfin lean on the community Intro Skipper plugin.
 
 ---
 
-## 6. User management & auth
+## 6. Playback & client UX
+
+| Feature                                            | OnScreen | Plex | Emby | Jellyfin |
+| -------------------------------------------------- | :------: | :--: | :--: | :------: |
+| Skip intro / skip credits button on player         |    ⚠    |  💎  |  🧩  |    🧩    |
+| Sleep timer                                        |    ❌    |  ✅  |  ✅  |    ✅    |
+| On-screen subtitle styling (font/size/color)       |    ❌    |  ✅  |  ✅  |    ✅    |
+| Chromecast / Google Cast                           |    ❌    |  ✅  |  ✅  |    ✅    |
+| AirPlay                                            |    ❌    |  ✅  |  ✅  |    ⚠    |
+| DLNA / UPnP server                                 |    ❌    |  ✅  |  ✅  |    ✅    |
+| Mobile offline downloads                           |    ❌    |  💎  |  💎  |    ✅    |
+| Sync watch / watch parties                         |    ❌    |  ❌  |  ❌  |    ✅    |
+| Last.fm / ListenBrainz scrobbling                  |    ❌    |  ⚠   |  🧩  |    🧩    |
+| Chapter markers + skip targets                     |    ✅    |  ✅  |  ✅  |    ✅    |
+
+Detection-side intro / credits is shipped (see section 5) but the player-side "Skip intro" button isn't wired into the web client yet — clients consume the chapter rows server-side, the UX surface is the open item. Most of the rest in this section are real trails: ABR ladder, Cast, AirPlay, DLNA, mobile downloads, and SyncPlay-style watch parties are all areas competitors are ahead. None are scheduled for v2.2.
+
+---
+
+## 7. User management & auth
 
 | Feature                                                       | OnScreen | Plex | Emby | Jellyfin |
 | ------------------------------------------------------------- | :------: | :--: | :--: | :------: |
@@ -116,7 +146,7 @@ OIDC + OAuth + SAML + LDAP are all core, no plugin install. The per-file stream 
 
 ---
 
-## 7. Native clients
+## 8. Native clients
 
 Per-platform status. ✅ here means "shipped to a real distribution channel and exercised on hardware"; ⚠ means code-complete but not yet hardware-verified or in soak.
 
@@ -137,7 +167,7 @@ OnScreen's Android TV / Fire TV client is on Play Store internal testing as of 2
 
 ---
 
-## 8. Admin & observability
+## 9. Admin & observability
 
 | Feature                                          | OnScreen | Plex | Emby | Jellyfin |
 | ------------------------------------------------ | :------: | :--: | :--: | :------: |
@@ -154,7 +184,7 @@ OnScreen ships an OTel + Prometheus + audit-log stack as core; competitors eithe
 
 ---
 
-## 9. Security & privacy
+## 10. Security & privacy
 
 | Feature                                            | OnScreen | Plex | Emby | Jellyfin |
 | -------------------------------------------------- | :------: | :--: | :--: | :------: |
@@ -169,7 +199,7 @@ Plex requires a plex.tv account for sign-in even on a self-hosted server. OnScre
 
 ---
 
-## 10. Storage & infrastructure
+## 11. Storage & infrastructure
 
 | Feature                                            | OnScreen   | Plex   | Emby   | Jellyfin |
 | -------------------------------------------------- | :--------: | :----: | :----: | :------: |
@@ -185,7 +215,7 @@ PostgreSQL-native is the foundational architecture choice — partitioned `watch
 
 ---
 
-## 11. Plugins & extensibility
+## 12. Plugins & extensibility
 
 | Feature                                            | OnScreen | Plex | Emby | Jellyfin |
 | -------------------------------------------------- | :------: | :--: | :--: | :------: |
@@ -198,7 +228,7 @@ OnScreen plugins are MCP servers OnScreen calls out to (outbound MCP). Inbound M
 
 ---
 
-## 12. License
+## 13. License
 
 | Feature                                | OnScreen   | Plex        | Emby                          | Jellyfin |
 | -------------------------------------- | :--------: | :---------: | :---------------------------: | :------: |
@@ -214,6 +244,10 @@ OnScreen plugins are MCP servers OnScreen calls out to (outbound MCP). Inbound M
 - **Modern auth out of the box** — OIDC, OAuth, SAML, LDAP, PASETO; competitors require plugins or paid tiers for most of these.
 - **Native bit-perfect audio engine on Windows** — WASAPI exclusive + DSD-via-DoP + ReplayGain enforcement, shipped today. Plex Pass has it in Plexamp; Emby and Jellyfin don't ship a bit-perfect path.
 - **All three book formats native** — CBZ + CBR + EPUB, one reader UI, no plugin install.
+- **Anime as a typed library** — AniList primary metadata, per-season franchise walk that maps on-disk seasons onto distinct AniList cours, TMDB → TVDB → AniList episode-fallback chain, watching-status mirror. No competitor ships this in core; Plex has nothing, Emby and Jellyfin rely on community plugins.
+- **Subtitle OCR in core** — bitmap subtitle streams (PGS / VOBSUB / DVB / XSUB) get Tesseract'd to text WebVTT and persisted; every client gets restyleable, smaller, searchable subs without re-encoding the video. Plex and Emby only do burn-in; Jellyfin needs a community plugin.
+- **Trickplay sprite sheets in core** — BIF-shape `xywh`-cued WebVTT thumbnails out of the box, no Plex Pass / Emby Premiere gate.
+- **Intro / credits auto-detection in core** — AcoustID fingerprinting + blackdetect, exposed as chapter rows. Plex Pass ships this paid; Emby and Jellyfin lean on community plugins.
 - **First-class observability** — OTel tracing, Prometheus, audit log, structured logs with trace IDs, schema-gated readiness probe — without a premium tier.
 - **In-app discover + request** — TMDB discover and request workflow ship in the search page; competitors require Overseerr / Ombi / Jellyseerr.
 - **User-owned home-video metadata** — edits rename the file on disk and stamp the mtime, so user-supplied titles travel across tools instead of being locked into one app's database.
@@ -229,6 +263,13 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **ML-driven personalised recommendations** *(vs Plex / Emby)*. Item-to-item collaborative filtering shipped and was pulled — the row didn't earn its space; trending row stays. Pgvector embedding pipeline never landed.
 - **TV-client hardware soak** *(vs all three)*. Code-complete on every platform; Android TV / Fire TV is hardware-verified. webOS / Tizen / Roku / Android phone need real-device soak before Plex-class confidence.
 - **VAAPI hardware encode validation** *(vs Plex / Emby paid tiers; Jellyfin core)*. Three of four encoder families validated on real hardware. VAAPI needs a Linux + non-NVIDIA GPU rig the project doesn't yet have.
+- **Adaptive bitrate HLS ladder** *(vs all three)*. OnScreen transcodes a single rendition per session and lets the operator-side bandwidth profile pick. Multi-rendition variant playlists with bandwidth-aware client switching are absent.
+- **Cast / AirPlay / DLNA out** *(vs all three)*. None of the three protocols is wired — Cast and AirPlay receivers don't see OnScreen, and there's no UPnP/DLNA server for legacy renderers. Browser-only "play here" today.
+- **Mobile offline downloads** *(vs Plex Pass / Emby Premiere / Jellyfin)*. No download-for-offline flow on any client.
+- **Sync-watch / watch parties** *(vs Jellyfin SyncPlay)*. Plex retired Watch Together; Emby has nothing native. Jellyfin's SyncPlay is the only differentiated one and OnScreen doesn't match it.
+- **Subtitle styling controls** *(vs all three)*. OCR-derived WebVTT is restyleable in principle, but the player UI doesn't expose font / size / colour / outline pickers yet.
+- **Sleep timer** *(vs all three)*. Trivial UX feature, easy to add when the player UI gets a polish pass.
+- **Last.fm / ListenBrainz scrobbling** *(vs community plugins on the others)*. Listen events live in `watch_events`; a one-way scrobble exporter would close this without much work.
 
 ---
 

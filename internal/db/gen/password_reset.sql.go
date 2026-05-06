@@ -57,11 +57,23 @@ func (q *Queries) GetPasswordResetToken(ctx context.Context, tokenHash string) (
 	return i, err
 }
 
-const markPasswordResetTokenUsed = `-- name: MarkPasswordResetTokenUsed :exec
-UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1
+const markPasswordResetTokenUsed = `-- name: MarkPasswordResetTokenUsed :execrows
+UPDATE password_reset_tokens
+   SET used_at = NOW()
+ WHERE id = $1 AND used_at IS NULL
 `
 
-func (q *Queries) MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markPasswordResetTokenUsed, id)
-	return err
+// Conditional UPDATE so two concurrent submissions of the same reset
+// token can't both pass the GetPasswordResetToken check and run
+// UpdatePassword last-write-wins. The first request wins (rows=1);
+// the second sees rows=0 and the handler bails before mutating
+// credentials. Run as the FIRST step of reset, before UpdatePassword,
+// so a race between two attackers (or a buggy retry) doesn't leave
+// the password in a half-changed state.
+func (q *Queries) MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markPasswordResetTokenUsed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

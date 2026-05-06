@@ -48,23 +48,35 @@ type webhookMediaDB interface {
 // unbounded memory/goroutine growth under heavy webhook load.
 const maxConcurrentDeliveries = 20
 
+// maxConcurrentDispatches caps the OUTER Dispatch goroutines (the
+// per-event fan-outs that read endpoints + build the payload). Without
+// this, a mass-import scan that fires 5,000 `library.scan.complete` /
+// `item.added` events back-to-back stacks 5,000 outer goroutines —
+// each holding a 30 s context and an endpoint-list query — even
+// though delivery itself is bounded by maxConcurrentDeliveries. 50
+// is enough headroom for normal traffic; 51st event briefly blocks
+// the producer (scanner / API), which is fine — they're not in a
+// hot path.
+const maxConcurrentDispatches = 50
+
 // WebhookDispatcher delivers webhook events asynchronously to all subscribed
 // endpoints. If a PluginNotifier is attached via WithPluginNotifier, every
 // dispatched event is also fanned out to the registered notification plugins;
 // the two paths are independent (a webhook delivery failure does not affect
 // plugin delivery, and vice versa).
 type WebhookDispatcher struct {
-	db       webhookDeliveryDB
-	media    webhookMediaDB
-	enc      *auth.Encryptor
-	server   WebhookServerInfo
-	client   *http.Client
-	logger   *slog.Logger
-	sem      chan struct{} // concurrency limiter for delivery goroutines
-	wg       sync.WaitGroup
-	ctx      context.Context // cancelled on Close to interrupt retries
-	cancel   context.CancelFunc
-	plugins  PluginNotifier
+	db        webhookDeliveryDB
+	media     webhookMediaDB
+	enc       *auth.Encryptor
+	server    WebhookServerInfo
+	client    *http.Client
+	logger    *slog.Logger
+	sem       chan struct{} // concurrency limiter for delivery goroutines
+	dispatchSem chan struct{} // concurrency limiter for outer Dispatch fan-outs
+	wg        sync.WaitGroup
+	ctx       context.Context // cancelled on Close to interrupt retries
+	cancel    context.CancelFunc
+	plugins   PluginNotifier
 }
 
 // NewWebhookDispatcher creates a WebhookDispatcher.
@@ -81,9 +93,13 @@ func NewWebhookDispatcher(
 		media:  media,
 		enc:    enc,
 		server: server,
-		client: &http.Client{Timeout: 10 * time.Second, Transport: webhook.SafeTransport()},
-		logger: logger,
-		sem:    make(chan struct{}, maxConcurrentDeliveries),
+		// SafeClient = SafeTransport (private-IP block at dial time) +
+		// CheckRedirect rejecting 3xx so a receiver can't bounce the
+		// signed POST body to an unapproved host.
+		client:      webhook.SafeClient(10 * time.Second),
+		logger:      logger,
+		sem:         make(chan struct{}, maxConcurrentDeliveries),
+		dispatchSem: make(chan struct{}, maxConcurrentDispatches),
 		ctx:    ctx,
 		cancel: cancel,
 	}
@@ -104,9 +120,18 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 		d.plugins.Dispatch(d.buildPluginEvent(eventType, userID, mediaID))
 	}
 
+	// Acquire an outer-dispatch slot before spawning the goroutine.
+	// Without this cap, a mass-event burst (5000 item.added during
+	// a library import) would spawn 5000 outer goroutines holding
+	// 30 s contexts each — bounded by inner sem at delivery time
+	// but unbounded at fan-out time. dispatchSem briefly blocks the
+	// producer (scanner / API) when too many dispatches are in
+	// flight, applying backpressure where it belongs.
+	d.dispatchSem <- struct{}{}
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
+		defer func() { <-d.dispatchSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 

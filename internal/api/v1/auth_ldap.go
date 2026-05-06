@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/safehttp"
@@ -65,11 +66,19 @@ type LDAPHandler struct {
 	cfgSrc LDAPSettingsReader
 	svc    LDAPAuthService
 	logger *slog.Logger
+	audit  *audit.Logger // optional; nil disables LDAP login audit trail
 }
 
 // NewLDAPHandler creates a handler.
 func NewLDAPHandler(cfgSrc LDAPSettingsReader, svc LDAPAuthService, logger *slog.Logger) *LDAPHandler {
 	return &LDAPHandler{cfgSrc: cfgSrc, svc: svc, logger: logger}
+}
+
+// WithAudit attaches an audit logger so successful LDAP logins are
+// recorded. Returns the handler for chaining.
+func (h *LDAPHandler) WithAudit(a *audit.Logger) *LDAPHandler {
+	h.audit = a
+	return h
 }
 
 // Enabled reports whether LDAP login is configured. Drives the login form.
@@ -119,6 +128,10 @@ func (h *LDAPHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setAuthCookies(w, r, pair)
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &pair.UserID, audit.ActionLoginSuccess, pair.Username,
+			map[string]any{"method": "ldap"}, audit.ClientIP(r))
+	}
 	respond.Success(w, r, pair)
 }
 
@@ -190,7 +203,17 @@ func (s *ldapAuthService) LoginLDAP(ctx context.Context, username, password stri
 		// Ambiguous filter — log server-side, but return invalid-credentials to
 		// the client so a misconfigured filter can't be used to enumerate the
 		// directory via behaviour diff vs. "user not found".
-		s.logger.Warn("ldap: ambiguous filter — refusing login", "matches", len(res.Entries), "filter", filter)
+		//
+		// Log only the unfilled filter template, not the user-supplied
+		// username. The earlier version logged both, which meant operator
+		// log archives accumulated raw attempted usernames — leaking
+		// exactly the credential half a brute-force attacker already
+		// knows. filter_template + matches is enough for the operator
+		// to diagnose a misconfigured filter; correlating to a specific
+		// username can be done via access-log timestamps if needed.
+		s.logger.Warn("ldap: ambiguous filter — refusing login",
+			"matches", len(res.Entries),
+			"filter_template", cfg.UserFilter)
 		return nil, ErrLDAPInvalidCredentials
 	}
 	entry := res.Entries[0]

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -396,8 +397,18 @@ type ItemDetailResponse struct {
 	// right show/movie" step and drop straight into the poster
 	// variants list. Omitempty keeps payloads small for items that
 	// haven't been enriched yet.
-	TMDBID *int `json:"tmdb_id,omitempty"`
-	TVDBID *int `json:"tvdb_id,omitempty"`
+	TMDBID    *int    `json:"tmdb_id,omitempty"`
+	TVDBID    *int    `json:"tvdb_id,omitempty"`
+	AniListID *int    `json:"anilist_id,omitempty"`
+	MalID     *int    `json:"mal_id,omitempty"`
+	// Kind is the per-row subtype within `episode` — `episode` (default,
+	// nil), `ova`, `ona`, `special`, or `movie`. Anime libraries surface
+	// non-default kinds as a badge on the episode list.
+	Kind *string `json:"kind,omitempty"`
+	// ReadingDirection: `ltr` | `rtl` | `ttb`. Manga / book reader uses
+	// it to flip page-flip orientation. Nil leaves the reader to pick
+	// based on library type (manga → rtl, everything else → ltr).
+	ReadingDirection *string `json:"reading_direction,omitempty"`
 
 	// Music-specific fields. Empty/nil for non-music items.
 	MusicBrainzID             *string `json:"musicbrainz_id,omitempty"`
@@ -424,6 +435,11 @@ type ChildItemResponse struct {
 	PosterPath   *string   `json:"poster_path,omitempty"`
 	ThumbPath    *string   `json:"thumb_path,omitempty"`
 	Index        *int      `json:"index,omitempty"`
+	// Kind surfaces episode subtype (`ova`, `ona`, `special`, `movie`)
+	// so the UI can show an OVA / Special badge on the episode list.
+	// Nil for ordinary episodes; the web client treats absent + "episode"
+	// the same.
+	Kind         *string   `json:"kind,omitempty"`
 	ViewOffsetMS int64     `json:"view_offset_ms"`
 	Watched      bool      `json:"watched"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -521,6 +537,10 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	out.TMDBID = item.TMDBID
 	out.TVDBID = item.TVDBID
+	out.AniListID = item.AniListID
+	out.MalID = item.MalID
+	out.Kind = item.Kind
+	out.ReadingDirection = item.ReadingDirection
 	out.MusicBrainzID = uuidPtrToStringPtr(item.MusicBrainzID)
 	out.MusicBrainzReleaseID = uuidPtrToStringPtr(item.MusicBrainzReleaseID)
 	out.MusicBrainzReleaseGroupID = uuidPtrToStringPtr(item.MusicBrainzReleaseGroupID)
@@ -891,6 +911,7 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 			PosterPath:   c.PosterPath,
 			ThumbPath:    c.ThumbPath,
 			Index:        c.Index,
+			Kind:         c.Kind,
 			ViewOffsetMS: viewOffsetMS,
 			Watched:      watched,
 			CreatedAt:    c.CreatedAt,
@@ -1572,8 +1593,8 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.audit != nil {
 		actor := claims.UserID
-		h.audit.Log(r.Context(), &actor, audit.ActionItemMatchApply, id.String(),
-			map[string]any{"action": "soft_delete_subtree"}, audit.ClientIP(r))
+		h.audit.Log(r.Context(), &actor, audit.ActionItemDelete, id.String(),
+			map[string]any{"mode": "soft_delete_subtree"}, audit.ClientIP(r))
 	}
 	if err := h.deleter.SoftDeleteSubtree(r.Context(), id); err != nil {
 		h.logger.ErrorContext(r.Context(), "soft delete subtree", "id", id, "err", err)
@@ -1581,6 +1602,130 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.NoContent(w)
+}
+
+// DownloadFile handles GET /media/download/{id}. Same auth + ACL + content-
+// rating check as StreamFile, but adds a Content-Disposition: attachment
+// header so the browser triggers save-as instead of inline playback. Used
+// by the "Download" button on the item detail page so users can save a
+// direct-play file for offline viewing on a flight or commute.
+//
+// V1 scope: serves the original file bytes only. Transcoded-for-download
+// (re-encode to a smaller / device-specific format) is a separate feature
+// — that path needs a quality picker, format selection, and a job queue
+// because re-encoding hours of video is not a single round-trip operation.
+//
+// The download token / auth posture matches StreamFile: cookies for the
+// browser path, `?token=<stream_token>` for clients that can't carry
+// cookies (mobile webview download manager). The 24h stream token TTL is
+// long enough for a slow phone download to finish without re-auth.
+func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid file id")
+		return
+	}
+
+	file, err := h.media.GetFile(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get file for download", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if file.Status != "active" {
+		respond.NotFound(w, r)
+		return
+	}
+
+	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get item for download", "file_id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+		return
+	}
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.Forbidden(w, r)
+			return
+		}
+	}
+
+	// Build a friendly filename from the item title — falls back to
+	// the on-disk basename when the title is empty so the user always
+	// gets a non-empty name. Sanitised so a malicious title can't
+	// inject quote / CRLF into the header (RFC 6266 §4.3).
+	dispositionFilename := downloadFilename(item.Title, file.FilePath)
+
+	// Content-Disposition with both `filename` (ASCII fallback) and
+	// `filename*` (UTF-8) so titles with non-ASCII characters survive
+	// the round-trip on every browser.
+	w.Header().Set(
+		"Content-Disposition",
+		`attachment; filename="`+dispositionFilename+`"; filename*=UTF-8''`+url.PathEscape(dispositionFilename),
+	)
+	// Tell the browser this is a binary blob, not something to render
+	// inline. The exact MIME doesn't matter for save-as — application/
+	// octet-stream is the universal "treat as opaque" hint.
+	w.Header().Set("Content-Type", "application/octet-stream")
+
+	// Same WriteTimeout reset as StreamFile — large downloads shouldn't
+	// be capped by the JSON-handler 60 s ceiling.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
+
+	http.ServeFile(w, r, file.FilePath)
+}
+
+// downloadFilename builds an attachment filename. Prefers the item
+// title (so "The Movie.mkv" beats "f1c93e.mkv"), strips characters
+// that aren't safe in a Content-Disposition value, and appends the
+// on-disk extension so the user's OS picks the right opener.
+//
+// Sanitisation rules:
+//   - Strip CR / LF (header injection)
+//   - Strip backslash and quote (would terminate the quoted-string)
+//   - Collapse to printable ASCII for the `filename=` fallback; the
+//     `filename*=UTF-8''<percent-encoded>` form carries the original.
+//   - Cap length at 200 chars so we don't emit pathological headers.
+func downloadFilename(title, sourcePath string) string {
+	ext := filepath.Ext(sourcePath)
+	base := strings.TrimSpace(title)
+	if base == "" {
+		base = strings.TrimSuffix(filepath.Base(sourcePath), ext)
+	}
+	// Reject characters that have meaning inside a quoted-string
+	// header value or that produce ambiguous filenames on Windows /
+	// macOS / Linux. `_` is the universal stand-in.
+	cleaner := strings.NewReplacer(
+		"\r", "", "\n", "",
+		"\"", "", "\\", "",
+		"/", "_", ":", "_",
+		"*", "_", "?", "_", "<", "_", ">", "_", "|", "_",
+	)
+	base = cleaner.Replace(base)
+	if len(base) > 200 {
+		base = base[:200]
+	}
+	if base == "" {
+		base = "download"
+	}
+	return base + ext
 }
 
 // StreamFile handles GET /media/stream/{id}.
