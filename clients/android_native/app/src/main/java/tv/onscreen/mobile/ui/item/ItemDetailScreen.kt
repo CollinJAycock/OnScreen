@@ -160,7 +160,7 @@ class ItemDetailViewModel @Inject constructor(
     }
 
     fun startDownload(fileId: String, itemId: String) {
-        downloads.enqueue(fileId, itemId)
+        viewModelScope.launch { downloads.enqueue(fileId, itemId) }
     }
 
     fun deleteDownload(fileId: String) {

@@ -85,11 +85,17 @@ class PlayerViewModel @Inject constructor(
     private val preferencesRepo: PreferencesRepository,
     private val serverPrefs: ServerPrefs,
     private val subtitlePrefs: SubtitlePrefs,
+    private val playbackPrefs: tv.onscreen.mobile.data.prefs.PlaybackPrefs,
     private val downloads: tv.onscreen.mobile.data.downloads.OnScreenDownloadManager,
     private val notifications: NotificationsRepository,
     private val onlineSubtitles: OnlineSubtitleRepository,
     private val trickplayRepo: TrickplayRepository,
 ) : ViewModel() {
+
+    /** Whether to gate video playback behind a "you're on cellular,
+     *  continue?" confirmation. Reads the user pref; PlayerScreen
+     *  pairs this with a connectivity check before deciding. */
+    suspend fun shouldWarnCellular(): Boolean = playbackPrefs.getWarnOnCellularStream()
 
     /** Per-session sprite-sheet cache. Trickplay sheets are typically
      *  10x10 grids of small JPGs, so the whole movie's worth is just a

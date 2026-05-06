@@ -12,6 +12,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,6 +22,7 @@ import javax.inject.Singleton
 class OnScreenDownloadManager @Inject constructor(
     @ApplicationContext private val context: Context,
     val store: DownloadStore,
+    private val prefs: PlaybackPrefs,
 ) {
     private val wm: WorkManager get() = WorkManager.getInstance(context)
 
@@ -28,8 +30,18 @@ class OnScreenDownloadManager @Inject constructor(
      *  queued work for this file_id is replaced — re-enqueueing acts
      *  as a "retry" when the previous attempt failed. Worker tag =
      *  file_id so callers can observe progress without juggling
-     *  WorkRequest UUIDs. */
-    fun enqueue(fileId: String, itemId: String) {
+     *  WorkRequest UUIDs.
+     *
+     *  When the user has download_on_wifi_only enabled (the default),
+     *  the constraint is NetworkType.UNMETERED so WorkManager defers
+     *  the download until the device leaves cellular. Otherwise any
+     *  connected network qualifies. */
+    suspend fun enqueue(fileId: String, itemId: String) {
+        val networkType = if (prefs.getDownloadOnWifiOnly()) {
+            NetworkType.UNMETERED
+        } else {
+            NetworkType.CONNECTED
+        }
         val req = OneTimeWorkRequestBuilder<DownloadWorker>()
             .setInputData(workDataOf(
                 DownloadWorker.KEY_FILE_ID to fileId,
@@ -37,7 +49,7 @@ class OnScreenDownloadManager @Inject constructor(
             ))
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiredNetworkType(networkType)
                     .build(),
             )
             .addTag(workTag(fileId))

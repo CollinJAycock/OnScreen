@@ -23,6 +23,7 @@ object Routes {
     const val PHOTO = "photo/{id}"
     const val AUTHOR = "author/{id}"
     const val SERIES = "series/{id}"
+    const val SETTINGS = "settings"
 
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"

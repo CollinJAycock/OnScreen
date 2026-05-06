@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import javax.inject.Singleton
 
@@ -17,5 +18,11 @@ object AppModule {
     @Singleton
     fun provideServerPrefs(@ApplicationContext context: Context): ServerPrefs {
         return ServerPrefs(context)
+    }
+
+    @Provides
+    @Singleton
+    fun providePlaybackPrefs(@ApplicationContext context: Context): PlaybackPrefs {
+        return PlaybackPrefs(context)
     }
 }

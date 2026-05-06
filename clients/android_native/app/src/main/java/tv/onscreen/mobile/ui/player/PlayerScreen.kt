@@ -84,6 +84,8 @@ import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.cast.CastMediaInfo
 import tv.onscreen.mobile.cast.CastSender
 import tv.onscreen.mobile.data.prefs.SubtitleStyle
+import tv.onscreen.mobile.playback.ActiveVideoTracker
+import tv.onscreen.mobile.ui.LocalInPipMode
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -97,6 +99,43 @@ fun PlayerScreen(
     val ui by vm.state.collectAsState()
     BackHandler(onBack = onClose)
 
+    // Cellular gate: when the user has warn-on-cellular enabled and
+    // we're on a metered network, block PlayerHost composition until
+    // the user confirms. We do the check once after the source
+    // resolves — connectivity changes mid-playback don't re-prompt
+    // (re-entering the player is the right place for that retry).
+    val context = LocalContext.current
+    var cellularConfirmed by remember { mutableStateOf(false) }
+    var cellularPromptVisible by remember { mutableStateOf(false) }
+    val isVideo = ui.item?.files?.firstOrNull()?.video_codec != null
+    LaunchedEffect(ui.source, isVideo) {
+        if (ui.source != null && isVideo && !cellularConfirmed && !cellularPromptVisible) {
+            if (vm.shouldWarnCellular() && isOnCellular(context)) {
+                cellularPromptVisible = true
+            } else {
+                cellularConfirmed = true
+            }
+        }
+    }
+    if (cellularPromptVisible) {
+        AlertDialog(
+            onDismissRequest = onClose,
+            title = { Text("Stream over cellular?") },
+            text = {
+                Text("You're on a metered connection. Streaming video may use a significant amount of data.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    cellularPromptVisible = false
+                    cellularConfirmed = true
+                }) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = onClose) { Text("Cancel") }
+            },
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -106,6 +145,10 @@ fun PlayerScreen(
         when {
             ui.error != null -> Text(ui.error!!, color = Color.White)
             ui.loading || ui.source == null -> CircularProgressIndicator()
+            // Wait until the user has acknowledged cellular (or it
+            // wasn't applicable). Without this gate, ExoPlayer fires
+            // up + buffers before the dialog renders.
+            isVideo && !cellularConfirmed -> CircularProgressIndicator()
             else -> PlayerHost(
                 itemId = itemId,
                 ui = ui,
@@ -114,6 +157,23 @@ fun PlayerScreen(
                 onNext = onNext,
             )
         }
+    }
+}
+
+/** True when the active default network is cellular (or otherwise
+ *  reports as metered). Used by the cellular-warn gate; falls
+ *  back to false on any error so a misconfigured device doesn't
+ *  see the prompt for every playback. */
+private fun isOnCellular(context: android.content.Context): Boolean {
+    return try {
+        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager ?: return false
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ||
+            !caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    } catch (_: Exception) {
+        false
     }
 }
 
@@ -190,6 +250,23 @@ private fun PlayerHost(
     // Video playback releases the player normally — PiP is the
     // backgrounding affordance for video.
     val isAudioOnly = ui.item?.files?.firstOrNull()?.video_codec == null
+
+    // Tell MainActivity whether to auto-enter PiP on
+    // onUserLeaveHint. We mark "playing" only for video so the
+    // audio path (handled by OnScreenMediaSessionService) doesn't
+    // collapse to a black PiP window when the user navigates home.
+    DisposableEffect(isAudioOnly) {
+        ActiveVideoTracker.set(!isAudioOnly)
+        onDispose { ActiveVideoTracker.set(false) }
+    }
+
+    // PiP mode (set by MainActivity.onPictureInPictureModeChanged
+    // via the LocalInPipMode composition local). When true, hide
+    // every UI affordance — the player surface keeps rendering
+    // because Android composites it into the PiP window directly,
+    // but overlays / dialogs / the built-in controller would just
+    // clutter the floating frame.
+    val inPip = LocalInPipMode.current
     DisposableEffect(player) {
         onDispose {
             if (isAudioOnly && player.playWhenReady && player.duration > 0) {
@@ -332,6 +409,16 @@ private fun PlayerHost(
         playerViewRef.value?.applySubtitleStyle(subtitleStyle)
     }
 
+    // PiP toggles the PlayerView's built-in controller off so the
+    // floating window shows the video frame only. Re-enabling on
+    // exit restores the seek bar / play-pause without a recompose.
+    LaunchedEffect(inPip, playerViewRef.value) {
+        playerViewRef.value?.let { pv ->
+            pv.useController = !inPip
+            if (inPip) pv.hideController()
+        }
+    }
+
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
@@ -369,7 +456,7 @@ private fun PlayerHost(
     // label always shown; bitmap shows once the sprite loads (it's
     // typically near-instant since trickplay sheets are <100 KB JPGs).
     val scrubPreview = ui.scrubPreview
-    if (scrubPreview != null) {
+    if (scrubPreview != null && !inPip) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -405,7 +492,7 @@ private fun PlayerHost(
     // Lyrics overlay. Renders only when the user has toggled it on
     // and the VM has lyrics. Polls the player's currentPosition on a
     // short cadence so synced LRC cues land near the active line.
-    if (showLyrics && (ui.lyricsCues != null || ui.lyricsPlain != null)) {
+    if (showLyrics && (ui.lyricsCues != null || ui.lyricsPlain != null) && !inPip) {
         var positionMs by remember { mutableStateOf(0L) }
         LaunchedEffect(player) {
             while (isActive) {
@@ -424,9 +511,11 @@ private fun PlayerHost(
     // Skip-intro / skip-credits overlay. Polls the player position
     // on a short cadence and shows the button when position lands
     // inside a marker window. Clicking jumps the player past it.
-    SkipMarkerOverlay(player = player, markers = ui.markers, hlsOffsetMs = vm.hlsOffsetMs)
+    if (!inPip) {
+        SkipMarkerOverlay(player = player, markers = ui.markers, hlsOffsetMs = vm.hlsOffsetMs)
+    }
 
-    Row(
+    if (!inPip) Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
@@ -577,10 +666,10 @@ private fun PlayerHost(
         }
 
         // Picture-in-picture only makes sense for video — audio-only
-        // playback gets the (forthcoming) MediaSession service for
-        // backgrounding instead. Gate on resolution_h so audiobooks
-        // and music don't surface a PiP button that would just shrink
-        // the album art.
+        // playback gets OnScreenMediaSessionService for backgrounding
+        // instead (see AudioHandoff.park in the dispose path above).
+        // Gate on video_codec so audiobooks and music don't surface a
+        // PiP button that would just shrink the album art.
         val hasVideo = ui.item?.files?.firstOrNull()?.video_codec != null
         if (hasVideo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             IconButton(onClick = { enterPip(context as? Activity) }) {
@@ -589,7 +678,7 @@ private fun PlayerHost(
         }
     }
 
-    if (showAudioPicker) {
+    if (showAudioPicker && !inPip) {
         AudioPickerDialog(
             streams = ui.audioStreams,
             activeIndex = activeAudioIndex.intValue,
@@ -604,7 +693,7 @@ private fun PlayerHost(
 
     var showOnlineSubtitleSearch by remember { mutableStateOf(false) }
 
-    if (showSubtitlePicker) {
+    if (showSubtitlePicker && !inPip) {
         SubtitlePickerDialog(
             streams = ui.subtitles,
             player = player,
@@ -616,7 +705,7 @@ private fun PlayerHost(
         )
     }
 
-    if (showChapters) {
+    if (showChapters && !inPip) {
         val activeChapters = ui.item?.files?.firstOrNull()?.chapters.orEmpty()
         ChapterPickerDialog(
             chapters = activeChapters,
@@ -632,7 +721,7 @@ private fun PlayerHost(
         )
     }
 
-    if (showSleepTimer) {
+    if (showSleepTimer && !inPip) {
         SleepTimerDialog(
             active = sleepTimer,
             onPick = { mode ->
@@ -643,7 +732,7 @@ private fun PlayerHost(
         )
     }
 
-    if (showSubtitleStyle) {
+    if (showSubtitleStyle && !inPip) {
         SubtitleStyleDialog(
             style = subtitleStyle,
             onSize = vm::setSubtitleSize,
@@ -654,7 +743,7 @@ private fun PlayerHost(
         )
     }
 
-    if (showOnlineSubtitleSearch) {
+    if (showOnlineSubtitleSearch && !inPip) {
         OnlineSubtitleSearchDialog(
             itemId = itemId,
             preferredLang = ui.preferredSubtitleLang,
@@ -666,7 +755,7 @@ private fun PlayerHost(
         )
     }
 
-    if (showUpNext && nextSibling != null) {
+    if (showUpNext && nextSibling != null && !inPip) {
         UpNextOverlay(
             title = nextSibling.title,
             onPlay = { onNext(nextSibling.id) },
