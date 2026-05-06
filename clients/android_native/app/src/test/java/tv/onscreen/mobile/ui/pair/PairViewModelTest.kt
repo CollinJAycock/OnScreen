@@ -203,13 +203,24 @@ class PairViewModelTest {
         coEvery { auth.startPairing() } returns PairCodeResponse(
             pin = "111111", device_token = "tok", expires_at = "2026-01-01T00:00:00Z",
         )
+        // Pending forever — the poll loop never resolves on its own.
+        // We assert the URL surfaces, then call reset() to cancel the
+        // infinite while(true)+delay(2000) loop. Without the reset,
+        // runTest's end-of-body advanceUntilIdle would skip the virtual
+        // delay forever and allocate until OOM.
         coEvery { auth.pollPairing(any()) } returns AuthRepository.PollResult.Pending
 
         val vm = PairViewModel(auth)
         vm.startSsoBridge()
-        advanceUntilIdle()
+        // Drain the immediate work (server-url check + startPairing +
+        // first poll) but do NOT advanceUntilIdle: the polling loop is
+        // unbounded under the Pending stub.
+        dispatcher.scheduler.runCurrent()
+
         assertThat(vm.ssoLaunchUrl.value).isNotNull()
         vm.consumeSsoLaunchUrl()
         assertThat(vm.ssoLaunchUrl.value).isNull()
+
+        vm.reset()
     }
 }
