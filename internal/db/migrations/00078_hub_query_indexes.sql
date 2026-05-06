@@ -1,3 +1,4 @@
+-- +goose Up
 -- Hub-query optimization: drop the 41,515-row skip scan that
 -- ListRecentlyAdded incurred on both per-library and global paths.
 --
@@ -40,3 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_media_items_episodes_recent
 -- Cheap and idempotent, so we run it inline with the index build.
 ANALYZE watch_events;
 ANALYZE media_items;
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_media_items_episodes_lib_recent;
+DROP INDEX IF EXISTS idx_media_items_episodes_recent;
