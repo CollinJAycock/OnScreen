@@ -16,6 +16,8 @@
   import type { RemoteKey } from '$lib/focus/keys';
   import { loadHls } from '$lib/player/hls-loader';
   import { ProgressReporter } from '$lib/player/progress-reporter';
+  import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
+  import type { OnlineSubtitle } from '$lib/api';
 
   const itemID = page.params.id!;
   let video: HTMLVideoElement | undefined = $state();
@@ -92,6 +94,27 @@
   // as a sync event. Track the last position we reported so we can
   // ignore matches within a small window.
   let lastReportedPositionMs = -1;
+
+  // Trickplay scrub-preview state. Cues parsed from the WebVTT
+  // index on mount; null when the item has no sprite sheets
+  // (movies that haven't been processed yet, audio-only items).
+  // The active cue is recomputed reactively from `position`.
+  let trickplayCues = $state<TrickplayCue[]>([]);
+  const trickplayCue = $derived(
+    trickplayCues.length > 0 ? findCue(trickplayCues, position) : null,
+  );
+
+  // Online subtitle search overlay. Opened from the subtitle
+  // picker via "Find more online…" — searches OpenSubtitles via
+  // the server, lets the user download a pick, and reloads the
+  // item so the new external_subtitle row surfaces in
+  // subtitle_streams.
+  let onlineSubsOpen = $state(false);
+  let onlineSubsLoading = $state(false);
+  let onlineSubsResults = $state<OnlineSubtitle[]>([]);
+  let onlineSubsCursor = $state(0);
+  let onlineSubsError = $state('');
+  let onlineSubsDownloading = $state(false);
 
   function showControls() {
     controlsVisible = true;
@@ -223,9 +246,18 @@
   }
 
   function pickerKey(k: RemoteKey): boolean {
+    // Online-subtitle overlay takes priority — runs its own cursor
+    // separate from the local-track picker because it has its own
+    // open/close lifecycle (search → results → download).
+    if (onlineSubsOpen) return onlineSubsKey(k);
     if (!audioPickerOpen && !subtitlePickerOpen) return false;
     if (k === 'back') { closePickers(); return true; }
-    const len = audioPickerOpen ? audioStreams.length : subtitleStreams.length + 1;
+    // Subtitle picker rows: Off (0), each stream (1..N), then a
+    // synthetic "Find more online…" row. The picker doesn't gate on
+    // the OpenSubtitles probe — `search` returns an empty list when
+    // the server isn't configured for it, falling through harmlessly.
+    const subtitleLen = subtitleStreams.length + 1 + 1; // +Off, +FindMore
+    const len = audioPickerOpen ? audioStreams.length : subtitleLen;
     if (k === 'up') {
       pickerCursor = (pickerCursor - 1 + len) % len;
       return true;
@@ -240,14 +272,96 @@
         if (stream && pickerCursor !== activeAudioIndex) {
           void switchAudioStream(stream.index, pickerCursor);
         }
+        closePickers();
       } else {
+        const findMoreIdx = subtitleStreams.length + 1;
+        if (pickerCursor === findMoreIdx) {
+          closePickers();
+          openOnlineSubtitleSearch();
+          return true;
+        }
         // pickerCursor === 0 is the synthetic "Off" row.
         applySubtitleSelection(pickerCursor === 0 ? -1 : pickerCursor - 1);
+        closePickers();
       }
-      closePickers();
       return true;
     }
     return false;
+  }
+
+  // ── Online subtitle search ─────────────────────────────────────────
+
+  async function openOnlineSubtitleSearch() {
+    onlineSubsOpen = true;
+    onlineSubsCursor = 0;
+    onlineSubsError = '';
+    onlineSubsLoading = true;
+    onlineSubsResults = [];
+    showControls();
+    try {
+      // No lang filter — the server enriches the query with the
+      // item's title / year / IMDB id internally.
+      onlineSubsResults = await endpoints.onlineSubtitles.search(itemID);
+    } catch (e) {
+      onlineSubsError = (e as Error).message ?? 'Search failed';
+    } finally {
+      onlineSubsLoading = false;
+    }
+  }
+
+  function closeOnlineSubtitleSearch() {
+    onlineSubsOpen = false;
+    onlineSubsResults = [];
+    onlineSubsError = '';
+    onlineSubsCursor = 0;
+  }
+
+  function onlineSubsKey(k: RemoteKey): boolean {
+    if (k === 'back') { closeOnlineSubtitleSearch(); return true; }
+    if (onlineSubsLoading || onlineSubsDownloading) return true;
+    const len = onlineSubsResults.length;
+    if (len === 0) return true;
+    if (k === 'up') { onlineSubsCursor = (onlineSubsCursor - 1 + len) % len; return true; }
+    if (k === 'down') { onlineSubsCursor = (onlineSubsCursor + 1) % len; return true; }
+    if (k === 'enter') {
+      const pick = onlineSubsResults[onlineSubsCursor];
+      if (pick) void downloadOnlineSubtitle(pick);
+      return true;
+    }
+    return false;
+  }
+
+  async function downloadOnlineSubtitle(pick: OnlineSubtitle) {
+    if (!item) return;
+    const file = item.files[0];
+    if (!file) return;
+    onlineSubsDownloading = true;
+    onlineSubsError = '';
+    try {
+      await endpoints.onlineSubtitles.download(itemID, file.id, pick);
+      // Re-fetch the item so the fresh external_subtitle row shows
+      // up in subtitle_streams. We don't auto-select since track-
+      // ordering can shuffle once the new entry lands.
+      const refreshed = await endpoints.items.get(itemID);
+      item = refreshed;
+      closeOnlineSubtitleSearch();
+    } catch (e) {
+      onlineSubsError = (e as Error).message ?? 'Download failed';
+    } finally {
+      onlineSubsDownloading = false;
+    }
+  }
+
+  async function loadTrickplay() {
+    // Item might not have trickplay generated yet (background
+    // worker hasn't processed it, or it's audio-only). Either way,
+    // leaving cues empty just suppresses the preview.
+    try {
+      const vtt = await endpoints.items.trickplayVtt(itemID);
+      if (vtt) trickplayCues = parseVtt(vtt);
+    } catch {
+      /* leave empty */
+    }
   }
 
   // Re-issue the active transcode session with a new
@@ -490,6 +604,7 @@
         // button, no Up Next means natural EOS exits).
         void loadMarkers();
         void loadNextSibling();
+        void loadTrickplay();
         startSyncStream();
 
         const file = item.files[0];
@@ -653,6 +768,42 @@
           {s.language || 'und'}{#if s.forced}{' · forced'}{/if}{#if s.title}{` · ${s.title}`}{/if}
         </div>
       {/each}
+      <div class="picker-row picker-row-action"
+           class:active={pickerCursor === subtitleStreams.length + 1}>
+        Find more online…
+      </div>
+    </div>
+  {/if}
+
+  {#if onlineSubsOpen}
+    <div class="picker online-subs">
+      <div class="picker-title">Online subtitles</div>
+      {#if onlineSubsLoading}
+        <div class="picker-row">Searching…</div>
+      {:else if onlineSubsError}
+        <div class="picker-row picker-row-error">{onlineSubsError}</div>
+      {:else if onlineSubsResults.length === 0}
+        <div class="picker-row">No results — Back to close.</div>
+      {:else}
+        {#each onlineSubsResults as r, i (r.provider_file_id)}
+          <div class="picker-row" class:active={onlineSubsCursor === i}>
+            <div class="online-sub-line">
+              <span class="online-sub-lang">{r.language || 'und'}</span>
+              <span class="online-sub-name">{r.file_name}</span>
+            </div>
+            <div class="online-sub-meta">
+              {#if r.from_trusted}<span>trusted</span>{/if}
+              {#if r.hd}<span>hd</span>{/if}
+              {#if r.hearing_impaired}<span>SDH</span>{/if}
+              {#if r.download_count}<span>{r.download_count.toLocaleString()} dl</span>{/if}
+              {#if r.uploader_name}<span>by {r.uploader_name}</span>{/if}
+            </div>
+          </div>
+        {/each}
+      {/if}
+      {#if onlineSubsDownloading}
+        <div class="picker-row">Downloading…</div>
+      {/if}
     </div>
   {/if}
 
@@ -684,6 +835,24 @@
                 <div class="chapter-marker" style="left: {(ch.start_ms / duration) * 100}%"></div>
               {/if}
             {/each}
+            {#if trickplayCue && duration > 0}
+              <!-- Sprite-cropped scrub preview. The element sized to
+                   (w, h) reveals only the cue's region of the parent
+                   sprite via background-position. Anchored to the
+                   track so the percent-based `left` lands on the
+                   playhead regardless of surrounding layout. -->
+              <div
+                class="trickplay-preview"
+                style="
+                  left: {progressPct}%;
+                  width: {trickplayCue.w}px;
+                  height: {trickplayCue.h}px;
+                  margin-left: -{trickplayCue.w / 2}px;
+                  background-image: url({endpoints.items.trickplaySpriteUrl(itemID, trickplayCue.spritePath)});
+                  background-position: -{trickplayCue.x}px -{trickplayCue.y}px;
+                "
+              ></div>
+            {/if}
           </div>
           <div class="remaining">{fmt(duration - position)}</div>
         </div>
@@ -857,6 +1026,68 @@
   }
   .picker-row.current:not(.active) {
     color: var(--accent);
+  }
+  .picker-row-action {
+    margin-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 12px;
+    font-style: italic;
+    color: var(--text-secondary);
+  }
+  .picker-row-action.active {
+    color: white;
+    font-style: normal;
+  }
+  .picker-row-error { color: #fca5a5; }
+  .online-subs {
+    /* Wider than the local picker — file names + uploader chips
+       are longer than language tags. */
+    min-width: 560px;
+    max-width: 760px;
+  }
+  .online-sub-line {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .online-sub-lang {
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .online-sub-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .picker-row.active .online-sub-lang { color: white; }
+  .online-sub-meta {
+    display: flex;
+    gap: 12px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+  .picker-row.active .online-sub-meta {
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  /* Sprite-cropped trickplay preview. Anchored to .track (which is
+     position: relative). `left: <pct>` places the preview's left
+     edge at the playhead, then `margin-left: -w/2` centres it.
+     Sprite cropping is pure CSS: background-image is the full
+     sprite sheet, background-position shifts to the cue's xywh
+     origin, the element's size masks the rest. */
+  .trickplay-preview {
+    position: absolute;
+    bottom: 32px;
+    border: 2px solid rgba(255, 255, 255, 0.6);
+    border-radius: 4px;
+    background-repeat: no-repeat;
+    background-size: auto;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
   }
 
   .up-next {

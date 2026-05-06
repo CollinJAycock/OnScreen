@@ -231,3 +231,96 @@ export interface CollectionItem {
   duration_ms?: number;
   position?: number;
 }
+
+// ── Discover (TMDB-backed) + Requests ──────────────────────────────────────
+
+export interface DiscoverItem {
+  type: string; // "movie" | "show"
+  tmdb_id: number;
+  title: string;
+  year?: number;
+  overview?: string;
+  rating?: number;
+  poster_url?: string;
+  fanart_url?: string;
+  in_library?: boolean;
+  library_item_id?: string;
+  has_active_request?: boolean;
+  active_request_id?: string;
+  active_request_status?: string;
+}
+
+export interface MediaRequest {
+  id: string;
+  user_id: string;
+  type: string;
+  tmdb_id: number;
+  title: string;
+  year?: number;
+  poster_url?: string;
+  overview?: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ── Online subtitle search ─────────────────────────────────────────────────
+
+export interface OnlineSubtitle {
+  provider_file_id: number;
+  file_name: string;
+  language: string;
+  release?: string;
+  hearing_impaired?: boolean;
+  hd?: boolean;
+  from_trusted?: boolean;
+  rating?: number;
+  download_count?: number;
+  uploader_name?: string;
+}
+
+// ── Live TV / DVR ──────────────────────────────────────────────────────────
+
+export interface Channel {
+  id: string;
+  tuner_id: string;
+  tuner_name: string;
+  tuner_type: string;
+  number: string;
+  callsign?: string;
+  name: string;
+  logo_url?: string;
+  enabled?: boolean;
+  sort_order?: number;
+  epg_channel_id?: string;
+}
+
+export interface NowNext {
+  channel_id: string;
+  program_id: string;
+  title: string;
+  subtitle?: string;
+  starts_at: string;
+  ends_at: string;
+  season_num?: number;
+  episode_num?: number;
+}
+
+export interface Recording {
+  id: string;
+  schedule_id?: string;
+  channel_id: string;
+  channel_number: string;
+  channel_name: string;
+  channel_logo?: string;
+  program_id?: string;
+  title: string;
+  subtitle?: string;
+  season_num?: number;
+  episode_num?: number;
+  status: string;
+  starts_at: string;
+  ends_at: string;
+  item_id?: string;
+  error?: string;
+}

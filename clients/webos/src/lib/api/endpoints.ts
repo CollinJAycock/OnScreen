@@ -1,8 +1,10 @@
 import { api } from './client';
 import type { TokenPair } from './client';
 import type {
+  Channel,
   ChildItem,
   CollectionItem,
+  DiscoverItem,
   FavoriteItem,
   HistoryItem,
   HubData,
@@ -12,7 +14,11 @@ import type {
   Marker,
   MediaCollection,
   MediaItem,
+  MediaRequest,
+  NowNext,
+  OnlineSubtitle,
   PairCodeResponse,
+  Recording,
   SearchResult,
   TranscodeSession
 } from './types';
@@ -39,6 +45,35 @@ export const items = {
   // for movies + non-episode types — the server returns [] rather
   // than 404 so callers can fire-and-forget without branching.
   markers: (id: string) => api.get<Marker[]>(`/api/v1/items/${id}/markers`),
+  // Trickplay WebVTT index. Returns the raw text so the caller can
+  // run it through the parser; keeping unwrapping client-side means
+  // the same parser works against test fixtures and the browser.
+  // 404 / 204 are normal — items without sprite sheets just don't
+  // surface a scrub preview, which is non-fatal.
+  trickplayVtt: async (id: string): Promise<string | null> => {
+    const origin = api.getOrigin();
+    if (!origin) return null;
+    const tok = api.getToken();
+    if (!tok) return null;
+    const resp = await fetch(`${origin}/api/v1/items/${id}/trickplay/index.vtt`, {
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+    if (!resp.ok) return null;
+    return await resp.text();
+  },
+  /** Build a fully-qualified URL to a trickplay sprite. Sprites are
+   *  auth-via-query-token so the browser can `<img>`-load them
+   *  without an Authorization header. */
+  trickplaySpriteUrl: (id: string, spritePath: string): string => {
+    const origin = api.getOrigin();
+    const tok = api.getToken();
+    if (!origin || !tok) return '';
+    const base = spritePath.startsWith('/')
+      ? `${origin}${spritePath}`
+      : `${origin}/api/v1/items/${id}/trickplay/${spritePath}`;
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}token=${encodeURIComponent(tok)}`;
+  },
   progress: (
     id: string,
     viewOffsetMs: number,
@@ -61,6 +96,37 @@ export const search = {
 
 export const profiles = {
   list: () => api.get<ManagedProfile[]>('/api/v1/profiles')
+};
+
+// Auth-provider discovery for the Pair screen's SSO hint. The TV
+// pair flow works against any auth backend (PIN claim is auth-
+// agnostic), but a laptop user is more likely to find the right
+// "Sign in with X" button on the web pair page if we name the
+// configured providers up front. LDAP is intentionally omitted —
+// its UX is the same username/password form local auth uses.
+export interface EnabledProvider {
+  kind: 'oidc' | 'saml';
+  display_name: string;
+}
+export const auth = {
+  providers: async (): Promise<EnabledProvider[]> => {
+    const out: EnabledProvider[] = [];
+    type Probe = { enabled: boolean; display_name: string };
+    const safe = async (path: string): Promise<Probe | null> => {
+      try {
+        return await api.get<Probe>(path);
+      } catch {
+        return null;
+      }
+    };
+    const [oidc, saml] = await Promise.all([
+      safe('/api/v1/auth/oidc/enabled'),
+      safe('/api/v1/auth/saml/enabled'),
+    ]);
+    if (oidc?.enabled) out.push({ kind: 'oidc', display_name: oidc.display_name || 'SSO' });
+    if (saml?.enabled) out.push({ kind: 'saml', display_name: saml.display_name || 'SAML' });
+    return out;
+  },
 };
 
 export interface TranscodeStartOpts {
@@ -137,4 +203,50 @@ export const favorites = {
 
 export const history = {
   list: (limit = 50) => api.get<HistoryItem[]>(`/api/v1/history?limit=${limit}`)
+};
+
+// ── Discover (TMDB) + Requests ─────────────────────────────────────────────
+
+export const discover = {
+  search: (query: string, limit = 12) =>
+    api.get<DiscoverItem[]>(
+      `/api/v1/discover/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+    ),
+  createRequest: (type: 'movie' | 'show', tmdbID: number) =>
+    api.post<MediaRequest>('/api/v1/requests', { type, tmdb_id: tmdbID }),
+};
+
+// ── Online subtitle search (OpenSubtitles via server) ──────────────────────
+
+export const onlineSubtitles = {
+  search: (itemID: string, lang?: string, query?: string) => {
+    const params = new URLSearchParams();
+    if (lang) params.set('lang', lang);
+    if (query) params.set('query', query);
+    const qs = params.toString();
+    return api.get<OnlineSubtitle[]>(
+      `/api/v1/items/${itemID}/subtitles/search${qs ? `?${qs}` : ''}`,
+    );
+  },
+  download: (itemID: string, fileID: string, candidate: OnlineSubtitle) =>
+    api.post<void>(`/api/v1/items/${itemID}/subtitles/download`, {
+      file_id: fileID,
+      provider_file_id: candidate.provider_file_id,
+      language: candidate.language,
+      title: candidate.file_name,
+      hearing_impaired: candidate.hearing_impaired ?? false,
+      rating: candidate.rating ?? 0,
+      download_count: candidate.download_count ?? 0,
+    }),
+};
+
+// ── Live TV / DVR ──────────────────────────────────────────────────────────
+
+export const livetv = {
+  channels: () => api.get<Channel[]>('/api/v1/tv/channels?enabled_only=true'),
+  nowNext: () => api.get<NowNext[]>('/api/v1/tv/channels/now-next'),
+  recordings: (status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}&limit=100` : '?limit=100';
+    return api.get<Recording[]>(`/api/v1/tv/recordings${qs}`);
+  },
 };
