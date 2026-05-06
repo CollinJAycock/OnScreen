@@ -39,6 +39,38 @@ export const items = {
   // for movies + non-episode types — the server returns [] rather
   // than 404 so callers can fire-and-forget without branching.
   markers: (id: string) => api.get<Marker[]>(`/api/v1/items/${id}/markers`),
+  // Trickplay WebVTT index. Returns the raw text so the caller
+  // can run it through the parser; keeping unwrapping client-side
+  // means the same parser works against test fixtures, the
+  // browser, and (in principle) any other transport. 404 / 204
+  // are normal — items without sprite sheets just don't surface
+  // a scrub preview, which is non-fatal.
+  trickplayVtt: async (id: string): Promise<string | null> => {
+    const origin = api.getOrigin();
+    if (!origin) return null;
+    const tok = api.getToken();
+    if (!tok) return null;
+    const resp = await fetch(`${origin}/api/v1/items/${id}/trickplay/index.vtt`, {
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+    if (!resp.ok) return null;
+    return await resp.text();
+  },
+  /** Build a fully-qualified URL to a trickplay sprite. Sprites
+   *  are auth-via-query-token so the browser can `<img>`-load
+   *  them without an Authorization header. */
+  trickplaySpriteUrl: (id: string, spritePath: string): string => {
+    const origin = api.getOrigin();
+    const tok = api.getToken();
+    if (!origin || !tok) return '';
+    // Cues sometimes carry a relative path (`sprite_0.jpg`),
+    // sometimes a server-rooted one. Detect and route both.
+    const base = spritePath.startsWith('/')
+      ? `${origin}${spritePath}`
+      : `${origin}/api/v1/items/${id}/trickplay/${spritePath}`;
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}token=${encodeURIComponent(tok)}`;
+  },
   progress: (
     id: string,
     viewOffsetMs: number,
@@ -61,6 +93,43 @@ export const search = {
 
 export const profiles = {
   list: () => api.get<ManagedProfile[]>('/api/v1/profiles')
+};
+
+// Auth-provider discovery. The TV pair flow works against any auth
+// backend, but a laptop user opening /pair on the server is more
+// likely to find the right "Sign in with X" button if we hint them
+// at it on the TV. Returns the names of OIDC + SAML providers that
+// are configured on this server. LDAP is intentionally omitted —
+// the LDAP path uses the same username/password form as local auth,
+// so naming it as a separate "provider" is just noise on the TV.
+export interface EnabledProvider {
+  kind: 'oidc' | 'saml';
+  display_name: string;
+}
+export const auth = {
+  providers: async (): Promise<EnabledProvider[]> => {
+    const out: EnabledProvider[] = [];
+    // The /enabled endpoints are unauthenticated and cheap; fire in
+    // parallel and tolerate failures (a misconfigured server might
+    // 500 on the OIDC probe but still have SAML working). Empty
+    // result on either error path → the Pair screen just doesn't
+    // render the hint, which matches the pre-feature behaviour.
+    type Probe = { enabled: boolean; display_name: string };
+    const safe = async (path: string): Promise<Probe | null> => {
+      try {
+        return await api.get<Probe>(path);
+      } catch {
+        return null;
+      }
+    };
+    const [oidc, saml] = await Promise.all([
+      safe('/api/v1/auth/oidc/enabled'),
+      safe('/api/v1/auth/saml/enabled'),
+    ]);
+    if (oidc?.enabled) out.push({ kind: 'oidc', display_name: oidc.display_name || 'SSO' });
+    if (saml?.enabled) out.push({ kind: 'saml', display_name: saml.display_name || 'SAML' });
+    return out;
+  },
 };
 
 export interface TranscodeStartOpts {

@@ -128,12 +128,37 @@ tizen/
   mount so Back / MediaPlay / MediaPause / colored buttons reach the
   focus handler.
 
-## What's not done yet
+## What's done (continued)
 
-- Audio / subtitle track pickers (AVPlay exposes
-  `getStreamInfo()`; wire when the picker UI lands)
-- Cross-device progress sync via the SSE notification stream
-- Skip intro / credits, trickplay scrub previews
+These shipped via the watch / settings / pair screens — the README's
+earlier "not done" list had drifted from the source:
+
+- **Audio + subtitle track pickers** — `routes/watch/[id]` opens
+  audio via Yellow / subtitle via Blue; audio switching re-issues
+  the transcode session (server emits one audio per session),
+  subtitles ride `webapis.avplay.setSelectTrack('TEXT', i)`.
+- **Cross-device progress sync via SSE** — watch screen mounts an
+  `EventSource` on `/api/v1/notifications/stream` and snaps to
+  remote progress when the local player is paused.
+- **Skip intro / credits** — markers loaded alongside the playback
+  session; overlay surfaces while position is inside an active
+  marker, dismissal tracked per-session.
+- **Settings + logout** — `routes/settings/+page.svelte`. Sign-out
+  keeps the server URL; forget-server clears everything and
+  routes back through `/setup`. Same screen surfaces an About
+  block (version + signed-in user + server URL).
+- **SSO provider hint on Pair screen** — fans out to
+  `/api/v1/auth/oidc/enabled` + `/saml/enabled`; renders a one-
+  line hint when at least one is configured so a laptop user
+  knows their IdP is available on the web pair page.
+- **Trickplay scrub previews** — VTT parser at
+  `lib/player/trickplay.ts` (TS port of Roku's `Trickplay.brs`,
+  same xywh cue shape). Watch screen renders a sprite-cropped
+  thumbnail above the seek bar via CSS `background-position`
+  (no canvas, no per-frame work).
+
+## What's still not done
+
 - Channel art (real PNG icons) — see `images/README.md`
 - Samsung Apps store submission paperwork (separate distributor
   cert + Samsung partner profile + content review)

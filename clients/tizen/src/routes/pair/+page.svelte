@@ -18,7 +18,7 @@
 
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, endpoints } from '$lib/api';
+  import { api, endpoints, type EnabledProvider } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
 
@@ -31,6 +31,13 @@
   let serverUrl = $state(api.getOrigin() ?? '');
   let pairUrl = $derived(serverUrl ? `${serverUrl}/pair` : '/pair');
   let errorMsg = $state('');
+
+  // Federated providers configured on this server. Surfaced as a
+  // hint on the pair screen so a laptop user knows they can pick
+  // "Sign in with <Google / Okta / etc.>" on the web pair page —
+  // the underlying flow doesn't change (PIN claim is the same on
+  // any auth backend), this is purely a TV-side affordance.
+  let providers = $state<EnabledProvider[]>([]);
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let cancelled = false;
@@ -88,6 +95,10 @@
 
   onMount(() => {
     startCycle();
+    // Best-effort provider probe. Fires in parallel with the pair
+    // code request so it never blocks the PIN render. A failure
+    // here just means the hint doesn't show.
+    void endpoints.auth.providers().then((p) => { providers = p; }).catch(() => {});
     // Back button leaves pairing and returns to the local-credentials
     // login flow.
     return focusManager.pushBack(() => {
@@ -124,6 +135,12 @@
       {errorMsg}
     {/if}
   </p>
+
+  {#if providers.length > 0}
+    <p class="sso-hint">
+      Includes <strong>{providers.map((p) => p.display_name).join(' / ')}</strong> sign-in on the web pair page.
+    </p>
+  {/if}
 
   <button use:focusable class="cancel-btn" onclick={() => goto('/login')}>
     Use password instead
@@ -175,6 +192,12 @@
     font-size: var(--font-md);
     color: var(--text-secondary);
     min-height: 1.5em;
+  }
+  .sso-hint {
+    margin: 4px 0 0;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    max-width: 700px;
   }
   .cancel-btn {
     margin-top: 24px;

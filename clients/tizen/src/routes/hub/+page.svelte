@@ -51,6 +51,7 @@
       <a href="/hub/" data-sveltekit-preload-data="false">home</a>
       <a href="/favorites/" data-sveltekit-preload-data="false">favorites</a>
       <a href="/history/" data-sveltekit-preload-data="false">history</a>
+      <a href="/settings/" data-sveltekit-preload-data="false">settings</a>
     </nav>
   </header>
 

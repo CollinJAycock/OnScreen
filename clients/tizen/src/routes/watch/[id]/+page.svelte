@@ -16,6 +16,7 @@
   import type { RemoteKey } from '$lib/focus/keys';
   import { avplay } from '$lib/player/avplay';
   import { ProgressReporter } from '$lib/player/progress-reporter';
+  import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
 
   const itemID = page.params.id!;
   // Fallback HTML5 video element — used only when AVPlay isn't
@@ -83,6 +84,15 @@
   // device left off. Active local playback wins.
   let syncEventSource: EventSource | null = null;
   let lastReportedPositionMs = -1;
+
+  // Trickplay scrub-preview state. Cues parsed from the WebVTT
+  // index on mount; null when the item has no sprite sheets
+  // (movies that haven't been processed yet, audio-only items).
+  // The active cue is recomputed reactively from `position`.
+  let trickplayCues = $state<TrickplayCue[]>([]);
+  const trickplayCue = $derived(
+    trickplayCues.length > 0 ? findCue(trickplayCues, position) : null,
+  );
 
   function showControls() {
     controlsVisible = true;
@@ -373,6 +383,18 @@
     }
   }
 
+  async function loadTrickplay() {
+    // Item might not have trickplay generated yet (background
+    // worker hasn't processed it, or it's audio-only). Either
+    // way, leaving cues empty just suppresses the preview.
+    try {
+      const vtt = await endpoints.items.trickplayVtt(itemID);
+      if (vtt) trickplayCues = parseVtt(vtt);
+    } catch {
+      /* leave empty */
+    }
+  }
+
   function updateActiveMarker() {
     if (markers.length === 0) {
       if (activeMarker) activeMarker = null;
@@ -524,6 +546,7 @@
         // next sibling = natural EOS exit).
         void loadMarkers();
         void loadNextSibling();
+        void loadTrickplay();
         startSyncStream();
 
         const file = item.files[0];
@@ -733,6 +756,7 @@
 
       <div class="bottom">
         <div class="state">{paused ? '❚❚ paused' : '▶ playing'}</div>
+
         <div class="bar">
           <div class="elapsed">{fmt(position)}</div>
           <div class="track">
@@ -742,6 +766,25 @@
                 <div class="chapter-marker" style="left: {(ch.start_ms / duration) * 100}%"></div>
               {/if}
             {/each}
+            {#if trickplayCue && duration > 0}
+              <!-- Sprite-cropped scrub preview. The element sized to
+                   (w, h) reveals only the cue's region of the parent
+                   sprite via background-position — no canvas, no
+                   per-frame image work. Anchored to the track so the
+                   percent-based `left` lands accurately on the
+                   playhead regardless of the surrounding layout. -->
+              <div
+                class="trickplay-preview"
+                style="
+                  left: {progressPct}%;
+                  width: {trickplayCue.w}px;
+                  height: {trickplayCue.h}px;
+                  margin-left: -{trickplayCue.w / 2}px;
+                  background-image: url({endpoints.items.trickplaySpriteUrl(itemID, trickplayCue.spritePath)});
+                  background-position: -{trickplayCue.x}px -{trickplayCue.y}px;
+                "
+              ></div>
+            {/if}
           </div>
           <div class="remaining">{fmt(duration - position)}</div>
         </div>
@@ -824,6 +867,24 @@
   .bottom {
     background: linear-gradient(0deg, rgba(0,0,0,0.85), transparent);
     padding: 80px 80px 48px;
+  }
+
+  /* Sprite-cropped trickplay preview. Anchored to .track (which is
+     position: relative) — `left: <pct>` places the preview's left
+     edge at the playhead, then `margin-left: -w/2` centres it.
+     `bottom: 32px` lifts it clear of the track. Sprite cropping is
+     pure CSS: background-image is the full sprite sheet,
+     background-position shifts to the cue's xywh origin, the
+     element's size masks the rest. */
+  .trickplay-preview {
+    position: absolute;
+    bottom: 32px;
+    border: 2px solid rgba(255, 255, 255, 0.6);
+    border-radius: 4px;
+    background-repeat: no-repeat;
+    background-size: auto;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
   }
 
   .state {
