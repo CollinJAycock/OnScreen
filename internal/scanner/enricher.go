@@ -18,6 +18,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/anilist"
+	"github.com/onscreen/onscreen/internal/metadata/animedb"
 	"github.com/onscreen/onscreen/internal/metadata/nfo"
 )
 
@@ -126,6 +127,19 @@ type AniListAgent interface {
 	GetMangaByID(ctx context.Context, anilistID int) (*metadata.MangaResult, error)
 }
 
+// AnimeDBLookup is the offline title→AniList-ID resolver, backed by
+// the manami-project anime-offline-database. The enricher consults
+// this on AniList live-search misses — manami's curated synonyms
+// list catches fansub-style folder names ("Akame ga Kill Theater")
+// that the live `Media(search:$q)` GraphQL field can't recover from.
+//
+// Narrow single-method interface so the enricher doesn't drag the
+// download / cache machinery into its tests; only the resolution
+// step matters here.
+type AnimeDBLookup interface {
+	Lookup(title string) (animedb.Entry, bool)
+}
+
 // ScanPathsProvider returns all active library scan paths so the enricher
 // can convert absolute artwork paths to paths relative to the library root.
 type ScanPathsProvider func() []string
@@ -149,6 +163,7 @@ type Enricher struct {
 	agentFn      func() metadata.Agent        // returns nil when no key is configured
 	tvdbFn       func() TVDBFallback          // returns nil when no key is configured
 	anilistFn    func() AniListAgent          // returns nil when AniList is disabled
+	animeDBFn    func() AnimeDBLookup         // returns nil when offline-DB lookup is disabled
 	libAnimeFn   func() LibraryAnimeChecker   // returns nil when not wired
 	musicAgentFn func() metadata.MusicAgent   // returns nil when not configured
 	caaFn        func() AlbumCoverByMBIDAgent // returns nil when disabled
@@ -239,6 +254,16 @@ func (e *Enricher) SetTVDBFallbackFn(fn func() TVDBFallback) {
 // to leave room for future per-library opt-out.
 func (e *Enricher) SetAniListFn(fn func() AniListAgent) {
 	e.anilistFn = fn
+}
+
+// SetAnimeDBFn sets the lazy factory for the offline AniList-ID
+// resolver (manami-project anime-offline-database). Called by
+// anilistShowFallback as a recovery path when AniList live search
+// misses — the dataset's curated synonyms list catches fansub-style
+// folder names AniList's fuzzy search rejects. Returning nil from
+// the factory disables the fallback.
+func (e *Enricher) SetAnimeDBFn(fn func() AnimeDBLookup) {
+	e.animeDBFn = fn
 }
 
 // SetLibraryAnimeCheckerFn sets the lazy factory for the per-library
@@ -2268,14 +2293,36 @@ func (e *Enricher) anilistShowFallback(ctx context.Context, title string, year i
 		return nil
 	}
 	tv, err := client.SearchAnime(ctx, title, year)
-	if err != nil || tv == nil {
-		e.logger.InfoContext(ctx, "anilist anime search found no match",
-			"title", title, "year", year, "err", err)
-		return nil
+	if err == nil && tv != nil {
+		e.logger.InfoContext(ctx, "anilist anime search matched",
+			"title", title, "anilist_id", tv.AniListID, "mal_id", tv.MALID)
+		return tv
 	}
-	e.logger.InfoContext(ctx, "anilist anime search matched",
-		"title", title, "anilist_id", tv.AniListID, "mal_id", tv.MALID)
-	return tv
+
+	// Live search missed. Manami's offline-DB synonyms list
+	// resolves fansub-style folder names ("Akame ga Kill Theater" →
+	// AniList ID 20988 for "Akame ga Kill! Gaiden: Theater") that
+	// the live fuzzy `Media(search:$q)` field rejects. Skip the
+	// recovery path when no offline DB is wired.
+	if e.animeDBFn != nil {
+		if db := e.animeDBFn(); db != nil {
+			if entry, ok := db.Lookup(title); ok && entry.AniListID > 0 {
+				resolved, byIDErr := client.GetAnimeByID(ctx, entry.AniListID)
+				if byIDErr == nil && resolved != nil {
+					e.logger.InfoContext(ctx, "anilist match recovered via offline db",
+						"title", title, "anilist_id", entry.AniListID,
+						"matched_title", entry.Title)
+					return resolved
+				}
+				e.logger.InfoContext(ctx, "offline-db hit but anilist by-id lookup failed",
+					"title", title, "anilist_id", entry.AniListID, "err", byIDErr)
+			}
+		}
+	}
+
+	e.logger.InfoContext(ctx, "anilist anime search found no match",
+		"title", title, "year", year, "err", err)
+	return nil
 }
 
 // tvdbShowFallback asks TVDB for a show when TMDB couldn't help. When base is

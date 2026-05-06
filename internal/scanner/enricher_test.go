@@ -14,6 +14,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/anilist"
+	"github.com/onscreen/onscreen/internal/metadata/animedb"
 )
 
 // ── mocks ────────────────────────────────────────────────────────────────────
@@ -1681,5 +1682,91 @@ func TestLibraryIsAnime_DBError_FailsClosed(t *testing.T) {
 	e.SetLibraryAnimeCheckerFn(func() LibraryAnimeChecker { return checker })
 	if got := e.libraryIsAnime(context.Background(), uuid.New()); got {
 		t.Errorf("libraryIsAnime = true on lookup error; must fail closed")
+	}
+}
+
+// branchedAniListAgent returns different results for SearchAnime
+// (live search miss) vs GetAnimeByID (offline-DB-derived recovery
+// hit). Mirrors how the enricher uses the two paths sequentially:
+// search title → if nil, look up via animedb → fetch by id.
+type branchedAniListAgent struct {
+	stubAniListAgent
+	byIDResult *metadata.TVShowResult
+	byIDErr    error
+}
+
+func (s *branchedAniListAgent) SearchAnime(_ context.Context, _ string, _ int) (*metadata.TVShowResult, error) {
+	// Always miss — exercises the offline-DB recovery code path.
+	return nil, errors.New("anilist: no anime match")
+}
+
+func (s *branchedAniListAgent) GetAnimeByID(_ context.Context, _ int) (*metadata.TVShowResult, error) {
+	return s.byIDResult, s.byIDErr
+}
+
+// stubAnimeDB satisfies AnimeDBLookup for the enricher test.
+type stubAnimeDB struct {
+	hits map[string]int // normalized title → AniList ID
+}
+
+func (s *stubAnimeDB) Lookup(title string) (animedb.Entry, bool) {
+	if id, ok := s.hits[title]; ok {
+		return animedb.Entry{Title: title, AniListID: id}, true
+	}
+	return animedb.Entry{}, false
+}
+
+// TestAnilistShowFallback_RecoversViaOfflineDB locks in the fix for
+// the user-reported "anime library doesn't show on the hub" bug.
+// AniList live `Media(search:$q)` misses fansub-style folder names
+// like "Akame ga Kill Theater"; the manami offline DB carries the
+// synonym, gives us the AniList ID, and we resolve via GetAnimeByID.
+// Without this fallback the show row stays unenriched (no poster_path)
+// and the per-library hub query's `grandparent.poster_path IS NOT NULL`
+// filter drops the entire row.
+func TestAnilistShowFallback_RecoversViaOfflineDB(t *testing.T) {
+	resolved := &metadata.TVShowResult{
+		AniListID: 20988,
+		MALID:     27077,
+		Title:     "Akame ga Kill! Gaiden: Theater",
+	}
+	anilistStub := &branchedAniListAgent{byIDResult: resolved}
+	db := &stubAnimeDB{hits: map[string]int{
+		// The folder-name input the user has on disk.
+		"Akame ga Kill Theater": 20988,
+	}}
+
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetAniListFn(func() AniListAgent { return anilistStub })
+	e.SetAnimeDBFn(func() AnimeDBLookup { return db })
+
+	got := e.anilistShowFallback(context.Background(), "Akame ga Kill Theater", 2014, nil)
+	if got == nil {
+		t.Fatal("expected offline-DB recovery to return a TVShowResult")
+	}
+	if got.AniListID != 20988 {
+		t.Errorf("AniListID = %d, want 20988", got.AniListID)
+	}
+	if got.Title != "Akame ga Kill! Gaiden: Theater" {
+		t.Errorf("Title = %q (the canonical title from GetAnimeByID)", got.Title)
+	}
+}
+
+// TestAnilistShowFallback_NoOfflineDBLeavesLiveSearchBehaviour confirms
+// that wiring an animeDB factory but having it not match (or not being
+// wired at all) leaves the existing live-search-only behaviour intact —
+// no new failure mode introduced for non-anime libraries that miss
+// AniList for legitimate reasons.
+func TestAnilistShowFallback_NoOfflineDBLeavesLiveSearchBehaviour(t *testing.T) {
+	anilistStub := &branchedAniListAgent{} // SearchAnime errs, byIDResult nil
+	db := &stubAnimeDB{hits: nil}          // empty → never hits
+
+	e := newTestEnricher(nil, newMockUpdater(), nil)
+	e.SetAniListFn(func() AniListAgent { return anilistStub })
+	e.SetAnimeDBFn(func() AnimeDBLookup { return db })
+
+	got := e.anilistShowFallback(context.Background(), "Some Show", 2014, nil)
+	if got != nil {
+		t.Fatalf("expected nil when both live + offline miss, got %+v", got)
 	}
 }

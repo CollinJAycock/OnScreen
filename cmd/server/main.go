@@ -44,6 +44,7 @@ import (
 	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/anilist"
+	"github.com/onscreen/onscreen/internal/metadata/animedb"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/coverartarchive"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
@@ -350,6 +351,33 @@ func run() error {
 	// parity with TVDB and future per-library opt-out.
 	anilistClient := anilist.New()
 	metaAgent.SetAniListFn(func() scanner.AniListAgent { return anilistClient })
+
+	// Offline title→AniList-ID resolver (manami-project anime-offline-
+	// database). Recovers fansub-style folder names AniList live
+	// search misses ("Akame ga Kill Theater" → "Akame ga Kill!
+	// Gaiden: Theater"). The dataset auto-refreshes weekly; first
+	// load downloads ~30 MB JSON, subsequent boots hit the cached
+	// file. Cache lives next to the artwork cache so existing
+	// volume-mount conventions on TrueNAS / Docker deploys cover it
+	// without new env wiring. Open is best-effort: a network failure
+	// at boot logs a warning and the lookup degrades to a no-op,
+	// leaving live AniList search as the only resolution path
+	// (current behaviour).
+	animeDBCachePath := filepath.Join(filepath.Dir(cfg.CachePath), "animedb")
+	animeDBClient := animedb.New(animeDBCachePath, logger)
+	go func() {
+		// Run in background so a slow first-time download doesn't block
+		// boot. Subsequent calls to Lookup return false until Open
+		// completes — that's the fall-through-to-live-search behaviour
+		// we want during the grace window.
+		openCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if err := animeDBClient.Open(openCtx); err != nil {
+			logger.Warn("animedb open failed; offline fallback disabled until next refresh",
+				"err", err)
+		}
+	}()
+	metaAgent.SetAnimeDBFn(func() scanner.AnimeDBLookup { return animeDBClient })
 
 	// Per-library is_anime flag promotes AniList from fallback to
 	// primary on libraries the admin has flagged as anime. Reads
