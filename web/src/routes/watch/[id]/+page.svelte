@@ -7,6 +7,25 @@
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
+  // Subtitle styling: full preference set (size, color, background,
+  // outline) lives in ./subtitle-style. Helper handles localStorage
+  // load / save, schema migration from the v1 size-only key, and the
+  // CSS-string emit consumed by the cue overlay below. Direct unit
+  // tests in subtitle-style.test.ts.
+  import {
+    loadSubtitleStyle,
+    saveSubtitleStyle,
+    subtitleCueStyle,
+    type SubtitleStyle,
+    type SubtitleSize,
+    type SubtitleColor,
+    type SubtitleBackground,
+    type SubtitleOutline,
+  } from './subtitle-style';
+  // Chromecast / Google Cast sender. Pure helpers (URL build, MIME
+  // map, isCastable predicate) live in $lib/cast and are unit-tested
+  // there; the SDK glue is local to this page.
+  import { buildCastMediaInfo, isCastable } from '$lib/cast';
 
   let showPlaylistPicker = false;
 
@@ -96,12 +115,159 @@
     origin: 'embedded' | 'external';
   };
   let selectedSubtitle: PickedSubtitle | null = null;
-  // Subtitle font size: 'small' | 'medium' | 'large'
-  const subtitleSizes = ['small', 'medium', 'large'] as const;
-  type SubtitleSize = typeof subtitleSizes[number];
-  let subtitleSize: SubtitleSize = (typeof localStorage !== 'undefined' && localStorage.getItem('subtitle_size') as SubtitleSize) || 'medium';
+  const subtitleSizes = ['small', 'medium', 'large'] as const satisfies readonly SubtitleSize[];
+  const subtitleColors = ['white', 'yellow', 'black', 'red'] as const satisfies readonly SubtitleColor[];
+  const subtitleBackgrounds = ['none', 'translucent', 'opaque'] as const satisfies readonly SubtitleBackground[];
+  const subtitleOutlines = ['none', 'light', 'heavy'] as const satisfies readonly SubtitleOutline[];
+
+  let subtitleStyle: SubtitleStyle = loadSubtitleStyle();
+  // Convenience accessor — keeps the existing template references
+  // (`subs-{subtitleSize}`) wiring during the refactor.
+  $: subtitleSize = subtitleStyle.size;
+  // Helper to commit a single-field update + persist. Keeps each
+  // button's click handler a one-liner.
+  function updateSubtitleStyle(patch: Partial<SubtitleStyle>) {
+    subtitleStyle = { ...subtitleStyle, ...patch };
+    saveSubtitleStyle(subtitleStyle);
+  }
   // Subtitle delay in seconds (positive = subs appear later, negative = earlier).
   let subtitleDelay = 0;
+
+  // ── Cast / Chromecast ──────────────────────────────────────────────
+  // SDK loaded asynchronously via cast_sender.js — only available on
+  // Chrome and Edge (Chromium with Cast support). castAvailable goes
+  // true once the framework loads; castConnected goes true while a
+  // session is active. The button surface only appears when the SDK
+  // exists, so a non-Cast browser sees nothing.
+  let castAvailable = false;
+  let castConnected = false;
+  let castReceiverName = '';
+  let castSessionLoading = false;
+  // Track listener so we can detach in onDestroy without leaking.
+  let castSessionListener: ((evt: any) => void) | null = null;
+
+  // initCast loads cast_sender.js and registers our session-state
+  // listener. Idempotent — multiple onMount triggers (HMR / route
+  // re-entry) just rebind the listener. Failures swallow: a non-Cast
+  // browser, an offline LAN, or a blocked Google CDN simply leaves
+  // castAvailable=false and the UI hides the button. No error
+  // surface needed.
+  function initCast() {
+    if (castAvailable) return;
+    if (typeof window === 'undefined') return;
+    // The Cast framework calls back through this global once the
+    // script finishes loading and probes for receivers. Define it
+    // BEFORE injecting the script so the callback isn't missed.
+    (window as any).__onGCastApiAvailable = (avail: boolean) => {
+      if (!avail) return;
+      const w = window as any;
+      try {
+        const ctx = w.cast.framework.CastContext.getInstance();
+        ctx.setOptions({
+          // Default Media Receiver — Google's pre-published receiver
+          // app that handles MP4/HLS without us shipping a custom one.
+          receiverApplicationId: w.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+          autoJoinPolicy: w.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+        });
+        castSessionListener = (evt: any) => {
+          // SESSION_STATE_CHANGED — track CONNECTED / DISCONNECTED so
+          // the UI button can switch label and the local <video> can
+          // pause/resume in sync with the receiver.
+          const state = evt?.sessionState ?? '';
+          castConnected = state === 'SESSION_STARTED' || state === 'SESSION_RESUMED';
+          if (castConnected) {
+            castReceiverName = ctx.getCurrentSession()?.getCastDevice?.()?.friendlyName ?? 'Cast';
+            // Pause local playback once the receiver takes over —
+            // otherwise audio plays from both surfaces.
+            if (videoEl && !videoEl.paused) videoEl.pause();
+          } else {
+            castReceiverName = '';
+          }
+        };
+        ctx.addEventListener(
+          w.cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+          castSessionListener,
+        );
+        castAvailable = true;
+      } catch {
+        // SDK loaded but the framework didn't initialise (e.g. cast
+        // is blocked by enterprise policy). Leave castAvailable false.
+      }
+    };
+    // Inject the SDK script. The query string asks for the framework
+    // (not just the legacy bare API) so cast.framework is available.
+    const existing = document.querySelector('script[data-cast-sdk]');
+    if (existing) return;
+    const s = document.createElement('script');
+    s.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
+    s.async = true;
+    s.setAttribute('data-cast-sdk', '1');
+    document.head.appendChild(s);
+  }
+
+  // castStart opens the receiver picker and sends a LOAD request
+  // with the current item + selected file. The build of the LOAD
+  // payload itself comes from buildCastMediaInfo (in $lib/cast,
+  // unit-tested) so this glue stays minimal.
+  async function castStart() {
+    if (!castAvailable || !item || !item.files?.length) return;
+    const file = item.files[0];
+    if (!isCastable(file as any)) return;
+    castSessionLoading = true;
+    try {
+      const w = window as any;
+      const ctx = w.cast.framework.CastContext.getInstance();
+      // requestSession opens the device picker. Resolves once the
+      // user picks a device (or rejects on cancel).
+      await ctx.requestSession();
+      const session = ctx.getCurrentSession();
+      if (!session) return;
+
+      const baseUrl = window.location.origin;
+      const info = buildCastMediaInfo(item as any, file as any, baseUrl);
+      if (!info) return;
+
+      const mediaInfo = new w.chrome.cast.media.MediaInfo(info.contentId, info.contentType);
+      mediaInfo.streamType = w.chrome.cast.media.StreamType.BUFFERED;
+      const meta = new w.chrome.cast.media.GenericMediaMetadata();
+      meta.title = info.metadata.title;
+      if (info.metadata.subtitle) meta.subtitle = info.metadata.subtitle;
+      if (info.metadata.images && info.metadata.images.length > 0) {
+        meta.images = info.metadata.images.map((i) => new w.chrome.cast.Image(i.url));
+      }
+      mediaInfo.metadata = meta;
+      if (info.duration) mediaInfo.duration = info.duration;
+      mediaInfo.customData = info.customData;
+
+      const req = new w.chrome.cast.media.LoadRequest(mediaInfo);
+      // Hand off the local playhead so the receiver picks up where
+      // the user was watching, not from zero.
+      if (videoEl && Number.isFinite(videoEl.currentTime)) {
+        req.currentTime = videoEl.currentTime;
+      }
+      await session.loadMedia(req);
+      if (videoEl) videoEl.pause();
+    } catch {
+      // User cancelled the picker, or the receiver rejected the
+      // load (DRM, codec, etc.). Surface nothing — the user already
+      // sees the picker close, and the local video is unaffected.
+    } finally {
+      castSessionLoading = false;
+    }
+  }
+
+  // castStop ends the active session; the receiver returns to its
+  // idle state and local playback is unaffected (already paused
+  // when cast started, the user can press play again).
+  function castStop() {
+    try {
+      const w = window as any;
+      const ctx = w.cast?.framework?.CastContext?.getInstance?.();
+      ctx?.endCurrentSession?.(true);
+    } catch {
+      // No session, no SDK, nothing to do.
+    }
+  }
 
   // Online subtitle search modal state. openSubtitleSearch triggers a search
   // using the item title (and S/E for episodes). Users can refine the query,
@@ -504,6 +670,15 @@
     return siblings.find(s => s.index != null && s.index === (item!.index! + 1)) ?? null;
   })();
 
+  // Previous episode lookup — same shape as nextEpisode but stepping
+  // back. Surfaced as an explicit "Previous" button on the player so
+  // users can navigate without bouncing back to the season list,
+  // matching the next-episode affordance.
+  $: prevEpisode = (() => {
+    if (!item || item.type !== 'episode' || item.index == null || item.index <= 1) return null;
+    return siblings.find(s => s.index != null && s.index === (item!.index! - 1)) ?? null;
+  })();
+
   // Chapters from the source file (already parsed by ffprobe at scan time).
   $: chapters = item?.files?.[0]?.chapters ?? [];
   // The current chapter — based on content position (currentTime + hlsOffsetSec).
@@ -646,6 +821,12 @@
   let autoplayCountdown = 0;
   let autoplayTimer: ReturnType<typeof setInterval> | null = null;
   let autoplayCancelled = false;
+  // pageEnteredAt is the timestamp the current item began loading.
+  // Used to gate the autoplay countdown so navigating BACK to an
+  // already-watched episode (whose view_offset_ms sits near the end)
+  // doesn't immediately trigger the next-episode countdown and
+  // bounce the user right back to the episode they came from.
+  let pageEnteredAt = 0;
 
   function cancelAutoplay(permanent = false) {
     if (permanent) autoplayCancelled = true;
@@ -655,6 +836,13 @@
 
   function startAutoplayCountdown() {
     if (autoplayTimer || autoplayCancelled || !nextEpisode) return;
+    // Suppress autoplay when the user has just landed on this page —
+    // an already-watched episode loads with view_offset_ms near
+    // duration, which would fire showNextEpisodePrompt immediately
+    // and yank the user forward before they could even react.
+    // 10 s is the same window as the visible countdown itself, so
+    // no UX is hidden behind this guard.
+    if (pageEnteredAt > 0 && Date.now() - pageEnteredAt < 10_000) return;
     autoplayCountdown = 10;
     autoplayTimer = setInterval(() => {
       autoplayCountdown -= 1;
@@ -670,6 +858,11 @@
     // Safari uses the prefixed event name for fullscreen changes.
     document.addEventListener('webkitfullscreenchange', onFullscreenChange);
     prevId = id;
+    pageEnteredAt = Date.now();
+    // Cast SDK loads asynchronously and only flips castAvailable
+    // when a receiver is reachable. Safe on every browser (Safari,
+    // Firefox just ignore — no error surface).
+    initCast();
     await load();
     mounted = true;
   });
@@ -716,6 +909,7 @@
     transcodeSessionId = null;
     transcodeToken = null;
     autoplayCancelled = false;
+    pageEnteredAt = Date.now();
     cancelAutoplay();
     load();
   }
@@ -944,6 +1138,91 @@
     }
   }
 
+  // ── Refresh metadata (admin) ────────────────────────────────────────────────
+  // Triggers POST /items/{id}/enrich, which re-runs the agent chain
+  // against this item's existing IDs (TMDB → TVDB → AniList for anime
+  // libraries). Useful when:
+  //  - the operator just fixed a broken TMDB / TVDB API key and wants
+  //    to backfill metadata on a row matched at the broken-key time;
+  //  - a new fallback path landed (e.g. AniList streamingEpisodes) and
+  //    the operator wants to pull the data without a full rescan.
+  let refreshing = false;
+  async function refreshMetadata() {
+    if (!item || refreshing) return;
+    refreshing = true;
+    try {
+      await mediaApi.enrichItem(item.id);
+      // Background work — poll for the row updating, then re-render.
+      // 12 × 2 s = 24 s ceiling; AniList is fast, TMDB cascades with
+      // children take longer. Bail out as soon as we see a change.
+      const startUpdated = item.updated_at;
+      for (let i = 0; i < 12; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        if (!item) break;
+        const fresh = await itemApi.get(item.id);
+        if (fresh.updated_at > startUpdated) {
+          item = fresh;
+          // For shows / seasons, also reload the children so OVA
+          // badges, episode titles, and thumbnails refresh inline.
+          if (item.type === 'show' || item.type === 'season') {
+            await loadShowDetail();
+          }
+          break;
+        }
+      }
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Refresh failed');
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  // ── Watching status (per-user) ────────────────────────────────────────────
+  // Plan to Watch / Watching / On Hold / Completed / Dropped. Anime-
+  // tracker convention shipped as a generic per-(user, item) feature
+  // — every type benefits, surfaced first on shows / movies but the
+  // backend handles audiobooks / albums / etc. equally.
+  type WatchStatusValue = 'plan_to_watch' | 'watching' | 'on_hold' | 'completed' | 'dropped' | '';
+  let watchStatus: WatchStatusValue = '';
+  let watchStatusLoading = false;
+
+  const watchStatusLabels: Record<Exclude<WatchStatusValue, ''>, string> = {
+    plan_to_watch: 'Plan to Watch',
+    watching: 'Watching',
+    on_hold: 'On Hold',
+    completed: 'Completed',
+    dropped: 'Dropped',
+  };
+
+  async function loadWatchStatus(itemId: string) {
+    try {
+      const r = await itemApi.getWatchStatus(itemId);
+      watchStatus = r.status;
+    } catch (e: unknown) {
+      // 404 = no status set yet. Anything else, leave the dropdown blank
+      // and silently swallow — this is a non-critical UI surface.
+      watchStatus = '';
+    }
+  }
+
+  async function changeWatchStatus(next: WatchStatusValue) {
+    if (!item) return;
+    watchStatusLoading = true;
+    try {
+      if (next === '') {
+        await itemApi.clearWatchStatus(item.id);
+        watchStatus = '';
+      } else {
+        const r = await itemApi.setWatchStatus(item.id, next);
+        watchStatus = r.status;
+      }
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Failed to update status');
+    } finally {
+      watchStatusLoading = false;
+    }
+  }
+
   // ── Remove (admin) ─────────────────────────────────────────────────────────
   async function removeItem() {
     if (!item) return;
@@ -1015,8 +1294,14 @@
     error = '';
     cast = [];
     playRequested = false;
+    watchStatus = '';
     try {
       item = await itemApi.get(id);
+
+      // Per-user watching status. Loaded async alongside credits so a
+      // 404 (no status set) doesn't slow page render. Status dropdown
+      // renders blank until the response lands.
+      loadWatchStatus(id);
 
       // Credits are fetched lazily on the server (TMDB round-trip on the
       // first view of an item), which can take several seconds. Don't
@@ -1322,6 +1607,31 @@
         startFragPrefetch: true,
         lowLatencyMode: false,
         backBufferLength: Infinity,
+        // Cold-start transcode window. ffmpeg can take 10–20 s to
+        // open AV1 / HEVC sources with full decode setup before the
+        // first segment lands; over Cloudflare Tunnel free tier the
+        // first byte can take longer still. The hls.js defaults
+        // (10 s TTFB / 20 s total per fragment) trip out before
+        // ffmpeg has produced segment 0, surfacing the user-visible
+        // `fragLoadTimeOut` errors. The Android TV client runs at
+        // 30 s connect / 60 s read for the same reason; matching
+        // those budgets here.
+        fragLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 30000,
+            maxLoadTimeMs: 60000,
+            timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+            errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+          },
+        },
+        manifestLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 30000,
+            maxLoadTimeMs: 60000,
+            timeoutRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+            errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+          },
+        },
         // When the server measured an audio warmup gap for seg 0, seek
         // forward into the stream by that amount on open so the player
         // skips the silent-video head and starts at the first audible
@@ -2101,11 +2411,12 @@
       <track kind="captions" />
     </video>
 
-    <!-- JS-rendered subtitle overlay (native <track> is unreliable with HLS.js/MSE) -->
+    <!-- JS-rendered subtitle overlay (native <track> is unreliable with HLS.js/MSE).
+         Cue style comes from subtitleCueStyle() — see ./subtitle-style. -->
     {#if activeCues.length > 0}
-      <div class="subtitle-overlay subs-{subtitleSize}">
+      <div class="subtitle-overlay">
         {#each activeCues as cue}
-          <span class="subtitle-cue">{@html escapeCueText(cue.text)}</span>
+          <span class="subtitle-cue" style={subtitleCueStyle(subtitleStyle)}>{@html escapeCueText(cue.text)}</span>
         {/each}
       </div>
     {/if}
@@ -2207,37 +2518,6 @@
         <!-- Controls row -->
         <div class="controls-row">
           <div class="controls-left">
-            <!-- Play/pause -->
-            <button class="icon-btn" on:click={togglePlay} title={paused ? 'Play (k)' : 'Pause (k)'}>
-              {#if paused}
-                <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
-                  <polygon points="5,3 19,12 5,21"/>
-                </svg>
-              {:else}
-                <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
-                  <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
-                </svg>
-              {/if}
-            </button>
-
-            <!-- Skip back 10s -->
-            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime - 10)} title="−10s (←)">
-              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                <path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z"/>
-                <path d="M12.5 1 8 5l4.5 4V1z"/>
-                <text x="12" y="14.5" text-anchor="middle" font-size="5" font-family="sans-serif" fill="currentColor">10</text>
-              </svg>
-            </button>
-
-            <!-- Skip forward 10s -->
-            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime + 10)} title="+10s (→)">
-              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                <path d="M11.5 3a9 9 0 1 1-9 9h2a7 7 0 1 0 7-7V3z"/>
-                <path d="M11.5 1l4.5 4-4.5 4V1z"/>
-                <text x="12" y="14.5" text-anchor="middle" font-size="5" font-family="sans-serif" fill="currentColor">10</text>
-              </svg>
-            </button>
-
             <!-- Volume -->
             <button class="icon-btn small" on:click={() => { videoEl.muted = !videoEl.muted; muted = videoEl.muted; }} title="Mute (m)">
               {#if muted || volume === 0}
@@ -2264,6 +2544,77 @@
 
             <!-- Time -->
             <span class="time">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
+          </div>
+
+          <!-- Centre transport cluster: prev episode · −10s · play/pause · +10s · next episode.
+               Episode-only buttons are visible-but-disabled on episodes
+               where a sibling doesn't exist (S1E1 prev, season finale
+               next) so the cluster keeps a stable shape across the
+               season. Movies / standalones get the three middle
+               buttons only. -->
+          <div class="controls-center">
+            {#if item?.type === 'episode'}
+              <a
+                class="icon-btn small ep-nav-btn"
+                class:disabled={!prevEpisode}
+                href={prevEpisode ? `/watch/${prevEpisode.id}` : '#'}
+                on:click={(e) => { if (!prevEpisode) e.preventDefault(); }}
+                title={prevEpisode ? `Previous: ${prevEpisode.title}` : 'No previous episode'}
+                aria-label="Previous episode"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                  <polygon points="20,4 9,12 20,20"/>
+                  <rect x="4" y="4" width="2" height="16"/>
+                </svg>
+              </a>
+            {/if}
+
+            <!-- Skip back 10s -->
+            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime - 10)} title="−10s (←)">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z"/>
+                <path d="M12.5 1 8 5l4.5 4V1z"/>
+                <text x="12" y="14.5" text-anchor="middle" font-size="5" font-family="sans-serif" fill="currentColor">10</text>
+              </svg>
+            </button>
+
+            <!-- Play/pause (centre, larger) -->
+            <button class="icon-btn play-pause-center" on:click={togglePlay} title={paused ? 'Play (k)' : 'Pause (k)'}>
+              {#if paused}
+                <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26">
+                  <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                </svg>
+              {/if}
+            </button>
+
+            <!-- Skip forward 10s -->
+            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime + 10)} title="+10s (→)">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M11.5 3a9 9 0 1 1-9 9h2a7 7 0 1 0 7-7V3z"/>
+                <path d="M11.5 1l4.5 4-4.5 4V1z"/>
+                <text x="12" y="14.5" text-anchor="middle" font-size="5" font-family="sans-serif" fill="currentColor">10</text>
+              </svg>
+            </button>
+
+            {#if item?.type === 'episode'}
+              <a
+                class="icon-btn small ep-nav-btn"
+                class:disabled={!nextEpisode}
+                href={nextEpisode ? `/watch/${nextEpisode.id}` : '#'}
+                on:click={(e) => { if (!nextEpisode) e.preventDefault(); }}
+                title={nextEpisode ? `Next: ${nextEpisode.title}` : 'No next episode'}
+                aria-label="Next episode"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                  <polygon points="4,4 15,12 4,20"/>
+                  <rect x="18" y="4" width="2" height="16"/>
+                </svg>
+              </a>
+            {/if}
           </div>
 
           <div class="controls-right">
@@ -2427,9 +2778,39 @@
                         {#each subtitleSizes as sz}
                           <button
                             class="subtitle-size-btn"
-                            class:active={subtitleSize === sz}
-                            on:click|stopPropagation={() => { subtitleSize = sz; localStorage.setItem('subtitle_size', sz); }}
+                            class:active={subtitleStyle.size === sz}
+                            on:click|stopPropagation={() => updateSubtitleStyle({ size: sz })}
                           >{sz[0].toUpperCase() + sz.slice(1)}</button>
+                        {/each}
+                      </div>
+                      <div class="subtitle-size-row">
+                        <span class="subtitle-size-label">Color</span>
+                        {#each subtitleColors as c}
+                          <button
+                            class="subtitle-size-btn"
+                            class:active={subtitleStyle.color === c}
+                            on:click|stopPropagation={() => updateSubtitleStyle({ color: c })}
+                          >{c[0].toUpperCase() + c.slice(1)}</button>
+                        {/each}
+                      </div>
+                      <div class="subtitle-size-row">
+                        <span class="subtitle-size-label">Background</span>
+                        {#each subtitleBackgrounds as b}
+                          <button
+                            class="subtitle-size-btn"
+                            class:active={subtitleStyle.background === b}
+                            on:click|stopPropagation={() => updateSubtitleStyle({ background: b })}
+                          >{b[0].toUpperCase() + b.slice(1)}</button>
+                        {/each}
+                      </div>
+                      <div class="subtitle-size-row">
+                        <span class="subtitle-size-label">Outline</span>
+                        {#each subtitleOutlines as o}
+                          <button
+                            class="subtitle-size-btn"
+                            class:active={subtitleStyle.outline === o}
+                            on:click|stopPropagation={() => updateSubtitleStyle({ outline: o })}
+                          >{o[0].toUpperCase() + o.slice(1)}</button>
                         {/each}
                       </div>
                       <div class="subtitle-size-row">
@@ -2479,6 +2860,25 @@
                   </div>
                 {/if}
               </div>
+            {/if}
+
+            <!-- Cast / Chromecast. Only renders once the SDK reports
+                 a receiver reachable; greyed out when the file isn't
+                 castable (AV1 source, MKV, etc — see isCastable). -->
+            {#if castAvailable && item?.files?.[0] && isCastable(item.files[0] as any)}
+              <button
+                class="icon-btn small cast-btn"
+                class:active={castConnected}
+                on:click|stopPropagation={castConnected ? castStop : castStart}
+                disabled={castSessionLoading}
+                title={castConnected ? `Casting to ${castReceiverName}` : 'Cast to TV'}
+                aria-label={castConnected ? 'Stop casting' : 'Cast to TV'}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
+                  <line x1="2" y1="20" x2="2.01" y2="20"/>
+                </svg>
+              </button>
             {/if}
 
             <!-- Quality picker -->
@@ -2613,9 +3013,39 @@
                 {#each subtitleSizes as sz}
                   <button
                     class="subtitle-size-btn"
-                    class:active={subtitleSize === sz}
-                    on:click|stopPropagation={() => { subtitleSize = sz; localStorage.setItem('subtitle_size', sz); }}
+                    class:active={subtitleStyle.size === sz}
+                    on:click|stopPropagation={() => updateSubtitleStyle({ size: sz })}
                   >{sz[0].toUpperCase() + sz.slice(1)}</button>
+                {/each}
+              </div>
+              <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
+                <span class="subtitle-size-label">Color</span>
+                {#each subtitleColors as c}
+                  <button
+                    class="subtitle-size-btn"
+                    class:active={subtitleStyle.color === c}
+                    on:click|stopPropagation={() => updateSubtitleStyle({ color: c })}
+                  >{c[0].toUpperCase() + c.slice(1)}</button>
+                {/each}
+              </div>
+              <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
+                <span class="subtitle-size-label">Background</span>
+                {#each subtitleBackgrounds as b}
+                  <button
+                    class="subtitle-size-btn"
+                    class:active={subtitleStyle.background === b}
+                    on:click|stopPropagation={() => updateSubtitleStyle({ background: b })}
+                  >{b[0].toUpperCase() + b.slice(1)}</button>
+                {/each}
+              </div>
+              <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
+                <span class="subtitle-size-label">Outline</span>
+                {#each subtitleOutlines as o}
+                  <button
+                    class="subtitle-size-btn"
+                    class:active={subtitleStyle.outline === o}
+                    on:click|stopPropagation={() => updateSubtitleStyle({ outline: o })}
+                  >{o[0].toUpperCase() + o.slice(1)}</button>
                 {/each}
               </div>
               <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
@@ -2697,6 +3127,25 @@
             {item.view_offset_ms > 0 ? `Resume · ${fmtTime(item.view_offset_ms / 1000)}` : 'Play'}
           </button>
         {/if}
+        <!-- Download for offline playback. Server adds Content-Disposition:
+             attachment so the browser triggers save-as. Stream-token in
+             query so the path works from a mobile browser that can't
+             carry cookies (Android Download Manager, iOS Safari). -->
+        {#if item.files?.[0]?.id && item.files[0].stream_token}
+          <a
+            class="download-btn"
+            href="{assetUrl(`/media/download/${item.files[0].id}?token=${encodeURIComponent(item.files[0].stream_token)}`)}"
+            download
+            title="Download for offline viewing"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download
+          </a>
+        {/if}
       </div>
     </div>
 
@@ -2725,11 +3174,16 @@
       </div>
     {/if}
 
-    <!-- Fix Match + Choose Poster + Remove (shows and movies, admin) -->
+    <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
     {#if (item.type === 'show' || item.type === 'movie') && isAdmin}
       <button class="fix-match-btn" on:click={openMatchModal}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         Fix Match
+      </button>
+      <button class="fix-match-btn" class:refreshing on:click={refreshMetadata} disabled={refreshing}
+              title="Re-run metadata enrichment from the configured providers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        {refreshing ? 'Refreshing…' : 'Refresh'}
       </button>
       <button class="fix-match-btn" on:click={openPosterModal} title="Pick a different poster image">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5-11 11"/></svg>
@@ -2739,6 +3193,56 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         Remove
       </button>
+    {/if}
+
+    <!-- Per-user watching status. Visible on shows / movies for any
+         signed-in user (not admin-gated — it's their own list).
+         Distinct surface from the watched / in-progress markers the
+         player generates automatically: this is the user's explicit
+         classification, anime-tracker convention applied to every
+         type. -->
+    {#if (item.type === 'show' || item.type === 'movie')}
+      <div class="watch-status-control">
+        <label for="watch-status-select" class="watch-status-label">Status</label>
+        <select
+          id="watch-status-select"
+          class="watch-status-select"
+          value={watchStatus}
+          disabled={watchStatusLoading}
+          on:change={(e) => changeWatchStatus(e.currentTarget.value as WatchStatusValue)}
+        >
+          <option value="">— None —</option>
+          <option value="plan_to_watch">Plan to Watch</option>
+          <option value="watching">Watching</option>
+          <option value="on_hold">On Hold</option>
+          <option value="completed">Completed</option>
+          <option value="dropped">Dropped</option>
+        </select>
+      </div>
+    {/if}
+
+    <!-- External provider deep-links. Visible to all users (not gated
+         on isAdmin) since they're a navigation aid, not an admin
+         action. Render only when the corresponding ID is set so
+         non-anime rows don't get an empty AniList button.
+         Type-gated to show / movie so episode pages don't sprout
+         show-level deep-links — episode rows don't have the IDs
+         set anyway since we only cross-harvest at the show level. -->
+    {#if (item.type === 'show' || item.type === 'movie') && (item.anilist_id || item.mal_id)}
+      <div class="external-links" aria-label="External tracker links">
+        {#if item.anilist_id}
+          <a class="external-link external-link--anilist"
+             href={`https://anilist.co/${item.type === 'movie' ? 'anime' : 'anime'}/${item.anilist_id}`}
+             target="_blank" rel="noopener noreferrer"
+             title="Open on AniList">AniList</a>
+        {/if}
+        {#if item.mal_id}
+          <a class="external-link external-link--mal"
+             href={`https://myanimelist.net/anime/${item.mal_id}`}
+             target="_blank" rel="noopener noreferrer"
+             title="Open on MyAnimeList">MyAnimeList</a>
+        {/if}
+      </div>
     {/if}
 
     <!-- Edit Metadata + Remove (home_video — no external metadata source,
@@ -2777,7 +3281,7 @@
               class:active={selectedSeasonId === season.id}
               on:click={() => selectSeason(season.id)}
             >
-              {season.title}
+              {season.title || `Season ${season.index ?? '—'}`}
             </button>
           {/each}
         </div>
@@ -2788,7 +3292,7 @@
             on:change={(e) => selectSeason(e.currentTarget.value)}
           >
             {#each seasons as season}
-              <option value={season.id}>{season.title}</option>
+              <option value={season.id}>{season.title || `Season ${season.index ?? '—'}`}</option>
             {/each}
           </select>
         </div>
@@ -2807,6 +3311,14 @@
             <div class="ep-info">
               <div class="ep-title">
                 {ep.title}
+                {#if ep.kind && ep.kind !== 'episode'}
+                  <!-- Anime episode subtype badge. Scanner detects
+                       OVA / ONA / Special / movie episodes by folder
+                       (Specials/) and filename markers ([Special],
+                       OVA1, S00E01) so the reader can group them
+                       distinctly from main-run episodes. -->
+                  <span class="ep-kind-pill ep-kind-{ep.kind}">{ep.kind.toUpperCase()}</span>
+                {/if}
                 {#if ep.watched}
                   <!-- Inline check + "Watched" pill: Plex / Jellyfin
                        convention so a finished episode is obvious at
@@ -3173,16 +3685,42 @@
     text-align: center;
   }
   .subtitle-cue {
-    background: rgba(0, 0, 0, 0.75);
-    color: #fff;
+    /* font-size / color / background / text-shadow set inline via
+       subtitleCueStyle() so user prefs reflect immediately. Padding
+       and corner-rounding stay class-driven so they never disappear
+       under a "no background" pref. */
     padding: 0.15em 0.5em;
     border-radius: 3px;
     line-height: 1.4;
-    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
   }
-  .subtitle-overlay.subs-small .subtitle-cue { font-size: 1rem; }
-  .subtitle-overlay.subs-medium .subtitle-cue { font-size: 1.4rem; }
-  .subtitle-overlay.subs-large .subtitle-cue { font-size: 2rem; }
+
+  /* Cast button — borrows the existing icon-btn shell; .active
+     turns the chrome accent on so the user can see at a glance
+     that a session is running. */
+  .cast-btn.active {
+    color: var(--accent, #4dd0e1);
+  }
+
+  /* Download button on the detail page. Sized to match .play-btn so
+     they line up; styled secondary so the play CTA stays primary. */
+  .download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.9rem;
+    margin-left: 0.6rem;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.85rem;
+    text-decoration: none;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .download-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.32);
+  }
 
   .fanart-bg {
     position: absolute;
@@ -3342,11 +3880,43 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 0.75rem;
   }
   .controls-left, .controls-right {
     display: flex;
     align-items: center;
     gap: 0.25rem;
+    flex: 1; /* let center stay centered while sides absorb extra width */
+  }
+  .controls-right { justify-content: flex-end; }
+  /* Centre transport cluster — prev / −10s / play / +10s / next.
+     Pinned to the geometric centre via flex:1 on the side rails;
+     internal gap is tighter than the side clusters so the buttons
+     read as a single grouped affordance. */
+  .controls-center {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+  .play-pause-center {
+    /* Larger circle so the centre button reads as the primary
+       transport control. Subtle background lifts it off the row. */
+    width: 44px; height: 44px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.08);
+  }
+  .play-pause-center:hover {
+    background: rgba(255,255,255,0.14);
+  }
+  .controls-center .ep-nav-btn {
+    color: rgba(255,255,255,0.85);
+    text-decoration: none;
+  }
+  .controls-center .ep-nav-btn.disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    pointer-events: none;
   }
 
   .icon-btn {
@@ -3923,6 +4493,24 @@
     opacity: 1;
   }
   .episode-row.ep-watched .ep-watched-pill { opacity: 1; }
+  /* Anime episode-subtype badges. OVA / ONA / Special / Movie
+     are visually distinct from the watched pill so the eye can
+     scan the kind column at a glance — different hue per subtype
+     lets a Specials cluster pop without reading every label. */
+  .ep-kind-pill {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.05rem 0.45rem 0.1rem;
+    border-radius: 999px;
+    font-size: 0.6rem; font-weight: 700;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    color: white;
+  }
+  .ep-kind-pill.ep-kind-ova     { background: #6c5ce7; } /* purple */
+  .ep-kind-pill.ep-kind-ona     { background: #00b894; } /* teal */
+  .ep-kind-pill.ep-kind-special { background: #e17055; } /* coral */
+  .ep-kind-pill.ep-kind-movie   { background: #d63031; } /* red */
   /* In-progress bar under the title for episodes the user has
      started but not finished. Hidden for watched episodes. */
   .ep-progress {
@@ -3963,6 +4551,70 @@
     transition: all 0.12s;
   }
   .fix-match-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-hover); }
+  .fix-match-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  /* Spin the refresh icon while the request is in flight. SVG is
+     the first child of the button — `> svg:first-child` keeps the
+     selector tight enough that other admin buttons that happen to
+     lead with an SVG don't get rotated. */
+  .fix-match-btn.refreshing > svg:first-child {
+    animation: refresh-spin 1s linear infinite;
+  }
+  @keyframes refresh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* External tracker deep-links. Brand colours per provider so they
+     read as third-party affordances rather than admin controls. */
+  .external-links {
+    display: inline-flex;
+    gap: 0.4rem;
+    margin-bottom: 1.5rem;
+    margin-left: 0.4rem;
+    vertical-align: middle;
+  }
+  .external-link {
+    display: inline-flex; align-items: center;
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+    font-size: 0.7rem; font-weight: 600;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    color: white;
+    transition: filter 0.12s;
+  }
+  .external-link:hover { filter: brightness(1.15); }
+  .external-link--anilist { background: #02a9ff; }     /* AniList brand blue */
+  .external-link--mal     { background: #2e51a2; }     /* MAL brand navy */
+
+  /* Per-user watching-status dropdown. Inline with the action-button
+     row, but visually distinct (pill-shaped, accent-bordered) so
+     users register it as a state control rather than another
+     one-shot button. */
+  .watch-status-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    padding: 0.25rem 0.7rem 0.25rem 0.85rem;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+  }
+  .watch-status-label {
+    font-size: 0.7rem; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+  .watch-status-select {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0.15rem 0.25rem;
+  }
+  .watch-status-select:disabled { opacity: 0.55; cursor: not-allowed; }
+  .watch-status-select:focus { outline: 1px solid var(--accent); outline-offset: 2px; }
 
   .download-btn {
     display: inline-flex; align-items: center; gap: 0.35rem;

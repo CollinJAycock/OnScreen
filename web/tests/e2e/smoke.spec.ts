@@ -47,7 +47,7 @@ test.describe('Tier 1 — auth', () => {
     await page.goto('/login');
     await page.getByLabel(/username/i).fill(USERNAME);
     await page.getByLabel(/password/i).fill(PASSWORD);
-    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
     await expect(page).not.toHaveURL(/\/login/);
 
     // Refresh-token cookie should be set after login. Name varies per
@@ -89,7 +89,7 @@ test.describe('Tier 1 — library + admin smoke', () => {
     await page.goto('/login');
     await page.getByLabel(/username/i).fill(USERNAME);
     await page.getByLabel(/password/i).fill(PASSWORD);
-    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
     await expect(page).not.toHaveURL(/\/login/);
 
     await page.goto('/settings');

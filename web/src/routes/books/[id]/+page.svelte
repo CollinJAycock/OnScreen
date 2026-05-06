@@ -3,6 +3,14 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, assetUrl, getBearerToken, type ItemDetail } from '$lib/api';
+  import {
+    effectiveLayout as computeEffectiveLayout,
+    pageStep as computePageStep,
+    keyToPageDelta,
+    keyToAbsolutePage,
+    type ReadingDirection,
+    type LayoutMode,
+  } from './reader-nav';
 
   // v2.1 reader for CBZ / CBR / EPUB.
   //
@@ -27,6 +35,26 @@
   // off to a different render path entirely (epub.js).
   let format: 'cbz' | 'cbr' | 'epub' = 'cbz';
   $: isEpub = format === 'epub';
+
+  // Reader modes for manga / comics.
+  //
+  //   direction: 'ltr' = Western (left → right), 'rtl' = manga
+  //              (right → left), 'ttb' = webtoon (vertical scroll).
+  //   layout:    'single' = one page at a time (default),
+  //              'spread' = two pages side-by-side (manga / comics),
+  //              'scroll' = all pages stacked vertically (webtoons).
+  //
+  // Defaults: direction picks up book.reading_direction when set
+  // (manga enricher populates from AniList countryOfOrigin) and
+  // falls back to ltr; layout always starts at 'single'. ttb
+  // implies 'scroll' (webtoons aren't read page-by-page) and
+  // overrides layout. EPUB ignores both — epub.js owns its own
+  // pagination.
+  let direction: ReadingDirection = 'ltr';
+  let layout: LayoutMode = 'single';
+  // Reactive view of computeEffectiveLayout — ttb forces scroll; otherwise
+  // pass-through. Keeping this as $: so Svelte tracks both inputs.
+  $: effectiveLayout = computeEffectiveLayout(direction, layout);
 
   // EPUB state — undefined for cbz/cbr.
   let epubViewerEl: HTMLDivElement | null = null;
@@ -79,6 +107,16 @@
         return;
       }
       book = detail;
+      // Reading direction: prefer the per-book override stored by the
+      // manga enricher (AniList countryOfOrigin → JP=rtl, KR/CN=ttb),
+      // fall back to ltr for ordinary books / EPUB. The reader's UI
+      // controls let the user override at view time without writing
+      // back to the row.
+      if (detail.reading_direction === 'rtl' || detail.reading_direction === 'ttb' || detail.reading_direction === 'ltr') {
+        direction = detail.reading_direction;
+      } else {
+        direction = 'ltr';
+      }
       // Container is stamped from the file extension (api/v1/items.go
       // backfills it for book items when ffprobe doesn't). Falls back
       // to cbz so older rows from before this code shipped still
@@ -191,6 +229,11 @@
     return `/api/v1/items/${id}/book/page/${n}`;
   }
 
+  // Navigation step. Spread mode advances by 2 to keep both pages
+  // turning together; ttb / scroll ignore go() entirely (the page
+  // is rendered as one long column, browser scroll handles it).
+  $: pageStep = computePageStep(effectiveLayout);
+
   function go(n: number) {
     if (n < 1 || n > pageCount) return;
     if (isEpub) {
@@ -228,19 +271,25 @@
     }, 0);
   }
 
+  // Arrow keys are direction-aware. RTL manga reads right-to-left,
+  // so → advances toward the END of the book (which means a LOWER
+  // page number visually but a HIGHER one in archive order — the
+  // archive order matches the manga's intended flip order).
+  // PageDown / Space always advance regardless of direction (those
+  // keys are about reading flow, not spatial direction).
+  // The direction/layout/key → delta math lives in ./reader-nav so
+  // it can be unit-tested without mounting the page.
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+    const abs = keyToAbsolutePage(e.key, pageCount, direction, layout);
+    if (abs !== null) {
       e.preventDefault();
-      go(pageNum + 1);
-    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+      go(abs);
+      return;
+    }
+    const delta = keyToPageDelta(e.key, direction, layout);
+    if (delta !== null) {
       e.preventDefault();
-      go(pageNum - 1);
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      go(1);
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      go(pageCount);
+      go(pageNum + delta);
     }
   }
 </script>
@@ -268,6 +317,31 @@
         <div class="page-counter">
           {isEpub ? 'Section' : 'Page'} {pageNum} of {pageCount}
         </div>
+        {#if !isEpub}
+          <!-- Reader-mode controls. Hidden on EPUB (epub.js owns
+               its own pagination). Direction toggle covers manga
+               (rtl) + webtoon (ttb); layout toggle adds spread for
+               two-page comics / manga. ttb forces scroll layout
+               regardless of the layout pick. -->
+          <div class="mode-controls" aria-label="Reader mode">
+            <select class="mode-select"
+                    aria-label="Reading direction"
+                    bind:value={direction}>
+              <option value="ltr">Left → Right</option>
+              <option value="rtl">Right → Left</option>
+              <option value="ttb">Vertical (webtoon)</option>
+            </select>
+            {#if direction !== 'ttb'}
+              <select class="mode-select"
+                      aria-label="Page layout"
+                      bind:value={layout}>
+                <option value="single">Single page</option>
+                <option value="spread">Two-page spread</option>
+                <option value="scroll">Long scroll</option>
+              </select>
+            {/if}
+          </div>
+        {/if}
         {#if isAdmin}
           <button class="btn-remove" on:click={removeItem}
                   title="Soft-delete this book">
@@ -278,31 +352,65 @@
       </div>
     </header>
 
-    <div class="reader">
-      <button
-        class="nav-btn left"
-        on:click={() => go(pageNum - 1)}
-        disabled={!isEpub && pageNum <= 1}
-        aria-label="Previous page"
-      >‹</button>
-
-      <div class="page-frame">
-        {#if isEpub}
-          <div class="epub-viewer" bind:this={epubViewerEl}></div>
-        {:else}
-          {#key pageNum}
-            <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
-          {/key}
-        {/if}
+    {#if effectiveLayout === 'scroll' && !isEpub}
+      <!-- Webtoon / long-scroll mode: stack every page in a single
+           column and let the browser handle scroll. Range slider in
+           the bottombar still works (it scrolls the matching image
+           into view). -->
+      <div class="reader-scroll">
+        {#each Array(pageCount) as _, i}
+          <img class="page-img scroll-page"
+               src={pageURL(i + 1)}
+               alt="Page {i + 1}"
+               loading="lazy"
+               id="scroll-page-{i + 1}" />
+        {/each}
       </div>
+    {:else}
+      <div class="reader" class:rtl={direction === 'rtl'}>
+        <button
+          class="nav-btn left"
+          on:click={() => go(direction === 'rtl' ? pageNum + pageStep : pageNum - pageStep)}
+          disabled={!isEpub && (direction === 'rtl' ? pageNum + pageStep > pageCount : pageNum <= 1)}
+          aria-label={direction === 'rtl' ? 'Next page' : 'Previous page'}
+        >‹</button>
 
-      <button
-        class="nav-btn right"
-        on:click={() => go(pageNum + 1)}
-        disabled={!isEpub && pageNum >= pageCount}
-        aria-label="Next page"
-      >›</button>
-    </div>
+        <div class="page-frame" class:spread={effectiveLayout === 'spread' && !isEpub}>
+          {#if isEpub}
+            <div class="epub-viewer" bind:this={epubViewerEl}></div>
+          {:else if effectiveLayout === 'spread'}
+            <!-- Two-page spread: render pages [n, n+1] side-by-side.
+                 Direction governs visual order — RTL manga shows
+                 the higher page number on the LEFT (the way print
+                 manga lay out across two facing pages). -->
+            {#key pageNum}
+              {#if direction === 'rtl'}
+                {#if pageNum + 1 <= pageCount}
+                  <img class="page-img" src={pageURL(pageNum + 1)} alt="Page {pageNum + 1}" />
+                {/if}
+                <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
+              {:else}
+                <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
+                {#if pageNum + 1 <= pageCount}
+                  <img class="page-img" src={pageURL(pageNum + 1)} alt="Page {pageNum + 1}" />
+                {/if}
+              {/if}
+            {/key}
+          {:else}
+            {#key pageNum}
+              <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
+            {/key}
+          {/if}
+        </div>
+
+        <button
+          class="nav-btn right"
+          on:click={() => go(direction === 'rtl' ? pageNum - pageStep : pageNum + pageStep)}
+          disabled={!isEpub && (direction === 'rtl' ? pageNum <= 1 : pageNum + pageStep > pageCount)}
+          aria-label={direction === 'rtl' ? 'Previous page' : 'Next page'}
+        >›</button>
+      </div>
+    {/if}
 
     <footer class="bottombar">
       <input
@@ -380,6 +488,52 @@
     object-fit: contain;
     user-select: none;
   }
+  /* Two-page spread: split the frame in half so each page gets
+     half the width but the full height. Larger than single-page
+     mode visually because two narrow pages tile the whole frame. */
+  .page-frame.spread {
+    flex-direction: row;
+    gap: 4px;
+  }
+  .page-frame.spread .page-img {
+    max-width: 50%;
+  }
+  /* Webtoon / scroll mode: vertical column, full-width images. */
+  .reader-scroll {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: var(--bg-elevated);
+    border-radius: 6px;
+    padding: 0 0.5rem;
+  }
+  .scroll-page {
+    width: 100%;
+    max-width: 800px; /* webtoons render best at ~800px wide */
+    max-height: none;
+    height: auto;
+    margin-bottom: 2px;
+  }
+
+  /* Mode controls inline with the page counter. Compact selects so
+     they don't dominate the topbar. */
+  .mode-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .mode-select {
+    background: var(--input-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.4rem;
+    cursor: pointer;
+  }
+  .mode-select:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
   .epub-viewer {
     width: 100%; height: 100%;
     background: #fdfcf7;

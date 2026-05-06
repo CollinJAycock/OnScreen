@@ -16,6 +16,17 @@
   let useLdap = false; // toggle the password form to LDAP mode
   let setupRequired = false;
   let forgotEnabled = false;
+  // Post-login redirect target. Set when the login page is reached
+  // via ?next= (e.g. native client opens /pair?code=N → not signed
+  // in → /login?next=%2Fpair%3Fcode%3DN). For local + LDAP we honor
+  // it directly after sign-in. For OIDC / SAML — which round-trip
+  // through the IdP and come back to / via cookie-driven state — we
+  // stash the redirect in sessionStorage so the / route's bootstrap
+  // can pick it up after the OIDC/SAML callback redirects there.
+  let nextRedirect: string | null = null;
+  // Storage key the / route looks at to honor the post-OIDC bounce.
+  // Kept in one spot so client + server-redirect target agree.
+  const NEXT_REDIRECT_KEY = 'onscreen_post_login_redirect';
 
   onMount(async () => {
     // Redirect to setup if no users exist yet.
@@ -29,6 +40,14 @@
     } catch { /* proceed to login */ }
 
     const params = new URLSearchParams(window.location.search);
+    // Capture ?next= for the post-login redirect. Validate it stays
+    // same-origin (starts with `/`) so an attacker can't craft a
+    // /login?next=https://evil.example link that bounces the user
+    // off-site after they sign in. open redirect classic.
+    const rawNext = params.get('next');
+    if (rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//')) {
+      nextRedirect = rawNext;
+    }
     const oauthError = params.get('error');
     if (oauthError === 'oidc_denied') error = 'Sign-in was cancelled.';
     else if (oauthError === 'oidc_disabled') error = 'OIDC sign-in is not configured.';
@@ -65,12 +84,23 @@
         ? await authApi.ldapLogin(username, password)
         : await authApi.login(username, password);
       api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
-      goto('/');
+      goto(nextRedirect ?? '/');
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Login failed.';
       password = '';
     } finally {
       loading = false;
+    }
+  }
+
+  /** Called before kicking off an OIDC or SAML redirect. The IdP
+   *  round-trip discards URL state (the server-side handler ends at
+   *  `/?oidc_auth=1` regardless), so we stash the post-login target
+   *  in sessionStorage and let the / route's bootstrap pick it up
+   *  after the bounce. Cleared after use to prevent stale redirects. */
+  function persistNextForFederated() {
+    if (nextRedirect && typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(NEXT_REDIRECT_KEY, nextRedirect);
     }
   }
 </script>
@@ -118,7 +148,7 @@
       <div class="divider"><span>or continue with</span></div>
       <div class="sso-buttons">
         {#if oidcEnabled}
-          <button class="sso-btn" on:click={() => window.location.href = '/api/v1/auth/oidc'}>
+          <button class="sso-btn" on:click={() => { persistNextForFederated(); window.location.href = '/api/v1/auth/oidc'; }}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
               <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 4h2v8h-2V6zm0 10h2v2h-2v-2z"/>
             </svg>
@@ -126,7 +156,7 @@
           </button>
         {/if}
         {#if samlEnabled}
-          <button class="sso-btn" on:click={() => window.location.href = '/api/v1/auth/saml'}>
+          <button class="sso-btn" on:click={() => { persistNextForFederated(); window.location.href = '/api/v1/auth/saml'; }}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
               <path d="M12 1a4 4 0 00-4 4v3H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2h-2V5a4 4 0 00-4-4zm-2 7V5a2 2 0 014 0v3h-4z"/>
             </svg>

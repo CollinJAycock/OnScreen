@@ -881,8 +881,33 @@ export const mediaApi = {
   eventCollections: (libraryId: string) =>
     api.get<EventCollection[]>(`/libraries/${libraryId}/event-collections`),
   enrichItem: (id: string) =>
-    api.post<void>(`/items/${id}/enrich`)
+    api.post<void>(`/items/${id}/enrich`),
+
+  // Watching-status: per-user Plan to Watch / Watching / etc.
+  // Returns 404 when no row exists; UI treats that as "no status".
+  getWatchStatus: (id: string) =>
+    api.get<WatchStatus>(`/items/${id}/watch-status`),
+  setWatchStatus: (id: string, status: WatchStatusValue) =>
+    api.put<WatchStatus>(`/items/${id}/watch-status`, { status }),
+  clearWatchStatus: (id: string) =>
+    api.delete<void>(`/items/${id}/watch-status`),
 };
+
+// WatchStatus mirrors WatchStatusResponse on the server. Status is
+// one of the five anime-tracker classifications shipped as a generic
+// per-(user, item) feature.
+export type WatchStatusValue =
+  | 'plan_to_watch'
+  | 'watching'
+  | 'on_hold'
+  | 'completed'
+  | 'dropped';
+
+export interface WatchStatus {
+  status: WatchStatusValue;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface EventCollection {
   id: string;
@@ -1071,6 +1096,18 @@ export interface ItemDetail {
   markers?: Marker[];
   tmdb_id?: number;
   tvdb_id?: number;
+  // Anime-native external IDs. Populated when an anime library
+  // matched the show / movie via the AniList agent. Surfaced on
+  // the detail page as deep-link buttons (anilist.co, MAL).
+  anilist_id?: number;
+  mal_id?: number;
+  // Anime episode subtype (`ova`, `ona`, `special`, `movie`).
+  // Absent / `episode` = ordinary episode.
+  kind?: string;
+  // Manga / book reader page-flip direction. `ltr` (Western), `rtl`
+  // (manga), `ttb` (webtoon / manhwa / manhua vertical strip).
+  // Absent → reader picks library-type default at open time.
+  reading_direction?: 'ltr' | 'rtl' | 'ttb';
   // Music-specific fields (undefined for non-music items).
   musicbrainz_id?: string;
   musicbrainz_release_id?: string;
@@ -1105,6 +1142,10 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  // Episode subtype within an anime show (`ova`, `ona`, `special`,
+  // `movie`). Absent or `episode` = ordinary episode. Surfaced as a
+  // badge on the episode list.
+  kind?: string;
   // Per-user playback state populated by the server's children
   // endpoint. Used by show / season detail pages to render the
   // watched indicator + in-progress bar on each episode row.

@@ -171,7 +171,7 @@ test.describe('Security — XSS reflection', () => {
     await page.goto('/login');
     await page.getByLabel(/username/i).fill(USERNAME);
     await page.getByLabel(/password/i).fill(PASSWORD);
-    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
     await expect(page).not.toHaveURL(/\/login/);
 
     // Intercept any XSS execution — if the script tag is reflected and

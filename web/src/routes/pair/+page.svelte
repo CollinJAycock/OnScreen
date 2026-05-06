@@ -11,7 +11,7 @@
 
   // Pre-fill the PIN from a query param so a TV-app QR code can deep-link
   // straight to the pre-filled form.
-  onMount(() => {
+  onMount(async () => {
     if (!api.getUser()) {
       const next = encodeURIComponent(window.location.pathname + window.location.search);
       window.location.href = `/login?next=${next}`;
@@ -20,6 +20,15 @@
     const params = new URLSearchParams(window.location.search);
     const seed = params.get('pin') ?? params.get('code') ?? '';
     pin = seed.replace(/\D/g, '').slice(0, 6);
+    // Auto-claim path: native client opens Custom Tabs to
+    // /pair?code=N&auto=1 and polls the pair-poll endpoint in the
+    // background. With a 6-digit PIN already present and the user
+    // signed in, there's no good reason to make them tap "Authorize"
+    // — fire it now and surface the success card. The polling app
+    // sees the claim land and takes the user to the home hub.
+    if (params.get('auto') === '1' && pin.length === 6) {
+      await submit();
+    }
   });
 
   function onPinInput(e: Event) {

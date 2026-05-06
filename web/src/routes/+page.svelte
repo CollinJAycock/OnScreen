@@ -33,6 +33,19 @@
       }
       if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     }
+    // Honor a stashed post-login redirect. Set by /login when the
+    // user arrives via ?next= and clicks an SSO button (the IdP
+    // round-trip discards URL state, so /login persists the target
+    // here for the / route to pick up). Same-origin guard mirrors
+    // the /login validation — never bounce off-site.
+    try {
+      const stash = sessionStorage.getItem('onscreen_post_login_redirect');
+      if (stash && stash.startsWith('/') && !stash.startsWith('//')) {
+        sessionStorage.removeItem('onscreen_post_login_redirect');
+        goto(stash);
+        return;
+      }
+    } catch { /* sessionStorage disabled / private mode — ignore */ }
     await load();
     pollTimer = setInterval(refreshHub, 30_000);
   });

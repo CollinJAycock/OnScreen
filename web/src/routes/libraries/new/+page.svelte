@@ -13,7 +13,12 @@
   }
 
   let name = '';
-  let type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book' = 'movie';
+  // `manga` is parked — the AniList manga agent and the RTL/spread
+  // reader code remain in tree but the type is hidden from this picker
+  // until the volume/chapter hierarchy + reader polish ship. Server-side
+  // validateCreateParams refuses it too. Re-add 'manga' here when the
+  // feature reopens.
+  let type: 'movie' | 'show' | 'anime' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book' = 'movie';
   let paths: string[] = [''];
   let agent = 'tmdb';
   let language = 'en';
@@ -76,7 +81,7 @@
         <input id="name" bind:value={name} placeholder="Movies" autocomplete="off" />
       </div>
       <div class="type-picker">
-        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label]}
+        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🍙','Anime'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
             <span class="type-icon">{icon}</span>
