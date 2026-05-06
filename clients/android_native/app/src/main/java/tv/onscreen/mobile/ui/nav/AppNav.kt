@@ -34,6 +34,7 @@ import tv.onscreen.mobile.ui.playlists.PlaylistsScreen
 import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
 import tv.onscreen.mobile.ui.series.SeriesScreen
+import tv.onscreen.mobile.ui.settings.AboutScreen
 import tv.onscreen.mobile.ui.settings.SettingsScreen
 import javax.inject.Inject
 
@@ -80,7 +81,13 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(onBack = { nav.popBackStack() })
+            SettingsScreen(
+                onBack = { nav.popBackStack() },
+                onOpenAbout = { nav.navigate(Routes.ABOUT) },
+            )
+        }
+        composable(Routes.ABOUT) {
+            AboutScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.DISCOVER) {
             DiscoverScreen(onBack = { nav.popBackStack() })

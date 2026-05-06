@@ -24,6 +24,7 @@ object Routes {
     const val AUTHOR = "author/{id}"
     const val SERIES = "series/{id}"
     const val SETTINGS = "settings"
+    const val ABOUT = "about"
 
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"

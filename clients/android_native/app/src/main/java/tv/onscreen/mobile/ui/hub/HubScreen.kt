@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -99,14 +100,24 @@ fun HubScreen(
             )
         },
     ) { padding ->
-        Box(
+        // Pull-to-refresh wraps the body so the gesture is available
+        // on both the empty/error state and the populated grid. Loads
+        // through the same vm.load() call init runs at startup so
+        // refresh-vs-first-load take identical code paths.
+        PullToRefreshBox(
+            isRefreshing = ui.loading,
+            onRefresh = vm::load,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
             when {
-                ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                ui.error != null -> Text(
+                // Initial load — show the spinner above the empty
+                // grid. Pull-to-refresh's own indicator handles the
+                // refresh case (ui.loading=true with hub already set).
+                ui.loading && ui.hub == null ->
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                ui.error != null && ui.hub == null -> Text(
                     "Couldn't load: ${ui.error}",
                     modifier = Modifier
                         .align(Alignment.Center)

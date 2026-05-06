@@ -18,6 +18,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -104,14 +105,21 @@ fun LibraryScreen(
             )
         },
     ) { padding ->
-        Box(
+        PullToRefreshBox(
+            isRefreshing = ui.loading,
+            onRefresh = { vm.load(libraryId) },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
             when {
-                ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                ui.error != null -> Text(ui.error!!, modifier = Modifier.align(Alignment.Center))
+                // Initial load before any items — show the centered
+                // spinner. PullToRefreshBox's own indicator handles
+                // the refresh case (loading + items already present).
+                ui.loading && ui.items.isEmpty() ->
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                ui.error != null && ui.items.isEmpty() ->
+                    Text(ui.error!!, modifier = Modifier.align(Alignment.Center))
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(120.dp),
                     contentPadding = PaddingValues(12.dp),
