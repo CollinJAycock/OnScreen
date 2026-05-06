@@ -930,7 +930,7 @@ func run() error {
 		Plugins:            pluginHandler,
 		Pair:               pairHandler,
 		Logs:               v1.NewLogsHandler(logBuffer),
-		Debug:              v1.NewDebugHandler(logger),
+		Debug:              v1.NewDebugHandler(logger).WithExplain(roPool),
 		Capabilities:       capabilitiesHandler,
 		ArrServices:        arrServicesHandler,
 		Requests:           requestsHandler,

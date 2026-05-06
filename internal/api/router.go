@@ -542,6 +542,7 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/admin/debug/pprof/symbol", h.Debug.PprofSymbol)
 					r.Post("/admin/debug/pprof/symbol", h.Debug.PprofSymbol)
 					r.Get("/admin/debug/pprof/trace", h.Debug.PprofTrace)
+					r.Get("/admin/debug/explain/{name}", h.Debug.Explain)
 				})
 			}
 
