@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,6 +17,13 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/library"
 )
+
+// trendingCacheTTL controls how long a /api/v1/hub trending result
+// stays warm. 5 minutes amortizes the ~1s underlying query across
+// the dozens of hub fetches a client makes per session while
+// keeping freshly-watched items visible within minutes. Tunable
+// via WithTrendingCacheTTL for tests.
+const trendingCacheTTL = 5 * time.Minute
 
 // HubDB defines the database queries the hub handler needs.
 type HubDB interface {
@@ -34,17 +42,30 @@ type HubLibraryLister interface {
 
 // HubHandler serves the home page hub data.
 type HubHandler struct {
-	db      HubDB
-	access  LibraryAccessChecker
-	libs    HubLibraryLister
-	epDB    EpisodePosterDB // optional — when set, substitutes show posters for episode rows
-	logger  *slog.Logger
-	perLib  int32 // items per library row; defaults to 12 if zero
+	db       HubDB
+	access   LibraryAccessChecker
+	libs     HubLibraryLister
+	epDB     EpisodePosterDB // optional — when set, substitutes show posters for episode rows
+	logger   *slog.Logger
+	perLib   int32 // items per library row; defaults to 12 if zero
+	trending *trendingCache
 }
 
 // NewHubHandler creates a HubHandler.
 func NewHubHandler(db HubDB, logger *slog.Logger) *HubHandler {
-	return &HubHandler{db: db, logger: logger}
+	return &HubHandler{
+		db:       db,
+		logger:   logger,
+		trending: newTrendingCache(trendingCacheTTL),
+	}
+}
+
+// WithTrendingCacheTTL overrides the trending-cache TTL. Intended
+// for tests that want a 0-duration TTL to disable caching, or a
+// sub-second TTL to validate eviction.
+func (h *HubHandler) WithTrendingCacheTTL(d time.Duration) *HubHandler {
+	h.trending = newTrendingCache(d)
+	return h
 }
 
 // WithLibraryAccess enables per-user library filtering on hub rows.
@@ -287,10 +308,18 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// down by the caller's library access + parental ceiling. 30 raw
 	// rows so the post-access-filter result still has 12+ candidates
 	// even for a heavily-restricted user.
-	trRows, err := h.db.ListTrending(r.Context(), gen.ListTrendingParams{
-		WindowDays:    7,
-		MaxRatingRank: maxRank,
-		ResultLimit:   30,
+	//
+	// Routed through trendingCache because the underlying query is
+	// ~1s on a populated catalog (joins watch_events partitions,
+	// double-walks media_items for grandparent rollup + title
+	// lookup). Per-user library filtering still happens below on
+	// the cached rows, so a stale cache entry can't leak access.
+	trRows, err := h.trending.get(r.Context(), maxRank, func(ctx context.Context) ([]gen.ListTrendingRow, error) {
+		return h.db.ListTrending(ctx, gen.ListTrendingParams{
+			WindowDays:    7,
+			MaxRatingRank: maxRank,
+			ResultLimit:   30,
+		})
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "hub: trending", "err", err)
