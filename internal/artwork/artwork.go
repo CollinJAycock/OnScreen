@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,16 @@ import (
 type Manager struct {
 	cachePath  string // resize cache path
 	httpClient *http.Client
+
+	// resizeSem caps concurrent JPEG decode+resize operations. Each
+	// decode allocates the full RGBA image into memory (a 2000×3000
+	// poster is ~24 MB), so an unbounded burst (e.g. a TV row scroll
+	// firing 30 cards at once across many clients) ratchets the Go
+	// heap_sys high-watermark. Even after the burst settles and live
+	// heap drains, Go retains the OS pages and the operator sees RSS
+	// frozen at the burst peak. Bounded concurrency keeps the burst
+	// peak proportional to GOMAXPROCS instead of client-driven.
+	resizeSem chan struct{}
 }
 
 // New creates an artwork Manager. The default HTTP client uses
@@ -42,6 +53,7 @@ func New(cachePath string) *Manager {
 	return &Manager{
 		cachePath:  cachePath,
 		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second),
+		resizeSem:  make(chan struct{}, runtime.GOMAXPROCS(0)),
 	}
 }
 
@@ -180,13 +192,28 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 	cacheKey := cacheKeyFor(sourcePath, width, height)
 	cachePath := filepath.Join(m.cachePath, cacheKey+".jpg")
 
-	// Check if cache is valid (source mtime hasn't changed).
+	// Check if cache is valid (source mtime hasn't changed). Cache hits
+	// are pure file IO (small JPEG → response writer); they bypass the
+	// resize semaphore so a TV row of cached cards never waits on
+	// in-flight decodes.
 	if isCacheValid(sourcePath, cachePath) {
 		cf, err := os.Open(cachePath)
 		if err == nil {
 			defer cf.Close()
 			_, err = io.Copy(w, cf)
 			return err
+		}
+	}
+
+	// Cache miss → bound concurrent decodes. See Manager.resizeSem.
+	// Honour the request context so a navigated-away client (TV scroll
+	// past a card) doesn't sit waiting for a slot.
+	if m.resizeSem != nil {
+		select {
+		case m.resizeSem <- struct{}{}:
+			defer func() { <-m.resizeSem }()
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 
