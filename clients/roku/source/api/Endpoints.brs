@@ -35,6 +35,15 @@ function ApiLibraries() as String
     return "/api/v1/libraries"
 end function
 
+' Items inside a single library. Backs LibraryScene's poster grid.
+' limit/offset pagination matches the rest of the read endpoints;
+' 200 is the comfortable per-fetch ceiling for a poster grid before
+' the focus-feedback render starts dropping frames on lower-tier
+' Roku hardware. Bigger libraries page on scroll once that lands.
+function ApiLibraryItems(libraryId as String) as String
+    return "/api/v1/libraries/" + libraryId + "/items?limit=200"
+end function
+
 function ApiSearch() as String
     return "/api/v1/search"
 end function

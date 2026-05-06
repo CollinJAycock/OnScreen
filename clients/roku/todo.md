@@ -4,49 +4,34 @@ Working list of feature parity items vs. [android_native](../android_native/) an
 - [docs/comparison-matrix.md](../../docs/comparison-matrix.md) — claimed feature set
 - [docs/api/openapi.yaml](../../docs/api/openapi.yaml) — server API surface
 
-Audit snapshot: 2026-05-05 (after android_native picked up subtitle styling + Cast).
+Audit snapshot: 2026-05-05 (after android_native picked up subtitle styling + Cast). Latest revision 2026-05-06: P0 #1 shipped, #2 confirmed already shipped, #3 partially shipped (data side; rendering deferred — see notes).
 
 ---
 
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 
-### 1. Browse library by type (new `LibraryScene`)
-**Why:** Every Roku user currently has to use Search to find their movies. android_native ships a dedicated library grid; matrix claims library browse as ✅. Big UX win.
+### 1. Browse library by type (`LibraryScene`) — ✅ shipped 2026-05-06
 
-**Scope:**
-- New `components/browse/LibraryScene.xml` + `.brs` with a poster grid backed by `GET /libraries/{id}/items?type=movie&sort=title&order=asc`.
-- Paging via the existing `Endpoints.brs` envelope (`data` + `meta.total` + `meta.cursor`).
-- Library picker on the home hub: tile per library_id from `GET /libraries`.
-- Filter chips along the top row mirroring [SearchScene.brs](components/search/SearchScene.brs)'s pattern — pre-applied based on the library's `type` (movie library defaults to `type=movie` chip on, etc.).
-- Resume / Play actions identical to the home hub's continue-watching tiles.
-
-**Estimate:** medium. ~1 new scene, ~1 new task fetcher, ~1 envelope mapper. No server changes.
+[LibraryListScene.xml](components/browse/LibraryListScene.xml) lists the user's libraries; [LibraryScene.xml](components/browse/LibraryScene.xml) renders the items as a poster grid backed by `GET /libraries/{id}/items?limit=200`. Reachable from a "Libraries" button on HomeScene's top nav. Click routing matches FavoritesScene: containers → DetailScene, photos → PhotoScene, leaves → PlayerScene. Filter chips per library type are deferred — single-type libraries are the common case and a chip strip is visual noise without the multi-type case to disambiguate.
 
 ---
 
-### 2. Auto-advance to next episode on EOS
-**Why:** Up Next overlay exists at [PlayerScene.brs:67](components/playback/PlayerScene.brs#L67) but tapping the button is the only path. android_native auto-advances at end-of-stream and pre-buffers via the MediaSession service. Stops users sitting through credits to manually click "next."
+### 2. Auto-advance to next episode on EOS — ✅ already shipped (rediscovered 2026-05-06)
 
-**Scope:**
-- In `PlayerScene.brs`, hook the existing `position` observer for `position == duration - epsilon`.
-- Resolve the next sibling using the parent_id + child-index pattern android_native's [NextSiblingResolver.kt](../android_native/app/src/main/java/tv/onscreen/mobile/playback/NextSiblingResolver.kt) already establishes (album → next track, season → next episode, audiobook → next chapter).
-- Mirror android_native's behaviour: only auto-advance for episodes/tracks/chapters; movies / standalone items stay on the post-roll overlay.
-- Respect the user dismissing the Up Next overlay (`dismissed` flag persisted in the existing skip-marker dismissal store).
-
-**Estimate:** low. ~50 lines of `.brs`, no new scene.
+The original audit missed that [PlayerScene.brs](components/playback/PlayerScene.brs) `onVideoState` already auto-advances on the firmware `state="finished"` edge. The Up Next overlay is the ahead-of-EOS UI for early-accept / dismiss; if the user neither accepts nor dismisses, EOS triggers `goToNext(m.nextSibling)`. Behaviour matches android_native: types with a meaningful next-sibling (episode / podcast_episode / track / audiobook_chapter) auto-advance; movies bail to home. Stale comment in `onVideoState` updated 2026-05-06 to match the actual code path.
 
 ---
 
-### 3. Trickplay thumbnails on the seekbar
-**Why:** [Endpoints.brs:59](source/api/Endpoints.brs#L59) already fetches the trickplay sprite-sheet status, but the seekbar doesn't render thumbnails. Matrix claims trickplay sprite sheets as ✅ (a v2.1 differentiator vs Plex Pass / Emby Premiere). Currently a stubbed feature on Roku.
+### 3. Trickplay thumbnails on the seekbar — ⚠ partial: data side shipped, rendering deferred
 
-**Scope:**
-- Pull the VTT + sprite URLs from `GET /api/v1/items/{id}/trickplay/index.vtt` and the sprite chunks under `/api/v1/items/{id}/trickplay/sprite_{n}.jpg`.
-- Parse the VTT cues in BrightScript (existing helper-style: `Endpoints.brs` parses HLS, similar pattern). Each cue carries an `xywh` fragment naming the position inside the sprite sheet.
-- During seek-bar scrub, render the cue at the scrubbed position above the bar. Roku's `Poster` node supports `imageRegion` for cropped sprite display.
-- Preload sprite_0 at playback start so the first scrub feels instant.
+**What shipped 2026-05-06:** [Trickplay.brs](source/playback/Trickplay.brs) — a VTT parser that converts the WebVTT index into an array of `{start_ms, end_ms, sprite_path, x, y, w, h}` cues, plus `Trickplay_FindCue(cues, posMs)` for per-frame lookup. 18 unit tests cover timestamp parsing, cue parsing (with / without nested paths, with / without xywh fragment), full VTT parsing, CRLF tolerance, cue-lookup boundary cases.
 
-**Estimate:** medium. The VTT parser + sprite cropping is the main work; everything else slots into the existing PlayerScene.
+**What's deferred:** rendering the cropped sprite above the seekbar during scrub. The original scope assumed Roku's `Poster` had an `imageRegion` field — it doesn't. Two paths for the visual layer:
+
+   1. **Server-side BIF endpoint** (preferred — Roku firmware natively renders trickplay from a BIF binary on the Video node's built-in scrub bar; no custom UI). Add `/api/v1/items/{id}/trickplay/index.bif` that assembles per-frame JPEGs from the existing sprite chunks at scan time. Roku then sets `Content.bifUrl` and gets thumbnails for free. Benefits any future Apple TV / webOS / Tizen client too.
+   2. **SceneGraph clipping with offset Poster** (no server change, device-tier validation needed). Wrap a full-sprite Poster in a Group sized to (w, h) with the Poster offset by (-x, -y); only the cue region renders. Scrub detection by observing `Video.position` jumps faster than playback rate.
+
+Path 1 is cleaner. Path 2 reaches deeper into BrightScript than is comfortable to ship without on-device testing.
 
 ---
 

@@ -32,6 +32,10 @@
                  + history live as Buttons in the top-right of the
                  hub. Same affordance the Android client exposes
                  via its bottom nav row. -->
+            <Button id="librariesBtn"
+                    text="Libraries"
+                    translation="[960, 40]"
+                    minWidth="160" />
             <Button id="favoritesBtn"
                     text="Favorites"
                     translation="[1140, 40]"

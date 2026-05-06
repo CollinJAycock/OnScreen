@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Browse one library. Receives `itemId` (the library_id — same
+    field MainScene.navigateToWithItem populates for every
+    item-aware scene) and renders the library's items as a single
+    poster row. Mirrors FavoritesScene's RowList shape so the
+    PosterCard reuse and focus feel are identical.
+
+    P0 ships a flat single-row grid; pagination + filter chips
+    (movie/show/track type within mixed-type libraries — rare but
+    possible via custom server config) are tracked on roku/todo.md
+    and slot in here once the catalog grows past the 200-row
+    over-fetch ceiling baked into ApiLibraryItems.
+-->
+<component name="LibraryScene" extends="Group">
+
+    <interface>
+        <field id="itemId" type="string" />
+    </interface>
+
+    <script type="text/brightscript" uri="LibraryScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x121212ff" />
+
+            <Label id="title"
+                   text="Library"
+                   translation="[80, 50]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <RowList id="rows"
+                     translation="[80, 160]"
+                     itemComponentName="PosterCard"
+                     itemSize="[1760, 380]"
+                     rowItemSize="[[240, 360]]"
+                     rowItemSpacing="[[20, 0]]"
+                     showRowLabel="[false]"
+                     rowHeights="[380]"
+                     focusBitmapBlendColor="0xffffffff"
+                     drawFocusFeedback="true" />
+
+            <Label id="empty"
+                   text="Loading..."
+                   translation="[80, 540]"
+                   color="0xa0a0a0ff" />
+        </Group>
+
+        <ListFetchTask id="task" />
+    </children>
+
+</component>

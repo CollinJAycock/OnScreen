@@ -215,12 +215,19 @@ end sub
 sub onVideoState()
     state = m.video.state
     if state = "finished"
-        ' Music tracks + audiobook chapters chain silently when a
-        ' next sibling exists — the closing seconds carry the
-        ' outro / final line and an Up Next overlay would clip
-        ' that. Episodes / podcasts go through goToNext via the
-        ' Up Next overlay flow (which calls in here when its
-        ' countdown elapses or the user accepts).
+        ' Auto-advance at end-of-stream for any item type that
+        ' has a meaningful "next sibling" — episodes, podcast
+        ' episodes, music tracks, audiobook chapters. Movies and
+        ' standalone items intentionally bail to home instead;
+        ' there's no obvious next thing to play.
+        '
+        ' For episodes / podcast episodes, the Up Next overlay has
+        ' already been rendered ahead of EOS via maybeShowUpNext
+        ' so the user could accept early or dismiss. Reaching
+        ' EOS without dismissal means: auto-play the next.
+        ' Dismissal clears m.nextSibling, falling through to bail.
+        ' Music + audiobook chapters skip the overlay (the closing
+        ' seconds carry the outro / final line) and chain silently.
         if m.nextSibling <> invalid and (m.item <> invalid) and (m.item.type = "track" or m.item.type = "audiobook_chapter" or m.item.type = "podcast_episode" or m.item.type = "episode")
             goToNext(m.nextSibling)
             return

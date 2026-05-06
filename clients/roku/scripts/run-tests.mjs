@@ -53,6 +53,11 @@ const suites = [
     sources: ['source/playback/Decide.brs'],
     test: 'tests/PlaybackDecide_test.brs',
   },
+  {
+    name: 'Trickplay',
+    sources: ['source/playback/Trickplay.brs'],
+    test: 'tests/Trickplay_test.brs',
+  },
 ];
 
 let totalPass = 0;

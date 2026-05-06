@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Library picker. Lists the libraries the signed-in user can see
+    (filtered server-side by ACL); pressing OK on a row opens
+    LibraryScene for that library_id.
+
+    Shape mirrors FavoritesScene + HistoryScene + CollectionScene —
+    a single ListFetchTask + a focus-bearing list — so the keyboard
+    feel is identical across the four list scenes. The layout uses
+    a vertical LabelList rather than a poster RowList because
+    libraries don't have artwork; the type tag in parens is enough
+    visual differentiation.
+-->
+<component name="LibraryListScene" extends="Group">
+
+    <script type="text/brightscript" uri="LibraryListScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x121212ff" />
+
+            <Label id="title"
+                   text="Libraries"
+                   translation="[80, 50]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <LabelList id="list"
+                       translation="[80, 160]"
+                       itemSize="[1760, 80]"
+                       numRows="10"
+                       focusBitmapBlendColor="0xffffffff"
+                       drawFocusFeedback="true" />
+
+            <Label id="empty"
+                   text="No libraries yet — ask an admin to add one on the server."
+                   translation="[80, 540]"
+                   color="0xa0a0a0ff"
+                   visible="false" />
+        </Group>
+
+        <ListFetchTask id="task" />
+    </children>
+
+</component>

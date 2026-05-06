@@ -10,12 +10,14 @@ sub init()
     m.searchBtn = m.top.findNode("searchBtn")
     m.favoritesBtn = m.top.findNode("favoritesBtn")
     m.historyBtn = m.top.findNode("historyBtn")
+    m.librariesBtn = m.top.findNode("librariesBtn")
 
     m.hubTask.observeField("state", "onHubTaskState")
     m.rows.observeField("rowItemSelected", "onCardSelected")
     m.searchBtn.observeField("buttonSelected", "onSearchPressed")
     m.favoritesBtn.observeField("buttonSelected", "onFavoritesPressed")
     m.historyBtn.observeField("buttonSelected", "onHistoryPressed")
+    m.librariesBtn.observeField("buttonSelected", "onLibrariesPressed")
 
     ' Kick off the fetch. Task nodes start when control=RUN.
     m.hubTask.control = "RUN"
@@ -31,6 +33,10 @@ end sub
 
 sub onHistoryPressed()
     getMainScene().callFunc("navigateTo", "HistoryScene")
+end sub
+
+sub onLibrariesPressed()
+    getMainScene().callFunc("navigateTo", "LibraryListScene")
 end sub
 
 sub onHubTaskState()
