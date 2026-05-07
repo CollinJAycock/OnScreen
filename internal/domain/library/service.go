@@ -95,11 +95,12 @@ type Querier interface {
 	SoftDeleteLibrary(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemsByLibrary(ctx context.Context, libraryID uuid.UUID) error
 	SoftDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error
-	// PurgeDeletedLibraryRows hard-removes every media_items row for
-	// the library; FK cascades clean up media_files, watch_state,
-	// favorites, etc. Returns the number of items removed. Caller
-	// must ensure the library is already soft-deleted.
-	PurgeDeletedLibraryRows(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	// PurgeDeletedLibraryBatch hard-removes UP TO batchLimit media_items
+	// rows for the library; FK cascades clean up media_files, watch_state,
+	// favorites, etc. Returns rows-affected so the caller's loop can stop
+	// when n == 0. The SQL refuses to act unless the library is
+	// soft-deleted, so a typo with a live library_id is a no-op.
+	PurgeDeletedLibraryBatch(ctx context.Context, libraryID uuid.UUID, batchLimit int) (int64, error)
 	RefreshHubRecentlyAdded(ctx context.Context) error
 	MarkLibraryScanCompleted(ctx context.Context, id uuid.UUID) error
 	MarkLibraryMetadataRefreshed(ctx context.Context, id uuid.UUID) error
@@ -352,9 +353,19 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 
 	// Hard-delete cascade — detached so a request cancellation
 	// (Cloudflare 524) can't roll the transaction back partway.
+	// defer recover() catches any panic so a programming error in
+	// the cascade path doesn't take down the goroutine silently
+	// (the previous shape had no recover and one stuck cascade
+	// went un-diagnosed for half an hour on QA).
 	bgCtx := context.WithoutCancel(ctx)
 	go func() {
-		n, err := s.rw.PurgeDeletedLibraryRows(bgCtx, id)
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.ErrorContext(bgCtx, "cascade purge after delete panicked",
+					"library_id", id, "panic", r)
+			}
+		}()
+		n, err := s.purgeInBatches(bgCtx, id)
 		if err != nil {
 			s.logger.ErrorContext(bgCtx, "cascade purge after delete failed",
 				"library_id", id, "err", err)
@@ -366,23 +377,47 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// PurgeDeleted hard-removes the rows for an already-soft-deleted
-// library. Returns the number of media_items rows hard-deleted —
-// FK cascades take care of media_files, watch_state, favorites,
-// collection memberships, intro_markers, trickplay rows, etc.
+// PurgeDeleted hard-removes every media_items row for a library
+// that's already soft-deleted. Returns the total number of items
+// removed — FK cascades take care of media_files, watch_state,
+// favorites, collection memberships, intro_markers, trickplay rows,
+// notifications, recordings, etc.
 //
-// The "must be soft-deleted first" gate is enforced inside the SQL
-// (see PurgeDeletedLibraryRows in queries/media.sql) — calling this
-// on a live library returns 0 rows affected without touching
-// anything, so a typo can't nuke production data.
+// Implemented as a loop of small batches via purgeInBatches so the
+// per-statement lock duration stays bounded (a single big DELETE on
+// 6,000+ items took >30 minutes on QA before this was batched). The
+// "must be soft-deleted first" gate is enforced inside the SQL —
+// calling this on a live library returns 0 without touching
+// anything.
 func (s *Service) PurgeDeleted(ctx context.Context, id uuid.UUID) (int64, error) {
-	n, err := s.rw.PurgeDeletedLibraryRows(ctx, id)
-	if err != nil {
-		return 0, fmt.Errorf("purge library %s: %w", id, err)
+	return s.purgeInBatches(ctx, id)
+}
+
+// purgeBatchSize is the per-statement DELETE limit for the cascade
+// purge loop. 200 was empirically the breaking point on QA — bigger
+// batches accumulated too much WAL + lock pressure to finish
+// reliably; smaller batches added per-statement overhead without
+// helping the bottleneck. Tune if a future cascade table changes
+// the math.
+const purgeBatchSize = 200
+
+func (s *Service) purgeInBatches(ctx context.Context, id uuid.UUID) (int64, error) {
+	var total int64
+	for {
+		if ctx.Err() != nil {
+			return total, ctx.Err()
+		}
+		n, err := s.rw.PurgeDeletedLibraryBatch(ctx, id, purgeBatchSize)
+		if err != nil {
+			return total, fmt.Errorf("purge library %s batch: %w", id, err)
+		}
+		if n == 0 {
+			return total, nil
+		}
+		total += n
+		s.logger.InfoContext(ctx, "library rows purged (batch)",
+			"library_id", id, "batch_rows", n, "running_total", total)
 	}
-	s.logger.InfoContext(ctx, "library rows purged",
-		"library_id", id, "items_deleted", n)
-	return n, nil
 }
 
 // EnqueueScan triggers an on-demand library scan.

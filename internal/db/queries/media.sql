@@ -714,24 +714,40 @@ WHERE status != 'deleted'
       SELECT id FROM media_items WHERE library_id = $1
   );
 
--- name: PurgeDeletedLibraryRows :execrows
--- Hard-deletes every media_items row for [library_id]; FK cascades
--- (added in 00007) take care of media_files, watch_state,
--- watch_events, favorites, collection memberships, intro_markers,
--- trickplay rows, external_subtitles, etc. Returns the number of
--- media_items rows hard-deleted so the caller can report progress.
+-- name: PurgeDeletedLibraryBatch :execrows
+-- Hard-deletes UP TO sqlc.arg('batch_limit') media_items rows for
+-- [library_id]; FK cascades (added in 00007 + 00081) take care of
+-- media_files, watch_state, watch_events, favorites, collection
+-- memberships, intro_markers, trickplay rows, external_subtitles,
+-- notifications, recordings, etc. Returns the number of media_items
+-- rows hard-deleted in THIS batch so the caller's loop can decide
+-- whether more work remains (n == 0 → done).
+--
+-- Batched on purpose. A single big DELETE on 6,000+ items took >30
+-- minutes in production because each parent row triggers a cascade
+-- across ~10 child tables and the per-statement lock is held for
+-- the whole duration. Splitting into 200-row batches drops per-
+-- statement lock duration to seconds and lets autovacuum keep up
+-- between batches.
 --
 -- The EXISTS subquery enforces the soft-delete gate inside the SQL
 -- itself: hard-deleting a LIVE library's content would be a
 -- catastrophic typo, so the row only gets touched when the parent
 -- library has deleted_at IS NOT NULL. Gate is also enforced in the
 -- handler / service layer; both layers refuse independently.
-DELETE FROM media_items
-WHERE library_id = $1
-  AND EXISTS (
-      SELECT 1 FROM libraries
-      WHERE libraries.id = $1 AND libraries.deleted_at IS NOT NULL
-  );
+WITH batch AS (
+    SELECT mi.id
+    FROM media_items mi
+    WHERE mi.library_id = sqlc.arg('library_id')::uuid
+      AND EXISTS (
+          SELECT 1 FROM libraries l
+          WHERE l.id = sqlc.arg('library_id')::uuid
+            AND l.deleted_at IS NOT NULL
+      )
+    LIMIT sqlc.arg('batch_limit')::int
+)
+DELETE FROM media_items mi USING batch
+WHERE mi.id = batch.id;
 
 -- name: SoftDeleteMediaItemIfAllFilesDeleted :exec
 UPDATE media_items

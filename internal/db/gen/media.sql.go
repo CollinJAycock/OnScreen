@@ -4325,20 +4325,49 @@ func (q *Queries) MarkMediaFileMissing(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
-const purgeDeletedLibraryRows = `-- name: PurgeDeletedLibraryRows :execrows
-DELETE FROM media_items WHERE library_id = $1
+const purgeDeletedLibraryBatch = `-- name: PurgeDeletedLibraryBatch :execrows
+WITH batch AS (
+    SELECT mi.id
+    FROM media_items mi
+    WHERE mi.library_id = $1::uuid
+      AND EXISTS (
+          SELECT 1 FROM libraries l
+          WHERE l.id = $1::uuid
+            AND l.deleted_at IS NOT NULL
+      )
+    LIMIT $2::int
+)
+DELETE FROM media_items mi USING batch
+WHERE mi.id = batch.id
 `
 
-// Hard-deletes every media_items row for [library_id]; FK cascades
-// (added in 00007) take care of media_files, watch_state,
-// watch_events, favorites, collection memberships, intro_markers,
-// trickplay rows, external_subtitles, etc. Intended ONLY for
-// libraries already soft-deleted (deleted_at IS NOT NULL); the
-// handler enforces that gate so a typo doesn't nuke a live library.
-// Returns the number of media_items rows hard-deleted so the caller
-// can report progress.
-func (q *Queries) PurgeDeletedLibraryRows(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeDeletedLibraryRows, libraryID)
+type PurgeDeletedLibraryBatchParams struct {
+	LibraryID  uuid.UUID `json:"library_id"`
+	BatchLimit int32     `json:"batch_limit"`
+}
+
+// Hard-deletes UP TO sqlc.arg('batch_limit') media_items rows for
+// [library_id]; FK cascades (added in 00007 + 00081) take care of
+// media_files, watch_state, watch_events, favorites, collection
+// memberships, intro_markers, trickplay rows, external_subtitles,
+// notifications, recordings, etc. Returns the number of media_items
+// rows hard-deleted in THIS batch so the caller's loop can decide
+// whether more work remains (n == 0 → done).
+//
+// Batched on purpose. A single big DELETE on 6,000+ items took >30
+// minutes in production because each parent row triggers a cascade
+// across ~10 child tables and the per-statement lock is held for
+// the whole duration. Splitting into 200-row batches drops per-
+// statement lock duration to seconds and lets autovacuum keep up
+// between batches.
+//
+// The EXISTS subquery enforces the soft-delete gate inside the SQL
+// itself: hard-deleting a LIVE library's content would be a
+// catastrophic typo, so the row only gets touched when the parent
+// library has deleted_at IS NOT NULL. Gate is also enforced in the
+// handler / service layer; both layers refuse independently.
+func (q *Queries) PurgeDeletedLibraryBatch(ctx context.Context, arg PurgeDeletedLibraryBatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeDeletedLibraryBatch, arg.LibraryID, arg.BatchLimit)
 	if err != nil {
 		return 0, err
 	}

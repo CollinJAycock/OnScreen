@@ -133,8 +133,11 @@ func (a *libraryAdapter) SoftDeleteMediaFilesByLibrary(ctx context.Context, libr
 	return a.q.SoftDeleteMediaFilesByLibrary(ctx, libraryID)
 }
 
-func (a *libraryAdapter) PurgeDeletedLibraryRows(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	return a.q.PurgeDeletedLibraryRows(ctx, libraryID)
+func (a *libraryAdapter) PurgeDeletedLibraryBatch(ctx context.Context, libraryID uuid.UUID, batchLimit int) (int64, error) {
+	return a.q.PurgeDeletedLibraryBatch(ctx, gen.PurgeDeletedLibraryBatchParams{
+		LibraryID:  libraryID,
+		BatchLimit: int32(batchLimit),
+	})
 }
 
 func (a *libraryAdapter) RefreshHubRecentlyAdded(ctx context.Context) error {

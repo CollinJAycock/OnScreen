@@ -35,6 +35,7 @@ type mockQuerier struct {
 	softDelItemsCalls []uuid.UUID
 	softDelFilesCalls []uuid.UUID
 	purgeCalls        []uuid.UUID
+	purgeBatchLimits  []int
 	purgeCounts       map[uuid.UUID]int64
 	purgeErr          error
 	// purgeDone fires once the async purge goroutine in
@@ -154,10 +155,21 @@ func (m *mockQuerier) SoftDeleteMediaFilesByLibrary(_ context.Context, lib uuid.
 	m.mu.Unlock()
 	return nil
 }
-func (m *mockQuerier) PurgeDeletedLibraryRows(_ context.Context, lib uuid.UUID) (int64, error) {
+func (m *mockQuerier) PurgeDeletedLibraryBatch(_ context.Context, lib uuid.UUID, batchLimit int) (int64, error) {
 	m.mu.Lock()
 	m.purgeCalls = append(m.purgeCalls, lib)
-	n, ok := m.purgeCounts[lib]
+	m.purgeBatchLimits = append(m.purgeBatchLimits, batchLimit)
+	// purgeCounts[lib] is the TOTAL rows the mock pretends are
+	// available for that library; on each call we drain up to
+	// batchLimit and return that count, simulating the real
+	// query's "delete N rows, return how many" behavior. When the
+	// total hits 0 the loop in Service.purgeInBatches stops.
+	remaining := m.purgeCounts[lib]
+	n := int64(batchLimit)
+	if remaining < n {
+		n = remaining
+	}
+	m.purgeCounts[lib] = remaining - n
 	err := m.purgeErr
 	m.mu.Unlock()
 	// Signal the test goroutine after the bookkeeping is recorded
@@ -166,10 +178,7 @@ func (m *mockQuerier) PurgeDeletedLibraryRows(_ context.Context, lib uuid.UUID) 
 	case m.purgeDone <- struct{}{}:
 	default:
 	}
-	if ok {
-		return n, err
-	}
-	return 0, err
+	return n, err
 }
 func (m *mockQuerier) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error      { return nil }
 func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                    { return nil }
@@ -466,25 +475,35 @@ func TestDelete_SyncCascade_ItemsAndFiles(t *testing.T) {
 }
 
 // TestDelete_AsyncCascade_HardPurge guards the async tail: after the
-// sync soft-delete steps, Delete fires PurgeDeletedLibraryRows on a
+// sync soft-delete steps, Delete fires the batched purge loop on a
 // detached goroutine to actually remove the rows + cascade through
 // every FK-CASCADE table. Without the goroutine, the rows would
 // linger as orphans (the original QA bug — recreating a library at
-// the same path then reported found:N / new:0).
+// the same path then reported found:N / new:0). Uses a small
+// purgeCount so the loop terminates quickly and we can wait on
+// every batch deterministically.
 func TestDelete_AsyncCascade_HardPurge(t *testing.T) {
 	svc, q, _ := newService(t)
 	id := uuid.New()
 	q.libs[id] = Library{ID: id, Name: "Anime"}
-	q.purgeCounts[id] = 5870
+	q.purgeCounts[id] = 50 // single batch + zero-batch terminator = 2 calls
 
 	if err := svc.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
+	// First batch fires.
+	q.awaitPurge(t)
+	// Zero-batch terminator fires (signals loop completion).
 	q.awaitPurge(t)
 	calls := q.snapshotPurgeCalls()
-	if len(calls) != 1 || calls[0] != id {
-		t.Errorf("expected 1 PurgeDeletedLibraryRows(%s) call from goroutine, got %v",
-			id, calls)
+	if len(calls) != 2 {
+		t.Errorf("expected 2 batch calls (drain + terminator) from goroutine, got %d: %v",
+			len(calls), calls)
+	}
+	for i, c := range calls {
+		if c != id {
+			t.Errorf("call[%d] target: got %s, want %s", i, c, id)
+		}
 	}
 }
 
@@ -518,7 +537,13 @@ func TestDelete_RequestCancellationDoesNotCancelPurge(t *testing.T) {
 // be soft-deleted first" gate lives inside the SQL query itself
 // (EXISTS subquery against libraries.deleted_at) so the service
 // layer doesn't pre-check.
-func TestPurgeDeleted_DirectInvocation(t *testing.T) {
+// TestPurgeDeleted_BatchedLoop covers the per-statement-batched
+// implementation: PurgeDeleted now loops over the rw layer until
+// it returns 0, summing the per-batch counts. With 42 mocked items
+// available and a 200-batch size, that's one batch of 42 followed
+// by one zero-batch that signals "drain complete." Each call must
+// pass the configured batch limit.
+func TestPurgeDeleted_BatchedLoop(t *testing.T) {
 	svc, q, _ := newService(t)
 	id := uuid.New()
 	q.purgeCounts[id] = 42
@@ -531,8 +556,42 @@ func TestPurgeDeleted_DirectInvocation(t *testing.T) {
 		t.Errorf("rows: got %d, want 42", got)
 	}
 	calls := q.snapshotPurgeCalls()
-	if len(calls) != 1 || calls[0] != id {
-		t.Errorf("expected 1 PurgeDeletedLibraryRows(%s), got %v", id, calls)
+	if len(calls) != 2 {
+		t.Errorf("expected 2 batch calls (drain + empty terminator), got %d: %v",
+			len(calls), calls)
+	}
+	for i, c := range calls {
+		if c != id {
+			t.Errorf("call[%d] target: got %s, want %s", i, c, id)
+		}
+	}
+	for _, lim := range q.purgeBatchLimits {
+		if lim != 200 {
+			t.Errorf("each batch must use the configured limit (200), got %d", lim)
+		}
+	}
+}
+
+// TestPurgeDeleted_LargeLibrary_BatchCount verifies the loop runs
+// the right number of batches for a library bigger than one batch.
+// 5870 items / 200 batch = 30 full batches (drains 6000) — wait,
+// 30 * 200 = 6000 > 5870, so 29 full batches of 200 + one 70-row
+// batch + one zero-row terminator = 31 calls.
+func TestPurgeDeleted_LargeLibrary_BatchCount(t *testing.T) {
+	svc, q, _ := newService(t)
+	id := uuid.New()
+	q.purgeCounts[id] = 5870
+
+	got, err := svc.PurgeDeleted(context.Background(), id)
+	if err != nil {
+		t.Fatalf("PurgeDeleted: %v", err)
+	}
+	if got != 5870 {
+		t.Errorf("rows: got %d, want 5870", got)
+	}
+	const expected = 31 // 29 full + 1 partial + 1 terminator
+	if calls := q.snapshotPurgeCalls(); len(calls) != expected {
+		t.Errorf("expected %d batch calls for 5870 items, got %d", expected, len(calls))
 	}
 }
 
@@ -541,6 +600,26 @@ func TestPurgeDeleted_QueryError(t *testing.T) {
 	q.purgeErr = errors.New("db down")
 	if _, err := svc.PurgeDeleted(context.Background(), uuid.New()); err == nil {
 		t.Error("expected error when query fails")
+	}
+}
+
+// TestPurgeDeleted_ContextCancellationStopsLoop verifies the loop
+// exits cleanly when its context is cancelled — the worker process
+// shutting down or a 30-min timeout shouldn't leak a goroutine that
+// keeps drilling through batches forever.
+func TestPurgeDeleted_ContextCancellationStopsLoop(t *testing.T) {
+	svc, q, _ := newService(t)
+	id := uuid.New()
+	q.purgeCounts[id] = 100000 // way more than one cancellation could survive
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before the first call
+	_, err := svc.PurgeDeleted(ctx, id)
+	if err == nil {
+		t.Error("expected ctx.Err() to surface, got nil")
+	}
+	if calls := q.snapshotPurgeCalls(); len(calls) != 0 {
+		t.Errorf("expected 0 batch calls when ctx already cancelled, got %d", len(calls))
 	}
 }
 
