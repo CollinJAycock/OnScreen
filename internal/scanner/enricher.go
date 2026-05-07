@@ -819,6 +819,18 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	if result.AniListID != 0 {
 		anilistID := result.AniListID
 		p.AniListID = &anilistID
+		// Walk the AniList relations graph to compute a stable
+		// franchise_id (smallest AniList ID in the PREQUEL/SEQUEL/PARENT
+		// connected subgraph, filtered to TV / TV_SHORT). This is what
+		// lets the UI optionally collapse "Dr. STONE" / "Dr. STONE
+		// SCIENCE FRONTIERS" / "Dr. STONE: STONE WARS" into a single
+		// franchise card without us regexing titles. Failures (offline,
+		// rate-limited) are non-fatal — leave franchise_id nil and a
+		// later refresh-missing-art / re-scan will fill it in.
+		if fid := e.computeFranchiseID(ctx, anilistID); fid != 0 {
+			f := fid
+			p.FranchiseID = &f
+		}
 	}
 	if result.MALID != 0 {
 		malID := result.MALID
@@ -1298,6 +1310,51 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 // the seasons un-attached, in which case the per-episode lookup
 // falls back to the show-level anilist_id (today's behavior). Logged
 // so an operator can spot persistent walk failures.
+// computeFranchiseID walks the AniList relations graph from
+// [anilistID] and returns the smallest AniList ID in the connected
+// PREQUEL/SEQUEL/PARENT subgraph (filtered to TV / TV_SHORT formats
+// by the AniList client). That smallest ID is a stable, deterministic
+// franchise key — every cour of the same franchise yields the same
+// number regardless of which one we walked from, so the UI can
+// "Group by franchise" with a simple equality test.
+//
+// Returns 0 (treated as nil franchise_id by the caller) when:
+//   - the AniList client isn't wired
+//   - the walk errors (offline, rate-limited)
+//   - the walk returns nothing — fall back to the input ID itself
+//     so a one-off (no relations) anime still gets a franchise_id
+//     equal to its own AniList ID and clusters cleanly with itself.
+func (e *Enricher) computeFranchiseID(ctx context.Context, anilistID int) int {
+	if e.anilistFn == nil {
+		return anilistID
+	}
+	al := e.anilistFn()
+	if al == nil {
+		return anilistID
+	}
+	franchise, err := al.GetAnimeFranchise(ctx, anilistID)
+	if err != nil {
+		e.logger.InfoContext(ctx, "anilist franchise walk failed for franchise_id",
+			"anilist_id", anilistID, "err", err)
+		// Conservative on failure: leave the column nil so a later
+		// refresh can fill it in with a real walked value rather
+		// than a possibly-wrong self-reference.
+		return 0
+	}
+	if len(franchise) == 0 {
+		// No relations — anime is a singleton. Use its own ID so it
+		// still has a franchise_id, just one with cardinality 1.
+		return anilistID
+	}
+	smallest := anilistID
+	for _, m := range franchise {
+		if m.AniListID > 0 && m.AniListID < smallest {
+			smallest = m.AniListID
+		}
+	}
+	return smallest
+}
+
 func (e *Enricher) attachAniListFranchiseToSeasons(ctx context.Context, showID uuid.UUID, anilistID int) {
 	if e.anilistFn == nil {
 		return

@@ -5,7 +5,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
-       anilist_id, mal_id, kind, reading_direction,
+       anilist_id, mal_id, kind, reading_direction, franchise_id,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
@@ -572,7 +572,7 @@ INSERT INTO media_items (
     disc_total, track_total, original_year, compilation, release_type,
     parent_id, index,
     poster_path, fanart_path, thumb_path,
-    originally_available_at
+    originally_available_at, anilist_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
@@ -582,7 +582,7 @@ INSERT INTO media_items (
     $23, $24, $25, $26, $27,
     $28, $29,
     $30, $31, $32,
-    $33
+    $33, $34
 )
 RETURNING id, library_id, type, title, sort_title, original_title, year,
           summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -668,6 +668,11 @@ SET title                   = $2,
     -- non-manga refresh (where the param is null) preserves any
     -- prior operator override.
     reading_direction       = COALESCE($22, reading_direction),
+    -- franchise_id groups anime cours via AniList's relations graph.
+    -- Same COALESCE pattern as the anime IDs above so a non-anime
+    -- refresh path that passes nil leaves any previously-walked
+    -- value intact.
+    franchise_id            = COALESCE($23, franchise_id),
     updated_at              = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, library_id, type, title, sort_title, original_title, year,

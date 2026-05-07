@@ -864,6 +864,10 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 				i := folderIDs.IMDBID
 				movieParams.IMDBID = &i
 			}
+			if folderIDs.AniListID > 0 {
+				a := folderIDs.AniListID
+				movieParams.AniListID = &a
+			}
 		}
 		var createErr error
 		item, createErr = s.media.FindOrCreateItem(ctx, movieParams)
@@ -1068,6 +1072,10 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 	if folderIDs.IMDBID != "" {
 		i := folderIDs.IMDBID
 		createParams.IMDBID = &i
+	}
+	if folderIDs.AniListID > 0 {
+		a := folderIDs.AniListID
+		createParams.AniListID = &a
 	}
 	show, err := s.media.FindOrCreateHierarchyItem(ctx, createParams)
 	if err != nil {

@@ -18,6 +18,18 @@ import (
 //	The Office (2005) [tvdbid-73244]
 //	Frieren {tmdb-209867}
 //
+// Anime libraries can additionally use AniList IDs since neither TMDB
+// nor TVDB has full anime coverage. The Plex/Hama and Jellyfin/Shoko
+// ecosystems use the same suffix shape:
+//
+//	Frieren [anilist-154587]
+//
+// `[anidb-NNN]` markers are accepted and stripped from the title
+// (community convention from Hama / Shoko) but not currently
+// translated to an AniList ID — operators wanting a forced match
+// should use the AniList variant. We can revisit when manami-DB
+// lookup is wired into the scanner.
+//
 // Same idea on Radarr's movie folders. Recognising these markers lets
 // the scanner match a folder to the canonical row by ID even when the
 // title parsing would otherwise produce a fresh stub (e.g. release
@@ -25,28 +37,33 @@ import (
 // `IE` vs `(Ireland)`). It also prevents future duplicate-row creation
 // because the ID is the authoritative match key.
 type FolderIDs struct {
-	TMDBID int
-	TVDBID int
-	IMDBID string // "tt..." form, kept verbatim
+	TMDBID    int
+	TVDBID    int
+	IMDBID    string // "tt..." form, kept verbatim
+	AniListID int
 }
 
 // Each pattern captures the numeric / IMDb portion in group 1.
 var (
-	reTMDBBraces = regexp.MustCompile(`(?i)\{\s*tmdb-?\s*(\d+)\s*\}`)
-	reTVDBBraces = regexp.MustCompile(`(?i)\{\s*tvdb-?\s*(\d+)\s*\}`)
-	reIMDBBraces = regexp.MustCompile(`(?i)\{\s*imdb-?\s*(tt\d+)\s*\}`)
+	reTMDBBraces    = regexp.MustCompile(`(?i)\{\s*tmdb-?\s*(\d+)\s*\}`)
+	reTVDBBraces    = regexp.MustCompile(`(?i)\{\s*tvdb-?\s*(\d+)\s*\}`)
+	reIMDBBraces    = regexp.MustCompile(`(?i)\{\s*imdb-?\s*(tt\d+)\s*\}`)
+	reAniListBraces = regexp.MustCompile(`(?i)\{\s*anilist-?\s*(\d+)\s*\}`)
 
-	// Bracketed (Jellyfin / Emby) variants — also match the
+	// Bracketed (Jellyfin / Emby / Hama) variants — also match the
 	// `tvdbid-` / `tmdbid-` / `imdbid-` long forms.
-	reTMDBBrackets = regexp.MustCompile(`(?i)\[\s*tmdb(?:id)?-?\s*(\d+)\s*\]`)
-	reTVDBBrackets = regexp.MustCompile(`(?i)\[\s*tvdb(?:id)?-?\s*(\d+)\s*\]`)
-	reIMDBBrackets = regexp.MustCompile(`(?i)\[\s*imdb(?:id)?-?\s*(tt\d+)\s*\]`)
+	reTMDBBrackets    = regexp.MustCompile(`(?i)\[\s*tmdb(?:id)?-?\s*(\d+)\s*\]`)
+	reTVDBBrackets    = regexp.MustCompile(`(?i)\[\s*tvdb(?:id)?-?\s*(\d+)\s*\]`)
+	reIMDBBrackets    = regexp.MustCompile(`(?i)\[\s*imdb(?:id)?-?\s*(tt\d+)\s*\]`)
+	reAniListBrackets = regexp.MustCompile(`(?i)\[\s*anilist(?:id)?-?\s*(\d+)\s*\]`)
 
 	// Master pattern for stripping every recognised ID marker from a
 	// folder name — produces a clean title for downstream parsing.
+	// Includes "anidb" so a folder named "Show [anidb-NNN]" still has
+	// its title cleaned even though we don't currently act on the ID.
 	// Matches a leading separator (space / dot / underscore / dash)
 	// so the strip doesn't leave double spaces.
-	reAnyIDMarker = regexp.MustCompile(`(?i)[\s._-]*[\{\[]\s*(?:tmdb|tvdb|imdb)(?:id)?-?\s*(?:tt)?\d+\s*[\}\]]`)
+	reAnyIDMarker = regexp.MustCompile(`(?i)[\s._-]*[\{\[]\s*(?:tmdb|tvdb|imdb|anilist|anidb)(?:id)?-?\s*(?:tt)?\d+\s*[\}\]]`)
 )
 
 // ParseFolderIDs extracts external-id markers from a folder name. The
@@ -72,6 +89,12 @@ func ParseFolderIDs(folderName string) FolderIDs {
 		ids.IMDBID = strings.ToLower(m[1])
 	} else if m := reIMDBBrackets.FindStringSubmatch(folderName); m != nil {
 		ids.IMDBID = strings.ToLower(m[1])
+	}
+
+	if m := reAniListBraces.FindStringSubmatch(folderName); m != nil {
+		ids.AniListID = atoiSafe(m[1])
+	} else if m := reAniListBrackets.FindStringSubmatch(folderName); m != nil {
+		ids.AniListID = atoiSafe(m[1])
 	}
 
 	return ids

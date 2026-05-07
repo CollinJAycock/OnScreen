@@ -709,6 +709,118 @@ func TestAttachAniListFranchiseToSeasons(t *testing.T) {
 	}
 }
 
+// TestComputeFranchiseID covers the franchise_id derivation that lets
+// the UI optionally collapse anime cours under a single card without
+// regexing titles. The community-converged answer (per Plex/Hama,
+// Jellyfin/Shoko, AniList docs) is to walk the AniList relations
+// graph and pick a stable representative ID — we use the smallest
+// AniList ID in the connected component.
+func TestComputeFranchiseID(t *testing.T) {
+	t.Run("multi-cour franchise picks smallest AniList id", func(t *testing.T) {
+		// Solo Leveling shape: walk from the S1 row returns the
+		// franchise pair, and the franchise key is the numeric
+		// minimum across the component (S2 happens to have the
+		// lower AniList ID here).
+		anilistStub := &stubAniListAgent{
+			franchise: []anilist.AniListRelation{
+				{AniListID: 153406, StartYear: 2024},
+				{AniListID: 151807, StartYear: 2025},
+			},
+		}
+		e := newTestEnricher(&mockAgent{}, newMockUpdater(), nil)
+		e.SetAniListFn(func() AniListAgent { return anilistStub })
+		got := e.computeFranchiseID(context.Background(), 153406)
+		if got != 151807 {
+			t.Errorf("computeFranchiseID = %d, want 151807 (smallest in component)", got)
+		}
+	})
+
+	t.Run("walk-from-any-cour produces same franchise key", func(t *testing.T) {
+		// Determinism check — entering from any cour must yield the
+		// same franchise_id, since the smallest-ID rule is symmetric.
+		anilistStub := &stubAniListAgent{
+			franchise: []anilist.AniListRelation{
+				{AniListID: 200, StartYear: 2020},
+				{AniListID: 100, StartYear: 2018},
+				{AniListID: 300, StartYear: 2022},
+			},
+		}
+		e := newTestEnricher(&mockAgent{}, newMockUpdater(), nil)
+		e.SetAniListFn(func() AniListAgent { return anilistStub })
+		for _, entry := range []int{100, 200, 300} {
+			if got := e.computeFranchiseID(context.Background(), entry); got != 100 {
+				t.Errorf("entered from %d, got franchise_id %d, want 100", entry, got)
+			}
+		}
+	})
+
+	t.Run("singleton (no relations) falls back to the input id", func(t *testing.T) {
+		// One-off anime with no PREQUEL/SEQUEL chain still gets a
+		// franchise_id (= its own AniList ID) so it clusters with
+		// itself and the UI doesn't need a NULL special case.
+		anilistStub := &stubAniListAgent{franchise: nil}
+		e := newTestEnricher(&mockAgent{}, newMockUpdater(), nil)
+		e.SetAniListFn(func() AniListAgent { return anilistStub })
+		if got := e.computeFranchiseID(context.Background(), 42); got != 42 {
+			t.Errorf("singleton franchise_id = %d, want 42", got)
+		}
+	})
+
+	t.Run("walk error returns zero (caller leaves column nil)", func(t *testing.T) {
+		// Network error / rate-limit: don't write a guess. Letting
+		// the column stay nil means a later refresh can fill it in
+		// with a real walked value rather than a permanent self-
+		// reference that hides the franchise grouping.
+		anilistStub := &stubAniListAgent{frErr: errors.New("rate limited")}
+		e := newTestEnricher(&mockAgent{}, newMockUpdater(), nil)
+		e.SetAniListFn(func() AniListAgent { return anilistStub })
+		if got := e.computeFranchiseID(context.Background(), 99); got != 0 {
+			t.Errorf("walk-error franchise_id = %d, want 0", got)
+		}
+	})
+
+	t.Run("anilist not wired returns input id unchanged", func(t *testing.T) {
+		e := newTestEnricher(&mockAgent{}, newMockUpdater(), nil)
+		// No SetAniListFn — anilistFn is nil.
+		if got := e.computeFranchiseID(context.Background(), 7); got != 7 {
+			t.Errorf("no-anilist franchise_id = %d, want 7", got)
+		}
+	})
+
+	t.Run("input id is already the smallest in component", func(t *testing.T) {
+		// Walk from the lowest-ID cour; should return the input rather
+		// than picking up a larger ID. Verifies the comparison
+		// initialises smallest = anilistID rather than +inf.
+		anilistStub := &stubAniListAgent{
+			franchise: []anilist.AniListRelation{
+				{AniListID: 200, StartYear: 2020},
+				{AniListID: 300, StartYear: 2022},
+			},
+		}
+		e := newTestEnricher(&mockAgent{}, newMockUpdater(), nil)
+		e.SetAniListFn(func() AniListAgent { return anilistStub })
+		if got := e.computeFranchiseID(context.Background(), 100); got != 100 {
+			t.Errorf("when input is smallest, got %d, want 100", got)
+		}
+	})
+
+	t.Run("zero-id franchise entries are ignored", func(t *testing.T) {
+		// Defends against a malformed AniList response — a relation
+		// node with id 0 must not collapse the whole franchise to 0.
+		anilistStub := &stubAniListAgent{
+			franchise: []anilist.AniListRelation{
+				{AniListID: 0, StartYear: 0}, // bogus
+				{AniListID: 500, StartYear: 2021},
+			},
+		}
+		e := newTestEnricher(&mockAgent{}, newMockUpdater(), nil)
+		e.SetAniListFn(func() AniListAgent { return anilistStub })
+		if got := e.computeFranchiseID(context.Background(), 500); got != 500 {
+			t.Errorf("zero-id ignored: got %d, want 500", got)
+		}
+	})
+}
+
 // TestEnrichEpisode_AniListFallback covers the anime-library scenario
 // where the operator's TMDB key is broken (or never configured) and
 // the show has no TVDB ID either — only an AniList ID survives.

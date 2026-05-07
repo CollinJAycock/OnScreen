@@ -106,6 +106,15 @@ type Item struct {
 	MalID     *int
 	Kind      *string
 
+	// FranchiseID groups anime cours that share an AniList relations
+	// component (PREQUEL / SEQUEL / PARENT edges, TV / TV_SHORT only).
+	// Set by the show enricher to the smallest AniList ID in the
+	// connected subgraph as a stable franchise key. Read-side surfaces
+	// it as an optional "Group by franchise" UI affordance — collapsing
+	// is the user's choice rather than mandatory, since whether
+	// `Sailor Moon SuperS` should fold into `Sailor Moon` is taste.
+	FranchiseID *int
+
 	// ReadingDirection: "ltr" | "rtl" | "ttb". Manga / book reader
 	// page-flip direction. Populated by the manga enricher from
 	// AniList countryOfOrigin; nil falls back to the reader's
@@ -425,6 +434,13 @@ type CreateItemParams struct {
 	TMDBID                    *int
 	TVDBID                    *int
 	IMDBID                    *string
+	// AniListID lets the scanner pre-set the canonical AniList row
+	// when the user has embedded `[anilist-NNN]` in the folder name —
+	// the same operator escape hatch Plex+Hama and Jellyfin+Shoko
+	// users rely on to force the right anime match without depending
+	// on title parsing. The enricher then short-circuits the title
+	// search and calls GetAnimeByID directly.
+	AniListID                 *int
 	MusicBrainzID             *uuid.UUID
 	MusicBrainzReleaseID      *uuid.UUID
 	MusicBrainzReleaseGroupID *uuid.UUID
@@ -470,6 +486,13 @@ type UpdateItemMetadataParams struct {
 	// COALESCE in the SQL preserves any prior value.
 	AniListID *int
 	MALID     *int
+	// FranchiseID groups anime cours that share an AniList franchise
+	// relations component. Computed by walking PREQUEL/SEQUEL/PARENT
+	// edges and taking the smallest AniList ID in the connected
+	// subgraph as the stable franchise key. nil for non-anime rows
+	// or when the walk hasn't run yet — COALESCE preserves any
+	// prior value.
+	FranchiseID *int
 	// ReadingDirection: "ltr" | "rtl" | "ttb" — manga / book reader
 	// page-flip direction. Set by the manga enricher from AniList's
 	// countryOfOrigin (JP→rtl, KR/CN→ttb, otherwise ltr); operator

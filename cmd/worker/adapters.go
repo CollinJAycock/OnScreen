@@ -152,6 +152,7 @@ func genGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
 	item.AniListID = int32PtrToIntPtr(r.AnilistID)
 	item.MalID = int32PtrToIntPtr(r.MalID)
 	item.Kind = r.Kind
+	item.FranchiseID = int32PtrToIntPtr(r.FranchiseID)
 	return item
 }
 
@@ -247,6 +248,7 @@ func createItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
 		FanartPath:            p.FanartPath,
 		ThumbPath:             p.ThumbPath,
 		OriginallyAvailableAt: timePtrToPGDate(p.OriginallyAvailableAt),
+		AnilistID:             intPtrToInt32Ptr(p.AniListID),
 	}
 }
 
@@ -274,6 +276,7 @@ func updateItemMetadataParamsToGen(p media.UpdateItemMetadataParams) gen.UpdateM
 		AnilistID:             intPtrToInt32Ptr(p.AniListID),
 		MalID:                 intPtrToInt32Ptr(p.MALID),
 		ReadingDirection:      p.ReadingDirection,
+		FranchiseID:           intPtrToInt32Ptr(p.FranchiseID),
 	}
 }
 

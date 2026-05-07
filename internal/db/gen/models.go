@@ -275,6 +275,7 @@ type MediaItem struct {
 	MalID                     *int32             `json:"mal_id"`
 	Kind                      *string            `json:"kind"`
 	ReadingDirection          *string            `json:"reading_direction"`
+	FranchiseID               *int32             `json:"franchise_id"`
 }
 
 type MediaRequest struct {
