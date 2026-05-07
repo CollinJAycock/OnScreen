@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,11 +28,19 @@ type mockQuerier struct {
 	// Cascade-call tracking for the library-delete + purge tests.
 	// Order matters (delete should soft-delete library first, then
 	// items, then files), so we keep slices instead of bools.
+	// mu guards the slices because Service.Delete fires the purge
+	// hard-delete on a background goroutine — the mock can be
+	// observed concurrently from the test goroutine.
+	mu                sync.Mutex
 	softDelItemsCalls []uuid.UUID
 	softDelFilesCalls []uuid.UUID
 	purgeCalls        []uuid.UUID
 	purgeCounts       map[uuid.UUID]int64
 	purgeErr          error
+	// purgeDone fires once the async purge goroutine in
+	// Service.Delete has actually invoked PurgeDeletedLibraryRows,
+	// so tests can synchronise without sleeping.
+	purgeDone chan struct{}
 }
 
 func newMockQuerier() *mockQuerier {
@@ -39,7 +48,43 @@ func newMockQuerier() *mockQuerier {
 		libs:        make(map[uuid.UUID]Library),
 		access:      make(map[uuid.UUID][]uuid.UUID),
 		purgeCounts: make(map[uuid.UUID]int64),
+		purgeDone:   make(chan struct{}, 4),
 	}
+}
+
+// awaitPurge blocks until the async purge goroutine in Service.Delete
+// has called PurgeDeletedLibraryRows, or the timeout elapses.
+func (m *mockQuerier) awaitPurge(t *testing.T) {
+	t.Helper()
+	select {
+	case <-m.purgeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("PurgeDeletedLibraryRows not called within 2s")
+	}
+}
+
+func (m *mockQuerier) snapshotPurgeCalls() []uuid.UUID {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]uuid.UUID, len(m.purgeCalls))
+	copy(out, m.purgeCalls)
+	return out
+}
+
+func (m *mockQuerier) snapshotSoftDelItems() []uuid.UUID {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]uuid.UUID, len(m.softDelItemsCalls))
+	copy(out, m.softDelItemsCalls)
+	return out
+}
+
+func (m *mockQuerier) snapshotSoftDelFiles() []uuid.UUID {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]uuid.UUID, len(m.softDelFilesCalls))
+	copy(out, m.softDelFilesCalls)
+	return out
 }
 
 func (m *mockQuerier) GetLibrary(_ context.Context, id uuid.UUID) (Library, error) {
@@ -98,19 +143,33 @@ func (m *mockQuerier) SoftDeleteLibrary(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 func (m *mockQuerier) SoftDeleteMediaItemsByLibrary(_ context.Context, lib uuid.UUID) error {
+	m.mu.Lock()
 	m.softDelItemsCalls = append(m.softDelItemsCalls, lib)
+	m.mu.Unlock()
 	return nil
 }
 func (m *mockQuerier) SoftDeleteMediaFilesByLibrary(_ context.Context, lib uuid.UUID) error {
+	m.mu.Lock()
 	m.softDelFilesCalls = append(m.softDelFilesCalls, lib)
+	m.mu.Unlock()
 	return nil
 }
 func (m *mockQuerier) PurgeDeletedLibraryRows(_ context.Context, lib uuid.UUID) (int64, error) {
+	m.mu.Lock()
 	m.purgeCalls = append(m.purgeCalls, lib)
-	if n, ok := m.purgeCounts[lib]; ok {
-		return n, m.purgeErr
+	n, ok := m.purgeCounts[lib]
+	err := m.purgeErr
+	m.mu.Unlock()
+	// Signal the test goroutine after the bookkeeping is recorded
+	// so awaitPurge sees the call before the assertions run.
+	select {
+	case m.purgeDone <- struct{}{}:
+	default:
 	}
-	return 0, m.purgeErr
+	if ok {
+		return n, err
+	}
+	return 0, err
 }
 func (m *mockQuerier) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error      { return nil }
 func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                    { return nil }
@@ -382,14 +441,13 @@ func TestDelete_NotFound(t *testing.T) {
 	}
 }
 
-// TestDelete_CascadesToItemsAndFiles is the regression guard for the
-// "recreate library at the same path returns found:N / new:0" bug.
-// The fix is that library Delete must soft-delete BOTH media_items
-// AND media_files for the library so the partial UNIQUE on
-// media_files(file_path) WHERE status != 'deleted' lets the new
-// library claim the same paths. Forgetting either cascade reverts
-// the bug.
-func TestDelete_CascadesToItemsAndFiles(t *testing.T) {
+// TestDelete_SyncCascade_ItemsAndFiles guards the synchronous part
+// of the cascade: items + files are flipped to deleted state before
+// Delete returns, so the partial UNIQUE on media_files(file_path)
+// WHERE status != 'deleted' (00080) immediately stops claiming the
+// path and a new library at the same scan_paths can be created
+// without colliding mid-cascade.
+func TestDelete_SyncCascade_ItemsAndFiles(t *testing.T) {
 	svc, q, _ := newService(t)
 	id := uuid.New()
 	q.libs[id] = Library{ID: id, Name: "Anime"}
@@ -397,22 +455,70 @@ func TestDelete_CascadesToItemsAndFiles(t *testing.T) {
 	if err := svc.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if len(q.softDelItemsCalls) != 1 || q.softDelItemsCalls[0] != id {
-		t.Errorf("expected 1 SoftDeleteMediaItemsByLibrary(%s), got %v",
-			id, q.softDelItemsCalls)
+	items := q.snapshotSoftDelItems()
+	if len(items) != 1 || items[0] != id {
+		t.Errorf("expected 1 SoftDeleteMediaItemsByLibrary(%s), got %v", id, items)
 	}
-	if len(q.softDelFilesCalls) != 1 || q.softDelFilesCalls[0] != id {
-		t.Errorf("expected 1 SoftDeleteMediaFilesByLibrary(%s), got %v",
-			id, q.softDelFilesCalls)
+	files := q.snapshotSoftDelFiles()
+	if len(files) != 1 || files[0] != id {
+		t.Errorf("expected 1 SoftDeleteMediaFilesByLibrary(%s), got %v", id, files)
 	}
 }
 
-// TestPurgeDeleted_HappyPath: PurgeDeleted forwards the library_id to
-// the Querier and surfaces the row count back to the caller. The
-// "must be soft-deleted first" gate lives inside the SQL query
-// itself (PurgeDeletedLibraryRows uses an EXISTS subquery against
-// libraries.deleted_at) so the service layer doesn't pre-check.
-func TestPurgeDeleted_HappyPath(t *testing.T) {
+// TestDelete_AsyncCascade_HardPurge guards the async tail: after the
+// sync soft-delete steps, Delete fires PurgeDeletedLibraryRows on a
+// detached goroutine to actually remove the rows + cascade through
+// every FK-CASCADE table. Without the goroutine, the rows would
+// linger as orphans (the original QA bug — recreating a library at
+// the same path then reported found:N / new:0).
+func TestDelete_AsyncCascade_HardPurge(t *testing.T) {
+	svc, q, _ := newService(t)
+	id := uuid.New()
+	q.libs[id] = Library{ID: id, Name: "Anime"}
+	q.purgeCounts[id] = 5870
+
+	if err := svc.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	q.awaitPurge(t)
+	calls := q.snapshotPurgeCalls()
+	if len(calls) != 1 || calls[0] != id {
+		t.Errorf("expected 1 PurgeDeletedLibraryRows(%s) call from goroutine, got %v",
+			id, calls)
+	}
+}
+
+// TestDelete_RequestCancellationDoesNotCancelPurge is the regression
+// guard for the Cloudflare-524 / context-cancelled-mid-cascade bug.
+// Delete must use context.WithoutCancel so the HTTP layer aborting
+// the parent context (a 524 timeout, an http.Server.Shutdown) does
+// NOT roll back the hard-delete cascade halfway through.
+func TestDelete_RequestCancellationDoesNotCancelPurge(t *testing.T) {
+	svc, q, _ := newService(t)
+	id := uuid.New()
+	q.libs[id] = Library{ID: id, Name: "Anime"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := svc.Delete(ctx, id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	// Cancel the parent context the instant Delete returns. The
+	// goroutine must have detached its context already.
+	cancel()
+	q.awaitPurge(t)
+	calls := q.snapshotPurgeCalls()
+	if len(calls) != 1 {
+		t.Errorf("purge must run despite parent ctx cancel; calls=%v", calls)
+	}
+}
+
+// TestPurgeDeleted_DirectInvocation: PurgeDeleted is also exposed
+// directly (used by the maintenance endpoint for one-shot cleanup
+// of orphans created before Delete became cascade-aware). The "must
+// be soft-deleted first" gate lives inside the SQL query itself
+// (EXISTS subquery against libraries.deleted_at) so the service
+// layer doesn't pre-check.
+func TestPurgeDeleted_DirectInvocation(t *testing.T) {
 	svc, q, _ := newService(t)
 	id := uuid.New()
 	q.purgeCounts[id] = 42
@@ -424,9 +530,9 @@ func TestPurgeDeleted_HappyPath(t *testing.T) {
 	if got != 42 {
 		t.Errorf("rows: got %d, want 42", got)
 	}
-	if len(q.purgeCalls) != 1 || q.purgeCalls[0] != id {
-		t.Errorf("expected 1 PurgeDeletedLibraryRows(%s), got %v",
-			id, q.purgeCalls)
+	calls := q.snapshotPurgeCalls()
+	if len(calls) != 1 || calls[0] != id {
+		t.Errorf("expected 1 PurgeDeletedLibraryRows(%s), got %v", id, calls)
 	}
 }
 

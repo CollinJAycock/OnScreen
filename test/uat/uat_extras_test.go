@@ -1239,9 +1239,15 @@ func (s *stubMaintenanceMedia) DedupeTopLevelItems(_ context.Context, _ string, 
 	return media.DedupeResult{}, nil
 }
 
+type stubMaintenanceLibrary struct{}
+
+func (s *stubMaintenanceLibrary) PurgeDeleted(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
 func TestMaintenance_RefreshMissingArtRequiresAdmin(t *testing.T) {
 	ts := newExtrasServer(t, func(h *api.Handlers) {
-		h.Maintenance = v1.NewMaintenanceHandler(&stubMaintenanceMedia{}, &stubItemEnricher{}, slog.Default())
+		h.Maintenance = v1.NewMaintenanceHandler(&stubMaintenanceMedia{}, &stubMaintenanceLibrary{}, &stubItemEnricher{}, slog.Default())
 	})
 
 	resp := ts.do("POST", "/api/v1/maintenance/refresh-missing-art", ts.userToken(), nil)

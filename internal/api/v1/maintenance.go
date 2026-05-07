@@ -142,6 +142,16 @@ func (h *MaintenanceHandler) dedupe(w http.ResponseWriter, r *http.Request, item
 // found:N / new:0). This endpoint cleans up those orphans so the
 // new library can re-scan from a clean slate.
 //
+// Returns 202 Accepted and runs the DELETE on a detached background
+// goroutine, because the cascade through every FK-CASCADE table
+// (media_files, watch_state, watch_events, favorites,
+// collection_items, intro_markers, trickplay_*, external_subtitles,
+// people_credits, ...) for a multi-thousand-item library reliably
+// blows past Cloudflare's 100s edge timeout. The synchronous variant
+// hit ERR 524 on QA and the request-context cancellation rolled the
+// transaction back, leaving the orphans in place. Caller polls
+// /admin/logs for "purge deleted library complete" / failure.
+//
 // Admin-only — mounted under AdminRequired in router.go.
 func (h *MaintenanceHandler) PurgeDeletedLibrary(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("library_id")
@@ -155,18 +165,23 @@ func (h *MaintenanceHandler) PurgeDeletedLibrary(w http.ResponseWriter, r *http.
 		return
 	}
 
-	n, err := h.library.PurgeDeleted(r.Context(), libID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "purge deleted library", "library_id", libID, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
+	// Detach the context so an HTTP-level cancellation (Cloudflare
+	// 524 timeout) doesn't roll back the transaction halfway through.
+	bgCtx := context.WithoutCancel(r.Context())
+	go func() {
+		n, err := h.library.PurgeDeleted(bgCtx, libID)
+		if err != nil {
+			h.logger.ErrorContext(bgCtx, "purge deleted library",
+				"library_id", libID, "err", err)
+			return
+		}
+		h.logger.InfoContext(bgCtx, "purge deleted library complete",
+			"library_id", libID, "purged_items", n)
+	}()
 
-	h.logger.InfoContext(r.Context(), "purge deleted library complete",
-		"library_id", libID, "purged_items", n)
+	h.logger.InfoContext(r.Context(), "purge deleted library enqueued",
+		"library_id", libID)
 
-	respond.Success(w, r, map[string]any{
-		"library_id":    libID.String(),
-		"purged_items":  n,
-	})
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte(`{"data":{"status":"accepted"}}`))
 }

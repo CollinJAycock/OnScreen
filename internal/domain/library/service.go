@@ -314,15 +314,23 @@ func (s *Service) Update(ctx context.Context, p UpdateLibraryParams) (*Library, 
 	return &lib, nil
 }
 
-// Delete soft-deletes a library, its media items, AND its media
-// files, then refreshes hub views. The media_files step matters
-// because GetMediaFileByPath isn't library-scoped — without it, a
-// library recreated at the same on-disk path would walk the
-// existing file_path rows and treat every file as already-scanned
-// (found:N, new:0). Setting status='deleted' makes the partial
-// UNIQUE on media_files(file_path) WHERE status!='deleted' (added
-// in 00080) ignore those rows, so the new library can claim the
-// paths cleanly.
+// Delete soft-deletes the libraries row (preserved for audit), then
+// kicks off a detached background goroutine that hard-deletes every
+// child media_items row — FK CASCADE handles media_files, watch_state,
+// favorites, collection_items, intro_markers, trickplay rows,
+// external_subtitles, etc. The two synchronous UPDATEs that come
+// first (soft-delete on items + status='deleted' on files) close the
+// "new library at same path before async finishes" window: the
+// partial UNIQUE on media_files(file_path) WHERE status!='deleted'
+// (00080) immediately stops recognising those rows so a fresh scan
+// can claim the paths without colliding with the in-flight cleanup.
+//
+// The cascade DELETE itself runs detached because for a library
+// with thousands of items it reliably exceeds Cloudflare's 100s
+// edge timeout — synchronous would surface ERR 524 and roll back
+// mid-transaction (this exact bug took down QA before this fix).
+// The goroutine uses context.WithoutCancel so the HTTP-request
+// cancellation doesn't propagate.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.rw.SoftDeleteLibrary(ctx, id); err != nil {
 		return fmt.Errorf("delete library %s: %w", id, mapNotFound(err))
@@ -339,7 +347,22 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 		s.logger.WarnContext(ctx, "failed to refresh hub after library delete",
 			"library_id", id, "err", err)
 	}
-	s.logger.InfoContext(ctx, "library deleted", "library_id", id)
+	s.logger.InfoContext(ctx, "library deleted (cascade purge running async)",
+		"library_id", id)
+
+	// Hard-delete cascade — detached so a request cancellation
+	// (Cloudflare 524) can't roll the transaction back partway.
+	bgCtx := context.WithoutCancel(ctx)
+	go func() {
+		n, err := s.rw.PurgeDeletedLibraryRows(bgCtx, id)
+		if err != nil {
+			s.logger.ErrorContext(bgCtx, "cascade purge after delete failed",
+				"library_id", id, "err", err)
+			return
+		}
+		s.logger.InfoContext(bgCtx, "cascade purge after delete complete",
+			"library_id", id, "items_deleted", n)
+	}()
 	return nil
 }
 

@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -58,14 +60,47 @@ func (m *maintEnricher) EnrichItem(_ context.Context, id uuid.UUID) error {
 func (m *maintEnricher) MatchItem(_ context.Context, _ uuid.UUID, _ int) error { return nil }
 
 type mockMaintLibSvc struct {
+	mu         sync.Mutex
 	purgeCalls []uuid.UUID
 	purgeCount int64
 	purgeErr   error
+	// done is closed when PurgeDeleted is invoked, so async tests
+	// can block on the goroutine completing without sleeping.
+	done chan struct{}
+}
+
+func newMockMaintLibSvc() *mockMaintLibSvc {
+	return &mockMaintLibSvc{done: make(chan struct{}, 1)}
 }
 
 func (m *mockMaintLibSvc) PurgeDeleted(_ context.Context, id uuid.UUID) (int64, error) {
+	m.mu.Lock()
 	m.purgeCalls = append(m.purgeCalls, id)
+	m.mu.Unlock()
+	select {
+	case m.done <- struct{}{}:
+	default:
+	}
 	return m.purgeCount, m.purgeErr
+}
+
+// awaitPurge blocks until PurgeDeleted has been called once or t fails.
+// Used by async-handler tests to synchronise with the detached goroutine.
+func (m *mockMaintLibSvc) awaitPurge(t *testing.T) {
+	t.Helper()
+	select {
+	case <-m.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("PurgeDeleted not called within 2s")
+	}
+}
+
+func (m *mockMaintLibSvc) calls() []uuid.UUID {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]uuid.UUID, len(m.purgeCalls))
+	copy(out, m.purgeCalls)
+	return out
 }
 
 // ── RefreshMissingArt ────────────────────────────────────────────────────────
@@ -218,9 +253,14 @@ func TestMaintenance_Dedupe_DBError(t *testing.T) {
 }
 
 // ── PurgeDeletedLibrary ──────────────────────────────────────────────────────
+//
+// Handler returns 202 Accepted and runs the cascade DELETE on a
+// detached goroutine — synchronous would blow past Cloudflare's 100s
+// edge timeout for a multi-thousand-item library and roll back. Tests
+// use the mock's `done` channel to synchronise with the goroutine.
 
 func TestMaintenance_PurgeDeletedLibrary_RequiresLibraryID(t *testing.T) {
-	lib := &mockMaintLibSvc{}
+	lib := newMockMaintLibSvc()
 	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/purge-deleted-library", nil)
@@ -230,13 +270,13 @@ func TestMaintenance_PurgeDeletedLibrary_RequiresLibraryID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}
-	if len(lib.purgeCalls) != 0 {
-		t.Errorf("library.PurgeDeleted should not be called without library_id, calls=%v", lib.purgeCalls)
+	if calls := lib.calls(); len(calls) != 0 {
+		t.Errorf("library.PurgeDeleted should not be called without library_id, calls=%v", calls)
 	}
 }
 
 func TestMaintenance_PurgeDeletedLibrary_RejectsBadUUID(t *testing.T) {
-	lib := &mockMaintLibSvc{}
+	lib := newMockMaintLibSvc()
 	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost,
@@ -247,14 +287,18 @@ func TestMaintenance_PurgeDeletedLibrary_RejectsBadUUID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}
-	if len(lib.purgeCalls) != 0 {
+	if calls := lib.calls(); len(calls) != 0 {
 		t.Error("library.PurgeDeleted should not be called when UUID parse fails")
 	}
 }
 
-func TestMaintenance_PurgeDeletedLibrary_HappyPath(t *testing.T) {
+// TestMaintenance_PurgeDeletedLibrary_AsyncAccepted: handler returns
+// 202 immediately, goroutine completes the purge in the background.
+// The done channel synchronises the assertion so we don't have a flake.
+func TestMaintenance_PurgeDeletedLibrary_AsyncAccepted(t *testing.T) {
 	libID := uuid.New()
-	lib := &mockMaintLibSvc{purgeCount: 178}
+	lib := newMockMaintLibSvc()
+	lib.purgeCount = 178
 	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost,
@@ -262,19 +306,26 @@ func TestMaintenance_PurgeDeletedLibrary_HappyPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.PurgeDeletedLibrary(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("status: got %d, want 200", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status: got %d, want 202", rec.Code)
 	}
-	if len(lib.purgeCalls) != 1 || lib.purgeCalls[0] != libID {
-		t.Errorf("expected 1 PurgeDeleted(%s), got %v", libID, lib.purgeCalls)
+	if !strings.Contains(rec.Body.String(), `"accepted"`) {
+		t.Errorf("body should signal accepted, got %q", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"purged_items":178`) {
-		t.Errorf("body should report purged_items=178, got %q", rec.Body.String())
+	lib.awaitPurge(t)
+	calls := lib.calls()
+	if len(calls) != 1 || calls[0] != libID {
+		t.Errorf("expected 1 PurgeDeleted(%s), got %v", libID, calls)
 	}
 }
 
-func TestMaintenance_PurgeDeletedLibrary_ServiceError(t *testing.T) {
-	lib := &mockMaintLibSvc{purgeErr: errors.New("db down")}
+// TestMaintenance_PurgeDeletedLibrary_GoroutineErrorIsLogged: a service
+// error inside the goroutine must NOT crash the handler — it just
+// gets logged. The handler already returned 202 so the response code
+// is unchanged; we just verify the call was made and we didn't panic.
+func TestMaintenance_PurgeDeletedLibrary_GoroutineErrorIsLogged(t *testing.T) {
+	lib := newMockMaintLibSvc()
+	lib.purgeErr = errors.New("db down")
 	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost,
@@ -282,7 +333,11 @@ func TestMaintenance_PurgeDeletedLibrary_ServiceError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.PurgeDeletedLibrary(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("status: got %d, want 500", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status: got %d, want 202 (handler returned before the goroutine)", rec.Code)
+	}
+	lib.awaitPurge(t)
+	if calls := lib.calls(); len(calls) != 1 {
+		t.Errorf("expected 1 PurgeDeleted call even on error, got %v", calls)
 	}
 }
