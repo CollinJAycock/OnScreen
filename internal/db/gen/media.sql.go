@@ -1580,7 +1580,15 @@ ranked AS (
 SELECT id AS loser_id, survivor_id::uuid AS survivor_id
 FROM ranked
 WHERE rn > 1
-  AND (year IS NULL OR survivor_year IS NULL OR year = survivor_year)
+  -- Year tolerance: ±5 years keeps consecutive cours of the same
+  -- anime franchise together (One Punch Man 2015 / OPM S2 2019,
+  -- Sword Art Online 2012 / SAO II 2014) while still keeping
+  -- distinct shows that share a title apart (Sailor Moon 1992 vs
+  -- Sailor Moon Crystal 2014, Hunter x Hunter 1999 vs the 2011
+  -- remake, Heroes 2006 vs Heroes 2024). Bare equality was too
+  -- strict for franchise dedup; nullable on either side stays
+  -- merge-eligible because pre-enrichment rows often lack a year.
+  AND (year IS NULL OR survivor_year IS NULL OR abs(year - survivor_year) <= 5)
 `
 
 type ListDuplicateTopLevelItemsParams struct {
