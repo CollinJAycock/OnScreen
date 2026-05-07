@@ -75,75 +75,18 @@ LIMIT 5;
 -- whose year conflicts with the survivor's year are NOT merged, so
 -- two distinct shows that happen to share a title (e.g. "Heroes" 2006 and
 -- "Heroes" 2024) stay separate.
+-- normalize_dedupe_title() is the canonical SQL function in 00001_init.sql
+-- that owns the regexp_replace ladder (article strip, year strip, season-
+-- marker strip, &/and unify, alphanumeric squeeze). Always use `title`,
+-- not `coalesce(original_title, title)`: TMDB-enriched rows often have an
+-- original_title in the production language (e.g. Japanese for an anime,
+-- German for a foreign film); after the alphanumeric squeeze that becomes
+-- the empty string, excluding the row from dedup. title is NOT NULL and
+-- is the user-facing English label across both rows so dedup keys
+-- converge correctly.
 WITH normalized AS (
     SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
-           lower(
-               regexp_replace(
-                 regexp_replace(
-                   regexp_replace(
-                     regexp_replace(
-                       regexp_replace(
-                         -- Strip a release-group prefix in square
-                         -- brackets ("[ToonsHub] Frieren...",
-                         -- "[QWERTY] 8 Out Of 10 Cats") before any
-                         -- other normalization. The scanner pulls
-                         -- these in from filenames when the canonical
-                         -- show row hasn't been created yet, and the
-                         -- prefix is never part of the actual title —
-                         -- always safe to drop. Country suffixes like
-                         -- "(US)" or " IE" intentionally stay because
-                         -- "The Zoo (Ireland)" and "The Zoo" are
-                         -- different productions (year mismatch
-                         -- already keeps them apart for cases like
-                         -- "Heroes 2006" vs "Heroes 2024", but the
-                         -- non-parenthesised country tag would
-                         -- accidentally merge two real shows).
-                         unaccent(replace(replace(
-                           regexp_replace(
-                             -- Use `title` as the dedup source rather than
-                             -- preferring original_title. TMDB-enriched
-                             -- rows often have an original_title in the
-                             -- production language (e.g. Japanese for an
-                             -- anime, German for a foreign film); after
-                             -- the `[^a-zA-Z0-9]+` strip below that becomes
-                             -- the empty string, the row is excluded by
-                             -- `WHERE norm <> ''`, and a duplicate row
-                             -- whose title was scanned in English never
-                             -- gets folded into the canonical row. title
-                             -- is NOT NULL in the schema and is the
-                             -- user-facing English label across both rows
-                             -- so dedup keys converge correctly.
-                             title,
-                             '^\s*\[[^\]]+\]\s*', '', 'i'
-                           ),
-                           '&amp;', '&'), '''', '')
-                         ),
-                         '^\s*(the|a|an)\s+', '', 'i'
-                       ),
-                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
-                     ),
-                     -- Trailing season markers: "S2", "Season 2",
-                     -- "2nd Season", "Cour 3". Anime cours folder-named
-                     -- "One Punch Man S2" / "Spy x Family Season 2"
-                     -- otherwise live as separate top-level rows from
-                     -- the base franchise; stripping the suffix here
-                     -- lets the dedupe survivor pull them in. Roman
-                     -- numerals (II/III) intentionally NOT stripped
-                     -- because they collide with legit titles
-                     -- ("Final Fantasy VII", "Rocky II"). Subtitle
-                     -- suffixes after a colon ("Code Geass: Lelouch
-                     -- of the Rebellion") are part of canonical
-                     -- AniList titles and stay too. Mirrors the
-                     -- scanner-side stripShowSeasonMarkers so scan-
-                     -- time and dedupe-time normalization agree.
-                     '\s+(s\s*\d+|season\s+\d+|\d+(st|nd|rd|th)\s+season|cour\s+\d+)\s*$',
-                     '', 'gi'
-                   ),
-                   '\s+(and|&)\s+', 'and', 'gi'
-                 ),
-                 '[^a-zA-Z0-9]+', '', 'g'
-               )
-           ) AS norm
+           normalize_dedupe_title(title) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NULL
@@ -187,55 +130,12 @@ WHERE rn > 1
 -- have NO external IDs and NO year, so a real spin-off that has been
 -- enriched (e.g. "Naruto Shippuden" with its own tmdb_id) won't be folded
 -- into the parent show.
+-- See ListDuplicateTopLevelItems for the rationale on using `title`
+-- instead of coalesce(original_title, title). Same normalize_dedupe_title()
+-- function so both passes agree on the key for "OPM" / "OPM S2".
 WITH normalized AS (
     SELECT id, library_id, type, year, tmdb_id, tvdb_id, poster_path, created_at,
-           lower(
-               regexp_replace(
-                 regexp_replace(
-                   regexp_replace(
-                     regexp_replace(
-                       regexp_replace(
-                         -- Strip a release-group prefix in square
-                         -- brackets ("[ToonsHub] Frieren...",
-                         -- "[QWERTY] 8 Out Of 10 Cats") before any
-                         -- other normalization. The scanner pulls
-                         -- these in from filenames when the canonical
-                         -- show row hasn't been created yet, and the
-                         -- prefix is never part of the actual title —
-                         -- always safe to drop. Country suffixes like
-                         -- "(US)" or " IE" intentionally stay because
-                         -- "The Zoo (Ireland)" and "The Zoo" are
-                         -- different productions (year mismatch
-                         -- already keeps them apart for cases like
-                         -- "Heroes 2006" vs "Heroes 2024", but the
-                         -- non-parenthesised country tag would
-                         -- accidentally merge two real shows).
-                         unaccent(replace(replace(
-                           regexp_replace(
-                             -- See ListDuplicateTopLevelItems for why this is
-                             -- `title` and not `coalesce(original_title, title)`:
-                             -- CJK / non-Latin original titles strip to empty
-                             -- and exclude their row from dedup entirely.
-                             title,
-                             '^\s*\[[^\]]+\]\s*', '', 'i'
-                           ),
-                           '&amp;', '&'), '''', '')
-                         ),
-                         '^\s*(the|a|an)\s+', '', 'i'
-                       ),
-                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
-                     ),
-                     -- Trailing season markers — kept identical to
-                     -- ListDuplicateTopLevelItems so both passes agree
-                     -- on the normalized key for "OPM" / "OPM S2".
-                     '\s+(s\s*\d+|season\s+\d+|\d+(st|nd|rd|th)\s+season|cour\s+\d+)\s*$',
-                     '', 'gi'
-                   ),
-                   '\s+(and|&)\s+', 'and', 'gi'
-                 ),
-                 '[^a-zA-Z0-9]+', '', 'g'
-               )
-           ) AS norm
+           normalize_dedupe_title(title) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NULL
@@ -276,24 +176,15 @@ ORDER BY l.id,
 -- ampersand/and, and non-alphanumeric characters. Survivor is the most
 -- enriched row (external ids > poster > year > oldest). Year mismatches
 -- block the merge so a re-release with a different year stays distinct.
+-- Child rows can rely on original_title (album-tag spellings vary), so
+-- coalesce to original_title first. The bracket-strip and season-marker
+-- regexes inside normalize_dedupe_title() are no-ops on child titles
+-- (albums don't carry "[release-group]" prefixes or "S2" suffixes), so
+-- using the same function is safe and keeps one definition.
 WITH normalized AS (
     SELECT id, parent_id, type, year, tmdb_id, tvdb_id, musicbrainz_id,
            poster_path, created_at,
-           lower(
-               regexp_replace(
-                 regexp_replace(
-                   regexp_replace(
-                     regexp_replace(
-                       unaccent(replace(replace(coalesce(NULLIF(original_title, ''), title), '&amp;', '&'), '''', '')),
-                       '^\s*(the|a|an)\s+', '', 'i'
-                     ),
-                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
-                   ),
-                   '\s+(and|&)\s+', 'and', 'gi'
-                 ),
-                 '[^a-zA-Z0-9]+', '', 'g'
-               )
-           ) AS norm
+           normalize_dedupe_title(coalesce(NULLIF(original_title, ''), title)) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NOT NULL
@@ -339,21 +230,7 @@ WHERE rn > 1
 -- reparents the chapters into the rightful author's audiobook tile.
 WITH normalized AS (
     SELECT mi.id, mi.parent_id, mi.year, mi.poster_path, mi.tmdb_id, mi.created_at,
-           lower(
-               regexp_replace(
-                 regexp_replace(
-                   regexp_replace(
-                     regexp_replace(
-                       unaccent(replace(replace(coalesce(NULLIF(mi.original_title, ''), mi.title), '&amp;', '&'), '''', '')),
-                       '^\s*(the|a|an)\s+', '', 'i'
-                     ),
-                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
-                   ),
-                   '\s+(and|&)\s+', 'and', 'gi'
-                 ),
-                 '[^a-zA-Z0-9]+', '', 'g'
-               )
-           ) AS norm,
+           normalize_dedupe_title(coalesce(NULLIF(mi.original_title, ''), mi.title)) AS norm,
            EXISTS (
                SELECT 1 FROM media_files mf
                WHERE mf.media_item_id = mi.id

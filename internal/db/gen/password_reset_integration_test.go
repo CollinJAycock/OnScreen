@@ -101,8 +101,12 @@ func TestPasswordReset_Integration_GetUsedReturnsErrNoRows(t *testing.T) {
 		t.Fatalf("Get (live): %v", err)
 	}
 
-	if err := q.MarkPasswordResetTokenUsed(ctx, tok.ID); err != nil {
+	rows, err := q.MarkPasswordResetTokenUsed(ctx, tok.ID)
+	if err != nil {
 		t.Fatalf("MarkPasswordResetTokenUsed: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("MarkPasswordResetTokenUsed rows = %d, want 1 — first claim should win", rows)
 	}
 
 	if _, err := q.GetPasswordResetToken(ctx, hash); err != pgx.ErrNoRows {
@@ -140,7 +144,7 @@ func TestPasswordReset_Integration_DeleteExpiredCleansBothBranches(t *testing.T)
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	})
 	usedTok, _ := q.GetPasswordResetToken(ctx, usedHash)
-	_ = q.MarkPasswordResetTokenUsed(ctx, usedTok.ID)
+	_, _ = q.MarkPasswordResetTokenUsed(ctx, usedTok.ID)
 
 	if err := q.DeleteExpiredPasswordResetTokens(ctx); err != nil {
 		t.Fatalf("DeleteExpiredPasswordResetTokens: %v", err)

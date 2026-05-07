@@ -34,6 +34,7 @@ func seedLibrary(ctx context.Context, t *testing.T, q *gen.Queries, name string)
 		Language:                "en",
 		ScanInterval:            time.Hour,
 		MetadataRefreshInterval: 24 * time.Hour,
+		IsPrivate:               true,
 	})
 	if err != nil {
 		t.Fatalf("CreateLibrary %q: %v", name, err)
