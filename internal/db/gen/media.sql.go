@@ -4325,6 +4325,26 @@ func (q *Queries) MarkMediaFileMissing(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
+const purgeDeletedLibraryRows = `-- name: PurgeDeletedLibraryRows :execrows
+DELETE FROM media_items WHERE library_id = $1
+`
+
+// Hard-deletes every media_items row for [library_id]; FK cascades
+// (added in 00007) take care of media_files, watch_state,
+// watch_events, favorites, collection memberships, intro_markers,
+// trickplay rows, external_subtitles, etc. Intended ONLY for
+// libraries already soft-deleted (deleted_at IS NOT NULL); the
+// handler enforces that gate so a typo doesn't nuke a live library.
+// Returns the number of media_items rows hard-deleted so the caller
+// can report progress.
+func (q *Queries) PurgeDeletedLibraryRows(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeDeletedLibraryRows, libraryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const refreshHubRecentlyAdded = `-- name: RefreshHubRecentlyAdded :exec
 REFRESH MATERIALIZED VIEW CONCURRENTLY hub_recently_added
 `
@@ -4687,6 +4707,26 @@ WHERE library_id = $1
 // handled by SoftDeleteEmptyContainerItems instead.
 func (q *Queries) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteItemsWithNoActiveFiles, libraryID)
+	return err
+}
+
+const softDeleteMediaFilesByLibrary = `-- name: SoftDeleteMediaFilesByLibrary :exec
+UPDATE media_files SET status = 'deleted', updated_at = NOW()
+WHERE status != 'deleted'
+  AND media_item_id IN (
+      SELECT id FROM media_items WHERE library_id = $1
+  )
+`
+
+// Companion to SoftDeleteMediaItemsByLibrary used when a library is
+// deleted. Marks every active/missing file in the library as
+// 'deleted' so the partial UNIQUE on media_files(file_path) WHERE
+// status != 'deleted' (added in 00080) no longer claims those paths
+// — a fresh library created at the same scan_paths can then own
+// them without colliding. Rows are kept for audit / undelete; use
+// PurgeDeletedLibrary to hard-remove them.
+func (q *Queries) SoftDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteMediaFilesByLibrary, libraryID)
 	return err
 }
 

@@ -57,12 +57,23 @@ func (m *maintEnricher) EnrichItem(_ context.Context, id uuid.UUID) error {
 }
 func (m *maintEnricher) MatchItem(_ context.Context, _ uuid.UUID, _ int) error { return nil }
 
+type mockMaintLibSvc struct {
+	purgeCalls []uuid.UUID
+	purgeCount int64
+	purgeErr   error
+}
+
+func (m *mockMaintLibSvc) PurgeDeleted(_ context.Context, id uuid.UUID) (int64, error) {
+	m.purgeCalls = append(m.purgeCalls, id)
+	return m.purgeCount, m.purgeErr
+}
+
 // ── RefreshMissingArt ────────────────────────────────────────────────────────
 
 func TestMaintenance_RefreshMissingArt_Defaults(t *testing.T) {
 	svc := &mockMaintSvc{}
 	enr := &maintEnricher{}
-	h := NewMaintenanceHandler(svc, enr, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, enr, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/refresh-missing-art", nil)
 	rec := httptest.NewRecorder()
@@ -79,7 +90,7 @@ func TestMaintenance_RefreshMissingArt_Defaults(t *testing.T) {
 func TestMaintenance_RefreshMissingArt_ClampsTo1000(t *testing.T) {
 	svc := &mockMaintSvc{}
 	enr := &maintEnricher{}
-	h := NewMaintenanceHandler(svc, enr, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, enr, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/refresh-missing-art?limit=999999", nil)
 	rec := httptest.NewRecorder()
@@ -100,7 +111,7 @@ func TestMaintenance_RefreshMissingArt_CountsSuccessAndFailure(t *testing.T) {
 		{ID: good2, Title: "Good 2"},
 	}}
 	enr := &maintEnricher{errForIDs: map[uuid.UUID]error{bad: errors.New("tmdb down")}}
-	h := NewMaintenanceHandler(svc, enr, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, enr, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/refresh-missing-art", nil)
 	rec := httptest.NewRecorder()
@@ -124,7 +135,7 @@ func TestMaintenance_RefreshMissingArt_CountsSuccessAndFailure(t *testing.T) {
 
 func TestMaintenance_RefreshMissingArt_DBError(t *testing.T) {
 	svc := &mockMaintSvc{listErr: errors.New("boom")}
-	h := NewMaintenanceHandler(svc, &maintEnricher{}, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/refresh-missing-art", nil)
 	rec := httptest.NewRecorder()
@@ -139,7 +150,7 @@ func TestMaintenance_RefreshMissingArt_DBError(t *testing.T) {
 
 func TestMaintenance_DedupeShows_InvalidLibraryID(t *testing.T) {
 	svc := &mockMaintSvc{}
-	h := NewMaintenanceHandler(svc, &maintEnricher{}, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/dedupe-shows?library_id=bogus", nil)
 	rec := httptest.NewRecorder()
@@ -155,7 +166,7 @@ func TestMaintenance_DedupeShows_InvalidLibraryID(t *testing.T) {
 
 func TestMaintenance_DedupeShows_NoLibraryScopesAll(t *testing.T) {
 	svc := &mockMaintSvc{dedupeRes: media.DedupeResult{MergedItems: 2}}
-	h := NewMaintenanceHandler(svc, &maintEnricher{}, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/dedupe-shows", nil)
 	rec := httptest.NewRecorder()
@@ -175,7 +186,7 @@ func TestMaintenance_DedupeShows_NoLibraryScopesAll(t *testing.T) {
 func TestMaintenance_DedupeMovies_ScopesByLibrary(t *testing.T) {
 	libID := uuid.New()
 	svc := &mockMaintSvc{}
-	h := NewMaintenanceHandler(svc, &maintEnricher{}, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/dedupe-movies?library_id="+libID.String(), nil)
 	rec := httptest.NewRecorder()
@@ -194,7 +205,7 @@ func TestMaintenance_DedupeMovies_ScopesByLibrary(t *testing.T) {
 
 func TestMaintenance_Dedupe_DBError(t *testing.T) {
 	svc := &mockMaintSvc{dedupeErr: errors.New("boom")}
-	h := NewMaintenanceHandler(svc, &maintEnricher{}, slog.Default())
+	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, &maintEnricher{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/dedupe-shows", nil)
 	rec := httptest.NewRecorder()
@@ -204,4 +215,74 @@ func TestMaintenance_Dedupe_DBError(t *testing.T) {
 		t.Errorf("status: got %d, want 500", rec.Code)
 	}
 	_ = strings.TrimSpace(rec.Body.String())
+}
+
+// ── PurgeDeletedLibrary ──────────────────────────────────────────────────────
+
+func TestMaintenance_PurgeDeletedLibrary_RequiresLibraryID(t *testing.T) {
+	lib := &mockMaintLibSvc{}
+	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/purge-deleted-library", nil)
+	rec := httptest.NewRecorder()
+	h.PurgeDeletedLibrary(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", rec.Code)
+	}
+	if len(lib.purgeCalls) != 0 {
+		t.Errorf("library.PurgeDeleted should not be called without library_id, calls=%v", lib.purgeCalls)
+	}
+}
+
+func TestMaintenance_PurgeDeletedLibrary_RejectsBadUUID(t *testing.T) {
+	lib := &mockMaintLibSvc{}
+	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/maintenance/purge-deleted-library?library_id=not-a-uuid", nil)
+	rec := httptest.NewRecorder()
+	h.PurgeDeletedLibrary(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", rec.Code)
+	}
+	if len(lib.purgeCalls) != 0 {
+		t.Error("library.PurgeDeleted should not be called when UUID parse fails")
+	}
+}
+
+func TestMaintenance_PurgeDeletedLibrary_HappyPath(t *testing.T) {
+	libID := uuid.New()
+	lib := &mockMaintLibSvc{purgeCount: 178}
+	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/maintenance/purge-deleted-library?library_id="+libID.String(), nil)
+	rec := httptest.NewRecorder()
+	h.PurgeDeletedLibrary(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200", rec.Code)
+	}
+	if len(lib.purgeCalls) != 1 || lib.purgeCalls[0] != libID {
+		t.Errorf("expected 1 PurgeDeleted(%s), got %v", libID, lib.purgeCalls)
+	}
+	if !strings.Contains(rec.Body.String(), `"purged_items":178`) {
+		t.Errorf("body should report purged_items=178, got %q", rec.Body.String())
+	}
+}
+
+func TestMaintenance_PurgeDeletedLibrary_ServiceError(t *testing.T) {
+	lib := &mockMaintLibSvc{purgeErr: errors.New("db down")}
+	h := NewMaintenanceHandler(&mockMaintSvc{}, lib, &maintEnricher{}, slog.Default())
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/maintenance/purge-deleted-library?library_id="+uuid.NewString(), nil)
+	rec := httptest.NewRecorder()
+	h.PurgeDeletedLibrary(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want 500", rec.Code)
+	}
 }

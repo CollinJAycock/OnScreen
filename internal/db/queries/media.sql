@@ -700,6 +700,39 @@ WHERE id = $1;
 UPDATE media_items SET deleted_at = NOW(), updated_at = NOW()
 WHERE library_id = $1 AND deleted_at IS NULL;
 
+-- name: SoftDeleteMediaFilesByLibrary :exec
+-- Companion to SoftDeleteMediaItemsByLibrary used when a library is
+-- deleted. Marks every active/missing file in the library as
+-- 'deleted' so the partial UNIQUE on media_files(file_path) WHERE
+-- status != 'deleted' (added in 00080) no longer claims those paths
+-- — a fresh library created at the same scan_paths can then own
+-- them without colliding. Rows are kept for audit / undelete; use
+-- PurgeDeletedLibrary to hard-remove them.
+UPDATE media_files SET status = 'deleted', updated_at = NOW()
+WHERE status != 'deleted'
+  AND media_item_id IN (
+      SELECT id FROM media_items WHERE library_id = $1
+  );
+
+-- name: PurgeDeletedLibraryRows :execrows
+-- Hard-deletes every media_items row for [library_id]; FK cascades
+-- (added in 00007) take care of media_files, watch_state,
+-- watch_events, favorites, collection memberships, intro_markers,
+-- trickplay rows, external_subtitles, etc. Returns the number of
+-- media_items rows hard-deleted so the caller can report progress.
+--
+-- The EXISTS subquery enforces the soft-delete gate inside the SQL
+-- itself: hard-deleting a LIVE library's content would be a
+-- catastrophic typo, so the row only gets touched when the parent
+-- library has deleted_at IS NOT NULL. Gate is also enforced in the
+-- handler / service layer; both layers refuse independently.
+DELETE FROM media_items
+WHERE library_id = $1
+  AND EXISTS (
+      SELECT 1 FROM libraries
+      WHERE libraries.id = $1 AND libraries.deleted_at IS NOT NULL
+  );
+
 -- name: SoftDeleteMediaItemIfAllFilesDeleted :exec
 UPDATE media_items
 SET deleted_at = NOW(), updated_at = NOW()

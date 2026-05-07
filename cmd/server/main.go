@@ -837,7 +837,7 @@ func run() error {
 	playbackHandler := v1.NewPlaybackHandler(gen.New(roPool), notifBrokerEarly, logger)
 
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
-	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, metaAgent, logger)
+	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, libSvc, metaAgent, logger)
 	expectedSchemaVersion, err := dbmigrations.Highest()
 	if err != nil {
 		logger.Error("scan embedded migrations for schema version", "err", err)

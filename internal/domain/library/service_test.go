@@ -24,12 +24,21 @@ type mockQuerier struct {
 	countErr  error
 	due       []Library
 	dueMeta   []Library
+	// Cascade-call tracking for the library-delete + purge tests.
+	// Order matters (delete should soft-delete library first, then
+	// items, then files), so we keep slices instead of bools.
+	softDelItemsCalls []uuid.UUID
+	softDelFilesCalls []uuid.UUID
+	purgeCalls        []uuid.UUID
+	purgeCounts       map[uuid.UUID]int64
+	purgeErr          error
 }
 
 func newMockQuerier() *mockQuerier {
 	return &mockQuerier{
-		libs:   make(map[uuid.UUID]Library),
-		access: make(map[uuid.UUID][]uuid.UUID),
+		libs:        make(map[uuid.UUID]Library),
+		access:      make(map[uuid.UUID][]uuid.UUID),
+		purgeCounts: make(map[uuid.UUID]int64),
 	}
 }
 
@@ -88,7 +97,21 @@ func (m *mockQuerier) SoftDeleteLibrary(_ context.Context, id uuid.UUID) error {
 	delete(m.libs, id)
 	return nil
 }
-func (m *mockQuerier) SoftDeleteMediaItemsByLibrary(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockQuerier) SoftDeleteMediaItemsByLibrary(_ context.Context, lib uuid.UUID) error {
+	m.softDelItemsCalls = append(m.softDelItemsCalls, lib)
+	return nil
+}
+func (m *mockQuerier) SoftDeleteMediaFilesByLibrary(_ context.Context, lib uuid.UUID) error {
+	m.softDelFilesCalls = append(m.softDelFilesCalls, lib)
+	return nil
+}
+func (m *mockQuerier) PurgeDeletedLibraryRows(_ context.Context, lib uuid.UUID) (int64, error) {
+	m.purgeCalls = append(m.purgeCalls, lib)
+	if n, ok := m.purgeCounts[lib]; ok {
+		return n, m.purgeErr
+	}
+	return 0, m.purgeErr
+}
 func (m *mockQuerier) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error      { return nil }
 func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                    { return nil }
 func (m *mockQuerier) MarkLibraryScanCompleted(_ context.Context, _ uuid.UUID) error      { return nil }
@@ -356,6 +379,62 @@ func TestDelete_NotFound(t *testing.T) {
 	err := svc.Delete(context.Background(), uuid.New())
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+// TestDelete_CascadesToItemsAndFiles is the regression guard for the
+// "recreate library at the same path returns found:N / new:0" bug.
+// The fix is that library Delete must soft-delete BOTH media_items
+// AND media_files for the library so the partial UNIQUE on
+// media_files(file_path) WHERE status != 'deleted' lets the new
+// library claim the same paths. Forgetting either cascade reverts
+// the bug.
+func TestDelete_CascadesToItemsAndFiles(t *testing.T) {
+	svc, q, _ := newService(t)
+	id := uuid.New()
+	q.libs[id] = Library{ID: id, Name: "Anime"}
+
+	if err := svc.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(q.softDelItemsCalls) != 1 || q.softDelItemsCalls[0] != id {
+		t.Errorf("expected 1 SoftDeleteMediaItemsByLibrary(%s), got %v",
+			id, q.softDelItemsCalls)
+	}
+	if len(q.softDelFilesCalls) != 1 || q.softDelFilesCalls[0] != id {
+		t.Errorf("expected 1 SoftDeleteMediaFilesByLibrary(%s), got %v",
+			id, q.softDelFilesCalls)
+	}
+}
+
+// TestPurgeDeleted_HappyPath: PurgeDeleted forwards the library_id to
+// the Querier and surfaces the row count back to the caller. The
+// "must be soft-deleted first" gate lives inside the SQL query
+// itself (PurgeDeletedLibraryRows uses an EXISTS subquery against
+// libraries.deleted_at) so the service layer doesn't pre-check.
+func TestPurgeDeleted_HappyPath(t *testing.T) {
+	svc, q, _ := newService(t)
+	id := uuid.New()
+	q.purgeCounts[id] = 42
+
+	got, err := svc.PurgeDeleted(context.Background(), id)
+	if err != nil {
+		t.Fatalf("PurgeDeleted: %v", err)
+	}
+	if got != 42 {
+		t.Errorf("rows: got %d, want 42", got)
+	}
+	if len(q.purgeCalls) != 1 || q.purgeCalls[0] != id {
+		t.Errorf("expected 1 PurgeDeletedLibraryRows(%s), got %v",
+			id, q.purgeCalls)
+	}
+}
+
+func TestPurgeDeleted_QueryError(t *testing.T) {
+	svc, q, _ := newService(t)
+	q.purgeErr = errors.New("db down")
+	if _, err := svc.PurgeDeleted(context.Background(), uuid.New()); err == nil {
+		t.Error("expected error when query fails")
 	}
 }
 

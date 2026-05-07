@@ -490,6 +490,7 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/maintenance/refresh-missing-art", h.Maintenance.RefreshMissingArt)
 					r.Post("/maintenance/dedupe-shows", h.Maintenance.DedupeShows)
 					r.Post("/maintenance/dedupe-movies", h.Maintenance.DedupeMovies)
+					r.Post("/maintenance/purge-deleted-library", h.Maintenance.PurgeDeletedLibrary)
 				})
 			}
 

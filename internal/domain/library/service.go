@@ -94,6 +94,12 @@ type Querier interface {
 	UpdateLibrary(ctx context.Context, p UpdateLibraryParams) (Library, error)
 	SoftDeleteLibrary(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemsByLibrary(ctx context.Context, libraryID uuid.UUID) error
+	SoftDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error
+	// PurgeDeletedLibraryRows hard-removes every media_items row for
+	// the library; FK cascades clean up media_files, watch_state,
+	// favorites, etc. Returns the number of items removed. Caller
+	// must ensure the library is already soft-deleted.
+	PurgeDeletedLibraryRows(ctx context.Context, libraryID uuid.UUID) (int64, error)
 	RefreshHubRecentlyAdded(ctx context.Context) error
 	MarkLibraryScanCompleted(ctx context.Context, id uuid.UUID) error
 	MarkLibraryMetadataRefreshed(ctx context.Context, id uuid.UUID) error
@@ -308,7 +314,15 @@ func (s *Service) Update(ctx context.Context, p UpdateLibraryParams) (*Library, 
 	return &lib, nil
 }
 
-// Delete soft-deletes a library and its media items, then refreshes hub views.
+// Delete soft-deletes a library, its media items, AND its media
+// files, then refreshes hub views. The media_files step matters
+// because GetMediaFileByPath isn't library-scoped — without it, a
+// library recreated at the same on-disk path would walk the
+// existing file_path rows and treat every file as already-scanned
+// (found:N, new:0). Setting status='deleted' makes the partial
+// UNIQUE on media_files(file_path) WHERE status!='deleted' (added
+// in 00080) ignore those rows, so the new library can claim the
+// paths cleanly.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.rw.SoftDeleteLibrary(ctx, id); err != nil {
 		return fmt.Errorf("delete library %s: %w", id, mapNotFound(err))
@@ -317,12 +331,35 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 		s.logger.ErrorContext(ctx, "failed to soft-delete media items for library",
 			"library_id", id, "err", err)
 	}
+	if err := s.rw.SoftDeleteMediaFilesByLibrary(ctx, id); err != nil {
+		s.logger.ErrorContext(ctx, "failed to soft-delete media files for library",
+			"library_id", id, "err", err)
+	}
 	if err := s.rw.RefreshHubRecentlyAdded(ctx); err != nil {
 		s.logger.WarnContext(ctx, "failed to refresh hub after library delete",
 			"library_id", id, "err", err)
 	}
 	s.logger.InfoContext(ctx, "library deleted", "library_id", id)
 	return nil
+}
+
+// PurgeDeleted hard-removes the rows for an already-soft-deleted
+// library. Returns the number of media_items rows hard-deleted —
+// FK cascades take care of media_files, watch_state, favorites,
+// collection memberships, intro_markers, trickplay rows, etc.
+//
+// The "must be soft-deleted first" gate is enforced inside the SQL
+// (see PurgeDeletedLibraryRows in queries/media.sql) — calling this
+// on a live library returns 0 rows affected without touching
+// anything, so a typo can't nuke production data.
+func (s *Service) PurgeDeleted(ctx context.Context, id uuid.UUID) (int64, error) {
+	n, err := s.rw.PurgeDeletedLibraryRows(ctx, id)
+	if err != nil {
+		return 0, fmt.Errorf("purge library %s: %w", id, err)
+	}
+	s.logger.InfoContext(ctx, "library rows purged",
+		"library_id", id, "items_deleted", n)
+	return n, nil
 }
 
 // EnqueueScan triggers an on-demand library scan.

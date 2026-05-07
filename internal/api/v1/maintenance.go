@@ -18,17 +18,25 @@ type MaintenanceMediaService interface {
 	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
 }
 
+// MaintenanceLibraryService is the slice of library.Service the
+// purge endpoint needs. Separate from MaintenanceMediaService so
+// the existing media-only handlers can keep their narrow surface.
+type MaintenanceLibraryService interface {
+	PurgeDeleted(ctx context.Context, id uuid.UUID) (int64, error)
+}
+
 // MaintenanceHandler exposes admin-only one-shot operations such as backfilling
 // missing artwork after a new metadata source (e.g. TVDB key) is configured.
 type MaintenanceHandler struct {
 	media    MaintenanceMediaService
+	library  MaintenanceLibraryService
 	enricher ItemEnricher
 	logger   *slog.Logger
 }
 
 // NewMaintenanceHandler creates a MaintenanceHandler.
-func NewMaintenanceHandler(svc MaintenanceMediaService, enricher ItemEnricher, logger *slog.Logger) *MaintenanceHandler {
-	return &MaintenanceHandler{media: svc, enricher: enricher, logger: logger}
+func NewMaintenanceHandler(svc MaintenanceMediaService, lib MaintenanceLibraryService, enricher ItemEnricher, logger *slog.Logger) *MaintenanceHandler {
+	return &MaintenanceHandler{media: svc, library: lib, enricher: enricher, logger: logger}
 }
 
 // RefreshMissingArt handles POST /api/v1/maintenance/refresh-missing-art.
@@ -117,4 +125,48 @@ func (h *MaintenanceHandler) dedupe(w http.ResponseWriter, r *http.Request, item
 		"reparented", res.ReparentedRows)
 
 	respond.Success(w, r, res)
+}
+
+// PurgeDeletedLibrary handles POST /api/v1/maintenance/purge-deleted-library?library_id=UUID.
+// Hard-removes every media_items row for an already-soft-deleted
+// library; FK cascades clean up media_files, watch_state, favorites,
+// collection memberships, intro markers, etc. Refuses to operate on
+// a live library — the SQL itself enforces the soft-delete gate, so
+// passing a live library_id returns purged_items=0 without touching
+// anything.
+//
+// Use case: a library was deleted-and-recreated at the same scan
+// path before 00080 / the cascade-soft-delete fix landed, leaving
+// orphaned media_files rows that block the new library's scanner
+// from claiming the same paths (symptom: scan reports
+// found:N / new:0). This endpoint cleans up those orphans so the
+// new library can re-scan from a clean slate.
+//
+// Admin-only — mounted under AdminRequired in router.go.
+func (h *MaintenanceHandler) PurgeDeletedLibrary(w http.ResponseWriter, r *http.Request) {
+	raw := r.URL.Query().Get("library_id")
+	if raw == "" {
+		respond.BadRequest(w, r, "library_id is required")
+		return
+	}
+	libID, err := uuid.Parse(raw)
+	if err != nil {
+		respond.BadRequest(w, r, "invalid library_id")
+		return
+	}
+
+	n, err := h.library.PurgeDeleted(r.Context(), libID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "purge deleted library", "library_id", libID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	h.logger.InfoContext(r.Context(), "purge deleted library complete",
+		"library_id", libID, "purged_items", n)
+
+	respond.Success(w, r, map[string]any{
+		"library_id":    libID.String(),
+		"purged_items":  n,
+	})
 }
