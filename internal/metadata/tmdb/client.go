@@ -308,7 +308,10 @@ func normTitle(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// GetSeason implements metadata.Agent.
+// GetSeason implements metadata.Agent. Returns season metadata + the
+// full episode list in one call (TMDB embeds episodes in the season
+// response), so callers can skip per-episode round-trips for the
+// 95% case where TMDB has the data.
 func (c *Client) GetSeason(ctx context.Context, showTMDBID, seasonNum int) (*metadata.SeasonResult, error) {
 	var s tmdbSeason
 	path := fmt.Sprintf("/tv/%d/season/%d", showTMDBID, seasonNum)
@@ -318,12 +321,27 @@ func (c *Client) GetSeason(ctx context.Context, showTMDBID, seasonNum int) (*met
 		return nil, fmt.Errorf("tmdb get season %d/%d: %w", showTMDBID, seasonNum, err)
 	}
 	air, _ := time.Parse("2006-01-02", s.AirDate)
+	episodes := make([]metadata.EpisodeResult, 0, len(s.Episodes))
+	for _, e := range s.Episodes {
+		epAir, _ := time.Parse("2006-01-02", e.AirDate)
+		episodes = append(episodes, metadata.EpisodeResult{
+			ShowTMDBID: showTMDBID,
+			SeasonNum:  seasonNum,
+			EpisodeNum: e.EpisodeNumber,
+			Title:      e.Name,
+			Summary:    e.Overview,
+			AirDate:    epAir,
+			Rating:     e.VoteAverage,
+			ThumbURL:   imageURL(e.StillPath),
+		})
+	}
 	return &metadata.SeasonResult{
 		Number:    s.SeasonNumber,
 		Name:      s.Name,
 		Summary:   s.Overview,
 		AirDate:   air,
 		PosterURL: imageURL(s.PosterPath),
+		Episodes:  episodes,
 	}, nil
 }
 
@@ -633,11 +651,14 @@ type tmdbTV struct {
 }
 
 type tmdbSeason struct {
-	SeasonNumber int    `json:"season_number"`
-	Name         string `json:"name"`
-	Overview     string `json:"overview"`
-	AirDate      string `json:"air_date"`
-	PosterPath   string `json:"poster_path"`
+	SeasonNumber int           `json:"season_number"`
+	Name         string        `json:"name"`
+	Overview     string        `json:"overview"`
+	AirDate      string        `json:"air_date"`
+	PosterPath   string        `json:"poster_path"`
+	// /tv/{id}/season/{n} embeds the full episode list — pull it
+	// in one shot instead of N+1 calls per episode.
+	Episodes []tmdbEpisode `json:"episodes"`
 }
 
 type tmdbEpisode struct {

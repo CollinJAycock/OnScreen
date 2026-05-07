@@ -196,6 +196,46 @@ func TestGetSeason_Success(t *testing.T) {
 	}
 }
 
+// TMDB embeds the per-season episode list in the season response. The
+// scanner's bulk-enrich path leans on this — exercising the GetEpisode
+// endpoint per episode would be N+1 calls per season, so the season
+// fetch must surface the embedded list intact for the cascade to
+// avoid those round-trips.
+func TestGetSeason_EmbedsEpisodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"season_number": 1,
+			"name":          "Season 1",
+			"episodes": []map[string]any{
+				{"episode_number": 1, "name": "Pilot", "overview": "First.", "still_path": "/p1.jpg", "air_date": "2008-01-20", "vote_average": 8.5},
+				{"episode_number": 2, "name": "Cat in the Bag", "overview": "Second.", "still_path": "/p2.jpg", "air_date": "2008-01-27", "vote_average": 8.7},
+				{"episode_number": 3, "name": "And the Bag's in the River", "overview": "Third.", "still_path": "/p3.jpg", "air_date": "2008-02-10", "vote_average": 8.6},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	result, err := c.GetSeason(context.Background(), 1396, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Episodes) != 3 {
+		t.Fatalf("Episodes length: got %d, want 3", len(result.Episodes))
+	}
+	if result.Episodes[0].EpisodeNum != 1 || result.Episodes[0].Title != "Pilot" {
+		t.Errorf("Episodes[0]: got num=%d title=%q, want 1/Pilot",
+			result.Episodes[0].EpisodeNum, result.Episodes[0].Title)
+	}
+	if result.Episodes[2].ThumbURL == "" {
+		t.Error("Episodes[2].ThumbURL: expected non-empty (still_path was set)")
+	}
+	if result.Episodes[1].ShowTMDBID != 1396 || result.Episodes[1].SeasonNum != 1 {
+		t.Errorf("Episodes[1] ShowTMDBID/SeasonNum: got %d/%d, want 1396/1",
+			result.Episodes[1].ShowTMDBID, result.Episodes[1].SeasonNum)
+	}
+}
+
 // ── GetEpisode ──────────────────────────────────────────────────────────────
 
 func TestGetEpisode_Success(t *testing.T) {

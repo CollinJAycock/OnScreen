@@ -361,7 +361,10 @@ func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.Fil
 	case "season":
 		return e.enrichSeason(ctx, agent, item, file)
 	case "episode":
-		return e.enrichEpisode(ctx, agent, item, file)
+		// Standalone case (Enrich called for a single episode item, e.g.
+		// admin "re-enrich item"). No prefetched season data — pay the
+		// per-episode TMDB round-trip; this is rare and one-off.
+		return e.enrichEpisode(ctx, agent, item, file, nil)
 	case "artist", "album", "track":
 		if e.musicAgentFn != nil {
 			if ma := e.musicAgentFn(); ma != nil {
@@ -977,12 +980,19 @@ func (e *Enricher) enrichSeason(ctx context.Context, agent metadata.Agent, item 
 	// Anime shows matched on AniList alone skip the season fetch (AniList
 	// doesn't model anime by season anyway — sequels are separate Media
 	// rows) but still cascade to episode-level enrichment below.
+	//
+	// preloadedEpisodes carries the season's full episode list out to
+	// the cascade so each episode can skip its own TMDB round-trip.
+	// Empty when TMDB wasn't called or returned nothing — the cascade
+	// falls back to TVDB / AniList per episode in that case.
+	var preloadedEpisodes []metadata.EpisodeResult
 	if show.TMDBID != nil {
 		result, err := agent.GetSeason(ctx, *show.TMDBID, *item.Index)
 		if err != nil {
 			e.logger.InfoContext(ctx, "tmdb get season found no result",
 				"show_tmdb_id", *show.TMDBID, "season", *item.Index, "err", err)
 		} else {
+			preloadedEpisodes = result.Episodes
 			p := media.UpdateItemMetadataParams{
 				ID:        item.ID,
 				Title:     result.Name,
@@ -1022,8 +1032,10 @@ func (e *Enricher) enrichSeason(ctx context.Context, agent metadata.Agent, item 
 	// Cascade: enrich episodes under this season. Runs even when TMDB
 	// season metadata was skipped above so anime libraries with only an
 	// AniList ID still get per-episode titles + thumbnails from the
-	// streamingEpisodes fallback in enrichEpisode.
-	e.enrichSeasonChildren(ctx, agent, show, item, file)
+	// streamingEpisodes fallback in enrichEpisode. preloadedEpisodes
+	// is the batch from the season fetch above; per-episode TMDB calls
+	// only fire when this slice doesn't cover an episode.
+	e.enrichSeasonChildren(ctx, agent, show, item, file, preloadedEpisodes)
 
 	return nil
 }
@@ -1033,12 +1045,23 @@ func (e *Enricher) enrichSeason(ctx context.Context, agent metadata.Agent, item 
 // (TMDB, TVDB, or AniList) — enrichEpisode itself handles the
 // fallback chain across providers, so the cascade no longer needs
 // to gate on TMDB.
-func (e *Enricher) enrichSeasonChildren(ctx context.Context, agent metadata.Agent, show *media.Item, season *media.Item, file *media.File) {
+func (e *Enricher) enrichSeasonChildren(ctx context.Context, agent metadata.Agent, show *media.Item, season *media.Item, file *media.File, preloaded []metadata.EpisodeResult) {
 	if season.Index == nil {
 		return
 	}
 	if show.TMDBID == nil && show.TVDBID == nil && show.AniListID == nil {
 		return
+	}
+
+	// Index the preloaded TMDB season episodes by episode number so
+	// each child can grab its own row in O(1) without another network
+	// call. preloaded is empty when TMDB wasn't queried (no show TMDB
+	// ID) or returned no data — the cascade falls through to per-
+	// episode TVDB / AniList lookups in that case.
+	preloadedByNum := make(map[int]*metadata.EpisodeResult, len(preloaded))
+	for i := range preloaded {
+		ep := &preloaded[i]
+		preloadedByNum[ep.EpisodeNum] = ep
 	}
 
 	episodes, err := e.updater.ListChildren(ctx, season.ID)
@@ -1061,7 +1084,11 @@ func (e *Enricher) enrichSeasonChildren(ctx context.Context, agent metadata.Agen
 		if !shouldForceReenrich(ctx) && ep.Summary != nil && ep.ThumbPath != nil {
 			continue
 		}
-		if err := e.enrichEpisode(ctx, agent, ep, file); err != nil {
+		var prefetched *metadata.EpisodeResult
+		if ep.Index != nil {
+			prefetched = preloadedByNum[*ep.Index]
+		}
+		if err := e.enrichEpisode(ctx, agent, ep, file, prefetched); err != nil {
 			e.logger.WarnContext(ctx, "episode enrich in cascade failed",
 				"episode_id", ep.ID, "err", err)
 		}
@@ -1099,7 +1126,16 @@ func applyEpisodeNFO(p *media.UpdateItemMetadataParams, e *nfo.Episode) {
 	}
 }
 
-func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File) error {
+// enrichEpisode applies metadata to a single episode item. When prefetched
+// is non-nil (the common path — set by enrichSeasonChildren from the
+// season's bulk fetch), no TMDB GetEpisode call is made: the data was
+// already pulled in the parent season's response. The TVDB and AniList
+// fallback paths still fire when prefetched is nil and the show carries
+// the corresponding ID, so anime-only and TVDB-only libraries still get
+// per-episode data. Standalone re-enrichment (admin "re-enrich item")
+// passes prefetched=nil and pays the round-trip — fine because it's a
+// one-off, not the bulk scan path.
+func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File, prefetched *metadata.EpisodeResult) error {
 	if item.ParentID == nil || item.Index == nil {
 		return nil
 	}
@@ -1174,7 +1210,14 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 		tvdbClient = e.tvdbFn()
 	}
 
-	if show.TMDBID != nil {
+	switch {
+	case prefetched != nil:
+		// Bulk path: data came from the parent season's GetSeason call.
+		// No network round-trip.
+		result = prefetched
+	case show.TMDBID != nil:
+		// Standalone path (no preloaded season data). Pay the per-
+		// episode round-trip.
 		result, err = agent.GetEpisode(ctx, *show.TMDBID, *season.Index, *item.Index)
 		if err != nil {
 			e.logger.InfoContext(ctx, "tmdb get episode found no result",

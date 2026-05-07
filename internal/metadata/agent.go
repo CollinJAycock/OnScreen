@@ -47,13 +47,18 @@ type TVShowResult struct {
 	FanartURL     string
 }
 
-// SeasonResult holds season metadata.
+// SeasonResult holds season metadata. Episodes is populated by agents
+// whose season endpoint returns the full episode list inline (TMDB does
+// — GET /tv/{id}/season/{n} embeds the episodes array). Callers should
+// prefer this list over a per-episode round-trip; if Episodes is empty,
+// fall back to the per-episode path.
 type SeasonResult struct {
 	Number    int
 	Name      string
 	Summary   string
 	AirDate   time.Time
 	PosterURL string
+	Episodes  []EpisodeResult
 }
 
 // EpisodeResult holds episode metadata.

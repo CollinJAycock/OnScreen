@@ -28,6 +28,10 @@ type mockAgent struct {
 	getSeasonErr      error
 	getEpisodeResult  *metadata.EpisodeResult
 	getEpisodeErr     error
+	// Call counters so tests can prove the cascade did or didn't make
+	// per-episode round-trips.
+	getEpisodeCalls int
+	getSeasonCalls  int
 }
 
 func (m *mockAgent) SearchMovie(_ context.Context, _ string, _ int) (*metadata.MovieResult, error) {
@@ -46,12 +50,14 @@ func (m *mockAgent) SearchTVCandidates(_ context.Context, _ string) ([]metadata.
 	return nil, nil
 }
 func (m *mockAgent) GetSeason(_ context.Context, _, _ int) (*metadata.SeasonResult, error) {
+	m.getSeasonCalls++
 	if m.getSeasonErr != nil {
 		return nil, m.getSeasonErr
 	}
 	return m.getSeasonResult, nil
 }
 func (m *mockAgent) GetEpisode(_ context.Context, _, _, _ int) (*metadata.EpisodeResult, error) {
+	m.getEpisodeCalls++
 	if m.getEpisodeErr != nil {
 		return nil, m.getEpisodeErr
 	}
@@ -498,7 +504,7 @@ func TestEnrichEpisode_Success(t *testing.T) {
 	artwork := &mockArtwork{thumbPath: "/media/shows/BB/ep3_thumb.jpg"}
 	e := newTestEnricher(agent, updater, artwork)
 
-	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/media/shows/BB/S01E03.mkv"})
+	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/media/shows/BB/S01E03.mkv"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -562,7 +568,7 @@ func TestEnrichEpisode_TVDBOnly_NoTMDBID(t *testing.T) {
 	e := newTestEnricher(agent, updater, nil)
 	e.SetTVDBFallbackFn(func() TVDBFallback { return tvdbStub })
 
-	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/anime/Solo Leveling/S01E01.mkv"})
+	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/anime/Solo Leveling/S01E01.mkv"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -869,7 +875,7 @@ func TestEnrichEpisode_AniListFallback(t *testing.T) {
 	e.SetTVDBFallbackFn(func() TVDBFallback { return tvdbStub })
 	e.SetAniListFn(func() AniListAgent { return anilistStub })
 
-	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/anime/show/05.mkv"})
+	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/anime/show/05.mkv"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -966,7 +972,7 @@ func TestEnrichEpisode_NoParentID_Noop(t *testing.T) {
 	updater.items[epID] = &media.Item{ID: epID, Type: "episode", Index: &idx}
 	e := newTestEnricher(agent, updater, nil)
 
-	err := e.enrichEpisode(context.Background(), agent, updater.items[epID], &media.File{})
+	err := e.enrichEpisode(context.Background(), agent, updater.items[epID], &media.File{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1014,7 +1020,7 @@ func TestEnrichEpisode_ShowNotEnriched_CascadesUp(t *testing.T) {
 	}
 	e := newTestEnricher(agent, updater, nil)
 
-	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/media/shows/BB/S01E01.mkv"})
+	err := e.enrichEpisode(context.Background(), agent, updater.items[episodeID], &media.File{FilePath: "/media/shows/BB/S01E01.mkv"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1152,7 +1158,7 @@ func TestEnrichSeasonChildren_EnrichesEpisodes(t *testing.T) {
 	updater.children[seasonID] = []media.Item{*updater.items[ep1ID], *updater.items[ep2ID]}
 
 	e := newTestEnricher(agent, updater, nil)
-	e.enrichSeasonChildren(context.Background(), agent, updater.items[showID], updater.items[seasonID], &media.File{FilePath: "/media/shows/BB/S01E01.mkv"})
+	e.enrichSeasonChildren(context.Background(), agent, updater.items[showID], updater.items[seasonID], &media.File{FilePath: "/media/shows/BB/S01E01.mkv"}, nil)
 
 	enrichedEp1 := false
 	for _, call := range updater.updateCalls {
@@ -1165,6 +1171,66 @@ func TestEnrichSeasonChildren_EnrichesEpisodes(t *testing.T) {
 	}
 	if !enrichedEp1 {
 		t.Error("episode 1 should have been enriched")
+	}
+}
+
+// TestEnrichSeasonChildren_PreloadedSkipsPerEpisodeCalls proves the bulk-fetch
+// path. When the parent season's GetSeason call already returned the episode
+// list, the cascade must apply that data locally and never hit GetEpisode.
+// This is the difference between 1 + N and 1 TMDB calls per season — easy to
+// regress if a future refactor forgets to forward the prefetched arg.
+func TestEnrichSeasonChildren_PreloadedSkipsPerEpisodeCalls(t *testing.T) {
+	tmdbID := 1396
+	seasonNum := 1
+	showID := uuid.New()
+	seasonID := uuid.New()
+	ep1ID := uuid.New()
+	ep2ID := uuid.New()
+	epIdx1 := 1
+	epIdx2 := 2
+
+	agent := &mockAgent{
+		// Sentinel: if the cascade falls back to per-episode lookup,
+		// it'll get THIS, which would land in updateCalls and let us
+		// detect the regression by Title.
+		getEpisodeResult: &metadata.EpisodeResult{Title: "PER-EPISODE-FALLBACK"},
+	}
+	updater := newMockUpdater()
+	updater.items[showID] = &media.Item{ID: showID, Type: "show", Title: "Breaking Bad", TMDBID: &tmdbID}
+	updater.items[seasonID] = &media.Item{
+		ID: seasonID, Type: "season", Title: "Season 1",
+		ParentID: &showID, Index: &seasonNum,
+	}
+	updater.items[ep1ID] = &media.Item{
+		ID: ep1ID, Type: "episode", Title: "Episode 1",
+		ParentID: &seasonID, Index: &epIdx1,
+	}
+	updater.items[ep2ID] = &media.Item{
+		ID: ep2ID, Type: "episode", Title: "Episode 2",
+		ParentID: &seasonID, Index: &epIdx2,
+	}
+	updater.children[seasonID] = []media.Item{*updater.items[ep1ID], *updater.items[ep2ID]}
+
+	preloaded := []metadata.EpisodeResult{
+		{ShowTMDBID: tmdbID, SeasonNum: seasonNum, EpisodeNum: 1, Title: "Pilot", Summary: "Walt turns to crime."},
+		{ShowTMDBID: tmdbID, SeasonNum: seasonNum, EpisodeNum: 2, Title: "Cat in the Bag", Summary: "Body disposal."},
+	}
+
+	e := newTestEnricher(agent, updater, nil)
+	e.enrichSeasonChildren(context.Background(), agent, updater.items[showID], updater.items[seasonID], &media.File{FilePath: "/media/shows/BB/S01E01.mkv"}, preloaded)
+
+	if agent.getEpisodeCalls != 0 {
+		t.Errorf("GetEpisode calls = %d, want 0 — bulk path must not round-trip per episode", agent.getEpisodeCalls)
+	}
+	gotTitles := map[uuid.UUID]string{}
+	for _, call := range updater.updateCalls {
+		gotTitles[call.ID] = call.Title
+	}
+	if gotTitles[ep1ID] != "Pilot" {
+		t.Errorf("ep1 title = %q, want %q (preloaded data not applied)", gotTitles[ep1ID], "Pilot")
+	}
+	if gotTitles[ep2ID] != "Cat in the Bag" {
+		t.Errorf("ep2 title = %q, want %q (preloaded data not applied)", gotTitles[ep2ID], "Cat in the Bag")
 	}
 }
 
