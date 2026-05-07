@@ -288,17 +288,16 @@ func (m *mockQuerier) MarkMediaFileActive(_ context.Context, id uuid.UUID) error
 	}
 	return nil
 }
-func (m *mockQuerier) MarkMediaFileDeleted(_ context.Context, id uuid.UUID) error {
+func (m *mockQuerier) HardDeleteMediaFile(_ context.Context, id uuid.UUID) (int64, error) {
 	for itemID, files := range m.files {
 		for i, f := range files {
 			if f.ID == id {
-				files[i].Status = "deleted"
-				m.files[itemID] = files
-				return nil
+				m.files[itemID] = append(files[:i], files[i+1:]...)
+				return 1, nil
 			}
 		}
 	}
-	return nil
+	return 0, nil
 }
 func (m *mockQuerier) UpdateMediaFileHash(_ context.Context, _ uuid.UUID, _ string) error { return nil }
 func (m *mockQuerier) UpdateMediaFileItemID(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
@@ -331,8 +330,7 @@ func (m *mockQuerier) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ stri
 func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]File, error) {
 	return nil, nil
 }
-func (m *mockQuerier) DeleteMissingFilesByLibrary(_ context.Context, _ uuid.UUID) error { return nil }
-func (m *mockQuerier) HardDeleteSoftDeletedFilesByLibrary(_ context.Context, _ uuid.UUID) (int64, error) {
+func (m *mockQuerier) DeleteMissingFilesByLibrary(_ context.Context, _ uuid.UUID) (int64, error) {
 	return 0, nil
 }
 func (m *mockQuerier) GetMediaItemEnrichAttemptedAt(_ context.Context, _ uuid.UUID) (*time.Time, error) {
@@ -561,49 +559,16 @@ func TestGetFiles_ReturnsFiles(t *testing.T) {
 	}
 }
 
-// TestCreateOrUpdateFile_DeletedTombstone_StaysDeleted guards the QA-bug
-// fix: a user soft-deletes a TV show (typically because it's a duplicate
-// or bad-metadata match), the files stay on disk, the library scanner
-// runs again — and pre-fix, the soft-deleted item came back in Recently
-// Added under a new ID. Root cause: CreateOrUpdateFile treated
-// status='deleted' the same as status='missing' (both 'inactive'),
-// flipping the file row back to active and calling
-// RestoreMediaItemAncestry, which cleared deleted_at on the parent
-// show + season chain.
-//
-// Contract: status='deleted' is a sticky tombstone — distinct from
-// 'missing'. CreateOrUpdateFile must return the existing row unchanged.
-// The 'missing' → restore path (covered by
-// TestCreateOrUpdateFile_ExistingPath_MarksActive below) must keep
-// working — that's auto-recovery for transient file-system blips.
-func TestCreateOrUpdateFile_DeletedTombstone_StaysDeleted(t *testing.T) {
-	svc, q := newService(t)
-	itemID := uuid.New()
-	existingID := uuid.New()
-	existing := File{ID: existingID, MediaItemID: itemID, FilePath: "/a.mkv", Status: "deleted"}
-	q.files[itemID] = []File{existing}
-	q.fileByPath["/a.mkv"] = existing
-
-	hash := "abc123"
-	f, isNew, err := svc.CreateOrUpdateFile(context.Background(), CreateFileParams{
-		MediaItemID: itemID,
-		FilePath:    "/a.mkv",
-		FileHash:    &hash,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if isNew {
-		t.Error("want isNew=false for tombstoned path")
-	}
-	if f.Status != "deleted" {
-		t.Errorf("tombstone must be sticky: want status=deleted, got %s", f.Status)
-	}
-	// Underlying row must not have been flipped active either.
-	if got := q.fileByPath["/a.mkv"].Status; got != "deleted" {
-		t.Errorf("file row in store: want status=deleted, got %s", got)
-	}
-}
+// (TestCreateOrUpdateFile_DeletedTombstone_StaysDeleted removed
+// when "delete = hard delete" landed. The scenario the test guarded
+// — a media_files row existing with status='deleted' — can't occur
+// anymore; deletion is a real DELETE, so a known file path on disk
+// either reflects an active row or no row at all. The "soft-deleted
+// item comes back in Recently Added under a new ID" failure mode
+// the test was protecting against is now prevented at the schema
+// level instead of in the application: there's no tombstone for the
+// scanner to consult, so RestoreMediaItemAncestry can't be triggered
+// by a stale row.)
 
 func TestCreateOrUpdateFile_ExistingPath_MarksActive(t *testing.T) {
 	svc, q := newService(t)

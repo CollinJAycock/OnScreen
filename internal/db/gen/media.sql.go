@@ -369,18 +369,25 @@ func (q *Queries) CreateMediaItem(ctx context.Context, arg CreateMediaItemParams
 	return i, err
 }
 
-const deleteMissingFilesByLibrary = `-- name: DeleteMissingFilesByLibrary :exec
-UPDATE media_files
-SET status = 'deleted'
+const deleteMissingFilesByLibrary = `-- name: DeleteMissingFilesByLibrary :execrows
+DELETE FROM media_files
 WHERE status = 'missing'
   AND media_item_id IN (
       SELECT id FROM media_items WHERE library_id = $1 AND deleted_at IS NULL
   )
 `
 
-func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteMissingFilesByLibrary, libraryID)
-	return err
+// Promotes every status='missing' file in the library to gone:
+// hard-deletes it. This is the auto-cleanup arm of the missing-grace-
+// period flow — once a file has been gone from disk past the grace
+// window, its row is removed so it stops showing in admin views.
+// Returns the count for log surfacing.
+func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMissingFilesByLibrary, libraryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const findTopLevelItemByTitleYear = `-- name: FindTopLevelItemByTitleYear :one
@@ -652,11 +659,14 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak
 FROM media_files
-WHERE file_hash = $1 AND status IN ('missing', 'deleted')
+WHERE file_hash = $1 AND status = 'missing'
 ORDER BY created_at DESC
 LIMIT 1
 `
 
+// Move detection only matches against status='missing' rows now —
+// the 'deleted' arm went away when "delete = hard delete" landed
+// (those rows are gone, can't be matched).
 func (q *Queries) GetMediaFileByHash(ctx context.Context, fileHash *string) (MediaFile, error) {
 	row := q.db.QueryRow(ctx, getMediaFileByHash, fileHash)
 	var i MediaFile
@@ -1020,20 +1030,74 @@ func (q *Queries) GetShowPostersForEpisodes(ctx context.Context, dollar_1 []uuid
 	return items, nil
 }
 
-const hardDeleteSoftDeletedFilesByLibrary = `-- name: HardDeleteSoftDeletedFilesByLibrary :execrows
-DELETE FROM media_files
-WHERE status = 'deleted'
-  AND media_item_id IN (
-      SELECT id FROM media_items WHERE library_id = $1
-  )
+const hardDeleteMediaFile = `-- name: HardDeleteMediaFile :execrows
+DELETE FROM media_files WHERE id = $1
 `
 
-// Permanently removes media_files rows with status='deleted' for a library.
-// Runs after CleanupMissingFiles so all no-longer-present files (missing grace
-// period expired) get promoted to deleted and then hard-purged in one scan.
-// watch_events.file_id uses ON DELETE SET NULL, so history is preserved.
-func (q *Queries) HardDeleteSoftDeletedFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, hardDeleteSoftDeletedFilesByLibrary, libraryID)
+// Hard-removes one media_files row. FK CASCADE/SET NULL on the five
+// referencing tables (watch_events, intro_markers, trickplay,
+// trickplay_status — all SET NULL — plus external_subtitles CASCADE)
+// clean up. The "delete = hard delete" rule means we never leave a
+// status='deleted' tombstone; there is no admin-facing "undelete"
+// path. Returns rows-affected so callers can detect a stale id.
+func (q *Queries) HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, hardDeleteMediaFile, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const hardDeleteMediaFilesByLibrary = `-- name: HardDeleteMediaFilesByLibrary :execrows
+DELETE FROM media_files
+WHERE media_item_id IN (
+    SELECT id FROM media_items WHERE library_id = $1
+)
+`
+
+// Companion to SoftDeleteMediaItemsByLibrary used when a library is
+// deleted. Hard-removes every media_files row in the library so the
+// file_path slot is freed for a fresh library at the same scan_paths
+// without going through the soft-delete tombstone dance. Cascade
+// FKs (mostly SET NULL — watch_events, intro_markers, trickplay,
+// trickplay_status — plus CASCADE on external_subtitles) clean up.
+// Returns rows-affected so the caller can log progress.
+//
+// Design note: per the "delete = hard delete" rule, we no longer
+// carry status='deleted' tombstones for files. The orphan-recreate
+// problem the partial UNIQUE in 00080 worked around vanishes once
+// there are no soft-deleted file rows lingering. media_items still
+// ride the async cascade purge (much bigger fan-out via parent_id
+// recursion + 10 child tables), so this stays sync to release the
+// path locks before the async media_items DELETE finishes.
+func (q *Queries) HardDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, hardDeleteMediaFilesByLibrary, libraryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const hardDeleteMediaFilesForSubtree = `-- name: HardDeleteMediaFilesForSubtree :execrows
+WITH RECURSIVE subtree AS (
+    SELECT mi.id FROM media_items mi WHERE mi.id = $1
+    UNION
+    SELECT m.id
+    FROM media_items m
+    JOIN subtree s ON m.parent_id = s.id
+)
+DELETE FROM media_files
+WHERE media_files.media_item_id IN (SELECT subtree.id FROM subtree)
+`
+
+// Companion to SoftDeleteMediaItemSubtree — hard-removes every file
+// attached to any item in the subtree so the next scan doesn't try
+// to "restore" the soft-deleted item via RestoreMediaItemAncestry
+// when it sees the file still on disk. Without this, a soft-deleted
+// "A Happy Place" comes right back the next time the scanner runs,
+// defeating the admin's removal. Returns rows-affected for logs.
+func (q *Queries) HardDeleteMediaFilesForSubtree(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, hardDeleteMediaFilesForSubtree, id)
 	if err != nil {
 		return 0, err
 	}
@@ -4302,17 +4366,6 @@ func (q *Queries) MarkMediaFileActive(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const markMediaFileDeleted = `-- name: MarkMediaFileDeleted :exec
-UPDATE media_files
-SET status = 'deleted'
-WHERE id = $1
-`
-
-func (q *Queries) MarkMediaFileDeleted(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markMediaFileDeleted, id)
-	return err
-}
-
 const markMediaFileMissing = `-- name: MarkMediaFileMissing :exec
 UPDATE media_files
 SET status        = 'missing',
@@ -4720,6 +4773,7 @@ func (q *Queries) SoftDeleteEmptyContainerItems(ctx context.Context, libraryID u
 }
 
 const softDeleteItemsWithNoActiveFiles = `-- name: SoftDeleteItemsWithNoActiveFiles :exec
+
 UPDATE media_items
 SET deleted_at = NOW(), updated_at = NOW()
 WHERE library_id = $1
@@ -4731,56 +4785,15 @@ WHERE library_id = $1
   )
 `
 
+// (Removed: HardDeleteSoftDeletedFilesByLibrary. The two-phase
+// "soft-delete then purge" flow collapsed to a single hard-delete
+// when the "delete = hard delete" rule landed. DeleteMissingFilesByLibrary
+// now hard-removes rows directly so there's nothing to second-pass.)
 // Soft-delete leaf items (those that own files directly) with no active files.
 // Container types (show, season, artist, album) never own files — they're
 // handled by SoftDeleteEmptyContainerItems instead.
 func (q *Queries) SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteItemsWithNoActiveFiles, libraryID)
-	return err
-}
-
-const softDeleteMediaFilesByLibrary = `-- name: SoftDeleteMediaFilesByLibrary :exec
-UPDATE media_files SET status = 'deleted', updated_at = NOW()
-WHERE status != 'deleted'
-  AND media_item_id IN (
-      SELECT id FROM media_items WHERE library_id = $1
-  )
-`
-
-// Companion to SoftDeleteMediaItemsByLibrary used when a library is
-// deleted. Marks every active/missing file in the library as
-// 'deleted' so the partial UNIQUE on media_files(file_path) WHERE
-// status != 'deleted' (added in 00080) no longer claims those paths
-// — a fresh library created at the same scan_paths can then own
-// them without colliding. Rows are kept for audit / undelete; use
-// PurgeDeletedLibrary to hard-remove them.
-func (q *Queries) SoftDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, softDeleteMediaFilesByLibrary, libraryID)
-	return err
-}
-
-const softDeleteMediaFilesForSubtree = `-- name: SoftDeleteMediaFilesForSubtree :exec
-WITH RECURSIVE subtree AS (
-    SELECT mi.id FROM media_items mi WHERE mi.id = $1
-    UNION
-    SELECT m.id
-    FROM media_items m
-    JOIN subtree s ON m.parent_id = s.id
-)
-UPDATE media_files
-SET status = 'deleted'
-WHERE media_files.media_item_id IN (SELECT subtree.id FROM subtree)
-  AND media_files.status != 'deleted'
-`
-
-// Companion to SoftDeleteMediaItemSubtree — also marks every file
-// attached to any item in the subtree as deleted, so the next scan
-// doesn't try to "restore" the soft-deleted item via
-// RestoreMediaItemAncestry when it sees the file still on disk.
-// Without this, a soft-deleted "A Happy Place" comes right back the
-// next time the scanner runs, defeating the user's removal.
-func (q *Queries) SoftDeleteMediaFilesForSubtree(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, softDeleteMediaFilesForSubtree, id)
 	return err
 }
 
@@ -4800,7 +4813,7 @@ SET deleted_at = NOW(), updated_at = NOW()
 WHERE media_items.id = $1
   AND NOT EXISTS (
       SELECT 1 FROM media_files
-      WHERE media_files.media_item_id = $1 AND media_files.status != 'deleted'
+      WHERE media_files.media_item_id = $1
   )
 `
 

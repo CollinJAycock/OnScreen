@@ -149,11 +149,11 @@ func (m *mockQuerier) SoftDeleteMediaItemsByLibrary(_ context.Context, lib uuid.
 	m.mu.Unlock()
 	return nil
 }
-func (m *mockQuerier) SoftDeleteMediaFilesByLibrary(_ context.Context, lib uuid.UUID) error {
+func (m *mockQuerier) HardDeleteMediaFilesByLibrary(_ context.Context, lib uuid.UUID) (int64, error) {
 	m.mu.Lock()
 	m.softDelFilesCalls = append(m.softDelFilesCalls, lib)
 	m.mu.Unlock()
-	return nil
+	return 0, nil
 }
 func (m *mockQuerier) PurgeDeletedLibraryBatch(_ context.Context, lib uuid.UUID, batchLimit int) (int64, error) {
 	m.mu.Lock()
@@ -470,7 +470,7 @@ func TestDelete_SyncCascade_ItemsAndFiles(t *testing.T) {
 	}
 	files := q.snapshotSoftDelFiles()
 	if len(files) != 1 || files[0] != id {
-		t.Errorf("expected 1 SoftDeleteMediaFilesByLibrary(%s), got %v", id, files)
+		t.Errorf("expected 1 HardDeleteMediaFilesByLibrary(%s), got %v", id, files)
 	}
 }
 

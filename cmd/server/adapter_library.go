@@ -129,8 +129,8 @@ func (a *libraryAdapter) SoftDeleteMediaItemsByLibrary(ctx context.Context, libr
 	return a.q.SoftDeleteMediaItemsByLibrary(ctx, libraryID)
 }
 
-func (a *libraryAdapter) SoftDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
-	return a.q.SoftDeleteMediaFilesByLibrary(ctx, libraryID)
+func (a *libraryAdapter) HardDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
+	return a.q.HardDeleteMediaFilesByLibrary(ctx, libraryID)
 }
 
 func (a *libraryAdapter) PurgeDeletedLibraryBatch(ctx context.Context, libraryID uuid.UUID, batchLimit int) (int64, error) {

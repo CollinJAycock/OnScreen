@@ -109,8 +109,7 @@ type MediaService interface {
 	RestoreItemAncestry(ctx context.Context, id uuid.UUID) error
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
-	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error
-	PurgeDeletedFiles(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) (int64, error)
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 	GetEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
 	TouchEnrichAttempt(ctx context.Context, id uuid.UUID) error
@@ -342,16 +341,16 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 			"library_id", libraryID, "walked", len(filePaths), "db_active", len(activeFiles))
 	}
 
-	// Clean up stale missing files from prior scans and remove items with
-	// no remaining active files. This catches files that were already
-	// status='missing' and invisible to the active-only orphan check above.
-	if err := s.media.CleanupMissingFiles(ctx, libraryID); err != nil {
+	// Clean up stale missing files from prior scans and remove items
+	// with no remaining files. CleanupMissingFiles now hard-deletes
+	// rows directly (the "delete = hard delete" rule eliminated the
+	// old two-phase mark-deleted-then-purge dance), so the separate
+	// PurgeDeletedFiles step that used to come next is gone.
+	if n, err := s.media.CleanupMissingFiles(ctx, libraryID); err != nil {
 		s.logger.WarnContext(ctx, "cleanup missing files failed", "library_id", libraryID, "err", err)
-	}
-	if purged, err := s.media.PurgeDeletedFiles(ctx, libraryID); err != nil {
-		s.logger.WarnContext(ctx, "purge deleted files failed", "library_id", libraryID, "err", err)
-	} else if purged > 0 {
-		s.logger.InfoContext(ctx, "purged soft-deleted file rows", "library_id", libraryID, "count", purged)
+	} else if n > 0 {
+		s.logger.InfoContext(ctx, "missing files past grace hard-deleted",
+			"library_id", libraryID, "count", n)
 	}
 	if err := s.media.CleanupEmptyItems(ctx, libraryID); err != nil {
 		s.logger.WarnContext(ctx, "cleanup empty items failed", "library_id", libraryID, "err", err)
@@ -637,22 +636,12 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	existing, existingErr := s.media.GetFileByPath(ctx, path)
 	haveExisting := existingErr == nil
 
-	// Sticky tombstone: if a file row already exists with status='deleted',
-	// the user explicitly deleted this content from the library (typically
-	// to remove a duplicate or a bad metadata match). Bail out — even
-	// though the file is still on disk, we don't auto-resurrect.
-	//
-	// Without this, the slow path below would call FindOrCreateHierarchyItem
-	// for the show/season/episode (or FindOrCreateItem for a flat library),
-	// the lookup queries filter `deleted_at IS NULL` so they MISS the
-	// soft-deleted row and CREATE a fresh duplicate item with the same
-	// title; then CreateOrUpdateFile reassigns the tombstoned file row to
-	// the new item. Net effect from the user's perspective: deleted shows
-	// reappear in Recently Added under a new ID. Recovery from a tombstone
-	// requires an explicit restore action, not just leaving the file on disk.
-	if haveExisting && existing.Status == "deleted" {
-		return nil, nil, false, nil
-	}
+	// (Sticky-tombstone gate removed when "delete = hard delete"
+	// landed. status='deleted' rows can't exist anymore — a deletion
+	// is a real DELETE, so a known path always reflects an active or
+	// missing-but-soon-to-recover row. The previous gate guarded
+	// against admin-deleted files reappearing on rescan; that path
+	// no longer exists since we don't keep tombstones to consult.)
 
 	// Fast skip: if the file on disk is unchanged since the last scan
 	// (size matches AND mtime predates ScannedAt), skip hash + ffprobe

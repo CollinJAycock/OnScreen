@@ -94,7 +94,7 @@ type Querier interface {
 	UpdateLibrary(ctx context.Context, p UpdateLibraryParams) (Library, error)
 	SoftDeleteLibrary(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemsByLibrary(ctx context.Context, libraryID uuid.UUID) error
-	SoftDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error
+	HardDeleteMediaFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error)
 	// PurgeDeletedLibraryBatch hard-removes UP TO batchLimit media_items
 	// rows for the library; FK cascades clean up media_files, watch_state,
 	// favorites, etc. Returns rows-affected so the caller's loop can stop
@@ -317,21 +317,30 @@ func (s *Service) Update(ctx context.Context, p UpdateLibraryParams) (*Library, 
 
 // Delete soft-deletes the libraries row (preserved for audit), then
 // kicks off a detached background goroutine that hard-deletes every
-// child media_items row — FK CASCADE handles media_files, watch_state,
-// favorites, collection_items, intro_markers, trickplay rows,
-// external_subtitles, etc. The two synchronous UPDATEs that come
-// first (soft-delete on items + status='deleted' on files) close the
-// "new library at same path before async finishes" window: the
-// partial UNIQUE on media_files(file_path) WHERE status!='deleted'
-// (00080) immediately stops recognising those rows so a fresh scan
-// can claim the paths without colliding with the in-flight cleanup.
+// child media_items row — FK CASCADE handles watch_state, favorites,
+// collection_items, intro_markers, trickplay rows, external_subtitles,
+// etc.
 //
-// The cascade DELETE itself runs detached because for a library
-// with thousands of items it reliably exceeds Cloudflare's 100s
-// edge timeout — synchronous would surface ERR 524 and roll back
-// mid-transaction (this exact bug took down QA before this fix).
-// The goroutine uses context.WithoutCancel so the HTTP-request
-// cancellation doesn't propagate.
+// Synchronous steps run before return so the operator sees the
+// library disappear instantly:
+//   1. Soft-delete the libraries row (preserves audit timeline).
+//   2. Soft-delete every media_items row in the library (hides them
+//      from the user's listings).
+//   3. HARD-delete every media_files row in the library — bounded
+//      work (5 SET-NULL/CASCADE child tables, all indexed) that
+//      releases the file_path slot immediately so a recreated
+//      library at the same scan_paths can claim it without going
+//      through the dead-tombstone dance the old soft-delete design
+//      forced. This is the "delete = hard delete" rule applied at
+//      the file layer.
+//
+// Async (detached goroutine, context.WithoutCancel):
+//   4. Hard-delete media_items via the batched purge loop. Detached
+//      because for a thousands-of-items library the cascade through
+//      ~10 child tables + the recursive parent_id CASCADE reliably
+//      exceeds Cloudflare's 100s edge timeout (synchronous surfaces
+//      ERR 524 and rolls back mid-transaction — that exact bug took
+//      down QA before the goroutine landed).
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.rw.SoftDeleteLibrary(ctx, id); err != nil {
 		return fmt.Errorf("delete library %s: %w", id, mapNotFound(err))
@@ -340,9 +349,12 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 		s.logger.ErrorContext(ctx, "failed to soft-delete media items for library",
 			"library_id", id, "err", err)
 	}
-	if err := s.rw.SoftDeleteMediaFilesByLibrary(ctx, id); err != nil {
-		s.logger.ErrorContext(ctx, "failed to soft-delete media files for library",
+	if n, err := s.rw.HardDeleteMediaFilesByLibrary(ctx, id); err != nil {
+		s.logger.ErrorContext(ctx, "failed to hard-delete media files for library",
 			"library_id", id, "err", err)
+	} else {
+		s.logger.InfoContext(ctx, "media files hard-deleted for library",
+			"library_id", id, "deleted_files", n)
 	}
 	if err := s.rw.RefreshHubRecentlyAdded(ctx); err != nil {
 		s.logger.WarnContext(ctx, "failed to refresh hub after library delete",

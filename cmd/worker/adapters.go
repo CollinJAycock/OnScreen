@@ -695,8 +695,8 @@ func (a *mediaAdapter) MarkMediaFileActive(ctx context.Context, id uuid.UUID) er
 	return a.q.MarkMediaFileActive(ctx, id)
 }
 
-func (a *mediaAdapter) MarkMediaFileDeleted(ctx context.Context, id uuid.UUID) error {
-	return a.q.MarkMediaFileDeleted(ctx, id)
+func (a *mediaAdapter) HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (int64, error) {
+	return a.q.HardDeleteMediaFile(ctx, id)
 }
 
 func (a *mediaAdapter) UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error {
@@ -731,12 +731,8 @@ func (a *mediaAdapter) ListActiveFilesForLibrary(ctx context.Context, libraryID 
 	return out, nil
 }
 
-func (a *mediaAdapter) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error {
+func (a *mediaAdapter) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
 	return a.q.DeleteMissingFilesByLibrary(ctx, libraryID)
-}
-
-func (a *mediaAdapter) HardDeleteSoftDeletedFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	return a.q.HardDeleteSoftDeletedFilesByLibrary(ctx, libraryID)
 }
 
 func (a *mediaAdapter) GetMediaItemEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error) {

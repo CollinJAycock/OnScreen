@@ -144,12 +144,11 @@ func (m *mockMediaService) GetFiles(_ context.Context, _ uuid.UUID) ([]media.Fil
 func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]media.File, error) {
 	return nil, nil
 }
-func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
 func (m *mockMediaService) UpsertPhotoMetadata(_ context.Context, _ media.PhotoMetadataParams) error {
 	return nil
-}
-func (m *mockMediaService) PurgeDeletedFiles(_ context.Context, _ uuid.UUID) (int64, error) {
-	return 0, nil
 }
 func (m *mockMediaService) CleanupEmptyItems(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockMediaService) GetEnrichAttemptedAt(_ context.Context, id uuid.UUID) (*time.Time, error) {

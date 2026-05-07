@@ -237,14 +237,13 @@ type Querier interface {
 	UpdateMediaFilePath(ctx context.Context, id uuid.UUID, newPath string) error
 	MarkMediaFileMissing(ctx context.Context, id uuid.UUID) error
 	MarkMediaFileActive(ctx context.Context, id uuid.UUID) error
-	MarkMediaFileDeleted(ctx context.Context, id uuid.UUID) error
+	HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (int64, error)
 	UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
 	ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error)
-	DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) error
-	HardDeleteSoftDeletedFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error)
 	GetMediaItemEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
 	TouchMediaItemEnrichAttempt(ctx context.Context, id uuid.UUID) error
 	SoftDeleteItemsWithNoActiveFiles(ctx context.Context, libraryID uuid.UUID) error
@@ -688,18 +687,11 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 	// Check if path already known.
 	existing, err := s.rw.GetMediaFileByPath(ctx, p.FilePath)
 	if err == nil {
-		// Sticky tombstone: status='deleted' is a user-driven hard "no" on
-		// this file — distinct from 'missing', which is the auto-cleanup
-		// grace period that DOES auto-restore on rescan. Don't flip it
-		// active or restore the parent item's deleted_at; return the row
-		// untouched so the caller treats it as a no-op. The scanner has
-		// the same guard up front (so we never reach here for a file the
-		// scanner saw on disk), but a different caller — e.g. a future
-		// move-detection or hash-resync path — could still land here
-		// without that pre-check.
-		if existing.Status == "deleted" {
-			return &existing, false, nil
-		}
+		// "delete = hard delete" means a deleted file is gone, not
+		// tombstoned, so the only states we encounter on a known
+		// path are 'active' and 'missing'. The latter is the
+		// scanner's auto-cleanup grace window — flip it back to
+		// active and the file is in good standing again.
 		wasInactive := existing.Status != "active"
 		// Path known — mark active, update hash, and refresh probe metadata.
 		if err := s.rw.MarkMediaFileActive(ctx, existing.ID); err != nil {
@@ -767,15 +759,23 @@ func (s *Service) MarkMissing(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// DeleteFile marks a file as deleted immediately (skipping the missing grace period).
+// DeleteFile hard-removes a file row immediately. FK CASCADE/SET NULL
+// on the five referencing tables (watch_events, intro_markers,
+// trickplay, trickplay_status, external_subtitles) clean up. Per
+// the "delete = hard delete" rule there is no soft-delete tombstone
+// — the row is gone. Skips the missing-grace-period entirely.
 func (s *Service) DeleteFile(ctx context.Context, id uuid.UUID) error {
-	if err := s.rw.MarkMediaFileDeleted(ctx, id); err != nil {
+	if _, err := s.rw.HardDeleteMediaFile(ctx, id); err != nil {
 		return fmt.Errorf("delete file %s: %w", id, err)
 	}
 	return nil
 }
 
-// SoftDeleteItemIfEmpty soft-deletes a media item if all its files are deleted.
+// SoftDeleteItemIfEmpty soft-deletes a media item if it has no
+// remaining files. With the "delete = hard delete" rule, a file
+// row is either present-and-active (or missing during the grace
+// window) or gone, so checking absence is enough — no need to
+// filter status='deleted' anymore.
 func (s *Service) SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error {
 	return s.rw.SoftDeleteMediaItemIfAllFilesDeleted(ctx, id)
 }
@@ -794,17 +794,13 @@ func (s *Service) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 	return s.rw.ListActiveFilesForLibrary(ctx, libraryID)
 }
 
-// CleanupMissingFiles promotes all missing files to deleted for a library.
-func (s *Service) CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) error {
+// CleanupMissingFiles hard-deletes every status='missing' file in
+// the library — the auto-cleanup arm of the missing-grace-period
+// flow. Returns the count for log surfacing. Replaces the old
+// two-phase "mark deleted then purge" since the soft-delete
+// tombstone class is gone.
+func (s *Service) CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) (int64, error) {
 	return s.rw.DeleteMissingFilesByLibrary(ctx, libraryID)
-}
-
-// PurgeDeletedFiles permanently removes file rows with status='deleted' for a
-// library. Called after CleanupMissingFiles so the missing-grace-period has
-// already elapsed for any file that gets purged here. watch_events.file_id
-// uses ON DELETE SET NULL so playback history is preserved.
-func (s *Service) PurgeDeletedFiles(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	return s.rw.HardDeleteSoftDeletedFilesByLibrary(ctx, libraryID)
 }
 
 // GetEnrichAttemptedAt returns the timestamp of the last enrichment attempt
@@ -834,9 +830,12 @@ func (s *Service) CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) er
 	return s.rw.SoftDeleteEmptyContainerItems(ctx, libraryID)
 }
 
-// PromoteExpiredMissing finds files that have been missing longer than the
-// grace period and marks them deleted. Then soft-deletes any media_items
-// whose all files are now deleted. Returns the count of promoted files.
+// PromoteExpiredMissing finds files that have been missing longer
+// than the grace period and hard-deletes them, then soft-deletes
+// any media_items left without files. Returns the count of files
+// removed. Per "delete = hard delete," missing-grace expiration
+// goes straight to DELETE — no intermediate status='deleted'
+// tombstone.
 func (s *Service) PromoteExpiredMissing(ctx context.Context, gracePeriod time.Duration) (int, error) {
 	cutoff := time.Now().Add(-gracePeriod)
 	files, err := s.rw.ListMissingFilesOlderThan(ctx, cutoff)
@@ -846,13 +845,13 @@ func (s *Service) PromoteExpiredMissing(ctx context.Context, gracePeriod time.Du
 
 	affected := map[uuid.UUID]struct{}{}
 	for _, f := range files {
-		if err := s.rw.MarkMediaFileDeleted(ctx, f.ID); err != nil {
-			s.logger.WarnContext(ctx, "failed to mark file deleted",
+		if _, err := s.rw.HardDeleteMediaFile(ctx, f.ID); err != nil {
+			s.logger.WarnContext(ctx, "failed to hard-delete missing file",
 				"file_id", f.ID, "err", err)
 			continue
 		}
 		affected[f.MediaItemID] = struct{}{}
-		s.logger.InfoContext(ctx, "file promoted to deleted",
+		s.logger.InfoContext(ctx, "missing file hard-deleted past grace",
 			"file_id", f.ID, "path", f.FilePath)
 	}
 
