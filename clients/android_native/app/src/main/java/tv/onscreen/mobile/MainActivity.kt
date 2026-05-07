@@ -1,12 +1,16 @@
 package tv.onscreen.mobile
 
+import android.Manifest
 import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
@@ -30,8 +34,23 @@ class MainActivity : ComponentActivity() {
     // the Compose tree recomposes.
     private var inPipMode by mutableStateOf(false)
 
+    /** Android 13+ requires a runtime grant for POST_NOTIFICATIONS;
+     *  without it the system silently suppresses every notification we
+     *  post — including the foreground-service notification the
+     *  download worker uses. The OS has been observed to kill the
+     *  foreground service after a while when no notification is
+     *  visible, so this isn't purely cosmetic. */
+    private val requestNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* ignored */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             OnScreenTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {

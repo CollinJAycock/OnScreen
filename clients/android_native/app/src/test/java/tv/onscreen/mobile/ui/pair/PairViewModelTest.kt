@@ -33,7 +33,7 @@ class PairViewModelTest {
     @Test
     fun `submitServerUrl normalizes naked host and reaches ServerReady when reachable`() = runTest(dispatcher) {
         val auth = mockk<AuthRepository>()
-        coEvery { auth.checkServer("https://onscreen.tv") } returns true
+        coEvery { auth.checkServer("https://onscreen.tv") } returns AuthRepository.CheckResult.Ok
 
         val vm = PairViewModel(auth)
         vm.submitServerUrl("onscreen.tv")
@@ -43,15 +43,20 @@ class PairViewModelTest {
     }
 
     @Test
-    fun `submitServerUrl unreachable surfaces ServerUnreachable`() = runTest(dispatcher) {
+    fun `submitServerUrl unreachable surfaces Error with the actual reason`() = runTest(dispatcher) {
         val auth = mockk<AuthRepository>()
-        coEvery { auth.checkServer(any()) } returns false
+        coEvery { auth.checkServer(any()) } returns AuthRepository.CheckResult.Failed("UnknownHostException: broken.example")
 
         val vm = PairViewModel(auth)
         vm.submitServerUrl("https://broken.example")
         advanceUntilIdle()
 
-        assertThat(vm.state.value).isEqualTo(PairState.ServerUnreachable)
+        val s = vm.state.value
+        assertThat(s).isInstanceOf(PairState.Error::class.java)
+        // Surfacing the actual cause is the whole point — generic
+        // "server unreachable" hid DNS / TLS / 4xx for too long.
+        assertThat((s as PairState.Error).message).contains("UnknownHostException")
+        assertThat(s.message).contains("https://broken.example")
     }
 
     @Test
@@ -125,7 +130,7 @@ class PairViewModelTest {
     @Test
     fun `reset returns to NeedsServer`() = runTest(dispatcher) {
         val auth = mockk<AuthRepository>()
-        coEvery { auth.checkServer(any()) } returns true
+        coEvery { auth.checkServer(any()) } returns AuthRepository.CheckResult.Ok
 
         val vm = PairViewModel(auth)
         vm.submitServerUrl("https://srv")

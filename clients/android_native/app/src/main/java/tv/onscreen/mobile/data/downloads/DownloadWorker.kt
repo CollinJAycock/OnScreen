@@ -74,7 +74,12 @@ class DownloadWorker @AssistedInject constructor(
             markFailed(fileId, "Not signed in")
             return Result.failure()
         }
-        val url = "$server${file.stream_url}?token=$token"
+        // Match the player's URL builder: use `&token=` when the
+        // stream path already carries a query string. The earlier
+        // unconditional `?token=` produced malformed URLs on any
+        // stream_url with existing params.
+        val sep = if (file.stream_url.contains("?")) "&" else "?"
+        val url = "$server${file.stream_url}${sep}token=$token"
 
         val entry = store.get(fileId) ?: DownloadEntry(
             file_id = fileId,
@@ -92,7 +97,16 @@ class DownloadWorker @AssistedInject constructor(
         val outFile = store.fileFor(entry)
         val resumeFrom = if (outFile.exists()) outFile.length() else 0L
 
-        setForeground(makeForegroundInfo(entry.item_title, 0))
+        // setForeground throws on devices that haven't granted
+        // POST_NOTIFICATIONS (Android 13+) or that reject the
+        // dataSync foreground-service type. The worker can still
+        // finish a small download as a regular background job, so
+        // log + continue rather than aborting the whole transfer.
+        try {
+            setForeground(makeForegroundInfo(entry.item_title, 0))
+        } catch (e: Exception) {
+            android.util.Log.w("DownloadWorker", "setForeground failed", e)
+        }
 
         val req = Request.Builder()
             .url(url)
@@ -103,6 +117,10 @@ class DownloadWorker @AssistedInject constructor(
                 if (!resp.isSuccessful && resp.code != 206) {
                     error("HTTP ${resp.code}")
                 }
+                android.util.Log.i(
+                    "DownloadWorker",
+                    "GET $url -> ${resp.code} ${resp.header("Content-Type")} len=${resp.header("Content-Length")}",
+                )
                 val body = resp.body ?: error("empty body")
                 val contentLength = body.contentLength()
                 val totalSize = if (contentLength > 0) resumeFrom + contentLength else 0L
@@ -122,6 +140,7 @@ class DownloadWorker @AssistedInject constructor(
                 sink.use { fos ->
                     val buf = ByteArray(64 * 1024)
                     var written = resumeFrom
+                    var lastManifestWriteMs = 0L
                     body.byteStream().use { input ->
                         while (true) {
                             if (isStopped) {
@@ -133,14 +152,29 @@ class DownloadWorker @AssistedInject constructor(
                             if (n <= 0) break
                             fos.write(buf, 0, n)
                             written += n
-                            // Progress updates throttled by WorkManager —
-                            // every Data write is broadcast to observers.
-                            // 64KB chunks at 50 MB/s = ~800 updates/sec
-                            // which is fine; the UI debounces.
                             setProgress(workDataOf(
                                 PROGRESS_DOWNLOADED to written,
                                 PROGRESS_TOTAL to (totalSize.takeIf { it > 0 } ?: written),
                             ))
+                            // Periodically push live byte counts into
+                            // the manifest so the UI's percentage
+                            // ticks up. Without this, the manifest is
+                            // only refreshed at start/end and the
+                            // button sits at 0% for the entire
+                            // download. 1s cadence is fast enough for
+                            // a smooth UX without thrashing the
+                            // manifest file or the StateFlow.
+                            val now = System.currentTimeMillis()
+                            if (now - lastManifestWriteMs >= 1_000L) {
+                                lastManifestWriteMs = now
+                                store.upsert(
+                                    entry.copy(
+                                        size_bytes = totalSize.takeIf { it > 0 } ?: written,
+                                        downloaded_bytes = written,
+                                        status = "downloading",
+                                    ),
+                                )
+                            }
                         }
                     }
                     val done = entry.copy(

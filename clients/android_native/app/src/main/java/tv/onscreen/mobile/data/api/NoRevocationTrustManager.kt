@@ -1,10 +1,6 @@
 package tv.onscreen.mobile.data.api
 
 import java.security.KeyStore
-import java.security.cert.CertPathValidator
-import java.security.cert.CertificateFactory
-import java.security.cert.PKIXParameters
-import java.security.cert.TrustAnchor
 import java.security.cert.X509Certificate
 import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
@@ -41,22 +37,29 @@ import javax.net.ssl.X509TrustManager
  */
 class NoRevocationTrustManager : X509TrustManager {
 
-    private val anchors: Set<TrustAnchor> = systemDelegate().acceptedIssuers
-        .map { TrustAnchor(it, /* nameConstraints */ null) }
-        .toSet()
+    // Delegate to the platform's full X509TrustManager for chain
+    // validation. The platform manager does proper path-building
+    // (including fetching missing intermediates via the AIA
+    // extension when the server sends an incomplete chain — the
+    // exact case Cloudflare-fronted deployments hit because their
+    // edges send only [leaf, intermediate] without the root).
+    //
+    // Building our own PKIXParameters + CertPathValidator from
+    // scratch — the previous implementation — looked equivalent to
+    // the system path but skipped this AIA fetch, throwing
+    // "Path does not chain with any of the trust anchors" against
+    // any server with a public-CA-issued cert that doesn't ship the
+    // full chain in its handshake. That hit a user on a Samsung
+    // S24 FE pointing at a Cloudflare-fronted QA box.
+    //
+    // Revocation: the platform delegate honours the system's default
+    // revocation policy (typically OCSP-stapling-aware, soft-fail on
+    // a missing OCSP response). That matches every browser; the
+    // earlier opt-out was overcautious.
+    private val delegate: X509TrustManager = systemDelegate()
 
     override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-        val params = PKIXParameters(anchors).apply {
-            isRevocationEnabled = false
-        }
-        val factory = CertificateFactory.getInstance("X.509")
-        val path = factory.generateCertPath(chain.toList())
-        // PKIX validator throws CertPathValidatorException on any
-        // chain failure (untrusted root, broken signature, expired
-        // cert, hostname mismatch — though hostname is usually
-        // checked separately by HttpsURLConnection / OkHttp).
-        // Revocation specifically is now off.
-        CertPathValidator.getInstance("PKIX").validate(path, params)
+        delegate.checkServerTrusted(chain, authType)
     }
 
     override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
@@ -64,14 +67,11 @@ class NoRevocationTrustManager : X509TrustManager {
     }
 
     override fun getAcceptedIssuers(): Array<X509Certificate> =
-        systemDelegate().acceptedIssuers
+        delegate.acceptedIssuers
 
     companion object {
         /** Loads the platform's default X509TrustManager — the same
-         *  instance OkHttp would use without our intervention.
-         *  Re-loaded per call so a system trust-store update mid-
-         *  session is picked up; cheap because TrustManagerFactory
-         *  caches under the hood. */
+         *  instance OkHttp would use without our intervention. */
         private fun systemDelegate(): X509TrustManager {
             val tmf = TrustManagerFactory.getInstance(
                 TrustManagerFactory.getDefaultAlgorithm(),

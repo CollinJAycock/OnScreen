@@ -1,11 +1,14 @@
 package tv.onscreen.mobile.ui.item
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.Row
@@ -104,11 +107,31 @@ class ItemDetailViewModel @Inject constructor(
                 // 404s the route. Fetched after the main detail so the
                 // page renders without waiting on it.
                 refreshWatchStatus(itemId)
+                // Children list — seasons under a show, episodes under
+                // a season, tracks under an album, chapters under an
+                // audiobook. Without this list, the user lands on a
+                // bare title + Play and has no way to drill into the
+                // structure. Best-effort: an empty list just means
+                // the body shows the leaf-style layout (Play + meta).
+                if (isContainer(detail.type)) {
+                    runCatching { repo.getChildren(itemId) }
+                        .onSuccess { kids ->
+                            _state.value = _state.value.copy(children = kids)
+                        }
+                }
             } catch (e: Exception) {
                 _state.value = ItemDetailUi(loading = false, error = e.message)
             }
         }
     }
+
+    /** Top-level types that have a meaningful children list to
+     *  surface on the detail page. Movies + episodes + tracks + photos
+     *  are leaves (Play action only). book_author and book_series
+     *  redirect to dedicated screens before children would render. */
+    private fun isContainer(type: String): Boolean = type in setOf(
+        "show", "season", "anime", "album", "artist", "audiobook", "podcast",
+    )
 
     /** Re-pull the watching-status row. Called after a load and after
      *  every set/clear so the dropdown reflects post-write state. */
@@ -160,11 +183,45 @@ class ItemDetailViewModel @Inject constructor(
     }
 
     fun startDownload(fileId: String, itemId: String) {
-        viewModelScope.launch { downloads.enqueue(fileId, itemId) }
+        viewModelScope.launch {
+            // Catch + surface in UI state. An uncaught throw here
+            // crashes the process (viewModelScope's default handler
+            // forwards to the thread's UncaughtExceptionHandler) — and
+            // WorkManager.enqueueUniqueWork can throw for a handful of
+            // OS-level reasons (foreground-service-type mismatch on
+            // Android 14+, missing Hilt worker factory wiring, etc.).
+            try {
+                val detail = _state.value.detail
+                val file = detail?.files?.firstOrNull { it.id == fileId }
+                downloads.enqueue(
+                    fileId = fileId,
+                    itemId = itemId,
+                    itemTitle = detail?.title ?: "Download",
+                    itemType = detail?.type ?: "movie",
+                    container = file?.container,
+                    posterPath = detail?.poster_path,
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("ItemDetailVM", "enqueue failed", e)
+                _state.value = _state.value.copy(
+                    downloadError = e.message ?: "Couldn't start download",
+                )
+            }
+        }
+    }
+
+    fun clearDownloadError() {
+        _state.value = _state.value.copy(downloadError = null)
     }
 
     fun deleteDownload(fileId: String) {
-        viewModelScope.launch { downloads.delete(fileId) }
+        viewModelScope.launch {
+            try {
+                downloads.delete(fileId)
+            } catch (e: Exception) {
+                android.util.Log.e("ItemDetailVM", "delete failed", e)
+            }
+        }
     }
 
     /** Optimistic toggle. The detail returned from /items already
@@ -194,7 +251,17 @@ data class ItemDetailUi(
      *  doesn't expose the route (older build). The dropdown reads this
      *  to highlight the active selection. */
     val watchStatus: WatchStatus? = null,
+    /** Children of the active item — seasons under a show, episodes
+     *  under a season, tracks under an album, etc. Empty for leaves
+     *  and for types we don't drill into here (movies, photos,
+     *  book_author/book_series — the last two route to dedicated
+     *  screens). */
+    val children: List<tv.onscreen.mobile.data.model.ChildItem> = emptyList(),
     val error: String? = null,
+    /** Transient enqueue/delete error from the Download button. The
+     *  screen reads this to show a Toast, then calls clearDownloadError
+     *  so the same message doesn't fire again on recompose. */
+    val downloadError: String? = null,
 )
 
 /** UI-friendly snapshot of a single file's download state. Driven by
@@ -203,6 +270,11 @@ data class ItemDetailUi(
  *  updates as it writes. */
 sealed class DownloadButtonState {
     data object NotDownloaded : DownloadButtonState()
+    /** Manager has scheduled the work but the WorkManager-level
+     *  constraint (Wi-Fi only, network connected) hasn't fired the
+     *  worker yet. Distinct from InProgress so the user sees that
+     *  the request landed even when bytes haven't started flowing. */
+    data object Queued : DownloadButtonState()
     data class InProgress(val downloadedBytes: Long, val totalBytes: Long) : DownloadButtonState() {
         val ratio: Float
             get() = if (totalBytes <= 0) 0f else (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
@@ -214,6 +286,7 @@ sealed class DownloadButtonState {
         fun fromEntry(e: DownloadEntry): DownloadButtonState = when (e.status) {
             "completed" -> Completed
             "failed" -> Failed(e.error)
+            "queued" -> Queued
             else -> InProgress(e.downloaded_bytes, e.size_bytes)
         }
     }
@@ -230,6 +303,11 @@ private fun DownloadButton(
             Icon(Icons.Default.Download, contentDescription = null)
             Spacer(Modifier.width(6.dp))
             Text("Download")
+        }
+        DownloadButtonState.Queued -> OutlinedButton(onClick = onDelete) {
+            Icon(Icons.Default.Downloading, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Queued — Cancel")
         }
         is DownloadButtonState.InProgress -> Column {
             OutlinedButton(onClick = onDelete) {
@@ -279,19 +357,29 @@ fun ItemDetailScreen(
     LaunchedEffect(itemId) { vm.load(itemId) }
     val ui by vm.state.collectAsState()
 
+    // Surface enqueue / delete failures from the Download button as a
+    // Toast so the user gets feedback instead of a silent no-op.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(ui.downloadError) {
+        val msg = ui.downloadError ?: return@LaunchedEffect
+        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+        vm.clearDownloadError()
+    }
+
     // Type-based redirects: photos open straight into the full-screen
     // viewer; book_author + book_series have dedicated screens that
     // render the children list. The shared ItemDetailScreen would
     // just show a title with no useful body for these types since
-    // they don't carry a playable file. Pop the detail off the back
-    // stack so Back returns to the source list, not to a flash of
-    // the wrong page.
+    // they don't carry a playable file. AppNav wires these callbacks
+    // to navigate WITH popUpTo(item) so the destination replaces this
+    // detail screen on the back stack — earlier we did navigate-then-
+    // popBackStack which raced and popped the just-pushed entry.
     LaunchedEffect(ui.detail?.id, ui.detail?.type) {
         val d = ui.detail ?: return@LaunchedEffect
         when (d.type) {
-            "photo" -> { onOpenPhoto(d.id); onBack() }
-            "book_author" -> { onOpenAuthor(d.id); onBack() }
-            "book_series" -> { onOpenSeries(d.id); onBack() }
+            "photo" -> onOpenPhoto(d.id)
+            "book_author" -> onOpenAuthor(d.id)
+            "book_series" -> onOpenSeries(d.id)
         }
     }
 
@@ -329,7 +417,15 @@ fun ItemDetailScreen(
                 ui.detail != null -> {
                     val d = ui.detail!!
                     val downloadStates by vm.downloadState.collectAsState()
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .padding(16.dp)
+                            // Children list can run long (50-episode
+                            // anime seasons, 200-track classical
+                            // albums); without a scroll the bottom of
+                            // the page becomes unreachable.
+                            .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                    ) {
                         Text(d.title, style = MaterialTheme.typography.headlineSmall)
                         if (d.year != null) {
                             Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
@@ -425,9 +521,76 @@ fun ItemDetailScreen(
                                 }
                             }
                         }
+
+                        // Children — seasons under a show, episodes
+                        // under a season, tracks under an album, etc.
+                        // The header noun adapts to the parent type so
+                        // the section heading isn't always "Children".
+                        if (ui.children.isNotEmpty()) {
+                            Spacer(Modifier.height(24.dp))
+                            Text(
+                                childrenSectionTitle(d.type),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            ui.children.forEach { child ->
+                                ChildRow(child = child, onClick = { onOpenItem(child.id) })
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+private fun childrenSectionTitle(parentType: String): String = when (parentType) {
+    "show", "anime" -> "Seasons"
+    "season" -> "Episodes"
+    "album" -> "Tracks"
+    "artist" -> "Albums"
+    "audiobook" -> "Chapters"
+    "podcast" -> "Episodes"
+    else -> "Items"
+}
+
+@Composable
+private fun ChildRow(
+    child: tv.onscreen.mobile.data.model.ChildItem,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+    ) {
+        // index when present (S01E03, track 3) — gives a stable
+        // ordering hint even when the title doesn't carry one.
+        if (child.index != null) {
+            Text(
+                text = "${child.index}.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 12.dp).width(40.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f, fill = true)) {
+            Text(child.title, style = MaterialTheme.typography.bodyLarge)
+            if (child.year != null) {
+                Text(
+                    child.year.toString(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (child.duration_ms != null && child.duration_ms > 0) {
+            Text(
+                text = formatDuration(child.duration_ms),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

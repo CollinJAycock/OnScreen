@@ -52,6 +52,18 @@
             </intent-filter>
         </service>
 
+        <!-- WorkManager's SystemForegroundService is registered by the
+             work-runtime AAR with NO foregroundServiceType. On Android
+             14+ that triggers a SecurityException the moment our
+             DownloadWorker calls setForeground(... DATA_SYNC) — the
+             OS enforces that the runtime type matches the manifest
+             declaration. Merging dataSync onto the existing entry
+             fixes downloads on 14+. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
         <!-- Cast SDK options provider. The framework reflects on this
              metadata at app start and calls
              tv.onscreen.mobile.cast.CastOptionsProvider.getCastOptions

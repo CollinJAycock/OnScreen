@@ -35,8 +35,37 @@ class OnScreenDownloadManager @Inject constructor(
      *  When the user has download_on_wifi_only enabled (the default),
      *  the constraint is NetworkType.UNMETERED so WorkManager defers
      *  the download until the device leaves cellular. Otherwise any
-     *  connected network qualifies. */
-    suspend fun enqueue(fileId: String, itemId: String) {
+     *  connected network qualifies.
+     *
+     *  Pre-upserts a `queued` manifest entry before scheduling so the
+     *  UI shows immediate feedback and the user can tell whether the
+     *  worker is queued-but-blocked (constraint not met) vs. actually
+     *  running. The worker overwrites this with `downloading` when
+     *  it starts. */
+    suspend fun enqueue(
+        fileId: String,
+        itemId: String,
+        itemTitle: String,
+        itemType: String,
+        container: String?,
+        posterPath: String? = null,
+    ) {
+        val existing = store.get(fileId)
+        if (existing == null || existing.status == "failed") {
+            store.upsert(
+                DownloadEntry(
+                    file_id = fileId,
+                    item_id = itemId,
+                    item_title = itemTitle,
+                    item_type = itemType,
+                    container = container,
+                    size_bytes = 0L,
+                    downloaded_bytes = 0L,
+                    status = "queued",
+                    poster_path = posterPath,
+                ),
+            )
+        }
         val networkType = if (prefs.getDownloadOnWifiOnly()) {
             NetworkType.UNMETERED
         } else {

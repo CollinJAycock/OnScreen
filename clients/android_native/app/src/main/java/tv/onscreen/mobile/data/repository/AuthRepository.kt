@@ -72,13 +72,27 @@ open class AuthRepository @Inject constructor(
         prefs.clearAuth()
     }
 
+    /** Result of [checkServer]. Carries the actual failure reason so
+     *  the UI can show "DNS could not resolve" vs "TLS handshake
+     *  failed" vs "HTTP 503" instead of the generic "server
+     *  unreachable" — that masking ate too many round-trips of "is
+     *  the server up? is the URL right? is wifi working?" the last
+     *  time someone hit a first-launch failure. */
+    sealed class CheckResult {
+        data object Ok : CheckResult()
+        data class HttpError(val code: Int) : CheckResult()
+        data class Failed(val message: String) : CheckResult()
+    }
+
     /** Check server reachability by hitting the health endpoint. */
-    suspend fun checkServer(url: String): Boolean {
+    suspend fun checkServer(url: String): CheckResult {
         prefs.setServerUrl(url)
         return try {
-            api.healthCheck().isSuccessful
-        } catch (_: Exception) {
-            false
+            val resp = api.healthCheck()
+            if (resp.isSuccessful) CheckResult.Ok
+            else CheckResult.HttpError(resp.code())
+        } catch (e: Exception) {
+            CheckResult.Failed(e.javaClass.simpleName + ": " + (e.message ?: "unknown"))
         }
     }
 

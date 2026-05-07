@@ -210,11 +210,39 @@ private fun PlayerHost(
 
     val player = remember(source) {
         ExoPlayer.Builder(context).build().apply {
-            val dsFactory = DefaultHttpDataSource.Factory()
+            // DefaultDataSource dispatches by URI scheme — file://
+            // routes to FileDataSource, http(s):// to the wrapped
+            // DefaultHttpDataSource. The bare HTTP factory we used
+            // before crashed with ClassCastException the first time
+            // an offline file:// URL hit it (downloaded items).
+            val dsFactory = androidx.media3.datasource.DefaultDataSource.Factory(
+                context,
+                DefaultHttpDataSource.Factory(),
+            )
+            // MIME hint when we know the container — helps ExoPlayer
+            // pick the right extractor for offline files where the
+            // file:// scheme carries no Content-Type header.
+            val containerHint = ui.item?.files?.firstOrNull()?.container?.let { c ->
+                when (c.lowercase()) {
+                    "mp4", "m4v", "m4a", "m4b" -> "video/mp4"
+                    "mkv" -> "video/x-matroska"
+                    "webm" -> "video/webm"
+                    "mp3" -> "audio/mpeg"
+                    "flac" -> "audio/flac"
+                    "ogg" -> "audio/ogg"
+                    "wav" -> "audio/wav"
+                    "aac" -> "audio/aac"
+                    else -> null
+                }
+            }
             val mediaSource: MediaSource = when (source) {
-                is PlaybackSource.DirectPlay ->
-                    ProgressiveMediaSource.Factory(dsFactory)
-                        .createMediaSource(MediaItem.fromUri(Uri.parse(source.url)))
+                is PlaybackSource.DirectPlay -> {
+                    val mediaItem = MediaItem.Builder()
+                        .setUri(Uri.parse(source.url))
+                        .apply { containerHint?.let { setMimeType(it) } }
+                        .build()
+                    ProgressiveMediaSource.Factory(dsFactory).createMediaSource(mediaItem)
+                }
                 is PlaybackSource.Hls ->
                     HlsMediaSource.Factory(dsFactory)
                         .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
@@ -249,7 +277,19 @@ private fun PlayerHost(
     // dispose so backing out of the screen doesn't kill the music.
     // Video playback releases the player normally — PiP is the
     // backgrounding affordance for video.
-    val isAudioOnly = ui.item?.files?.firstOrNull()?.video_codec == null
+    //
+    // Type-first check: the offline-play synthetic ItemFile carries
+    // no codec metadata, so a pure null-codec check would mis-route
+    // every offline video to the audio handoff path and crash with
+    // ForegroundServiceDidNotStartInTimeException when the music
+    // session service didn't startForeground in time.
+    val codec = ui.item?.files?.firstOrNull()?.video_codec
+    val isAudioOnly = when (itemType) {
+        "track", "audiobook", "podcast" -> true
+        "movie", "episode", "video", "photo" -> false
+        null -> codec.isNullOrEmpty()
+        else -> codec.isNullOrEmpty()
+    }
 
     // Tell MainActivity whether to auto-enter PiP on
     // onUserLeaveHint. We mark "playing" only for video so the
@@ -373,6 +413,14 @@ private fun PlayerHost(
     var showSleepTimer by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var showChapters by remember { mutableStateOf(false) }
+
+    // Mirror the built-in PlayerView controller's visibility. The
+    // Media3 controller fades in on tap and auto-hides after a few
+    // seconds — our overlay toolbar (subtitles / sleep timer / PiP /
+    // cast) follows the same edge so it doesn't sit floating on the
+    // video frame the whole time. Wired below in the PlayerView
+    // factory via setControllerVisibilityListener.
+    var controlsVisible by remember { mutableStateOf(true) }
     val sleepTimer by vm.sleepTimer.collectAsState()
     val sleepTimerFired by vm.sleepTimerFired.collectAsState()
     // When the sleep-timer countdown ends, the VM raises the
@@ -427,6 +475,15 @@ private fun PlayerHost(
                 useController = true
                 playerViewRef.value = this
                 applySubtitleStyle(subtitleStyle)
+                // Mirror the built-in controller's show/hide into our
+                // Compose state so the floating toolbar follows the
+                // same auto-hide timer instead of staying pinned to
+                // the screen during playback.
+                setControllerVisibilityListener(
+                    PlayerView.ControllerVisibilityListener { visibility ->
+                        controlsVisible = visibility == android.view.View.VISIBLE
+                    },
+                )
                 // Hook the built-in TimeBar to drive trickplay
                 // previews. The id is part of Media3's public layout —
                 // exo_progress is the DefaultTimeBar inside the
@@ -515,9 +572,14 @@ private fun PlayerHost(
         SkipMarkerOverlay(player = player, markers = ui.markers, hlsOffsetMs = vm.hlsOffsetMs)
     }
 
-    if (!inPip) Row(
+    // Pin to top-right. Without the wrapping Box + align(TopEnd) the
+    // outer PlayerScreen Box's contentAlignment = Center vertically
+    // centers the Row, which sits right on top of Media3's centered
+    // play / rewind / fast-forward chevrons and steals their taps.
+    if (!inPip && controlsVisible) Box(modifier = Modifier.fillMaxSize()) {
+      Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .align(Alignment.TopEnd)
             .padding(16.dp),
         horizontalArrangement = Arrangement.End,
     ) {
@@ -676,6 +738,7 @@ private fun PlayerHost(
                 Icon(Icons.Default.PictureInPicture, contentDescription = "Picture in picture", tint = Color.White)
             }
         }
+    }
     }
 
     if (showAudioPicker && !inPip) {

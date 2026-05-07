@@ -359,12 +359,39 @@ class PlayerViewModel @Inject constructor(
     fun prepare(itemId: String) {
         viewModelScope.launch {
             try {
-                val item = itemRepo.getItem(itemId)
+                // Container items (show / season / album / artist /
+                // audiobook / podcast / anime) carry no files of their
+                // own — only their children do. Hitting Play on a show
+                // tile means "play the next episode" so we walk down to
+                // a leaf before doing anything else.
+                var resolvedId = itemId
+                var item = try {
+                    itemRepo.getItem(resolvedId)
+                } catch (e: Exception) {
+                    // Offline path: server unreachable, but the user
+                    // may have downloaded this exact item. Look in the
+                    // manifest for a completed download keyed to this
+                    // item id and synthesise just enough ItemDetail /
+                    // ItemFile to play it from disk. Bypasses the
+                    // server entirely — same as the airplane-mode
+                    // playback path on Spotify / Plex.
+                    val offline = playFromLocalIfDownloaded(resolvedId)
+                    if (offline != null) return@launch
+                    throw e
+                }
+                if (item.files.isEmpty() && isContainerType(item.type)) {
+                    val leafId = resolveLeafToPlay(resolvedId)
+                    if (leafId != null && leafId != resolvedId) {
+                        resolvedId = leafId
+                        item = itemRepo.getItem(resolvedId)
+                    }
+                }
                 val file = item.files.firstOrNull()
                 if (file == null) {
                     _state.value = PlayerUiState(loading = false, error = "No playable file")
                     return@launch
                 }
+                val itemId = resolvedId
                 val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
                 val prefs = try { preferencesRepo.get() } catch (_: Exception) { null }
                 val mode = PlaybackHelper.decide(file)
@@ -448,6 +475,113 @@ class PlayerViewModel @Inject constructor(
                 _state.value = PlayerUiState(loading = false, error = msg)
             }
         }
+    }
+
+    /** Offline fallback: walk the download manifest for a completed
+     *  entry whose item_id matches [itemId], and if one exists, build
+     *  a minimal PlayerUiState pointing at the on-disk file. Returns
+     *  the synthesised state on success (already published to
+     *  `_state`), or null when no usable local copy is present.
+     *
+     *  The synthesised ItemFile carries no audio/subtitle stream
+     *  metadata since the manifest doesn't store it — pickers just
+     *  hide the buttons, which matches Plex's offline-mode UI. */
+    private suspend fun playFromLocalIfDownloaded(itemId: String): PlayerUiState? {
+        downloads.store.load()
+        val entry = downloads.store.state.value.entries.firstOrNull {
+            it.item_id == itemId && it.status == "completed"
+        } ?: return null
+        val localFile = downloads.store.fileFor(entry).takeIf { it.exists() && it.length() > 0 }
+            ?: return null
+        // Diagnostic: log the file's first 32 bytes + length so we
+        // can confirm the worker wrote real media (MKV starts with
+        // 1A 45 DF A3; MP4 has "ftyp" at offset 4) vs an HTML body
+        // or a truncated stream. Visible in logcat under
+        // PlayerViewModel.
+        try {
+            val head = localFile.inputStream().use { it.readNBytes(32) }
+            val hex = head.joinToString(" ") { "%02X".format(it) }
+            android.util.Log.i(
+                "PlayerViewModel",
+                "offline play: ${localFile.absolutePath} size=${localFile.length()} head=$hex",
+            )
+        } catch (_: Exception) {
+        }
+        hlsOffsetMs = 0
+        lastTranscodeRequest = null
+        val syntheticFile = tv.onscreen.mobile.data.model.ItemFile(
+            id = entry.file_id,
+            stream_url = "",
+            container = entry.container,
+        )
+        val syntheticItem = tv.onscreen.mobile.data.model.ItemDetail(
+            id = entry.item_id,
+            library_id = "",
+            title = entry.item_title,
+            type = entry.item_type,
+            poster_path = entry.poster_path,
+            files = listOf(syntheticFile),
+        )
+        val state = PlayerUiState(
+            loading = false,
+            source = PlaybackSource.DirectPlay("file://${localFile.absolutePath}", 0L),
+            item = syntheticItem,
+        )
+        _state.value = state
+        return state
+    }
+
+    private fun isContainerType(type: String?): Boolean = type in setOf(
+        "show", "season", "anime", "album", "artist", "audiobook", "podcast",
+    )
+
+    /** Walk a container down to the leaf the user expects when they
+     *  hit Play. Mirrors the Plex / Jellyfin "next-up" rule:
+     *   1. Resume an in-progress leaf if one exists.
+     *   2. Otherwise play the leaf immediately after the last fully-
+     *      watched one.
+     *   3. Otherwise the first unwatched leaf.
+     *   4. Otherwise (whole container watched) the very first leaf —
+     *      replay from the start. */
+    private suspend fun resolveLeafToPlay(containerId: String): String? {
+        val children = try {
+            itemRepo.getChildren(containerId)
+        } catch (_: Exception) {
+            return null
+        }
+        if (children.isEmpty()) return null
+        val sorted = children.sortedBy { it.index ?: Int.MAX_VALUE }
+
+        // show / anime / artist nest one level deeper. Flatten by
+        // pulling each container child's own children in order so the
+        // pickNextUp pass sees a single ordered episode / track list.
+        val leaves = if (sorted.any { isContainerType(it.type) }) {
+            val flat = mutableListOf<tv.onscreen.mobile.data.model.ChildItem>()
+            for (c in sorted) {
+                if (isContainerType(c.type)) {
+                    val grandKids = try {
+                        itemRepo.getChildren(c.id)
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                    flat.addAll(grandKids.sortedBy { it.index ?: Int.MAX_VALUE })
+                } else {
+                    flat.add(c)
+                }
+            }
+            flat
+        } else {
+            sorted
+        }
+        if (leaves.isEmpty()) return null
+
+        leaves.firstOrNull { it.view_offset_ms > 0 && !it.watched }?.let { return it.id }
+        val lastWatchedIdx = leaves.indexOfLast { it.watched }
+        if (lastWatchedIdx >= 0 && lastWatchedIdx + 1 < leaves.size) {
+            return leaves[lastWatchedIdx + 1].id
+        }
+        leaves.firstOrNull { !it.watched }?.let { return it.id }
+        return leaves.first().id
     }
 
     private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {

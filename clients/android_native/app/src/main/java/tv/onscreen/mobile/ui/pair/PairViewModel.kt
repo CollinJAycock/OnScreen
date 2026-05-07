@@ -41,16 +41,21 @@ class PairViewModel @Inject constructor(
         val normalized = url.trim().let { if (it.startsWith("http")) it else "https://$it" }
         viewModelScope.launch {
             _state.value = PairState.CheckingServer
-            val ok = authRepo.checkServer(normalized)
-            if (ok) {
-                _state.value = PairState.ServerReady
-                // Fan out the three /enabled probes immediately —
-                // best-effort, no failure path. UI just won't show
-                // the federated rows if the providers blob doesn't
-                // arrive, falling back to the local-only login form.
-                _providers.value = try { authRepo.getAuthProviders() } catch (_: Exception) { null }
-            } else {
-                _state.value = PairState.ServerUnreachable
+            when (val result = authRepo.checkServer(normalized)) {
+                is AuthRepository.CheckResult.Ok -> {
+                    _state.value = PairState.ServerReady
+                    // Fan out the three /enabled probes immediately —
+                    // best-effort, no failure path. UI just won't show
+                    // the federated rows if the providers blob doesn't
+                    // arrive, falling back to the local-only login form.
+                    _providers.value = try { authRepo.getAuthProviders() } catch (_: Exception) { null }
+                }
+                is AuthRepository.CheckResult.HttpError -> {
+                    _state.value = PairState.Error("Server returned HTTP ${result.code} from $normalized")
+                }
+                is AuthRepository.CheckResult.Failed -> {
+                    _state.value = PairState.Error("Couldn't reach $normalized — ${result.message}")
+                }
             }
         }
     }

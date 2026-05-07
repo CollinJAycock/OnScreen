@@ -249,6 +249,116 @@ class PlayerViewModelTest {
     }
 
     @Test
+    fun `play on a season picks first unwatched after the last watched episode`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        // Season carries no files of its own.
+        coEvery { itemRepo.getItem("season-1") } returns ItemDetail(
+            id = "season-1", library_id = "lib-1", title = "S1", type = "season",
+        )
+        // E1 watched, E2 watched, E3 unwatched, E4 unwatched → next-up = E3.
+        coEvery { itemRepo.getChildren("season-1") } returns listOf(
+            ChildItem(id = "ep-1", title = "E1", type = "episode", index = 1, watched = true),
+            ChildItem(id = "ep-2", title = "E2", type = "episode", index = 2, watched = true),
+            ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
+            ChildItem(id = "ep-4", title = "E4", type = "episode", index = 4),
+        )
+        coEvery { itemRepo.getItem("ep-3") } returns episodeDetail(directPlayFile(), "season-1", 3)
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay())
+        vm.prepare("season-1")
+        advanceUntilIdle()
+
+        val s = vm.state.value
+        assertThat(s.error).isNull()
+        assertThat(s.item?.id).isEqualTo("ep-3")
+        assertThat(s.source).isInstanceOf(PlaybackSource.DirectPlay::class.java)
+    }
+
+    @Test
+    fun `play on a season prefers the in-progress episode over the next unwatched`() =
+        runTest(dispatcher) {
+            val itemRepo = itemRepo()
+            val transcodeRepo = mockk<TranscodeRepository>()
+            coEvery { itemRepo.getItem("season-1") } returns ItemDetail(
+                id = "season-1", library_id = "lib-1", title = "S1", type = "season",
+            )
+            // E1 watched, E2 in-progress, E3 unwatched. The "next after
+            // the last watched" rule would point at E3, but a partially-
+            // played episode should win — the user wants to resume what
+            // they actually paused, not jump past it.
+            coEvery { itemRepo.getChildren("season-1") } returns listOf(
+                ChildItem(id = "ep-1", title = "E1", type = "episode", index = 1, watched = true),
+                ChildItem(
+                    id = "ep-2", title = "E2", type = "episode", index = 2,
+                    view_offset_ms = 5 * 60_000L,
+                ),
+                ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
+            )
+            coEvery { itemRepo.getItem("ep-2") } returns episodeDetail(directPlayFile(), "season-1", 2)
+
+            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay())
+            vm.prepare("season-1")
+            advanceUntilIdle()
+
+            assertThat(vm.state.value.item?.id).isEqualTo("ep-2")
+        }
+
+    @Test
+    fun `play on a show flattens through seasons to a leaf episode`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        // Show → season → episode. Children of the show are seasons, so
+        // the resolver has to recurse one level deeper before it can
+        // pick a leaf.
+        coEvery { itemRepo.getItem("show-1") } returns ItemDetail(
+            id = "show-1", library_id = "lib-1", title = "Show", type = "show",
+        )
+        coEvery { itemRepo.getChildren("show-1") } returns listOf(
+            ChildItem(id = "season-1", title = "S1", type = "season", index = 1),
+            ChildItem(id = "season-2", title = "S2", type = "season", index = 2),
+        )
+        coEvery { itemRepo.getChildren("season-1") } returns listOf(
+            ChildItem(id = "ep-1", title = "E1", type = "episode", index = 1, watched = true),
+            ChildItem(id = "ep-2", title = "E2", type = "episode", index = 2, watched = true),
+        )
+        coEvery { itemRepo.getChildren("season-2") } returns listOf(
+            ChildItem(id = "ep-3", title = "E3", type = "episode", index = 1),
+            ChildItem(id = "ep-4", title = "E4", type = "episode", index = 2),
+        )
+        coEvery { itemRepo.getItem("ep-3") } returns episodeDetail(directPlayFile(), "season-2", 3)
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay())
+        vm.prepare("show-1")
+        advanceUntilIdle()
+
+        val s = vm.state.value
+        assertThat(s.error).isNull()
+        assertThat(s.item?.id).isEqualTo("ep-3")
+    }
+
+    @Test
+    fun `play on a fully-watched show falls back to the very first leaf for replay`() =
+        runTest(dispatcher) {
+            val itemRepo = itemRepo()
+            val transcodeRepo = mockk<TranscodeRepository>()
+            coEvery { itemRepo.getItem("season-1") } returns ItemDetail(
+                id = "season-1", library_id = "lib-1", title = "S1", type = "season",
+            )
+            coEvery { itemRepo.getChildren("season-1") } returns listOf(
+                ChildItem(id = "ep-1", title = "E1", type = "episode", index = 1, watched = true),
+                ChildItem(id = "ep-2", title = "E2", type = "episode", index = 2, watched = true),
+            )
+            coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
+
+            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay())
+            vm.prepare("season-1")
+            advanceUntilIdle()
+
+            assertThat(vm.state.value.item?.id).isEqualTo("ep-1")
+        }
+
+    @Test
     fun `getItem failure surfaces error message`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()

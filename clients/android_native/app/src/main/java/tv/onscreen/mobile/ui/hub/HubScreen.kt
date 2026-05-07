@@ -20,7 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +41,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,7 +65,6 @@ fun HubScreen(
     onOpenHistory: () -> Unit,
     onOpenCollections: () -> Unit,
     onOpenDownloads: () -> Unit,
-    onOpenDiscover: () -> Unit,
     onOpenPlaylists: () -> Unit,
     onOpenSettings: () -> Unit,
     vm: HubViewModel = hiltViewModel(),
@@ -69,32 +73,54 @@ fun HubScreen(
 
     Scaffold(
         topBar = {
+            // Search + Settings stay inline; everything else folds into
+            // a 3-dot overflow. Eight icons in the action row left no
+            // horizontal space for the centered title on a phone — the
+            // "OnScreen" text ended up smashed behind the leading icons.
+            var menuOpen by remember { mutableStateOf(false) }
             CenterAlignedTopAppBar(
                 title = { Text("OnScreen") },
                 actions = {
-                    IconButton(onClick = onOpenFavorites) {
-                        Icon(Icons.Default.Favorite, contentDescription = "Favorites")
-                    }
-                    IconButton(onClick = onOpenHistory) {
-                        Icon(Icons.Default.History, contentDescription = "History")
-                    }
-                    IconButton(onClick = onOpenCollections) {
-                        Icon(Icons.Default.Bookmarks, contentDescription = "Collections")
-                    }
-                    IconButton(onClick = onOpenPlaylists) {
-                        Icon(Icons.Default.QueueMusic, contentDescription = "Playlists")
-                    }
-                    IconButton(onClick = onOpenDownloads) {
-                        Icon(Icons.Default.Download, contentDescription = "Downloads")
-                    }
-                    IconButton(onClick = onOpenDiscover) {
-                        Icon(Icons.Default.Explore, contentDescription = "Discover")
-                    }
                     IconButton(onClick = onOpenSearch) {
                         Icon(Icons.Default.Search, contentDescription = "Search")
                     }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More")
+                    }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Favorites") },
+                            leadingIcon = { Icon(Icons.Default.Favorite, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenFavorites() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("History") },
+                            leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenHistory() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Collections") },
+                            leadingIcon = { Icon(Icons.Default.Bookmarks, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenCollections() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Playlists") },
+                            leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenPlaylists() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Downloads") },
+                            leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenDownloads() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenSettings() },
+                        )
                     }
                 },
             )

@@ -16,10 +16,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import tv.onscreen.mobile.data.network.ConnectivityObserver
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.ui.collections.CollectionDetailScreen
 import tv.onscreen.mobile.ui.collections.CollectionsScreen
-import tv.onscreen.mobile.ui.discover.DiscoverScreen
 import tv.onscreen.mobile.ui.downloads.DownloadsScreen
 import tv.onscreen.mobile.ui.favorites.FavoritesScreen
 import tv.onscreen.mobile.ui.history.HistoryScreen
@@ -41,20 +41,31 @@ import javax.inject.Inject
 @HiltViewModel
 class RootViewModel @Inject constructor(
     prefs: ServerPrefs,
+    connectivity: ConnectivityObserver,
 ) : ViewModel() {
     val signedIn: StateFlow<Boolean?> =
         prefs.isLoggedIn
             .map<Boolean, Boolean?> { it }
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Cold-start online state. Captured once at construction so the
+     *  start destination doesn't flap if the network comes up while
+     *  the user is on the splash. Live state for screens to react to
+     *  comes from [ConnectivityObserver.isOnline] directly. */
+    val coldStartOnline: Boolean = connectivity.isOnline.value
 }
 
 @Composable
 fun AppNav(vm: RootViewModel = hiltViewModel()) {
     val nav = rememberNavController()
     val signedIn by vm.signedIn.collectAsState()
+    // Offline-mode routing: signed-in users with no network at cold
+    // start land on Downloads instead of Hub. Hub fetches /hub which
+    // would just error out, and the user's offline content is by
+    // definition the manifest of completed downloads.
     val start = when (signedIn) {
         null -> return       // splash flicker avoidance — wait for first emission
-        true -> Routes.HUB
+        true -> if (vm.coldStartOnline) Routes.HUB else Routes.DOWNLOADS
         false -> Routes.PAIR
     }
 
@@ -75,7 +86,6 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 onOpenHistory = { nav.navigate(Routes.HISTORY) },
                 onOpenCollections = { nav.navigate(Routes.COLLECTIONS) },
                 onOpenDownloads = { nav.navigate(Routes.DOWNLOADS) },
-                onOpenDiscover = { nav.navigate(Routes.DISCOVER) },
                 onOpenPlaylists = { nav.navigate(Routes.PLAYLISTS) },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
             )
@@ -88,9 +98,6 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         }
         composable(Routes.ABOUT) {
             AboutScreen(onBack = { nav.popBackStack() })
-        }
-        composable(Routes.DISCOVER) {
-            DiscoverScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.PLAYLISTS) {
             PlaylistsScreen(onBack = { nav.popBackStack() })
@@ -108,6 +115,16 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         composable(Routes.DOWNLOADS) {
             DownloadsScreen(
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onPlay = { id -> nav.navigate(Routes.player(id)) },
+                onGoOnline = {
+                    // From offline-mode start: replace Downloads on
+                    // the back stack with Hub so Back exits the app
+                    // (matches the normal cold-start back behaviour
+                    // from Hub).
+                    nav.navigate(Routes.HUB) {
+                        popUpTo(Routes.DOWNLOADS) { inclusive = true }
+                    }
+                },
                 onBack = { nav.popBackStack() },
             )
         }
@@ -146,6 +163,7 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
             LibraryScreen(
                 libraryId = entry.arguments!!.getString("id")!!,
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenPhoto = { id -> nav.navigate(Routes.photo(id)) },
                 onOpenPhotoExtras = { libId -> nav.navigate(Routes.photoExtras(libId)) },
                 onBack = { nav.popBackStack() },
             )
@@ -158,9 +176,26 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 itemId = entry.arguments!!.getString("id")!!,
                 onPlay = { id -> nav.navigate(Routes.player(id)) },
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
-                onOpenPhoto = { id -> nav.navigate(Routes.photo(id)) },
-                onOpenAuthor = { id -> nav.navigate(Routes.author(id)) },
-                onOpenSeries = { id -> nav.navigate(Routes.series(id)) },
+                // Redirect destinations for photo / book_author /
+                // book_series items pop the current item route as they
+                // push, so Back returns to the source list (library,
+                // hub row, favorites, etc.) — not to this detail
+                // screen which would just redirect again.
+                onOpenPhoto = { id ->
+                    nav.navigate(Routes.photo(id)) {
+                        popUpTo(Routes.ITEM) { inclusive = true }
+                    }
+                },
+                onOpenAuthor = { id ->
+                    nav.navigate(Routes.author(id)) {
+                        popUpTo(Routes.ITEM) { inclusive = true }
+                    }
+                },
+                onOpenSeries = { id ->
+                    nav.navigate(Routes.series(id)) {
+                        popUpTo(Routes.ITEM) { inclusive = true }
+                    }
+                },
                 onBack = { nav.popBackStack() },
             )
         }

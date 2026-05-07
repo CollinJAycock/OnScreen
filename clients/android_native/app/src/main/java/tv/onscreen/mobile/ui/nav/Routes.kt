@@ -12,8 +12,6 @@ object Routes {
     const val COLLECTIONS = "collections"
     const val COLLECTION = "collection/{id}"
     const val DOWNLOADS = "downloads"
-    /** TMDB discover + in-app request submit. New in v2.2 phone parity. */
-    const val DISCOVER = "discover"
     /** User-owned playlists (static + smart). v2.2 phone parity. */
     const val PLAYLISTS = "playlists"
     /** Photo extras — timeline + geotagged tabs for a single photo
