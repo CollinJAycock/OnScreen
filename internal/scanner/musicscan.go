@@ -299,12 +299,23 @@ var artistArtFilenames = []string{
 func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePath string, roots []string, hasEmbedded bool) string {
 	absDir := filepath.Dir(filePath)
 
+	// Embedded art FIRST when the file carries it. Disk art (cover.jpg /
+	// folder.jpg) is per-DIRECTORY: when a single artist folder contains
+	// tracks for multiple albums (flat layout, e.g.
+	// "/music/AC+DC/Album1-track1.flac" + "/music/AC+DC/Album2-track1.flac"),
+	// every album in that folder would inherit the same source bytes.
+	// Embedded art is per-track and unambiguous, so it wins when present.
+	// Disk art remains the fallback for libraries where the rips don't
+	// carry embedded covers (most lossless flac rips do; some legacy mp3
+	// rips don't).
 	var artData []byte
-	if data, ok := findArtOnDisk(absDir, albumArtFilenames); ok {
-		artData = data
-	} else if hasEmbedded {
-		data, err := readEmbeddedArtwork(filePath)
-		if err == nil && len(data) > 0 {
+	if hasEmbedded {
+		if data, err := readEmbeddedArtwork(filePath); err == nil && len(data) > 0 {
+			artData = data
+		}
+	}
+	if len(artData) == 0 {
+		if data, ok := findArtOnDisk(absDir, albumArtFilenames); ok {
 			artData = data
 		}
 	}
@@ -415,6 +426,22 @@ func (s *Scanner) extractArtistArt(ctx context.Context, artist *media.Item, file
 	candidates := artistArtFilenames
 	if artistDir == albumDir {
 		candidates = []string{"artist.jpg", "artist.jpeg", "artist.png"}
+	}
+
+	// Skip disk lookup when artistDir IS a library scan root. In that
+	// layout every artist sits in their own folder UNDER the root, so
+	// looking *in* the root would find shared/library-wide images and
+	// hand the same bytes to every artist (real bug from QA: every
+	// artist showed the same portrait because /music/folder.jpg got
+	// re-copied as `<artist.id>-poster.jpg` for hundreds of artists).
+	// "artist.jpg" at the library root is still ambiguous (whose
+	// portrait?), so the carve-out applies regardless of the candidate
+	// list narrowed above.
+	cleanArtistDir := filepath.Clean(artistDir)
+	for _, root := range roots {
+		if filepath.Clean(root) == cleanArtistDir {
+			return ""
+		}
 	}
 
 	artData, ok := findArtOnDisk(artistDir, candidates)
