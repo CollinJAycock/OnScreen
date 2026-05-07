@@ -1493,44 +1493,62 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       -- Strip a release-group prefix in square
-                       -- brackets ("[ToonsHub] Frieren...",
-                       -- "[QWERTY] 8 Out Of 10 Cats") before any
-                       -- other normalization. The scanner pulls
-                       -- these in from filenames when the canonical
-                       -- show row hasn't been created yet, and the
-                       -- prefix is never part of the actual title —
-                       -- always safe to drop. Country suffixes like
-                       -- "(US)" or " IE" intentionally stay because
-                       -- "The Zoo (Ireland)" and "The Zoo" are
-                       -- different productions (year mismatch
-                       -- already keeps them apart for cases like
-                       -- "Heroes 2006" vs "Heroes 2024", but the
-                       -- non-parenthesised country tag would
-                       -- accidentally merge two real shows).
-                       unaccent(replace(replace(
-                         regexp_replace(
-                           -- Use ` + "`" + `title` + "`" + ` as the dedup source rather than
-                           -- preferring original_title. TMDB-enriched
-                           -- rows often have an original_title in the
-                           -- production language (e.g. Japanese for an
-                           -- anime, German for a foreign film); after
-                           -- the ` + "`" + `[^a-zA-Z0-9]+` + "`" + ` strip below that becomes
-                           -- the empty string, the row is excluded by
-                           -- ` + "`" + `WHERE norm <> ''` + "`" + `, and a duplicate row
-                           -- whose title was scanned in English never
-                           -- gets folded into the canonical row. title
-                           -- is NOT NULL in the schema and is the
-                           -- user-facing English label across both rows
-                           -- so dedup keys converge correctly.
-                           title,
-                           '^\s*\[[^\]]+\]\s*', '', 'i'
+                       regexp_replace(
+                         -- Strip a release-group prefix in square
+                         -- brackets ("[ToonsHub] Frieren...",
+                         -- "[QWERTY] 8 Out Of 10 Cats") before any
+                         -- other normalization. The scanner pulls
+                         -- these in from filenames when the canonical
+                         -- show row hasn't been created yet, and the
+                         -- prefix is never part of the actual title —
+                         -- always safe to drop. Country suffixes like
+                         -- "(US)" or " IE" intentionally stay because
+                         -- "The Zoo (Ireland)" and "The Zoo" are
+                         -- different productions (year mismatch
+                         -- already keeps them apart for cases like
+                         -- "Heroes 2006" vs "Heroes 2024", but the
+                         -- non-parenthesised country tag would
+                         -- accidentally merge two real shows).
+                         unaccent(replace(replace(
+                           regexp_replace(
+                             -- Use ` + "`" + `title` + "`" + ` as the dedup source rather than
+                             -- preferring original_title. TMDB-enriched
+                             -- rows often have an original_title in the
+                             -- production language (e.g. Japanese for an
+                             -- anime, German for a foreign film); after
+                             -- the ` + "`" + `[^a-zA-Z0-9]+` + "`" + ` strip below that becomes
+                             -- the empty string, the row is excluded by
+                             -- ` + "`" + `WHERE norm <> ''` + "`" + `, and a duplicate row
+                             -- whose title was scanned in English never
+                             -- gets folded into the canonical row. title
+                             -- is NOT NULL in the schema and is the
+                             -- user-facing English label across both rows
+                             -- so dedup keys converge correctly.
+                             title,
+                             '^\s*\[[^\]]+\]\s*', '', 'i'
+                           ),
+                           '&amp;', '&'), '''', '')
                          ),
-                         '&amp;', '&'), '''', '')
+                         '^\s*(the|a|an)\s+', '', 'i'
                        ),
-                       '^\s*(the|a|an)\s+', '', 'i'
+                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                      ),
-                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                     -- Trailing season markers: "S2", "Season 2",
+                     -- "2nd Season", "Cour 3". Anime cours folder-named
+                     -- "One Punch Man S2" / "Spy x Family Season 2"
+                     -- otherwise live as separate top-level rows from
+                     -- the base franchise; stripping the suffix here
+                     -- lets the dedupe survivor pull them in. Roman
+                     -- numerals (II/III) intentionally NOT stripped
+                     -- because they collide with legit titles
+                     -- ("Final Fantasy VII", "Rocky II"). Subtitle
+                     -- suffixes after a colon ("Code Geass: Lelouch
+                     -- of the Rebellion") are part of canonical
+                     -- AniList titles and stay too. Mirrors the
+                     -- scanner-side stripShowSeasonMarkers so scan-
+                     -- time and dedupe-time normalization agree.
+                     '\s+(s\s*\d+|season\s+\d+|\d+(st|nd|rd|th)\s+season|cour\s+\d+)\s*$',
+                     '', 'gi'
                    ),
                    '\s+(and|&)\s+', 'and', 'gi'
                  ),
@@ -3687,35 +3705,42 @@ WITH normalized AS (
                  regexp_replace(
                    regexp_replace(
                      regexp_replace(
-                       -- Strip a release-group prefix in square
-                       -- brackets ("[ToonsHub] Frieren...",
-                       -- "[QWERTY] 8 Out Of 10 Cats") before any
-                       -- other normalization. The scanner pulls
-                       -- these in from filenames when the canonical
-                       -- show row hasn't been created yet, and the
-                       -- prefix is never part of the actual title —
-                       -- always safe to drop. Country suffixes like
-                       -- "(US)" or " IE" intentionally stay because
-                       -- "The Zoo (Ireland)" and "The Zoo" are
-                       -- different productions (year mismatch
-                       -- already keeps them apart for cases like
-                       -- "Heroes 2006" vs "Heroes 2024", but the
-                       -- non-parenthesised country tag would
-                       -- accidentally merge two real shows).
-                       unaccent(replace(replace(
-                         regexp_replace(
-                           -- See ListDuplicateTopLevelItems for why this is
-                           -- ` + "`" + `title` + "`" + ` and not ` + "`" + `coalesce(original_title, title)` + "`" + `:
-                           -- CJK / non-Latin original titles strip to empty
-                           -- and exclude their row from dedup entirely.
-                           title,
-                           '^\s*\[[^\]]+\]\s*', '', 'i'
+                       regexp_replace(
+                         -- Strip a release-group prefix in square
+                         -- brackets ("[ToonsHub] Frieren...",
+                         -- "[QWERTY] 8 Out Of 10 Cats") before any
+                         -- other normalization. The scanner pulls
+                         -- these in from filenames when the canonical
+                         -- show row hasn't been created yet, and the
+                         -- prefix is never part of the actual title —
+                         -- always safe to drop. Country suffixes like
+                         -- "(US)" or " IE" intentionally stay because
+                         -- "The Zoo (Ireland)" and "The Zoo" are
+                         -- different productions (year mismatch
+                         -- already keeps them apart for cases like
+                         -- "Heroes 2006" vs "Heroes 2024", but the
+                         -- non-parenthesised country tag would
+                         -- accidentally merge two real shows).
+                         unaccent(replace(replace(
+                           regexp_replace(
+                             -- See ListDuplicateTopLevelItems for why this is
+                             -- ` + "`" + `title` + "`" + ` and not ` + "`" + `coalesce(original_title, title)` + "`" + `:
+                             -- CJK / non-Latin original titles strip to empty
+                             -- and exclude their row from dedup entirely.
+                             title,
+                             '^\s*\[[^\]]+\]\s*', '', 'i'
+                           ),
+                           '&amp;', '&'), '''', '')
                          ),
-                         '&amp;', '&'), '''', '')
+                         '^\s*(the|a|an)\s+', '', 'i'
                        ),
-                       '^\s*(the|a|an)\s+', '', 'i'
+                       '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
                      ),
-                     '[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$', ''
+                     -- Trailing season markers — kept identical to
+                     -- ListDuplicateTopLevelItems so both passes agree
+                     -- on the normalized key for "OPM" / "OPM S2".
+                     '\s+(s\s*\d+|season\s+\d+|\d+(st|nd|rd|th)\s+season|cour\s+\d+)\s*$',
+                     '', 'gi'
                    ),
                    '\s+(and|&)\s+', 'and', 'gi'
                  ),

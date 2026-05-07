@@ -270,6 +270,38 @@ func TestStripLeadingFansubGroups(t *testing.T) {
 	}
 }
 
+// TestCleanShowTitle_SeasonMarkersStripped guards the rule that
+// trailing season indicators are dropped before the title lands in
+// the DB. Without this, anime cours folder-named "One Punch Man S2"
+// scan as a separate top-level show from "One Punch Man" and the
+// dedupe SQL can't find the pair (its normalization didn't strip
+// "S2" either, so the two never share a key).
+//
+// Subtitle-style suffixes like "Season Subtitle" or dash-bracketed
+// cour names ("-Dive to the Future-") are intentionally NOT stripped
+// here — they're sometimes part of the canonical AniList title
+// ("Code Geass: Lelouch of the Rebellion"). Those need a different
+// treatment if we ever want to fold them.
+func TestCleanShowTitle_SeasonMarkersStripped(t *testing.T) {
+	cases := map[string]string{
+		"One Punch Man S2":              "One Punch Man",
+		"One Punch Man S 2":             "One Punch Man",
+		"Spy x Family S2":               "Spy x Family",
+		"Fire Force Season 2":           "Fire Force",
+		"Demon Slayer 2nd Season":       "Demon Slayer",
+		"Demon Slayer 3rd Season":       "Demon Slayer",
+		"Some Show Cour 2":              "Some Show",
+		"Show Name":                     "Show Name",            // no marker — passthrough
+		"Code Geass: Lelouch of the Rebellion": "Code Geass: Lelouch of the Rebellion", // colon subtitle preserved
+		"Final Fantasy VII":             "Final Fantasy VII",    // roman numeral inside title preserved
+	}
+	for in, want := range cases {
+		if got := cleanShowTitle(in); got != want {
+			t.Errorf("cleanShowTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestCleanShowTitle_FansubGroupStripped is a regression guard for
 // the user-visible bug where a filename like
 // `[jaaj] Solo Leveling S01E04 (2024) (BD 1080p AV1 AAC).mkv` landed

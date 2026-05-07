@@ -306,5 +306,40 @@ func cleanShowTitle(raw string) string {
 	title = strings.TrimRight(title, " -")
 	title = strings.TrimSpace(title)
 
+	// Strip trailing season markers so anime cours folder-named like
+	// "One Punch Man S2", "Spy x Family Season 2", "Demon Slayer 2nd
+	// Season" all collapse to the franchise base. Without this both
+	// AniList search at scan time AND the dedupe SQL miss the join.
+	// Conservative: only the trailing season suffix is removed; an
+	// internal "Season 2 Special" (rare but possible in subtitles)
+	// keeps its label.
+	title = stripShowSeasonMarkers(title)
+
 	return title
+}
+
+// seasonMarkerRE matches the trailing-season patterns observed in
+// real anime/show folder names:
+//   - "S2", "S 2", "s12"               (compact)
+//   - "Season 2", "Season  3"          (Plex/Jellyfin style)
+//   - "2nd Season", "3rd Season"       (anime-style ordinal)
+//   - "Cour 2"                          (rare but seen)
+// Anchored to end-of-string so a legit "Season 2 Specials" subtitle
+// is preserved.
+var seasonMarkerRE = regexp.MustCompile(`(?i)\s+(?:s\s*\d+|season\s+\d+|\d+(?:st|nd|rd|th)\s+season|cour\s+\d+)\s*$`)
+
+// stripShowSeasonMarkers removes a trailing season indicator from a
+// show title. Returns the input unchanged if no marker is found.
+// Only meant for top-level show titles — episode / season titles
+// pass through their own naming pipeline.
+func stripShowSeasonMarkers(title string) string {
+	stripped := seasonMarkerRE.ReplaceAllString(title, "")
+	stripped = strings.TrimSpace(stripped)
+	if stripped == "" {
+		// Defensive: if the whole title was a season marker (shouldn't
+		// happen in practice but possible with bad metadata), keep
+		// the original so we don't blank out the row.
+		return title
+	}
+	return stripped
 }
