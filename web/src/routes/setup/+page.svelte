@@ -1,10 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { authApi, libraryApi, api, type Library } from '$lib/api';
+  import { authApi, settingsApi, api } from '$lib/api';
 
   let ready = false; // false until we confirm setup is still needed
-  let step = 1; // 1 = create account, 2 = add library (optional), 3 = done
+  let step = 1; // 1 = create account, 2 = enrichment keys (optional), 3 = done
 
   onMount(async () => {
     try {
@@ -27,12 +27,12 @@
   let registerError = '';
   let registering = false;
 
-  // Step 2 fields
-  let libName = '';
-  let libType = 'movie';
-  let libPath = '';
-  let addingLib = false;
-  let libError = '';
+  // Step 2 fields — metadata enrichment keys. Both optional; libraries
+  // still scan without them, posters/summaries just won't backfill.
+  let tmdbKey = '';
+  let tvdbKey = '';
+  let savingKeys = false;
+  let keysError = '';
 
   async function handleRegister() {
     if (password !== confirmPassword) {
@@ -54,24 +54,25 @@
     }
   }
 
-  async function handleAddLibrary() {
-    addingLib = true;
-    libError = '';
+  async function handleSaveKeys() {
+    savingKeys = true;
+    keysError = '';
     try {
-      await libraryApi.create({
-        name: libName,
-        type: libType as Library['type'],
-        scan_paths: [libPath]
-      });
+      const body: Record<string, string> = {};
+      if (tmdbKey.trim()) body.tmdb_api_key = tmdbKey.trim();
+      if (tvdbKey.trim()) body.tvdb_api_key = tvdbKey.trim();
+      if (Object.keys(body).length > 0) {
+        await settingsApi.update(body);
+      }
       step = 3;
     } catch (e: unknown) {
-      libError = e instanceof Error ? e.message : 'Failed to add library.';
+      keysError = e instanceof Error ? e.message : 'Failed to save keys.';
     } finally {
-      addingLib = false;
+      savingKeys = false;
     }
   }
 
-  function skipLibrary() {
+  function skipKeys() {
     step = 3;
   }
 
@@ -100,7 +101,7 @@
       <div class="step-line" class:done={step > 1}></div>
       <div class="step" class:active={step === 2} class:done={step > 2}>
         <span class="step-dot">{step > 2 ? '✓' : '2'}</span>
-        <span>Library</span>
+        <span>API Keys</span>
       </div>
       <div class="step-line" class:done={step > 2}></div>
       <div class="step" class:active={step === 3}>
@@ -136,36 +137,35 @@
         </button>
       </form>
     {:else if step === 2}
-      <form on:submit|preventDefault={handleAddLibrary}>
-        <h2>Add Your First Library</h2>
-        <p class="step-desc">Point OnScreen at your media folder. You can add more later.</p>
+      <form on:submit|preventDefault={handleSaveKeys}>
+        <h2>Metadata API Keys</h2>
+        <p class="step-desc">Posters, summaries, and ratings come from TMDB and TheTVDB. Both are free and optional — you can add them later in Settings.</p>
         <div class="field">
-          <label for="s-libname">Library Name</label>
-          <input id="s-libname" bind:value={libName} type="text" placeholder="My Movies" />
+          <label for="s-tmdb">
+            TMDB API Key
+            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="get-link">Get a key →</a>
+          </label>
+          <input id="s-tmdb" bind:value={tmdbKey} type="text" autocomplete="off" placeholder="32-character v3 API key" />
         </div>
         <div class="field">
-          <label for="s-libtype">Type</label>
-          <select id="s-libtype" bind:value={libType}>
-            <option value="movie">Movies</option>
-            <option value="show">TV Shows</option>
-            <option value="music">Music</option>
-            <option value="photo">Photos</option>
-          </select>
+          <label for="s-tvdb">
+            TheTVDB API Key
+            <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="get-link">Get a key →</a>
+          </label>
+          <input id="s-tvdb" bind:value={tvdbKey} type="text" autocomplete="off" placeholder="UUID-format key (v4 API)" />
         </div>
-        <div class="field">
-          <label for="s-libpath">Scan Path</label>
-          <input id="s-libpath" bind:value={libPath} type="text" placeholder="/media/movies" />
-        </div>
-        {#if libError}
-          <div class="error-banner">{libError}</div>
+        {#if keysError}
+          <div class="error-banner">{keysError}</div>
         {/if}
         <div class="btn-row">
-          <button type="submit" disabled={addingLib || !libName || !libPath} class="btn-primary">
-            {addingLib ? 'Adding...' : 'Add Library'}
+          <button type="submit" disabled={savingKeys} class="btn-primary">
+            {savingKeys ? 'Saving...' : (tmdbKey || tvdbKey ? 'Save & Continue' : 'Continue')}
           </button>
-          <button type="button" class="btn-secondary" on:click={skipLibrary}>
-            Skip
-          </button>
+          {#if tmdbKey || tvdbKey}
+            <button type="button" class="btn-secondary" on:click={skipKeys}>
+              Skip
+            </button>
+          {/if}
         </div>
       </form>
     {:else}
@@ -177,7 +177,7 @@
           </svg>
         </div>
         <h2>You're all set</h2>
-        <p class="step-desc">OnScreen is ready. Your library scan will start in the background.</p>
+        <p class="step-desc">Add libraries from <strong>Settings → Libraries</strong> to start scanning.</p>
         <button class="btn-primary" on:click={finish}>Go to Dashboard</button>
       </div>
     {/if}
@@ -306,6 +306,17 @@
     color: var(--text-muted);
     font-weight: 400;
   }
+
+  .get-link {
+    float: right;
+    font-size: 0.72rem;
+    color: var(--accent-text);
+    text-decoration: none;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+
+  .get-link:hover { text-decoration: underline; }
 
   input, select {
     width: 100%;

@@ -132,7 +132,7 @@ test.describe('Browser playback @chromium-only', () => {
     const duration = await video.evaluate((v: HTMLVideoElement) => v.duration);
     const seekTarget = Math.max(5, duration - 5);
     const preSeekTime = await video.evaluate((v: HTMLVideoElement) => v.currentTime);
-    await video.evaluate((target, v: HTMLVideoElement) => {
+    await video.evaluate((v: HTMLVideoElement, target: number) => {
       v.currentTime = target;
     }, seekTarget);
     await expect

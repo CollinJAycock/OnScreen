@@ -582,7 +582,7 @@ export interface UserPreferences {
 export interface Library {
   id: string;
   name: string;
-  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book';
+  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book' | 'anime';
   scan_paths: string[];
   agent: string;
   language: string;
@@ -882,15 +882,6 @@ export const mediaApi = {
     api.get<EventCollection[]>(`/libraries/${libraryId}/event-collections`),
   enrichItem: (id: string) =>
     api.post<void>(`/items/${id}/enrich`),
-
-  // Watching-status: per-user Plan to Watch / Watching / etc.
-  // Returns 404 when no row exists; UI treats that as "no status".
-  getWatchStatus: (id: string) =>
-    api.get<WatchStatus>(`/items/${id}/watch-status`),
-  setWatchStatus: (id: string, status: WatchStatusValue) =>
-    api.put<WatchStatus>(`/items/${id}/watch-status`, { status }),
-  clearWatchStatus: (id: string) =>
-    api.delete<void>(`/items/${id}/watch-status`),
 };
 
 // WatchStatus mirrors WatchStatusResponse on the server. Status is
@@ -1056,6 +1047,11 @@ export interface ItemFile {
   subtitle_streams: SubtitleStream[];
   external_subtitles?: ExternalSubtitle[];
   chapters: Chapter[];
+  // Per-file 24h PASETO bound to the requesting user. Used in the
+  // `?token=` query of the download URL on clients that can't carry
+  // cookies (mobile browser save-as, Android Download Manager). Omitted
+  // by the server when the stream-token maker isn't wired.
+  stream_token?: string;
 }
 
 export interface Marker {
@@ -1348,7 +1344,16 @@ export const itemApi = {
       thumb_width?: number;
       thumb_height?: number;
       last_error?: string;
-    }>(`/items/${id}/trickplay`)
+    }>(`/items/${id}/trickplay`),
+
+  // Watching-status: per-user Plan to Watch / Watching / etc.
+  // Returns 404 when no row exists; UI treats that as "no status".
+  getWatchStatus: (id: string) =>
+    api.get<WatchStatus>(`/items/${id}/watch-status`),
+  setWatchStatus: (id: string, status: WatchStatusValue) =>
+    api.put<WatchStatus>(`/items/${id}/watch-status`, { status }),
+  clearWatchStatus: (id: string) =>
+    api.delete(`/items/${id}/watch-status`),
 };
 
 export const subtitleApi = {
