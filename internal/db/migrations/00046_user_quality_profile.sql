@@ -16,9 +16,11 @@ ALTER TABLE users
     ADD COLUMN forced_subtitles_only  BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- +goose Down
+-- IF EXISTS guards: a previous botched up-migration may have left
+-- the columns half-applied; explicit guards make the down idempotent.
 ALTER TABLE users
-    DROP COLUMN forced_subtitles_only,
-    DROP COLUMN preferred_video_codec,
-    DROP COLUMN max_video_height,
-    DROP COLUMN max_audio_bitrate_kbps,
-    DROP COLUMN max_video_bitrate_kbps;
+    DROP COLUMN IF EXISTS forced_subtitles_only,
+    DROP COLUMN IF EXISTS preferred_video_codec,
+    DROP COLUMN IF EXISTS max_video_height,
+    DROP COLUMN IF EXISTS max_audio_bitrate_kbps,
+    DROP COLUMN IF EXISTS max_video_bitrate_kbps;

@@ -18,22 +18,29 @@ FROM schedules
 WHERE id = $1;
 
 -- name: ListSchedulesForUser :many
+-- Hard-capped at 500 — DVR rules per user; nobody legitimately has
+-- hundreds of active recording rules and an unbounded list ships a
+-- big payload to the schedule UI.
 SELECT id, user_id, type, program_id, channel_id, title_match, new_only,
        time_start, time_end, padding_pre_sec, padding_post_sec,
        priority, retention_days, enabled, created_at, updated_at
 FROM schedules
 WHERE user_id = $1
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 500;
 
 -- name: ListEnabledSchedules :many
 -- The matcher iterates this every minute. Disabled schedules are
 -- ignored (but their existing scheduled recordings continue normally).
+-- Hard-capped at 5000 — generous ceiling so a ridiculous fleet of
+-- title-match rules can't blow up the matcher's memory each tick.
 SELECT id, user_id, type, program_id, channel_id, title_match, new_only,
        time_start, time_end, padding_pre_sec, padding_post_sec,
        priority, retention_days, enabled, created_at, updated_at
 FROM schedules
 WHERE enabled = TRUE
-ORDER BY priority DESC, created_at;
+ORDER BY priority DESC, created_at
+LIMIT 5000;
 
 -- name: DeleteSchedule :exec
 DELETE FROM schedules WHERE id = $1;

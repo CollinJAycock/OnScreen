@@ -11,4 +11,4 @@
 ALTER TABLE users ADD COLUMN session_epoch BIGINT NOT NULL DEFAULT 0;
 
 -- +goose Down
-ALTER TABLE users DROP COLUMN session_epoch;
+ALTER TABLE users DROP COLUMN IF EXISTS session_epoch;

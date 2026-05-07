@@ -273,10 +273,13 @@ SELECT id, user_id, type, program_id, channel_id, title_match, new_only,
 FROM schedules
 WHERE enabled = TRUE
 ORDER BY priority DESC, created_at
+LIMIT 5000
 `
 
 // The matcher iterates this every minute. Disabled schedules are
 // ignored (but their existing scheduled recordings continue normally).
+// Hard-capped at 5000 — generous ceiling so a ridiculous fleet of
+// title-match rules can't blow up the matcher's memory each tick.
 func (q *Queries) ListEnabledSchedules(ctx context.Context) ([]Schedule, error) {
 	rows, err := q.db.Query(ctx, listEnabledSchedules)
 	if err != nil {
@@ -456,8 +459,12 @@ SELECT id, user_id, type, program_id, channel_id, title_match, new_only,
 FROM schedules
 WHERE user_id = $1
 ORDER BY created_at DESC
+LIMIT 500
 `
 
+// Hard-capped at 500 — DVR rules per user; nobody legitimately has
+// hundreds of active recording rules and an unbounded list ships a
+// big payload to the schedule UI.
 func (q *Queries) ListSchedulesForUser(ctx context.Context, userID uuid.UUID) ([]Schedule, error) {
 	rows, err := q.db.Query(ctx, listSchedulesForUser, userID)
 	if err != nil {

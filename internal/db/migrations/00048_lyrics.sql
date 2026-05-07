@@ -15,5 +15,5 @@ ALTER TABLE media_items
 
 -- +goose Down
 ALTER TABLE media_items
-    DROP COLUMN lyrics_synced,
-    DROP COLUMN lyrics_plain;
+    DROP COLUMN IF EXISTS lyrics_synced,
+    DROP COLUMN IF EXISTS lyrics_plain;

@@ -5,10 +5,15 @@ SELECT * FROM users WHERE id = $1;
 SELECT * FROM users WHERE username = $1;
 
 -- name: ListUsers :many
+-- Hard-capped at 1000 — admin user-management UI; if a deployment
+-- ever has >1000 users we want to know via paging not by silently
+-- truncating, but for now bound the response so a never-paginated
+-- admin call doesn't ship a multi-megabyte payload.
 SELECT id, username, email, is_admin,
        created_at, updated_at
 FROM users
-ORDER BY username;
+ORDER BY username
+LIMIT 1000;
 
 -- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, is_admin)
