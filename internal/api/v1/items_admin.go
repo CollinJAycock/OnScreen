@@ -184,8 +184,16 @@ func (h *ItemBulkAdminHandler) ReEnrichUnmatched(w http.ResponseWriter, r *http.
 	}
 
 	limit := body.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 50
+	if limit <= 0 {
+		limit = 200
+	}
+	// 1000 keeps a single pass bounded for QA-style catch-up runs that
+	// might face thousands of NFO-only items at once. The worker grinds
+	// serially so a 1000-item batch translates to 1000 EnrichItem calls
+	// against the rate-limited TMDB client — finishes when it finishes,
+	// but doesn't fight other work in the meantime.
+	if limit > 1000 {
+		limit = 1000
 	}
 
 	listParams := gen.ListUnmatchedTopLevelItemsParams{
