@@ -681,6 +681,24 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 	// TMDB) stay — the NFO doesn't override those.
 	applyMovieNFO(&p, nfoMovie)
 
+	// Pre-flight merge — same shape as enrichShow / matchShow / matchMovie.
+	// Without this the UpdateItemMetadata below would crash whenever the
+	// canonical TMDB title+year already lives on a sibling row in the
+	// library (year-suffix duplicate from the scanner's folder parser,
+	// or a hand-renamed re-scan that produced two rows for the same film).
+	if result.TMDBID != 0 {
+		if survivor, sErr := e.updater.GetItemByTMDBID(ctx, item.LibraryID, result.TMDBID); sErr == nil && survivor != nil && survivor.ID != item.ID {
+			e.logger.InfoContext(ctx, "enrich: merging movie into existing canonical row",
+				"loser_id", item.ID, "survivor_id", survivor.ID,
+				"loser_title", item.Title, "survivor_title", survivor.Title,
+				"tmdb_id", result.TMDBID)
+			if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+				return fmt.Errorf("merge into canonical row: %w", err)
+			}
+			return nil
+		}
+	}
+
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update item metadata: %w", err)
 	}
@@ -890,6 +908,29 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	// NFO wins where it has values — applied after TMDB so a Kodi-curated
 	// tvshow.nfo beats a TMDB guess on title/plot/genres.
 	applyShowNFO(&p, nfoShow)
+
+	// Pre-flight merge: if another row in this library is already
+	// attached to the canonical TMDB id, the UpdateItemMetadata below
+	// would crash with the idx_media_items_library_type_title_year
+	// unique-constraint violation (the operator-visible "100 Day Hotel
+	// Challenge" / "Battlestar Galactica 1978" / "1923 2022" symptom on
+	// QA — every cascade re-enrich attempt collided because the year-
+	// suffix duplicate row tried to upgrade to canonical title+year and
+	// lost to the already-canonical sibling). Reparent this row's
+	// children onto the survivor and stop — same shape as matchShow's
+	// pre-flight, lifted into the auto-enrich path.
+	if result.TMDBID != 0 {
+		if survivor, sErr := e.updater.GetItemByTMDBID(ctx, item.LibraryID, result.TMDBID); sErr == nil && survivor != nil && survivor.ID != item.ID {
+			e.logger.InfoContext(ctx, "enrich: merging into existing canonical row",
+				"loser_id", item.ID, "survivor_id", survivor.ID,
+				"loser_title", item.Title, "survivor_title", survivor.Title,
+				"tmdb_id", result.TMDBID)
+			if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+				return fmt.Errorf("merge into canonical row: %w", err)
+			}
+			return nil
+		}
+	}
 
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update show metadata: %w", err)
