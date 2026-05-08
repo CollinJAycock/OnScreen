@@ -76,6 +76,74 @@ func TestSearchMovie_Success(t *testing.T) {
 	}
 }
 
+// TestSearchMovieCandidates_ReturnsAllResults locks the multi-result
+// contract that Fix Match leans on. Real QA case: searching "Blair
+// Witch" should return both the 1999 original and the 2016 sequel —
+// before this endpoint existed, SearchMovieCandidates was a one-line
+// stub around SearchMovie that only ever returned TMDB's top guess.
+func TestSearchMovieCandidates_ReturnsAllResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/search/movie") {
+			http.NotFound(w, r)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{"id": 2667, "title": "The Blair Witch Project", "release_date": "1999-07-14", "overview": "Three filmmakers...", "vote_average": 6.5},
+				{"id": 318846, "title": "Blair Witch", "release_date": "2016-09-15", "overview": "After discovering a video showing what he believes to be his vanished sister Heather...", "vote_average": 5.1},
+				{"id": 14290, "title": "Book of Shadows: Blair Witch 2", "release_date": "2000-10-27", "overview": "A group of Blair Witch enthusiasts...", "vote_average": 4.4},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	results, err := c.SearchMovieCandidates(context.Background(), "Blair Witch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results: got %d, want 3 — multi-result must surface all candidates so Fix Match can disambiguate", len(results))
+	}
+	// Identify the ones we care about by TMDB id.
+	wantIDs := map[int]string{2667: "The Blair Witch Project", 318846: "Blair Witch", 14290: "Book of Shadows: Blair Witch 2"}
+	for _, r := range results {
+		if want, ok := wantIDs[r.TMDBID]; ok {
+			if r.Title != want {
+				t.Errorf("TMDBID %d: title = %q, want %q", r.TMDBID, r.Title, want)
+			}
+			delete(wantIDs, r.TMDBID)
+		}
+	}
+	if len(wantIDs) != 0 {
+		t.Errorf("missing candidates: %v", wantIDs)
+	}
+}
+
+func TestSearchMovieCandidates_CapsAt10(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		results := make([]map[string]any, 25)
+		for i := range results {
+			results[i] = map[string]any{
+				"id":           1000 + i,
+				"title":        "Result",
+				"release_date": "2020-01-01",
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	results, err := c.SearchMovieCandidates(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(results) != 10 {
+		t.Errorf("results: got %d, want 10 (cap)", len(results))
+	}
+}
+
 func TestSearchMovie_NoResults(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"results": []any{}})

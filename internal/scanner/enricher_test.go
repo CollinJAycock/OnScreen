@@ -49,6 +49,9 @@ func (m *mockAgent) SearchTV(_ context.Context, _ string, _ int) (*metadata.TVSh
 func (m *mockAgent) SearchTVCandidates(_ context.Context, _ string) ([]metadata.TVShowResult, error) {
 	return nil, nil
 }
+func (m *mockAgent) SearchMovieCandidates(_ context.Context, _ string) ([]metadata.MovieResult, error) {
+	return nil, nil
+}
 func (m *mockAgent) GetSeason(_ context.Context, _, _ int) (*metadata.SeasonResult, error) {
 	m.getSeasonCalls++
 	if m.getSeasonErr != nil {

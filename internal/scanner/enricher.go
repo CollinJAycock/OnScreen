@@ -2477,29 +2477,32 @@ func (e *Enricher) SearchTVCandidates(ctx context.Context, query string) ([]TVMa
 }
 
 // SearchMovieCandidates returns TMDB movie search results for manual match selection.
+// Now backed by the proper /search/movie multi-result endpoint via
+// agent.SearchMovieCandidates — the prior single-result wrapper around
+// SearchMovie meant Fix Match could only ever surface TMDB's top guess,
+// so a query like "Blair Witch" hid the 2016 remake behind the 1999
+// original.
 func (e *Enricher) SearchMovieCandidates(ctx context.Context, query string) ([]TVMatchCandidate, error) {
 	agent := e.agentFn()
 	if agent == nil {
 		return nil, fmt.Errorf("metadata agent not configured")
 	}
-	result, err := agent.SearchMovie(ctx, query, 0)
+	results, err := agent.SearchMovieCandidates(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, nil
+	out := make([]TVMatchCandidate, len(results))
+	for i, r := range results {
+		out[i] = TVMatchCandidate{
+			TMDBID:    r.TMDBID,
+			Title:     r.Title,
+			Year:      r.Year,
+			Summary:   r.Summary,
+			PosterURL: r.PosterURL,
+			Rating:    r.Rating,
+		}
 	}
-	// SearchMovie returns a single result — wrap it. For a proper multi-result
-	// movie search we'd add SearchMovieCandidates to the Agent interface; for now
-	// return the top match.
-	return []TVMatchCandidate{{
-		TMDBID:    result.TMDBID,
-		Title:     result.Title,
-		Year:      result.Year,
-		Summary:   result.Summary,
-		PosterURL: result.PosterURL,
-		Rating:    result.Rating,
-	}}, nil
+	return out, nil
 }
 
 // TVMatchCandidate is returned by the search methods for manual match selection.

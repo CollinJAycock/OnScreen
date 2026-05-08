@@ -242,6 +242,39 @@ func (c *Client) SearchMulti(ctx context.Context, query string, maxResults int) 
 	return out, nil
 }
 
+// SearchMovieCandidates implements metadata.Agent. Returns up to 10
+// movie results for manual match selection — the Fix Match tray uses
+// this so the operator can disambiguate cases where TMDB has multiple
+// hits for a query (e.g. "Blair Witch" → both the 1999 original and
+// the 2016 remake / sequel; "The Thing" → 1982 Carpenter and 2011
+// prequel).
+func (c *Client) SearchMovieCandidates(ctx context.Context, query string) ([]metadata.MovieResult, error) {
+	params := url.Values{}
+	params.Set("query", query)
+	params.Set("language", c.language)
+
+	var resp struct {
+		Results []tmdbMovie `json:"results"`
+	}
+	if err := c.get(ctx, "/search/movie", params, &resp); err != nil {
+		return nil, fmt.Errorf("tmdb search movie candidates %q: %w", query, err)
+	}
+
+	limit := len(resp.Results)
+	if limit > 10 {
+		limit = 10
+	}
+	out := make([]metadata.MovieResult, 0, limit)
+	for i := 0; i < limit; i++ {
+		mr, mErr := c.movieToResult(ctx, resp.Results[i])
+		if mErr != nil || mr == nil {
+			continue
+		}
+		out = append(out, *mr)
+	}
+	return out, nil
+}
+
 // SearchTVCandidates implements metadata.Agent.
 // Returns up to 10 TV show results for manual match selection.
 func (c *Client) SearchTVCandidates(ctx context.Context, query string) ([]metadata.TVShowResult, error) {
