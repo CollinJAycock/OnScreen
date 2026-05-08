@@ -43,19 +43,50 @@ func (m *mockMaintSvc) DedupeTopLevelItems(_ context.Context, itemType string, l
 }
 
 type maintEnricher struct {
+	mu        sync.Mutex
 	err       error
 	errForIDs map[uuid.UUID]error
 	calledIDs []uuid.UUID
+	// expect signals when len(calledIDs) reaches this value, so async
+	// tests can synchronise with the background worker without sleeping.
+	expect int
+	done   chan struct{}
 }
 
 func (m *maintEnricher) EnrichItem(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
 	m.calledIDs = append(m.calledIDs, id)
+	reached := m.expect > 0 && len(m.calledIDs) == m.expect
+	m.mu.Unlock()
+	if reached && m.done != nil {
+		select {
+		case m.done <- struct{}{}:
+		default:
+		}
+	}
 	if m.errForIDs != nil {
 		if e, ok := m.errForIDs[id]; ok {
 			return e
 		}
 	}
 	return m.err
+}
+
+func (m *maintEnricher) calls() []uuid.UUID {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]uuid.UUID, len(m.calledIDs))
+	copy(out, m.calledIDs)
+	return out
+}
+
+func (m *maintEnricher) awaitN(t *testing.T, n int) {
+	t.Helper()
+	select {
+	case <-m.done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("enricher EnrichItem not called %d times within 2s (got %d)", n, len(m.calls()))
+	}
 }
 func (m *maintEnricher) MatchItem(_ context.Context, _ uuid.UUID, _ int) error { return nil }
 
@@ -136,7 +167,7 @@ func TestMaintenance_RefreshMissingArt_ClampsTo1000(t *testing.T) {
 	}
 }
 
-func TestMaintenance_RefreshMissingArt_CountsSuccessAndFailure(t *testing.T) {
+func TestMaintenance_RefreshMissingArt_QueuesEveryCandidateAsync(t *testing.T) {
 	good1 := uuid.New()
 	good2 := uuid.New()
 	bad := uuid.New()
@@ -145,13 +176,21 @@ func TestMaintenance_RefreshMissingArt_CountsSuccessAndFailure(t *testing.T) {
 		{ID: bad, Title: "Bad"},
 		{ID: good2, Title: "Good 2"},
 	}}
-	enr := &maintEnricher{errForIDs: map[uuid.UUID]error{bad: errors.New("tmdb down")}}
+	enr := &maintEnricher{
+		errForIDs: map[uuid.UUID]error{bad: errors.New("tmdb down")},
+		expect:    3,
+		done:      make(chan struct{}, 1),
+	}
 	h := NewMaintenanceHandler(svc, &mockMaintLibSvc{}, enr, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/maintenance/refresh-missing-art", nil)
 	rec := httptest.NewRecorder()
 	h.RefreshMissingArt(rec, req)
 
+	// Handler returns immediately with the queued count — the enrich
+	// loop runs in a detached goroutine so a 5-30 minute walk doesn't
+	// time out the HTTP request (real bug from QA: 90s curl timeout
+	// killed the work mid-batch and left items half-enriched).
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d", rec.Code)
 	}
@@ -159,12 +198,25 @@ func TestMaintenance_RefreshMissingArt_CountsSuccessAndFailure(t *testing.T) {
 	if int(data.Data["candidates"].(float64)) != 3 {
 		t.Errorf("candidates: got %v, want 3", data.Data["candidates"])
 	}
-	if int(data.Data["refreshed"].(float64)) != 2 {
-		t.Errorf("refreshed: got %v, want 2", data.Data["refreshed"])
+	if int(data.Data["queued"].(float64)) != 3 {
+		t.Errorf("queued: got %v, want 3", data.Data["queued"])
 	}
-	failed := data.Data["failed"].([]any)
-	if len(failed) != 1 {
-		t.Errorf("failed: got %d, want 1", len(failed))
+
+	// Wait for the worker to finish processing all 3 items and assert
+	// every candidate (including the failing one) was attempted.
+	enr.awaitN(t, 3)
+	called := enr.calls()
+	if len(called) != 3 {
+		t.Fatalf("EnrichItem call count: got %d, want 3", len(called))
+	}
+	got := map[uuid.UUID]bool{}
+	for _, id := range called {
+		got[id] = true
+	}
+	for _, id := range []uuid.UUID{good1, good2, bad} {
+		if !got[id] {
+			t.Errorf("EnrichItem not called for %s", id)
+		}
 	}
 }
 

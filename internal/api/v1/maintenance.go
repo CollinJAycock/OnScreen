@@ -40,9 +40,12 @@ func NewMaintenanceHandler(svc MaintenanceMediaService, lib MaintenanceLibrarySe
 }
 
 // RefreshMissingArt handles POST /api/v1/maintenance/refresh-missing-art.
-// It re-runs metadata enrichment for up to ?limit=N (default 200, max 1000)
-// top-level items that currently have no poster. Successes and failures are
-// counted individually so one bad item doesn't abort the batch.
+// Lists up to ?limit=N (default 200, max 1000) top-level items missing a
+// poster, then queues per-item enrichment in a single background
+// goroutine. Returns immediately with the candidate count so the HTTP
+// request doesn't block on a 5–30-minute TMDB walk (which the
+// cancelled request context would have killed mid-way through, plus
+// Cloudflare's 100s edge timeout would 524 anyway).
 func (h *MaintenanceHandler) RefreshMissingArt(w http.ResponseWriter, r *http.Request) {
 	limit := respond.ParseLimit(r, 200, 1000)
 
@@ -53,32 +56,42 @@ func (h *MaintenanceHandler) RefreshMissingArt(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	type failure struct {
-		ID    uuid.UUID `json:"id"`
-		Title string    `json:"title"`
-		Error string    `json:"error"`
-	}
-	var (
-		refreshed int
-		failed    []failure
-	)
-	for _, it := range items {
-		if err := h.enricher.EnrichItem(r.Context(), it.ID); err != nil {
-			h.logger.WarnContext(r.Context(), "refresh missing art failed",
-				"item_id", it.ID, "title", it.Title, "err", err)
-			failed = append(failed, failure{ID: it.ID, Title: it.Title, Error: err.Error()})
-			continue
+	if len(items) > 0 {
+		// WithoutCancel so the worker keeps processing after the HTTP
+		// request returns (or gets cancelled by Cloudflare). Same shape
+		// as ReEnrichUnmatched.
+		bgCtx := context.WithoutCancel(r.Context())
+		ids := make([]uuid.UUID, 0, len(items))
+		titles := make(map[uuid.UUID]string, len(items))
+		for _, it := range items {
+			ids = append(ids, it.ID)
+			titles[it.ID] = it.Title
 		}
-		refreshed++
+		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					h.logger.ErrorContext(bgCtx, "refresh missing art panic",
+						"panic", rec)
+				}
+			}()
+			var refreshed, failed int
+			for _, id := range ids {
+				if err := h.enricher.EnrichItem(bgCtx, id); err != nil {
+					h.logger.WarnContext(bgCtx, "refresh missing art failed",
+						"item_id", id, "title", titles[id], "err", err)
+					failed++
+					continue
+				}
+				refreshed++
+			}
+			h.logger.InfoContext(bgCtx, "refresh missing art complete",
+				"candidates", len(ids), "refreshed", refreshed, "failed", failed)
+		}()
 	}
-
-	h.logger.InfoContext(r.Context(), "refresh missing art complete",
-		"candidates", len(items), "refreshed", refreshed, "failed", len(failed))
 
 	respond.Success(w, r, map[string]any{
 		"candidates": len(items),
-		"refreshed":  refreshed,
-		"failed":     failed,
+		"queued":     len(items),
 	})
 }
 
