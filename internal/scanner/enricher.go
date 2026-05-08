@@ -37,6 +37,12 @@ type ItemUpdater interface {
 	// Both methods return nil error when the lookup misses; merge is a
 	// no-op when loser == survivor.
 	GetItemByTMDBID(ctx context.Context, libraryID uuid.UUID, tmdbID int) (*media.Item, error)
+	// FindTopLevelItemByTitleYear catches the second flavor of the
+	// constraint collision: an NFO-only sibling sits at the canonical
+	// title+year with no TMDB id, so the GetItemByTMDBID pre-flight
+	// can't see it but the UPDATE still loses on the
+	// idx_media_items_library_type_title_year unique key.
+	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*media.Item, error)
 	MergeIntoTopLevel(ctx context.Context, loserID, survivorID uuid.UUID, itemType string) error
 }
 
@@ -2104,8 +2110,55 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 		return fmt.Errorf("refresh tv %d: %w", tmdbID, err)
 	}
 
+	// Pre-flight #2 — by-title+year. The canonical TMDB title+year
+	// might collide with an NFO-only sibling that has the same
+	// (title, year) but no provider IDs. Without this fallback the
+	// UPDATE on our row hits the
+	// idx_media_items_library_type_title_year unique constraint and
+	// the user sees "auto-resolve tmdb match failed". Redirect the
+	// UPDATE at the sibling (so it gets our IDs) and merge our row
+	// into it.
+	if result.Title != "" {
+		var canonYear *int
+		if result.FirstAirYear != 0 {
+			y := result.FirstAirYear
+			canonYear = &y
+		}
+		if survivor, sErr := e.updater.FindTopLevelItemByTitleYear(ctx, item.LibraryID, item.Type, result.Title, canonYear); sErr == nil && survivor != nil && survivor.ID != item.ID {
+			e.logger.InfoContext(ctx, "fix match: merging into NFO-canonical sibling",
+				"loser_id", item.ID, "survivor_id", survivor.ID,
+				"title", result.Title, "tmdb_id", tmdbID)
+			if err := e.applyMatchedShowToTarget(ctx, survivor.ID, file, result, tmdbID); err != nil {
+				return fmt.Errorf("apply match to canonical sibling: %w", err)
+			}
+			if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+				return fmt.Errorf("merge into canonical sibling: %w", err)
+			}
+			// Cascade onto the survivor — its seasons/episodes (now
+			// including the loser's reparented children) need a refresh
+			// against the freshly-applied TMDB id.
+			e.enrichShowChildren(ctx, agent, survivor, file)
+			return nil
+		}
+	}
+
+	if err := e.applyMatchedShowToTarget(ctx, item.ID, file, result, tmdbID); err != nil {
+		return err
+	}
+	e.logger.InfoContext(ctx, "show matched",
+		"item_id", item.ID, "title", result.Title, "tmdb_id", tmdbID)
+
+	// Cascade to seasons and episodes.
+	e.enrichShowChildren(ctx, agent, item, file)
+	return nil
+}
+
+// applyMatchedShowToTarget mirrors applyMatchedMovieToTarget for shows.
+// Shared between matchShow's primary path and the title+year sibling-
+// merge path.
+func (e *Enricher) applyMatchedShowToTarget(ctx context.Context, targetID uuid.UUID, file *media.File, result *metadata.TVShowResult, tmdbID int) error {
 	p := media.UpdateItemMetadataParams{
-		ID:        item.ID,
+		ID:        targetID,
 		Title:     result.Title,
 		SortTitle: result.Title,
 		TMDBID:    &tmdbID,
@@ -2133,31 +2186,22 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 		p.Genres = result.Genres
 	}
 
-	// Download artwork next to the media files (show root directory).
 	artDir := showDirFromFile(file.FilePath)
-	e.logger.DebugContext(ctx, "match artwork download",
-		"item_id", item.ID, "art_dir", artDir,
-		"poster_url", result.PosterURL, "fanart_url", result.FanartURL)
 	if e.artwork != nil && artDir != "" && artDir != "." {
-		// Use the Replace variant so a wrong-match poster.jpg /
-		// fanart.jpg from a previous enrich gets overwritten — the
-		// non-Replace path short-circuits when the file already
-		// exists, which leaves the old image bytes on disk even
-		// though poster_path now points at the same filename.
 		if result.PosterURL != "" {
-			absPath, dlErr := e.artwork.ReplaceShowPoster(ctx, item.ID, result.PosterURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowPoster(ctx, targetID, result.PosterURL, artDir)
 			if dlErr != nil {
 				e.logger.WarnContext(ctx, "match poster download failed",
-					"item_id", item.ID, "err", dlErr)
+					"item_id", targetID, "err", dlErr)
 			} else {
 				e.setRelPath(&p.PosterPath, absPath)
 			}
 		}
 		if result.FanartURL != "" {
-			absPath, dlErr := e.artwork.ReplaceShowFanart(ctx, item.ID, result.FanartURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowFanart(ctx, targetID, result.FanartURL, artDir)
 			if dlErr != nil {
 				e.logger.WarnContext(ctx, "match fanart download failed",
-					"item_id", item.ID, "err", dlErr)
+					"item_id", targetID, "err", dlErr)
 			} else {
 				e.setRelPath(&p.FanartPath, absPath)
 			}
@@ -2167,20 +2211,14 @@ func (e *Enricher) matchShow(ctx context.Context, agent metadata.Agent, item *me
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update show metadata: %w", err)
 	}
-
-	e.logger.InfoContext(ctx, "show matched",
-		"item_id", item.ID, "title", result.Title, "tmdb_id", tmdbID,
-		"has_poster", p.PosterPath != nil, "has_fanart", p.FanartPath != nil)
-
-	// Cascade to seasons and episodes.
-	e.enrichShowChildren(ctx, agent, item, file)
 	return nil
 }
 
 // matchMovie re-enriches a movie using RefreshMovie with a specific TMDB ID.
 func (e *Enricher) matchMovie(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File, tmdbID int) error {
-	// Pre-flight merge: same shape as matchShow, see comment there for
-	// the unique-constraint reasoning.
+	// Pre-flight #1 — by-tmdb. Catches the case where a different row
+	// in the library already owns this TMDB id (e.g. duplicate folder
+	// rows that the operator wants to collapse).
 	if survivor, err := e.updater.GetItemByTMDBID(ctx, item.LibraryID, tmdbID); err == nil && survivor != nil && survivor.ID != item.ID {
 		e.logger.InfoContext(ctx, "fix match: merging into existing canonical row",
 			"loser_id", item.ID, "survivor_id", survivor.ID,
@@ -2197,8 +2235,54 @@ func (e *Enricher) matchMovie(ctx context.Context, agent metadata.Agent, item *m
 		return fmt.Errorf("refresh movie %d: %w", tmdbID, err)
 	}
 
+	// Pre-flight #2 — by-title+year. The canonical metadata from TMDB
+	// might collide with an NFO-only sibling that has the same
+	// (title, year) but no TMDB id (so by-tmdb above missed it).
+	// Without this, the UPDATE on our row hits the
+	// idx_media_items_library_type_title_year unique constraint and
+	// the user sees "auto-resolve tmdb match failed" with no
+	// resolution. Redirect the UPDATE at the sibling (so it gets our
+	// TMDB id) and merge our row into it.
+	if result.Title != "" {
+		var canonYear *int
+		if result.Year != 0 {
+			y := result.Year
+			canonYear = &y
+		}
+		if survivor, sErr := e.updater.FindTopLevelItemByTitleYear(ctx, item.LibraryID, item.Type, result.Title, canonYear); sErr == nil && survivor != nil && survivor.ID != item.ID {
+			e.logger.InfoContext(ctx, "fix match: merging into NFO-canonical sibling",
+				"loser_id", item.ID, "survivor_id", survivor.ID,
+				"title", result.Title, "tmdb_id", tmdbID)
+			// Apply our IDs (the survivor was id-less) so the merge
+			// preserves them on the survivor row.
+			if err := e.applyMatchedMovieToTarget(ctx, survivor.ID, file, result, tmdbID); err != nil {
+				return fmt.Errorf("apply match to canonical sibling: %w", err)
+			}
+			if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+				return fmt.Errorf("merge into canonical sibling: %w", err)
+			}
+			return nil
+		}
+	}
+
+	if err := e.applyMatchedMovieToTarget(ctx, item.ID, file, result, tmdbID); err != nil {
+		return err
+	}
+	e.logger.InfoContext(ctx, "movie matched",
+		"item_id", item.ID, "title", result.Title, "tmdb_id", tmdbID)
+	return nil
+}
+
+// applyMatchedMovieToTarget builds the canonical-metadata
+// UpdateItemMetadataParams from a TMDB MovieResult and writes it to
+// targetID. Shared between matchMovie's primary path (target = the
+// row the user clicked Fix Match on) and the title+year sibling-merge
+// path (target = the NFO-only sibling that already owns the canonical
+// title+year, so writing canonical fields onto OUR row would collide).
+// file's directory is used as the artwork download root.
+func (e *Enricher) applyMatchedMovieToTarget(ctx context.Context, targetID uuid.UUID, file *media.File, result *metadata.MovieResult, tmdbID int) error {
 	p := media.UpdateItemMetadataParams{
-		ID:        item.ID,
+		ID:        targetID,
 		Title:     result.Title,
 		SortTitle: result.Title,
 		TMDBID:    &tmdbID,
@@ -2231,19 +2315,19 @@ func (e *Enricher) matchMovie(ctx context.Context, agent metadata.Agent, item *m
 		p.OriginallyAvailableAt = &result.ReleaseDate
 	}
 
-	// Force-overwrite via ReplaceShow* (non-Replace path skips when
-	// the file already exists, which would leave the old wrong-match
+	// Force-overwrite via Replace* (non-Replace path skips when the
+	// file already exists, which would leave the old wrong-match
 	// poster bytes on disk).
 	artDir := filepath.Dir(file.FilePath)
 	if e.artwork != nil && artDir != "" && artDir != "." {
 		if result.PosterURL != "" {
-			absPath, dlErr := e.artwork.ReplaceShowPoster(ctx, item.ID, result.PosterURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowPoster(ctx, targetID, result.PosterURL, artDir)
 			if dlErr == nil {
 				e.setRelPath(&p.PosterPath, absPath)
 			}
 		}
 		if result.FanartURL != "" {
-			absPath, dlErr := e.artwork.ReplaceShowFanart(ctx, item.ID, result.FanartURL, artDir)
+			absPath, dlErr := e.artwork.ReplaceShowFanart(ctx, targetID, result.FanartURL, artDir)
 			if dlErr == nil {
 				e.setRelPath(&p.FanartPath, absPath)
 			}
@@ -2253,9 +2337,6 @@ func (e *Enricher) matchMovie(ctx context.Context, agent metadata.Agent, item *m
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update movie metadata: %w", err)
 	}
-
-	e.logger.InfoContext(ctx, "movie matched",
-		"item_id", item.ID, "title", result.Title, "tmdb_id", tmdbID)
 	return nil
 }
 

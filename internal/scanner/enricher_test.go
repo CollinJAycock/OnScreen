@@ -107,6 +107,10 @@ type mockUpdater struct {
 	// "tmdb-id already attached" survivors here; the mock returns ErrNotFound
 	// otherwise.
 	itemByTMDB    map[int]*media.Item
+	// titleYearMatch is the second pre-flight: when non-nil it's
+	// returned for FindTopLevelItemByTitleYear regardless of args.
+	// Tests exercising the title+year sibling-merge path set this.
+	titleYearMatch *media.Item
 	mergeCalls    []mergeCall
 	mergeErr      error
 }
@@ -160,6 +164,17 @@ func (m *mockUpdater) ListChildren(_ context.Context, parentID uuid.UUID) ([]med
 func (m *mockUpdater) GetItemByTMDBID(_ context.Context, _ uuid.UUID, tmdbID int) (*media.Item, error) {
 	if it, ok := m.itemByTMDB[tmdbID]; ok {
 		return it, nil
+	}
+	return nil, errors.New("not found")
+}
+
+// FindTopLevelItemByTitleYear is the title+year sibling-merge pre-flight.
+// Tests that don't exercise that path leave the helper unimplemented (returns
+// not-found), which falls through to the original UPDATE behavior. Tests that
+// DO exercise it can reach in via mockUpdater.titleYearMatch.
+func (m *mockUpdater) FindTopLevelItemByTitleYear(_ context.Context, _ uuid.UUID, _, _ string, _ *int) (*media.Item, error) {
+	if m.titleYearMatch != nil {
+		return m.titleYearMatch, nil
 	}
 	return nil, errors.New("not found")
 }
@@ -1417,6 +1432,66 @@ func TestMatchItem_Show_SelfMatch_NoOp(t *testing.T) {
 	}
 	if len(updater.mergeCalls) != 0 {
 		t.Errorf("merge calls: got %d, want 0 (self-match must not trigger merge)", len(updater.mergeCalls))
+	}
+}
+
+// TestMatchItem_Movie_MergesWhenTitleYearSiblingExists guards the
+// second pre-flight: an NFO-only sibling already owns the canonical
+// (title, year) tuple but has no TMDB id, so the by-tmdb pre-flight
+// can't see it. matchMovie must apply the IDs to the sibling and
+// merge the current row into it — without this, the UPDATE on the
+// current row hits idx_media_items_library_type_title_year and the
+// operator sees "auto-resolve tmdb match failed".
+func TestMatchItem_Movie_MergesWhenTitleYearSiblingExists(t *testing.T) {
+	libraryID := uuid.New()
+	loserID := uuid.New()
+	survivorID := uuid.New()
+	updater := newMockUpdater()
+	updater.items[loserID] = &media.Item{
+		ID: loserID, LibraryID: libraryID, Type: "movie", Title: "Apocalypse Now",
+	}
+	year := 1979
+	updater.items[survivorID] = &media.Item{
+		ID: survivorID, LibraryID: libraryID, Type: "movie",
+		Title: "Apocalypse Now", Year: &year,
+	}
+	updater.files[loserID] = []media.File{
+		{ID: uuid.New(), MediaItemID: loserID, FilePath: "/movies/Apocalypse Now/movie.mkv", Status: "active"},
+	}
+	// itemByTMDB is empty (sibling has no TMDB id), so by-tmdb misses.
+	// titleYearMatch returns the sibling for the by-title+year pre-flight.
+	updater.titleYearMatch = updater.items[survivorID]
+
+	agent := &mockAgent{
+		searchMovieResult: &metadata.MovieResult{
+			TMDBID: 28,
+			Title:  "Apocalypse Now",
+			Year:   1979,
+		},
+	}
+	e := newTestEnricher(agent, updater, nil)
+
+	if err := e.MatchItem(context.Background(), loserID, 28); err != nil {
+		t.Fatalf("MatchItem: %v", err)
+	}
+	if len(updater.mergeCalls) != 1 {
+		t.Fatalf("merge calls: got %d, want 1", len(updater.mergeCalls))
+	}
+	mc := updater.mergeCalls[0]
+	if mc.LoserID != loserID || mc.SurvivorID != survivorID || mc.ItemType != "movie" {
+		t.Errorf("merge call: got %+v, want loser=%s survivor=%s type=movie", mc, loserID, survivorID)
+	}
+	// The UPDATE should have targeted the survivor (carrying our TMDB id),
+	// not the loser. Loser is reparented + deleted by MergeIntoTopLevel.
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("update calls: got %d, want 1", len(updater.updateCalls))
+	}
+	if updater.updateCalls[0].ID != survivorID {
+		t.Errorf("update target: got %s, want survivor %s — IDs must land on the survivor row, not the doomed loser",
+			updater.updateCalls[0].ID, survivorID)
+	}
+	if updater.updateCalls[0].TMDBID == nil || *updater.updateCalls[0].TMDBID != 28 {
+		t.Errorf("survivor's TMDB id: got %v, want 28", updater.updateCalls[0].TMDBID)
 	}
 }
 

@@ -1411,6 +1411,17 @@ func (s *Service) GetItemByTMDBID(ctx context.Context, libraryID uuid.UUID, tmdb
 	return &item, nil
 }
 
+// FindTopLevelItemByTitleYear locates a top-level row matching the
+// (library, type, title, year) tuple — the same key the
+// idx_media_items_library_type_title_year unique partial index
+// enforces. Used by Fix Match's title+year pre-flight: when the
+// chosen TMDB id resolves to canonical metadata that an NFO-only
+// sibling row already carries, redirect the UPDATE at that sibling
+// (so it gets the TMDB id) and merge the current row into it.
+func (s *Service) FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error) {
+	return s.rw.FindTopLevelItemByTitleYear(ctx, libraryID, itemType, title, year)
+}
+
 // MergeIntoTopLevel merges a loser top-level item into a survivor in the
 // same library: reparents seasons/episodes (collisions merge recursively),
 // reparents files, soft-deletes the loser. Wraps the same applyDedupePairs
