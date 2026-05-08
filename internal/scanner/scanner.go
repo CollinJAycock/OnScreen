@@ -683,6 +683,20 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 				s.logger.WarnContext(ctx, "restore ancestry failed", "path", path, "err", err)
 			}
 		}
+		// Even though the file is unchanged, the parent item may still
+		// need enrichment — e.g. the show was scanned before a TMDB key
+		// was configured, or a prior attempt missed and the cooldown has
+		// since elapsed. Without this check, a rescan of a static
+		// library was a no-op for enrichment, which is exactly the QA
+		// experience this session: posters never filled in even after
+		// the operator added the API key, because every file looked
+		// "unchanged" and the bail-out short-circuited before
+		// shouldEnrich could run. Mirrors the hash-match path below.
+		if item, err := s.media.GetItem(ctx, existing.MediaItemID); err == nil {
+			if s.shouldEnrich(ctx, item, false) {
+				return item, existing, false, nil
+			}
+		}
 		return nil, nil, false, nil
 	}
 

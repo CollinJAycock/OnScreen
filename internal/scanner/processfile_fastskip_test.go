@@ -48,10 +48,16 @@ func TestProcessFile_MtimeFastSkip(t *testing.T) {
 	itemID := uuid.New()
 	hash := "deadbeefcafefood"
 	svc := newMockMediaService()
+	// Pre-existing track that's already fully enriched — has a poster
+	// path so itemNeedsEnrich returns false, so the fast skip can take
+	// its full short-circuit. The "still needs enrichment" branch is
+	// covered by TestProcessFile_MtimeFastSkip_NeedsEnrichment below.
+	posterPath := "Music/Pre-existing/poster.jpg"
 	svc.items[itemID] = &media.Item{
-		ID:    itemID,
-		Type:  "track",
-		Title: "Pre-existing track",
+		ID:         itemID,
+		Type:       "track",
+		Title:      "Pre-existing track",
+		PosterPath: &posterPath,
 	}
 	durationMS := int64(180_000)
 	svc.fileByPath[path] = &media.File{
@@ -90,6 +96,74 @@ func TestProcessFile_MtimeFastSkip(t *testing.T) {
 	// (the pre-seeded row).
 	if len(svc.files) != 0 {
 		t.Errorf("CreateOrUpdateFile should not be called on fast skip; svc.files has %d entries", len(svc.files))
+	}
+}
+
+// TestProcessFile_MtimeFastSkip_NeedsEnrichment proves the fast skip still
+// surfaces the item for enrichment when its metadata is incomplete. Real
+// QA bug this guards against: shows scanned before a TMDB key was
+// configured stayed unmatched forever because the fast skip short-
+// circuited on every later rescan, never giving the now-configured
+// agent a chance to fill them in. The fix: in the fast-skip branch,
+// run shouldEnrich(item) and return the item+file pair so the caller
+// queues enrichment, exactly mirroring the hash-match path immediately
+// below it.
+func TestProcessFile_MtimeFastSkip_NeedsEnrichment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "S01E01.mkv")
+	if err := os.WriteFile(path, []byte("contents"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	pastMtime := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(path, pastMtime, pastMtime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	itemID := uuid.New()
+	hash := "deadbeefcafefood"
+	svc := newMockMediaService()
+	// Episode with no Summary and no ThumbPath → itemNeedsEnrich returns
+	// true. Since last_enrich_attempted_at is unset (mock returns nil),
+	// the cooldown check also returns true → shouldEnrich = true.
+	svc.items[itemID] = &media.Item{
+		ID:    itemID,
+		Type:  "episode",
+		Title: "Episode 1",
+	}
+	durationMS := int64(2_500_000)
+	svc.fileByPath[path] = &media.File{
+		ID:          uuid.New(),
+		MediaItemID: itemID,
+		FilePath:    path,
+		FileSize:    info.Size(),
+		FileHash:    &hash,
+		DurationMS:  &durationMS,
+		Status:      "active",
+		ScannedAt:   time.Now(),
+	}
+
+	s := newTestScanner(svc)
+	libID := uuid.New()
+
+	item, file, isNew, err := s.processFile(context.Background(), libID, "show", path, []string{dir})
+	if err != nil {
+		t.Fatalf("processFile returned error: %v", err)
+	}
+	if isNew {
+		t.Errorf("isNew should be false (file already known)")
+	}
+	if item == nil {
+		t.Fatalf("expected item to be returned for enrichment, got nil")
+	}
+	if item.ID != itemID {
+		t.Errorf("returned item id = %s, want %s", item.ID, itemID)
+	}
+	if file == nil {
+		t.Fatalf("expected file to be returned alongside item, got nil")
 	}
 }
 
