@@ -670,6 +670,18 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		SortTitle: result.Title,
 	}
 
+	// Long-standing miss: enrichMovie was reading result.TMDBID for
+	// the by-tmdb pre-flight but never assigning it to the params, so
+	// every successful SearchMovie still left tmdb_id NULL on the row.
+	// enrichShow / matchMovie / matchShow all set this; movie auto-
+	// enrich was the only path leaking the id. Without it, even
+	// well-matched movies stayed in the "unmatched" tray and the
+	// scheduled refresh-missing-art task kept retrying them on every
+	// pass with the same null result.
+	if result.TMDBID != 0 {
+		tmdbID := result.TMDBID
+		p.TMDBID = &tmdbID
+	}
 	if result.OriginalTitle != "" {
 		p.OriginalTitle = &result.OriginalTitle
 	}
@@ -751,6 +763,43 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 				"loser_id", item.ID, "loser_title", item.Title,
 				"survivor_id", survivor.ID, "survivor_title", survivor.Title,
 				"tmdb_id", result.TMDBID)
+			return nil
+		}
+	}
+
+	// Pre-flight #2 — by-title+year. The canonical (title, year) might
+	// already live on an NFO-only sibling that has no provider IDs (so
+	// the by-tmdb pre-flight above missed it). Without this fallback
+	// the UPDATE collides on idx_media_items_library_type_title_year.
+	// Same safety gate as the by-tmdb path: only merge when the loser's
+	// title is plausibly the same content as the canonical.
+	if p.Title != "" {
+		var canonYear *int
+		if p.Year != nil {
+			y := *p.Year
+			canonYear = &y
+		}
+		if survivor, sErr := e.updater.FindTopLevelItemByTitleYear(ctx, item.LibraryID, item.Type, p.Title, canonYear); sErr == nil && survivor != nil && survivor.ID != item.ID {
+			survivorOrig := ""
+			if survivor.OriginalTitle != nil {
+				survivorOrig = *survivor.OriginalTitle
+			}
+			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, result.OriginalTitle) {
+				e.logger.InfoContext(ctx, "enrich: merging into NFO-canonical sibling (movie)",
+					"loser_id", item.ID, "survivor_id", survivor.ID,
+					"title", p.Title, "tmdb_id", result.TMDBID)
+				p.ID = survivor.ID
+				if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
+					return fmt.Errorf("update canonical sibling metadata: %w", err)
+				}
+				if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+					return fmt.Errorf("merge into canonical sibling: %w", err)
+				}
+				return nil
+			}
+			e.logger.WarnContext(ctx, "enrich: skipping risky title+year merge — sibling shares (title,year) but isn't a safe merge target",
+				"loser_id", item.ID, "loser_title", item.Title,
+				"survivor_id", survivor.ID, "survivor_title", survivor.Title)
 			return nil
 		}
 	}
@@ -1097,6 +1146,46 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				"loser_id", item.ID, "loser_title", item.Title,
 				"survivor_id", survivor.ID, "survivor_title", survivor.Title,
 				"tmdb_id", result.TMDBID)
+			return nil
+		}
+	}
+
+	// Pre-flight #2 — by-title+year. Same shape as enrichMovie's
+	// title+year fallback: catches NFO-only siblings whose canonical
+	// (title, year) collides with what we're about to write.
+	if p.Title != "" {
+		var canonYear *int
+		if p.Year != nil {
+			y := *p.Year
+			canonYear = &y
+		}
+		if survivor, sErr := e.updater.FindTopLevelItemByTitleYear(ctx, item.LibraryID, item.Type, p.Title, canonYear); sErr == nil && survivor != nil && survivor.ID != item.ID {
+			survivorOrig := ""
+			if survivor.OriginalTitle != nil {
+				survivorOrig = *survivor.OriginalTitle
+			}
+			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, result.OriginalTitle) {
+				e.logger.InfoContext(ctx, "enrich: merging into NFO-canonical sibling (show)",
+					"loser_id", item.ID, "survivor_id", survivor.ID,
+					"title", p.Title, "tmdb_id", result.TMDBID)
+				p.ID = survivor.ID
+				if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
+					return fmt.Errorf("update canonical sibling metadata: %w", err)
+				}
+				if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+					return fmt.Errorf("merge into canonical sibling: %w", err)
+				}
+				// Reload survivor and cascade onto IT — children that
+				// were just reparented need enrichment against the
+				// freshly-applied IDs.
+				if reloaded, gErr := e.updater.GetItem(ctx, survivor.ID); gErr == nil {
+					e.enrichShowChildren(ctx, agent, reloaded, file)
+				}
+				return nil
+			}
+			e.logger.WarnContext(ctx, "enrich: skipping risky title+year merge (show) — sibling shares (title,year) but isn't a safe merge target",
+				"loser_id", item.ID, "loser_title", item.Title,
+				"survivor_id", survivor.ID, "survivor_title", survivor.Title)
 			return nil
 		}
 	}

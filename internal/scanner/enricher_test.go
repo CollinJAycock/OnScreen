@@ -1435,6 +1435,67 @@ func TestMatchItem_Show_SelfMatch_NoOp(t *testing.T) {
 	}
 }
 
+// TestEnrichMovie_MergesWhenTitleYearSiblingExists guards the auto-
+// enrich path's title+year pre-flight. Real QA bug after the bulk
+// re-enrich: dozens of "refresh missing art failed" warns with
+// "duplicate key value violates unique constraint
+// idx_media_items_library_type_title_year" because enrichMovie's
+// canonical (title, year) collided with an NFO-only sibling that had
+// no TMDB id (so the by-tmdb pre-flight didn't see it). The
+// title+year pre-flight must catch this AND respect the safety gate
+// (don't merge wildly-different titles even if title+year matches —
+// rare but TMDB SearchMovie can hand back a different film with a
+// year clash).
+func TestEnrichMovie_MergesWhenTitleYearSiblingExists(t *testing.T) {
+	libraryID := uuid.New()
+	loserID := uuid.New()
+	survivorID := uuid.New()
+	updater := newMockUpdater()
+	year := 2010
+	updater.items[loserID] = &media.Item{
+		ID: loserID, LibraryID: libraryID, Type: "movie",
+		Title: "The Way",
+	}
+	// NFO-only sibling already owns the canonical (title, year) — same
+	// title, year, no TMDB id. by-tmdb pre-flight can't see it.
+	updater.items[survivorID] = &media.Item{
+		ID: survivorID, LibraryID: libraryID, Type: "movie",
+		Title: "The Way", Year: &year,
+	}
+	updater.titleYearMatch = updater.items[survivorID]
+	updater.files[loserID] = []media.File{
+		{ID: uuid.New(), MediaItemID: loserID, FilePath: "/movies/The Way (2010)/movie.mkv", Status: "active"},
+	}
+
+	agent := &mockAgent{
+		searchMovieResult: &metadata.MovieResult{
+			TMDBID: 41442, Title: "The Way", Year: 2010,
+		},
+	}
+	e := newTestEnricher(agent, updater, nil)
+
+	if err := e.enrichMovie(context.Background(), agent, updater.items[loserID], &updater.files[loserID][0]); err != nil {
+		t.Fatalf("enrichMovie: %v", err)
+	}
+	if len(updater.mergeCalls) != 1 {
+		t.Fatalf("merge calls: got %d, want 1", len(updater.mergeCalls))
+	}
+	mc := updater.mergeCalls[0]
+	if mc.LoserID != loserID || mc.SurvivorID != survivorID {
+		t.Errorf("merge call: got %+v, want loser=%s survivor=%s", mc, loserID, survivorID)
+	}
+	// UPDATE must target the survivor — IDs land on the row that survives.
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("update calls: got %d, want 1", len(updater.updateCalls))
+	}
+	if updater.updateCalls[0].ID != survivorID {
+		t.Errorf("update target: got %s, want %s (survivor)", updater.updateCalls[0].ID, survivorID)
+	}
+	if updater.updateCalls[0].TMDBID == nil || *updater.updateCalls[0].TMDBID != 41442 {
+		t.Errorf("survivor's TMDB id: got %v, want 41442", updater.updateCalls[0].TMDBID)
+	}
+}
+
 // TestMatchItem_Movie_MergesWhenTitleYearSiblingExists guards the
 // second pre-flight: an NFO-only sibling already owns the canonical
 // (title, year) tuple but has no TMDB id, so the by-tmdb pre-flight
