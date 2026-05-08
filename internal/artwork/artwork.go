@@ -154,6 +154,10 @@ func (m *Manager) download(ctx context.Context, url, absPath string, force bool)
 	if err != nil {
 		return "", fmt.Errorf("artwork download: build request: %w", err)
 	}
+	// Wikimedia (and a few other hosts) reject the Go default
+	// "Go-http-client/1.1" UA — set a real one so user-pasted poster
+	// URLs from those sources work.
+	req.Header.Set("User-Agent", "OnScreen/1.0 (+https://github.com/CollinJAycock/OnScreen)")
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
