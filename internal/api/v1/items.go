@@ -20,6 +20,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/contentrating"
@@ -1550,6 +1551,15 @@ func (h *ItemHandler) ApplyPoster(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"poster_url": body.URL}, audit.ClientIP(r))
 	}
 	if err := h.posters.SetItemPoster(r.Context(), id, body.URL); err != nil {
+		var dlErr *artwork.DownloadHTTPError
+		if errors.As(err, &dlErr) {
+			h.logger.WarnContext(r.Context(), "apply poster: upstream non-200",
+				"id", id, "url", body.URL, "status", dlErr.StatusCode)
+			respond.BadRequest(w, r, fmt.Sprintf(
+				"image URL returned HTTP %d — paste a direct link to a .jpg / .png / .webp, not a webpage",
+				dlErr.StatusCode))
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "apply poster", "id", id, "url", body.URL, "err", err)
 		respond.InternalError(w, r)
 		return

@@ -3550,7 +3550,11 @@
         </div>
       {/if}
 
-      <h3 class="poster-paste-h">Or paste an image URL</h3>
+      <h3 class="poster-paste-h">Or paste a direct image URL</h3>
+      <p class="poster-paste-hint">
+        Must be a direct link to the image file (right-click → Copy image
+        address). Page URLs from IMDB, Wikipedia, Google Images won't work.
+      </p>
       <form
         class="poster-paste-form"
         on:submit|preventDefault={() => applyPoster(posterPasteUrl.trim())}
@@ -4808,6 +4812,12 @@
     color: var(--text-muted);
     margin: 0.5rem 0 0.5rem;
     font-weight: 600;
+  }
+  .poster-paste-hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    margin: 0 0 0.6rem;
   }
   .poster-paste-form { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
   .poster-paste-input {

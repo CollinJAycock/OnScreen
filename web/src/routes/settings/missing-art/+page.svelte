@@ -151,7 +151,12 @@
                 <p class="muted">No TMDB ID attached — paste a URL below.</p>
               {/if}
 
-              <h3 class="picker-h">Paste image URL</h3>
+              <h3 class="picker-h">Paste direct image URL</h3>
+              <p class="paste-hint">
+                Must be a direct link to the image file (right-click → Copy
+                image address). Page URLs from IMDB, Wikipedia, Google Images
+                won't work.
+              </p>
               <form class="paste-form" on:submit|preventDefault={() => applyUrl(item, pasteUrl.trim())}>
                 <input
                   type="url"
@@ -233,6 +238,12 @@
   .poster-btn:disabled { opacity: 0.5; cursor: progress; }
   .poster-btn img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
 
+  .paste-hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    margin: 0 0 0.6rem;
+  }
   .paste-form { display: flex; gap: 0.5rem; }
   .paste-input {
     flex: 1;

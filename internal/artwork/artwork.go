@@ -27,6 +27,20 @@ import (
 	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
+// DownloadHTTPError is returned when an artwork URL responds with a
+// non-200 status. Callers that surface user-supplied URLs (the manual
+// poster picker) check for this with errors.As to render a 4xx with
+// the actual upstream status — generic 500s leave operators guessing
+// whether the URL was wrong or the server itself broke.
+type DownloadHTTPError struct {
+	URL        string
+	StatusCode int
+}
+
+func (e *DownloadHTTPError) Error() string {
+	return fmt.Sprintf("artwork download: status %d", e.StatusCode)
+}
+
 // Manager downloads and caches artwork (ADR-006).
 type Manager struct {
 	cachePath  string // resize cache path
@@ -148,7 +162,7 @@ func (m *Manager) download(ctx context.Context, url, absPath string, force bool)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("artwork download: status %d", resp.StatusCode)
+		return "", &DownloadHTTPError{URL: url, StatusCode: resp.StatusCode}
 	}
 
 	dir := filepath.Dir(absPath)
