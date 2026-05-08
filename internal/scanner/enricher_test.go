@@ -1948,3 +1948,52 @@ func TestAnilistShowFallback_NoOfflineDBLeavesLiveSearchBehaviour(t *testing.T) 
 		t.Fatalf("expected nil when both live + offline miss, got %+v", got)
 	}
 }
+
+// TestMergeIsSafe codifies the safety gate around the auto-merge
+// pre-flight in enrichShow / enrichMovie. Real cases from QA: the
+// "wrong merge" rows are the ones we MUST reject (TMDB SearchTV
+// returned a vague best-effort match and the unguarded merge bonded
+// unrelated content together); the "correct merge" rows are the
+// year-suffix and cross-language duplicates the gate must let through.
+func TestMergeIsSafe(t *testing.T) {
+	tests := []struct {
+		name           string
+		loser          string
+		survivor       string
+		survivorOrig   string
+		canonicalOrig  string
+		want           bool
+	}{
+		// --- year-suffix duplicates (MUST merge) ---
+		{"year-suffix bare", "1923 2022", "1923", "", "", true},
+		{"year-suffix with show name", "Battlestar Galactica 1978", "Battlestar Galactica", "", "", true},
+		{"year-suffix punctuation diff", "All Creatures Great Small 2020", "All Creatures Great & Small", "", "", true},
+		{"year-suffix parens", "1923 (2022)", "1923", "", "", true},
+
+		// --- cross-language via original_title (MUST merge) ---
+		{"cross-language via survivor original", "La casa de papel", "Money Heist", "La Casa de Papel", "", true},
+		{"cross-language via canonical original", "El Descubrimiento de las Brujas", "A Discovery of Witches", "", "El Descubrimiento de las Brujas", true},
+
+		// --- vague TMDB matches (MUST NOT merge — these were the QA bugs) ---
+		{"unrelated show", "100 Day Hotel Challenge", "Love Exposure: The TV-Show", "", "", false},
+		{"unrelated show 2", "1971 The Year That Music Changed Everything", "Love Exposure: The TV-Show", "", "", false},
+		{"regional variant UK vs US", "Ghosts UK", "Ghosts", "", "", false},
+		{"different spinoff", "Law and Order 1990", "Law & Order: Special Victims Unit", "", "", false},
+		{"after-show vs main", "13 Reasons Why 2017", "13 Reasons Why: Beyond the Reasons", "", "", false},
+		{"abbreviation could be anything", "FH", "Full House", "", "", false},
+		{"spinoff", "Adventure Time Distant Lands", "Adventure Time", "", "", false},
+
+		// --- edge cases ---
+		{"empty loser", "", "Anything", "", "", false},
+		{"identical titles", "Show", "Show", "", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeIsSafe(tc.loser, tc.survivor, tc.survivorOrig, tc.canonicalOrig)
+			if got != tc.want {
+				t.Errorf("mergeIsSafe(loser=%q, survivor=%q, sOrig=%q, cOrig=%q) = %v, want %v",
+					tc.loser, tc.survivor, tc.survivorOrig, tc.canonicalOrig, got, tc.want)
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -681,20 +682,31 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 	// TMDB) stay — the NFO doesn't override those.
 	applyMovieNFO(&p, nfoMovie)
 
-	// Pre-flight merge — same shape as enrichShow / matchShow / matchMovie.
-	// Without this the UpdateItemMetadata below would crash whenever the
-	// canonical TMDB title+year already lives on a sibling row in the
-	// library (year-suffix duplicate from the scanner's folder parser,
-	// or a hand-renamed re-scan that produced two rows for the same film).
+	// Pre-flight merge with the same safety gate as enrichShow.
+	// See mergeIsSafe for the accepted shapes (year-suffix variant or
+	// TMDB-known original-title alias). Vague TMDB matches stay
+	// unmatched and surface for manual Fix Match.
 	if result.TMDBID != 0 {
 		if survivor, sErr := e.updater.GetItemByTMDBID(ctx, item.LibraryID, result.TMDBID); sErr == nil && survivor != nil && survivor.ID != item.ID {
-			e.logger.InfoContext(ctx, "enrich: merging movie into existing canonical row",
-				"loser_id", item.ID, "survivor_id", survivor.ID,
-				"loser_title", item.Title, "survivor_title", survivor.Title,
-				"tmdb_id", result.TMDBID)
-			if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
-				return fmt.Errorf("merge into canonical row: %w", err)
+			survivorOrig := ""
+			if survivor.OriginalTitle != nil {
+				survivorOrig = *survivor.OriginalTitle
 			}
+			canonOrig := result.OriginalTitle
+			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, canonOrig) {
+				e.logger.InfoContext(ctx, "enrich: merging movie into existing canonical row",
+					"loser_id", item.ID, "survivor_id", survivor.ID,
+					"loser_title", item.Title, "survivor_title", survivor.Title,
+					"tmdb_id", result.TMDBID)
+				if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+					return fmt.Errorf("merge into canonical row: %w", err)
+				}
+				return nil
+			}
+			e.logger.WarnContext(ctx, "enrich: skipping risky auto-merge — sibling has same TMDB id but loser title isn't a year-suffix or alias variant; resolve via Fix Match if appropriate",
+				"loser_id", item.ID, "loser_title", item.Title,
+				"survivor_id", survivor.ID, "survivor_title", survivor.Title,
+				"tmdb_id", result.TMDBID)
 			return nil
 		}
 	}
@@ -711,6 +723,67 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		"from_nfo", nfoMovie != nil,
 	)
 	return nil
+}
+
+// mergeIsSafe gates the auto-merge in enrichShow / enrichMovie. A pre-
+// flight merge fires when TMDB returns a canonical id that another
+// row in the library is already attached to — but TMDB SearchTV
+// happily returns its best-effort guess for queries it has no real
+// match for, so a positive id collision alone is not enough to
+// commit a destructive reparent + delete.
+//
+// Accepts two safe shapes:
+//   1. The loser title equals the survivor's canonical title after
+//      year-suffix-strip + alphanumeric normalization. Catches the
+//      year-suffix duplicates the scanner produces today
+//      ("1923 2022" → "1923", "Battlestar Galactica 1978" →
+//      "Battlestar Galactica", "All Creatures Great Small 2020"
+//      → "All Creatures Great & Small").
+//   2. The loser title equals the survivor's original_title (or the
+//      TMDB result's original_title) under the same normalization.
+//      Catches cross-language aliases ("La casa de papel" →
+//      "Money Heist", "El Descubrimiento de las Brujas" →
+//      "A Discovery of Witches") which the title comparison would
+//      reject but which TMDB knows are the same show.
+//
+// Anything else (vague TMDB matches, spinoffs, regional variants
+// like "Ghosts UK") returns false. The caller should log + leave the
+// loser unmatched so the operator can use Fix Match to resolve.
+func mergeIsSafe(loserTitle, survivorTitle, survivorOriginalTitle, canonicalOriginalTitle string) bool {
+	loserNorm := normalizeForMerge(loserTitle)
+	if loserNorm == "" {
+		return false
+	}
+	if loserNorm == normalizeForMerge(survivorTitle) {
+		return true
+	}
+	if survivorOriginalTitle != "" && loserNorm == normalizeForMerge(survivorOriginalTitle) {
+		return true
+	}
+	if canonicalOriginalTitle != "" && loserNorm == normalizeForMerge(canonicalOriginalTitle) {
+		return true
+	}
+	return false
+}
+
+// normalizeForMerge mirrors the dedupe ladder closely enough to
+// catch the year-suffix and punctuation-variant cases. Strips a
+// trailing 4-digit year, lowercases, drops non-alphanumeric
+// characters. Intentionally simpler than normalize_dedupe_title()
+// in 00001_init.sql — we only need it to recognise sameness of two
+// titles that the scanner / TMDB both think identify the same show.
+var trailingYearRE = regexp.MustCompile(`[\s\-]+[\(\[]?(19|20)\d{2}[\)\]]?\s*$`)
+
+func normalizeForMerge(s string) string {
+	s = trailingYearRE.ReplaceAllString(s, "")
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // applyShowNFO layers NFO values over TMDB-derived UpdateItemMetadataParams
@@ -912,22 +985,47 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	// Pre-flight merge: if another row in this library is already
 	// attached to the canonical TMDB id, the UpdateItemMetadata below
 	// would crash with the idx_media_items_library_type_title_year
-	// unique-constraint violation (the operator-visible "100 Day Hotel
-	// Challenge" / "Battlestar Galactica 1978" / "1923 2022" symptom on
-	// QA — every cascade re-enrich attempt collided because the year-
-	// suffix duplicate row tried to upgrade to canonical title+year and
-	// lost to the already-canonical sibling). Reparent this row's
-	// children onto the survivor and stop — same shape as matchShow's
-	// pre-flight, lifted into the auto-enrich path.
+	// unique-constraint violation. Reparent this row's children onto
+	// the survivor and stop — but ONLY when we can prove the loser is
+	// the same show under year-suffix-strip rules.
+	//
+	// SAFETY GATE: TMDB SearchTV returns a best-effort guess for any
+	// query, including queries it has no real match for ("100 Day
+	// Hotel Challenge" hands back tmdb 83649 = Lupin). Without the
+	// gate, the merge bonded unrelated content together — a
+	// destructive operation that's hard to undo. The gate accepts only
+	// the cases the dedupe ladder is designed for:
+	//   * loser title equals survivor title after year-suffix strip
+	//     and normalization ("1923 2022" → "1923",
+	//     "Battlestar Galactica 1978" → "Battlestar Galactica",
+	//     "All Creatures Great Small 2020" → "All Creatures Great & Small"),
+	//   * OR loser title equals the survivor's original_title
+	//     (cross-language: "La casa de papel" → "Money Heist",
+	//     "El Descubrimiento de las Brujas" → "A Discovery of Witches").
+	// Bad TMDB matches now stay unmatched and surface in the unmatched
+	// list for manual Fix Match. Operator can also see WHY they were
+	// rejected via the warn-level log below.
 	if result.TMDBID != 0 {
 		if survivor, sErr := e.updater.GetItemByTMDBID(ctx, item.LibraryID, result.TMDBID); sErr == nil && survivor != nil && survivor.ID != item.ID {
-			e.logger.InfoContext(ctx, "enrich: merging into existing canonical row",
-				"loser_id", item.ID, "survivor_id", survivor.ID,
-				"loser_title", item.Title, "survivor_title", survivor.Title,
-				"tmdb_id", result.TMDBID)
-			if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
-				return fmt.Errorf("merge into canonical row: %w", err)
+			survivorOrig := ""
+			if survivor.OriginalTitle != nil {
+				survivorOrig = *survivor.OriginalTitle
 			}
+			canonOrig := result.OriginalTitle
+			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, canonOrig) {
+				e.logger.InfoContext(ctx, "enrich: merging into existing canonical row",
+					"loser_id", item.ID, "survivor_id", survivor.ID,
+					"loser_title", item.Title, "survivor_title", survivor.Title,
+					"tmdb_id", result.TMDBID)
+				if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
+					return fmt.Errorf("merge into canonical row: %w", err)
+				}
+				return nil
+			}
+			e.logger.WarnContext(ctx, "enrich: skipping risky auto-merge — sibling has same TMDB id but loser title isn't a year-suffix or alias variant; resolve via Fix Match if appropriate",
+				"loser_id", item.ID, "loser_title", item.Title,
+				"survivor_id", survivor.ID, "survivor_title", survivor.Title,
+				"tmdb_id", result.TMDBID)
 			return nil
 		}
 	}
