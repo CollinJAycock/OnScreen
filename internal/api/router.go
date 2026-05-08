@@ -554,6 +554,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/items/unmatched", h.ItemsAdmin.ListUnmatched)
+					r.Get("/admin/items/missing-art", h.ItemsAdmin.ListMissingArt)
 					r.Post("/admin/items/re-enrich-unmatched", h.ItemsAdmin.ReEnrichUnmatched)
 				})
 			}

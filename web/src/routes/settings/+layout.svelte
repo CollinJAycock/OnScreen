@@ -24,6 +24,7 @@
     { href: '/settings/plugins', label: 'Plugins', exact: false },
     { href: '/settings/tasks', label: 'Tasks', exact: false },
     { href: '/settings/unmatched', label: 'Fix Match', exact: false },
+    { href: '/settings/missing-art', label: 'Set Poster', exact: false },
     { href: '/settings/backup', label: 'Backup', exact: false },
     { href: '/settings/sso', label: 'SSO', exact: false },
     { href: '/settings/email', label: 'Email', exact: false },

@@ -540,6 +540,26 @@ export const unmatchedApi = {
   }
 };
 
+// ── Admin Missing Art (poster-fix tray) ───────────────────────────────────────
+
+export interface MissingArtItem {
+  id: string;
+  library_id: string;
+  type: 'movie' | 'show';
+  title: string;
+  year?: number;
+  tmdb_id?: number;
+}
+
+export interface MissingArtListResponse {
+  items: MissingArtItem[];
+  total: number;
+}
+
+export const missingArtApi = {
+  list: () => api.get<MissingArtListResponse>('/admin/items/missing-art')
+};
+
 // ── Invites (admin) ───────────────────────────────────────────────────────────
 
 export const inviteApi = {

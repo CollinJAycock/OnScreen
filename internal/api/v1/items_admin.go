@@ -23,6 +23,7 @@ import (
 // shouldn't pollute the day-to-day service interface.
 type ItemBulkAdminDB interface {
 	ListUnmatchedTopLevelItems(ctx context.Context, arg gen.ListUnmatchedTopLevelItemsParams) ([]gen.ListUnmatchedTopLevelItemsRow, error)
+	ListMediaItemsMissingArt(ctx context.Context, limit int32) ([]gen.ListMediaItemsMissingArtRow, error)
 	UpdateMediaItemTitle(ctx context.Context, arg gen.UpdateMediaItemTitleParams) error
 }
 
@@ -66,6 +67,71 @@ type unmatchedItem struct {
 type unmatchedListResponse struct {
 	Items []unmatchedItem `json:"items"`
 	Total int             `json:"total"`
+}
+
+// missingArtItem is the per-row shape for GET /admin/items/missing-art.
+// Mirrors unmatchedItem but adds tmdb_id so the missing-art tray can
+// kick the existing TMDB poster picker (POST /items/{id}/posters
+// needs a tmdb id) without an extra round-trip per row.
+type missingArtItem struct {
+	ID        string `json:"id"`
+	LibraryID string `json:"library_id"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Year      *int32 `json:"year,omitempty"`
+	TMDBID    *int   `json:"tmdb_id,omitempty"`
+}
+
+type missingArtListResponse struct {
+	Items []missingArtItem `json:"items"`
+	Total int              `json:"total"`
+}
+
+// ListMissingArt handles GET /api/v1/admin/items/missing-art. Returns
+// every top-level movie/show with no poster_path. Used by the admin
+// "Set poster" tray so the operator can pick a TMDB poster variant
+// or paste a URL for items where the auto-fetched poster came back
+// empty. List-only — mutations go through the existing /items/{id}/
+// posters and /items/{id}/poster endpoints.
+func (h *ItemBulkAdminHandler) ListMissingArt(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	claims := middleware.ClaimsFromContext(ctx)
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+
+	limit := respond.ParseLimit(r, 200, 1000)
+	rows, err := h.db.ListMediaItemsMissingArt(ctx, limit)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "list items missing art", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	items := make([]missingArtItem, 0, len(rows))
+	for _, row := range rows {
+		entry := missingArtItem{
+			ID:        row.ID.String(),
+			LibraryID: row.LibraryID.String(),
+			Type:      row.Type,
+			Title:     row.Title,
+		}
+		if row.Year != nil {
+			y := *row.Year
+			entry.Year = &y
+		}
+		if row.TmdbID != nil {
+			v := int(*row.TmdbID)
+			entry.TMDBID = &v
+		}
+		items = append(items, entry)
+	}
+
+	respond.Success(w, r, missingArtListResponse{
+		Items: items,
+		Total: len(items),
+	})
 }
 
 // ListUnmatched handles GET /api/v1/admin/items/unmatched. Returns

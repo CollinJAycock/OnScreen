@@ -44,6 +44,10 @@ func (m *mockBulkAdminDB) UpdateMediaItemTitle(_ context.Context, p gen.UpdateMe
 	return nil
 }
 
+func (m *mockBulkAdminDB) ListMediaItemsMissingArt(_ context.Context, _ int32) ([]gen.ListMediaItemsMissingArtRow, error) {
+	return nil, nil
+}
+
 type mockBulkEnricher struct {
 	mu       sync.Mutex
 	enriched []uuid.UUID
