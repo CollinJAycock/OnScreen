@@ -297,13 +297,24 @@ func run() error {
 		}
 		agentMu.Lock()
 		defer agentMu.Unlock()
+		// Don't poison a previously-good cache with an empty live read.
+		// settings.get returns "" on transient DB errors as well as "key
+		// not set" — under load (bulk re-enrich hammering this) the
+		// pool can drop a query, return "", and the old code would
+		// cache nil indefinitely until the read returned something
+		// different. Real bug from QA: 18 of 20 bulk re-enrich items
+		// silently no-op'd against an apparently-unconfigured TMDB
+		// agent while the row was sitting in server_settings the
+		// whole time. The /api/v1/settings PATCH path explicitly
+		// clears the agent on a real key change (see SetTMDBAPIKey
+		// callers), so the only legitimate "go to nil" trigger is
+		// admin action, not a transient read failure.
+		if key == "" {
+			return agentCache
+		}
 		if key != agentKey {
 			agentKey = key
-			if key == "" {
-				agentCache = nil
-			} else {
-				agentCache = tmdb.New(key, cfg.TMDBRateLimit, "")
-			}
+			agentCache = tmdb.New(key, cfg.TMDBRateLimit, "")
 		}
 		return agentCache
 	}

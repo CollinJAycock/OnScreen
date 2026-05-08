@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onscreen/onscreen/internal/auth"
@@ -567,6 +568,16 @@ func (s *Service) get(ctx context.Context, key string) string {
 		`SELECT value FROM server_settings WHERE key = $1`, key,
 	).Scan(&val)
 	if err != nil {
+		// pgx.ErrNoRows is the legitimate "key not set yet" case and
+		// callers handle the empty return. Anything else (pool exhausted,
+		// transient connection drop, query timeout) was previously
+		// swallowed silently — the agent factory then cached `nil` for
+		// hours of "secret unset" while the row was actually present.
+		// Surface it so the same hang can't happen invisibly again.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.ErrorContext(ctx, "settings get: db query failed",
+				"key", key, "err", err)
+		}
 		return ""
 	}
 	// Encrypted-at-rest path: anything with the encv1: sentinel passes
