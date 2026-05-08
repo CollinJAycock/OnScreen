@@ -1065,6 +1065,7 @@
   let posterLoading = false;
   let posterApplying = false;
   let posterError = '';
+  let posterPasteUrl = '';
 
   async function openPosterModal() {
     if (!item) return;
@@ -1073,6 +1074,7 @@
     posterCandidates = [];
     posterMatchResults = [];
     posterApplying = false;
+    posterPasteUrl = '';
     posterMatchQuery = item.title ?? '';
     // Skip the TMDB-pick step if the item already has a confirmed match.
     const tid = item.tmdb_id;
@@ -3547,6 +3549,27 @@
           {/each}
         </div>
       {/if}
+
+      <h3 class="poster-paste-h">Or paste an image URL</h3>
+      <form
+        class="poster-paste-form"
+        on:submit|preventDefault={() => applyPoster(posterPasteUrl.trim())}
+      >
+        <input
+          type="url"
+          class="poster-paste-input"
+          placeholder="https://example.com/poster.jpg"
+          bind:value={posterPasteUrl}
+          required
+        />
+        <button
+          type="submit"
+          class="poster-paste-btn"
+          disabled={posterApplying || !posterPasteUrl.trim()}
+        >
+          {posterApplying ? 'Applying…' : 'Apply'}
+        </button>
+      </form>
     {/if}
 
     <button class="match-cancel" on:click={() => showPosterModal = false}>Cancel</button>
@@ -4777,6 +4800,40 @@
   }
   .poster-lang { font-weight: 700; letter-spacing: 0.5px; }
   .poster-dims { opacity: 0.85; }
+
+  .poster-paste-h {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 0.5rem 0 0.5rem;
+    font-weight: 600;
+  }
+  .poster-paste-form { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+  .poster-paste-input {
+    flex: 1;
+    padding: 0.55rem 0.75rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    outline: none;
+    box-sizing: border-box;
+  }
+  .poster-paste-input:focus { border-color: rgba(124,106,247,0.5); }
+  .poster-paste-btn {
+    padding: 0.55rem 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .poster-paste-btn:hover:not(:disabled) { background: #6b5ce6; }
+  .poster-paste-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* ── Photo viewer ───────────────────────────────────── */
   .photo-viewer {
