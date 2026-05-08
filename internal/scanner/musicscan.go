@@ -273,15 +273,19 @@ var albumArtFilenames = []string{
 }
 
 // artistArtFilenames lists the on-disk artist-portrait filenames we
-// check in the artist directory. "artist.jpg" is unambiguous; the
-// "folder.jpg"/"poster.jpg" entries only matter when the artist
-// directory is distinct from the album directory (nested layout) —
-// on flat layouts they're the album's own art and we skip them in
-// extractArtistArt.
+// check in the artist directory. Restricted to "artist.jpg" only —
+// the historic "folder.jpg" / "poster.jpg" / "cover.jpg" fallbacks
+// are ambiguous: they're album covers in flat-album layouts, library
+// art in shared-parent layouts, and only artist portraits in the
+// dedicated-artist-folder case. The QA bug — every artist showing
+// AC/DC's image — was every flat-album artist reading the same
+// folder.jpg from the music library root and copying its bytes as
+// their personal portrait. Drop the ambiguous filenames; users with
+// per-artist portraits can rename to artist.jpg (the Plex/Jellyfin
+// convention) or rely on TheAudioDB enrichment to fetch a real
+// portrait by MusicBrainz id.
 var artistArtFilenames = []string{
 	"artist.jpg", "artist.jpeg", "artist.png",
-	"poster.jpg", "poster.jpeg", "poster.png",
-	"folder.jpg", "folder.jpeg", "folder.png",
 }
 
 // extractAlbumArt writes the album's poster to {album.id}-poster.jpg in
