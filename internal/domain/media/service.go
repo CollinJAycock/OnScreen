@@ -202,6 +202,8 @@ type Querier interface {
 	GetMediaItemByTMDBID(ctx context.Context, libraryID uuid.UUID, tmdbID int) (Item, error)
 	ListMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]Item, error)
 	ListMediaItemsMissingArt(ctx context.Context, limit int32) ([]Item, error)
+	CountMediaItemsMissingArt(ctx context.Context) (int32, error)
+	CountUnmatchedTopLevelItems(ctx context.Context) (int32, error)
 	ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f FilterParams) ([]Item, error)
 	ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]Item, error)
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
@@ -572,6 +574,29 @@ func (s *Service) ListItemsMissingArt(ctx context.Context, limit int32) ([]Item,
 		return nil, fmt.Errorf("list media items missing art: %w", err)
 	}
 	return items, nil
+}
+
+// CountItemsMissingArt returns a snapshot count of top-level movies/shows
+// with no poster_path. Drives the /api/v1/jobs status surface so the
+// frontend can display "N items still need artwork" without paging
+// through the list.
+func (s *Service) CountItemsMissingArt(ctx context.Context) (int, error) {
+	n, err := s.ro.CountMediaItemsMissingArt(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count media items missing art: %w", err)
+	}
+	return int(n), nil
+}
+
+// CountUnmatchedItems returns a snapshot count of top-level movies/shows
+// with no provider IDs (tmdb / tvdb / imdb all null). Drives the "needs
+// manual Fix Match" surface on /api/v1/jobs. Operator-actionable signal.
+func (s *Service) CountUnmatchedItems(ctx context.Context) (int, error) {
+	n, err := s.ro.CountUnmatchedTopLevelItems(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count unmatched top-level items: %w", err)
+	}
+	return int(n), nil
 }
 
 // ListChildren returns children of a media item (seasons, episodes, tracks).

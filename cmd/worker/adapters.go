@@ -389,6 +389,14 @@ func (a *mediaAdapter) ListMediaItemsMissingArt(ctx context.Context, limit int32
 	return out, nil
 }
 
+func (a *mediaAdapter) CountMediaItemsMissingArt(ctx context.Context) (int32, error) {
+	return a.q.CountMediaItemsMissingArt(ctx)
+}
+
+func (a *mediaAdapter) CountUnmatchedTopLevelItems(ctx context.Context) (int32, error) {
+	return a.q.CountUnmatchedTopLevelItems(ctx)
+}
+
 func (a *mediaAdapter) ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error) {
 	rows, err := a.q.ListMediaItemChildren(ctx, pgtype.UUID{Bytes: [16]byte(parentID), Valid: true})
 	if err != nil {

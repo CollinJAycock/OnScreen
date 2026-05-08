@@ -64,6 +64,44 @@ func (q *Queries) CountMediaItemsFiltered(ctx context.Context, arg CountMediaIte
 	return count, err
 }
 
+const countMediaItemsMissingArt = `-- name: CountMediaItemsMissingArt :one
+SELECT count(*)::int AS missing_art_count
+FROM media_items
+WHERE type IN ('movie', 'show')
+  AND poster_path IS NULL
+  AND deleted_at IS NULL
+`
+
+// Snapshot count for the /api/v1/jobs status surface. Same predicate as
+// ListMediaItemsMissingArt above so the count and the list always agree.
+func (q *Queries) CountMediaItemsMissingArt(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countMediaItemsMissingArt)
+	var missing_art_count int32
+	err := row.Scan(&missing_art_count)
+	return missing_art_count, err
+}
+
+const countUnmatchedTopLevelItems = `-- name: CountUnmatchedTopLevelItems :one
+SELECT count(*)::int AS unmatched_count
+FROM media_items
+WHERE parent_id IS NULL
+  AND deleted_at IS NULL
+  AND type IN ('movie', 'show')
+  AND tmdb_id IS NULL
+  AND tvdb_id IS NULL
+  AND imdb_id IS NULL
+`
+
+// Snapshot count of top-level rows with no provider IDs at all. Drives the
+// "N shows need manual matching" surface; same predicate as
+// ListUnmatchedTopLevelItems so counts and list agree.
+func (q *Queries) CountUnmatchedTopLevelItems(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countUnmatchedTopLevelItems)
+	var unmatched_count int32
+	err := row.Scan(&unmatched_count)
+	return unmatched_count, err
+}
+
 const createMediaFile = `-- name: CreateMediaFile :one
 
 INSERT INTO media_files (

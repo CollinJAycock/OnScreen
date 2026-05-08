@@ -923,6 +923,12 @@ func run() error {
 	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger)
 	tasksHandler := v1.NewTasksHandler(gen.New(rwPool), schedRegistry, logger)
 
+	// Jobs status feed — drives the frontend "scanning…", "N items
+	// missing art", "N items unmatched" banner. Reads from the live
+	// scanEnqueuer for in-flight scans and from mediaSvc for the
+	// snapshot counts; both are cheap. Mounted at /api/v1/jobs.
+	jobsHandler := v1.NewJobsHandler(libEnqueuer, mediaSvc, &jobsLibNamer{libSvc: libSvc}, logger)
+
 	// ── People (cast/crew) handler — lazy TMDB fetch on first item-detail
 	// view. peopleSvc itself is constructed earlier (above the items
 	// handler) so the items handler can wire it as a credits refresher.
@@ -972,6 +978,7 @@ func run() error {
 		Maintenance:        maintenanceHandler,
 		Backup:             backupHandler,
 		Tasks:              tasksHandler,
+		Jobs:               jobsHandler,
 		People:             peopleHandler,
 		Plugins:            pluginHandler,
 		Pair:               pairHandler,
@@ -1191,6 +1198,24 @@ func run() error {
 
 // scanEnqueuer implements library.ScanEnqueuer and scanner.WatchTrigger.
 // It manages per-library filesystem watchers and drives the real scanner.
+// jobsLibNamer adapts library.Service to the v1.JobsLibraryNamer
+// interface so the JobsHandler can decorate in-flight scan UUIDs with
+// human-readable library names ("scanning Movies…" beats "scanning
+// 5a8ac716-…"). NameOf returns ("", false) when the library can't be
+// resolved — JobsHandler treats that as "fall through to the UUID",
+// so a transient lookup failure doesn't black out the response.
+type jobsLibNamer struct {
+	libSvc *library.Service
+}
+
+func (j *jobsLibNamer) NameOf(ctx context.Context, id uuid.UUID) (string, bool) {
+	lib, err := j.libSvc.Get(ctx, id)
+	if err != nil {
+		return "", false
+	}
+	return lib.Name, true
+}
+
 type scanEnqueuer struct {
 	scanner           *scanner.Scanner
 	libSvc            *library.Service
@@ -1217,6 +1242,23 @@ type scanEnqueuer struct {
 	// parallel — burning CPU and writing competing intro_markers
 	// rows for the same episode.
 	detectInFlight sync.Map // uuid.UUID → struct{}
+}
+
+// InFlightScans returns the set of library IDs currently being scanned.
+// Read-side surface for the /api/v1/jobs endpoint so the frontend can
+// show a "scanning Movies…" banner without polling any heavier
+// progress source. Snapshot semantics: a scan that completes between
+// the InFlightScans call and the response is fine, the next poll
+// will catch up.
+func (e *scanEnqueuer) InFlightScans() []uuid.UUID {
+	out := make([]uuid.UUID, 0)
+	e.scanInFlight.Range(func(k, _ any) bool {
+		if id, ok := k.(uuid.UUID); ok {
+			out = append(out, id)
+		}
+		return true
+	})
+	return out
 }
 
 func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) error {

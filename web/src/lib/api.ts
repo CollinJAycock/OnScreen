@@ -506,6 +506,40 @@ export const emailApi = {
   sendTest: (to: string) => api.post<{ message: string }>('/email/test', { to })
 };
 
+// ── Jobs / status ─────────────────────────────────────────────────────────────
+
+export interface JobsStatus {
+  scans: { library_id: string; library_name?: string }[];
+  missing_art_count: number;
+  unmatched_count: number;
+}
+
+export const jobsApi = {
+  get: () => api.get<JobsStatus>('/jobs')
+};
+
+// ── Admin Fix Match (unmatched items tray) ────────────────────────────────────
+
+export interface UnmatchedItem {
+  id: string;
+  library_id: string;
+  type: 'movie' | 'show';
+  title: string;
+  year?: number;
+}
+
+export interface UnmatchedListResponse {
+  items: UnmatchedItem[];
+  total: number;
+}
+
+export const unmatchedApi = {
+  list: (libraryId?: string) => {
+    const qs = libraryId ? `?library_id=${encodeURIComponent(libraryId)}` : '';
+    return api.get<UnmatchedListResponse>(`/admin/items/unmatched${qs}`);
+  }
+};
+
 // ── Invites (admin) ───────────────────────────────────────────────────────────
 
 export const inviteApi = {

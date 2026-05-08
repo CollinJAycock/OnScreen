@@ -392,6 +392,14 @@ func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.Fil
 // UpdateItemMetadataParams. NFO wins where it's populated — it's
 // operator-curated data, not a scraper guess. Empty NFO fields fall
 // through to whatever TMDB already set on p.
+//
+// Provider IDs (TMDB / IMDB) come through too: a Kodi/Jellyfin
+// `<uniqueid type="tmdb">…</uniqueid>` is the operator declaring "this
+// IS the canonical ID". Without propagating it, an NFO-enriched library
+// would have metadata + posters but tmdb_id=NULL — every refresh-
+// missing-art / scheduled-task pass would re-treat it as unmatched, and
+// the admin Fix Match tray would surface it indefinitely as "needs a
+// manual match" even though the NFO already declared the answer.
 func applyMovieNFO(p *media.UpdateItemMetadataParams, m *nfo.Movie) {
 	if m == nil {
 		return
@@ -438,6 +446,16 @@ func applyMovieNFO(p *media.UpdateItemMetadataParams, m *nfo.Movie) {
 	if m.Premiered != nil {
 		v := *m.Premiered
 		p.OriginallyAvailableAt = &v
+	}
+	// Only set IDs when not already populated — when TMDB succeeded,
+	// the result-based IDs are authoritative; NFO is the fallback.
+	// (IMDB ID isn't on UpdateItemMetadataParams yet — the DB column
+	// exists but the Update path doesn't expose it. Tracked as a
+	// follow-up; the more impactful TMDB ID is what unblocks the
+	// "Fix Match shows already-matched items" symptom.)
+	if m.TMDBID != 0 && p.TMDBID == nil {
+		v := m.TMDBID
+		p.TMDBID = &v
 	}
 }
 
@@ -607,7 +625,27 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		}
 	}
 
-	result, err := agent.SearchMovie(ctx, searchTitle, year)
+	// When the NFO declares a TMDB ID, fetch by ID directly — exact
+	// lookup beats fuzzy search and avoids the "Dr. Strangelove or:
+	// How I Learned to Stop Worrying and Love the Bomb" class of
+	// long-title misses. Falls through to SearchMovie if RefreshMovie
+	// fails for any reason (transient TMDB error, ID renumbered, etc.)
+	// so a flaky exact lookup doesn't strand an otherwise-resolvable item.
+	var (
+		result *metadata.MovieResult
+		err    error
+	)
+	if nfoMovie != nil && nfoMovie.TMDBID != 0 {
+		result, err = agent.RefreshMovie(ctx, nfoMovie.TMDBID)
+		if err != nil {
+			e.logger.InfoContext(ctx, "tmdb refresh by NFO id failed; falling back to title search",
+				"tmdb_id", nfoMovie.TMDBID, "err", err)
+			result = nil
+		}
+	}
+	if result == nil {
+		result, err = agent.SearchMovie(ctx, searchTitle, year)
+	}
 	if err != nil || result == nil {
 		// No result or API error — not a scan-blocking error.
 		e.logger.InfoContext(ctx, "tmdb search found no result",
@@ -828,6 +866,19 @@ func applyShowNFO(p *media.UpdateItemMetadataParams, s *nfo.Show) {
 		v := *s.Premiered
 		p.OriginallyAvailableAt = &v
 	}
+	// Provider IDs from <uniqueid> tags. Same rationale as
+	// applyMovieNFO: an NFO that declares the canonical TMDB / TVDB
+	// ID is operator authority, and persisting it keeps the row out
+	// of the Fix Match tray and lets scheduled refresh tasks reach
+	// the right rows.
+	if s.TMDBID != 0 && p.TMDBID == nil {
+		v := s.TMDBID
+		p.TMDBID = &v
+	}
+	if s.TVDBID != 0 && p.TVDBID == nil {
+		v := s.TVDBID
+		p.TVDBID = &v
+	}
 }
 
 // enrichShow searches TMDB for the show and updates metadata, poster, and fanart.
@@ -874,7 +925,21 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	// the show); non-anime libraries keep TMDB-first (avoids spurious
 	// AniList matches for Western shows that share a title with an
 	// anime).
-	result := e.searchShow(ctx, agent, searchTitle, year, e.libraryIsAnime(ctx, item.LibraryID))
+	// Same pattern as enrichMovie: when the tvshow.nfo declares a
+	// TMDB ID, prefer RefreshTV(id) over the fuzzy searchShow. The
+	// fuzzy path stays as the fallback if the exact lookup fails.
+	var result *metadata.TVShowResult
+	if nfoShow != nil && nfoShow.TMDBID != 0 {
+		if r, refreshErr := agent.RefreshTV(ctx, nfoShow.TMDBID); refreshErr == nil && r != nil {
+			result = r
+		} else {
+			e.logger.InfoContext(ctx, "tmdb refresh by NFO id failed; falling back to title search",
+				"tmdb_id", nfoShow.TMDBID, "err", refreshErr)
+		}
+	}
+	if result == nil {
+		result = e.searchShow(ctx, agent, searchTitle, year, e.libraryIsAnime(ctx, item.LibraryID))
+	}
 	if result == nil {
 		e.logger.InfoContext(ctx, "no metadata source matched show",
 			"title", item.Title)

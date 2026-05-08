@@ -23,6 +23,7 @@
     { href: '/settings/arr-services', label: 'Arr Services', exact: false },
     { href: '/settings/plugins', label: 'Plugins', exact: false },
     { href: '/settings/tasks', label: 'Tasks', exact: false },
+    { href: '/settings/unmatched', label: 'Fix Match', exact: false },
     { href: '/settings/backup', label: 'Backup', exact: false },
     { href: '/settings/sso', label: 'SSO', exact: false },
     { href: '/settings/email', label: 'Email', exact: false },

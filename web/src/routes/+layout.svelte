@@ -17,6 +17,8 @@
     stopNotifications,
     playbackTransfers,
   } from '$lib/stores/notifications';
+  import { startJobsPolling, stopJobsPolling } from '$lib/stores/jobs';
+  import JobsBanner from '$lib/components/JobsBanner.svelte';
   import { itemApi, getClientName } from '$lib/api';
   import { audio, type AudioTrack } from '$lib/stores/audio';
   import { currentTrack } from '$lib/stores/audio';
@@ -128,6 +130,7 @@
           currentUsername = pair.username;
           isAdmin = pair.is_admin;
           initNotifications();
+          startJobsPolling();
         }
       } catch {}
       // Strip every known marker so refresh doesn't re-trigger the loop.
@@ -144,6 +147,7 @@
       currentUsername = user.username;
       isAdmin = user.is_admin;
       initNotifications();
+      startJobsPolling();
     }
 
     // Cross-device "play on this device" receiver. The originator
@@ -231,7 +235,9 @@
       currentUsername = newUser.username;
       isAdmin = newUser.is_admin;
       stopNotifications();
+      stopJobsPolling();
       initNotifications();
+      startJobsPolling();
       closeSwitcher();
       window.location.href = '/';
     } catch (e: unknown) {
@@ -244,6 +250,7 @@
 
   async function logout() {
     stopNotifications();
+    stopJobsPolling();
     try { await authApi.logout(); } catch { /* ignore */ }
     api.setUser(null);
     goto('/login');
@@ -463,6 +470,7 @@
           </button>
         </div>
       {/if}
+      <JobsBanner />
       <slot />
     </main>
     <AudioPlayer />

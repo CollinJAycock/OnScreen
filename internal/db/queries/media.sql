@@ -427,6 +427,28 @@ WHERE type IN ('movie', 'show')
 ORDER BY created_at DESC
 LIMIT $1;
 
+-- name: CountMediaItemsMissingArt :one
+-- Snapshot count for the /api/v1/jobs status surface. Same predicate as
+-- ListMediaItemsMissingArt above so the count and the list always agree.
+SELECT count(*)::int AS missing_art_count
+FROM media_items
+WHERE type IN ('movie', 'show')
+  AND poster_path IS NULL
+  AND deleted_at IS NULL;
+
+-- name: CountUnmatchedTopLevelItems :one
+-- Snapshot count of top-level rows with no provider IDs at all. Drives the
+-- "N shows need manual matching" surface; same predicate as
+-- ListUnmatchedTopLevelItems so counts and list agree.
+SELECT count(*)::int AS unmatched_count
+FROM media_items
+WHERE parent_id IS NULL
+  AND deleted_at IS NULL
+  AND type IN ('movie', 'show')
+  AND tmdb_id IS NULL
+  AND tvdb_id IS NULL
+  AND imdb_id IS NULL;
+
 -- name: ListMediaItemChildren :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,

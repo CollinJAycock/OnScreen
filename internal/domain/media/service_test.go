@@ -82,6 +82,12 @@ func (m *mockQuerier) ListMediaItems(_ context.Context, libID uuid.UUID, _ strin
 func (m *mockQuerier) ListMediaItemsMissingArt(_ context.Context, _ int32) ([]Item, error) {
 	return nil, nil
 }
+func (m *mockQuerier) CountMediaItemsMissingArt(_ context.Context) (int32, error) {
+	return 0, nil
+}
+func (m *mockQuerier) CountUnmatchedTopLevelItems(_ context.Context) (int32, error) {
+	return 0, nil
+}
 func (m *mockQuerier) FindTopLevelItemsByTitleFlexible(_ context.Context, _ uuid.UUID, _, _ string) ([]Item, error) {
 	return nil, nil
 }

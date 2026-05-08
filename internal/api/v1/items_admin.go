@@ -51,6 +51,80 @@ func (h *ItemBulkAdminHandler) WithAudit(a *audit.Logger) *ItemBulkAdminHandler 
 	return h
 }
 
+// unmatchedItem is the per-row shape for GET /admin/items/unmatched.
+// Mirrors the fields the frontend needs to render the "Fix Match" tray:
+// ID for the per-item match call, library_id for scoping, type +
+// title + year for display.
+type unmatchedItem struct {
+	ID        string `json:"id"`
+	LibraryID string `json:"library_id"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Year      *int32 `json:"year,omitempty"`
+}
+
+type unmatchedListResponse struct {
+	Items []unmatchedItem `json:"items"`
+	Total int             `json:"total"`
+}
+
+// ListUnmatched handles GET /api/v1/admin/items/unmatched. Returns
+// every top-level movie/show with no provider IDs (tmdb / tvdb /
+// imdb). Used by the admin Fix Match tray as the data feed; the
+// per-item search + apply path uses the existing
+// /api/v1/items/{id}/match/search and /api/v1/items/{id}/match
+// endpoints (matchShow / matchMovie internally), so this endpoint
+// only does the list — no mutation.
+func (h *ItemBulkAdminHandler) ListUnmatched(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	claims := middleware.ClaimsFromContext(ctx)
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+
+	limit := respond.ParseLimit(r, 200, 1000)
+
+	params := gen.ListUnmatchedTopLevelItemsParams{
+		ResultLimit: limit,
+	}
+	if raw := r.URL.Query().Get("library_id"); raw != "" {
+		libID, err := uuid.Parse(raw)
+		if err != nil {
+			respond.BadRequest(w, r, "invalid library_id")
+			return
+		}
+		params.LibraryID = pgtype.UUID{Bytes: libID, Valid: true}
+	}
+
+	rows, err := h.db.ListUnmatchedTopLevelItems(ctx, params)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "list unmatched items", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	items := make([]unmatchedItem, 0, len(rows))
+	for _, row := range rows {
+		entry := unmatchedItem{
+			ID:        row.ID.String(),
+			LibraryID: row.LibraryID.String(),
+			Type:      row.Type,
+			Title:     row.Title,
+		}
+		if row.Year != nil {
+			y := *row.Year
+			entry.Year = &y
+		}
+		items = append(items, entry)
+	}
+
+	respond.Success(w, r, unmatchedListResponse{
+		Items: items,
+		Total: len(items),
+	})
+}
+
 type reEnrichUnmatchedRequest struct {
 	LibraryID *string `json:"library_id,omitempty"` // optional UUID; when set, scope to that library
 	DryRun    bool    `json:"dry_run,omitempty"`    // when true, return candidates without modifying anything

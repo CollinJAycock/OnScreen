@@ -76,6 +76,7 @@ type Handlers struct {
 	Maintenance     *v1.MaintenanceHandler
 	Backup          *v1.BackupHandler
 	Tasks           *v1.TasksHandler
+	Jobs            *v1.JobsHandler
 	People          *v1.PeopleHandler
 	Plugins         *v1.PluginHandler
 	Pair            *v1.PairHandler
@@ -552,6 +553,7 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.ItemsAdmin != nil {
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/items/unmatched", h.ItemsAdmin.ListUnmatched)
 					r.Post("/admin/items/re-enrich-unmatched", h.ItemsAdmin.ReEnrichUnmatched)
 				})
 			}
@@ -643,6 +645,14 @@ func NewRouter(h *Handlers) http.Handler {
 			// Home page hub — continue watching + recently added.
 			if h.Hub != nil {
 				r.Get("/hub", h.Hub.Get)
+			}
+
+			// Operational status — in-flight scans, items missing
+			// art, items needing manual match. Polled by the
+			// frontend status banner so users can see "scanning…"
+			// without hunting through admin endpoints.
+			if h.Jobs != nil {
+				r.Get("/jobs", h.Jobs.Get)
 			}
 
 			// Search — full-text search across media items.
