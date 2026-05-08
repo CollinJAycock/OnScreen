@@ -1959,14 +1959,26 @@ func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgen
 // via singleflight and skipping items already attempted in this process.
 // Errors are logged but not propagated — a per-track enrichment pass must
 // never fail the scan.
+//
+// Manual refresh (forceReenrich set in ctx, e.g. EnrichItem on an artist
+// row) bypasses the per-process attempted-cache. Without this, a manual
+// re-enrich after data corruption (NULL'd poster_path, wrong artist
+// match, etc.) would silently no-op for the rest of the container's
+// lifetime — the cache intentionally outlives a single scan but should
+// not outlive an explicit operator override.
 func (e *Enricher) enrichMusicOnce(ctx context.Context, agent metadata.MusicAgent, item *media.Item, artDir string) {
 	key := item.Type + ":" + item.ID.String()
-	if _, ok := e.musicAttempted.Load(key); ok {
-		return
+	force := shouldForceReenrich(ctx)
+	if !force {
+		if _, ok := e.musicAttempted.Load(key); ok {
+			return
+		}
 	}
 	_, err, _ := e.musicSF.Do(key, func() (any, error) {
-		if _, ok := e.musicAttempted.Load(key); ok {
-			return nil, nil
+		if !force {
+			if _, ok := e.musicAttempted.Load(key); ok {
+				return nil, nil
+			}
 		}
 		var innerErr error
 		switch item.Type {
