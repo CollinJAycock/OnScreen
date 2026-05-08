@@ -62,9 +62,22 @@ var bookExtensions = map[string]bool{
 	".epub": true,
 }
 
-// yearRE matches a 4-digit year, optionally surrounded by parentheses, square
-// brackets, or dots.
-var yearRE = regexp.MustCompile(`[\.\s][\(\[]?(\d{4})[\)\]]?`)
+// yearRE matches a 4-digit year preceded by a dot/space/hyphen, optionally
+// wrapped in parens or square brackets. The `-` separator catches the
+// "Altered Carbon-2018" variant — folder names that hyphen-attach the
+// year with no surrounding whitespace, common output of one-off
+// rippers/renamers and what Plex / Jellyfin both handle.
+var yearRE = regexp.MustCompile(`[\.\s\-][\(\[]?(\d{4})[\)\]]?`)
+
+// parenYearRE matches a 4-digit year explicitly wrapped in parens or square
+// brackets (e.g. ".(2017)", " [2024]"). Tried first by cleanTitle so
+// "Blade Runner 2049 (2017)" yields year=2017 — the parenthesised year
+// is an unambiguous signal, while the bare 2049 is title text. Without
+// this preference cleanTitle takes the first match (.2049) and strips
+// "(2017)" along with everything after it, leaving title="Blade Runner"
+// and year=2049 — the real bug operator hit on QA where TMDB then
+// searched "Blade Runner" with year=2049 and returned no result.
+var parenYearRE = regexp.MustCompile(`[\.\s\-][\(\[](\d{4})[\)\]]`)
 
 // bracketPrefixRE matches a leading release-group prefix in square brackets
 // like `[ToonsHub] My Hero Academia`, `[QWERTY] 8 Out Of 10 Cats`, or
@@ -1178,7 +1191,16 @@ func cleanTitle(name string) (title string, year *int) {
 	name = strings.ReplaceAll(name, "_", ".")
 	name = strings.ReplaceAll(name, " ", ".")
 
-	if m := yearRE.FindStringSubmatchIndex(name); m != nil {
+	// Prefer an explicitly-bracketed year over a bare 4-digit number anywhere
+	// in the name. "Blade.Runner.2049.(2017)" must yield year=2017, not 2049
+	// — the parenthesised form is an unambiguous tag, while 2049 is title
+	// text. Falls back to the loose match (any leading separator) when no
+	// bracketed year exists.
+	m := parenYearRE.FindStringSubmatchIndex(name)
+	if m == nil {
+		m = yearRE.FindStringSubmatchIndex(name)
+	}
+	if m != nil {
 		yearStr := name[m[2]:m[3]]
 		if y, err := strconv.Atoi(yearStr); err == nil && y >= 1888 && y <= 2100 {
 			yr := y

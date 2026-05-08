@@ -132,6 +132,39 @@ func TestCleanTitle(t *testing.T) {
 			wantTitle: "Foo Bar [Director's Cut]",
 			wantYear:  intPtr(2015),
 		},
+		// QA bug 2026-05-08: parenthesised year must beat a bare 4-digit
+		// number elsewhere in the title. "Blade Runner 2049 (2017)"
+		// previously returned year=2049, title="Blade Runner" — TMDB
+		// then searched for "Blade Runner" with year=2049 and found
+		// nothing, so the show stayed unmatched on QA.
+		{
+			name:      "parenthesised year beats bare year in title",
+			input:     "Blade.Runner.2049.(2017).1080p.WEBRip",
+			wantTitle: "Blade Runner 2049",
+			wantYear:  intPtr(2017),
+		},
+		{
+			name:      "bracketed year beats bare year",
+			input:     "Title 2049 [2017]",
+			wantTitle: "Title 2049",
+			wantYear:  intPtr(2017),
+		},
+		// QA bug 2026-05-08: "Altered Carbon-2018" — hyphen-attached
+		// year, no whitespace. Year regex used to require a leading
+		// dot or space, so the suffix stuck and the show stayed
+		// unmatched. Plex / Jellyfin both handle this shape.
+		{
+			name:      "hyphen-attached year (no space)",
+			input:     "Altered Carbon-2018",
+			wantTitle: "Altered Carbon",
+			wantYear:  intPtr(2018),
+		},
+		{
+			name:      "hyphen-attached year with quality tags",
+			input:     "Some.Show-2020.1080p.WEB-DL",
+			wantTitle: "Some Show",
+			wantYear:  intPtr(2020),
+		},
 	}
 
 	for _, tt := range tests {
