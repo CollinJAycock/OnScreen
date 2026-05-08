@@ -55,6 +55,19 @@ var requiredSystemTasks = []systemTask{
 		cronExpr: "17 3 * * *",
 		enabled:  true,
 	},
+	{
+		name:     "Refresh missing artwork",
+		taskType: "refresh_missing_art",
+		// Every 2 hours: covers the "scanned before the API key was
+		// configured" case, transient TMDB outages, and any other
+		// path that leaves a top-level item with no poster. Scoped
+		// query (only items with poster_path IS NULL), so the cost
+		// is proportional to the actual gap, not the library size —
+		// healthy libraries see the run finish in milliseconds with
+		// "no items missing art".
+		cronExpr: "23 */2 * * *",
+		enabled:  true,
+	},
 }
 
 // seedSystemTasks inserts any missing required task rows. Idempotent —

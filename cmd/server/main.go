@@ -907,6 +907,13 @@ func run() error {
 	// Retention purge runs daily off-peak, deletes recordings past
 	// their schedule's retention_days window + the files on disk.
 	schedRegistry.Register("dvr_retention", scheduler.NewDVRRetentionHandler(dvrSvc))
+	// Periodic art-refresh sweep: catches partially-enriched libraries
+	// that scanned before the operator added a TMDB key, after the
+	// agent recovered from a transient outage, etc. Runs every couple
+	// of hours so the recovery window is "by morning" not "operator
+	// goes hunting for an admin endpoint".
+	schedRegistry.Register("refresh_missing_art",
+		scheduler.NewRefreshMissingArtHandler(mediaSvc, metaAgent, logger))
 	// Seed the scheduled_tasks rows our handlers depend on. Idempotent:
 	// admin edits to existing rows are preserved (EnsureSystemTask uses
 	// WHERE NOT EXISTS on task_type), so this is safe on every boot.
