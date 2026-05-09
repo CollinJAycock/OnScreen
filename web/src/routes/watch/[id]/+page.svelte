@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { progressUpdates } from '$lib/stores/notifications';
+  import { capabilities } from '$lib/stores/capabilities';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
@@ -3132,8 +3133,10 @@
         <!-- Download for offline playback. Server adds Content-Disposition:
              attachment so the browser triggers save-as. Stream-token in
              query so the path works from a mobile browser that can't
-             carry cookies (Android Download Manager, iOS Safari). -->
-        {#if item.files?.[0]?.id && item.files[0].stream_token}
+             carry cookies (Android Download Manager, iOS Safari).
+             Gated on the public capabilities flag — admin can disable
+             server-wide via Settings → General. -->
+        {#if $capabilities?.features?.web_downloads && item.files?.[0]?.id && item.files[0].stream_token}
           <a
             class="download-btn"
             href="{assetUrl(`/media/download/${item.files[0].id}?token=${encodeURIComponent(item.files[0].stream_token)}`)}"

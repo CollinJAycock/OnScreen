@@ -27,19 +27,22 @@ func (m *mockWorkerLister) ListWorkers(_ context.Context) ([]transcode.WorkerReg
 // ── mock settings service ────────────────────────────────────────────────────
 
 type mockSettingsService struct {
-	key          string
-	tvdbKey      string
-	setErr       error
-	setTVDBErr   error
-	fleet        settings.WorkerFleetConfig
-	setFleetErr  error
-	setFleetCall *settings.WorkerFleetConfig // captures last SetWorkerFleet call
-	oidc         settings.OIDCConfig
-	ldap         settings.LDAPConfig
-	saml         settings.SAMLConfig
-	smtp         settings.SMTPConfig
-	otel         settings.OTelConfig
-	general      settings.GeneralConfig
+	key             string
+	tvdbKey         string
+	setErr          error
+	setTVDBErr      error
+	fleet           settings.WorkerFleetConfig
+	setFleetErr     error
+	setFleetCall    *settings.WorkerFleetConfig // captures last SetWorkerFleet call
+	oidc            settings.OIDCConfig
+	ldap            settings.LDAPConfig
+	saml            settings.SAMLConfig
+	smtp            settings.SMTPConfig
+	otel            settings.OTelConfig
+	general         settings.GeneralConfig
+	webDownloads    bool
+	setWebDLErr     error
+	setWebDLCalled  bool
 }
 
 func (m *mockSettingsService) TMDBAPIKey(_ context.Context) string {
@@ -154,6 +157,15 @@ func (m *mockSettingsService) SetGeneral(_ context.Context, cfg settings.General
 		return m.setErr
 	}
 	m.general = cfg
+	return nil
+}
+func (m *mockSettingsService) WebDownloadsEnabled(_ context.Context) bool { return m.webDownloads }
+func (m *mockSettingsService) SetWebDownloadsEnabled(_ context.Context, enabled bool) error {
+	if m.setWebDLErr != nil {
+		return m.setWebDLErr
+	}
+	m.webDownloads = enabled
+	m.setWebDLCalled = true
 	return nil
 }
 

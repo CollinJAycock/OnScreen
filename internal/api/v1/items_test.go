@@ -609,6 +609,64 @@ func TestStreamFile_Range(t *testing.T) {
 // so a regression that drops the attachment header (and silently
 // reverts to inline playback) gets caught here.
 
+// stubDownloadGate satisfies DownloadGate with a fixed bool — lets tests
+// flip the admin toggle without dragging the full settings stack in.
+type stubDownloadGate struct{ enabled bool }
+
+func (s *stubDownloadGate) WebDownloadsEnabled(_ context.Context) bool { return s.enabled }
+
+// TestDownloadFile_GateDisabled_Returns403 locks the admin toggle: when
+// downloads are disabled at the server level the handler must short-
+// circuit with 403 + a clear error code BEFORE doing any DB or
+// filesystem work, so a client that tries to bypass the hidden UI
+// button gets a sensible refusal.
+func TestDownloadFile_GateDisabled_Returns403(t *testing.T) {
+	// Media stub is ready but should never be touched: gate fires first.
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: "/should-not-read.mkv", MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), Type: "movie", Title: "Test"},
+	}
+	h := newItemHandler(ms).WithDownloadGate(&stubDownloadGate{enabled: false})
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	h.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403 when downloads are disabled", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "DOWNLOADS_DISABLED") {
+		t.Errorf("body should carry the DOWNLOADS_DISABLED code so clients can render a specific message: %s", rec.Body.String())
+	}
+}
+
+// TestDownloadFile_GateEnabled_Allows confirms the gate permits
+// downloads when the admin has flipped the toggle on. Same fixture
+// as the headers/body test, just with an explicit gate=true rather
+// than the nil-gate default that the plain handler uses.
+func TestDownloadFile_GateEnabled_Allows(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "movie.mkv")
+	if err := os.WriteFile(tmp, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), Type: "movie", Title: "Test"},
+	}
+	h := newItemHandler(ms).WithDownloadGate(&stubDownloadGate{enabled: true})
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	h.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 when gate is enabled", rec.Code)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment;") {
+		t.Errorf("Content-Disposition still missing attachment prefix: %q", cd)
+	}
+}
+
 func TestDownloadFile_NotFound(t *testing.T) {
 	ms := &mockItemMedia{fileErr: media.ErrNotFound}
 	h := newItemHandler(ms)

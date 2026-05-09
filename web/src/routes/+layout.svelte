@@ -18,6 +18,7 @@
     playbackTransfers,
   } from '$lib/stores/notifications';
   import { startJobsPolling, stopJobsPolling } from '$lib/stores/jobs';
+  import { loadCapabilities } from '$lib/stores/capabilities';
   import JobsBanner from '$lib/components/JobsBanner.svelte';
   import { itemApi, getClientName } from '$lib/api';
   import { audio, type AudioTrack } from '$lib/stores/audio';
@@ -71,6 +72,10 @@
 
   onMount(async () => {
     theme.init();
+    // Capabilities is public — kick off the fetch as soon as we know
+    // the API base, so feature-gated UI (Download button, etc.) has
+    // a value by the time it renders. Non-blocking.
+    void loadCapabilities();
 
     // Tauri first-run gate: every API call needs a server URL. If
     // the user hasn't picked one, render the setup screen and skip

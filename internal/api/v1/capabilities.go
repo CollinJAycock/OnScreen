@@ -50,6 +50,11 @@ type CapabilitiesFeatures struct {
 	Lyrics            bool `json:"lyrics"`
 	IntroMarkers      bool `json:"intro_markers"`
 	Chapters          bool `json:"chapters"`
+	// WebDownloads gates the browser "Download" button on the watch
+	// page. Defaults off — admin toggle in /settings flips it. Public
+	// here so the web client can hide the button without a separate
+	// admin-only fetch.
+	WebDownloads      bool `json:"web_downloads"`
 }
 
 // CapabilitiesCodecs advertises which codecs this server can transcode

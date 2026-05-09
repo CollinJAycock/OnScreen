@@ -86,6 +86,7 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			Lyrics:       true,
 			IntroMarkers: true,
 			Chapters:     true,
+			WebDownloads: p.settings.WebDownloadsEnabled(ctx),
 		},
 		Codecs: v1.CapabilitiesCodecs{
 			Video:      []string{"h264", "hevc"},

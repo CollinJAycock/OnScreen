@@ -142,6 +142,29 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("WebDownloadsEnabled_DefaultsFalse", func(t *testing.T) {
+		// No row → default to false. Server default is "stream only";
+		// admin opts in to letting users save raw bytes.
+		if got := svc.WebDownloadsEnabled(ctx); got != false {
+			t.Errorf("default: got %v, want false", got)
+		}
+	})
+
+	t.Run("WebDownloadsEnabled_RoundTrip", func(t *testing.T) {
+		if err := svc.SetWebDownloadsEnabled(ctx, true); err != nil {
+			t.Fatalf("Set true: %v", err)
+		}
+		if got := svc.WebDownloadsEnabled(ctx); got != true {
+			t.Errorf("after Set(true): got %v, want true", got)
+		}
+		if err := svc.SetWebDownloadsEnabled(ctx, false); err != nil {
+			t.Fatalf("Set false: %v", err)
+		}
+		if got := svc.WebDownloadsEnabled(ctx); got != false {
+			t.Errorf("after Set(false): got %v, want false", got)
+		}
+	})
+
 	t.Run("OpenSubtitles", func(t *testing.T) {
 		want := OpenSubtitlesConfig{
 			APIKey: "os-key", Username: "alice", Password: "p",

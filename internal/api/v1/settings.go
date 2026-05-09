@@ -48,6 +48,8 @@ type SettingsServiceIface interface {
 	SetOTel(ctx context.Context, cfg settings.OTelConfig) error
 	General(ctx context.Context) settings.GeneralConfig
 	SetGeneral(ctx context.Context, cfg settings.GeneralConfig) error
+	WebDownloadsEnabled(ctx context.Context) bool
+	SetWebDownloadsEnabled(ctx context.Context, enabled bool) error
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -301,19 +303,20 @@ func (h *SettingsHandler) UpdateFleet(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsResponse struct {
-	TMDBAPIKey        string                  `json:"tmdb_api_key"`
-	TVDBAPIKey        string                  `json:"tvdb_api_key"`
-	ArrAPIKey         string                  `json:"arr_api_key"`
-	ArrWebhookURL     string                  `json:"arr_webhook_url"`
-	ArrPathMappings   map[string]string       `json:"arr_path_mappings,omitempty"`
-	TranscodeEncoders string                  `json:"transcode_encoders"`
-	OpenSubtitles     openSubtitlesSettingDTO `json:"opensubtitles"`
-	OIDC              oidcSettingDTO          `json:"oidc"`
-	LDAP              ldapSettingDTO          `json:"ldap"`
-	SAML              samlSettingDTO          `json:"saml"`
-	SMTP              smtpSettingDTO          `json:"smtp"`
-	OTel              otelSettingDTO          `json:"otel"`
-	General           generalSettingDTO       `json:"general"`
+	TMDBAPIKey          string                  `json:"tmdb_api_key"`
+	TVDBAPIKey          string                  `json:"tvdb_api_key"`
+	ArrAPIKey           string                  `json:"arr_api_key"`
+	ArrWebhookURL       string                  `json:"arr_webhook_url"`
+	ArrPathMappings     map[string]string       `json:"arr_path_mappings,omitempty"`
+	TranscodeEncoders   string                  `json:"transcode_encoders"`
+	WebDownloadsEnabled bool                    `json:"web_downloads_enabled"`
+	OpenSubtitles       openSubtitlesSettingDTO `json:"opensubtitles"`
+	OIDC                oidcSettingDTO          `json:"oidc"`
+	LDAP                ldapSettingDTO          `json:"ldap"`
+	SAML                samlSettingDTO          `json:"saml"`
+	SMTP                smtpSettingDTO          `json:"smtp"`
+	OTel                otelSettingDTO          `json:"otel"`
+	General             generalSettingDTO       `json:"general"`
 }
 
 // generalSettingDTO mirrors settings.GeneralConfig — no secrets, surfaces the
@@ -562,8 +565,9 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ArrAPIKey:         maskAPIKey(arrKey),
 		ArrWebhookURL:     webhookURL,
 		ArrPathMappings:   h.svc.ArrPathMappings(ctx),
-		TranscodeEncoders: h.svc.TranscodeEncoders(ctx),
-		OpenSubtitles:     toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
+		TranscodeEncoders:   h.svc.TranscodeEncoders(ctx),
+		WebDownloadsEnabled: h.svc.WebDownloadsEnabled(ctx),
+		OpenSubtitles:       toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
 		OIDC:              toOIDCDTO(h.svc.OIDC(ctx)),
 		LDAP:              toLDAPDTO(h.svc.LDAP(ctx)),
 		SAML:              toSAMLDTO(h.svc.SAML(ctx)),
@@ -579,8 +583,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		TMDBAPIKey        *string            `json:"tmdb_api_key"`
 		TVDBAPIKey        *string            `json:"tvdb_api_key"`
 		ArrAPIKey         *string            `json:"arr_api_key"`
-		ArrPathMappings   *map[string]string `json:"arr_path_mappings"`
-		TranscodeEncoders *string            `json:"transcode_encoders"`
+		ArrPathMappings     *map[string]string `json:"arr_path_mappings"`
+		TranscodeEncoders   *string            `json:"transcode_encoders"`
+		WebDownloadsEnabled *bool              `json:"web_downloads_enabled"`
 		OpenSubtitles     *struct {
 			APIKey    *string `json:"api_key"`
 			Username  *string `json:"username"`
@@ -682,6 +687,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.TranscodeEncoders != nil {
 		if err := h.svc.SetTranscodeEncoders(ctx, *body.TranscodeEncoders); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "transcode_encoders", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.WebDownloadsEnabled != nil {
+		if err := h.svc.SetWebDownloadsEnabled(ctx, *body.WebDownloadsEnabled); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "web_downloads_enabled", "err", err)
 			respond.InternalError(w, r)
 			return
 		}

@@ -27,6 +27,7 @@ const keyWorkerFleet = "worker_fleet"
 const keyTranscodeConfig = "transcode_config"
 const keyIntroDetectionMode = "intro_detection_mode"
 const keyOpenSubtitlesConfig = "opensubtitles_config"
+const keyWebDownloadsEnabled = "web_downloads_enabled"
 const keyOIDCConfig = "oidc_config"
 const keySAMLConfig = "saml_config"
 const keyLDAPConfig = "ldap_config"
@@ -255,6 +256,31 @@ func (s *Service) SetIntroDetectionMode(ctx context.Context, mode IntroDetection
 	default:
 		return ErrInvalidSetting
 	}
+}
+
+// WebDownloadsEnabled reports whether the browser "Download" button on
+// the watch page is enabled. Defaults to false: a media server's
+// default posture is "stream only, no save-as", so an operator opting
+// in to letting users pull raw bytes off the disk is an explicit
+// decision rather than the out-of-the-box default.
+//
+// The handler-side gate (DownloadFile) reads this; the client-side
+// gate is wired through the public capabilities endpoint so the
+// "Download" button doesn't show in the UI when downloads are off.
+func (s *Service) WebDownloadsEnabled(ctx context.Context) bool {
+	return s.get(ctx, keyWebDownloadsEnabled) == "true"
+}
+
+// SetWebDownloadsEnabled persists the toggle. Stored as the literal
+// string "true" / "false" so future config inspection via the raw
+// settings table reads naturally — same convention as the other bool-
+// shape settings already in use.
+func (s *Service) SetWebDownloadsEnabled(ctx context.Context, enabled bool) error {
+	v := "false"
+	if enabled {
+		v = "true"
+	}
+	return s.set(ctx, keyWebDownloadsEnabled, v)
 }
 
 // OpenSubtitlesConfig stores credentials and defaults for the OpenSubtitles

@@ -645,7 +645,8 @@ func run() error {
 		WithStreamTokenMaker(tokenMaker).
 		WithPosterPicker(metaAgent).
 		WithSubtreeDeleter(&subtreeDeleter{q: gen.New(rwPool)}).
-		WithCreditsRefresher(peopleSvc)
+		WithCreditsRefresher(peopleSvc).
+		WithDownloadGate(settingsSvc)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)

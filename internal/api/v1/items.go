@@ -155,7 +155,17 @@ type ItemHandler struct {
 	posters   ItemPosterPicker // optional; when set, /posters and /poster routes are admin-served
 	deleter   ItemSubtreeDeleter // optional; when set, DELETE /items/{id} is admin-served
 	credits   ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
+	dlGate    DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
 	logger    *slog.Logger
+}
+
+// DownloadGate decides whether the /media/download/{id} endpoint is open
+// to clients. Production wires settings.Service.WebDownloadsEnabled;
+// tests can pass a stub. nil means "no gate" — backwards-compatible
+// default that preserves the pre-toggle behaviour for any wiring that
+// hasn't called WithDownloadGate yet.
+type DownloadGate interface {
+	WebDownloadsEnabled(ctx context.Context) bool
 }
 
 // ExternalSubLister returns the saved external subtitle rows for a media file.
@@ -223,6 +233,18 @@ func (h *ItemHandler) WithPosterPicker(p ItemPosterPicker) *ItemHandler {
 // When unset, DELETE /api/v1/items/{id} returns 405.
 func (h *ItemHandler) WithSubtreeDeleter(d ItemSubtreeDeleter) *ItemHandler {
 	h.deleter = d
+	return h
+}
+
+// WithDownloadGate wires the admin toggle for the browser "Download"
+// button on the watch page. When the gate reports false the
+// /media/download/{id} endpoint returns 403 and the public capabilities
+// flag goes off so the client hides the button. Production wires
+// settings.Service.WebDownloadsEnabled. Default (no gate) lets every
+// download through — preserves test ergonomics and pre-toggle behaviour
+// when production wiring hasn't run yet.
+func (h *ItemHandler) WithDownloadGate(g DownloadGate) *ItemHandler {
+	h.dlGate = g
 	return h
 }
 
@@ -1630,6 +1652,17 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // cookies (mobile webview download manager). The 24h stream token TTL is
 // long enough for a slow phone download to finish without re-auth.
 func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
+	// Admin toggle: when downloads are disabled at the server level
+	// reject before any DB or filesystem work. The capabilities feed
+	// already hides the UI button when this is off, so a 403 here is
+	// only seen by a client that ignored the flag (or where the
+	// capabilities response was stale across a toggle change).
+	if h.dlGate != nil && !h.dlGate.WebDownloadsEnabled(r.Context()) {
+		respond.Error(w, r, http.StatusForbidden, "DOWNLOADS_DISABLED",
+			"file downloads are disabled on this server")
+		return
+	}
+
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid file id")

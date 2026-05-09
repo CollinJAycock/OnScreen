@@ -518,6 +518,42 @@ export const jobsApi = {
   get: () => api.get<JobsStatus>('/jobs')
 };
 
+// ── Capabilities (public feature-flag feed) ───────────────────────────────────
+
+export interface CapabilitiesFeatures {
+  transcode: boolean;
+  trickplay: boolean;
+  subtitles_external: boolean;
+  subtitles_ocr: boolean;
+  oidc: boolean;
+  ldap: boolean;
+  device_pairing: boolean;
+  plugins: boolean;
+  backup: boolean;
+  people_credits: boolean;
+  photos: boolean;
+  music: boolean;
+  webhooks: boolean;
+  notifications: boolean;
+  requests: boolean;
+  live_tv: boolean;
+  dvr: boolean;
+  lyrics: boolean;
+  intro_markers: boolean;
+  chapters: boolean;
+  web_downloads: boolean;
+}
+
+export interface CapabilitiesResponse {
+  features: CapabilitiesFeatures;
+  // Other fields exist (server, codecs, limits, discovery) but the UI
+  // only consumes features today; type-import what we use, ignore the rest.
+}
+
+export const capabilitiesApi = {
+  get: () => api.get<CapabilitiesResponse>('/system/capabilities')
+};
+
 // ── Admin Fix Match (unmatched items tray) ────────────────────────────────────
 
 export interface UnmatchedItem {
@@ -806,6 +842,7 @@ export interface ServerSettings {
   arr_webhook_url: string;
   arr_path_mappings?: Record<string, string>;
   transcode_encoders: string;
+  web_downloads_enabled: boolean;
   opensubtitles: OpenSubtitlesSettings;
   oidc: OIDCSettings;
   ldap: LDAPSettings;
