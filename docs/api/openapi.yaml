@@ -1,9 +1,17 @@
 openapi: 3.0.3
 info:
   title: OnScreen API
-  version: "2.1.1-dev"
+  version: "2.2.0"
   description: |
     HTTP API for the OnScreen media server.
+
+    **API stability** — frozen as of v2.2.0 (2026-05-09). Future v2.x
+    minor releases may *add* endpoints, fields, or capability flags
+    but never *remove* or *rename* them. Clients written against
+    v2.2.0 keep working through the v2.x line. See
+    [docs/server-lock.md](../server-lock.md) for the full posture
+    and the v2.3 candidate list (ABR ladder, 2FA, Last.fm exporter,
+    audio loudnorm).
 
     All JSON responses use a uniform envelope:
       - Success: `{ "data": <payload> }`
@@ -16,7 +24,11 @@ info:
 
     Auth is delivered as either a Paseto v4 bearer token (`Authorization: Bearer ...`)
     or the `os_access` httpOnly cookie set by `/auth/login`. Browser clients use the
-    cookie; native and third-party clients use the bearer header.
+    cookie; native and third-party clients use the bearer header. Asset routes
+    (artwork, media stream, subtitles, downloads) additionally accept a
+    `?token=<paseto>` query-string token so renderers that can't carry an
+    Authorization header (mobile webview, browser `<img>` / `<video>`) still
+    authenticate.
   license:
     name: AGPL-3.0
 servers:
@@ -890,6 +902,140 @@ paths:
       responses:
         '204': { description: Applied. }
 
+  /api/v1/items/{id}/posters:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: query, name: tmdb_id, required: true, schema: { type: integer }, description: 'TMDB id of the show / movie to fetch poster variants for.' }
+    get:
+      summary: List TMDB poster variants for an item
+      description: |
+        Returns every poster TMDB has for the supplied show / movie id.
+        Powers the admin "Set Poster" tray and the watch-page Choose
+        Poster modal. Admin-only — TMDB calls cost the operator's API
+        quota.
+      tags: [Items]
+      responses:
+        '200':
+          description: Poster candidates.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        url:      { type: string, format: uri }
+                        width:    { type: integer }
+                        height:   { type: integer }
+                        language: { type: string, nullable: true }
+                        vote:     { type: number, format: float }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/items/{id}/poster:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Apply a poster URL to an item
+      description: |
+        Downloads the supplied URL and writes it next to the item's
+        media files, then updates `poster_path`. URL must point at a
+        direct image (jpg / png / webp). Page URLs (IMDB mediaviewer,
+        Wikipedia file pages) are rejected with 400 + the upstream HTTP
+        status. Admin-only.
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: 'Direct image URL (jpg/png/webp). Stream tokens, query strings allowed.'
+      responses:
+        '204': { description: Applied. }
+        '400':
+          description: |
+            Bad URL. Returned with `code = DOWNLOADS_DISABLED` when the
+            admin toggle is off, or with the upstream HTTP status in
+            the message when the URL didn't return an image.
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/items/{id}/watch-status:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Per-(user, item) watching-status mirror
+      description: |
+        Plan to Watch / Watching / Completed / On Hold / Dropped — a
+        generic feature, not anime-only. Distinct from playback
+        progress; this records the user's explicit classification
+        ("I want to watch this later", "I gave up").
+      tags: [Items]
+      responses:
+        '200':
+          description: Current status (or null when never set).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    nullable: true
+                    properties:
+                      status: { type: string, enum: [plan_to_watch, watching, completed, on_hold, dropped] }
+                      updated_at: { type: string, format: date-time }
+    put:
+      summary: Set watch status
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [plan_to_watch, watching, completed, on_hold, dropped] }
+      responses:
+        '204': { description: Saved. }
+    delete:
+      summary: Clear watch status
+      tags: [Items]
+      responses:
+        '204': { description: Cleared. }
+
+  /api/v1/items/{id}/lyrics:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Lyrics for a music track
+      description: |
+        Returns embedded USLT (ID3) / Vorbis-comment LYRICS extracted
+        at scan time, or LRCLIB-sourced synced lyrics when the file
+        ships none. `synced` is true when timestamped LRC frames were
+        parsed; clients use this to render karaoke-style timing.
+      tags: [Items]
+      responses:
+        '200':
+          description: Lyrics text.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      text:   { type: string }
+                      synced: { type: boolean }
+                      source: { type: string, enum: [embedded, lrclib], description: 'Where the bytes came from.' }
+        '404': { description: 'No lyrics available.' }
+
   /api/v1/items/{id}/markers:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -1338,7 +1484,13 @@ paths:
         '206':
           description: Partial content (resume after interrupted download).
         '401': { description: Bad or missing auth. }
-        '403': { description: Content-rating or per-library ACL denial. }
+        '403':
+          description: |
+            Content-rating or per-library ACL denial, **or** the server-wide
+            web-downloads admin toggle is off (v2.2). The off case carries
+            `code = DOWNLOADS_DISABLED`. Mirrored to the public
+            `features.web_downloads` capabilities flag so clients hide
+            the UI without needing to probe with a real download.
         '404': { description: File not found or soft-deleted. }
 
   /media/subtitles/{fileId}/{streamIndex}:
@@ -1465,6 +1617,71 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/Session' }
+
+  /api/v1/playback/transfer:
+    post:
+      summary: Hand a playback state to another device
+      description: |
+        Cross-device "play on…" transfer — same shape as Plex's "Play
+        on" / Emby's "Remote Control". The target client subscribes to
+        the user's notifications stream and picks up a
+        `playback.transfer` event with the item id + offset; the
+        client then loads the item itself rather than the server
+        proxying media. Per-user device discovery uses the last-seen
+        client_name registry.
+      tags: [Playback]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_client_name, item_id]
+              properties:
+                target_client_name: { type: string, description: 'Last-seen device label, e.g. "Living Room TV".' }
+                item_id:             { type: string, format: uuid }
+                position_ms:         { type: integer, format: int64, description: 'Where to resume; defaults to the user''s saved progress on the item.' }
+      responses:
+        '202': { description: 'Event dispatched to the target client over SSE.' }
+        '404': { description: 'Target device not currently subscribed.' }
+
+  /api/v1/photos/map:
+    get:
+      summary: Geo-tagged photo points within a bounding box
+      description: |
+        Powers the photo map view. Uses EXIF GPS extracted at scan
+        time. Bounding box is required to keep the response bounded;
+        clients pan / zoom by re-querying with a tighter box.
+      tags: [Photos]
+      parameters:
+        - { in: query, name: library_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: min_lat,    required: true, schema: { type: number, format: double } }
+        - { in: query, name: max_lat,    required: true, schema: { type: number, format: double } }
+        - { in: query, name: min_lon,    required: true, schema: { type: number, format: double } }
+        - { in: query, name: max_lon,    required: true, schema: { type: number, format: double } }
+        - { in: query, name: limit,      schema: { type: integer, default: 500, maximum: 2000 } }
+      responses:
+        '200':
+          description: Photo points.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      points:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:        { type: string, format: uuid }
+                            lat:       { type: number, format: double }
+                            lon:       { type: number, format: double }
+                            taken_at:  { type: string, format: date-time, nullable: true }
+                            thumb_url: { type: string }
+                      total: { type: integer }
 
   # ── Collections ────────────────────────────────────────────────────────────
   /api/v1/collections:
@@ -2007,6 +2224,22 @@ paths:
   /api/v1/settings:
     get:
       summary: Get server settings (admin)
+      description: |
+        Returns every server-wide setting in one envelope. Secret-bearing
+        fields (tmdb_api_key, opensubtitles password, OIDC client_secret,
+        SAML SP private key, SMTP password) are masked as `****` when set
+        and empty when unset; the patcher below echoes back masked values
+        unchanged so partial updates don't clobber stored secrets.
+
+        Documented fields (additive — v2.x may add more):
+          - `tmdb_api_key`, `tvdb_api_key`, `arr_api_key` (masked)
+          - `arr_webhook_url`, `arr_path_mappings`
+          - `transcode_encoders`
+          - `web_downloads_enabled` *(v2.2)* — admin toggle for the
+            watch-page Download button. Default false. Mirrors to
+            `features.web_downloads` in `/system/capabilities`.
+          - `opensubtitles` (api_key, username, password, languages, enabled)
+          - `oidc`, `ldap`, `saml`, `smtp`, `otel`, `general` (sub-objects)
       tags: [Settings]
       responses:
         '200':
@@ -2019,6 +2252,10 @@ paths:
                   data: { type: object, additionalProperties: true }
     patch:
       summary: Patch server settings (admin)
+      description: |
+        Partial update — every top-level field is optional, only fields
+        present in the body are written. Secret fields are preserved when
+        the body sends `****` (the masked sentinel from GET).
       tags: [Settings]
       requestBody:
         required: true
@@ -2184,15 +2421,18 @@ paths:
                   data: { type: object, additionalProperties: true }
 
   # ── Maintenance (admin) ────────────────────────────────────────────────────
-  /api/v1/maintenance/refresh-missing-art:
-    post:
-      summary: Re-enrich items lacking poster art (admin)
-      tags: [Maintenance]
-      parameters:
-        - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 } }
+  /api/v1/jobs:
+    get:
+      summary: Background-job status snapshot
+      description: |
+        Powers the home banner's 30 s-poll surface. Returns in-flight
+        scans plus counts of items missing poster art or unmatched.
+        Cheap query — single counts plus the in-process scan registry,
+        no file walks.
+      tags: [System]
       responses:
         '200':
-          description: Result.
+          description: Snapshot.
           content:
             application/json:
               schema:
@@ -2201,16 +2441,147 @@ paths:
                   data:
                     type: object
                     properties:
-                      candidates: { type: integer }
-                      refreshed:  { type: integer }
-                      failed:
+                      scans:
                         type: array
                         items:
                           type: object
                           properties:
-                            id:    { type: string, format: uuid }
-                            title: { type: string }
-                            error: { type: string }
+                            library_id:   { type: string, format: uuid }
+                            library_name: { type: string }
+                      missing_art_count: { type: integer }
+                      unmatched_count:   { type: integer }
+
+  /api/v1/admin/items/unmatched:
+    get:
+      summary: List top-level items missing provider IDs (admin)
+      description: |
+        Powers the Fix Match tray. Returns every top-level movie / show
+        with no TMDB / TVDB / IMDB id — auto-enrichment couldn't match
+        them. The Set Poster tray has a separate endpoint
+        (`/admin/items/missing-art`) for items that have IDs but no
+        poster.
+      tags: [Admin]
+      parameters:
+        - { in: query, name: library_id, schema: { type: string, format: uuid }, description: 'Filter to one library (optional).' }
+        - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 } }
+      responses:
+        '200':
+          description: Unmatched items.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:         { type: string, format: uuid }
+                            library_id: { type: string, format: uuid }
+                            type:       { type: string, enum: [movie, show] }
+                            title:      { type: string }
+                            year:       { type: integer, nullable: true }
+                      total: { type: integer }
+
+  /api/v1/admin/items/missing-art:
+    get:
+      summary: List items with provider IDs but no poster (admin)
+      description: |
+        Powers the Set Poster tray. Returns every top-level row whose
+        `poster_path` is null but provider IDs are present — auto-art
+        couldn't pull a poster. Includes `tmdb_id` per row so the tray
+        can call `/items/{id}/posters` without an extra round-trip.
+      tags: [Admin]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 } }
+      responses:
+        '200':
+          description: Items missing art.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:         { type: string, format: uuid }
+                            library_id: { type: string, format: uuid }
+                            type:       { type: string, enum: [movie, show] }
+                            title:      { type: string }
+                            year:       { type: integer, nullable: true }
+                            tmdb_id:    { type: integer, nullable: true }
+                      total: { type: integer }
+
+  /api/v1/admin/items/re-enrich-unmatched:
+    post:
+      summary: Bulk re-enrich every unmatched top-level item (admin)
+      description: |
+        Strips `[ReleaseGroup]` prefixes and queues a background
+        enrichment for every row returned by the unmatched query.
+        `dry_run: true` returns the candidate list + the planned
+        title cleanups without applying side effects so the operator
+        can preview.
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run: { type: boolean, default: false }
+                limit:   { type: integer, default: 200, maximum: 1000 }
+      responses:
+        '200':
+          description: Result summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      found:             { type: integer }
+                      titles_cleaned:    { type: integer }
+                      enrichment_queued: { type: integer }
+                      dry_run:           { type: boolean }
+
+  /api/v1/maintenance/refresh-missing-art:
+    post:
+      summary: Re-enrich items lacking poster art (admin)
+      description: |
+        Backgrounded — the HTTP request returns immediately (202) and
+        the actual TMDB / TVDB calls run in a goroutine with
+        `WithoutCancel(ctx)` so the loop survives the request unwind.
+        Cloudflare's 30 s edge timeout would otherwise kill the
+        request before a long sweep finished. Same scheduled task
+        also runs every 2 h via the cron framework.
+      tags: [Maintenance]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 } }
+      responses:
+        '200':
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      candidates: { type: integer, description: 'How many items match the missing-art query.' }
+                      queued:     { type: integer, description: 'How many were dispatched to the background goroutine (capped at `limit`).' }
 
   /api/v1/maintenance/dedupe-shows:
     post:
@@ -3110,38 +3481,62 @@ components:
             server:
               type: object
               properties:
-                name:       { type: string }
-                machine_id: { type: string }
-                version:    { type: string }
-                started_at: { type: string, format: date-time }
+                name:        { type: string }
+                machine_id:  { type: string }
+                version:     { type: string }
+                api_version: { type: string, description: 'Stable API contract version (currently `v1`).' }
             features:
               type: object
+              description: |
+                Feature flags reflect runtime availability — `trickplay`,
+                `subtitles_ocr`, `intro_markers`, and `backup` AND-gate
+                against boot-time `LookPath` probes for ffmpeg /
+                tesseract / fpcalc / pg_dump, so a `false` here means
+                the feature genuinely won't work even if the codebase
+                supports it.
               properties:
-                transcode:          { type: boolean }
-                trickplay:          { type: boolean }
-                subtitles_external: { type: boolean }
-                subtitles_ocr:      { type: boolean }
+                transcode:          { type: boolean, description: 'Hardware + software transcode pipeline; false when ffmpeg is missing.' }
+                trickplay:          { type: boolean, description: 'Sprite-sheet seekbar previews; rides on ffmpeg.' }
+                subtitles_external: { type: boolean, description: 'OpenSubtitles search + download; needs an OS API key configured.' }
+                subtitles_ocr:      { type: boolean, description: 'PGS / VOBSUB → text WebVTT via Tesseract; needs ffmpeg + tesseract.' }
                 oidc:               { type: boolean }
                 ldap:               { type: boolean }
-                device_pairing:     { type: boolean }
-                plugins:            { type: boolean }
-                backup:             { type: boolean }
-                people_credits:     { type: boolean }
+                device_pairing:     { type: boolean, description: 'PIN-based native client device pairing.' }
+                plugins:            { type: boolean, description: 'Outbound MCP plugin host.' }
+                backup:             { type: boolean, description: 'pg_dump-backed backup endpoint; false when pg_dump is missing.' }
+                people_credits:     { type: boolean, description: 'TMDB-sourced cast / crew; needs a TMDB API key configured.' }
                 photos:             { type: boolean }
                 music:              { type: boolean }
                 webhooks:           { type: boolean }
-                notifications:      { type: boolean }
+                notifications:      { type: boolean, description: 'Real-time SSE notifications + in-app inbox.' }
+                requests:           { type: boolean, description: 'TMDB discover + media-request workflow with Sonarr/Radarr fan-out; needs a TMDB API key.' }
+                live_tv:            { type: boolean, description: 'Channel lineup + EPG; runtime-detected from configured tuners.' }
+                dvr:                { type: boolean, description: 'Recording rules + retention; rides Live TV.' }
+                lyrics:             { type: boolean, description: 'Embedded USLT extraction + LRCLIB / .lrc fallback.' }
+                intro_markers:      { type: boolean, description: 'AcoustID intro detection + ffmpeg blackdetect credits; needs fpcalc + ffmpeg.' }
+                chapters:           { type: boolean }
+                web_downloads:      { type: boolean, description: 'Server-wide admin toggle for the watch-page Download button. Default false; admin opt-in via Settings → General → Sharing.' }
+            codecs:
+              type: object
+              properties:
+                video:       { type: array, items: { type: string }, description: 'Output video codecs the transcoder can target.' }
+                audio:       { type: array, items: { type: string }, description: 'Output audio codecs the transcoder can target.' }
+                containers:  { type: array, items: { type: string }, description: 'Output containers (mp4, mkv, ts, webm).' }
+                hardware:    { type: array, items: { type: string }, description: 'Active hardware encoders (h264_nvenc, hevc_amf, etc.) — empty when running software-only.' }
+                hdr_tonemap: { type: boolean }
             limits:
               type: object
               properties:
-                max_request_bytes:  { type: integer }
-                max_artwork_dim:    { type: integer }
-                max_pagination:     { type: integer }
+                max_upload_bytes:           { type: integer, format: int64 }
+                max_transcode_bitrate_kbps: { type: integer }
+                max_transcode_width:        { type: integer }
+                max_transcode_height:       { type: integer }
+                max_concurrent_transcodes:  { type: integer }
+                live_tv_tune_count:         { type: integer, description: 'Total tuner-slot count across configured tuners.' }
             discovery:
               type: object
               properties:
-                enabled: { type: boolean }
-                port:    { type: integer }
+                udp_port: { type: integer, description: 'LAN discovery beacon port; omitted when discovery is disabled.' }
 
     # ── Libraries / items ──────────────────────────────────────────────────
     Library:
