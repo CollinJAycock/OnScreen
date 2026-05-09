@@ -3,6 +3,7 @@ package artwork
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -413,5 +414,62 @@ func TestResize_UnconstrainedReturnsOriginalDimensions(t *testing.T) {
 	}
 	if got.Bounds().Dx() != 80 || got.Bounds().Dy() != 60 {
 		t.Errorf("unconstrained Resize changed dimensions: %dx%d", got.Bounds().Dx(), got.Bounds().Dy())
+	}
+}
+
+// TestDownload_NonOKStatus_ReturnsTypedError locks the contract the
+// /items/{id}/poster handler relies on: when an upstream image URL
+// returns a non-200 (Wikipedia file pages 403, IMDB redirects 202,
+// dead links 404), the error is a *DownloadHTTPError whose
+// StatusCode is the actual upstream status. The handler uses
+// errors.As on this type to surface a 400 with the real status to
+// the operator instead of a generic 500.
+func TestDownload_NonOKStatus_ReturnsTypedError(t *testing.T) {
+	cases := []int{403, 404, 500}
+	for _, status := range cases {
+		t.Run("status_"+http.StatusText(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+
+			m := New(t.TempDir()).WithHTTPClient(srv.Client())
+			_, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, t.TempDir())
+			if err == nil {
+				t.Fatal("expected error on non-200 download, got nil")
+			}
+			var dlErr *DownloadHTTPError
+			if !errors.As(err, &dlErr) {
+				t.Fatalf("err type: got %T, want *DownloadHTTPError (handler does errors.As on this)", err)
+			}
+			if dlErr.StatusCode != status {
+				t.Errorf("StatusCode: got %d, want %d", dlErr.StatusCode, status)
+			}
+		})
+	}
+}
+
+// TestDownload_SetsUserAgent verifies the artwork client identifies
+// itself with a real User-Agent. Wikimedia (and a handful of CDNs)
+// reject Go's default "Go-http-client/1.1" with 403 — surfaced live
+// when an operator pasted an upload.wikimedia.org URL into the Set
+// Poster tray. Locking this prevents a regression to the empty UA.
+func TestDownload_SetsUserAgent(t *testing.T) {
+	var seen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("User-Agent")
+		_, _ = w.Write(makeJPEG(t, 4, 4))
+	}))
+	defer srv.Close()
+
+	m := New(t.TempDir()).WithHTTPClient(srv.Client())
+	if _, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, t.TempDir()); err != nil {
+		t.Fatalf("DownloadPoster: %v", err)
+	}
+	if seen == "" {
+		t.Fatal("server saw empty User-Agent — Wikimedia and similar will 403")
+	}
+	if strings.HasPrefix(seen, "Go-http-client") {
+		t.Errorf("User-Agent looks like Go default %q — Wikimedia rejects this", seen)
 	}
 }

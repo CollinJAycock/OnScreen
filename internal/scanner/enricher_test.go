@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1662,6 +1663,67 @@ func TestEnricher_artistDirFromTrack(t *testing.T) {
 				t.Errorf("artistDirFromTrack(%q) = %q, want %q", tc.trackPath, got, want)
 			}
 		})
+	}
+}
+
+// mockMusicAgent counts SearchArtist calls so cache-bypass behavior is
+// observable. Each call returns a unique-thumb result so the enricher
+// reaches the artwork branch and would persist a poster_path on a
+// real updater (here we just count the upstream hits).
+type mockMusicAgent struct {
+	mu       sync.Mutex
+	searches int
+}
+
+func (m *mockMusicAgent) SearchArtist(_ context.Context, _ string) (*metadata.ArtistResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.searches++
+	return &metadata.ArtistResult{Name: "X", ThumbURL: "https://example/thumb.jpg"}, nil
+}
+func (m *mockMusicAgent) SearchAlbum(_ context.Context, _, _ string) (*metadata.AlbumResult, error) {
+	return nil, nil
+}
+func (m *mockMusicAgent) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.searches
+}
+
+// TestEnricher_enrichMusicOnce_ForceReenrichBypassesCache locks the
+// QA-driven fix: a manual /items/{id}/enrich on an artist after data
+// corruption (NULL'd poster_path, wrong match) was silently no-op'ing
+// because the in-process musicAttempted cache from a prior scan was
+// outliving the original scan. Operator override (force-reenrich in
+// ctx) must bypass the cache; scan-time callers without the override
+// still benefit from coalescing.
+func TestEnricher_enrichMusicOnce_ForceReenrichBypassesCache(t *testing.T) {
+	agent := &mockMusicAgent{}
+	updater := &mockUpdater{}
+	e := newTestEnricher(nil, updater, nil)
+	e.SetMusicAgentFn(func() metadata.MusicAgent { return agent })
+
+	artist := &media.Item{ID: uuid.New(), Type: "artist", Title: "Test Artist"}
+	ctx := context.Background()
+
+	// First call hits the upstream and populates the cache.
+	e.enrichMusicOnce(ctx, agent, artist, "/media/Test Artist")
+	if agent.calls() != 1 {
+		t.Fatalf("first call: searches=%d, want 1", agent.calls())
+	}
+
+	// Second call without force should hit the cache and skip the agent.
+	e.enrichMusicOnce(ctx, agent, artist, "/media/Test Artist")
+	if agent.calls() != 1 {
+		t.Errorf("scan-time second call: searches=%d, want 1 (cache should coalesce)", agent.calls())
+	}
+
+	// Third call WITH force-reenrich must bypass the cache and re-run.
+	// Without this bypass, manual operator override after data corruption
+	// silently no-ops for the rest of the container's lifetime.
+	e.enrichMusicOnce(withForceReenrich(ctx), agent, artist, "/media/Test Artist")
+	if agent.calls() != 2 {
+		t.Errorf("force-reenrich call: searches=%d, want 2 (override must bypass cache)", agent.calls())
 	}
 }
 

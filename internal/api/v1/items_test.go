@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,9 +18,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/streaming"
 )
 
@@ -975,5 +978,72 @@ func TestSnapToChapterStart(t *testing.T) {
 	}
 	if got := snapToChapterStart([]ChapterJSON{}, 12_345); got != 12_345 {
 		t.Errorf("snapToChapterStart(empty) = %d, want pass-through", got)
+	}
+}
+
+// ── ApplyPoster ──────────────────────────────────────────────────────────────
+
+type mockPosterPicker struct {
+	listResult []metadata.PosterCandidate
+	listErr    error
+	setErr     error
+}
+
+func (m *mockPosterPicker) ListPosters(_ context.Context, _ string, _ int) ([]metadata.PosterCandidate, error) {
+	return m.listResult, m.listErr
+}
+func (m *mockPosterPicker) SetItemPoster(_ context.Context, _ uuid.UUID, _ string) error {
+	return m.setErr
+}
+
+// TestApplyPoster_DownloadHTTPError_Returns400 locks the contract that
+// surfaced the user-confusion bug: when the pasted URL is a Wikipedia
+// file page (403) or IMDB mediaviewer (202) instead of a direct image,
+// the handler returns 400 with the actual upstream HTTP status in the
+// message — not a generic 500 that leaves operators guessing whether
+// the URL was wrong or the server itself broke.
+func TestApplyPoster_DownloadHTTPError_Returns400(t *testing.T) {
+	ms := &mockItemMedia{item: &media.Item{ID: uuid.New(), Type: "movie", Title: "Test"}}
+	picker := &mockPosterPicker{
+		setErr: &artwork.DownloadHTTPError{URL: "https://example.com/page.html", StatusCode: 403},
+	}
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h = h.WithPosterPicker(picker)
+
+	body := bytes.NewBufferString(`{"url":"https://example.com/page.html"}`)
+	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", body), "id", uuid.New().String())
+	req.Header.Set("Content-Type", "application/json")
+	req = adminClaims(req)
+
+	rec := httptest.NewRecorder()
+	h.ApplyPoster(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400 (DownloadHTTPError must surface as 4xx, not generic 500)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "403") {
+		t.Errorf("body: %s — should mention upstream status 403 so the operator knows the URL was the problem", rec.Body.String())
+	}
+}
+
+// TestApplyPoster_GenericError_Returns500 confirms the typed-error
+// special-case doesn't swallow other failure modes — a generic
+// "couldn't write the file" still goes to 500 and is logged.
+func TestApplyPoster_GenericError_Returns500(t *testing.T) {
+	ms := &mockItemMedia{item: &media.Item{ID: uuid.New(), Type: "movie", Title: "Test"}}
+	picker := &mockPosterPicker{setErr: errors.New("disk write failed")}
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h = h.WithPosterPicker(picker)
+
+	body := bytes.NewBufferString(`{"url":"https://upstream.example/poster.jpg"}`)
+	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", body), "id", uuid.New().String())
+	req.Header.Set("Content-Type", "application/json")
+	req = adminClaims(req)
+
+	rec := httptest.NewRecorder()
+	h.ApplyPoster(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want 500 for non-HTTP errors", rec.Code)
 	}
 }
