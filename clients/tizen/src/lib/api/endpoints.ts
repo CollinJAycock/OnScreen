@@ -270,3 +270,85 @@ export const livetv = {
     return api.get<Recording[]>(`/api/v1/tv/recordings${qs}`);
   },
 };
+
+// ── System (v2.2) ──────────────────────────────────────────────────────────
+// Public capabilities feed — no auth needed. TV uses it to gate UI for
+// optional features (live_tv, dvr, requests, lyrics) that the operator
+// may not have configured. Server promises forward-compat: new fields
+// land in v2.x without breaking older clients.
+
+export interface CapabilitiesFeatures {
+  transcode: boolean;
+  trickplay: boolean;
+  subtitles_external: boolean;
+  subtitles_ocr: boolean;
+  oidc: boolean;
+  ldap: boolean;
+  device_pairing: boolean;
+  plugins: boolean;
+  backup: boolean;
+  people_credits: boolean;
+  photos: boolean;
+  music: boolean;
+  webhooks: boolean;
+  notifications: boolean;
+  // v2.2 additions — all default false on older servers.
+  requests: boolean;
+  live_tv: boolean;
+  dvr: boolean;
+  lyrics: boolean;
+  intro_markers: boolean;
+  chapters: boolean;
+  web_downloads: boolean;
+}
+
+export interface CapabilitiesResponse {
+  features: CapabilitiesFeatures;
+}
+
+export const system = {
+  capabilities: () => api.get<CapabilitiesResponse>('/api/v1/system/capabilities'),
+};
+
+// ── Watch-status mirror (v2.2) ────────────────────────────────────────────
+// Plan to Watch / Watching / Completed / On Hold / Dropped — generic
+// across every type. Distinct from playback progress.
+
+export type WatchStatusValue =
+  | 'plan_to_watch'
+  | 'watching'
+  | 'completed'
+  | 'on_hold'
+  | 'dropped';
+
+export interface WatchStatus {
+  status: WatchStatusValue;
+  updated_at: string;
+}
+
+export const watchStatus = {
+  get: (itemID: string) => api.get<WatchStatus | null>(`/api/v1/items/${itemID}/watch-status`),
+  set: (itemID: string, status: WatchStatusValue) =>
+    api.put<void>(`/api/v1/items/${itemID}/watch-status`, { status }),
+  clear: (itemID: string) => api.del<void>(`/api/v1/items/${itemID}/watch-status`),
+};
+
+// ── Cross-device playback transfer (v2.2) ─────────────────────────────────
+// TVs are typical receivers — phone-to-TV is the canonical use case. The
+// transfer event arrives on the user's SSE notifications stream as
+// `{ type: 'playback.transfer', data: { item_id, position_ms,
+// target_client_name } }`; the TV compares target_client_name against
+// its own registered client_name and loads + plays the item when they
+// match. The POST below lets the TV initiate the other direction
+// ("send this back to my phone") if the UI ever needs it.
+
+export interface PlaybackTransferRequest {
+  item_id: string;
+  position_ms?: number;
+  target_client_name: string;
+}
+
+export const playback = {
+  transfer: (req: PlaybackTransferRequest) =>
+    api.post<void>('/api/v1/playback/transfer', req),
+};

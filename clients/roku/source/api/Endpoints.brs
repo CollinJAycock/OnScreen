@@ -128,6 +128,34 @@ function ApiCollectionItems(id as String) as String
     return "/api/v1/collections/" + id + "/items?limit=200"
 end function
 
+' ── System (v2.2) ────────────────────────────────────────────────────────
+' Public capabilities feed. Lets the TV discover whether optional
+' features (live_tv, dvr, requests, lyrics) are wired on the server
+' before rendering tabs that would otherwise 5xx on first call.
+' Server promises forward-compat: new flags land in v2.x without
+' breaking older Roku binaries.
+function ApiSystemCapabilities() as String
+    return "/api/v1/system/capabilities"
+end function
+
+' ── Watch-status mirror (v2.2) ──────────────────────────────────────────
+' Plan to Watch / Watching / Completed / On Hold / Dropped — generic
+' across every type, not anime-only. Distinct from playback progress.
+' GET returns the row (or null), PUT { status } sets, DELETE clears.
+function ApiItemWatchStatus(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/watch-status"
+end function
+
+' ── Cross-device playback transfer (v2.2) ──────────────────────────────
+' Roku is a typical receiver — phone-to-TV is the canonical use case.
+' The transfer event arrives at the notifications stream as
+' { type: "playback.transfer", data: { item_id, position_ms,
+' target_client_name } }; the receiver compares target_client_name
+' against its own registered client_name before loading the item.
+function ApiPlaybackTransfer() as String
+    return "/api/v1/playback/transfer"
+end function
+
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function

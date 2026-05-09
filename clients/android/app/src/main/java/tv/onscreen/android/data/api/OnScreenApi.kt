@@ -35,6 +35,17 @@ interface OnScreenApi {
         @Header("Authorization") deviceTokenHeader: String,
     ): Response<ApiResponse<TokenPair>>
 
+    // ── System (v2.2) ───────────────────────────────────────────────────────
+
+    /** Server feature flags + codecs + limits. Public endpoint — no auth
+     *  needed. Returns the v2.2.0 contract; future v2.x adds fields but
+     *  doesn't remove them, and Moshi's loose decoding picks up new
+     *  flags without a client release. TVs use this to gate UI for
+     *  optional features (live_tv, dvr, requests) that the operator may
+     *  not have wired. */
+    @GET("api/v1/system/capabilities")
+    suspend fun getCapabilities(): ApiResponse<Capabilities>
+
     // ── Hub ─────────────────────────────────────────────────────────────────
 
     @GET("api/v1/hub")
@@ -78,6 +89,26 @@ interface OnScreenApi {
 
     @GET("api/v1/items/{id}/markers")
     suspend fun getMarkers(@Path("id") id: String): ApiListResponse<Marker>
+
+    // ── Watch-status mirror (v2.2) ──────────────────────────────────────────
+    // Plan to Watch / Watching / Completed / On Hold / Dropped — generic
+    // across every type, not anime-only. Distinct from playback progress;
+    // this is the user's explicit classification.
+
+    /** Returns the current watch status for an item, or null when never set
+     *  (server emits `data: null` in the envelope). Retrofit returns the
+     *  null cleanly through the ApiResponse wrapper. */
+    @GET("api/v1/items/{id}/watch-status")
+    suspend fun getWatchStatus(@Path("id") id: String): ApiResponse<WatchStatus?>
+
+    @PUT("api/v1/items/{id}/watch-status")
+    suspend fun setWatchStatus(
+        @Path("id") id: String,
+        @Body body: WatchStatusUpdate,
+    ): Response<Unit>
+
+    @DELETE("api/v1/items/{id}/watch-status")
+    suspend fun clearWatchStatus(@Path("id") id: String): Response<Unit>
 
     @GET("api/v1/items/{id}/trickplay")
     suspend fun getTrickplayStatus(@Path("id") id: String): ApiResponse<TrickplayStatus>
@@ -184,6 +215,15 @@ interface OnScreenApi {
         @Query("limit") limit: Int = 100,
         @Query("offset") offset: Int = 0,
     ): ApiResponse<List<Recording>>
+
+    // ── Cross-device playback transfer (v2.2) ──────────────────────────────
+    // POST sends a "play on Living Room TV" handoff. The receiving TV
+    // listens for the resulting `playback.transfer` SSE event in
+    // NotificationsRepository.subscribePlaybackTransfers and matches
+    // `target_client_name` against its own registration before acting.
+
+    @POST("api/v1/playback/transfer")
+    suspend fun transferPlayback(@Body body: PlaybackTransferRequest): Response<Unit>
 
     // ── External subtitles (OpenSubtitles) ──────────────────────────────────
 
