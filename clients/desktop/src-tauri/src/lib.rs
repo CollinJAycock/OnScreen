@@ -313,6 +313,95 @@ fn clear_tokens(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Downloads a URL to a user-chosen file path. Shows a native save-as
+/// dialog (default filename = `suggested_filename`); on confirm,
+/// streams the HTTP response body to disk via ureq and returns the
+/// chosen path. User-cancelled dialogs return `Ok(None)` so the
+/// frontend can distinguish between "they backed out" and a real
+/// error.
+///
+/// `bearer_token` is optional: web downloads on the OnScreen server
+/// authenticate via the per-file stream token in the URL query
+/// string, so callers leave it empty. The argument exists for the
+/// future case where a download URL needs an Authorization header
+/// instead.
+#[tauri::command]
+async fn download_to_file(
+    app: AppHandle,
+    url: String,
+    suggested_filename: String,
+    bearer_token: Option<String>,
+) -> Result<Option<String>, String> {
+    use std::io::{BufWriter, Read, Write};
+    use tauri_plugin_dialog::DialogExt;
+
+    // The dialog API is callback-based; bridge to async with a
+    // oneshot so we can `await` the user's choice. Cancel arrives as
+    // None. Tauri re-exports tokio's async primitives so we don't
+    // need to pull tokio in as a direct dependency.
+    let (tx, mut rx) = tauri::async_runtime::channel::<Option<tauri_plugin_dialog::FilePath>>(1);
+    let dialog_tx = tx.clone();
+    app.dialog()
+        .file()
+        .set_file_name(&suggested_filename)
+        .save_file(move |path| {
+            // The async closure can't await — fire-and-forget the
+            // send; the receiver below treats a closed channel as
+            // user-cancelled.
+            let _ = dialog_tx.blocking_send(path);
+        });
+    let chosen = match rx.recv().await {
+        Some(Some(p)) => p,
+        Some(None) | None => return Ok(None),
+    };
+
+    // FilePath -> std::path::PathBuf. Reject non-FS paths (e.g.
+    // mobile content:// URIs) — the desktop wrapper only ever sees
+    // a filesystem path on the platforms we ship.
+    let dst_path = chosen
+        .into_path()
+        .map_err(|e| format!("save dialog returned non-filesystem path: {e}"))?;
+
+    // ureq is blocking, so do the download on a worker thread to
+    // avoid pinning the Tauri main async runtime while a multi-GB
+    // movie streams. spawn_blocking is the standard idiom for
+    // "blocking I/O inside an async command".
+    let dst_clone = dst_path.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let mut req = ureq::get(&url);
+        if let Some(token) = bearer_token.as_ref() {
+            if !token.is_empty() {
+                req = req.set("Authorization", &format!("Bearer {token}"));
+            }
+        }
+        let resp = req.call().map_err(|e| format!("download request failed: {e}"))?;
+        if resp.status() != 200 {
+            return Err(format!("download HTTP status {}", resp.status()));
+        }
+        let mut reader = resp.into_reader();
+        let f = std::fs::File::create(&dst_clone)
+            .map_err(|e| format!("create {}: {e}", dst_clone.display()))?;
+        let mut writer = BufWriter::new(f);
+        // 1 MiB copy buffer — large enough that fread/fwrite syscall
+        // overhead is amortised on multi-GB downloads, small enough
+        // that a torn write never holds more than a frame's worth.
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| format!("read: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            writer.write_all(&buf[..n]).map_err(|e| format!("write: {e}"))?;
+        }
+        writer.flush().map_err(|e| format!("flush: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("download task panicked: {e}"))??;
+
+    Ok(Some(dst_path.to_string_lossy().into_owned()))
+}
+
 /// Brings the main window forward — used by both the tray icon's
 /// left-click and the "Show OnScreen" menu item. Unminimises before
 /// focusing so a tray click recovers from a minimized state too.
@@ -340,6 +429,11 @@ pub fn run() {
         // gates this behind a user pref so it doesn't spam during
         // album playback.
         .plugin(tauri_plugin_notification::init())
+        // Native save-as dialog. Used by the Download button on the
+        // watch page so the user picks where to drop the media file
+        // on their disk; the webview's <a download> doesn't fire the
+        // OS save flow on its own.
+        .plugin(tauri_plugin_dialog::init())
         // Global keyboard shortcuts — registers the OS media keys
         // (Play/Pause, Next, Previous, Stop) so transport works
         // when OnScreen isn't focused. The handler emits a
@@ -453,6 +547,7 @@ pub fn run() {
             get_tokens,
             set_tokens,
             clear_tokens,
+            download_to_file,
             audio::list_audio_devices,
             audio::play_test_tone,
             audio::stop_audio,

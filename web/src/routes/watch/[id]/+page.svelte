@@ -5,6 +5,7 @@
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { progressUpdates } from '$lib/stores/notifications';
   import { capabilities } from '$lib/stores/capabilities';
+  import { isTauri, nativeDownload } from '$lib/native';
   import {
     sleepTimer,
     startSleepTimer,
@@ -121,6 +122,35 @@
     { mode: '60m', label: '1 hour' },
     { mode: 'episode', label: 'End of episode' },
   ];
+
+  // Native download (Tauri) — the webview's <a download> doesn't
+  // trigger the OS save dialog, so under Tauri we hand the URL to
+  // the Rust shim which opens a native save-as and streams the
+  // response with ureq. The browser keeps the plain anchor path.
+  async function handleDownloadClick(e: Event) {
+    if (!isTauri()) return; // Browser handles it via the anchor's download attr.
+    e.preventDefault();
+    const f = item?.files?.[0];
+    if (!f?.id || !f.stream_token) return;
+    // assetUrl returns an absolute, token-bearing URL when running
+    // under Tauri (apiBase is the cross-origin server URL); the
+    // ureq fetch on the Rust side hits exactly the same path the
+    // browser anchor would have.
+    const fullUrl = assetUrl(`/media/download/${f.id}?token=${encodeURIComponent(f.stream_token)}`);
+    // Suggested filename — server uses the same logic in the
+    // Content-Disposition header, but Rust can't read that without
+    // a HEAD request, so derive one client-side. Falls back to a
+    // generic name when the title isn't usable.
+    const safeTitle = (item?.title ?? 'download').replace(/[\\/:*?"<>|]/g, '_');
+    const ext = f.container ? '.' + f.container.toLowerCase() : '';
+    const filename = safeTitle + ext;
+    try {
+      const path = await nativeDownload(fullUrl, filename);
+      if (path) toast.success('Saved to ' + path);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Download failed');
+    }
+  }
 
   // Pause + toast when the duration timer fires. Episode mode never
   // calls this — it gates the auto-next-episode handler instead.
@@ -3310,6 +3340,7 @@
             class="download-btn"
             href="{assetUrl(`/media/download/${item.files[0].id}?token=${encodeURIComponent(item.files[0].stream_token)}`)}"
             download
+            on:click={handleDownloadClick}
             title="Download for offline viewing"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">

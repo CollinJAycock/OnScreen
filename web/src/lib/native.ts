@@ -99,6 +99,28 @@ export async function clearStoredTokens(): Promise<void> {
   await invoke('clear_tokens');
 }
 
+/**
+ * Native save-as download. Browser <a download> doesn't trigger the
+ * OS save flow inside the Tauri webview — it just navigates inside
+ * the iframe and dead-ends. The Rust side opens a native dialog,
+ * streams the response with ureq, and writes to the chosen path.
+ *
+ * Returns the chosen path on success, `null` if the user cancelled
+ * the dialog. Throws on transport / write errors so the caller can
+ * surface a toast.
+ */
+export async function nativeDownload(url: string, suggestedFilename: string): Promise<string | null> {
+  if (!isTauri()) {
+    throw new Error('nativeDownload is only meaningful inside the native client');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke<string | null>('download_to_file', {
+    url,
+    suggestedFilename,
+    bearerToken: null,
+  });
+}
+
 // ── Native audio engine ────────────────────────────────────────────────────
 // Foundations only in this layer — device enumeration + a test-tone
 // path that proves the cpal output stack works on the user's box.

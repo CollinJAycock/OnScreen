@@ -35,6 +35,12 @@ tauri-plugin-global-shortcut = "2"
 # system notification centre, so the user sees "Now playing X" in
 # their notification shell when the OnScreen window isn't focused.
 tauri-plugin-notification = "2"
+# Native save-as dialog for the Download button. Browser <a download>
+# in the Tauri webview navigates inside the webview instead of
+# triggering the OS save flow; we hand the URL to Rust, ureq
+# streams the response, and tauri-plugin-dialog asks the user where
+# to put it.
+tauri-plugin-dialog = "2"
 
 # OS keychain. Refresh tokens move out of the plaintext appdata
 # JSON file and into Windows Credential Manager / macOS Keychain
