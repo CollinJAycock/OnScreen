@@ -135,7 +135,7 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 | Last.fm / ListenBrainz scrobbling                  |    ❌    |  ⚠   |  🧩  |    🧩    |
 | Chapter markers + skip targets                     |    ✅    |  ✅  |  ✅  |    ✅    |
 
-Skip Intro / Skip Credits is wired in the web player: a button slides in over the bottom-right corner whenever the playback head is inside an intro / credits region (server-detected, see section 5), `S` is the keyboard shortcut, and a per-browser "Always skip intros" toggle sits right under the button so users discover it the first time it appears. Auto-skip is intro-only — auto-skipping credits would yank the user out of the episode prematurely; that path is handled by the existing auto-next-episode flow with the sleep-timer "end of episode" gate. Most of the rest in this section are real trails: ABR ladder, Cast, AirPlay, DLNA, and SyncPlay-style watch parties are all areas competitors are ahead. None are scheduled for v2.2.
+Skip Intro / Skip Credits is wired in the web player: a button slides in over the bottom-right corner whenever the playback head is inside an intro / credits region (server-detected, see section 5), `S` is the keyboard shortcut, and a per-browser "Always skip intros" toggle sits right under the button so users discover it the first time it appears. Auto-skip is intro-only — auto-skipping credits would yank the user out of the episode prematurely; that path is handled by the existing auto-next-episode flow with the sleep-timer "end of episode" gate. ABR ladder + AirPlay + SyncPlay are real trails. Cast and DLNA show ❌ in the matrix but are not chasing tasks — see "Deferred" near the bottom for why (Android apps + cross-device transfer cover Cast's main use case; DLNA is permanently scoped out).
 
 OpenSubtitles search + download is built in: the player UI calls `/items/{id}/subtitles/search` against the OpenSubtitles v1 API, and downloaded `.srt` files are persisted to disk and registered as `external_subtitles` rows so subsequent playback gets text-based subs without re-querying. Per-session rate limit (10 searches/minute, 5 downloads/minute) prevents player retries from blowing the OpenSubtitles per-IP quota. Cross-device transfer (`POST /playback/transfer`) hands a playback state to a named target client by device label — same shape as Plex's "Play on" / Emby's "Remote Control".
 
@@ -316,11 +316,20 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **TV-client hardware soak** *(vs all three)*. Code-complete on every platform; Android TV / Fire TV is hardware-verified. webOS / Tizen / Roku / Android phone need real-device soak before Plex-class confidence.
 - **VAAPI hardware encode validation** *(vs Plex / Emby paid tiers; Jellyfin core)*. Three of four encoder families validated on real hardware. VAAPI needs a Linux + non-NVIDIA GPU rig the project doesn't yet have.
 - **Adaptive bitrate HLS ladder** *(vs all three)*. OnScreen transcodes a single rendition per session and lets the operator-side bandwidth profile pick. Multi-rendition variant playlists with bandwidth-aware client switching are absent.
-- **Cast / AirPlay / DLNA out** *(vs all three)*. None of the three protocols is wired — Cast and AirPlay receivers don't see OnScreen, and there's no UPnP/DLNA server for legacy renderers. Browser-only "play here" today.
+- **AirPlay out** *(vs Plex / Emby; partial on Jellyfin)*. No path from web or desktop into the Apple TV / HomePod ecosystem. Cast and DLNA are tracked separately under "Deferred" below — see that section for why those two don't sit here.
 - **iOS offline downloads** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; iOS is the only portable surface still uncovered (TV / set-top platforms aren't candidates — they sit on the network and never go offline). Web + desktop now ship a "save the original file" download (admin-toggleable, default off), so the laptop-on-a-flight use case is already covered through the browser path.
 - **Sync-watch / watch parties** *(vs Jellyfin SyncPlay)*. Plex retired Watch Together; Emby has nothing native. Jellyfin's SyncPlay is the only differentiated one and OnScreen doesn't match it.
 - **Subtitle styling controls** *(vs all three)*. OCR-derived WebVTT is restyleable in principle, but the player UI doesn't expose font / size / colour / outline pickers yet.
 - **Last.fm / ListenBrainz scrobbling** *(vs community plugins on the others)*. Listen events live in `watch_events`; a one-way scrobble exporter would close this without much work.
+
+---
+
+## Deferred — workaround in place
+
+Features competitors ship that OnScreen doesn't, but where the gap is mitigated by something else we already have. Lower priority than the trails above — they show up as missing rows in the matrix but don't block the use case for users on the OnScreen-native client stack.
+
+- **Chromecast / Google Cast** *(vs all three)*. The phone-to-TV use case Cast was invented for is covered by the OnScreen Android phone + Android TV / Fire TV apps and the cross-device "play on…" transfer (`POST /playback/transfer`). Remaining value: laptop / web → TV without switching devices, older Chromecast dongles plugged into TVs that can't run the Android TV app, and guests with no app installed. Real but narrow — sized at ~2 weeks of focused work for sender SDK + auth-token URL handover + real-hardware soak. Will land when a polish track has the room; the matrix-parity row stays ❌ until then.
+- **DLNA / UPnP server** *(vs all three)*. **Permanently scoped out.** DLNA wants progressive MP4 / MPEG-TS streams with DLNA-PN profile tags — a separate muxer path from our HLS pipeline — plus a SOAP ContentDirectory service and per-renderer compatibility quirks (Sony Bravia, Samsung Tizen, Kodi, VLC). The audience is mostly legacy TVs that have already been replaced by Cast / AirPlay / app-store TVs in the modern install base. Sized at ~3 weeks for a working implementation; ROI doesn't justify the surface.
 
 ---
 
