@@ -129,6 +129,7 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 | Chromecast / Google Cast                           |    ❌    |  ✅  |  ✅  |    ✅    |
 | AirPlay                                            |    ❌    |  ✅  |  ✅  |    ⚠    |
 | DLNA / UPnP server                                 |    ❌    |  ✅  |  ✅  |    ✅    |
+| Web + desktop file download (server-wide admin toggle, default off) | ✅ | ⚠   |  ⚠   |    ⚠    |
 | Mobile offline downloads                           |    ⚠    |  💎  |  💎  |    ✅    |
 | Sync watch / watch parties                         |    ❌    |  ❌  |  ❌  |    ✅    |
 | Last.fm / ListenBrainz scrobbling                  |    ❌    |  ⚠   |  🧩  |    🧩    |
@@ -137,6 +138,8 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 Skip Intro / Skip Credits is wired in the web player: a button slides in over the bottom-right corner whenever the playback head is inside an intro / credits region (server-detected, see section 5), `S` is the keyboard shortcut, and a per-browser "Always skip intros" toggle sits right under the button so users discover it the first time it appears. Auto-skip is intro-only — auto-skipping credits would yank the user out of the episode prematurely; that path is handled by the existing auto-next-episode flow with the sleep-timer "end of episode" gate. Most of the rest in this section are real trails: ABR ladder, Cast, AirPlay, DLNA, and SyncPlay-style watch parties are all areas competitors are ahead. None are scheduled for v2.2.
 
 OpenSubtitles search + download is built in: the player UI calls `/items/{id}/subtitles/search` against the OpenSubtitles v1 API, and downloaded `.srt` files are persisted to disk and registered as `external_subtitles` rows so subsequent playback gets text-based subs without re-querying. Per-session rate limit (10 searches/minute, 5 downloads/minute) prevents player retries from blowing the OpenSubtitles per-IP quota. Cross-device transfer (`POST /playback/transfer`) hands a playback state to a named target client by device label — same shape as Plex's "Play on" / Emby's "Remote Control".
+
+Web + desktop file download has a server-wide admin toggle in Settings → General → Sharing, **default off**. Posture is "stream only" out of the box — operators on shared servers don't want guests pulling raw files unintentionally; personal-server operators flip it on. Plex / Emby / Jellyfin all expose this only as a per-user permission (no global kill-switch). Under Tauri the click flows through a `download_to_file` Rust command that opens a native save-as dialog and streams the response with ureq — webview `<a download>` doesn't fire the OS save flow without that bridge.
 
 ---
 
@@ -314,7 +317,7 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **VAAPI hardware encode validation** *(vs Plex / Emby paid tiers; Jellyfin core)*. Three of four encoder families validated on real hardware. VAAPI needs a Linux + non-NVIDIA GPU rig the project doesn't yet have.
 - **Adaptive bitrate HLS ladder** *(vs all three)*. OnScreen transcodes a single rendition per session and lets the operator-side bandwidth profile pick. Multi-rendition variant playlists with bandwidth-aware client switching are absent.
 - **Cast / AirPlay / DLNA out** *(vs all three)*. None of the three protocols is wired — Cast and AirPlay receivers don't see OnScreen, and there's no UPnP/DLNA server for legacy renderers. Browser-only "play here" today.
-- **Offline downloads beyond Android phone** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; the iOS / Apple TV / Android TV / Fire TV / web / desktop / webOS / Tizen / Roku surfaces don't yet have an equivalent.
+- **Mobile-shape offline downloads beyond Android phone** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; iOS / Apple TV / Android TV / Fire TV / webOS / Tizen / Roku don't yet have an equivalent. Web and desktop now ship a "save the original file" download (admin-toggleable, default off) — that's a different shape than the mobile-side queueable manifest, but does solve the laptop-on-a-flight use case.
 - **Sync-watch / watch parties** *(vs Jellyfin SyncPlay)*. Plex retired Watch Together; Emby has nothing native. Jellyfin's SyncPlay is the only differentiated one and OnScreen doesn't match it.
 - **Subtitle styling controls** *(vs all three)*. OCR-derived WebVTT is restyleable in principle, but the player UI doesn't expose font / size / colour / outline pickers yet.
 - **Last.fm / ListenBrainz scrobbling** *(vs community plugins on the others)*. Listen events live in `watch_events`; a one-way scrobble exporter would close this without much work.
