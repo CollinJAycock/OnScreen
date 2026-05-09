@@ -5,6 +5,14 @@
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { progressUpdates } from '$lib/stores/notifications';
   import { capabilities } from '$lib/stores/capabilities';
+  import {
+    sleepTimer,
+    startSleepTimer,
+    cancelSleepTimer,
+    formatRemaining,
+    type SleepTimerMode,
+  } from '$lib/stores/sleepTimer';
+  import { toast } from '$lib/stores/toast';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
@@ -100,6 +108,41 @@
   ];
   let selectedQuality: QualityOption = qualityOptions[0];
   let showQualityMenu = false;
+  let showSleepTimerMenu = false;
+
+  // Sleep-timer menu options: time-based plus an "end of episode" mode
+  // for TV shows where the natural item boundary is the right place to
+  // stop. The episode option appears in the menu only when the current
+  // item is an episode (sleep-after-this-movie isn't a useful thing).
+  const sleepTimerOptions: { mode: SleepTimerMode; label: string }[] = [
+    { mode: '15m', label: '15 minutes' },
+    { mode: '30m', label: '30 minutes' },
+    { mode: '45m', label: '45 minutes' },
+    { mode: '60m', label: '1 hour' },
+    { mode: 'episode', label: 'End of episode' },
+  ];
+
+  // Pause + toast when the duration timer fires. Episode mode never
+  // calls this — it gates the auto-next-episode handler instead.
+  function onSleepTimerFire() {
+    if (videoEl && !videoEl.paused) videoEl.pause();
+    toast.success('Sleep timer ended — playback paused');
+  }
+
+  function pickSleepTimer(mode: SleepTimerMode) {
+    showSleepTimerMenu = false;
+    if (mode === 'off') {
+      cancelSleepTimer();
+      return;
+    }
+    startSleepTimer(mode, onSleepTimerFire);
+    if (mode === 'episode') {
+      toast.success('Sleep timer set — will stop after this episode');
+    } else {
+      const opt = sleepTimerOptions.find((o) => o.mode === mode);
+      toast.success(`Sleep timer set for ${opt?.label}`);
+    }
+  }
 
   // Subtitle picker
   let showSubtitleMenu = false;
@@ -837,6 +880,15 @@
 
   function startAutoplayCountdown() {
     if (autoplayTimer || autoplayCancelled || !nextEpisode) return;
+    // Sleep-timer "end of episode" mode short-circuits auto-advance —
+    // the user explicitly asked us to stop after this one. Surface a
+    // toast so they know the timer is what stopped the chain rather
+    // than a bug.
+    if ($sleepTimer.mode === 'episode') {
+      cancelSleepTimer();
+      toast.success('Sleep timer ended — stopped after this episode');
+      return;
+    }
     // Suppress autoplay when the user has just landed on this page —
     // an already-watched episode loads with view_offset_ms near
     // duration, which would fire showNextEpisodePrompt immediately
@@ -917,6 +969,7 @@
 
   onDestroy(() => {
     clearTimers();
+    cancelSleepTimer();
     unsubProgress();
     document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
     window.removeEventListener('mousemove', onSeekMouseMove);
@@ -1850,7 +1903,7 @@
     }
     if (!videoEl) return;
     // Close menus on Escape
-    if (e.key === 'Escape') { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; return; }
+    if (e.key === 'Escape') { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; showSleepTimerMenu = false; return; }
     switch (e.key) {
       case ' ':
       case 'k':
@@ -2325,7 +2378,7 @@
 <svelte:head><title>{item?.title ?? 'Watch'} — OnScreen</title></svelte:head>
 
 <!-- svelte-ignore avoid-is -->
-<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; }} />
+<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; showSleepTimerMenu = false; }} />
 
 {#if isPhoto && item}
 <!-- Photo viewer -->
@@ -2914,6 +2967,57 @@
                     >
                       {q.label}
                     </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <!-- Sleep timer -->
+            <div class="quality-picker" on:click|stopPropagation>
+              <button
+                class="icon-btn small quality-btn sleep-btn"
+                class:active={$sleepTimer.mode !== 'off'}
+                on:click|stopPropagation={() => { showSleepTimerMenu = !showSleepTimerMenu; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
+                title={$sleepTimer.mode === 'off' ? 'Sleep timer' : ($sleepTimer.mode === 'episode' ? 'Sleep timer: end of episode' : `Sleep timer: ${formatRemaining($sleepTimer.remainingMs)} left`)}
+                aria-label="Sleep timer"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+                {#if $sleepTimer.mode === 'episode'}
+                  <span class="quality-label">EP</span>
+                {:else if $sleepTimer.mode !== 'off'}
+                  <span class="quality-label">{formatRemaining($sleepTimer.remainingMs)}</span>
+                {/if}
+              </button>
+
+              {#if showSleepTimerMenu}
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
+                <div
+                  class="quality-menu"
+                  on:click|stopPropagation
+                  role="menu"
+                  aria-label="Sleep timer options"
+                >
+                  <button
+                    class="quality-option"
+                    class:active={$sleepTimer.mode === 'off'}
+                    on:click={() => pickSleepTimer('off')}
+                    role="menuitem"
+                  >
+                    Off
+                  </button>
+                  {#each sleepTimerOptions as opt}
+                    {#if opt.mode !== 'episode' || item?.type === 'episode'}
+                      <button
+                        class="quality-option"
+                        class:active={$sleepTimer.mode === opt.mode}
+                        on:click={() => pickSleepTimer(opt.mode)}
+                        role="menuitem"
+                      >
+                        {opt.label}
+                      </button>
+                    {/if}
                   {/each}
                 </div>
               {/if}
@@ -4020,6 +4124,14 @@
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.01em;
+  }
+
+  /* Active state for the sleep-timer button — coloured outline tells the
+     user a timer is running without taking the button out of the row. */
+  .sleep-btn.active {
+    color: var(--accent);
+    border-color: rgba(124,106,247,0.4);
+    background: rgba(124,106,247,0.12);
   }
 
   .quality-menu {

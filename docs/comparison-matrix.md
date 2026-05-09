@@ -124,7 +124,7 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 | Skip intro / skip credits button on player         |    ⚠    |  💎  |  🧩  |    🧩    |
 | OpenSubtitles search + download (in-player)        |    ✅    |  ❌  |  💎  |    🧩    |
 | Cross-device "play on…" transfer (own ecosystem)   |    ✅    |  ✅  |  ✅  |    ❌    |
-| Sleep timer                                        |    ❌    |  ✅  |  ✅  |    ✅    |
+| Sleep timer                                        |    ✅    |  ✅  |  ✅  |    ✅    |
 | On-screen subtitle styling (font/size/color)       |    ❌    |  ✅  |  ✅  |    ✅    |
 | Chromecast / Google Cast                           |    ❌    |  ✅  |  ✅  |    ✅    |
 | AirPlay                                            |    ❌    |  ✅  |  ✅  |    ⚠    |
@@ -317,7 +317,6 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **Offline downloads beyond Android phone** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; the iOS / Apple TV / Android TV / Fire TV / web / desktop / webOS / Tizen / Roku surfaces don't yet have an equivalent.
 - **Sync-watch / watch parties** *(vs Jellyfin SyncPlay)*. Plex retired Watch Together; Emby has nothing native. Jellyfin's SyncPlay is the only differentiated one and OnScreen doesn't match it.
 - **Subtitle styling controls** *(vs all three)*. OCR-derived WebVTT is restyleable in principle, but the player UI doesn't expose font / size / colour / outline pickers yet.
-- **Sleep timer** *(vs all three)*. Trivial UX feature, easy to add when the player UI gets a polish pass.
 - **Last.fm / ListenBrainz scrobbling** *(vs community plugins on the others)*. Listen events live in `watch_events`; a one-way scrobble exporter would close this without much work.
 
 ---
