@@ -125,7 +125,7 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 | OpenSubtitles search + download (in-player)        |    ✅    |  ❌  |  💎  |    🧩    |
 | Cross-device "play on…" transfer (own ecosystem)   |    ✅    |  ✅  |  ✅  |    ❌    |
 | Sleep timer                                        |    ✅    |  ✅  |  ✅  |    ✅    |
-| On-screen subtitle styling (font/size/color)       |    ❌    |  ✅  |  ✅  |    ✅    |
+| On-screen subtitle styling (size/color/background/outline) |  ✅ |  ✅  |  ✅  |    ✅    |
 | Chromecast / Google Cast                           |    ❌    |  ✅  |  ✅  |    ✅    |
 | AirPlay                                            |    ❌    |  ✅  |  ✅  |    ⚠    |
 | DLNA / UPnP server                                 |    ❌    |  ✅  |  ✅  |    ✅    |
@@ -318,7 +318,6 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **Adaptive bitrate HLS ladder** *(vs all three)*. OnScreen transcodes a single rendition per session and lets the operator-side bandwidth profile pick. Multi-rendition variant playlists with bandwidth-aware client switching are absent.
 - **AirPlay out** *(vs Plex / Emby; partial on Jellyfin)*. No path from web or desktop into the Apple TV / HomePod ecosystem. Cast and DLNA are tracked separately under "Deferred" below — see that section for why those two don't sit here.
 - **iOS offline downloads** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; iOS is the only portable surface still uncovered (TV / set-top platforms aren't candidates — they sit on the network and never go offline). Web + desktop now ship a "save the original file" download (admin-toggleable, default off), so the laptop-on-a-flight use case is already covered through the browser path.
-- **Subtitle styling controls** *(vs all three)*. OCR-derived WebVTT is restyleable in principle, but the player UI doesn't expose font / size / colour / outline pickers yet.
 - **Last.fm / ListenBrainz scrobbling** *(vs community plugins on the others)*. Listen events live in `watch_events`; a one-way scrobble exporter would close this without much work.
 
 ---
