@@ -1904,7 +1904,7 @@ func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgen
 	if file != nil {
 		dir := filepath.Dir(file.FilePath)
 		if item.Type == "artist" {
-			dir = filepath.Dir(dir) // go up past the album dir
+			dir = e.artistDirFromTrack(file.FilePath)
 		}
 		artDir = dir
 	}
@@ -1939,7 +1939,7 @@ func (e *Enricher) enrichMusicItem(ctx context.Context, agent metadata.MusicAgen
 		}
 		artistDir := ""
 		if file != nil {
-			artistDir = filepath.Dir(filepath.Dir(file.FilePath))
+			artistDir = e.artistDirFromTrack(file.FilePath)
 		}
 		if artist.PosterPath == nil {
 			e.enrichMusicOnce(ctx, agent, artist, artistDir)
@@ -2674,6 +2674,34 @@ func (e *Enricher) setRelPath(dest **string, abs string) {
 	if rel := e.relPath(abs); rel != "" {
 		*dest = &rel
 	}
+}
+
+// artistDirFromTrack returns the artist directory for a track file path.
+//
+// Default assumption is nested-album layout (`<root>/<artist>/<album>/<track>`),
+// where the artist is two levels up from the track. But flat-album layouts
+// (`<root>/<artist>/<track>` with no album subdirectory — verified live in
+// QA on AC/DC tracks like "/media/Media/Music/AC+DC/07-acdc-hard_times.flac")
+// are equally valid; going up two levels there overshoots into the library
+// scan root and writes the artist poster as a bare-filename file at root,
+// where every artist's "<id>-poster.jpg" stomps on previous-broken-scan
+// orphans and surfaces as "every artist shows the wrong art".
+//
+// The fix: if going up one level lands on a library scan root, the layout
+// is flat-album — the track's own dir IS the artist dir. Only walk up the
+// extra level when the parent isn't a scan root.
+func (e *Enricher) artistDirFromTrack(trackPath string) string {
+	dir := filepath.Dir(trackPath)
+	upOne := filepath.Dir(dir)
+	if e.scanPaths != nil {
+		cleanUp := filepath.Clean(upOne)
+		for _, root := range e.scanPaths() {
+			if filepath.Clean(root) == cleanUp {
+				return dir
+			}
+		}
+	}
+	return upOne
 }
 
 func (e *Enricher) relPath(absPath string) string {

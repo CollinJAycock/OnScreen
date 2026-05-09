@@ -1622,6 +1622,49 @@ func TestEnricher_relPath(t *testing.T) {
 	}
 }
 
+// TestEnricher_artistDirFromTrack covers the flat-album layout fix:
+// going up two levels from a track in `<root>/<artist>/<track>` overshoots
+// into the library scan root, which made enrichArtist write the artist
+// poster as a bare-filename file at root — colliding with previous-broken-
+// scan orphans and surfacing as "every artist shows the wrong art" in QA.
+func TestEnricher_artistDirFromTrack(t *testing.T) {
+	e := &Enricher{scanPaths: func() []string { return []string{"/music"} }}
+
+	tests := []struct {
+		name      string
+		trackPath string
+		want      string
+	}{
+		{
+			name:      "nested-album: track in <root>/<artist>/<album>/",
+			trackPath: "/music/Pink Floyd/Dark Side/track.flac",
+			want:      "/music/Pink Floyd",
+		},
+		{
+			name:      "flat-album: track in <root>/<artist>/ (the QA AC+DC case)",
+			trackPath: "/music/AC+DC/07-acdc-hard_times.flac",
+			want:      "/music/AC+DC",
+		},
+		{
+			name:      "deeply-nested: still walks up one level past track's parent",
+			trackPath: "/music/A/AC+DC/album/track.flac",
+			want:      "/music/A/AC+DC",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// filepath.Dir returns OS-native separators; normalize the expected
+			// value so the assertion holds on Windows test runs too. The
+			// production code paths through setRelPath/relPath which apply
+			// the forward-slash conversion before storing in the DB.
+			want := filepath.FromSlash(tc.want)
+			if got := e.artistDirFromTrack(tc.trackPath); got != want {
+				t.Errorf("artistDirFromTrack(%q) = %q, want %q", tc.trackPath, got, want)
+			}
+		})
+	}
+}
+
 // TestEnricher_setRelPath_skipsOnEmpty covers the bug-class fix: when
 // a downloaded artwork file lands outside library scan_paths, the
 // helper must NOT write a bare basename to *dest. That basename
