@@ -222,6 +222,22 @@
   {:else}
     <form on:submit|preventDefault={save}>
       <section>
+        <div class="sec-label">Sharing</div>
+        <div class="field toggle-field">
+          <label class="toggle-label">
+            <input type="checkbox" bind:checked={webDownloadsEnabled} />
+            <span>Allow web downloads</span>
+          </label>
+          <div class="hint">
+            Show a "Download" button on the watch page so users can save the
+            original media file to disk. Off by default — turn on for personal
+            servers where you trust every account; leave off for shared servers
+            where users should stream only.
+          </div>
+        </div>
+      </section>
+
+      <section>
         <div class="sec-label">Server</div>
         <div class="hint" style="margin-top: -0.5rem;">
           Restart required after changes — these are read at process startup.
@@ -264,18 +280,6 @@
             Comma-separated origin list for cross-origin XHR. Use <code>*</code> to allow any
             origin (safe — the API authenticates via Bearer headers, not cookies).
             Leave blank for same-origin only.
-          </div>
-        </div>
-        <div class="field toggle-field">
-          <label class="toggle-label">
-            <input type="checkbox" bind:checked={webDownloadsEnabled} />
-            <span>Allow web downloads</span>
-          </label>
-          <div class="hint">
-            Show a "Download" button on the watch page so users can save the
-            original media file to disk. Off by default — turn on for personal
-            servers where you trust every account; leave off for shared servers
-            where users should stream only.
           </div>
         </div>
       </section>

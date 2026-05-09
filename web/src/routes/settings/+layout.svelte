@@ -15,27 +15,89 @@
 
   $: path = $page.url.pathname;
 
-  const tabs = [
-    { href: '/settings', label: 'General', exact: true },
-    { href: '/settings/transcode', label: 'Transcode', exact: false },
-    { href: '/settings/users', label: 'Users', exact: false },
-    { href: '/settings/webhooks', label: 'Webhooks', exact: false },
-    { href: '/settings/arr-services', label: 'Arr Services', exact: false },
-    { href: '/settings/plugins', label: 'Plugins', exact: false },
-    { href: '/settings/tasks', label: 'Tasks', exact: false },
-    { href: '/settings/unmatched', label: 'Fix Match', exact: false },
-    { href: '/settings/missing-art', label: 'Set Poster', exact: false },
-    { href: '/settings/backup', label: 'Backup', exact: false },
-    { href: '/settings/sso', label: 'SSO', exact: false },
-    { href: '/settings/email', label: 'Email', exact: false },
-    { href: '/settings/tv', label: 'Live TV', exact: false },
-    { href: '/settings/observability', label: 'Observability', exact: false },
-    { href: '/settings/audit', label: 'Audit Log', exact: false },
+  // Two-level nav. Top-level groups collapse the previous 15-tab list
+  // into 7 buckets; selecting a group with multiple children renders a
+  // second-level sub-nav that links to the existing per-screen routes
+  // (no route changes — bookmarks still work).
+  type SubTab = { href: string; label: string };
+  type Group = {
+    label: string;
+    href: string; // landing href when the group is clicked
+    matches: string[]; // any URL prefix that activates this group
+    children: SubTab[]; // empty if the group is a single page
+  };
+
+  const groups: Group[] = [
+    {
+      label: 'General',
+      href: '/settings',
+      matches: ['/settings'],
+      children: [],
+    },
+    {
+      label: 'Library',
+      href: '/settings/unmatched',
+      matches: ['/settings/unmatched', '/settings/missing-art', '/settings/tasks'],
+      children: [
+        { href: '/settings/unmatched', label: 'Fix Match' },
+        { href: '/settings/missing-art', label: 'Set Poster' },
+        { href: '/settings/tasks', label: 'Tasks' },
+      ],
+    },
+    {
+      label: 'Transcode',
+      href: '/settings/transcode',
+      matches: ['/settings/transcode'],
+      children: [],
+    },
+    {
+      label: 'Users',
+      href: '/settings/users',
+      matches: ['/settings/users', '/settings/sso', '/settings/email'],
+      children: [
+        { href: '/settings/users', label: 'Users' },
+        { href: '/settings/sso', label: 'SSO' },
+        { href: '/settings/email', label: 'Email' },
+      ],
+    },
+    {
+      label: 'Integrations',
+      href: '/settings/webhooks',
+      matches: ['/settings/webhooks', '/settings/arr-services', '/settings/plugins'],
+      children: [
+        { href: '/settings/webhooks', label: 'Webhooks' },
+        { href: '/settings/arr-services', label: 'Arr Services' },
+        { href: '/settings/plugins', label: 'Plugins' },
+      ],
+    },
+    {
+      label: 'Live TV',
+      href: '/settings/tv',
+      matches: ['/settings/tv'],
+      children: [],
+    },
+    {
+      label: 'Observability',
+      href: '/settings/observability',
+      matches: ['/settings/observability', '/settings/audit', '/settings/backup'],
+      children: [
+        { href: '/settings/observability', label: 'Dashboards' },
+        { href: '/settings/audit', label: 'Audit Log' },
+        { href: '/settings/backup', label: 'Backup' },
+      ],
+    },
   ];
 
-  function isActive(tab: { href: string; exact: boolean }, current: string) {
-    return tab.exact ? current === tab.href : current.startsWith(tab.href);
+  // The General group's "matches" is just /settings, but every other
+  // settings route also starts with /settings — so plain prefix
+  // matching makes General match everything. Special-case it.
+  function groupActive(g: Group, current: string): boolean {
+    if (g.label === 'General') return current === '/settings';
+    return g.matches.some((m) => current === m || current.startsWith(m + '/'));
   }
+
+  $: activeGroup = groups.find((g) => groupActive(g, path));
+  $: subTabs = activeGroup?.children ?? [];
 </script>
 
 {#if ready}
@@ -43,18 +105,33 @@
     <div class="settings-header">
       <h1>Settings</h1>
       <nav class="tab-bar" role="tablist">
-        {#each tabs as tab}
+        {#each groups as g}
           <a
-            href={tab.href}
+            href={g.href}
             class="tab"
-            class:active={isActive(tab, path)}
+            class:active={groupActive(g, path)}
             role="tab"
-            aria-selected={isActive(tab, path)}
+            aria-selected={groupActive(g, path)}
           >
-            {tab.label}
+            {g.label}
           </a>
         {/each}
       </nav>
+      {#if subTabs.length > 0}
+        <nav class="sub-tab-bar" role="tablist" aria-label="{activeGroup?.label} sections">
+          {#each subTabs as st}
+            <a
+              href={st.href}
+              class="sub-tab"
+              class:active={path === st.href}
+              role="tab"
+              aria-selected={path === st.href}
+            >
+              {st.label}
+            </a>
+          {/each}
+        </nav>
+      {/if}
     </div>
     <slot />
   </div>
@@ -102,13 +179,43 @@
     border-bottom-color: var(--accent);
   }
 
+  /* Sub-nav rendered when the active top-level group has children.
+     Lighter styling than the top tabs so the hierarchy reads at a
+     glance — top tabs are the route, sub-tabs are the section. */
+  .sub-tab-bar {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.85rem;
+    flex-wrap: wrap;
+  }
+  .sub-tab {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-decoration: none;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 999px;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+  .sub-tab:hover {
+    color: var(--text-secondary);
+    background: rgba(255,255,255,0.06);
+  }
+  .sub-tab.active {
+    color: var(--accent-text);
+    background: rgba(124,106,247,0.18);
+    border-color: rgba(124,106,247,0.4);
+  }
+
   @media (max-width: 768px) {
     .settings-shell {
       padding: 1.25rem 1rem 5rem;
       max-width: 100%;
     }
 
-    .tab-bar {
+    .tab-bar, .sub-tab-bar {
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
     }

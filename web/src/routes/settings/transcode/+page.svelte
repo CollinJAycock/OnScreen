@@ -274,30 +274,28 @@
         {/if}
       </div>
       {#if fleetEmbeddedEnabled && !fleetEmbeddedDisabledByEnv}
-      <div class="fleet-row">
-        <div class="field" style="flex:1;">
-          <label for="embedded-encoder">Device</label>
-          <select id="embedded-encoder" bind:value={fleetEmbeddedEncoder}>
-            <option value="">Auto-detect</option>
-            {#each groupedDevices() as g}
-              <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
-            {/each}
-          </select>
-          <p class="hint">
-            Picking a device enables every codec it can hardware-encode
-            (H.264 for 1080p, HEVC for 4K bitrate savings, AV1 on
-            Ada/Blackwell). The worker picks the right codec per session.
-          </p>
-        </div>
-        {#if fleetEmbeddedOnline}
-        <div class="fleet-live-info">
-          <span>{fleetEmbeddedActiveSessions}/{fleetEmbeddedMaxSessions} sessions</span>
-          {#each fleetEmbeddedCapabilities as cap}
-            <span class="worker-cap">{cap}</span>
+      <div class="field">
+        <label for="embedded-encoder">Device</label>
+        <select id="embedded-encoder" bind:value={fleetEmbeddedEncoder}>
+          <option value="">Auto-detect</option>
+          {#each groupedDevices() as g}
+            <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
           {/each}
-        </div>
-        {/if}
+        </select>
+        <p class="hint">
+          Picking a device enables every codec it can hardware-encode
+          (H.264 for 1080p, HEVC for 4K bitrate savings, AV1 on
+          Ada/Blackwell). The worker picks the right codec per session.
+        </p>
       </div>
+      {#if fleetEmbeddedOnline}
+      <div class="fleet-live-info">
+        <span>{fleetEmbeddedActiveSessions}/{fleetEmbeddedMaxSessions} sessions</span>
+        {#each fleetEmbeddedCapabilities as cap}
+          <span class="worker-cap">{cap}</span>
+        {/each}
+      </div>
+      {/if}
       {/if}
     </div>
 
@@ -486,9 +484,10 @@
   }
   .fleet-live-info {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.375rem;
+    gap: 0.5rem 0.5rem;
+    margin-top: 0.5rem;
     font-size: 0.75rem;
     color: var(--text-muted);
   }
