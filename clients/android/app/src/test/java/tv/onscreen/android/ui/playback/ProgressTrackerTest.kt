@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import tv.onscreen.android.data.api.OnScreenApi
+import tv.onscreen.android.data.device.ClientName
 import tv.onscreen.android.data.repository.ItemRepository
 import java.lang.reflect.Proxy
 
@@ -27,7 +28,7 @@ class ProgressTrackerTest {
      * Minimal fake [ItemRepository]: records every `updateProgress` invocation
      * and can be configured to throw on the next call.
      */
-    private class FakeRepo : ItemRepository(FakeApi) {
+    private class FakeRepo : ItemRepository(FakeApi, ClientName()) {
         val calls = mutableListOf<Call>()
         var throwNext: Throwable? = null
 

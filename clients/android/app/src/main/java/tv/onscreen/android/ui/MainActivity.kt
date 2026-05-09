@@ -4,12 +4,17 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
+import tv.onscreen.android.data.device.ClientName
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.data.repository.CapabilitiesRepository
+import tv.onscreen.android.data.repository.NotificationsRepository
 import tv.onscreen.android.ui.playback.PlaybackFragment
 import tv.onscreen.android.ui.setup.ServerSetupFragment
 import tv.onscreen.android.ui.setup.LoginFragment
@@ -37,9 +42,33 @@ class MainActivity : FragmentActivity() {
     @Inject
     lateinit var prefs: ServerPrefs
 
+    @Inject
+    lateinit var clientName: ClientName
+
+    @Inject
+    lateinit var notifications: NotificationsRepository
+
+    @Inject
+    lateinit var capabilities: CapabilitiesRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // App-wide listeners that depend on auth — capabilities prefetch
+        // and the cross-device playback.transfer handler. Both gate on
+        // isLoggedIn so the SSE subscription doesn't try to dial the
+        // server before the bearer is set; both run for the lifetime
+        // of the activity (fragments come and go around them).
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                if (!prefs.isLoggedIn.first()) return@repeatOnLifecycle
+                // Capabilities prefetch — single-flight via the repo,
+                // so a duplicate call from HomeFragment is a no-op.
+                capabilities.getCachedOrFetch()
+                listenForPlaybackTransfers()
+            }
+        }
 
         if (savedInstanceState != null) return // Fragment state restored by system.
 
@@ -70,6 +99,39 @@ class MainActivity : FragmentActivity() {
             if (supportFragmentManager.isStateSaved) return@launch
             supportFragmentManager.beginTransaction()
                 .replace(R.id.main_container, fragment)
+                .commitAllowingStateLoss()
+        }
+    }
+
+    /**
+     * Cross-device "play on this TV" handler. Subscribes to the
+     * playback.transfer SSE channel and, when an event targets this
+     * device's [ClientName], swaps the foreground fragment for a
+     * PlaybackFragment loaded with the requested item + offset.
+     *
+     * The match is exact-string against `target_client_name` because
+     * the SSE channel is per-user, not per-device — every subscribed
+     * client of this user receives every transfer event. Without the
+     * filter, hitting "Play on Living Room TV" from a phone would
+     * also yank the Bedroom TV into playing the same item.
+     *
+     * The fragment swap reuses the same path the Watch Next deep
+     * link uses (popBackStack + replace) so back-press from playback
+     * lands on Home rather than walking up a stale stack.
+     */
+    private suspend fun listenForPlaybackTransfers() {
+        notifications.subscribePlaybackTransfers().collect { ev ->
+            if (ev.target_client_name != clientName.value) return@collect
+            if (supportFragmentManager.isStateSaved) return@collect
+            supportFragmentManager.popBackStack(
+                null,
+                androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
+            )
+            supportFragmentManager.beginTransaction()
+                .replace(
+                    R.id.main_container,
+                    PlaybackFragment.newInstance(ev.item_id, ev.position_ms),
+                )
                 .commitAllowingStateLoss()
         }
     }

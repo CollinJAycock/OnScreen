@@ -47,6 +47,12 @@ data class ProgressRequest(
     val view_offset_ms: Long,
     val duration_ms: Long,
     val state: String,
+    /** Stable per-device label. Drives the cross-device "play on
+     *  Living Room TV" picker (the server populates that list from
+     *  `MAX(last_seen) GROUP BY client_name` on watch_events) and
+     *  the "Resume from <Living Room TV>" UX. Server caps at 64
+     *  chars; the ClientName provider stays under 60. */
+    val client_name: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

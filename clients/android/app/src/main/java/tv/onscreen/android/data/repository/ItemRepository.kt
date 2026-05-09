@@ -1,6 +1,7 @@
 package tv.onscreen.android.data.repository
 
 import tv.onscreen.android.data.api.OnScreenApi
+import tv.onscreen.android.data.device.ClientName
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.Marker
@@ -12,6 +13,7 @@ import javax.inject.Singleton
 @Singleton
 open class ItemRepository @Inject constructor(
     private val api: OnScreenApi,
+    private val clientName: ClientName,
 ) {
     open suspend fun getItem(id: String): ItemDetail = api.getItem(id).data
 
@@ -24,7 +26,14 @@ open class ItemRepository @Inject constructor(
         durationMs: Long,
         state: String,
     ) {
-        api.updateProgress(itemId, ProgressRequest(offsetMs, durationMs, state))
+        // client_name attached to every progress post so the server's
+        // cross-device picker (`/api/v1/playback/devices`) can list
+        // this TV under the same label every transfer + Resume-from
+        // surface uses.
+        api.updateProgress(
+            itemId,
+            ProgressRequest(offsetMs, durationMs, state, client_name = clientName.value),
+        )
     }
 
     /** Intro / credits markers for an episode. Movies and containers
