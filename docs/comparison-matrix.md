@@ -129,7 +129,7 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 | Chromecast / Google Cast                           |    ❌    |  ✅  |  ✅  |    ✅    |
 | AirPlay                                            |    ❌    |  ✅  |  ✅  |    ⚠    |
 | DLNA / UPnP server                                 |    ❌    |  ✅  |  ✅  |    ✅    |
-| Mobile offline downloads                           |    ❌    |  💎  |  💎  |    ✅    |
+| Mobile offline downloads                           |    ⚠    |  💎  |  💎  |    ✅    |
 | Sync watch / watch parties                         |    ❌    |  ❌  |  ❌  |    ✅    |
 | Last.fm / ListenBrainz scrobbling                  |    ❌    |  ⚠   |  🧩  |    🧩    |
 | Chapter markers + skip targets                     |    ✅    |  ✅  |  ✅  |    ✅    |
@@ -314,7 +314,7 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **VAAPI hardware encode validation** *(vs Plex / Emby paid tiers; Jellyfin core)*. Three of four encoder families validated on real hardware. VAAPI needs a Linux + non-NVIDIA GPU rig the project doesn't yet have.
 - **Adaptive bitrate HLS ladder** *(vs all three)*. OnScreen transcodes a single rendition per session and lets the operator-side bandwidth profile pick. Multi-rendition variant playlists with bandwidth-aware client switching are absent.
 - **Cast / AirPlay / DLNA out** *(vs all three)*. None of the three protocols is wired — Cast and AirPlay receivers don't see OnScreen, and there's no UPnP/DLNA server for legacy renderers. Browser-only "play here" today.
-- **Mobile offline downloads** *(vs Plex Pass / Emby Premiere / Jellyfin)*. No download-for-offline flow on any client.
+- **Offline downloads beyond Android phone** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; the iOS / Apple TV / Android TV / Fire TV / web / desktop / webOS / Tizen / Roku surfaces don't yet have an equivalent.
 - **Sync-watch / watch parties** *(vs Jellyfin SyncPlay)*. Plex retired Watch Together; Emby has nothing native. Jellyfin's SyncPlay is the only differentiated one and OnScreen doesn't match it.
 - **Subtitle styling controls** *(vs all three)*. OCR-derived WebVTT is restyleable in principle, but the player UI doesn't expose font / size / colour / outline pickers yet.
 - **Sleep timer** *(vs all three)*. Trivial UX feature, easy to add when the player UI gets a polish pass.
