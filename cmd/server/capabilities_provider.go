@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os/exec"
 
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/config"
@@ -26,6 +27,19 @@ type capabilitiesProvider struct {
 	liveTVTuneCount         int
 	activeEncoders          []string
 	maxConcurrentTranscodes int
+
+	// Tool-dependency probes. The four features below shell out to
+	// external binaries that may or may not be on PATH depending on
+	// the operator's Docker image / host setup. Probed once at boot
+	// in setRuntimeDetected — PATH doesn't change at runtime, so a
+	// snapshot is correct. Capability flags reflect what actually
+	// works, not what the codebase intends to support, so a client
+	// reading `features.trickplay = false` knows to hide the
+	// scrub-preview UI instead of getting 5xx mid-render.
+	hasFFmpeg    bool // trickplay generation, transcode, OCR pre-roll
+	hasTesseract bool // OCR subtitle path
+	hasFPCalc    bool // intro-marker AcoustID detector
+	hasPGDump    bool // backup endpoint + scheduled backup task
 }
 
 // setRuntimeDetected populates the runtime-sensed fields. Called from
@@ -40,6 +54,22 @@ func (p *capabilitiesProvider) setRuntimeDetected(
 	p.liveTVTuneCount = tuneCount
 	p.activeEncoders = encoders
 	p.maxConcurrentTranscodes = maxTranscodes
+	// Tool-dep probes — see capabilitiesProvider field comments.
+	// LookPath errors are equivalent to "not on PATH"; we don't
+	// distinguish reasons (missing vs. unreadable) because the
+	// remediation is the same: install the tool.
+	p.hasFFmpeg = lookPathOK("ffmpeg")
+	p.hasTesseract = lookPathOK("tesseract")
+	p.hasFPCalc = lookPathOK("fpcalc")
+	p.hasPGDump = lookPathOK("pg_dump")
+}
+
+// lookPathOK is a thin LookPath wrapper that swallows the *exec.Error
+// detail — callers only care about presence/absence. Kept package-
+// local because no other startup code probes binaries this way.
+func lookPathOK(bin string) bool {
+	_, err := exec.LookPath(bin)
+	return err == nil
 }
 
 // Capabilities returns the current snapshot. Background context is fine —
@@ -60,15 +90,19 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			APIVersion: "v1",
 		},
 		Features: v1.CapabilitiesFeatures{
-			Transcode:         true,
-			Trickplay:         true,
+			// Transcode rides on ffmpeg. If it's missing, transcode
+			// requests will 5xx, so the flag should agree with the
+			// runtime probe even though "no ffmpeg = barely-functional
+			// server" is itself an unusual deploy.
+			Transcode:         p.hasFFmpeg,
+			Trickplay:         p.hasFFmpeg,
 			SubtitlesExternal: osCfg.APIKey != "",
-			SubtitlesOCR:      true,
+			SubtitlesOCR:      p.hasFFmpeg && p.hasTesseract,
 			OIDC:              oidcCfg.Enabled && oidcCfg.IssuerURL != "" && oidcCfg.ClientID != "",
 			LDAP:              ldapCfg.Enabled && ldapCfg.Host != "",
 			DevicePairing:     true,
 			Plugins:           true,
-			Backup:            true,
+			Backup:            p.hasPGDump,
 			PeopleCredits:     p.cfg.TMDBAPIKey != "",
 			Photos:            true,
 			Music:             true,
@@ -81,10 +115,13 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			// as soon as TMDB is wired.
 			Requests: p.cfg.TMDBAPIKey != "",
 			// Always-on features that became first-class post-Phase-A.
-			LiveTV:       p.liveTVAvailable,
-			DVR:          p.liveTVAvailable, // share one flag; DVR rides Live TV
-			Lyrics:       true,
-			IntroMarkers: true,
+			LiveTV: p.liveTVAvailable,
+			DVR:    p.liveTVAvailable, // share one flag; DVR rides Live TV
+			Lyrics: true,
+			// IntroMarkers needs both fpcalc (fingerprint) and ffmpeg
+			// (audio decode pre-roll) — either missing means the
+			// detector silently no-ops, so reflect honestly.
+			IntroMarkers: p.hasFPCalc && p.hasFFmpeg,
 			Chapters:     true,
 			WebDownloads: p.settings.WebDownloadsEnabled(ctx),
 		},
