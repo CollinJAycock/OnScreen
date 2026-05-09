@@ -1,6 +1,6 @@
 # OnScreen vs Plex / Emby / Jellyfin
 
-**Snapshot:** 2026-05-05 against v2.1.1-dev on `main` (server v2.1.0 tagged; v2.2 anime track landed 2026-05-04 ahead of the v2.2 cut; Play Store internal-testing track active for the Android TV client).
+**Snapshot:** 2026-05-09 against v2.2.0-dev on `main` (server v2.1.0 tagged; v2.2 anime track landed 2026-05-04 ahead of the v2.2 cut; Play Store internal-testing track active for the Android TV client).
 
 **Legend** — ✅ in core · 💎 paid tier · 🧩 official plugin · ⚠ partial · ❌ not supported
 
@@ -19,6 +19,7 @@
 | Audiobook author / series hierarchy         |    ✅    |  ⚠   |  ⚠   |    ⚠    |
 | Music videos (typed)                        |    ✅    |  ✅  |  ✅  |    ✅    |
 | Home videos (separate type, on-disk edits)  |    ✅    |  ⚠   |  ⚠   |    ⚠    |
+| Photo geo map view (server `/photos/map` API, bbox-paginated) | ✅ | ⚠   |  ⚠   |    ❌    |
 | Podcasts (local files)                      |    ⚠    |  ⚠   |  ❌  |    🧩    |
 | Podcasts (RSS subscription)                 |    ❌    |  ✅  |  ❌  |    🧩    |
 
@@ -66,9 +67,12 @@ OnScreen runs Tesseract on PGS / VOBSUB / DVB / XSUB streams and persists the re
 | Cover Art Archive fallback                                      |    ✅    |  ❌  |  ✅  |    ✅    |
 | Hi-Res / Lossless badging in the player                         |    ✅    |  💎  |  ⚠   |    ❌    |
 | Gapless playback (web client)                                   |    ✅    |  ✅  |  ✅  |    ⚠    |
+| Embedded USLT lyrics + LRCLIB / `.lrc` synced fallback          |    ✅    |  💎  |  🧩  |    🧩    |
 | Tidal / Qobuz integration                                       |    ❌    |  💎  |  ❌  |    ❌    |
 
 OnScreen's native desktop client decodes through symphonia 0.5 and writes raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE` — OS mixer bypassed. Plex Pass ships an exclusive-mode pipeline in Plexamp; the rest layer Roon / Audirvana on top.
+
+Lyrics: scanner extracts ID3 USLT and Vorbis-comment LYRICS frames during the music walk and persists them to `lyrics`. Fallback chain hits LRCLIB for community-sourced synced `.lrc` content when the file ships no embedded text. Plexamp shows lyrics behind the Plex Pass tier; Emby and Jellyfin lean on community plugins.
 
 ---
 
@@ -99,11 +103,17 @@ Plex and Emby gate the entire Live TV / DVR feature set behind paid tiers (Plex 
 | Trending row (rolling watch_events aggregate)      |    ✅    |  ✅  |  ✅  |    ❌    |
 | Smart playlists (rule-based, query-time eval)      |    ✅    |  ⚠   |  ✅  |    ⚠    |
 | Auto-genre collections (rule-based)                |    ✅    |  ✅  |  ✅  |    ⚠    |
+| Watch-status mirror (Plan/Watching/Done/Hold/Drop) |    ✅    |  ❌  |  ❌  |    ❌    |
+| Watchlist (persistent, all types)                  |    ✅    |  ⚠   |  ✅  |    ✅    |
+| Full-text search w/ library ACL + rating ceiling   |    ✅    |  ⚠   |  ⚠   |    ⚠    |
+| Sonarr / Radarr request fan-out (admin-approved)   |    ✅    |  🧩  |  ❌  |    🧩    |
 | Intro / credits auto-detection (AcoustID-FP)       |    ✅    |  💎  |  🧩  |    🧩    |
 | In-app TMDB discover + request                     |    ✅    |  ❌  |  ❌  |    ❌    |
 | "Because you watched X" / personalised row         |    ❌    |  ✅  |  ✅  |    ❌    |
 
-OnScreen's home hub serves the request flow inline — no Overseerr / Ombi / Jellyseerr companion needed. The personalised row was scaffolded (item-to-item collaborative filtering) but pulled before release because it didn't earn the home-hub real estate; trending stays. Intro / credits detection runs `fpcalc` (AcoustID) over a 600 s leading window to find the shared intro fingerprint across episodes of a season, plus `ffmpeg blackdetect` over the trailing 360 s for the credits boundary; both are stored as chapter rows and exposed via `GET /items/{id}` so clients can render skip buttons. Plex Pass ships this as "Intro & Credit Markers"; Emby + Jellyfin lean on the community Intro Skipper plugin.
+OnScreen's home hub serves the request flow inline — no Overseerr / Ombi / Jellyseerr companion needed. Approved requests fan out to configured Sonarr / Radarr instances (per-instance quality profile + root-folder mapping) and the resulting download links back to the originating request when the file lands. The personalised row was scaffolded (item-to-item collaborative filtering) but pulled before release because it didn't earn the home-hub real estate; trending stays. Intro / credits detection runs `fpcalc` (AcoustID) over a 600 s leading window to find the shared intro fingerprint across episodes of a season, plus `ffmpeg blackdetect` over the trailing 360 s for the credits boundary; both are stored as chapter rows and exposed via `GET /items/{id}` so clients can render skip buttons. Plex Pass ships this as "Intro & Credit Markers"; Emby + Jellyfin lean on the community Intro Skipper plugin.
+
+The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Dropped) shipped with the v2.2 anime track but applies generically to every library type — `(user_id, item_id)` keyed, distinct from playback progress, exposed as filter-able rails on the home hub. None of the three competitors carries the equivalent in core. Search is Postgres `websearch_to_tsquery` over `media_items_fts` with library-ACL pre-filter and per-user content-rating ceiling enforced inside the query — no result-set leakage to filtering layers above.
 
 ---
 
@@ -112,6 +122,8 @@ OnScreen's home hub serves the request flow inline — no Overseerr / Ombi / Jel
 | Feature                                            | OnScreen | Plex | Emby | Jellyfin |
 | -------------------------------------------------- | :------: | :--: | :--: | :------: |
 | Skip intro / skip credits button on player         |    ⚠    |  💎  |  🧩  |    🧩    |
+| OpenSubtitles search + download (in-player)        |    ✅    |  ❌  |  💎  |    🧩    |
+| Cross-device "play on…" transfer (own ecosystem)   |    ✅    |  ✅  |  ✅  |    ❌    |
 | Sleep timer                                        |    ❌    |  ✅  |  ✅  |    ✅    |
 | On-screen subtitle styling (font/size/color)       |    ❌    |  ✅  |  ✅  |    ✅    |
 | Chromecast / Google Cast                           |    ❌    |  ✅  |  ✅  |    ✅    |
@@ -123,6 +135,8 @@ OnScreen's home hub serves the request flow inline — no Overseerr / Ombi / Jel
 | Chapter markers + skip targets                     |    ✅    |  ✅  |  ✅  |    ✅    |
 
 Detection-side intro / credits is shipped (see section 5) but the player-side "Skip intro" button isn't wired into the web client yet — clients consume the chapter rows server-side, the UX surface is the open item. Most of the rest in this section are real trails: ABR ladder, Cast, AirPlay, DLNA, mobile downloads, and SyncPlay-style watch parties are all areas competitors are ahead. None are scheduled for v2.2.
+
+OpenSubtitles search + download is built in: the player UI calls `/items/{id}/subtitles/search` against the OpenSubtitles v1 API, and downloaded `.srt` files are persisted to disk and registered as `external_subtitles` rows so subsequent playback gets text-based subs without re-querying. Per-session rate limit (10 searches/minute, 5 downloads/minute) prevents player retries from blowing the OpenSubtitles per-IP quota. Cross-device transfer (`POST /playback/transfer`) hands a playback state to a named target client by device label — same shape as Plex's "Play on" / Emby's "Remote Control".
 
 ---
 
@@ -141,6 +155,9 @@ Detection-side intro / credits is shipped (see section 5) but the player-side "S
 | LDAP (incl. group sync)                                       |    ✅    |  ❌  |  💎  |    🧩    |
 | PASETO tokens (over JWT)                                      |    ✅    |  ❌  |  ❌  |    ❌    |
 | Per-file streaming token (24h, file_id-bound, purpose-scoped) |    ✅    |  ❌  |  ❌  |    ❌    |
+| Admin-issued invite links (no plex.tv account required)       |    ✅    |  ⚠   |  ✅  |    ❌    |
+| PIN-based native client device pairing                        |    ✅    |  ✅  |  ✅  |    ❌    |
+| Password reset (email link, expiring token)                   |    ✅    |  ✅  |  ✅  |    ❌    |
 
 OIDC + OAuth + SAML + LDAP are all core, no plugin install. The per-file stream token closes the long-tail "ExoPlayer dies at 1 h on a 90-minute movie" failure — natively-played streams need a longer-lived token than the API access token, and that token must not be repurposable as a Bearer or for a different file.
 
@@ -176,11 +193,15 @@ OnScreen's Android TV / Fire TV client is on Play Store internal testing as of 2
 | Structured JSON logs with trace IDs              |    ✅    |  ⚠   |  ⚠   |    ⚠    |
 | Audit log of admin / playback / auth events     |    ✅    |  ❌  |  ⚠   |    ⚠    |
 | Admin logs API (in-process ring buffer)          |    ✅    |  ❌  |  ❌  |    ❌    |
+| `/debug/pprof` (CPU/heap/goroutine/block/mutex)  |    ✅    |  ❌  |  ❌  |    ❌    |
+| Scheduled task framework w/ run history + UI     |    ✅    |  ⚠   |  ✅  |    ✅    |
+| Background jobs status feed (scans + missing-art)|    ✅    |  ⚠   |  ⚠   |    ⚠    |
+| In-app real-time notifications (SSE stream)      |    ✅    |  ✅  |  ✅  |    ⚠    |
 | Schema-version-gated `/health/ready`             |    ✅    |  ❌  |  ❌  |    ❌    |
 | Backup + restore round-trip (schema-aware)       |    ✅    |  ❌  |  ✅  |    ✅    |
 | Admin Settings UI (no XML / JSON config files)   |    ✅    |  ⚠   |  ✅  |    ✅    |
 
-OnScreen ships an OTel + Prometheus + audit-log stack as core; competitors either omit telemetry, gate behind a paid tier, or expect operators to layer it themselves.
+OnScreen ships an OTel + Prometheus + audit-log stack as core; competitors either omit telemetry, gate behind a paid tier, or expect operators to layer it themselves. The scheduler runs cron-driven admin tasks (scan, EPG refresh, DVR retention, OCR pass, intro detection, refresh missing artwork, dedupe shows / movies, backup) — every task records `last_run_at`, last status, and last error so the admin UI can surface failures without grepping logs. The jobs feed (`GET /jobs`) gives a 30 s-poll snapshot of in-flight scans + missing-art and unmatched-item counts so the home banner can show "scanning…" / "12 items need a poster" without hammering item endpoints. `/debug/pprof` is admin-gated.
 
 ---
 
@@ -191,11 +212,15 @@ OnScreen ships an OTel + Prometheus + audit-log stack as core; competitors eithe
 | Secret encryption at rest (AES-256-GCM)            |    ✅    |  ❌  |  ❌  |    ❌    |
 | Built-in HTTPS (operator-provided PEM)             |    ✅    |  ❌  |  ❌  |    ✅    |
 | Path-traversal hardening on every asset route      |    ✅    |  ✅  |  ✅  |    ✅    |
+| Strict CSP + HSTS + X-Frame-DENY + Permissions-Policy | ✅    |  ⚠   |  ⚠   |    ⚠    |
+| SSRF-hardened outbound HTTP (loopback / RFC1918 / link-local denied) | ✅ | ❌ | ❌ |  ❌    |
 | Rate limiting (per-route, env-overridable)         |    ✅    |  ❌  |  ⚠   |    ⚠    |
 | No third-party telemetry / analytics in clients    |    ✅    |  ❌  |  ⚠   |    ✅    |
 | Self-hosted account system (no vendor cloud)       |    ✅    |  ❌  |  ✅  |    ✅    |
 
 Plex requires a plex.tv account for sign-in even on a self-hosted server. OnScreen and Jellyfin are fully self-hosted; Emby is mostly self-hosted with optional cloud features.
+
+Outbound metadata + artwork fetches go through a `safehttp` dial policy that rejects loopback / RFC1918 / link-local destinations *post-resolution*, so a malicious or compromised metadata source can't return a URL that pivots the fetch into the operator's internal network. The webview CSP allows only self + inline styles + Cloudflare Insights for the beacon; `script-src` excludes `unsafe-eval` and external CDNs. Most competitors set `X-Content-Type-Options` and `X-Frame-Options` but ship without a strict `Content-Security-Policy` or `Permissions-Policy`.
 
 ---
 
@@ -215,7 +240,26 @@ PostgreSQL-native is the foundational architecture choice — partitioned `watch
 
 ---
 
-## 12. Plugins & extensibility
+## 12. Library hygiene & admin tooling
+
+Operator-facing tools for fixing the metadata that auto-enrichment couldn't get right.
+
+| Feature                                            | OnScreen | Plex | Emby | Jellyfin |
+| -------------------------------------------------- | :------: | :--: | :--: | :------: |
+| NFO sidecar override (`<uniqueid type="tmdb">`)    |    ✅    |  🧩  |  ✅  |    ✅    |
+| Per-item Fix Match (search TMDB → apply specific ID) |  ✅    |  ✅  |  ✅  |    ✅    |
+| Bulk Fix Match tray (every unmatched row, paged)   |    ✅    |  ⚠   |  ⚠   |    ⚠    |
+| Set Poster tray (TMDB variants + paste-URL fallback) |  ✅    |  ⚠   |  ⚠   |    ⚠    |
+| Refresh-missing-art scheduled sweep                |    ✅    |  ❌  |  ⚠   |    ⚠    |
+| `[ReleaseGroup]` prefix auto-strip during scan     |    ✅    |  ⚠   |  ⚠   |    ⚠    |
+| Per-item re-enrich (force-reenrich bypass cache)   |    ✅    |  ✅  |  ✅  |    ✅    |
+| Title-edit reflects to filesystem (rename + mtime) |    ✅    |  ❌  |  ❌  |    ❌    |
+
+The Fix Match tray (`/admin/items/unmatched`) and Set Poster tray (`/admin/items/missing-art`) are the operator's two main hygiene surfaces: paged lists of every top-level row that auto-enrichment couldn't match (no TMDB / TVDB IDs) or couldn't poster (provider IDs but no `poster_path`). Set Poster supports both TMDB poster-variant picking and paste-a-URL fallback (with direct-image-URL hinting and 4xx surfacing on upstream failures, so operators see "image URL returned HTTP 403" rather than a generic 500). A scheduled `refresh_missing_art` task re-runs every 2 h to catch newly-recovered titles.
+
+---
+
+## 13. Plugins & extensibility
 
 | Feature                                            | OnScreen | Plex | Emby | Jellyfin |
 | -------------------------------------------------- | :------: | :--: | :--: | :------: |
@@ -228,7 +272,7 @@ OnScreen plugins are MCP servers OnScreen calls out to (outbound MCP). Inbound M
 
 ---
 
-## 13. License
+## 14. License
 
 | Feature                                | OnScreen   | Plex        | Emby                          | Jellyfin |
 | -------------------------------------- | :--------: | :---------: | :---------------------------: | :------: |
@@ -248,9 +292,14 @@ OnScreen plugins are MCP servers OnScreen calls out to (outbound MCP). Inbound M
 - **Subtitle OCR in core** — bitmap subtitle streams (PGS / VOBSUB / DVB / XSUB) get Tesseract'd to text WebVTT and persisted; every client gets restyleable, smaller, searchable subs without re-encoding the video. Plex and Emby only do burn-in; Jellyfin needs a community plugin.
 - **Trickplay sprite sheets in core** — BIF-shape `xywh`-cued WebVTT thumbnails out of the box, no Plex Pass / Emby Premiere gate.
 - **Intro / credits auto-detection in core** — AcoustID fingerprinting + blackdetect, exposed as chapter rows. Plex Pass ships this paid; Emby and Jellyfin lean on community plugins.
-- **First-class observability** — OTel tracing, Prometheus, audit log, structured logs with trace IDs, schema-gated readiness probe — without a premium tier.
-- **In-app discover + request** — TMDB discover and request workflow ship in the search page; competitors require Overseerr / Ombi / Jellyseerr.
+- **First-class observability** — OTel tracing, Prometheus, audit log, structured logs with trace IDs, schema-gated readiness probe, `/debug/pprof` — without a premium tier.
+- **In-app discover + request with arr fan-out** — TMDB discover, request, admin approval, and Sonarr / Radarr dispatch all ship in core; competitors require Overseerr / Ombi / Jellyseerr.
 - **User-owned home-video metadata** — edits rename the file on disk and stamp the mtime, so user-supplied titles travel across tools instead of being locked into one app's database.
+- **Watch-status mirror across every type** — Plan to Watch / Watching / Completed / On Hold / Dropped is a generic feature, not anime-only. None of Plex / Emby / Jellyfin carries the equivalent.
+- **OpenSubtitles search + download in core** — the player itself drives subtitle search + download with rate-limited per-session quotas, and downloaded files persist as `external_subtitles` rows. Plex sunset its plugin; Emby gates this behind Premiere.
+- **Library hygiene trays** — Fix Match (every unmatched row, paged) and Set Poster (TMDB variants + paste-URL fallback with proper 4xx surfacing) are first-class admin pages. Competitors expose per-item match/poster pickers but not bulk-tray surfaces.
+- **Embedded lyrics + LRCLIB synced fallback** — USLT / Vorbis lyrics extracted at scan, LRCLIB filled in afterwards; Plexamp gates this behind Plex Pass and the rest are plugin-only.
+- **Strict CSP + SSRF-hardened outbound HTTP** — `safehttp` denies post-resolution loopback / RFC1918 / link-local destinations on every metadata fetch; CSP, HSTS, X-Frame-DENY, Permissions-Policy all set out of the box.
 
 ---
 
