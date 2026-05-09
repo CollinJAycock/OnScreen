@@ -121,7 +121,7 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 
 | Feature                                            | OnScreen | Plex | Emby | Jellyfin |
 | -------------------------------------------------- | :------: | :--: | :--: | :------: |
-| Skip intro / skip credits button on player         |    ⚠    |  💎  |  🧩  |    🧩    |
+| Skip intro / skip credits button on player         |    ✅    |  💎  |  🧩  |    🧩    |
 | OpenSubtitles search + download (in-player)        |    ✅    |  ❌  |  💎  |    🧩    |
 | Cross-device "play on…" transfer (own ecosystem)   |    ✅    |  ✅  |  ✅  |    ❌    |
 | Sleep timer                                        |    ✅    |  ✅  |  ✅  |    ✅    |
@@ -134,7 +134,7 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 | Last.fm / ListenBrainz scrobbling                  |    ❌    |  ⚠   |  🧩  |    🧩    |
 | Chapter markers + skip targets                     |    ✅    |  ✅  |  ✅  |    ✅    |
 
-Detection-side intro / credits is shipped (see section 5) but the player-side "Skip intro" button isn't wired into the web client yet — clients consume the chapter rows server-side, the UX surface is the open item. Most of the rest in this section are real trails: ABR ladder, Cast, AirPlay, DLNA, mobile downloads, and SyncPlay-style watch parties are all areas competitors are ahead. None are scheduled for v2.2.
+Skip Intro / Skip Credits is wired in the web player: a button slides in over the bottom-right corner whenever the playback head is inside an intro / credits region (server-detected, see section 5), `S` is the keyboard shortcut, and a per-browser "Always skip intros" toggle sits right under the button so users discover it the first time it appears. Auto-skip is intro-only — auto-skipping credits would yank the user out of the episode prematurely; that path is handled by the existing auto-next-episode flow with the sleep-timer "end of episode" gate. Most of the rest in this section are real trails: ABR ladder, Cast, AirPlay, DLNA, and SyncPlay-style watch parties are all areas competitors are ahead. None are scheduled for v2.2.
 
 OpenSubtitles search + download is built in: the player UI calls `/items/{id}/subtitles/search` against the OpenSubtitles v1 API, and downloaded `.srt` files are persisted to disk and registered as `external_subtitles` rows so subsequent playback gets text-based subs without re-querying. Per-session rate limit (10 searches/minute, 5 downloads/minute) prevents player retries from blowing the OpenSubtitles per-IP quota. Cross-device transfer (`POST /playback/transfer`) hands a playback state to a named target client by device label — same shape as Plex's "Play on" / Emby's "Remote Control".
 

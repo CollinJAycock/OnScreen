@@ -725,8 +725,12 @@
 
   // Chapters from the source file (already parsed by ffprobe at scan time).
   $: chapters = item?.files?.[0]?.chapters ?? [];
-  // The current chapter — based on content position (currentTime + hlsOffsetSec).
-  $: contentTimeSec = currentTime + hlsOffsetSec;
+  // currentTime already includes hlsOffsetSec (set in onTimeUpdate +
+  // line 1518 "currentTime is content-relative"). Don't add the offset
+  // again — that double-counted in HLS-with-offset sessions and
+  // pushed intro/credits markers out of sync the moment a mid-stream
+  // transcode session re-segmented from a non-zero start.
+  $: contentTimeSec = currentTime;
   $: currentChapter = (() => {
     if (chapters.length === 0) return null;
     const tMs = contentTimeSec * 1000;
@@ -759,6 +763,39 @@
   function skipMarker() {
     if (!currentMarker) return;
     seekToContentTime(currentMarker.end_ms / 1000);
+  }
+
+  // Per-user "always skip intros" preference. Persisted in localStorage
+  // — server-side preference would be cleaner but this keeps the change
+  // self-contained and matches how subtitle styling already works.
+  // Toggle lives next to the visible Skip button so users discover it
+  // when they first see the prompt.
+  let autoSkipIntros = false;
+  if (typeof window !== 'undefined') {
+    autoSkipIntros = window.localStorage.getItem('onscreen_auto_skip_intros') === '1';
+  }
+  function toggleAutoSkipIntros() {
+    autoSkipIntros = !autoSkipIntros;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('onscreen_auto_skip_intros', autoSkipIntros ? '1' : '0');
+    }
+  }
+
+  // When auto-skip is on AND we just entered an intro region, seek
+  // past it. Credits skip stays manual — auto-skipping credits would
+  // jump out of the episode entirely and feels surprising; the Skip
+  // Credits button + auto-next-episode handle that path together.
+  // Track the last marker we auto-skipped so a user-driven seek back
+  // into the same intro doesn't trigger an immediate re-skip loop.
+  let lastAutoSkippedIntroId = '';
+  $: {
+    if (autoSkipIntros && currentMarker?.kind === 'intro') {
+      const id = `${currentMarker.start_ms}-${currentMarker.end_ms}`;
+      if (id !== lastAutoSkippedIntroId) {
+        lastAutoSkippedIntroId = id;
+        skipMarker();
+      }
+    }
   }
 
   // ── Admin manual marker editor ─────────────────────────────────────────────
@@ -1937,6 +1974,16 @@
         videoEl.muted = !videoEl.muted;
         muted = videoEl.muted;
         break;
+      case 's':
+      case 'S':
+        // Skip-intro / skip-credits shortcut. Plex / Netflix users
+        // expect 'S' to skip while inside a marker region — fires the
+        // same seek the visible button does, no-op otherwise.
+        if (currentMarker) {
+          e.preventDefault();
+          skipMarker();
+        }
+        break;
     }
   }
 
@@ -3040,11 +3087,29 @@
       </div>
     </div>
 
-    <!-- Skip Intro / Skip Credits -->
+    <!-- Skip Intro / Skip Credits.
+         Slide-in animation so it feels like a deliberate prompt, not
+         a flicker. The auto-skip toggle is intro-only — auto-skipping
+         credits would surprise users by yanking them out of the
+         episode prematurely. Toggle persists per-browser via
+         localStorage; surfaces the preference exactly when it's
+         relevant (during an intro). -->
     {#if currentMarker}
-      <button class="skip-marker" on:click={skipMarker}>
-        {currentMarker.kind === 'intro' ? 'Skip Intro' : 'Skip Credits'} →
-      </button>
+      <div class="skip-marker-wrap">
+        <button class="skip-marker" on:click={skipMarker} title="Skip ({currentMarker.kind === 'intro' ? 'Skip Intro' : 'Skip Credits'}, S)">
+          {currentMarker.kind === 'intro' ? 'Skip Intro' : 'Skip Credits'} →
+        </button>
+        {#if currentMarker.kind === 'intro'}
+          <button
+            class="skip-marker-pref"
+            class:active={autoSkipIntros}
+            on:click={toggleAutoSkipIntros}
+            title={autoSkipIntros ? 'Auto-skip intros: on' : 'Auto-skip intros: off'}
+          >
+            {autoSkipIntros ? '✓ Always skip intros' : 'Always skip intros'}
+          </button>
+        {/if}
+      </div>
     {/if}
 
     <!-- Next episode prompt -->
@@ -4255,10 +4320,22 @@
   }
 
   /* ── Next episode ─────────────────────────────────────── */
-  .skip-marker {
+  .skip-marker-wrap {
     position: absolute;
     bottom: 5rem;
     right: 1.5rem;
+    z-index: 21;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.4rem;
+    animation: skip-marker-slide 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  @keyframes skip-marker-slide {
+    from { opacity: 0; transform: translateX(40px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  .skip-marker {
     padding: 0.6rem 1.1rem;
     background: rgba(15,15,25,0.85);
     border: 1px solid rgba(255,255,255,0.18);
@@ -4267,13 +4344,35 @@
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
-    z-index: 21;
     backdrop-filter: blur(8px);
     transition: background 0.12s, border-color 0.12s;
   }
   .skip-marker:hover {
     background: rgba(124,106,247,0.9);
     border-color: rgba(124,106,247,0.9);
+  }
+  /* Smaller, lower-contrast pref toggle. Sits right under the main
+     button so the user discovers it at the moment it's most useful. */
+  .skip-marker-pref {
+    padding: 0.3rem 0.7rem;
+    background: rgba(15,15,25,0.75);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    color: rgba(255,255,255,0.7);
+    font-size: 0.7rem;
+    font-weight: 500;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .skip-marker-pref:hover {
+    color: #fff;
+    border-color: rgba(255,255,255,0.25);
+  }
+  .skip-marker-pref.active {
+    color: var(--accent);
+    border-color: rgba(124,106,247,0.4);
+    background: rgba(124,106,247,0.18);
   }
 
   .next-episode {
