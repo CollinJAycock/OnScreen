@@ -13,6 +13,23 @@ export default {
     }),
     paths: {
       relative: true
+    },
+    // webOS + Tizen load the app from a virtual file:// origin
+    // (e.g. file://com.onscreen.tv-webos/) but resolve relative
+    // imports to the real install path (file:///media/developer/...).
+    // The two are different origins under file://, which trips ESM
+    // cross-origin policy and blocks every modulepreload + dynamic
+    // import. Inlining the whole bundle into index.html eliminates
+    // sub-imports entirely — one self-contained HTML, zero chunk
+    // loads, no cross-origin policy in play.
+    output: {
+      bundleStrategy: 'inline'
+    },
+    // bundleStrategy 'inline' requires client-side route resolution
+    // (server-resolved routing would fetch route manifests that we
+    // just inlined). Explicit for the schema validator.
+    router: {
+      resolution: 'client'
     }
   }
 };
