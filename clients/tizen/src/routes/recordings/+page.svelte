@@ -49,7 +49,7 @@
   onMount(() => {
     void load();
     return focusManager.pushBack(() => {
-      goto('/hub');
+      goto('#/hub');
       return true;
     });
   });
@@ -60,7 +60,7 @@
     try {
       recordings = await endpoints.livetv.recordings();
     } catch (e) {
-      if (e instanceof Unauthorized) goto('/login');
+      if (e instanceof Unauthorized) goto('#/login');
       else error = (e as Error).message ?? 'Could not load recordings';
     } finally {
       loading = false;
@@ -68,7 +68,7 @@
   }
 
   function open(r: Recording) {
-    if (r.item_id) goto(`/item/${r.item_id}`);
+    if (r.item_id) goto(`#/item/${r.item_id}`);
   }
 
   function fmtRange(r: Recording): string {
@@ -94,8 +94,8 @@
   <header>
     <h1>Recordings</h1>
     <nav class="links">
-      <a href="/hub/" data-sveltekit-preload-data="false">home</a>
-      <a href="/livetv/" data-sveltekit-preload-data="false">live tv</a>
+      <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
+      <a href="#/livetv/" data-sveltekit-preload-data="false">live tv</a>
     </nav>
   </header>
 

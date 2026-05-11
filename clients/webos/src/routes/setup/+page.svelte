@@ -30,7 +30,7 @@
       const resp = await fetch(`${clean}/api/v1/system/capabilities`);
       if (!resp.ok) throw new Error(`server replied ${resp.status}`);
       api.setOrigin(clean);
-      goto('/login');
+      goto('#/login');
     } catch (e) {
       error = `Could not reach server: ${(e as Error).message}`;
     } finally {

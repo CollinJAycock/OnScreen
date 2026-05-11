@@ -26,7 +26,7 @@
         confirming = null;
         return true;
       }
-      goto('/hub');
+      goto('#/hub');
       return true;
     });
   });
@@ -36,7 +36,7 @@
     // server-side, but `clearTokens()` runs in `finally` so the local
     // session ends cleanly even if the request fails.
     await api.logout();
-    goto('/login');
+    goto('#/login');
   }
 
   async function doForgetServer() {
@@ -49,7 +49,7 @@
     } finally {
       localStorage.removeItem('onscreen.api_origin');
     }
-    goto('/setup');
+    goto('#/setup');
   }
 </script>
 
@@ -57,7 +57,7 @@
   <header>
     <h1>Settings</h1>
     <nav class="links">
-      <a href="/hub/" data-sveltekit-preload-data="false">home</a>
+      <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
     </nav>
   </header>
 

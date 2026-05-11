@@ -33,7 +33,7 @@
 
   onMount(() => {
     return focusManager.pushBack(() => {
-      goto('/hub');
+      goto('#/hub');
       return true;
     });
   });
@@ -59,7 +59,7 @@
       const fresh = await endpoints.discover.search(query.trim(), 18);
       results = fresh;
     } catch (e) {
-      if (e instanceof Unauthorized) goto('/login');
+      if (e instanceof Unauthorized) goto('#/login');
       else error = (e as Error).message ?? 'Search failed';
       results = [];
     } finally {
@@ -93,7 +93,7 @@
   <header>
     <h1>Discover</h1>
     <nav class="links">
-      <a href="/hub/" data-sveltekit-preload-data="false">home</a>
+      <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
     </nav>
   </header>
 
@@ -138,7 +138,7 @@
                 <button
                   use:focusable={{ autofocus: i === 0 }}
                   class="btn-primary"
-                  onclick={() => goto(`/item/${r.library_item_id}`)}
+                  onclick={() => goto(`#/item/${r.library_item_id}`)}
                 >
                   Open
                 </button>

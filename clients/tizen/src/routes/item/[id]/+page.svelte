@@ -67,7 +67,7 @@
           }
         }
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
         else error = (e as Error).message;
       }
     })();
@@ -79,15 +79,15 @@
   });
 
   function play() {
-    goto(`/watch/${itemId}`);
+    goto(`#/watch/${itemId}`);
   }
 
   function playChild(childId: string) {
-    goto(`/watch/${childId}`);
+    goto(`#/watch/${childId}`);
   }
 
   function openChild(childId: string) {
-    goto(`/item/${childId}`);
+    goto(`#/item/${childId}`);
   }
 
   function resumeLabel(): string {

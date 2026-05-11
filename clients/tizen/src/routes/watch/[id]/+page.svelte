@@ -165,7 +165,7 @@
       void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
     }
     if (usingAvPlay) avplay.close();
-    goto(`/item/${itemID}`);
+    goto(`#/item/${itemID}`);
   }
 
   function onKey(k: RemoteKey): boolean {
@@ -434,7 +434,7 @@
           onEnded: () => {
             reporter?.stopped(duration, duration);
             if (nextSibling) goToNext(nextSibling);
-            else goto(`/item/${itemID}`);
+            else goto(`#/item/${itemID}`);
           },
           onError: (msg) => { error = msg; },
         },
@@ -586,7 +586,7 @@
       void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
     }
     if (usingAvPlay) avplay.close();
-    goto(`/watch/${target.id}`);
+    goto(`#/watch/${target.id}`);
   }
 
   // ── Cross-device sync ────────────────────────────────────────────
@@ -703,7 +703,7 @@
                 if (nextSibling) {
                   goToNext(nextSibling);
                 } else {
-                  goto(`/item/${itemID}`);
+                  goto(`#/item/${itemID}`);
                 }
               },
               onError: (msg) => {
@@ -745,12 +745,12 @@
             if (nextSibling) {
               goToNext(nextSibling);
             } else {
-              goto(`/item/${itemID}`);
+              goto(`#/item/${itemID}`);
             }
           });
         }
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
         else {
           error = (e as Error).message;
           loading = false;

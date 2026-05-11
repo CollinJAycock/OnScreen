@@ -64,7 +64,7 @@
       try {
         results = await endpoints.search.query(v.trim(), 30);
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
       } finally {
         searching = false;
       }
@@ -92,7 +92,7 @@
       // corrupt storage — fall back to defaults
     }
     return focusManager.pushBack(() => {
-      goto('/hub');
+      goto('#/hub');
       return true;
     });
   });

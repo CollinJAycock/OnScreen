@@ -5,11 +5,11 @@
 
   onMount(() => {
     if (!api.getOrigin()) {
-      goto('/setup');
+      goto('#/setup');
     } else if (!api.getToken()) {
-      goto('/login');
+      goto('#/login');
     } else {
-      goto('/hub');
+      goto('#/hub');
     }
   });
 </script>

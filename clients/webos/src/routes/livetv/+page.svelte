@@ -45,7 +45,7 @@
         stopPlayback();
         return true;
       }
-      goto('/hub');
+      goto('#/hub');
       return true;
     });
   });
@@ -75,7 +75,7 @@
       }
       nowNextByChannel = map;
     } catch (e) {
-      if (e instanceof Unauthorized) goto('/login');
+      if (e instanceof Unauthorized) goto('#/login');
       else error = (e as Error).message ?? 'Could not load channels';
     } finally {
       loading = false;
@@ -153,8 +153,8 @@
     <header>
       <h1>Live TV</h1>
       <nav class="links">
-        <a href="/hub/" data-sveltekit-preload-data="false">home</a>
-        <a href="/recordings/" data-sveltekit-preload-data="false">recordings</a>
+        <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
+        <a href="#/recordings/" data-sveltekit-preload-data="false">recordings</a>
       </nav>
     </header>
 

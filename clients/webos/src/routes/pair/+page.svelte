@@ -75,7 +75,7 @@
       switch (result.status) {
         case 'done':
           if (result.pair) api.setTokens(result.pair);
-          goto('/hub');
+          goto('#/hub');
           return;
         case 'pending':
           schedulePoll();
@@ -100,7 +100,7 @@
     // Back button leaves pairing and returns to the local-credentials
     // login flow.
     return focusManager.pushBack(() => {
-      goto('/login');
+      goto('#/login');
       return true;
     });
   });
@@ -140,7 +140,7 @@
     </p>
   {/if}
 
-  <button use:focusable class="cancel-btn" onclick={() => goto('/login')}>
+  <button use:focusable class="cancel-btn" onclick={() => goto('#/login')}>
     Use password instead
   </button>
 </div>

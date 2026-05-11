@@ -115,7 +115,7 @@
       siblingIds = photos;
       currentIndex = Math.max(0, photos.indexOf(initialId));
     } catch (e) {
-      if (e instanceof Unauthorized) goto('/login');
+      if (e instanceof Unauthorized) goto('#/login');
       // Any other failure leaves siblings empty — viewer still
       // renders the single photo, just without navigation.
     }

@@ -12,13 +12,13 @@ import { goto } from '$app/navigation';
 export function openItem(id: string, type: string) {
   switch (type) {
     case 'photo':
-      goto(`/photo/${id}`);
+      goto(`#/photo/${id}`);
       return;
     case 'collection':
     case 'playlist':
-      goto(`/collection/${id}`);
+      goto(`#/collection/${id}`);
       return;
     default:
-      goto(`/item/${id}`);
+      goto(`#/item/${id}`);
   }
 }

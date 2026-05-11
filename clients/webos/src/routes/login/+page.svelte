@@ -20,7 +20,7 @@
     submitting = true;
     try {
       await api.login(username.trim(), password);
-      goto('/hub');
+      goto('#/hub');
     } catch (e) {
       error = e instanceof ApiError ? e.message : 'Login failed';
       password = '';
@@ -54,7 +54,7 @@
        SAML / LDAP flows that need a real browser by punting them to
        the user's phone. The TV displays a PIN, the user signs in on
        the phone, the TV polls until tokens land. -->
-  <button use:focusable class="pair-btn" onclick={() => goto('/pair')}>
+  <button use:focusable class="pair-btn" onclick={() => goto('#/pair')}>
     Sign in with another device
   </button>
 </div>

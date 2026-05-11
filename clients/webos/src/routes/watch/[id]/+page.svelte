@@ -162,7 +162,7 @@
       void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
     }
     if (hls) hls.destroy();
-    goto(`/item/${itemID}`);
+    goto(`#/item/${itemID}`);
   }
 
   function onKey(k: RemoteKey): boolean {
@@ -534,7 +534,7 @@
       void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
     }
     hls?.destroy();
-    goto(`/watch/${target.id}`);
+    goto(`#/watch/${target.id}`);
   }
 
   // ── Cross-device sync ──────────────────────────────────────────────
@@ -678,11 +678,11 @@
           } else if (nextSibling) {
             goToNext(nextSibling);
           } else {
-            goto(`/item/${itemID}`);
+            goto(`#/item/${itemID}`);
           }
         });
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
         else {
           error = (e as Error).message;
           loading = false;

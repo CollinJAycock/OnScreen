@@ -35,7 +35,7 @@
         collection = meta;
         items = list;
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
         else error = (e as Error).message;
       }
     })();

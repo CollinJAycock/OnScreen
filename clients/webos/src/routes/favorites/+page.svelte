@@ -19,13 +19,13 @@
       try {
         items = await endpoints.favorites.list();
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
         else error = (e as Error).message;
       }
     })();
 
     return focusManager.pushBack(() => {
-      goto('/hub');
+      goto('#/hub');
       return true;
     });
   });

@@ -18,13 +18,13 @@
       try {
         items = await endpoints.libraries.listItems(libraryID);
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
         else error = (e as Error).message;
       }
     })();
 
     return focusManager.pushBack(() => {
-      goto('/hub');
+      goto('#/hub');
       return true;
     });
   });

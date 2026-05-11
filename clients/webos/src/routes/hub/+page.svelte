@@ -16,7 +16,7 @@
       try {
         data = await endpoints.hub.get();
       } catch (e) {
-        if (e instanceof Unauthorized) goto('/login');
+        if (e instanceof Unauthorized) goto('#/login');
         else error = (e as Error).message;
       }
     })();
@@ -47,14 +47,14 @@
   <header>
     <h1>OnScreen</h1>
     <nav class="links">
-      <a href="/search/" data-sveltekit-preload-data="false">search</a>
-      <a href="/hub/" data-sveltekit-preload-data="false">home</a>
-      <a href="/favorites/" data-sveltekit-preload-data="false">favorites</a>
-      <a href="/history/" data-sveltekit-preload-data="false">history</a>
-      <a href="/discover/" data-sveltekit-preload-data="false">discover</a>
-      <a href="/livetv/" data-sveltekit-preload-data="false">live tv</a>
-      <a href="/recordings/" data-sveltekit-preload-data="false">recordings</a>
-      <a href="/settings/" data-sveltekit-preload-data="false">settings</a>
+      <a href="#/search/" data-sveltekit-preload-data="false">search</a>
+      <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
+      <a href="#/favorites/" data-sveltekit-preload-data="false">favorites</a>
+      <a href="#/history/" data-sveltekit-preload-data="false">history</a>
+      <a href="#/discover/" data-sveltekit-preload-data="false">discover</a>
+      <a href="#/livetv/" data-sveltekit-preload-data="false">live tv</a>
+      <a href="#/recordings/" data-sveltekit-preload-data="false">recordings</a>
+      <a href="#/settings/" data-sveltekit-preload-data="false">settings</a>
     </nav>
   </header>
 
