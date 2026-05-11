@@ -42,32 +42,36 @@ These can ship *during* the lock without breaking it:
 
 ## v2.3 — committed track
 
-These two are scheduled for the v2.3 cut (decision 2026-05-10):
+These two are scheduled for the v2.3 cut (decisions 2026-05-10):
 
 - **Adaptive bitrate HLS ladder** — multi-rendition variant
   playlists, bandwidth-aware client switching. Touches the
   transcode pipeline + playlist generator. ~2 weeks. Highest
   user-facing impact of any server-only item left, and closes a
   documented trail row against Plex / Emby / Jellyfin.
-- **Pin transcode base to `jellyfin-ffmpeg`** — swap the Docker
-  ffmpeg layer for `jellyfin/jellyfin-ffmpeg` releases. Inherits
-  better HDR → SDR tonemap (custom Hable curve) and VAAPI fixes
-  without us forking ffmpeg ourselves. ~half a day. Closes the
-  visible-quality gap with Jellyfin / Plex on HDR content; matrix
-  row stays ✅ but the *quality* improves where it currently
-  trails on raw tonemap output.
+- **2FA / TOTP** — closes a Plex / Emby / Jellyfin parity gap on
+  password-based account security. Drops cleanly into the existing
+  PASETO + session shape (no schema rework); additive endpoints +
+  a new optional `totp_required` field on the login response.
+  ~1 week server + ~1 week client flows on web + Android phone.
+  TV clients only need verify-on-login support (enabling 2FA on a
+  TV is awkward; do it from a phone or laptop).
 
 ## v2.3+ candidates not yet committed
 
 Tracking these as "ship when there's slack; don't gate the lock":
 
-- **2FA / TOTP** — closes Plex / Emby / Jellyfin parity for
-  password-based accounts. Drops into the existing PASETO + session
-  shape. ~1 week.
 - **Last.fm / ListenBrainz scrobble exporter** — listen events
   already live in `watch_events`; one-way exporter. ~1 week.
 - **Audio loudnorm filter** — ffmpeg one-pass loudnorm wrapped
   behind a per-session "Normalize" toggle. ~3 days.
+- **`jellyfin-ffmpeg` base image pin** — parked until the Intel
+  Arc test box arrives. Our production hardware (NVIDIA RTX 5000)
+  routes HDR tonemap through NVENC's CUDA pipeline, not the
+  OpenCL / zscale path the custom Hable curve targets — so visible
+  gain on the current deployment is ~0%. The VAAPI patches are the
+  real win, and only matter once we can validate them on Intel
+  iGPU hardware.
 
 None of these break v2.2.0 clients; they're additive and ship as
 v2.x minor releases when client work has slack.
