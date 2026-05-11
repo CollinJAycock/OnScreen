@@ -41,7 +41,7 @@
     playlist_url: string;
   } | null = null;
   let reporter: ProgressReporter | null = null;
-  let usingAvPlay = false;
+  let usingAvPlay = $state(false);
 
   // On-screen debug breadcrumbs — visible while loading=true so we
   // can read what stage we got stuck at when playback never starts.
@@ -686,8 +686,11 @@
   }
 
   onMount(() => {
-    // Mark the body so the watch-route's :global() rules clear the
-    // page background, letting AVPlay's hardware overlay show.
+    // Mark html + body so the watch-route's :global() rules clear the
+    // page background chain, letting AVPlay's hardware overlay show.
+    // Both classes needed: html is the topmost paint surface, body is
+    // styled separately in app.css.
+    document.documentElement.classList.add('player-route');
     document.body.classList.add('player-route');
 
     const offKey = focusManager.pushKeyHandler(onKey);
@@ -868,6 +871,7 @@
     })();
 
     return () => {
+      document.documentElement.classList.remove('player-route');
       document.body.classList.remove('player-route');
       offKey();
       reporter?.stopped(position, duration);
@@ -892,7 +896,10 @@
 
 <div class="player" onmousemove={showControls}>
   <!-- svelte-ignore a11y_media_has_caption -->
-  <video bind:this={video} class="video" playsinline></video>
+  <!-- On Tizen with AVPlay, the <video> element is unused but
+       browsers paint a black "no source" rectangle that covers the
+       hardware overlay. Hide it whenever AVPlay is driving playback. -->
+  <video bind:this={video} class="video" class:hidden={usingAvPlay} playsinline></video>
 
   {#if loading}
     <div class="overlay center">
@@ -1073,19 +1080,27 @@
     overflow: hidden;
   }
 
-  /* Body + the layout's .tv-root paint the page background everywhere
-     else, but on the watch route those layers must let the AVPlay
-     hardware overlay through. Scoped via :global() because Svelte's
-     scoped CSS doesn't reach outside this component. */
+  /* HTML, body, and the layout's .tv-root all paint the dark page
+     background everywhere else, but on the watch route those layers
+     must let the AVPlay hardware overlay through. Even one opaque
+     layer in the chain hides the entire video. Scoped via :global()
+     because Svelte's scoped CSS doesn't reach outside this component.
+     The html selector targets the topmost paint surface; body still
+     gets cleared too so we don't depend on browser stacking quirks. */
+  :global(html.player-route),
   :global(body.player-route),
   :global(body.player-route .tv-root) {
-    background: transparent;
+    background: transparent !important;
   }
 
   .video {
     width: 100%;
     height: 100%;
     object-fit: contain;
+  }
+
+  .video.hidden {
+    display: none;
   }
 
   .overlay {
