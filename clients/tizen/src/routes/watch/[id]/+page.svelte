@@ -671,6 +671,10 @@
   }
 
   onMount(() => {
+    // Mark the body so the watch-route's :global() rules clear the
+    // page background, letting AVPlay's hardware overlay show.
+    document.body.classList.add('player-route');
+
     const offKey = focusManager.pushKeyHandler(onKey);
 
     (async () => {
@@ -752,6 +756,24 @@
           // Tizen hardware path. AVPlay handles HLS demux +
           // hardware decode; the <video> element below stays unused.
           usingAvPlay = true;
+          // Surface silent AVPlay failures as a visible error after
+          // 30 s with no progress tick. Without this the user sees a
+          // permanent black screen if prepareAsync hangs on a stream
+          // the firmware can't decode (rare 4K HEVC profiles, exotic
+          // audio channel layouts).
+          let watchdog: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+            if (loading) {
+              error = 'Playback didn’t start. The TV may not support this stream.';
+              loading = false;
+              try { avplay.close(); } catch { /* ignore */ }
+            }
+          }, 30_000);
+          const clearWatchdog = () => {
+            if (watchdog) {
+              clearTimeout(watchdog);
+              watchdog = null;
+            }
+          };
           avplay.open(
             {
               url: fullURL,
@@ -761,6 +783,7 @@
             },
             {
               onProgress: (currentMs, durationMs) => {
+                clearWatchdog();
                 position = currentMs;
                 duration = durationMs;
                 if (loading) {
@@ -774,6 +797,7 @@
                 maybeShowUpNext();
               },
               onEnded: () => {
+                clearWatchdog();
                 reporter?.stopped(duration, duration);
                 // EOS auto-advance: episodes / podcasts go through
                 // the Up Next overlay flow (which calls goToNext
@@ -787,7 +811,8 @@
                 }
               },
               onError: (msg) => {
-                error = msg;
+                clearWatchdog();
+                error = msg || 'AVPlay failed (no error message from firmware).';
                 loading = false;
               }
             }
@@ -812,6 +837,7 @@
     })();
 
     return () => {
+      document.body.classList.remove('player-route');
       offKey();
       reporter?.stopped(position, duration);
       if (session && api.getToken()) {
@@ -997,8 +1023,22 @@
   .player {
     position: fixed;
     inset: 0;
-    background: #000;
+    /* AVPlay renders its video as a hardware overlay BEHIND the webview.
+       Setting the player background opaque (#000) blocks that overlay
+       so the user sees a black webview chrome over a playing video.
+       Use transparent here and clear body / .tv-root on this route via
+       :global() below so the firmware compositor can show through. */
+    background: transparent;
     overflow: hidden;
+  }
+
+  /* Body + the layout's .tv-root paint the page background everywhere
+     else, but on the watch route those layers must let the AVPlay
+     hardware overlay through. Scoped via :global() because Svelte's
+     scoped CSS doesn't reach outside this component. */
+  :global(body.player-route),
+  :global(body.player-route .tv-root) {
+    background: transparent;
   }
 
   .video {
