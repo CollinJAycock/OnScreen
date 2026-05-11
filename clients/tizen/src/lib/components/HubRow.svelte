@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { focusScope } from '$lib/focus/focusable';
-
   interface Props {
     title: string;
     children: import('svelte').Snippet;
@@ -8,7 +6,7 @@
   let { title, children }: Props = $props();
 </script>
 
-<section class="row" use:focusScope>
+<section class="row">
   <h2>{title}</h2>
   <div class="scroller">
     {@render children()}
