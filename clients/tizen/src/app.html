@@ -4,6 +4,49 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=1920, initial-scale=1" />
     <title>OnScreen</title>
+    <script>
+      // ── webOS / Tizen older-Chromium polyfills ─────────────────
+      // Runs before SvelteKit's bundled code. Vite's build.target
+      // transpiles syntax, not method availability — these are
+      // runtime methods missing on older TV webviews.
+
+      // String.prototype.replaceAll — landed in Chromium 85 / Safari 13.4.
+      // SvelteKit's router uses it during route normalisation.
+      if (!String.prototype.replaceAll) {
+        String.prototype.replaceAll = function (search, replace) {
+          if (search instanceof RegExp) {
+            if (!search.global) {
+              throw new TypeError('String.prototype.replaceAll called with a non-global RegExp argument');
+            }
+            return this.replace(search, replace);
+          }
+          return this.split(search).join(replace);
+        };
+      }
+
+      // Array.prototype.at / String.prototype.at — Chromium 92 / Safari 15.4.
+      if (!Array.prototype.at) {
+        Array.prototype.at = function (i) {
+          const n = this.length;
+          const idx = i < 0 ? n + i : i;
+          return idx >= 0 && idx < n ? this[idx] : undefined;
+        };
+      }
+      if (!String.prototype.at) {
+        String.prototype.at = function (i) {
+          const n = this.length;
+          const idx = i < 0 ? n + i : i;
+          return idx >= 0 && idx < n ? this[idx] : undefined;
+        };
+      }
+
+      // Object.hasOwn — Chromium 93 / Safari 15.4.
+      if (!Object.hasOwn) {
+        Object.hasOwn = function (obj, key) {
+          return Object.prototype.hasOwnProperty.call(obj, key);
+        };
+      }
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

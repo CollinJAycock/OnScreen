@@ -4,6 +4,60 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=1920, initial-scale=1" />
     <title>OnScreen</title>
+    <script>
+      // ── webOS 6.x / Tizen older-Chromium polyfills ─────────────────
+      // Runs before SvelteKit's bundled code so anything that depends
+      // on the polyfilled methods picks them up. These are *runtime*
+      // method polyfills — Vite's `build.target` only transpiles
+      // syntax (optional chaining, ??, etc.), not method availability.
+      //
+      // webOS 6.0 ships Chromium 79. Tizen 6.x/7.x ships WebKit-based
+      // builds with comparable holes. The polyfills below target
+      // methods we hit in the SvelteKit runtime + our own code:
+
+      // String.prototype.replaceAll — landed in Chromium 85 / Safari 13.4.
+      // SvelteKit's router uses this during route normalisation; without
+      // it the whole boot crashes with `r.replaceAll is not a function`.
+      if (!String.prototype.replaceAll) {
+        String.prototype.replaceAll = function (search, replace) {
+          if (search instanceof RegExp) {
+            if (!search.global) {
+              throw new TypeError('String.prototype.replaceAll called with a non-global RegExp argument');
+            }
+            return this.replace(search, replace);
+          }
+          // Cheap split/join works for plain-string `search`. Functional
+          // replace callbacks are rare in our codebase, but the native
+          // method supports them; this stub doesn't. Add if needed.
+          return this.split(search).join(replace);
+        };
+      }
+
+      // Array.prototype.at — landed in Chromium 92 / Safari 15.4. Used
+      // throughout modern JS to grab the last element via `arr.at(-1)`.
+      if (!Array.prototype.at) {
+        Array.prototype.at = function (i) {
+          const n = this.length;
+          const idx = i < 0 ? n + i : i;
+          return idx >= 0 && idx < n ? this[idx] : undefined;
+        };
+      }
+      if (!String.prototype.at) {
+        String.prototype.at = function (i) {
+          const n = this.length;
+          const idx = i < 0 ? n + i : i;
+          return idx >= 0 && idx < n ? this[idx] : undefined;
+        };
+      }
+
+      // Object.hasOwn — landed in Chromium 93 / Safari 15.4. Common
+      // safer replacement for `Object.prototype.hasOwnProperty.call`.
+      if (!Object.hasOwn) {
+        Object.hasOwn = function (obj, key) {
+          return Object.prototype.hasOwnProperty.call(obj, key);
+        };
+      }
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
