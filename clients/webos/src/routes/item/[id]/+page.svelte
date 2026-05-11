@@ -22,6 +22,9 @@
   const fanartUrl = $derived(
     item?.fanart_path ? api.assetUrl(`/artwork/${item.fanart_path}?w=1920`) : ''
   );
+  const posterUrl = $derived(
+    item?.poster_path ? api.assetUrl(`/artwork/${item.poster_path}?w=480`) : ''
+  );
 
   onMount(() => {
     (async () => {
@@ -129,16 +132,21 @@
     {/if}
 
     <div class="content">
-      <h1>{item.title}</h1>
-      <div class="meta">
-        {#if item.year}<span>{item.year}</span>{/if}
-        {#if item.content_rating}<span class="pill">{item.content_rating}</span>{/if}
-        {#if item.rating}<span>★ {item.rating.toFixed(1)}</span>{/if}
-        {#if item.duration_ms}<span>{Math.round(item.duration_ms / 60000)}m</span>{/if}
-      </div>
-      {#if item.summary}<p class="summary">{item.summary}</p>{/if}
+      <div class="hero">
+        {#if posterUrl}
+          <img class="hero-poster" src={posterUrl} alt="" />
+        {/if}
+        <div class="hero-text">
+          <h1>{item.title}</h1>
+          <div class="meta">
+            {#if item.year}<span>{item.year}</span>{/if}
+            {#if item.content_rating}<span class="pill">{item.content_rating}</span>{/if}
+            {#if item.rating}<span>★ {item.rating.toFixed(1)}</span>{/if}
+            {#if item.duration_ms}<span>{Math.round(item.duration_ms / 60000)}m</span>{/if}
+          </div>
+          {#if item.summary}<p class="summary">{item.summary}</p>{/if}
 
-      <div class="actions">
+          <div class="actions">
         {#if item.files.length > 0}
           <button use:focusable={{ autofocus: true }} class="btn primary" onclick={play}>
             {resumeLabel()}
@@ -157,6 +165,8 @@
             Play
           </button>
         {/if}
+          </div>
+        </div>
       </div>
 
       {#if children.length > 0}
@@ -214,6 +224,27 @@
     padding: var(--page-pad);
   }
 
+  .hero {
+    display: flex;
+    gap: 48px;
+    align-items: flex-start;
+    margin-bottom: 40px;
+  }
+
+  .hero-poster {
+    width: 320px;
+    height: 480px;
+    border-radius: 12px;
+    object-fit: cover;
+    background: var(--bg-elevated);
+    flex: 0 0 auto;
+  }
+
+  .hero-text {
+    flex: 1;
+    min-width: 0;
+  }
+
   h1 {
     font-size: var(--font-2xl);
     margin: 0 0 20px;
@@ -245,7 +276,6 @@
   .actions {
     display: flex;
     gap: 24px;
-    margin-bottom: 60px;
   }
 
   .btn {
