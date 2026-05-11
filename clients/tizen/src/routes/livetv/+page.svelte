@@ -210,7 +210,13 @@
 {:else}
   <div class="player">
     {#if usingAvPlay}
-      <object bind:this={avplayAnchor} class="avplay-host" type="application/avplayer"></object>
+      <object
+        bind:this={avplayAnchor}
+        class="avplay-host"
+        type="application/avplayer"
+        width="1920"
+        height="1080"
+      ></object>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video bind:this={video} class="video" autoplay></video>

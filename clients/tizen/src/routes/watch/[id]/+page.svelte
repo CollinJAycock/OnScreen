@@ -27,10 +27,12 @@
   let video: HTMLVideoElement | undefined = $state();
   // Tizen-specific anchor `<object type="application/avplayer">` —
   // the firmware uses this DOM element as the placement marker for
-  // AVPlay's hardware video overlay. Pass it into avplay.open so the
-  // overlay tracks the element's actual rendered geometry on whatever
-  // panel resolution the webview is running at.
-  let avplayAnchor: HTMLObjectElement | undefined = $state();
+  // AVPlay's hardware video overlay. Must be a direct child of <body>
+  // (Jellyfin + Samsung samples both do this); nested under Svelte's
+  // .tv-root / .player wrappers, the firmware's chroma reservation
+  // can be clipped by overflow:hidden or fail to engage at all.
+  // Created imperatively on mount, removed on destroy.
+  let avplayAnchor: HTMLObjectElement | null = null;
 
   let item = $state<ItemDetail | null>(null);
   let error = $state('');
@@ -701,6 +703,25 @@
     document.documentElement.classList.add('player-route');
     document.body.classList.add('player-route');
 
+    // Create the AVPlay anchor as a direct child of <body> so the
+    // firmware's chroma reservation isn't clipped by any wrapper
+    // ancestors' overflow / transform / opacity. Inline-style instead
+    // of CSS class for the same reason — fewer surprises.
+    if (avplay.available()) {
+      const a = document.createElement('object') as HTMLObjectElement;
+      a.type = 'application/avplayer';
+      a.setAttribute('width', '1920');
+      a.setAttribute('height', '1080');
+      a.style.position = 'absolute';
+      a.style.left = '0';
+      a.style.top = '0';
+      a.style.width = '1920px';
+      a.style.height = '1080px';
+      a.style.zIndex = '0';
+      document.body.insertBefore(a, document.body.firstChild);
+      avplayAnchor = a;
+    }
+
     const offKey = focusManager.pushKeyHandler(onKey);
 
     (async () => {
@@ -888,6 +909,10 @@
     return () => {
       document.documentElement.classList.remove('player-route');
       document.body.classList.remove('player-route');
+      if (avplayAnchor && avplayAnchor.parentNode) {
+        avplayAnchor.parentNode.removeChild(avplayAnchor);
+      }
+      avplayAnchor = null;
       offKey();
       reporter?.stopped(position, duration);
       if (session && api.getToken()) {
@@ -910,16 +935,12 @@
 </script>
 
 <div class="player" onmousemove={showControls}>
-  <!-- AVPlay hardware-overlay anchor. <object type="application/avplayer">
-       is the Tizen-specific MIME the firmware reserves for native
-       video composition — without this element AVPlay has no DOM
-       handle to anchor to and the video plays "somewhere" outside the
-       webview's visible area. Matches Jellyfin's tizen-jellyfin-avplay
-       fork (extras/avplayVideoPlayer.js:553). -->
-  <object bind:this={avplayAnchor} class="avplay-anchor" type="application/avplayer"></object>
+  <!-- AVPlay anchor lives directly under <body> — created in onMount.
+       Do not place it inside .player; ancestor overflow:hidden /
+       stacking contexts can clip the firmware's chroma reservation. -->
 
   <!-- svelte-ignore a11y_media_has_caption -->
-  <!-- HTML5 <video> still used by the dev fallback path when AVPlay
+  <!-- HTML5 <video> only used by the dev fallback path when AVPlay
        isn't available. Hidden when AVPlay is driving so it can't
        cover the hardware overlay. -->
   <video bind:this={video} class="video" class:hidden={usingAvPlay} playsinline></video>
@@ -1126,16 +1147,6 @@
     display: none;
   }
 
-  .avplay-anchor {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    /* AVPlay reads offsetLeft/Top/Width/Height to position the
-       hardware overlay; the element itself paints nothing. Behind
-       everything else (controls, loading overlay) via low z-index. */
-    z-index: 0;
-  }
 
   .overlay {
     position: absolute;

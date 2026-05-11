@@ -105,41 +105,54 @@ export class AvPlay {
     const url = source.bearer
       ? `${source.url}${source.url.includes('?') ? '&' : '?'}token=${encodeURIComponent(source.bearer)}`
       : source.url;
+
+    // Defensive close — prepareAsync misbehaves if a prior session
+    // is still bound (e.g., switching audio tracks). Matches
+    // Jellyfin's fork (extras/avplayVideoPlayer.js:614).
+    try { this.api.close(); } catch { /* idle is fine */ }
+
     this.api.open(url);
-    // ADAPTIVE_INFO carries the streaming-mode hint AVPlay uses to
-    // pick its demuxer. Most firmware infers from the URL suffix
-    // (.m3u8 vs .mpd), but explicit hints make startup ~50–100 ms
-    // faster and avoid the rare misclassification on tunneled URLs
-    // where the suffix isn't visible until the response.
-    this.api.setStreamingProperty(
-      'ADAPTIVE_INFO',
-      source.streamingMode ? `STREAMING_FORMAT=${source.streamingMode}` : '',
-    );
+
+    // Buffering ceiling first (Jellyfin's order). 60 s gives slow-
+    // start transcodes room to deliver the first segment without the
+    // firmware giving up early.
+    try {
+      (this.api as unknown as { setTimeoutForBuffering?: (s: number) => void })
+        .setTimeoutForBuffering?.(60);
+    } catch { /* older firmware lacks this — fall back to default */ }
+
     this.api.setListener({
       oncurrentplaytime: (ms) => handlers.onProgress?.(ms, this.api!.getDuration()),
       onstreamcompleted: () => handlers.onEnded?.(),
       onerror: (e) => handlers.onError?.(typeof e === 'string' ? e : JSON.stringify(e))
     });
-    // 60 s buffering ceiling — matches Jellyfin's fork. Without this
-    // the firmware uses a much shorter default that gives up on
-    // slow-starting transcodes.
-    try {
-      (this.api as unknown as { setTimeoutForBuffering?: (s: number) => void })
-        .setTimeoutForBuffering?.(60);
-    } catch { /* older firmware lacks this — fall back to default */ }
+
     // Position AVPlay's hardware overlay where the anchor `<object>`
-    // element sits in the DOM. On a 4K Tizen webview that's typically
-    // 3840×2160 — hardcoding 1920×1080 would put the overlay in the
-    // top-left quarter only. offsetLeft/Top/Width/Height matches the
-    // actual rendered geometry.
-    const rect = {
-      x: source.anchor.offsetLeft,
-      y: source.anchor.offsetTop,
-      w: source.anchor.offsetWidth,
-      h: source.anchor.offsetHeight,
-    };
-    this.api.setDisplayRect(rect.x, rect.y, rect.w, rect.h);
-    this.api.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
+    // element sits in the DOM. Element-offset based (not hardcoded
+    // 1920×1080) so the rect matches on 4K panels whose webview runs
+    // at native resolution. Matches Jellyfin's fork at line 624.
+    this.api.setDisplayRect(
+      source.anchor.offsetLeft,
+      source.anchor.offsetTop,
+      source.anchor.offsetWidth,
+      source.anchor.offsetHeight,
+    );
+
+    // ADAPTIVE_INFO carries the streaming-mode hint AVPlay uses to
+    // pick its demuxer. Most firmware infers from the URL suffix
+    // (.m3u8 vs .mpd), but explicit hints make startup ~50–100 ms
+    // faster and avoid the rare misclassification on tunneled URLs.
+    this.api.setStreamingProperty(
+      'ADAPTIVE_INFO',
+      source.streamingMode ? `STREAMING_FORMAT=${source.streamingMode}` : '',
+    );
+    // Allocate the 4K decode pipeline for HEVC 2160p sources. Safe
+    // no-op on 1080p (firmware ignores). Matches Samsung's
+    // TVDemoAvPlayer reference.
+    try {
+      this.api.setStreamingProperty('SET_MODE_4K', 'TRUE');
+    } catch { /* older firmware lacks this property — ignore */ }
+
     this.api.prepareAsync(
       () => {
         this.prepared = true;
