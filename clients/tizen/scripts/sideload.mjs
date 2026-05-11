@@ -35,7 +35,19 @@ if (wgts.length === 0) {
 }
 const wgt = join(dist, wgts[0].f);
 
-const device = process.env.TIZEN_DEVICE;
+// Device target precedence:
+//   1. --emu flag             → look for the first emulator-style entry
+//   2. TIZEN_DEVICE env var    → exact device name
+//   3. unset                   → tizen CLI picks the first connected device
+const emuMode = process.argv.includes('--emu');
+let device = process.env.TIZEN_DEVICE;
+if (emuMode && !device) {
+  // The Tizen TV emulator registers with sdb as `emulator-26101`
+  // (default sdb port) when no other emulator is running. Multiple
+  // emulators bump the port (26103, 26105, …); set TIZEN_DEVICE
+  // explicitly in that case.
+  device = 'emulator-26101';
+}
 const target = device ? ['-t', device] : [];
 
 console.log(`installing ${wgts[0].f}` + (device ? ` to ${device}` : ' (default device)'));

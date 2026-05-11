@@ -11,7 +11,11 @@
     "package": "npm run build && ares-package build",
     "install-tv": "ares-install --device tv ./com.onscreen.tv_*.ipk",
     "launch-tv": "ares-launch --device tv com.onscreen.tv",
-    "inspect-tv": "ares-inspect --device tv --app com.onscreen.tv"
+    "inspect-tv": "ares-inspect --device tv --app com.onscreen.tv",
+    "install-emu": "ares-install --device emulator ./com.onscreen.tv_*.ipk",
+    "launch-emu": "ares-launch --device emulator com.onscreen.tv",
+    "inspect-emu": "ares-inspect --device emulator --app com.onscreen.tv",
+    "dev:emu": "npm run package && npm run install-emu && npm run launch-emu && npm run inspect-emu"
   },
   "dependencies": {
     "hls.js": "^1.5.15"

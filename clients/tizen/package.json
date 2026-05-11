@@ -10,7 +10,10 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "package": "npm run build && node scripts/package.mjs",
     "install-tv": "node scripts/sideload.mjs",
-    "launch-tv": "node scripts/launch.mjs"
+    "launch-tv": "node scripts/launch.mjs",
+    "install-emu": "node scripts/sideload.mjs --emu",
+    "launch-emu": "node scripts/launch.mjs --emu",
+    "dev:emu": "npm run package && npm run install-emu && npm run launch-emu"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",

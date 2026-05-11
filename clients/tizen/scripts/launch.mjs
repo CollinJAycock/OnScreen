@@ -9,7 +9,11 @@
 import { spawnSync } from 'node:child_process';
 
 const APP_ID = 'OnScreenTV.OnScreen';
-const device = process.env.TIZEN_DEVICE;
+// Mirror sideload.mjs's device-selection precedence so `--emu` works
+// the same way on both ends of the install→launch loop.
+const emuMode = process.argv.includes('--emu');
+let device = process.env.TIZEN_DEVICE;
+if (emuMode && !device) device = 'emulator-26101';
 const target = device ? ['-t', device] : [];
 
 const r = spawnSync('tizen', ['run', '-p', APP_ID, ...target], {
