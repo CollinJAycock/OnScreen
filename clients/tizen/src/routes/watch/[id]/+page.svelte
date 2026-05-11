@@ -414,7 +414,14 @@
     if (usingAvPlay) avplay.close();
     const fresh = await endpoints.transcode.start({
       itemId: itemID,
-      height: 1080,
+      // 2160 = the Q80B-class 4K hardware decoder's ceiling. Asking
+      // for 1080 forces the server to downscale + tonemap 4K HDR
+      // sources, which can't sustain real-time on the CPU pipeline
+      // and AVPlay times out on the slow first segment. With 2160 the
+      // server's decision tree picks `-c:v copy` for HEVC sources at
+      // ≤2160 and we direct-play. SDR-only / 1080p Tizen models exist
+      // but are rare in the 2020+ install base; can be probed later.
+      height: 2160,
       positionMs,
       fileId: file.id,
       supportsHEVC: true,
@@ -751,7 +758,14 @@
         dbg('transcode.start …');
         session = await endpoints.transcode.start({
           itemId: itemID,
-          height: 1080,
+          // 2160 = the Q80B-class 4K hardware decoder's ceiling. Asking
+      // for 1080 forces the server to downscale + tonemap 4K HDR
+      // sources, which can't sustain real-time on the CPU pipeline
+      // and AVPlay times out on the slow first segment. With 2160 the
+      // server's decision tree picks `-c:v copy` for HEVC sources at
+      // ≤2160 and we direct-play. SDR-only / 1080p Tizen models exist
+      // but are rare in the 2020+ install base; can be probed later.
+      height: 2160,
           positionMs: startMs,
           fileId: file.id,
           supportsHEVC: true
