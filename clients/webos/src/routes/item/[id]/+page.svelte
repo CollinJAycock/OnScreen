@@ -18,9 +18,12 @@
   let children = $state<ChildItem[]>([]);
   let error = $state('');
 
-  // Show-specific: children holds seasons, and we lazy-load the
-  // selected season's episodes inline so the user sees both layers
-  // (season picker + episode grid) without an extra drill-down.
+  // Show context: when viewing a show, season, or episode, render
+  // the full show hierarchy (season picker + selected-season's
+  // episodes) so the user can browse without drilling. showSeasons
+  // is the show's seasons; seasonEpisodes is the episodes for the
+  // currently-selected season.
+  let showSeasons = $state<ChildItem[]>([]);
   let selectedSeasonId = $state<string | null>(null);
   let seasonEpisodes = $state<ChildItem[]>([]);
   let seasonEpisodesLoading = $state(false);
@@ -76,11 +79,41 @@
             children = raw;
           }
 
-          // Show pages render both layers — season picker + episodes
-          // for the picked season. Default to the first season; user
-          // can switch left/right along the picker.
-          if (item.type === 'show' && children.length > 0) {
-            void selectSeason(children[0].id);
+        }
+
+        // Show context (show/season/episode): assemble the show's
+        // season list + selected season's episodes so the page renders
+        // the full hierarchy instead of just one layer.
+        if (item.type === 'show') {
+          showSeasons = children;
+          if (children.length > 0) void selectSeason(children[0].id);
+        } else if (item.type === 'season') {
+          // children = this season's episodes (already loaded above).
+          // Seed seasonEpisodes from it and fetch sibling seasons via
+          // the show (parent_id).
+          seasonEpisodes = children;
+          selectedSeasonId = item.id;
+          if (item.parent_id) {
+            try {
+              showSeasons = await endpoints.items.children(item.parent_id);
+            } catch { showSeasons = []; }
+          }
+        } else if (item.type === 'episode' && item.parent_id) {
+          // Walk up to the season → the show. Two extra round-trips
+          // for the show id; tolerable since episode pages are a
+          // deep-link surface (Continue Watching tile, search hit).
+          try {
+            const season = await endpoints.items.get(item.parent_id);
+            const showId = season.parent_id;
+            selectedSeasonId = season.id;
+            const [seasons, episodes] = await Promise.all([
+              showId ? endpoints.items.children(showId) : Promise.resolve([] as ChildItem[]),
+              endpoints.items.children(season.id),
+            ]);
+            showSeasons = seasons;
+            seasonEpisodes = episodes;
+          } catch {
+            // Best-effort; an episode page with hero + Play still works.
           }
         }
       } catch (e) {
@@ -196,14 +229,15 @@
         </div>
       </div>
 
-      {#if item.type === 'show' && children.length > 0}
+      {#if showSeasons.length > 0}
         <!-- Two-tier show layout: season chips along the top, episode
-             grid below for the selected season. Chips load their
-             season's children lazily on selection. -->
+             grid below for the selected season. Rendered for show,
+             season, and episode pages alike so the user always sees
+             the full hierarchy. -->
         <section class="children">
           <h2>Seasons</h2>
           <div class="season-chips">
-            {#each children as season (season.id)}
+            {#each showSeasons as season (season.id)}
               <button
                 use:focusable
                 class="season-chip"
