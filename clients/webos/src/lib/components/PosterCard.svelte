@@ -12,8 +12,11 @@
   }
   let { title, posterPath, subtitle, progressRatio, onclick, autofocus }: Props = $props();
 
-  const origin = api.getOrigin() ?? '';
-  const posterUrl = $derived(posterPath ? `${origin}/artwork/${posterPath}?w=400` : '');
+  // api.assetUrl handles origin + `?token=<paseto>` for the
+  // RequiredAllowQueryToken-protected /artwork/ route. The naive
+  // `${origin}/artwork/...?w=400` URL omits auth and 401s — `<img>`
+  // can't attach an Authorization header.
+  const posterUrl = $derived(posterPath ? api.assetUrl(`/artwork/${posterPath}?w=400`) : '');
 </script>
 
 <button use:focusable={{ autofocus }} class="card" {onclick}>

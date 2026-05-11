@@ -19,9 +19,8 @@
   let error = $state('');
 
   const itemId = $derived(page.params.id!);
-  const origin = api.getOrigin() ?? '';
   const fanartUrl = $derived(
-    item?.fanart_path ? `${origin}/artwork/${item.fanart_path}?w=1920` : ''
+    item?.fanart_path ? api.assetUrl(`/artwork/${item.fanart_path}?w=1920`) : ''
   );
 
   onMount(() => {

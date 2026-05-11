@@ -133,6 +133,35 @@ export class ApiClient {
     return `${origin}${path}`;
   }
 
+  /**
+   * URL for an asset endpoint (artwork, media stream, subtitles)
+   * that `<img>` / `<video>` / `<track>` can load directly.
+   *
+   * Browsers can't attach Authorization headers to those element
+   * fetches, so we put the bearer token in `?token=<paseto>` —
+   * the server's RequiredAllowQueryToken middleware accepts that
+   * specifically for asset routes. The token-in-URL trade-off is
+   * scoped: leaks (logs, Referer) don't grant general API access
+   * because regular API routes still require Bearer/cookie.
+   *
+   * Returns the path unchanged when no token is cached (caller
+   * gets a clean URL that'll 401, surface that, and trigger
+   * re-auth instead of silently swapping in a stale token).
+   *
+   * If the path already has a `?token=` (e.g. an HLS playlist
+   * with a pre-baked transcode token), the existing one wins —
+   * we don't overwrite.
+   */
+  assetUrl(path: string): string {
+    const origin = this.getOrigin();
+    if (!origin) throw new Error('API origin not configured');
+    const url = `${origin}${path}`;
+    const tok = this.getToken();
+    if (!tok) return url;
+    if (/[?&]token=/.test(url)) return url;
+    return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+  }
+
   private async authed<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
     try {
       return await this.raw<T>(method, path, body, true);
