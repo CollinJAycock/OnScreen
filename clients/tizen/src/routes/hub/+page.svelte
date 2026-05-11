@@ -108,7 +108,26 @@
       </HubRow>
     {/if}
 
-    {#if data.recently_added.length > 0}
+    <!-- Per-library "Recently Added to <Library>" strips. Falls back
+         to the flat aggregate on older servers that don't emit
+         recently_added_by_library. -->
+    {#if data.recently_added_by_library && data.recently_added_by_library.length > 0}
+      {#each data.recently_added_by_library as row, ri (row.library_id)}
+        {#if row.items.length > 0}
+          <HubRow title="Recently Added to {row.library_name}">
+            {#each row.items as item, i (item.id)}
+              <PosterCard
+                title={item.title}
+                posterPath={item.poster_path}
+                subtitle={item.year ? String(item.year) : undefined}
+                autofocus={cwEmpty && ri === 0 && i === 0}
+                onclick={() => open(item.id, item.type)}
+              />
+            {/each}
+          </HubRow>
+        {/if}
+      {/each}
+    {:else if data.recently_added.length > 0}
       <HubRow title="Recently Added">
         {#each data.recently_added as item, i (item.id)}
           <PosterCard
@@ -122,7 +141,7 @@
       </HubRow>
     {/if}
 
-    {#if cwEmpty && data.recently_added.length === 0}
+    {#if cwEmpty && (!data.recently_added_by_library || data.recently_added_by_library.every(r => r.items.length === 0)) && data.recently_added.length === 0}
       <p class="empty">Your library is empty. Add a library and run a scan from the web UI.</p>
     {/if}
   {/if}

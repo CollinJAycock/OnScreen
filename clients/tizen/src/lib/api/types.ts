@@ -17,6 +17,17 @@ export interface HubData {
   continue_watching_movies?: HubItem[];
   continue_watching_other?: HubItem[];
   recently_added: HubItem[];
+  // Per-library "Recently added to <Library>" strips. Each entry is
+  // one library's slice; hub renders one row per entry. Falls back
+  // to the flat recently_added when older servers omit this.
+  recently_added_by_library?: HubLibraryRow[];
+}
+
+export interface HubLibraryRow {
+  library_id: string;
+  library_name: string;
+  library_type: string;
+  items: HubItem[];
 }
 
 export interface Library {
