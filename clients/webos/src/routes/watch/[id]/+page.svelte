@@ -610,14 +610,23 @@
         const file = item.files[0];
         const startMs = item.view_offset_ms ?? 0;
 
-        // Audio-only items (music tracks, audiobooks, audiobook
-        // chapters, audio podcasts) skip the HLS transcode path. The
-        // TV's media element plays MP3/AAC/M4A/FLAC directly, and
+        // Audio-only items skip the HLS transcode path. The TV's
+        // media element plays MP3/AAC/M4A/M4B/FLAC directly, and
         // hls.js's audio-only handling can stall before loadedmetadata
         // fires on a freshly-spawned audio playlist — hence the
         // "Starting playback…" hang. Direct play also avoids needless
         // transcode load on the server.
-        const isAudioOnly = !file.video_codec && !!file.audio_codec;
+        //
+        // Prefer item.type to detect — "audiobook (Illustrated)"
+        // editions sometimes include a real per-chapter slideshow
+        // video stream, so the codec heuristic alone misclassifies
+        // them. For podcasts the type can host video too, so we keep
+        // the codec check there.
+        const audioType =
+          item.type === 'track' ||
+          item.type === 'audiobook' ||
+          item.type === 'audiobook_chapter';
+        const isAudioOnly = audioType || (!file.video_codec && !!file.audio_codec);
         if (isAudioOnly) {
           video!.src = api.assetUrl(file.stream_url);
         } else {
