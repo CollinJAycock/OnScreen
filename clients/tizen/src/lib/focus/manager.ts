@@ -82,17 +82,35 @@ class FocusManager {
       return;
     }
 
-    if (k === 'enter' && this.current) {
-      e.preventDefault();
-      this.current.click();
+    if (k === 'enter') {
+      if (!this.current || !document.body.contains(this.current)) {
+        this.focusFirst();
+      }
+      if (this.current) {
+        e.preventDefault();
+        this.current.click();
+      }
       return;
     }
 
-    if (isDirection(k) && this.current) {
-      const next = pickNeighbor(this.current, this.candidates(), k);
-      if (next) {
-        e.preventDefault();
-        this.focus(next as HTMLElement);
+    if (isDirection(k)) {
+      // Recover from "no current focus" — e.g. a page mounted no
+      // autofocus target (setup, book hierarchy), or the previously-
+      // focused element was unmounted on route change. Without this
+      // the remote stays dead until the user clicks something.
+      if (!this.current || !document.body.contains(this.current)) {
+        this.focusFirst();
+        if (this.current) {
+          e.preventDefault();
+          return;
+        }
+      }
+      if (this.current) {
+        const next = pickNeighbor(this.current, this.candidates(), k);
+        if (next) {
+          e.preventDefault();
+          this.focus(next as HTMLElement);
+        }
       }
     }
   };

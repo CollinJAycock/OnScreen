@@ -62,4 +62,13 @@
     <access origin="*" subdomains="true" />
     <tizen:allow-navigation>*</tizen:allow-navigation>
 
+    <!-- Tizen webview defaults to a CSP that blocks inline scripts.
+         SvelteKit's adapter-static with bundleStrategy:'inline' emits
+         the whole app bundle as an inline <script> in index.html, and
+         our polyfill block in app.html is also inline — both fail
+         silently to a black screen under default CSP. Widen the policy
+         so inline + cross-origin server requests work, and allow blob:
+         + data: media/img which the player and trickplay use. -->
+    <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src *</tizen:content-security-policy>
+
 </widget>
