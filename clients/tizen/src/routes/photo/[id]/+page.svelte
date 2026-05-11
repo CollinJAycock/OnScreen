@@ -58,7 +58,9 @@
     document.addEventListener('keydown', onKey);
     resolveSiblings();
     return focusManager.pushBack(() => {
-      history.back();
+      // See clients/tizen/src/routes/item/[id]/+page.svelte for the
+      // history.back() → app-reload loop on Tizen.
+      goto('#/hub');
       return true;
     });
   });

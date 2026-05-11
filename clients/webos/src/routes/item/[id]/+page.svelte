@@ -134,7 +134,13 @@
     })();
 
     return focusManager.pushBack(() => {
-      history.back();
+      // history.back() on the TV webview can land on the file://
+      // origin's empty parent state, which the firmware reloads as
+      // the app entry — looking like a back→loop bounce for the user.
+      // Always route to a known SvelteKit destination instead. Loses
+      // "back to the search results" fidelity until we ship a real
+      // back stack; non-looping is the higher priority.
+      goto('#/hub');
       return true;
     });
   });
