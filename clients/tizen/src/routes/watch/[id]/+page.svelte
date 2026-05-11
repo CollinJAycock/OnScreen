@@ -43,6 +43,14 @@
   let reporter: ProgressReporter | null = null;
   let usingAvPlay = false;
 
+  // On-screen debug breadcrumbs — visible while loading=true so we
+  // can read what stage we got stuck at when playback never starts.
+  // Cleared as soon as onProgress fires.
+  let debugLog = $state<string[]>([]);
+  function dbg(msg: string) {
+    debugLog = [...debugLog, msg].slice(-15);
+  }
+
   // Chapters: surface as jump targets. Start offsets used for green-button cycling.
   const chapters = $derived<Chapter[]>(item?.files[0]?.chapters ?? []);
 
@@ -679,7 +687,9 @@
 
     (async () => {
       try {
+        dbg(`fetch /items/${itemID}`);
         item = await endpoints.items.get(itemID);
+        dbg(`item: type=${item.type} files=${item.files.length} title=${item.title.slice(0, 40)}`);
         if (item.type === 'book') {
           // Ebooks need a paginated reader, not the video pipeline.
           // Defence-in-depth — the item detail page already hides the
@@ -706,6 +716,7 @@
 
         const file = item.files[0];
         const startMs = item.view_offset_ms ?? 0;
+        dbg(`file: vc=${file.video_codec || '∅'} ac=${file.audio_codec || '∅'} ${file.resolution_w || '?'}x${file.resolution_h || '?'}`);
 
         // Audio-only items skip the HLS transcode path. The TV's
         // <video> element plays MP3/AAC/M4A/M4B/FLAC directly, which
@@ -737,6 +748,7 @@
           return;
         }
 
+        dbg('transcode.start …');
         session = await endpoints.transcode.start({
           itemId: itemID,
           height: 1080,
@@ -744,10 +756,12 @@
           fileId: file.id,
           supportsHEVC: true
         });
+        dbg(`transcode session: ${session.session_id.slice(0, 8)}…`);
 
         const fullURL = session.playlist_url.startsWith('http')
           ? session.playlist_url
           : api.mediaUrl(session.playlist_url);
+        dbg(`url: ${fullURL.slice(0, 60)}…`);
 
         reporter = new ProgressReporter(itemID);
         reporter.start(() => ({ positionMs: position, durationMs: duration }));
@@ -756,6 +770,7 @@
           // Tizen hardware path. AVPlay handles HLS demux +
           // hardware decode; the <video> element below stays unused.
           usingAvPlay = true;
+          dbg('avplay.open …');
           // Surface silent AVPlay failures as a visible error after
           // 30 s with no progress tick. Without this the user sees a
           // permanent black screen if prepareAsync hangs on a stream
@@ -787,6 +802,7 @@
                 position = currentMs;
                 duration = durationMs;
                 if (loading) {
+                  dbg(`onProgress (first tick): ${currentMs}/${durationMs} ms`);
                   loading = false;
                   showControls();
                 }
@@ -812,6 +828,7 @@
               },
               onError: (msg) => {
                 clearWatchdog();
+                dbg(`onError: ${msg || '(empty)'}`);
                 error = msg || 'AVPlay failed (no error message from firmware).';
                 loading = false;
               }
@@ -867,10 +884,20 @@
     <div class="overlay center">
       <div class="title">Starting playback…</div>
       {#if item}<div class="sub">{item.title}</div>{/if}
+      {#if debugLog.length > 0}
+        <div class="debug-log">
+          {#each debugLog as line, i (i)}<div>{line}</div>{/each}
+        </div>
+      {/if}
     </div>
   {:else if error}
     <div class="overlay center">
       <div class="title error">{error}</div>
+      {#if debugLog.length > 0}
+        <div class="debug-log">
+          {#each debugLog as line, i (i)}<div>{line}</div>{/each}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -1073,6 +1100,19 @@
   .overlay .sub {
     font-size: var(--font-md);
     color: var(--text-secondary);
+  }
+
+  .debug-log {
+    font-family: ui-monospace, monospace;
+    font-size: var(--font-sm);
+    color: rgba(255, 255, 255, 0.75);
+    background: rgba(0, 0, 0, 0.5);
+    padding: 12px 20px;
+    border-radius: 8px;
+    max-width: 1500px;
+    margin-top: 24px;
+    text-align: left;
+    line-height: 1.5;
   }
 
   .controls {
