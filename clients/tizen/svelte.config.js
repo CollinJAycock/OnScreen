@@ -24,10 +24,14 @@ export default {
     output: {
       bundleStrategy: 'inline'
     },
-    // bundleStrategy 'inline' requires client-side route resolution
-    // (server-resolved routing would fetch route manifests that we
-    // just inlined). Explicit for the schema validator.
+    // bundleStrategy 'inline' requires client-side route resolution.
+    // `type: 'hash'` is the file:// fix: the page is loaded from
+    // /media/developer/.../index.html, but pathname-mode routing
+    // would try to match that filesystem path against the route
+    // table and 404. Hash-mode routes (#/discover, #/hub, …) don't
+    // care what path the HTML was loaded from.
     router: {
+      type: 'hash',
       resolution: 'client'
     }
   }
