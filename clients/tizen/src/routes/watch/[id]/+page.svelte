@@ -51,12 +51,16 @@
   let reporter: ProgressReporter | null = null;
   let usingAvPlay = $state(false);
 
-  // On-screen debug breadcrumbs — visible while loading=true so we
-  // can read what stage we got stuck at when playback never starts.
-  // Cleared as soon as onProgress fires.
+  // On-screen debug breadcrumbs + live AVPlay state poll. Always
+  // visible in a corner overlay so we can diagnose "black screen"
+  // even when loading=false (AVPlay claims it's playing but no video
+  // reaches the panel).
   let debugLog = $state<string[]>([]);
+  let livePoll = $state('');
+  let livePollTimer: ReturnType<typeof setInterval> | null = null;
   function dbg(msg: string) {
-    debugLog = [...debugLog, msg].slice(-15);
+    const ts = new Date().toISOString().substring(11, 19);
+    debugLog = [...debugLog, `${ts} ${msg}`].slice(-15);
   }
 
   // Chapters: surface as jump targets. Start offsets used for green-button cycling.
@@ -841,6 +845,13 @@
             loading = false;
             return;
           }
+          dbg(`anchor rect: ${avplayAnchor.offsetLeft},${avplayAnchor.offsetTop},${avplayAnchor.offsetWidth},${avplayAnchor.offsetHeight}`);
+          dbg(`viewport: ${window.innerWidth}x${window.innerHeight}`);
+          // Start the 1Hz state poller so we can read live AVPlay state
+          // on the TV. Stopped in the destroy cleanup.
+          livePollTimer = setInterval(() => {
+            livePoll = `state=${avplay.state()} pos=${avplay.currentMs()}ms dur=${avplay.durationMs()}ms`;
+          }, 1000);
           avplay.open(
             {
               url: fullURL,
@@ -921,6 +932,7 @@
       if (usingAvPlay) avplay.close();
       if (controlsTimer) clearTimeout(controlsTimer);
       if (upNextTimer) clearInterval(upNextTimer);
+      if (livePollTimer) clearInterval(livePollTimer);
       stopSyncStream();
     };
   });
@@ -949,22 +961,20 @@
     <div class="overlay center">
       <div class="title">Starting playback…</div>
       {#if item}<div class="sub">{item.title}</div>{/if}
-      {#if debugLog.length > 0}
-        <div class="debug-log">
-          {#each debugLog as line, i (i)}<div>{line}</div>{/each}
-        </div>
-      {/if}
     </div>
   {:else if error}
     <div class="overlay center">
       <div class="title error">{error}</div>
-      {#if debugLog.length > 0}
-        <div class="debug-log">
-          {#each debugLog as line, i (i)}<div>{line}</div>{/each}
-        </div>
-      {/if}
     </div>
   {/if}
+
+  <!-- Persistent debug HUD — visible regardless of loading / error
+       state so we can diagnose "AVPlay claims it's playing but the
+       screen is black". Remove once the player is shipping. -->
+  <div class="debug-hud">
+    {#if livePoll}<div class="debug-live">{livePoll}</div>{/if}
+    {#each debugLog as line, i (i)}<div>{line}</div>{/each}
+  </div>
 
   <!-- Skip Intro / Skip Credits overlay. Visible while playhead
        is inside an active marker window; Enter skips, Back
@@ -1176,17 +1186,28 @@
     color: var(--text-secondary);
   }
 
-  .debug-log {
+  .debug-hud {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    max-width: 900px;
+    z-index: 1000;
     font-family: ui-monospace, monospace;
-    font-size: var(--font-sm);
-    color: rgba(255, 255, 255, 0.75);
-    background: rgba(0, 0, 0, 0.5);
-    padding: 12px 20px;
+    font-size: 18px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.78);
+    padding: 12px 16px;
     border-radius: 8px;
-    max-width: 1500px;
-    margin-top: 24px;
-    text-align: left;
-    line-height: 1.5;
+    line-height: 1.45;
+    pointer-events: none;
+  }
+
+  .debug-live {
+    font-weight: bold;
+    color: #7c6af7;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    padding-bottom: 6px;
+    margin-bottom: 6px;
   }
 
   .controls {
