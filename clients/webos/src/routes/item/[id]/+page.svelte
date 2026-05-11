@@ -18,6 +18,13 @@
   let children = $state<ChildItem[]>([]);
   let error = $state('');
 
+  // Show-specific: children holds seasons, and we lazy-load the
+  // selected season's episodes inline so the user sees both layers
+  // (season picker + episode grid) without an extra drill-down.
+  let selectedSeasonId = $state<string | null>(null);
+  let seasonEpisodes = $state<ChildItem[]>([]);
+  let seasonEpisodesLoading = $state(false);
+
   const itemId = $derived(page.params.id!);
   const fanartUrl = $derived(
     item?.fanart_path ? api.assetUrl(`/artwork/${item.fanart_path}?w=1920`) : ''
@@ -68,6 +75,13 @@
           } else {
             children = raw;
           }
+
+          // Show pages render both layers — season picker + episodes
+          // for the picked season. Default to the first season; user
+          // can switch left/right along the picker.
+          if (item.type === 'show' && children.length > 0) {
+            void selectSeason(children[0].id);
+          }
         }
       } catch (e) {
         if (e instanceof Unauthorized) goto('#/login');
@@ -91,6 +105,19 @@
 
   function openChild(childId: string) {
     goto(`#/item/${childId}`);
+  }
+
+  async function selectSeason(seasonId: string) {
+    if (selectedSeasonId === seasonId) return;
+    selectedSeasonId = seasonId;
+    seasonEpisodesLoading = true;
+    try {
+      seasonEpisodes = await endpoints.items.children(seasonId);
+    } catch {
+      seasonEpisodes = [];
+    } finally {
+      seasonEpisodesLoading = false;
+    }
   }
 
   function resumeLabel(): string {
@@ -169,7 +196,42 @@
         </div>
       </div>
 
-      {#if children.length > 0}
+      {#if item.type === 'show' && children.length > 0}
+        <!-- Two-tier show layout: season chips along the top, episode
+             grid below for the selected season. Chips load their
+             season's children lazily on selection. -->
+        <section class="children">
+          <h2>Seasons</h2>
+          <div class="season-chips">
+            {#each children as season (season.id)}
+              <button
+                use:focusable
+                class="season-chip"
+                class:active={selectedSeasonId === season.id}
+                onclick={() => selectSeason(season.id)}
+              >
+                {season.title}
+              </button>
+            {/each}
+          </div>
+
+          {#if seasonEpisodesLoading}
+            <Spinner />
+          {:else if seasonEpisodes.length > 0}
+            <h2 class="episodes-heading">Episodes</h2>
+            <div class="grid">
+              {#each seasonEpisodes as ep (ep.id)}
+                <PosterCard
+                  title={ep.index ? `${ep.index}. ${ep.title}` : ep.title}
+                  posterPath={ep.thumb_path ?? ep.poster_path}
+                  subtitle={ep.duration_ms ? `${Math.round(ep.duration_ms / 60000)}m` : undefined}
+                  onclick={() => playChild(ep.id)}
+                />
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {:else if children.length > 0}
         <section class="children">
           <h2>{childrenHeading(item.type)}</h2>
           <div class="grid">
@@ -298,6 +360,34 @@
   .children h2 {
     font-size: var(--font-lg);
     margin: 0 0 24px;
+  }
+
+  .episodes-heading {
+    margin-top: 48px !important;
+  }
+
+  .season-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .season-chip {
+    font-family: inherit;
+    font-size: var(--font-md);
+    padding: 12px 28px;
+    border-radius: 999px;
+    border: 2px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .season-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
   }
 
   .grid {
