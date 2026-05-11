@@ -217,7 +217,13 @@
           {#if item.summary}<p class="summary">{item.summary}</p>{/if}
 
           <div class="actions">
-        {#if item.files.length > 0}
+        {#if item.type === 'book'}
+          <!-- Ebooks (EPUB / CBZ / CBR) need a paginated reader; the
+               TV clients don't ship one. Show a clear message instead
+               of routing to /watch, which would stall trying to play
+               an archive file as video. -->
+          <div class="note">Book reading isn't available on TV. Open this book in the web or phone app.</div>
+        {:else if item.files.length > 0}
           <button use:focusable={{ autofocus: true }} class="btn primary" onclick={play}>
             {resumeLabel()}
           </button>
@@ -384,6 +390,15 @@
   .actions {
     display: flex;
     gap: 24px;
+  }
+
+  .note {
+    padding: 16px 24px;
+    border-radius: 10px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    font-size: var(--font-md);
+    max-width: 720px;
   }
 
   .btn {

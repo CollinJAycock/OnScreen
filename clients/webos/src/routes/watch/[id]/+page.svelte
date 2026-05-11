@@ -592,6 +592,15 @@
     (async () => {
       try {
         item = await endpoints.items.get(itemID);
+        if (item.type === 'book') {
+          // Ebooks need a paginated reader, not the video pipeline.
+          // Defence-in-depth — the item detail page already hides the
+          // Play button for book type, but a stray deep link or older
+          // build elsewhere could still land us here.
+          error = 'Book reading isn’t available on TV. Open this book in the web or phone app.';
+          loading = false;
+          return;
+        }
         if (item.files.length === 0) {
           error = 'No playable file for this item.';
           loading = false;
