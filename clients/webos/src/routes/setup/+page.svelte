@@ -18,7 +18,16 @@
 
     testing = true;
     try {
-      const resp = await fetch(`${clean}/health/live`);
+      // Probe `/api/v1/system/capabilities` (public, chi-routed) instead
+      // of `/health/live`. The health endpoint is registered on the
+      // bare http.ServeMux that sits in front of the chi router, so it
+      // intentionally bypasses every middleware — including CORS. A
+      // cross-origin fetch from the TV webview's file:// (or dev's
+      // localhost:5174) origin would 200 OK at the HTTP layer but
+      // browser-level CORS would block JS from reading the response.
+      // Capabilities goes through the full chain and the CORS middleware
+      // echoes the right Access-Control-Allow-Origin header.
+      const resp = await fetch(`${clean}/api/v1/system/capabilities`);
       if (!resp.ok) throw new Error(`server replied ${resp.status}`);
       api.setOrigin(clean);
       goto('/login');

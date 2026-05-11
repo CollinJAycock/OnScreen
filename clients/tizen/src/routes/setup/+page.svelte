@@ -18,7 +18,13 @@
 
     testing = true;
     try {
-      const resp = await fetch(`${clean}/health/live`);
+      // `/health/live` bypasses every middleware (registered on the
+      // bare http.ServeMux ahead of the chi router for safety) — so
+      // a cross-origin fetch never gets a CORS header back even when
+      // the server's allowlist is right. Probe a chi-routed endpoint
+      // instead. See clients/webos/src/routes/setup/+page.svelte for
+      // the full rationale.
+      const resp = await fetch(`${clean}/api/v1/system/capabilities`);
       if (!resp.ok) throw new Error(`server replied ${resp.status}`);
       api.setOrigin(clean);
       goto('/login');
