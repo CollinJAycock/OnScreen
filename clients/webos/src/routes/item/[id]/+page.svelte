@@ -229,16 +229,24 @@
           <button use:focusable={{ autofocus: true }} class="btn primary" onclick={play}>
             {resumeLabel()}
           </button>
+        {:else if item.type === 'show' && seasonEpisodes.length > 0}
+          <!-- Show pages: Play drills two layers down to a real
+               playable episode. children[0] is a SEASON (no file),
+               so we use the selected season's first episode instead. -->
+          <button use:focusable={{ autofocus: true }} class="btn primary" onclick={() => playChild(seasonEpisodes[0].id)}>
+            Play S{seasonEpisodes[0].index ?? 1}E1
+          </button>
         {:else if children.length > 0 && item.type !== 'book_author' && item.type !== 'book_series'}
-          <!-- Container types (show / season / album / podcast / multi-
-               file audiobook) have no files of their own. Play picks
-               the first playable child instead.
+          <!-- Container types (season / album / podcast / multi-
+               file audiobook) where children[0] IS playable. Show
+               type is handled in the branch above because its
+               children are seasons, not episodes.
 
-               book_author + book_series are pure browse parents — the
-               first child is itself a parent (a series under an
-               author, or a multi-file book under a series), so Play
-               would land on a non-playable row. Hide and let the user
-               pick a book from the grid below. -->
+               book_author + book_series are pure browse parents —
+               the first child is itself a parent (series under an
+               author, multi-file book under a series), so Play
+               would land on a non-playable row. Hide and let the
+               user pick a book from the grid below. -->
           <button use:focusable={{ autofocus: true }} class="btn primary" onclick={() => playChild(children[0].id)}>
             Play
           </button>
