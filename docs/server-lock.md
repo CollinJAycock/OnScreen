@@ -40,13 +40,27 @@ These can ship *during* the lock without breaking it:
 - Performance / query / index improvements.
 - Bug fixes that preserve the API contract.
 
-## v2.3+ candidates already sized
+## v2.3 — committed track
 
-Tracking these as "ship anytime, don't gate the lock":
+These two are scheduled for the v2.3 cut (decision 2026-05-10):
 
 - **Adaptive bitrate HLS ladder** — multi-rendition variant
-  playlists. Touches the transcode pipeline + playlist generator.
-  ~2 weeks. Highest user-facing impact of anything left.
+  playlists, bandwidth-aware client switching. Touches the
+  transcode pipeline + playlist generator. ~2 weeks. Highest
+  user-facing impact of any server-only item left, and closes a
+  documented trail row against Plex / Emby / Jellyfin.
+- **Pin transcode base to `jellyfin-ffmpeg`** — swap the Docker
+  ffmpeg layer for `jellyfin/jellyfin-ffmpeg` releases. Inherits
+  better HDR → SDR tonemap (custom Hable curve) and VAAPI fixes
+  without us forking ffmpeg ourselves. ~half a day. Closes the
+  visible-quality gap with Jellyfin / Plex on HDR content; matrix
+  row stays ✅ but the *quality* improves where it currently
+  trails on raw tonemap output.
+
+## v2.3+ candidates not yet committed
+
+Tracking these as "ship when there's slack; don't gate the lock":
+
 - **2FA / TOTP** — closes Plex / Emby / Jellyfin parity for
   password-based accounts. Drops into the existing PASETO + session
   shape. ~1 week.
