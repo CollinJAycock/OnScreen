@@ -9,10 +9,10 @@
     "preview": "vite preview --host 0.0.0.0 --port 5174",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "package": "npm run build && ares-package build",
-    "install-tv": "ares-install --device tv ./com.onscreen.tv_*.ipk",
+    "install-tv": "node scripts/install.mjs --tv",
     "launch-tv": "ares-launch --device tv com.onscreen.tv",
     "inspect-tv": "ares-inspect --device tv --app com.onscreen.tv",
-    "install-emu": "ares-install --device emulator ./com.onscreen.tv_*.ipk",
+    "install-emu": "node scripts/install.mjs --emu",
     "launch-emu": "ares-launch --device emulator com.onscreen.tv",
     "inspect-emu": "ares-inspect --device emulator --app com.onscreen.tv",
     "dev:emu": "npm run package && npm run install-emu && npm run launch-emu && npm run inspect-emu"
