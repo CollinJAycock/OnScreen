@@ -15,7 +15,7 @@
   import { focusManager } from '$lib/focus/manager';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
-  import { openItem } from '$lib/nav';
+  import { openItem, goBack } from '$lib/nav';
 
   const collectionId = $derived(page.params.id!);
 
@@ -41,9 +41,7 @@
     })();
 
     return focusManager.pushBack(() => {
-      // See clients/tizen/src/routes/item/[id]/+page.svelte for the
-      // history.back() → app-reload loop on Tizen.
-      goto('#/hub');
+      goBack();
       return true;
     });
   });

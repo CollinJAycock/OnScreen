@@ -16,6 +16,7 @@
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { pushTo } from '$lib/nav';
 
   let recordings = $state<Recording[]>([]);
   let loading = $state(true);
@@ -68,7 +69,7 @@
   }
 
   function open(r: Recording) {
-    if (r.item_id) goto(`#/item/${r.item_id}`);
+    if (r.item_id) pushTo(`#/item/${r.item_id}`);
   }
 
   function fmtRange(r: Recording): string {

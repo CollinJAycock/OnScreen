@@ -15,6 +15,7 @@
   import { api, endpoints, Unauthorized, type ItemDetail, type ChildItem, type MediaItem } from '$lib/api';
   import { focusManager } from '$lib/focus/manager';
   import { toRemoteKey } from '$lib/focus/keys';
+  import { goBack } from '$lib/nav';
 
   const initialId = $derived(page.params.id!);
 
@@ -58,9 +59,7 @@
     document.addEventListener('keydown', onKey);
     resolveSiblings();
     return focusManager.pushBack(() => {
-      // See clients/webos/src/routes/item/[id]/+page.svelte for the
-      // history.back() → app-reload loop on TV webviews.
-      goto('#/hub');
+      goBack();
       return true;
     });
   });

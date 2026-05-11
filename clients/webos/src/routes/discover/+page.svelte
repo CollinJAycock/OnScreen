@@ -17,6 +17,7 @@
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { pushTo } from '$lib/nav';
 
   let query = $state('');
   let results = $state<DiscoverItem[]>([]);
@@ -138,7 +139,7 @@
                 <button
                   use:focusable={{ autofocus: i === 0 }}
                   class="btn-primary"
-                  onclick={() => goto(`#/item/${r.library_item_id}`)}
+                  onclick={() => pushTo(`#/item/${r.library_item_id}`)}
                 >
                   Open
                 </button>

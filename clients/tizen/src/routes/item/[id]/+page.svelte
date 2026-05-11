@@ -13,6 +13,7 @@
   import { focusManager } from '$lib/focus/manager';
   import Spinner from '$lib/components/Spinner.svelte';
   import PosterCard from '$lib/components/PosterCard.svelte';
+  import { goBack, openChild as openChildNav } from '$lib/nav';
 
   let item = $state<ItemDetail | null>(null);
   let children = $state<ChildItem[]>([]);
@@ -133,13 +134,7 @@
     })();
 
     return focusManager.pushBack(() => {
-      // history.back() on the Tizen webview can land on the file://
-      // origin's empty parent state, which the firmware reloads as
-      // the app entry — looking like a back→loop bounce for the user.
-      // Always route to a known SvelteKit destination instead. Loses
-      // "back to the search results" fidelity until we ship a real
-      // back stack; non-looping is the higher priority.
-      goto('#/hub');
+      goBack();
       return true;
     });
   });
@@ -153,7 +148,7 @@
   }
 
   function openChild(childId: string) {
-    goto(`#/item/${childId}`);
+    openChildNav(childId);
   }
 
   async function selectSeason(seasonId: string) {
