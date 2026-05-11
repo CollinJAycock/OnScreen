@@ -610,30 +610,42 @@
         const file = item.files[0];
         const startMs = item.view_offset_ms ?? 0;
 
-        session = await endpoints.transcode.start({
-          itemId: itemID,
-          height: 1080,
-          positionMs: startMs,
-          fileId: file.id,
-          supportsHEVC: true
-        });
-
-        const Hls = await loadHls();
-        const fullURL = session.playlist_url.startsWith('http')
-          ? session.playlist_url
-          : api.mediaUrl(session.playlist_url);
-
-        if (Hls.isSupported()) {
-          const hlsInst = new Hls({ lowLatencyMode: false });
-          hlsInst.loadSource(fullURL);
-          hlsInst.attachMedia(video!);
-          hls = hlsInst;
-        } else if (video!.canPlayType('application/vnd.apple.mpegurl')) {
-          video!.src = fullURL;
+        // Audio-only items (music tracks, audiobooks, audiobook
+        // chapters, audio podcasts) skip the HLS transcode path. The
+        // TV's media element plays MP3/AAC/M4A/FLAC directly, and
+        // hls.js's audio-only handling can stall before loadedmetadata
+        // fires on a freshly-spawned audio playlist — hence the
+        // "Starting playback…" hang. Direct play also avoids needless
+        // transcode load on the server.
+        const isAudioOnly = !file.video_codec && !!file.audio_codec;
+        if (isAudioOnly) {
+          video!.src = api.assetUrl(file.stream_url);
         } else {
-          error = 'HLS playback is not supported on this device.';
-          loading = false;
-          return;
+          session = await endpoints.transcode.start({
+            itemId: itemID,
+            height: 1080,
+            positionMs: startMs,
+            fileId: file.id,
+            supportsHEVC: true
+          });
+
+          const Hls = await loadHls();
+          const fullURL = session.playlist_url.startsWith('http')
+            ? session.playlist_url
+            : api.mediaUrl(session.playlist_url);
+
+          if (Hls.isSupported()) {
+            const hlsInst = new Hls({ lowLatencyMode: false });
+            hlsInst.loadSource(fullURL);
+            hlsInst.attachMedia(video!);
+            hls = hlsInst;
+          } else if (video!.canPlayType('application/vnd.apple.mpegurl')) {
+            video!.src = fullURL;
+          } else {
+            error = 'HLS playback is not supported on this device.';
+            loading = false;
+            return;
+          }
         }
 
         reporter = new ProgressReporter(itemID);

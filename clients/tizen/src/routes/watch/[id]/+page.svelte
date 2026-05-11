@@ -629,6 +629,47 @@
     syncEventSource = null;
   }
 
+  // Wire the <video> element's progress / pause / play / ended events
+  // into the same reactive state the AVPlay path drives. Reused by
+  // the audio-only direct-play branch (every TV) and the dev fallback
+  // (browser `vite dev`).
+  function attachVideoListeners(v: HTMLVideoElement, startMs: number) {
+    v.addEventListener('loadedmetadata', () => {
+      if (startMs > 0) v.currentTime = startMs / 1000;
+      loading = false;
+      void v.play();
+      showControls();
+    });
+    v.addEventListener('timeupdate', () => {
+      position = Math.round(v.currentTime * 1000);
+      const serverDurationMs = item?.duration_ms ?? item?.files[0]?.duration_ms ?? 0;
+      if (serverDurationMs > 0) {
+        duration = serverDurationMs;
+      } else {
+        const vd = v.duration ?? 0;
+        duration = Number.isFinite(vd) ? Math.round(vd * 1000) : 0;
+      }
+      updateActiveMarker();
+      maybeShowUpNext();
+    });
+    v.addEventListener('pause', () => {
+      paused = true;
+      reporter?.paused(position, duration);
+      showControls();
+    });
+    v.addEventListener('play', () => {
+      paused = false;
+    });
+    v.addEventListener('ended', () => {
+      reporter?.stopped(duration, duration);
+      if (nextSibling) {
+        goToNext(nextSibling);
+      } else {
+        goto(`#/item/${itemID}`);
+      }
+    });
+  }
+
   onMount(() => {
     const offKey = focusManager.pushKeyHandler(onKey);
 
@@ -652,6 +693,27 @@
 
         const file = item.files[0];
         const startMs = item.view_offset_ms ?? 0;
+
+        // Audio-only items (music tracks, audiobooks, audiobook
+        // chapters, audio podcasts) skip the HLS transcode path. The
+        // TV's <video> element plays MP3/AAC/M4A/FLAC directly, which
+        // also avoids AVPlay's video-only overlay path and the
+        // transcode session's loadedmetadata stall that triggers the
+        // "Starting playback…" hang for audio-only HLS playlists.
+        const isAudioOnly = !file.video_codec && !!file.audio_codec;
+
+        if (isAudioOnly) {
+          if (!video) {
+            error = 'Player element missing.';
+            loading = false;
+            return;
+          }
+          video.src = api.assetUrl(file.stream_url);
+          reporter = new ProgressReporter(itemID);
+          reporter.start(() => ({ positionMs: position, durationMs: duration }));
+          attachVideoListeners(video, startMs);
+          return;
+        }
 
         session = await endpoints.transcode.start({
           itemId: itemID,
@@ -720,48 +782,7 @@
           // requires the TV.
           if (!video) return;
           video.src = fullURL;
-          video.addEventListener('loadedmetadata', () => {
-            if (startMs > 0 && video) video.currentTime = startMs / 1000;
-            loading = false;
-            void video?.play();
-            showControls();
-          });
-          video.addEventListener('timeupdate', () => {
-            position = Math.round((video?.currentTime ?? 0) * 1000);
-            // Prefer the server-known duration over video.duration.
-            // For HLS transcode sessions the playlist is generated
-            // progressively, so video.duration can read as a small
-            // partial value (or Infinity) for much of playback —
-            // letting maybeShowUpNext() trigger the Up Next overlay
-            // tens of minutes early and auto-advance to the next
-            // episode. item.duration_ms (or files[0].duration_ms) is
-            // the file's true duration from the server probe.
-            const serverDurationMs = item?.duration_ms ?? item?.files[0]?.duration_ms ?? 0;
-            if (serverDurationMs > 0) {
-              duration = serverDurationMs;
-            } else {
-              const vd = video?.duration ?? 0;
-              duration = Number.isFinite(vd) ? Math.round(vd * 1000) : 0;
-            }
-            updateActiveMarker();
-            maybeShowUpNext();
-          });
-          video.addEventListener('pause', () => {
-            paused = true;
-            reporter?.paused(position, duration);
-            showControls();
-          });
-          video.addEventListener('play', () => {
-            paused = false;
-          });
-          video.addEventListener('ended', () => {
-            reporter?.stopped(duration, duration);
-            if (nextSibling) {
-              goToNext(nextSibling);
-            } else {
-              goto(`#/item/${itemID}`);
-            }
-          });
+          attachVideoListeners(video, startMs);
         }
       } catch (e) {
         if (e instanceof Unauthorized) goto('#/login');
