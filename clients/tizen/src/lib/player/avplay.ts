@@ -66,6 +66,13 @@ export interface PlaySource {
   /** Resume position in milliseconds. Applied via seekTo after
    *  the stream is prepared. */
   startMs?: number;
+  /** The DOM element that anchors AVPlay's hardware overlay. Must
+   *  be an `<object type="application/avplayer">` — Tizen's
+   *  firmware uses both the element's presence (as a webview-side
+   *  placement marker) AND its offsetLeft/Top/Width/Height to
+   *  composite the video. Hardcoded dimensions land in the wrong
+   *  place on 4K panels whose webview ≠ declared resolution. */
+  anchor: HTMLElement;
 }
 
 export interface PlayHandlers {
@@ -113,10 +120,25 @@ export class AvPlay {
       onstreamcompleted: () => handlers.onEnded?.(),
       onerror: (e) => handlers.onError?.(typeof e === 'string' ? e : JSON.stringify(e))
     });
-    // 1920×1080 fullscreen — overlay sits behind the SvelteKit
-    // webview which we make fully transparent in the +layout
-    // CSS while the player is mounted.
-    this.api.setDisplayRect(0, 0, 1920, 1080);
+    // 60 s buffering ceiling — matches Jellyfin's fork. Without this
+    // the firmware uses a much shorter default that gives up on
+    // slow-starting transcodes.
+    try {
+      (this.api as unknown as { setTimeoutForBuffering?: (s: number) => void })
+        .setTimeoutForBuffering?.(60);
+    } catch { /* older firmware lacks this — fall back to default */ }
+    // Position AVPlay's hardware overlay where the anchor `<object>`
+    // element sits in the DOM. On a 4K Tizen webview that's typically
+    // 3840×2160 — hardcoding 1920×1080 would put the overlay in the
+    // top-left quarter only. offsetLeft/Top/Width/Height matches the
+    // actual rendered geometry.
+    const rect = {
+      x: source.anchor.offsetLeft,
+      y: source.anchor.offsetTop,
+      w: source.anchor.offsetWidth,
+      h: source.anchor.offsetHeight,
+    };
+    this.api.setDisplayRect(rect.x, rect.y, rect.w, rect.h);
     this.api.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
     this.api.prepareAsync(
       () => {
@@ -148,6 +170,14 @@ export class AvPlay {
 
   durationMs(): number {
     return this.api?.getDuration() ?? 0;
+  }
+
+  state(): string {
+    try {
+      return this.api?.getState() ?? 'NO_API';
+    } catch {
+      return 'EXC';
+    }
   }
 
   close(): void {

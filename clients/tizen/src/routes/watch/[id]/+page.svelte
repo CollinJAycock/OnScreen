@@ -25,6 +25,12 @@
   // Tizen hardware AVPlay renders to a hardware overlay behind the
   // webview; the <video> element stays unused.
   let video: HTMLVideoElement | undefined = $state();
+  // Tizen-specific anchor `<object type="application/avplayer">` —
+  // the firmware uses this DOM element as the placement marker for
+  // AVPlay's hardware video overlay. Pass it into avplay.open so the
+  // overlay tracks the element's actual rendered geometry on whatever
+  // panel resolution the webview is running at.
+  let avplayAnchor: HTMLObjectElement | undefined = $state();
 
   let item = $state<ItemDetail | null>(null);
   let error = $state('');
@@ -432,12 +438,14 @@
       ? fresh.playlist_url
       : api.mediaUrl(fresh.playlist_url);
     if (usingAvPlay) {
+      if (!avplayAnchor) return;
       avplay.open(
         {
           url: freshURL,
           streamingMode: 'HLS',
           bearer: api.getToken() ?? undefined,
           startMs: positionMs,
+          anchor: avplayAnchor,
         },
         {
           onProgress: (currentMs, durationMs) => {
@@ -806,12 +814,19 @@
               watchdog = null;
             }
           };
+          if (!avplayAnchor) {
+            clearWatchdog();
+            error = 'AVPlay anchor element not mounted.';
+            loading = false;
+            return;
+          }
           avplay.open(
             {
               url: fullURL,
               streamingMode: 'HLS',
               bearer: api.getToken() ?? undefined,
-              startMs
+              startMs,
+              anchor: avplayAnchor
             },
             {
               onProgress: (currentMs, durationMs) => {
@@ -895,10 +910,18 @@
 </script>
 
 <div class="player" onmousemove={showControls}>
+  <!-- AVPlay hardware-overlay anchor. <object type="application/avplayer">
+       is the Tizen-specific MIME the firmware reserves for native
+       video composition — without this element AVPlay has no DOM
+       handle to anchor to and the video plays "somewhere" outside the
+       webview's visible area. Matches Jellyfin's tizen-jellyfin-avplay
+       fork (extras/avplayVideoPlayer.js:553). -->
+  <object bind:this={avplayAnchor} class="avplay-anchor" type="application/avplayer"></object>
+
   <!-- svelte-ignore a11y_media_has_caption -->
-  <!-- On Tizen with AVPlay, the <video> element is unused but
-       browsers paint a black "no source" rectangle that covers the
-       hardware overlay. Hide it whenever AVPlay is driving playback. -->
+  <!-- HTML5 <video> still used by the dev fallback path when AVPlay
+       isn't available. Hidden when AVPlay is driving so it can't
+       cover the hardware overlay. -->
   <video bind:this={video} class="video" class:hidden={usingAvPlay} playsinline></video>
 
   {#if loading}
@@ -1101,6 +1124,17 @@
 
   .video.hidden {
     display: none;
+  }
+
+  .avplay-anchor {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    /* AVPlay reads offsetLeft/Top/Width/Height to position the
+       hardware overlay; the element itself paints nothing. Behind
+       everything else (controls, loading overlay) via low z-index. */
+    z-index: 0;
   }
 
   .overlay {

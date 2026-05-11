@@ -40,6 +40,7 @@
   // pattern as the /watch route. AVPlay renders to a hardware
   // overlay behind the webview on real Tizen.
   let video: HTMLVideoElement | undefined = $state();
+  let avplayAnchor: HTMLObjectElement | undefined = $state();
   const usingAvPlay = $derived(avplay.available());
 
   onMount(() => {
@@ -99,8 +100,12 @@
     // /watch route uses for transcode sessions.
     const url = `${origin}/api/v1/tv/channels/${channel.id}/stream.m3u8`;
     if (usingAvPlay) {
+      if (!avplayAnchor) {
+        error = 'AVPlay anchor element not mounted.';
+        return;
+      }
       avplay.open(
-        { url, streamingMode: 'HLS', bearer: tok },
+        { url, streamingMode: 'HLS', bearer: tok, anchor: avplayAnchor },
         {
           onError: (msg) => { error = msg; },
         },
@@ -205,7 +210,7 @@
 {:else}
   <div class="player">
     {#if usingAvPlay}
-      <div class="avplay-host"></div>
+      <object bind:this={avplayAnchor} class="avplay-host" type="application/avplayer"></object>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video bind:this={video} class="video" autoplay></video>
