@@ -76,6 +76,14 @@
 
   .label {
     padding: 12px 4px 0;
+    /* Reserve fixed height for label area so every card lands at the
+       same total height regardless of title-line-count and presence
+       of a subtitle. Cards in a row used to drift in height because
+       the title clamp expanded for 2-line titles and the subtitle
+       only rendered when item.year was set; rows now align cleanly
+       on the bottom edge. */
+    height: calc(var(--font-sm) * 1.3 * 2 + var(--font-xs) * 1.3 + 4px);
+    box-sizing: content-box;
   }
 
   .title {
@@ -86,11 +94,19 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
+    /* Fixed two-line block — 1-line titles render in the upper line
+       and the second line stays reserved-but-empty. Prevents the
+       card from shrinking when the title fits on one line. */
+    min-height: calc(var(--font-sm) * 1.3 * 2);
   }
 
   .subtitle {
     font-size: var(--font-xs);
     color: var(--text-secondary);
     margin-top: 4px;
+    line-height: 1.3;
+    /* Reserve the line even when no subtitle is rendered, so cards
+       with item.year align with cards that lack it. */
+    min-height: calc(var(--font-xs) * 1.3);
   }
 </style>
