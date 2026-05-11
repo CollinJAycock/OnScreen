@@ -647,7 +647,21 @@
         });
         video!.addEventListener('timeupdate', () => {
           position = Math.round((video?.currentTime ?? 0) * 1000);
-          duration = Math.round((video?.duration ?? 0) * 1000);
+          // Prefer the server-known duration over video.duration.
+          // For HLS transcode sessions the playlist is generated
+          // progressively, so video.duration can read as a small
+          // partial value (or Infinity) for much of playback —
+          // letting maybeShowUpNext() trigger the Up Next overlay
+          // tens of minutes early and auto-advance to the next
+          // episode. item.duration_ms (or files[0].duration_ms) is
+          // the file's true duration from the server probe.
+          const serverDurationMs = item?.duration_ms ?? item?.files[0]?.duration_ms ?? 0;
+          if (serverDurationMs > 0) {
+            duration = serverDurationMs;
+          } else {
+            const vd = video?.duration ?? 0;
+            duration = Number.isFinite(vd) ? Math.round(vd * 1000) : 0;
+          }
           // Marker watcher: surface a "Skip Intro" / "Skip Credits"
           // overlay while the playhead is inside an active window,
           // unless the user has already dismissed that marker.
