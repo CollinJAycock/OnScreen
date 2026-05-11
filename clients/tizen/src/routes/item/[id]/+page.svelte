@@ -36,6 +36,17 @@
     item?.poster_path ? api.assetUrl(`/artwork/${item.poster_path}?w=480`) : ''
   );
 
+  // book_author + book_series have no playable file of their own and
+  // we deliberately hide the "Play first child" button because the
+  // first child is itself a parent (a series under an author, a book
+  // under a series). With no autofocus target, the remote can't drive
+  // the page — so when the Play button is suppressed, autofocus the
+  // first grid card instead.
+  const autofocusGridFirstCard = $derived(
+    !!item && item.files.length === 0 &&
+      (item.type === 'book_author' || item.type === 'book_series')
+  );
+
   onMount(() => {
     (async () => {
       try {
@@ -268,18 +279,20 @@
         <section class="children">
           <h2>{childrenHeading(item.type)}</h2>
           <div class="grid">
-            {#each children as child (child.id)}
+            {#each children as child, i (child.id)}
               {#if child.type === 'episode' || child.type === 'audiobook_chapter' || child.type === 'track' || child.type === 'podcast_episode'}
                 <PosterCard
                   title={child.index ? `${child.index}. ${child.title}` : child.title}
                   posterPath={child.thumb_path ?? child.poster_path}
                   subtitle={child.duration_ms ? `${Math.round(child.duration_ms / 60000)}m` : undefined}
+                  autofocus={autofocusGridFirstCard && i === 0}
                   onclick={() => playChild(child.id)}
                 />
               {:else}
                 <PosterCard
                   title={child.title}
                   posterPath={child.poster_path}
+                  autofocus={autofocusGridFirstCard && i === 0}
                   onclick={() => openChild(child.id)}
                 />
               {/if}
