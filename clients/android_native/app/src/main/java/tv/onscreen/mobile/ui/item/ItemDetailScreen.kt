@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -55,11 +56,13 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.downloads.DownloadEntry
 import tv.onscreen.mobile.data.downloads.DownloadWorker
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.WatchStatus
+import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.FavoritesRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
 import javax.inject.Inject
@@ -69,6 +72,7 @@ class ItemDetailViewModel @Inject constructor(
     private val repo: ItemRepository,
     private val downloads: OnScreenDownloadManager,
     private val favorites: FavoritesRepository,
+    private val serverPrefs: ServerPrefs,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ItemDetailUi())
@@ -100,7 +104,8 @@ class ItemDetailViewModel @Inject constructor(
             _state.value = ItemDetailUi(loading = true)
             try {
                 val detail = repo.getItem(itemId)
-                _state.value = ItemDetailUi(loading = false, detail = detail)
+                val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
+                _state.value = ItemDetailUi(loading = false, detail = detail, serverUrl = serverUrl)
                 downloads.store.load()
                 // Watching-status is best-effort — the detail page is
                 // useful even when the server is on an older build that
@@ -247,6 +252,9 @@ class ItemDetailViewModel @Inject constructor(
 data class ItemDetailUi(
     val loading: Boolean = false,
     val detail: ItemDetail? = null,
+    /** Trimmed server origin (no trailing slash). Used to build artwork
+     *  URLs for the hero image; empty until [load] resolves. */
+    val serverUrl: String = "",
     /** Per-user watching-status row. Null = not yet set, or the server
      *  doesn't expose the route (older build). The dropdown reads this
      *  to highlight the active selection. */
@@ -420,13 +428,29 @@ fun ItemDetailScreen(
                     val downloadStates by vm.downloadState.collectAsState()
                     Column(
                         modifier = Modifier
-                            .padding(16.dp)
                             // Children list can run long (50-episode
                             // anime seasons, 200-track classical
                             // albums); without a scroll the bottom of
                             // the page becomes unreachable.
                             .verticalScroll(androidx.compose.foundation.rememberScrollState()),
                     ) {
+                        // Hero art — fanart_path (16:9 backdrop) when
+                        // present, falling back to poster_path. Edge-to-
+                        // edge at the top of the page; the body content
+                        // gets its own horizontal padding below so the
+                        // image doesn't sit framed by a thin border.
+                        val heroPath = d.fanart_path ?: d.poster_path
+                        if (!heroPath.isNullOrEmpty() && ui.serverUrl.isNotEmpty()) {
+                            coil.compose.AsyncImage(
+                                model = artworkUrl(ui.serverUrl, heroPath, width = 1080),
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(16f / 9f),
+                            )
+                        }
+                        Column(modifier = Modifier.padding(16.dp)) {
                         Text(d.title, style = MaterialTheme.typography.headlineSmall)
                         if (d.year != null) {
                             Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
@@ -545,6 +569,7 @@ fun ItemDetailScreen(
                             ui.children.forEach { child ->
                                 ChildRow(child = child, onClick = { onOpenItem(child.id) })
                             }
+                        }
                         }
                     }
                 }
