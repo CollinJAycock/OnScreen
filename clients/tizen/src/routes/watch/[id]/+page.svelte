@@ -864,8 +864,14 @@
                 clearWatchdog();
                 position = currentMs;
                 duration = durationMs;
-                if (loading) {
-                  dbg(`onProgress (first tick): ${currentMs}/${durationMs} ms`);
+                // Only flip loading once AVPlay reports forward
+                // progress (currentMs > 0). oncurrentplaytime can
+                // fire with ms=0 while still preparing/buffering,
+                // and clearing the loading overlay too early hides
+                // the spinner before the picture lands — user sees
+                // no spinner, just a brief blank then video.
+                if (loading && currentMs > 0) {
+                  dbg(`onProgress (first real tick): ${currentMs}/${durationMs} ms`);
                   loading = false;
                   showControls();
                 }

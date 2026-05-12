@@ -16,16 +16,18 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 20px;
-    padding: 80px;
-    color: var(--text-secondary);
+    gap: 24px;
+    padding: 40px;
+    color: var(--text-primary);
     font-size: var(--font-md);
   }
 
   .dot {
-    width: 64px;
-    height: 64px;
-    border: 6px solid var(--border);
+    width: 96px;
+    height: 96px;
+    /* Higher contrast than var(--border)'s rgba(255,255,255,.08) so
+       the ring is visible at TV viewing distance against any backdrop. */
+    border: 10px solid rgba(255, 255, 255, 0.25);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
