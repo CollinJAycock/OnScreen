@@ -21,5 +21,9 @@ data class ItemDetail(
     val view_offset_ms: Long = 0,
     val updated_at: Long = 0,
     val is_favorite: Boolean = false,
+    /** Book-only: 'ltr', 'rtl' (manga), or 'ttb' (webtoon). Populated by
+     *  the manga enricher from AniList countryOfOrigin; null for ordinary
+     *  Western books and every non-book item. */
+    val reading_direction: String? = null,
     val files: List<ItemFile> = emptyList(),
 )

@@ -7,6 +7,9 @@ object Routes {
     const val ITEM = "item/{id}"
     const val SEARCH = "search"
     const val PLAYER = "player/{id}"
+    /** Book / comic reader. CBZ/CBR pages render via Coil; EPUB renders
+     *  in a WebView with bundled epub.js. */
+    const val BOOK = "book/{id}"
     const val FAVORITES = "favorites"
     const val HISTORY = "history"
     const val COLLECTIONS = "collections"
@@ -27,6 +30,7 @@ object Routes {
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"
     fun player(id: String) = "player/$id"
+    fun book(id: String) = "book/$id"
     fun collection(id: String) = "collection/$id"
     fun photo(id: String) = "photo/$id"
     fun author(id: String) = "author/$id"

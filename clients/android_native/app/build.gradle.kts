@@ -133,6 +133,13 @@ dependencies {
     // handshake stays in HTTPS land.
     implementation("androidx.browser:browser:1.8.0")
 
+    // androidx.webkit — pulls in WebViewAssetLoader so the EPUB
+    // reader can serve a bundled epub.js + the pre-fetched .epub
+    // bytes through one same-origin "https://appassets.androidplatform.net"
+    // namespace. Avoids file:// (which Chromium sandboxes hard) and
+    // skips the manual shouldInterceptRequest plumbing.
+    implementation("androidx.webkit:webkit:1.12.1")
+
     // Networking
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-moshi:2.11.0")

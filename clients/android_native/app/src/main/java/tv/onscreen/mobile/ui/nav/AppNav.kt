@@ -31,6 +31,7 @@ import tv.onscreen.mobile.ui.pair.PairScreen
 import tv.onscreen.mobile.ui.photo.PhotoExtrasScreen
 import tv.onscreen.mobile.ui.photo.PhotoViewerScreen
 import tv.onscreen.mobile.ui.playlists.PlaylistsScreen
+import tv.onscreen.mobile.ui.book.BookReaderScreen
 import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
 import tv.onscreen.mobile.ui.series.SeriesScreen
@@ -176,6 +177,7 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 itemId = entry.arguments!!.getString("id")!!,
                 onPlay = { id -> nav.navigate(Routes.player(id)) },
                 onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenBook = { id -> nav.navigate(Routes.book(id)) },
                 // Redirect destinations for photo / book_author /
                 // book_series items pop the current item route as they
                 // push, so Back returns to the source list (library,
@@ -232,6 +234,15 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
             SeriesScreen(
                 seriesId = entry.arguments!!.getString("id")!!,
                 onOpenBook = { id -> nav.navigate(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(
+            Routes.BOOK,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            BookReaderScreen(
+                itemId = entry.arguments!!.getString("id")!!,
                 onBack = { nav.popBackStack() },
             )
         }

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reader</title>
+<style>
+  /* Light background — most EPUB stylesheets target black-on-white
+     and don't paint a body background. A dark host would show that
+     transparent body as "no content rendered" even though the
+     rendition resolved. The error banner overrides locally. */
+  html, body { margin: 0; padding: 0; height: 100%; background: #ffffff; color: #111; font-family: system-ui, sans-serif; }
+  #viewer { position: absolute; inset: 0; }
+  #err { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; background: #0e1117; color: #e6e8ec; }
+  .hidden { display: none; }
+</style>
+<script src="jszip.min.js"></script>
+<script src="epub.min.js"></script>
+</head>
+<body>
+<div id="viewer"></div>
+<div id="err" class="hidden"></div>
+<script src="viewer.js"></script>
+</body>
+</html>

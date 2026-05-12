@@ -351,6 +351,7 @@ fun ItemDetailScreen(
     onOpenPhoto: (String) -> Unit,
     onOpenAuthor: (String) -> Unit,
     onOpenSeries: (String) -> Unit,
+    onOpenBook: (String) -> Unit,
     onBack: () -> Unit,
     vm: ItemDetailViewModel = hiltViewModel(),
 ) {
@@ -432,10 +433,18 @@ fun ItemDetailScreen(
                         }
                         Spacer(Modifier.height(16.dp))
                         Row {
-                            Button(onClick = { onPlay(itemId) }) {
+                            // Books route to the dedicated reader (CBZ/CBR
+                            // page-flip or EPUB WebView); every other type
+                            // goes to ExoPlayer. Without this branch, Play
+                            // would hand the archive file to the video
+                            // pipeline and silently fail.
+                            val isBook = d.type == "book"
+                            Button(onClick = {
+                                if (isBook) onOpenBook(itemId) else onPlay(itemId)
+                            }) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
-                                Text("Play")
+                                Text(if (isBook) "Read" else "Play")
                             }
                             // Only the first file is downloadable from
                             // the detail page for now — multi-file
