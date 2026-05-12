@@ -18,6 +18,7 @@
   import { ProgressReporter } from '$lib/player/progress-reporter';
   import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
   import type { OnlineSubtitle } from '$lib/api';
+  import Spinner from '$lib/components/Spinner.svelte';
 
   const itemID = page.params.id!;
   // Fallback HTML5 video element — used only when AVPlay isn't
@@ -51,16 +52,12 @@
   let reporter: ProgressReporter | null = null;
   let usingAvPlay = $state(false);
 
-  // On-screen debug breadcrumbs + live AVPlay state poll. Always
-  // visible in a corner overlay so we can diagnose "black screen"
-  // even when loading=false (AVPlay claims it's playing but no video
-  // reaches the panel).
-  let debugLog = $state<string[]>([]);
-  let livePoll = $state('');
-  let livePollTimer: ReturnType<typeof setInterval> | null = null;
+  // Lightweight breadcrumb logger — routes to the debug console only.
+  // Used to ship as an on-screen HUD; the HUD is gone now that the
+  // major bring-up issues are fixed, but the calls stay so re-enabling
+  // (just wire dbg into a state array) is a one-line change.
   function dbg(msg: string) {
-    const ts = new Date().toISOString().substring(11, 19);
-    debugLog = [...debugLog, `${ts} ${msg}`].slice(-15);
+    console.debug('[watch]', msg);
   }
 
   // Chapters: surface as jump targets. Start offsets used for green-button cycling.
@@ -791,20 +788,28 @@
           return;
         }
 
-        dbg('transcode.start …');
+        // Request video-copy (server-side `-c:v copy`) when the
+        // source codec is AVPlay-decodable. HEVC and H.264 are both
+        // hardware-decoded on Q80B-class Tizen panels; HDR10/HLG is
+        // also native. Without video_copy, the server transcodes 4K
+        // HDR through a CPU tonemap chain that takes ~50–70 s per
+        // first segment and AVPlay times out (the NeverEnding Story
+        // 4K HEVC HDR symptom). Mirrors the web client's
+        // canRemuxVideo logic.
+        const sourceCodec = (file.video_codec ?? '').toLowerCase();
+        const codecOK = sourceCodec === 'hevc' || sourceCodec === 'h265' ||
+                        sourceCodec === 'h264' || sourceCodec === 'avc' ||
+                        sourceCodec === 'av1';
+        const videoCopy = codecOK && file.faststart !== false;
+        dbg(`transcode.start (video_copy=${videoCopy}) …`);
         session = await endpoints.transcode.start({
           itemId: itemID,
-          // 2160 = the Q80B-class 4K hardware decoder's ceiling. Asking
-      // for 1080 forces the server to downscale + tonemap 4K HDR
-      // sources, which can't sustain real-time on the CPU pipeline
-      // and AVPlay times out on the slow first segment. With 2160 the
-      // server's decision tree picks `-c:v copy` for HEVC sources at
-      // ≤2160 and we direct-play. SDR-only / 1080p Tizen models exist
-      // but are rare in the 2020+ install base; can be probed later.
-      height: 2160,
+          // 2160 = the Q80B-class 4K hardware decoder's ceiling.
+          height: 2160,
           positionMs: startMs,
           fileId: file.id,
-          supportsHEVC: true
+          supportsHEVC: true,
+          videoCopy,
         });
         dbg(`transcode session: ${session.session_id.slice(0, 8)}…`);
 
@@ -846,12 +851,6 @@
             return;
           }
           dbg(`anchor rect: ${avplayAnchor.offsetLeft},${avplayAnchor.offsetTop},${avplayAnchor.offsetWidth},${avplayAnchor.offsetHeight}`);
-          dbg(`viewport: ${window.innerWidth}x${window.innerHeight}`);
-          // Start the 1Hz state poller so we can read live AVPlay state
-          // on the TV. Stopped in the destroy cleanup.
-          livePollTimer = setInterval(() => {
-            livePoll = `state=${avplay.state()} pos=${avplay.currentMs()}ms dur=${avplay.durationMs()}ms`;
-          }, 1000);
           avplay.open(
             {
               url: fullURL,
@@ -932,7 +931,6 @@
       if (usingAvPlay) avplay.close();
       if (controlsTimer) clearTimeout(controlsTimer);
       if (upNextTimer) clearInterval(upNextTimer);
-      if (livePollTimer) clearInterval(livePollTimer);
       stopSyncStream();
     };
   });
@@ -959,7 +957,7 @@
 
   {#if loading}
     <div class="overlay center">
-      <div class="title">Starting playback…</div>
+      <Spinner label="Starting playback…" />
       {#if item}<div class="sub">{item.title}</div>{/if}
     </div>
   {:else if error}
@@ -967,14 +965,6 @@
       <div class="title error">{error}</div>
     </div>
   {/if}
-
-  <!-- Persistent debug HUD — visible regardless of loading / error
-       state so we can diagnose "AVPlay claims it's playing but the
-       screen is black". Remove once the player is shipping. -->
-  <div class="debug-hud">
-    {#if livePoll}<div class="debug-live">{livePoll}</div>{/if}
-    {#each debugLog as line, i (i)}<div>{line}</div>{/each}
-  </div>
 
   <!-- Skip Intro / Skip Credits overlay. Visible while playhead
        is inside an active marker window; Enter skips, Back
@@ -1186,29 +1176,6 @@
     color: var(--text-secondary);
   }
 
-  .debug-hud {
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    max-width: 900px;
-    z-index: 1000;
-    font-family: ui-monospace, monospace;
-    font-size: 18px;
-    color: #fff;
-    background: rgba(0, 0, 0, 0.78);
-    padding: 12px 16px;
-    border-radius: 8px;
-    line-height: 1.45;
-    pointer-events: none;
-  }
-
-  .debug-live {
-    font-weight: bold;
-    color: #7c6af7;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-    padding-bottom: 6px;
-    margin-bottom: 6px;
-  }
 
   .controls {
     position: absolute;
