@@ -19,53 +19,156 @@
 
   const initialId = $derived(page.params.id!);
 
-  let serverUrl = $state(api.getOrigin() ?? '');
-  let siblingIds = $state<string[]>([]);
-  let currentIndex = $state(0);
-  let currentId = $state('');
-  let positionLabel = $derived(
-    siblingIds.length >= 2 ? `${currentIndex + 1} / ${siblingIds.length}` : ''
-  );
-  let imageUrl = $derived(
-    serverUrl && currentId
-      ? `${serverUrl}/api/v1/items/${currentId}/image?w=1920&h=1080&fit=contain`
-      : ''
-  );
-
-  function advance(delta: number) {
-    if (siblingIds.length < 2) return;
-    const n = siblingIds.length;
-    const next = ((currentIndex + delta) % n + n) % n;
-    currentIndex = next;
-    currentId = siblingIds[next];
+  interface Sibling {
+    id: string;
+    posterPath: string;
   }
 
-  // D-pad / remote keys arrive at the document; the focus manager's
-  // back stack is used for Back. Left/right have no DOM-focus
-  // counterpart on this page (no buttons), so subscribe directly.
-  function onKey(e: KeyboardEvent) {
-    const k = toRemoteKey(e);
-    if (k === 'left' || k === 'rewind') {
-      e.preventDefault();
-      advance(-1);
-    } else if (k === 'right' || k === 'forward') {
-      e.preventDefault();
-      advance(1);
+  let siblings = $state<Sibling[]>([]);
+  let currentIndex = $state(0);
+  let currentSibling = $state<Sibling | null>(null);
+  let imageBlobUrl = $state('');
+  let imageError = $state('');
+  let positionLabel = $derived(
+    siblings.length >= 2 ? `${currentIndex + 1} / ${siblings.length}` : ''
+  );
+
+  // Small in-memory cache of fetched blob URLs keyed by sibling id.
+  // Photo nav was laggy because every left/right triggered a fresh
+  // HTTP fetch + blob conversion. Caching cuts re-visits to zero
+  // round-trips, and the prefetchAdjacent() call below warms the
+  // ±1 entries in the background so forward/back scrolling feels
+  // instant after the initial paint.
+  const blobCache = new Map<string, string>();
+  const inFlight = new Map<string, Promise<string>>();
+  const MAX_CACHE = 11; // current + 5 in each direction
+
+  function urlForSibling(sib: Sibling): string {
+    const origin = api.getOrigin();
+    if (!origin) return '';
+    // /artwork when poster_path is set (matches web client + works
+    // with the asset-route ?token= path); /items/{id}/image as
+    // fallback when the photo item has no stored poster_path.
+    return sib.posterPath
+      ? `${origin}/artwork/${encodeURI(sib.posterPath)}?w=1920`
+      : `${origin}/api/v1/items/${sib.id}/image?w=1920&h=1080&fit=contain`;
+  }
+
+  async function fetchBlobUrl(sib: Sibling): Promise<string> {
+    const cached = blobCache.get(sib.id);
+    if (cached) return cached;
+    const existing = inFlight.get(sib.id);
+    if (existing) return existing;
+    const tok = api.getToken();
+    if (!tok) throw new Error('not signed in');
+    const url = urlForSibling(sib);
+    if (!url) throw new Error('no origin');
+    const p = (async () => {
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${tok}` } });
+      if (resp.status === 401) throw new Unauthorized();
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const objUrl = URL.createObjectURL(blob);
+      blobCache.set(sib.id, objUrl);
+      // Evict oldest when over cap (Map preserves insertion order).
+      while (blobCache.size > MAX_CACHE) {
+        const oldestKey = blobCache.keys().next().value;
+        if (!oldestKey) break;
+        const oldUrl = blobCache.get(oldestKey);
+        blobCache.delete(oldestKey);
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+      }
+      return objUrl;
+    })();
+    inFlight.set(sib.id, p);
+    try { return await p; }
+    finally { inFlight.delete(sib.id); }
+  }
+
+  async function loadCurrentImage() {
+    const sib = currentSibling;
+    if (!sib) return;
+    imageError = '';
+    // Cache hit: paint immediately without awaiting.
+    const cached = blobCache.get(sib.id);
+    if (cached) {
+      imageBlobUrl = cached;
+      void prefetchAdjacent();
+      return;
+    }
+    try {
+      const objUrl = await fetchBlobUrl(sib);
+      // The user may have advanced again while we were waiting;
+      // only commit if this fetch is still the active one.
+      if (currentSibling?.id === sib.id) {
+        imageBlobUrl = objUrl;
+      }
+      void prefetchAdjacent();
+    } catch (e) {
+      if (e instanceof Unauthorized) goto('#/login');
+      else if (currentSibling?.id === sib.id) {
+        imageError = (e as Error).message ?? 'Image load failed';
+      }
     }
   }
 
+  function prefetchAdjacent() {
+    if (siblings.length < 2) return;
+    const n = siblings.length;
+    const ids = [
+      ((currentIndex + 1) % n + n) % n,
+      ((currentIndex - 1) % n + n) % n,
+    ];
+    for (const i of ids) {
+      const s = siblings[i];
+      if (!s || blobCache.has(s.id) || inFlight.has(s.id)) continue;
+      fetchBlobUrl(s).catch(() => { /* prefetch — failures recovered on real navigation */ });
+    }
+  }
+
+  // Reload (or pull from cache) whenever the active sibling changes.
+  $effect(() => {
+    void currentSibling;
+    void loadCurrentImage();
+  });
+
+  function advance(delta: number) {
+    if (siblings.length < 2) return;
+    const n = siblings.length;
+    const next = ((currentIndex + delta) % n + n) % n;
+    currentIndex = next;
+    currentSibling = siblings[next];
+  }
+
+  // Photo viewer has no focusable elements, so we hook the focus
+  // manager's keyHandler stack directly. The manager iterates these
+  // before its own direction-recovery / Enter / Back logic and
+  // returning true tells it to swallow the event — that prevents the
+  // recovery path from incorrectly stealing left/right when there's
+  // nothing focusable to navigate.
+  function handleKey(k: ReturnType<typeof toRemoteKey>): boolean {
+    if (k === 'left' || k === 'rewind') { advance(-1); return true; }
+    if (k === 'right' || k === 'forward') { advance(1); return true; }
+    return false;
+  }
+
   onMount(() => {
-    currentId = initialId;
-    document.addEventListener('keydown', onKey);
+    const offKey = focusManager.pushKeyHandler((k) => handleKey(k));
     resolveSiblings();
-    return focusManager.pushBack(() => {
+    const offBack = focusManager.pushBack(() => {
       goBack();
       return true;
     });
+    return () => {
+      offKey();
+      offBack();
+    };
   });
 
   onDestroy(() => {
-    document.removeEventListener('keydown', onKey);
+    for (const url of blobCache.values()) URL.revokeObjectURL(url);
+    blobCache.clear();
+    inFlight.clear();
   });
 
   // Build the sibling list. Tries the parent album first (when the
@@ -76,45 +179,43 @@
   async function resolveSiblings() {
     try {
       const detail = await endpoints.items.get(initialId);
+      // Seed the current sibling from the just-fetched detail so the
+      // photo paints right away — the sibling list build below can
+      // take a few hundred ms on large libraries.
+      currentSibling = { id: detail.id, posterPath: detail.poster_path ?? '' };
 
-      let photos: string[] = [];
+      let photos: Sibling[] = [];
+
+      // Parent-album fast path. Most photo libraries are flat (no
+      // albums); skip when there's no parent.
       if (detail.parent_id) {
         const kids = await endpoints.items.children(detail.parent_id);
-        photos = kids.filter((k) => k.type === 'photo').map((k) => k.id);
+        photos = kids
+          .filter((k) => k.type === 'photo')
+          .map((k) => ({ id: k.id, posterPath: k.poster_path ?? '' }));
       }
 
+      // Library fallback via /api/v1/photos — purpose-built endpoint
+      // (paginated, library-scoped, returns poster_path). Server
+      // caps page size at 500; loop until a short page lands.
       if (photos.length < 2) {
-        // Library fallback. We don't have a count-aware endpoint here,
-        // so paginate cautiously: ask for a generous first page (200)
-        // and stop when a page returns short. For most libraries one
-        // page is enough; >200 photos requires extra round trips but
-        // they're issued in series only because we lack a total — the
-        // server's library/items endpoint doesn't surface meta in the
-        // current TS client, so this stays sequential. Acceptable
-        // because the parent-album path covers most photo libraries.
         photos = [];
-        const pageSize = 200;
+        const pageSize = 500;
         let offset = 0;
-        // We use the top-level library/items endpoint via a direct
-        // fetch to access offset. The wrapped endpoint module
-        // doesn't expose it, so build the URL by hand here.
         for (;;) {
-          const items = await fetchLibraryItemsPage(detail.library_id, pageSize, offset);
-          for (const it of items) {
-            if (it.type === 'photo') photos.push(it.id);
+          const page = await fetchPhotoPage(detail.library_id, pageSize, offset);
+          for (const p of page) {
+            photos.push({ id: p.id, posterPath: p.poster_path ?? '' });
           }
-          if (items.length < pageSize) break;
-          offset += items.length;
+          if (page.length < pageSize) break;
+          offset += page.length;
         }
       }
 
-      if (photos.length < 2) {
-        // Single-photo album / library. Left/right will no-op, which
-        // is fine; the position counter stays hidden.
-        return;
-      }
-      siblingIds = photos;
-      currentIndex = Math.max(0, photos.indexOf(initialId));
+      if (photos.length < 2) return;
+      siblings = photos;
+      currentIndex = Math.max(0, photos.findIndex((p) => p.id === initialId));
+      currentSibling = photos[currentIndex];
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
       // Any other failure leaves siblings empty — viewer still
@@ -122,28 +223,41 @@
     }
   }
 
-  async function fetchLibraryItemsPage(
+  interface PhotoListItem {
+    id: string;
+    poster_path?: string;
+  }
+
+  async function fetchPhotoPage(
     libraryID: string,
     limit: number,
     offset: number
-  ): Promise<MediaItem[]> {
+  ): Promise<PhotoListItem[]> {
     const origin = api.getOrigin();
     if (!origin) throw new Error('API origin not configured');
     const tok = api.getToken();
     const resp = await fetch(
-      `${origin}/api/v1/libraries/${libraryID}/items?limit=${limit}&offset=${offset}`,
+      `${origin}/api/v1/photos?library_id=${libraryID}&limit=${limit}&offset=${offset}`,
       { headers: tok ? { Authorization: `Bearer ${tok}` } : {} }
     );
     if (resp.status === 401) throw new Unauthorized();
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const j = await resp.json();
-    return (j?.data ?? []) as MediaItem[];
+    // Server wraps in { data: { photos: [...], total: N } } per the
+    // recent /photos shape; tolerate both data.photos and bare data.
+    const data = j?.data ?? j;
+    const list = data?.photos ?? data ?? [];
+    return Array.isArray(list) ? list : [];
   }
 </script>
 
 <div class="viewer">
-  {#if imageUrl}
-    <img class="photo" src={imageUrl} alt="" />
+  {#if imageBlobUrl}
+    <img class="photo" src={imageBlobUrl} alt="" />
+  {:else if imageError}
+    <div class="status">Couldn’t load photo: {imageError}</div>
+  {:else}
+    <div class="status">Loading…</div>
   {/if}
   {#if positionLabel}
     <div class="position">{positionLabel}</div>
@@ -172,5 +286,10 @@
     background: rgba(0, 0, 0, 0.55);
     color: #fff;
     font-size: var(--font-sm);
+  }
+  .status {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: var(--font-md);
+    text-align: center;
   }
 </style>

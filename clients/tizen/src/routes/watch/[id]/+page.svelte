@@ -18,7 +18,6 @@
   import { ProgressReporter } from '$lib/player/progress-reporter';
   import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
   import type { OnlineSubtitle } from '$lib/api';
-  import Spinner from '$lib/components/Spinner.svelte';
 
   const itemID = page.params.id!;
   // Fallback HTML5 video element — used only when AVPlay isn't
@@ -655,6 +654,74 @@
     syncEventSource = null;
   }
 
+  // Loading overlay element — created imperatively as a direct child
+  // of <body> so it sits above AVPlay's hardware overlay in the
+  // firmware compositor's stacking order. Anything Svelte renders
+  // inside .player gets hidden by AVPlay between open() and the first
+  // decoded frame; a body-level fixed div with z-index 9999999 is
+  // the standard fix (Jellyfin uses the same pattern at
+  // jellyfin-web/src/components/loading/loading.ts).
+  let loadingEl: HTMLDivElement | null = null;
+  function ensureLoadingEl() {
+    if (loadingEl) return loadingEl;
+    const el = document.createElement('div');
+    el.style.cssText = [
+      'position: fixed',
+      'top: 0', 'left: 0', 'right: 0', 'bottom: 0',
+      'z-index: 9999999',
+      'display: none',
+      'align-items: center',
+      'justify-content: center',
+      'flex-direction: column',
+      'gap: 28px',
+      'background: rgba(0, 0, 0, 0.75)',
+      'color: #fff',
+      'font-family: inherit',
+    ].join(';');
+    el.innerHTML = `
+      <div style="
+        width: 120px; height: 120px;
+        border: 12px solid rgba(255, 255, 255, 0.2);
+        border-top-color: #7c6af7;
+        border-radius: 50%;
+        animation: tv-loading-spin 0.9s linear infinite;
+      "></div>
+      <div data-label style="font-size: 36px; font-weight: 500;">Starting playback…</div>
+      <div data-sub style="font-size: 28px; color: rgba(255, 255, 255, 0.7);"></div>
+    `;
+    // Inject keyframes once; can't live in scoped CSS since the element
+    // isn't a Svelte node anymore.
+    if (!document.getElementById('tv-loading-keyframes')) {
+      const style = document.createElement('style');
+      style.id = 'tv-loading-keyframes';
+      style.textContent = '@keyframes tv-loading-spin { to { transform: rotate(360deg); } }';
+      document.head.appendChild(style);
+    }
+    document.body.appendChild(el);
+    loadingEl = el;
+    return el;
+  }
+  function showLoading(subtitle = '') {
+    const el = ensureLoadingEl();
+    const sub = el.querySelector<HTMLElement>('[data-sub]');
+    if (sub) sub.textContent = subtitle;
+    el.style.display = 'flex';
+  }
+  function hideLoading() {
+    if (loadingEl) loadingEl.style.display = 'none';
+  }
+  function destroyLoadingEl() {
+    if (loadingEl && loadingEl.parentNode) {
+      loadingEl.parentNode.removeChild(loadingEl);
+    }
+    loadingEl = null;
+  }
+  // Mirror the `loading` reactive state onto the imperative element.
+  $effect(() => {
+    if (loading) showLoading(item?.title ?? '');
+    else hideLoading();
+  });
+
   // Wire the <video> element's progress / pause / play / ended events
   // into the same reactive state the AVPlay path drives. Reused by
   // the audio-only direct-play branch (every TV) and the dev fallback
@@ -929,6 +996,7 @@
         avplayAnchor.parentNode.removeChild(avplayAnchor);
       }
       avplayAnchor = null;
+      destroyLoadingEl();
       offKey();
       reporter?.stopped(position, duration);
       if (session && api.getToken()) {
@@ -961,12 +1029,13 @@
        cover the hardware overlay. -->
   <video bind:this={video} class="video" class:hidden={usingAvPlay} playsinline></video>
 
-  {#if loading}
-    <div class="overlay center">
-      <Spinner label="Starting playback…" />
-      {#if item}<div class="sub">{item.title}</div>{/if}
-    </div>
-  {:else if error}
+  <!-- Loading overlay is rendered IMPERATIVELY in onMount as a direct
+       child of <body> — same pattern Jellyfin uses (jellyfin-web
+       src/components/loading/loading.ts). When AVPlay's hardware
+       overlay engages, anything Svelte renders inside .player is
+       hidden by the firmware compositor; a body-level fixed div with
+       a huge z-index sits above the overlay and stays visible. -->
+  {#if error}
     <div class="overlay center">
       <div class="title error">{error}</div>
     </div>
@@ -1167,6 +1236,7 @@
     background: rgba(0, 0, 0, 0.7);
     gap: 20px;
   }
+
 
   .overlay .title {
     font-size: var(--font-xl);

@@ -47,7 +47,16 @@ class FocusManager {
 
   focusFirst() {
     const first = document.querySelector<HTMLElement>(`[${FOCUSABLE_ATTR}]`);
-    if (first) this.focus(first);
+    if (first) {
+      this.focus(first);
+    } else {
+      // No focusable elements on the current page (photo viewer,
+      // pure-player route, splash). Clear stale references so the
+      // arrow/enter recovery in onKey doesn't preventDefault on a
+      // detached node — would swallow keypresses meant for the
+      // page's own document-level handler.
+      this.current = null;
+    }
   }
 
   refocus() {

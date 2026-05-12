@@ -6,6 +6,7 @@
   import HubRow from '$lib/components/HubRow.svelte';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import TopNav from '$lib/components/TopNav.svelte';
   import { openItem } from '$lib/nav';
 
   let data = $state<HubData | null>(null);
@@ -44,19 +45,7 @@
 </script>
 
 <div class="page">
-  <header>
-    <h1>OnScreen</h1>
-    <nav class="links">
-      <a href="#/search/" data-sveltekit-preload-data="false">search</a>
-      <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
-      <a href="#/favorites/" data-sveltekit-preload-data="false">favorites</a>
-      <a href="#/history/" data-sveltekit-preload-data="false">history</a>
-      <a href="#/discover/" data-sveltekit-preload-data="false">discover</a>
-      <a href="#/livetv/" data-sveltekit-preload-data="false">live tv</a>
-      <a href="#/recordings/" data-sveltekit-preload-data="false">recordings</a>
-      <a href="#/settings/" data-sveltekit-preload-data="false">settings</a>
-    </nav>
-  </header>
+  <TopNav />
 
   {#if error}
     <p class="error">{error}</p>
@@ -149,33 +138,7 @@
 
 <style>
   .page {
-    padding: 32px 0 0;
-  }
-
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    padding: 0 var(--page-pad);
-    margin-bottom: 48px;
-  }
-
-  h1 {
-    font-size: var(--font-xl);
-    margin: 0;
-    color: var(--accent);
-  }
-
-  .links {
-    display: flex;
-    gap: 32px;
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-  }
-
-  .links a {
-    color: inherit;
-    text-decoration: none;
+    padding: 0 0 32px;
   }
 
   .error, .empty {
