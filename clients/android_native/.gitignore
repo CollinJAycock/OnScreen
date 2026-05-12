@@ -8,3 +8,12 @@
 /captures
 .externalNativeBuild
 .cxx
+
+# Play upload signing — never commit the keystore or the password file.
+# build.gradle.kts looks for these at the module root.
+/keystore/
+/keystore.properties
+
+# Play Store listing assets. Screenshots are kept in-tree (small, useful);
+# demo videos are uploaded to YouTube and would balloon the repo.
+/store/*.mp4

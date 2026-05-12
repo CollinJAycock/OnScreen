@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -6,12 +8,29 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+// Upload-key signing — driven by keystore.properties at the gradle root
+// (which IS clients/android_native/ since this module has its own gradlew).
+// File is gitignored; CI sets the values via env vars instead. Both paths
+// produce a deterministic AAB suitable for Play App Signing (Google holds
+// the distribution key; this just authenticates the upload).
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     namespace = "tv.onscreen.mobile"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "tv.onscreen.mobile"
+        // applicationId is what Play / the OS sees as the package name.
+        // The internal Kotlin namespace stays `tv.onscreen.mobile` (R
+        // class + BuildConfig location) — Play doesn't care, and renaming
+        // every source file's package would churn the entire client for
+        // no functional benefit.
+        applicationId = "tv.onscreen.android"
         // Phone client targets Android 7+ — narrows the install base
         // vs the TV client (API 21) but in exchange the Compose +
         // Material3 baseline doesn't need backward compat shims for
@@ -25,6 +44,22 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            // Skip wiring when the props file is absent so debug builds
+            // and CI checkouts that haven't been provisioned with a key
+            // still pass `./gradlew assembleDebug`.
+            if (keystoreProps.isNotEmpty()) {
+                storeFile = rootProject.file(
+                    keystoreProps.getProperty("storeFile") ?: "keystore/upload.jks",
+                )
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias") ?: "upload"
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -32,6 +67,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Only attach the signing config when the props file is
+            // present — otherwise the AGP fails the configure step with
+            // "Keystore file not set for signing config release" even
+            // when only debug is being built.
+            if (keystoreProps.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
