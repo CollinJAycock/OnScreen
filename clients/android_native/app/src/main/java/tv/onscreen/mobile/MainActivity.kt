@@ -62,21 +62,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Auto-enter PiP when the user navigates home or backgrounds
-     * the app with a video playing. Without this, hitting home
-     * during a movie pauses + collapses the player to nothing.
-     *
-     * Gated on ActiveVideoTracker so audio-only playback doesn't
-     * trigger PiP — that path uses OnScreenMediaSessionService for
-     * backgrounding instead.
-     */
     /** Android 12+ supports declarative auto-enter PiP — set
      *  setAutoEnterEnabled(true) on params and the system handles
      *  the home-button gesture without an onUserLeaveHint() bridge.
      *  Gated on ActiveVideoTracker so we only register the params
      *  while a video is playing (otherwise the system would PiP an
-     *  empty surface during routine navigation). */
+     *  empty surface during routine navigation). Audio-only items
+     *  intentionally aren't backgrounded — closing the player ends
+     *  playback for tracks, audiobooks, and podcasts. */
     private fun updatePipParams() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         val playing = ActiveVideoTracker.isPlaying()

@@ -10,7 +10,6 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- WorkManager downloads run as a data-sync foreground service
          on Android 14+; the type-specific permission is required
          alongside the generic FOREGROUND_SERVICE one. -->
@@ -38,28 +37,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Background-audio host. Started when the user navigates
-             away from PlayerScreen mid-track; the service inherits
-             the parked ExoPlayer + metadata via AudioHandoff and
-             keeps playback running with system media-session controls.
-
-             exported="true" is required so the system MediaSession
-             infrastructure (Android Auto, system-pulldown media
-             controls, Bluetooth headset playback keys) can bind to
-             the session. Lint warns because we don't gate it on a
-             custom permission — that's intentional: the upstream
-             androidx.media3.session.MediaSessionService binder is
-             already permission-checked by the framework. -->
-        <service
-            android:name=".playback.OnScreenMediaSessionService"
-            android:foregroundServiceType="mediaPlayback"
-            android:exported="true"
-            tools:ignore="ExportedService">
-            <intent-filter>
-                <action android:name="androidx.media3.session.MediaSessionService" />
-            </intent-filter>
-        </service>
 
         <!-- WorkManager's SystemForegroundService is registered by the
              work-runtime AAR with NO foregroundServiceType. On Android

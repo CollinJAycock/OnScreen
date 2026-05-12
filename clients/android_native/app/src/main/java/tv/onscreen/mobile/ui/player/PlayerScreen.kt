@@ -71,9 +71,6 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
-import android.content.Intent
-import tv.onscreen.mobile.playback.AudioHandoff
-import tv.onscreen.mobile.playback.OnScreenMediaSessionService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -193,21 +190,6 @@ private fun PlayerHost(
     var showUpNext by remember { mutableStateOf(false) }
     val nextSibling = ui.nextSibling
 
-    // Re-entry: if the same item is parked in AudioHandoff (because
-    // an earlier instance of this screen handed playback to the
-    // background service), stop the service so the foreground
-    // notification disappears and rebuild a fresh player here. The
-    // brief audio cut on re-entry is the cost of not threading a
-    // bound-service binder through the Compose tree just to call
-    // detach() — the player will resume from the last reported
-    // progress position, so the user sees a small skip back at most.
-    LaunchedEffect(itemId) {
-        if (AudioHandoff.peekMetadata()?.itemId == itemId) {
-            AudioHandoff.clear()
-            context.stopService(Intent(context, OnScreenMediaSessionService::class.java))
-        }
-    }
-
     val player = remember(source) {
         ExoPlayer.Builder(context).build().apply {
             // DefaultDataSource dispatches by URI scheme — file://
@@ -273,16 +255,11 @@ private fun PlayerHost(
         }
     }
 
-    // Audio-only playback: park into the MediaSessionService on
-    // dispose so backing out of the screen doesn't kill the music.
-    // Video playback releases the player normally — PiP is the
-    // backgrounding affordance for video.
-    //
-    // Type-first check: the offline-play synthetic ItemFile carries
-    // no codec metadata, so a pure null-codec check would mis-route
-    // every offline video to the audio handoff path and crash with
-    // ForegroundServiceDidNotStartInTimeException when the music
-    // session service didn't startForeground in time.
+    // Type-first audio detection — used by ActiveVideoTracker to gate
+    // PiP and by the inline UI to pick the audio-vs-video layout.
+    // The offline-play synthetic ItemFile carries no codec metadata,
+    // so a pure null-codec check would misclassify every offline
+    // video as audio.
     val codec = ui.item?.files?.firstOrNull()?.video_codec
     val isAudioOnly = when (itemType) {
         "track", "audiobook", "podcast" -> true
@@ -292,9 +269,9 @@ private fun PlayerHost(
     }
 
     // Tell MainActivity whether to auto-enter PiP on
-    // onUserLeaveHint. We mark "playing" only for video so the
-    // audio path (handled by OnScreenMediaSessionService) doesn't
-    // collapse to a black PiP window when the user navigates home.
+    // onUserLeaveHint. We mark "playing" only for video so audio
+    // playback doesn't collapse to a black PiP window when the
+    // user navigates home.
     DisposableEffect(isAudioOnly) {
         ActiveVideoTracker.set(!isAudioOnly)
         onDispose { ActiveVideoTracker.set(false) }
@@ -307,30 +284,13 @@ private fun PlayerHost(
     // but overlays / dialogs / the built-in controller would just
     // clutter the floating frame.
     val inPip = LocalInPipMode.current
+    // Closing the player ends playback for every item type. The
+    // earlier audio-handoff to a MediaSessionService was removed —
+    // the simpler "back stops playback" model matches what users
+    // expect (and avoided a class of foreground-service-startup
+    // crashes the handoff was introducing).
     DisposableEffect(player) {
-        onDispose {
-            if (isAudioOnly && player.playWhenReady && player.duration > 0) {
-                val item = ui.item
-                AudioHandoff.park(
-                    player,
-                    AudioHandoff.Metadata(
-                        itemId = itemId,
-                        itemType = item?.type ?: "track",
-                        parentId = item?.parent_id,
-                        index = item?.index,
-                        hlsOffsetMs = vm.hlsOffsetMs,
-                    ),
-                )
-                val intent = Intent(context, OnScreenMediaSessionService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
-            } else {
-                player.release()
-            }
-        }
+        onDispose { player.release() }
     }
 
     // Cross-device resume: when another of the user's devices reports
@@ -613,10 +573,27 @@ private fun PlayerHost(
             )
         }
         if (castFile != null && CastMediaInfo.isCastable(castFile)) {
-            // The route button itself — Cast SDK draws it.
+            // The route button itself — Cast SDK draws it. MediaRouteButton's
+            // theme helper reads colorBackground from the inflating context
+            // and crashes with `background can not be translucent: #0` when
+            // that resolves to a transparent value, which is exactly what
+            // the Compose-hosted activity context surfaces. Wrap the
+            // factory context in a Theme.AppCompat.* theme that has an
+            // opaque background so the contrast calculation succeeds.
             AndroidView(
                 factory = { ctx ->
-                    androidx.mediarouter.app.MediaRouteButton(ctx).also {
+                    // MediaRouterThemeHelper reads ?colorBackground at
+                    // construction time and throws if it's translucent.
+                    // The Compose-only host theme has a #0 value, so
+                    // wrap in Theme.OnScreen.MediaRoute (defined in
+                    // res/values/themes.xml) which hardcodes an opaque
+                    // dark surface for both the framework + AppCompat
+                    // attribute namespaces.
+                    val themed = android.view.ContextThemeWrapper(
+                        ctx,
+                        tv.onscreen.mobile.R.style.Theme_OnScreen_MediaRoute,
+                    )
+                    androidx.mediarouter.app.MediaRouteButton(themed).also {
                         com.google.android.gms.cast.framework.CastButtonFactory
                             .setUpMediaRouteButton(ctx.applicationContext, it)
                     }
@@ -727,11 +704,10 @@ private fun PlayerHost(
             }
         }
 
-        // Picture-in-picture only makes sense for video — audio-only
-        // playback gets OnScreenMediaSessionService for backgrounding
-        // instead (see AudioHandoff.park in the dispose path above).
-        // Gate on video_codec so audiobooks and music don't surface a
-        // PiP button that would just shrink the album art.
+        // Picture-in-picture only makes sense for video — audio items
+        // just end playback when the user backs out. Gate on
+        // video_codec so audiobooks and music don't surface a PiP
+        // button that would just shrink the album art.
         val hasVideo = ui.item?.files?.firstOrNull()?.video_codec != null
         if (hasVideo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             IconButton(onClick = { enterPip(context as? Activity) }) {
@@ -1178,8 +1154,7 @@ private fun enterPip(activity: Activity?) {
         activity.enterPictureInPictureMode(params)
     } catch (_: Exception) {
         // Some launchers / form-factors reject PiP — swallow rather
-        // than crash; the user can fall back to backgrounding music
-        // via the MediaSession service.
+        // than crash.
     }
 }
 

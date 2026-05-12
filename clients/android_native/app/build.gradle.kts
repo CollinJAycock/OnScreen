@@ -100,7 +100,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
-    implementation("androidx.media3:media3-session:1.3.1")
 
     // Google Cast SDK — `MediaRouteButton` for the Cast picker, plus
     // `CastContext` / `CastSession` for sending LOAD requests to the
@@ -114,6 +113,16 @@ dependencies {
     // 7+ (our minSdk).
     implementation("androidx.mediarouter:mediarouter:1.7.0")
     implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
+    // mediarouter's theme helper reads `?attr/colorBackground` (the
+    // AppCompat-namespaced attribute, not `?android:attr/colorBackground`)
+    // at MediaRouteButton construction and throws
+    // IllegalArgumentException when it's translucent. The attribute is
+    // defined by appcompat; without it on the classpath the lookup
+    // falls through to the framework value (#0 under our Compose-only
+    // host theme). The AppCompat dep also lets us wrap with a
+    // Theme.AppCompat.* theme where the attribute is set to an opaque
+    // value, fixing the crash without changing the app shell.
+    implementation("androidx.appcompat:appcompat:1.7.0")
 
     // Chrome Custom Tabs — used by the SSO bridge to open the
     // server's web /pair page in an in-app browser tab. The user

@@ -10,4 +10,21 @@
         <item name="android:navigationBarColor">@color/window_bg</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <!-- mediarouter's MediaRouterThemeHelper.getControllerColor reads
+         `?androidx.appcompat:attr/colorPrimary` from the inflating
+         context and runs it through ColorUtils.calculateContrast,
+         which throws IllegalArgumentException when the value is
+         translucent. The Compose-only host theme doesn't define
+         colorPrimary, so the lookup returns 0 (#00000000). Parent on
+         a full AppCompat theme that defines all the colour attrs
+         mediarouter and the Cast SDK introspect, and pin colorPrimary
+         + android:colorBackground to opaque values so the contrast
+         helper succeeds. -->
+    <style name="Theme.OnScreen.MediaRoute" parent="Theme.AppCompat.DayNight">
+        <item name="colorPrimary">#FF7C6AF7</item>
+        <item name="colorPrimaryDark">#FF5A4ED4</item>
+        <item name="colorAccent">#FF7C6AF7</item>
+        <item name="android:colorBackground">#FF0E1117</item>
+    </style>
 </resources>

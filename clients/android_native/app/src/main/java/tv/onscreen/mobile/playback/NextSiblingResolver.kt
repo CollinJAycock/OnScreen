@@ -7,13 +7,7 @@ import tv.onscreen.mobile.data.repository.ItemRepository
  *  given track or episode. Same logic as the TV client's resolver —
  *  in-container next sibling first (S04E12 → S04E13, album track 5
  *  → track 6), then cross-container fall-through (last episode of
- *  S04 → S05E01, last track of album A → first track of album B).
- *
- *  Lives outside the ViewModel so the [OnScreenMediaSessionService]
- *  can call it from a Player.Listener when the service-owned
- *  ExoPlayer hits STATE_ENDED — same logic the screen-side
- *  PlayerViewModel.loadNextSibling uses, but reachable from
- *  background code with no Compose / Lifecycle dependencies. */
+ *  S04 → S05E01, last track of album A → first track of album B). */
 class NextSiblingResolver(private val itemRepo: ItemRepository) {
 
     suspend fun resolve(

@@ -16,8 +16,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * PlayerScreen flips the flag on (DisposableEffect enter) when a
  * video is loaded and active, off when the screen is leaving the
- * composition. Audio-only playback leaves the flag false — that
- * path goes through OnScreenMediaSessionService, not PiP.
+ * composition. Audio-only playback leaves the flag false — backing
+ * out of an audio item just ends playback, so no PiP and no
+ * background-service bridge are needed.
  */
 object ActiveVideoTracker {
     private val flag = AtomicBoolean(false)
