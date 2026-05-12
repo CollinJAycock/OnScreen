@@ -21,10 +21,20 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object ActiveVideoTracker {
     private val flag = AtomicBoolean(false)
+    /** Called whenever the playing-flag flips. MainActivity registers
+     *  a listener that re-invokes setPictureInPictureParams with
+     *  setAutoEnterEnabled mirroring this flag, so the system can
+     *  honour the gesture without an onUserLeaveHint() bridge. */
+    @Volatile private var listener: ((Boolean) -> Unit)? = null
 
     fun set(playing: Boolean) {
-        flag.set(playing)
+        val prev = flag.getAndSet(playing)
+        if (prev != playing) listener?.invoke(playing)
     }
 
     fun isPlaying(): Boolean = flag.get()
+
+    fun setListener(fn: ((Boolean) -> Unit)?) {
+        listener = fn
+    }
 }

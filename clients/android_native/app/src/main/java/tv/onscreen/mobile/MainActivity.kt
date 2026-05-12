@@ -71,13 +71,47 @@ class MainActivity : ComponentActivity() {
      * trigger PiP — that path uses OnScreenMediaSessionService for
      * backgrounding instead.
      */
+    /** Android 12+ supports declarative auto-enter PiP — set
+     *  setAutoEnterEnabled(true) on params and the system handles
+     *  the home-button gesture without an onUserLeaveHint() bridge.
+     *  Gated on ActiveVideoTracker so we only register the params
+     *  while a video is playing (otherwise the system would PiP an
+     *  empty surface during routine navigation). */
+    private fun updatePipParams() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val playing = ActiveVideoTracker.isPlaying()
+        try {
+            setPictureInPictureParams(
+                PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .setAutoEnterEnabled(playing)
+                    .build(),
+            )
+        } catch (_: Exception) {
+            // Some skins reject PiP outright — swallow.
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updatePipParams()
+        // Re-fire setPictureInPictureParams whenever the player flips
+        // the active-video flag so setAutoEnterEnabled tracks reality.
+        ActiveVideoTracker.setListener { runOnUiThread { updatePipParams() } }
+    }
+
+    override fun onPause() {
+        ActiveVideoTracker.setListener(null)
+        super.onPause()
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        // Android 12+ auto-enters via setAutoEnterEnabled — onUserLeaveHint
+        // would double-fire. Pre-12 still needs the manual call.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (!ActiveVideoTracker.isPlaying()) return
-        // Already in PiP (e.g. user dragged the floating window
-        // around) — re-entering would be a no-op but the OS rejects
-        // it noisily on some skins.
         if (isInPictureInPictureMode) return
         try {
             enterPictureInPictureMode(
@@ -87,8 +121,7 @@ class MainActivity : ComponentActivity() {
             )
         } catch (_: Exception) {
             // Some launchers / form-factors reject PiP — swallow
-            // rather than crash. The player keeps running in the
-            // background; the user can resume by reopening the app.
+            // rather than crash.
         }
     }
 

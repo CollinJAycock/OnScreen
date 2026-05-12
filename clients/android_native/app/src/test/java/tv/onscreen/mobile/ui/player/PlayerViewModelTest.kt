@@ -15,8 +15,10 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.mobile.data.downloads.DownloadManifest
 import tv.onscreen.mobile.data.downloads.DownloadStore
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
+import kotlinx.coroutines.flow.MutableStateFlow
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
@@ -155,6 +157,11 @@ class PlayerViewModelTest {
         val store = mockk<DownloadStore>(relaxed = true)
         coEvery { store.load() } returns Unit
         coEvery { store.get(any()) } returns null
+        // Real StateFlow with an empty manifest — the offline-fallback
+        // path reads `store.state.value.entries`, and a relaxed-mock
+        // StateFlow returns a default Object that fails the
+        // DownloadManifest cast.
+        every { store.state } returns MutableStateFlow(DownloadManifest(entries = emptyList()))
         val mgr = mockk<OnScreenDownloadManager>()
         every { mgr.store } returns store
         return mgr

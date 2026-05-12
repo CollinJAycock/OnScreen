@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "tv.onscreen.mobile"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "tv.onscreen.mobile"
@@ -17,7 +17,10 @@ android {
         // Material3 baseline doesn't need backward compat shims for
         // window-insets, predictive-back, and dynamic colors.
         minSdk = 24
-        targetSdk = 34
+        // Android 15 (API 35) — Play Console requires targetSdk 35 for
+        // new submissions from Aug 2025. Bumping ahead of submission
+        // keeps the OldTargetApi lint quiet and avoids surprises.
+        targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -43,6 +46,21 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // Module-wide opt-in for media3's UnstableApi — every player
+        // surface we touch (ExoPlayer config, MediaSource, AudioSink)
+        // is annotated with it, and per-callsite @OptIn doesn't
+        // satisfy the lint UnsafeOptInUsageError check.
+        freeCompilerArgs += listOf(
+            "-opt-in=androidx.media3.common.util.UnstableApi",
+        )
+    }
+    lint {
+        // UnsafeOptInUsageError on media3 stays noisy even with
+        // -opt-in above because the lint detector reads the Java
+        // annotations, not Kotlin's. The compile-time opt-in is
+        // genuine; ignore the lint signal so a real future error
+        // doesn't get buried under 22 spurious media3 ones.
+        disable += "UnsafeOptInUsageError"
     }
 }
 

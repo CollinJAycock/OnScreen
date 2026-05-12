@@ -499,8 +499,20 @@ class PlayerViewModel @Inject constructor(
         // or a truncated stream. Visible in logcat under
         // PlayerViewModel.
         try {
-            val head = localFile.inputStream().use { it.readNBytes(32) }
-            val hex = head.joinToString(" ") { "%02X".format(it) }
+            // readNBytes(int) is API 33+; do it the portable way for
+            // minSdk 24. read(byteArray) returns -1 at EOF (file
+            // shorter than 32 bytes) so we trim before formatting.
+            val buf = ByteArray(32)
+            val n = localFile.inputStream().use { stream ->
+                var read = 0
+                while (read < buf.size) {
+                    val r = stream.read(buf, read, buf.size - read)
+                    if (r <= 0) break
+                    read += r
+                }
+                read
+            }
+            val hex = buf.take(n).joinToString(" ") { "%02X".format(it) }
             android.util.Log.i(
                 "PlayerViewModel",
                 "offline play: ${localFile.absolutePath} size=${localFile.length()} head=$hex",

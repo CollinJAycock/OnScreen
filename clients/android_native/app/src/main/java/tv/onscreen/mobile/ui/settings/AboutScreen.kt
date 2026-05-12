@@ -42,8 +42,16 @@ fun AboutScreen(
         try {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
             val name = info.versionName ?: "?"
-            @Suppress("DEPRECATION")
-            val code = info.longVersionCode
+            // longVersionCode is API 28+; below that fall back to the
+            // 32-bit versionCode. Both report the same value for any
+            // build that fits in an Int, which covers every shipping
+            // version we'll generate.
+            val code: Long = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
             "$name ($code)"
         } catch (_: PackageManager.NameNotFoundException) {
             "unknown"
