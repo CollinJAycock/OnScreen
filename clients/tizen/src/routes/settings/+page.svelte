@@ -10,7 +10,7 @@
 
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api } from '$lib/api';
+  import { api, endpoints } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import TopNav from '$lib/components/TopNav.svelte';
@@ -20,6 +20,113 @@
   const serverUrl = $derived(api.getOrigin() ?? '');
 
   let confirming = $state<'signOut' | 'forgetServer' | null>(null);
+
+  // Playback preferences (server-side, per-user). audio + subtitle
+  // languages are 3-letter ISO 639-2 codes (eng, jpn, etc.) the
+  // server matches against MediaStream.language during initial
+  // track selection.
+  type LangOpt = { value: string; label: string };
+  const langOptions: LangOpt[] = [
+    { value: '',    label: 'Auto / file default' },
+    { value: 'eng', label: 'English' },
+    { value: 'jpn', label: 'Japanese' },
+    { value: 'spa', label: 'Spanish' },
+    { value: 'fre', label: 'French' },
+    { value: 'ger', label: 'German' },
+    { value: 'ita', label: 'Italian' },
+    { value: 'por', label: 'Portuguese' },
+    { value: 'rus', label: 'Russian' },
+    { value: 'kor', label: 'Korean' },
+    { value: 'chi', label: 'Chinese' },
+  ];
+  // 'off' is special — coerced to a magic sentinel server-side so
+  // subtitles are explicitly suppressed (vs. just unsuppressed +
+  // missing-language).
+  const subLangOptions: LangOpt[] = [
+    { value: 'off', label: 'Off' },
+    ...langOptions,
+  ];
+
+  let audioLang = $state('');
+  let subLang = $state('');
+  let forcedOnly = $state(false);
+  let prefsLoaded = $state(false);
+  let prefsSaving = $state(false);
+
+  onMount(() => {
+    (async () => {
+      try {
+        const p = await endpoints.users.preferences();
+        audioLang = p.preferred_audio_lang ?? '';
+        subLang = p.preferred_subtitle_lang ?? '';
+        forcedOnly = p.forced_subtitles_only;
+      } catch {
+        // Best-effort — leave defaults blank. UI still usable.
+      } finally {
+        prefsLoaded = true;
+      }
+    })();
+
+    return focusManager.pushBack(() => {
+      if (confirming) {
+        confirming = null;
+        return true;
+      }
+      goto('#/hub');
+      return true;
+    });
+  });
+
+  // Persisting individual fields immediately on focus-exit would be
+  // smooth, but the on-screen cursor is a button cycle — saving on
+  // every toggle works fine here and matches the rest of the app's
+  // "no Save button" pattern.
+  async function persist() {
+    prefsSaving = true;
+    try {
+      const updated = await endpoints.users.setPreferences({
+        preferred_audio_lang: audioLang || null,
+        preferred_subtitle_lang: subLang || null,
+        forced_subtitles_only: forcedOnly,
+      });
+      audioLang = updated.preferred_audio_lang ?? '';
+      subLang = updated.preferred_subtitle_lang ?? '';
+      forcedOnly = updated.forced_subtitles_only;
+    } catch {
+      // Toast / inline error UI would go here in a later pass; for
+      // now silently revert by re-fetching.
+      try {
+        const p = await endpoints.users.preferences();
+        audioLang = p.preferred_audio_lang ?? '';
+        subLang = p.preferred_subtitle_lang ?? '';
+        forcedOnly = p.forced_subtitles_only;
+      } catch { /* give up */ }
+    } finally {
+      prefsSaving = false;
+    }
+  }
+
+  function cycleAudio() {
+    const i = langOptions.findIndex((o) => o.value === audioLang);
+    audioLang = langOptions[(i + 1) % langOptions.length].value;
+    void persist();
+  }
+  function cycleSub() {
+    const i = subLangOptions.findIndex((o) => o.value === subLang);
+    subLang = subLangOptions[(i + 1) % subLangOptions.length].value;
+    void persist();
+  }
+  function toggleForced() {
+    forcedOnly = !forcedOnly;
+    void persist();
+  }
+
+  const audioLabel = $derived(
+    langOptions.find((o) => o.value === audioLang)?.label ?? 'Auto / file default'
+  );
+  const subLabel = $derived(
+    subLangOptions.find((o) => o.value === subLang)?.label ?? 'Auto / file default'
+  );
 
   onMount(() => {
     return focusManager.pushBack(() => {
@@ -92,6 +199,30 @@
         Remove the server URL and all session state. Use when switching to a different OnScreen deployment.
       </div>
     </button>
+  </section>
+
+  <section>
+    <div class="section-title">Playback</div>
+    {#if !prefsLoaded}
+      <div class="action-desc">Loading preferences…</div>
+    {:else}
+      <button use:focusable class="action-row" onclick={cycleAudio}>
+        <div class="action-title">Audio language</div>
+        <div class="action-desc">
+          {audioLabel}{prefsSaving ? ' · saving…' : ''}
+        </div>
+      </button>
+      <button use:focusable class="action-row" onclick={cycleSub}>
+        <div class="action-title">Subtitle language</div>
+        <div class="action-desc">{subLabel}</div>
+      </button>
+      <button use:focusable class="action-row" onclick={toggleForced}>
+        <div class="action-title">Forced subtitles only</div>
+        <div class="action-desc">
+          {forcedOnly ? 'On — only show subtitles flagged as forced' : 'Off — show full subtitle tracks'}
+        </div>
+      </button>
+    {/if}
   </section>
 
   <section>

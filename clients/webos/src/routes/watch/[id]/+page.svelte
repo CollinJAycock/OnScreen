@@ -81,6 +81,13 @@
   // 25 s before EOS for episodes / podcasts; for music tracks we
   // chain silently at EOS (no overlay) to avoid clipping the outro.
   let nextSibling = $state<ChildItem | null>(null);
+  let prevSibling = $state<ChildItem | null>(null);
+  // For music tracks: album (parent) + artist (grandparent) and the
+  // position in the album. Surfaced in the now-playing UI.
+  let albumTitle = $state('');
+  let artistTitle = $state('');
+  let queuePosition = $state(0);
+  let queueTotal = $state(0);
   let upNextShown = $state(false);
   let upNextCountdown = $state(10);
   let upNextTimer: ReturnType<typeof setInterval> | null = null;
@@ -224,10 +231,20 @@
         seek(10_000);
         return true;
       case 'rewind':
-        seek(-30_000);
+        // Music tracks: rewind = previous track. Other audio /
+        // video: rewind = 30 s seek.
+        if (item?.type === 'track' && prevSibling) {
+          goToNext(prevSibling);
+        } else {
+          seek(-30_000);
+        }
         return true;
       case 'forward':
-        seek(30_000);
+        if (item?.type === 'track' && nextSibling) {
+          goToNext(nextSibling);
+        } else {
+          seek(30_000);
+        }
         return true;
       case 'green':
         jumpToChapter(1);
@@ -511,11 +528,33 @@
     }
     try {
       const kids = await endpoints.items.children(item.parent_id);
-      const target = kids
+      const sorted = kids
         .filter((k) => k.type === item!.type && k.index != null)
-        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-        .find((k) => (k.index ?? -1) === (item!.index ?? -1) + 1);
-      if (target) nextSibling = target;
+        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      const myIdx = item.index ?? -1;
+      nextSibling = sorted.find((k) => (k.index ?? -1) === myIdx + 1) ?? null;
+      prevSibling = sorted.find((k) => (k.index ?? -1) === myIdx - 1) ?? null;
+      const myI = sorted.findIndex((k) => k.id === item!.id);
+      if (myI >= 0) {
+        queuePosition = myI + 1;
+        queueTotal = sorted.length;
+      }
+    } catch {
+      // Best-effort.
+    }
+  }
+
+  // For music tracks: fetch album (parent) + artist (grandparent)
+  // so the now-playing view can label them.
+  async function loadAudioContext() {
+    if (!item || item.type !== 'track' || !item.parent_id) return;
+    try {
+      const album = await endpoints.items.get(item.parent_id);
+      albumTitle = album.title ?? '';
+      if (album.parent_id) {
+        const artist = await endpoints.items.get(album.parent_id);
+        artistTitle = artist.title ?? '';
+      }
     } catch {
       // Best-effort.
     }
@@ -635,6 +674,7 @@
         // button, no Up Next means natural EOS exits).
         void loadMarkers();
         void loadNextSibling();
+        void loadAudioContext();
         void loadTrickplay();
         startSyncStream();
 
@@ -790,8 +830,19 @@
         <div class="music-art music-art-placeholder">♪</div>
       {/if}
       <div class="music-title">{item.title}</div>
+      {#if artistTitle || albumTitle}
+        <div class="music-subtitle">
+          {#if artistTitle}<span class="music-artist">{artistTitle}</span>{/if}
+          {#if artistTitle && albumTitle}<span class="music-dot">·</span>{/if}
+          {#if albumTitle}<span class="music-album">{albumTitle}</span>{/if}
+        </div>
+      {/if}
       <div class="music-meta">
-        {#if item.year}<span>{item.year}</span>{/if}
+        {#if queuePosition > 0 && queueTotal > 0}
+          <span>Track {queuePosition} of {queueTotal}</span>
+        {:else if item.year}
+          <span>{item.year}</span>
+        {/if}
         <span>{paused ? '❚❚ Paused' : '▶ Playing'}</span>
       </div>
       <div class="music-bar">
@@ -809,7 +860,11 @@
       <div class="music-hints">
         <span>OK play / pause</span>
         <span>← → seek 10s</span>
-        <span>◀◀ ▶▶ seek 30s</span>
+        {#if item.type === 'track'}
+          <span>◀◀ ▶▶ prev / next track</span>
+        {:else}
+          <span>◀◀ ▶▶ seek 30s</span>
+        {/if}
         {#if chapters.length > 0}<span>red/green chapters</span>{/if}
         <span>back exit</span>
       </div>
@@ -1038,6 +1093,21 @@
     text-align: center;
     line-height: 1.2;
   }
+  .music-subtitle {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: var(--font-lg);
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: -8px;
+  }
+  .music-artist { color: var(--text-primary); font-weight: 500; }
+  .music-album { font-style: italic; }
+  .music-dot { color: var(--text-muted); }
+
   .music-meta {
     display: flex;
     gap: 24px;

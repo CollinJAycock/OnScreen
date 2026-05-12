@@ -206,12 +206,18 @@
 {:else}
   <div class="player">
     {#if usingAvPlay}
+      <!-- AVPlay anchor: the Tizen firmware uses this DOM element to
+           place the hardware video overlay. It's not interactive and
+           contains no perceivable content; aria-hidden suppresses the
+           a11y warning. -->
       <object
         bind:this={avplayAnchor}
         class="avplay-host"
         type="application/avplayer"
         width="1920"
         height="1080"
+        aria-label="Video playback area"
+        title="Video playback"
       ></object>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->

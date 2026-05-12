@@ -1,6 +1,6 @@
 # OnScreen vs Plex / Emby / Jellyfin
 
-**Snapshot:** 2026-05-09 against v2.2.0-dev on `main` (server v2.1.0 tagged; v2.2 anime track landed 2026-05-04 ahead of the v2.2 cut; Play Store internal-testing track active for the Android TV client).
+**Snapshot:** 2026-05-12 against v2.2.0 on `main` (server lock active; v2.2 anime track landed 2026-05-04; Play Store internal-testing track active for the Android TV client; Tizen client hardware-verified on a Samsung QN75Q80B 2022 panel between 2026-05-11 and 2026-05-12).
 
 **Legend** — ✅ in core · 💎 paid tier · 🧩 official plugin · ⚠ partial · ❌ not supported
 
@@ -174,35 +174,35 @@ Per-platform status. ✅ here means "shipped to a real distribution channel and 
 | ------------------------------ | :------: | :--: | :--: | :------: |
 | Web (browser)                  |    ✅    |  ✅  |  ✅  |    ✅    |
 | Desktop (Windows/macOS/Linux)  |    ✅    |  ✅  |  ✅  |    ✅    |
-| Android phone                  |    ⚠    |  ✅  |  ✅  |    ✅    |
-| Android TV / Google TV         |    ⚠    |  ✅  |  ✅  |    ✅    |
-| Fire TV                        |    ⚠    |  ✅  |  ✅  |    ✅    |
-| LG webOS                       |    ⚠    |  ✅  |  ✅  |    🧩    |
-| Samsung Tizen                  |    ⚠    |  ✅  |  ✅  |    🧩    |
-| Roku                           |    ⚠    |  ✅  |  ✅  |    🧩    |
+| Android phone                  |    ⚠     |  ✅  |  ✅  |    ✅    |
+| Android TV / Google TV         |    ⚠     |  ✅  |  ✅  |    ✅    |
+| Fire TV                        |    ⚠     |  ✅  |  ✅  |    ✅    |
+| LG webOS                       |    ⚠     |  ✅  |  ✅  |    🧩    |
+| Samsung Tizen                  |    ⚠     |  ✅  |  ✅  |    🧩    |
+| Roku                           |    ⚠     |  ✅  |  ✅  |    🧩    |
 | iOS / iPadOS                   |    ❌    |  ✅  |  ✅  |    ✅    |
 | Apple TV                       |    ❌    |  ✅  |  ✅  |    ✅    |
 
-OnScreen's Android TV / Fire TV client is on Play Store internal testing as of 2026-05-04 (graduates to closed → open → production over a 14-day Play-mandated soak). Desktop ships via Tauri 2 with a native Rust audio engine outside the webview. webOS / Tizen / Roku are feature-complete in code; real-hardware soak is the open item. iOS + Apple TV are out of scope until a Swift skill ramp + App Store review budget land.
+OnScreen's Android TV / Fire TV client is on Play Store internal testing as of 2026-05-04 (graduates to closed → open → production over a 14-day Play-mandated soak). Desktop ships via Tauri 2 with a native Rust audio engine outside the webview. Tizen got its first end-to-end hardware run on 2026-05-11 against a Samsung QN75Q80B (2022) — sideloaded via Samsung partner cert against the bound DUID, with the full surface exercised on the panel (navigation, video / audio / music / photo playback, watch state, library hygiene). The webOS scaffold sits at near-parity in code; real LG hardware soak is the open item. Roku is feature-complete in code; real-device soak likewise pending. Samsung Apps Store + LG Content Store submission paperwork is the gate between ⚠ and ✅ in the table above. iOS + Apple TV are out of scope until a Swift skill ramp + App Store review budget land.
 
 ---
 
 ## 9. Admin & observability
 
-| Feature                                          | OnScreen | Plex | Emby | Jellyfin |
-| ------------------------------------------------ | :------: | :--: | :--: | :------: |
-| OpenTelemetry tracing (OTLP/gRPC)                |    ✅    |  ❌  |  ❌  |    ❌    |
+| Feature                                          | OnScreen | Plex | Emby | Jellyfin  |
+| ------------------------------------------------ | :------: | :--: | :--: | :------:  |
+| OpenTelemetry tracing (OTLP/gRPC)                |    ✅    |  ❌  |  ❌  |    ❌   |
 | Prometheus metrics endpoint                      |    ✅    |  ❌  |  ❌  |    ⚠    |
 | Structured JSON logs with trace IDs              |    ✅    |  ⚠   |  ⚠   |    ⚠    |
-| Audit log of admin / playback / auth events     |    ✅    |  ❌  |  ⚠   |    ⚠    |
-| Admin logs API (in-process ring buffer)          |    ✅    |  ❌  |  ❌  |    ❌    |
-| `/debug/pprof` (CPU/heap/goroutine/block/mutex)  |    ✅    |  ❌  |  ❌  |    ❌    |
-| Scheduled task framework w/ run history + UI     |    ✅    |  ⚠   |  ✅  |    ✅    |
+| Audit log of admin / playback / auth events      |    ✅    |  ❌  |  ⚠   |    ⚠    |
+| Admin logs API (in-process ring buffer)          |    ✅    |  ❌  |  ❌  |    ❌   |
+| `/debug/pprof` (CPU/heap/goroutine/block/mutex)  |    ✅    |  ❌  |  ❌  |    ❌   |
+| Scheduled task framework w/ run history + UI     |    ✅    |  ⚠   |  ✅  |    ✅   |
 | Background jobs status feed (scans + missing-art)|    ✅    |  ⚠   |  ⚠   |    ⚠    |
 | In-app real-time notifications (SSE stream)      |    ✅    |  ✅  |  ✅  |    ⚠    |
-| Schema-version-gated `/health/ready`             |    ✅    |  ❌  |  ❌  |    ❌    |
-| Backup + restore round-trip (schema-aware)       |    ✅    |  ❌  |  ✅  |    ✅    |
-| Admin Settings UI (no XML / JSON config files)   |    ✅    |  ⚠   |  ✅  |    ✅    |
+| Schema-version-gated `/health/ready`             |    ✅    |  ❌  |  ❌  |    ❌   |
+| Backup + restore round-trip (schema-aware)       |    ✅    |  ❌  |  ✅  |    ✅   |
+| Admin Settings UI (no XML / JSON config files)   |    ✅    |  ⚠   |  ✅  |    ✅   |
 
 OnScreen ships an OTel + Prometheus + audit-log stack as core; competitors either omit telemetry, gate behind a paid tier, or expect operators to layer it themselves. The scheduler runs cron-driven admin tasks (scan, EPG refresh, DVR retention, OCR pass, intro detection, refresh missing artwork, dedupe shows / movies, backup) — every task records `last_run_at`, last status, and last error so the admin UI can surface failures without grepping logs. The jobs feed (`GET /jobs`) gives a 30 s-poll snapshot of in-flight scans + missing-art and unmatched-item counts so the home banner can show "scanning…" / "12 items need a poster" without hammering item endpoints. `/debug/pprof` is admin-gated.
 
@@ -311,9 +311,9 @@ OnScreen plugins are MCP servers OnScreen calls out to (outbound MCP). Inbound M
 Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 
 - **iOS + Apple TV apps** *(vs Plex / Emby / Jellyfin)*. Out of scope until a Swift ramp + App Store review budget land.
-- **Tidal / Qobuz integration** *(vs Plex Pass)*. Sized XL — OAuth bind, library import, streaming passthrough, ReplayGain alignment with the local FLAC pipeline, licensing legwork. Track C of the v2.1 roadmap; re-scope decision pending.
+- **Tidal / Qobuz integration** *(vs Plex Pass)*. Sized XL — OAuth bind, library import, streaming passthrough, ReplayGain absent on the source side; not a near-term track.
 - **ML-driven personalised recommendations** *(vs Plex / Emby)*. Item-to-item collaborative filtering shipped and was pulled — the row didn't earn its space; trending row stays. Pgvector embedding pipeline never landed.
-- **TV-client hardware soak** *(vs all three)*. Code-complete on every platform; Android TV / Fire TV is hardware-verified. webOS / Tizen / Roku / Android phone need real-device soak before Plex-class confidence.
+- **TV-client hardware soak** *(vs all three)*. Code-complete on every platform; Android TV / Fire TV is hardware-verified, Tizen is hardware-verified on a 2022 Q80B panel as of 2026-05-12 (sideloaded; store submission pending). webOS / Roku / Android phone still need real-device soak before Plex-class confidence.
 - **VAAPI hardware encode validation** *(vs Plex / Emby paid tiers; Jellyfin core)*. Three of four encoder families validated on real hardware. VAAPI needs a Linux + non-NVIDIA GPU rig the project doesn't yet have.
 - **Adaptive bitrate HLS ladder** *(vs all three)*. OnScreen transcodes a single rendition per session and lets the operator-side bandwidth profile pick. Multi-rendition variant playlists with bandwidth-aware client switching are absent.
 - **AirPlay out** *(vs Plex / Emby; partial on Jellyfin)*. No path from web or desktop into the Apple TV / HomePod ecosystem. Cast and DLNA are tracked separately under "Deferred" below — see that section for why those two don't sit here.

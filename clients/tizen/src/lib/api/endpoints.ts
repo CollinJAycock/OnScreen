@@ -352,3 +352,32 @@ export const playback = {
   transfer: (req: PlaybackTransferRequest) =>
     api.post<void>('/api/v1/playback/transfer', req),
 };
+
+// ── User preferences ─────────────────────────────────────────────
+// Server-side per-user defaults: audio + subtitle languages, forced-
+// subtitles-only, max-quality caps. Settings page surfaces the audio
+// + subtitle language fields; the rest are admin-only or future
+// surface.
+export interface UserPreferences {
+  preferred_audio_lang?: string | null;
+  preferred_subtitle_lang?: string | null;
+  max_content_rating?: string | null;
+  max_video_bitrate_kbps?: number | null;
+  max_audio_bitrate_kbps?: number | null;
+  max_video_height?: number | null;
+  preferred_video_codec?: string | null;
+  forced_subtitles_only: boolean;
+  episode_use_show_poster: boolean;
+}
+
+export interface PreferencesUpdate {
+  preferred_audio_lang?: string | null;
+  preferred_subtitle_lang?: string | null;
+  forced_subtitles_only?: boolean;
+}
+
+export const users = {
+  preferences: () => api.get<UserPreferences>('/api/v1/users/me/preferences'),
+  setPreferences: (body: PreferencesUpdate) =>
+    api.put<UserPreferences>('/api/v1/users/me/preferences', body),
+};

@@ -91,6 +91,15 @@
   // music + audiobook chapters chain silently at EOS instead so
   // the closing seconds aren't clipped.
   let nextSibling = $state<ChildItem | null>(null);
+  let prevSibling = $state<ChildItem | null>(null);
+  // For music tracks: the album (parent) + artist (grandparent) and
+  // the position in the album's track list. Surfaced in the now-
+  // playing UI so the user sees "Track 3 of 12" + album/artist
+  // without having to back out to the album page.
+  let albumTitle = $state('');
+  let artistTitle = $state('');
+  let queuePosition = $state(0); // 1-indexed, 0 = unknown
+  let queueTotal = $state(0);
   let upNextShown = $state(false);
   let upNextCountdown = $state(10);
   let upNextTimer: ReturnType<typeof setInterval> | null = null;
@@ -254,10 +263,24 @@
         seek(10_000);
         return true;
       case 'rewind':
-        seek(-30_000);
+        // For music tracks the rewind button is a "previous track"
+        // skip — common audio-player convention. Fall back to a
+        // 30 s seek for video / audiobook chapters where chapter
+        // ordering is rare and seeking inside the current track is
+        // more useful.
+        if (item?.type === 'track' && prevSibling) {
+          goToNext(prevSibling);
+        } else {
+          seek(-30_000);
+        }
         return true;
       case 'forward':
-        seek(30_000);
+        // Mirror of rewind: music = next-track skip, otherwise seek.
+        if (item?.type === 'track' && nextSibling) {
+          goToNext(nextSibling);
+        } else {
+          seek(30_000);
+        }
         return true;
       case 'green':
         jumpToChapter(1);
@@ -592,13 +615,37 @@
     }
     try {
       const kids = await endpoints.items.children(item.parent_id);
-      const target = kids
+      const sorted = kids
         .filter((k) => k.type === item!.type && k.index != null)
-        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-        .find((k) => (k.index ?? -1) === (item!.index ?? -1) + 1);
-      if (target) nextSibling = target;
+        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      const myIdx = item.index ?? -1;
+      nextSibling = sorted.find((k) => (k.index ?? -1) === myIdx + 1) ?? null;
+      prevSibling = sorted.find((k) => (k.index ?? -1) === myIdx - 1) ?? null;
+      // Queue position — 1-indexed slot within the same-type siblings.
+      const myI = sorted.findIndex((k) => k.id === item!.id);
+      if (myI >= 0) {
+        queuePosition = myI + 1;
+        queueTotal = sorted.length;
+      }
     } catch {
       // Best-effort.
+    }
+  }
+
+  // For music tracks: fetch album (parent) + artist (grandparent) so
+  // the now-playing view can label them. Cheap — two items.get calls
+  // off the critical playback path, run in parallel.
+  async function loadAudioContext() {
+    if (!item || item.type !== 'track' || !item.parent_id) return;
+    try {
+      const album = await endpoints.items.get(item.parent_id);
+      albumTitle = album.title ?? '';
+      if (album.parent_id) {
+        const artist = await endpoints.items.get(album.parent_id);
+        artistTitle = artist.title ?? '';
+      }
+    } catch {
+      // Best-effort — leave labels blank on failure.
     }
   }
 
@@ -848,6 +895,7 @@
         // next sibling = natural EOS exit).
         void loadMarkers();
         void loadNextSibling();
+        void loadAudioContext();
         void loadTrickplay();
         startSyncStream();
 
@@ -1072,8 +1120,19 @@
         <div class="music-art music-art-placeholder">♪</div>
       {/if}
       <div class="music-title">{item.title}</div>
+      {#if artistTitle || albumTitle}
+        <div class="music-subtitle">
+          {#if artistTitle}<span class="music-artist">{artistTitle}</span>{/if}
+          {#if artistTitle && albumTitle}<span class="music-dot">·</span>{/if}
+          {#if albumTitle}<span class="music-album">{albumTitle}</span>{/if}
+        </div>
+      {/if}
       <div class="music-meta">
-        {#if item.year}<span>{item.year}</span>{/if}
+        {#if queuePosition > 0 && queueTotal > 0}
+          <span>Track {queuePosition} of {queueTotal}</span>
+        {:else if item.year}
+          <span>{item.year}</span>
+        {/if}
         <span>{paused ? '❚❚ Paused' : '▶ Playing'}</span>
       </div>
       <div class="music-bar">
@@ -1091,7 +1150,11 @@
       <div class="music-hints">
         <span>OK play / pause</span>
         <span>← → seek 10s</span>
-        <span>◀◀ ▶▶ seek 30s</span>
+        {#if item.type === 'track'}
+          <span>◀◀ ▶▶ prev / next track</span>
+        {:else}
+          <span>◀◀ ▶▶ seek 30s</span>
+        {/if}
         {#if chapters.length > 0}<span>red/green chapters</span>{/if}
         <span>back exit</span>
       </div>
@@ -1332,10 +1395,6 @@
     color: #fca5a5;
   }
 
-  .overlay .sub {
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-  }
 
 
   /* ── Music / audiobook view ────────────────────────────────── */
@@ -1386,6 +1445,21 @@
     max-width: 1400px;
     line-height: 1.2;
   }
+  .music-subtitle {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: var(--font-lg);
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: -8px;
+  }
+  .music-artist { color: var(--text-primary); font-weight: 500; }
+  .music-album { font-style: italic; }
+  .music-dot { color: var(--text-muted); }
+
   .music-meta {
     display: flex;
     gap: 24px;
