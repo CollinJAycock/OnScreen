@@ -116,11 +116,33 @@
   let onlineSubsError = $state('');
   let onlineSubsDownloading = $state(false);
 
+  // Item types that have no video — keep controls (scrubber, title,
+  // play/pause) visible permanently since there's no picture to dim
+  // behind them.
+  const isAudioItem = $derived(
+    !!item && (
+      item.type === 'track' ||
+      item.type === 'audiobook' ||
+      item.type === 'audiobook_chapter'
+    )
+  );
+
   function showControls() {
     controlsVisible = true;
     if (controlsTimer) clearTimeout(controlsTimer);
+    if (isAudioItem) return; // never auto-hide for music / audiobooks
     controlsTimer = setTimeout(() => (controlsVisible = false), 3000);
   }
+
+  $effect(() => {
+    if (isAudioItem) {
+      if (controlsTimer) {
+        clearTimeout(controlsTimer);
+        controlsTimer = null;
+      }
+      controlsVisible = true;
+    }
+  });
 
   function fmt(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -756,9 +778,49 @@
   const progressPct = $derived(duration > 0 ? (position / duration) * 100 : 0);
 </script>
 
+<!-- Music / audiobook view — full-screen "now playing" panel.
+     Renders for audio item types only; video items fall through to
+     the .player overlay controls below. -->
+{#if isAudioItem && !loading && !error && item}
+  <div class="music-view">
+    <div class="music-content">
+      {#if item.poster_path}
+        <img class="music-art" src={api.assetUrl(`/artwork/${item.poster_path}?w=720`)} alt="" />
+      {:else}
+        <div class="music-art music-art-placeholder">♪</div>
+      {/if}
+      <div class="music-title">{item.title}</div>
+      <div class="music-meta">
+        {#if item.year}<span>{item.year}</span>{/if}
+        <span>{paused ? '❚❚ Paused' : '▶ Playing'}</span>
+      </div>
+      <div class="music-bar">
+        <div class="music-elapsed">{fmt(position)}</div>
+        <div class="music-track">
+          <div class="music-fill" style="width: {progressPct}%"></div>
+          {#each chapters as ch (ch.start_ms)}
+            {#if duration > 0}
+              <div class="music-chapter-marker" style="left: {(ch.start_ms / duration) * 100}%"></div>
+            {/if}
+          {/each}
+        </div>
+        <div class="music-remaining">-{fmt(duration - position)}</div>
+      </div>
+      <div class="music-hints">
+        <span>OK play / pause</span>
+        <span>← → seek 10s</span>
+        <span>◀◀ ▶▶ seek 30s</span>
+        {#if chapters.length > 0}<span>red/green chapters</span>{/if}
+        <span>back exit</span>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="player" onmousemove={showControls}>
   <!-- svelte-ignore a11y_media_has_caption -->
-  <video bind:this={video} class="video" playsinline></video>
+  <video bind:this={video} class="video" class:hidden={isAudioItem} playsinline></video>
 
   {#if loading}
     <div class="overlay center">
@@ -862,7 +924,7 @@
     </div>
   {/if}
 
-  {#if controlsVisible && !loading && !error}
+  {#if !isAudioItem && controlsVisible && !loading && !error}
     <div class="controls">
       <div class="top">
         {#if item}<div class="now-playing">{item.title}</div>{/if}
@@ -927,6 +989,99 @@
     width: 100%;
     height: 100%;
     object-fit: contain;
+  }
+
+  .video.hidden {
+    display: none;
+  }
+
+  /* ── Music / audiobook view ────────────────────────────────── */
+  .music-view {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #0d0d18 0%, #07070d 100%);
+    color: var(--text-primary);
+  }
+  .music-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    width: 1400px;
+    max-width: 90%;
+  }
+  .music-art {
+    width: 460px;
+    height: 460px;
+    object-fit: cover;
+    border-radius: 18px;
+    background: var(--bg-elevated);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  }
+  .music-art-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 180px;
+    color: var(--text-muted);
+  }
+  .music-title {
+    font-size: var(--font-2xl);
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.2;
+  }
+  .music-meta {
+    display: flex;
+    gap: 24px;
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+  }
+  .music-bar {
+    display: grid;
+    grid-template-columns: 120px 1fr 120px;
+    align-items: center;
+    gap: 28px;
+    width: 100%;
+    color: var(--text-primary);
+    font-size: var(--font-md);
+    font-variant-numeric: tabular-nums;
+  }
+  .music-elapsed { text-align: right; color: var(--text-secondary); }
+  .music-remaining { text-align: left; color: var(--text-secondary); }
+  .music-track {
+    position: relative;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
+    overflow: visible;
+  }
+  .music-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 5px;
+  }
+  .music-chapter-marker {
+    position: absolute;
+    top: -5px;
+    width: 2px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.6);
+    transform: translateX(-1px);
+  }
+  .music-hints {
+    display: flex;
+    gap: 32px;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-top: 8px;
   }
 
   .overlay {

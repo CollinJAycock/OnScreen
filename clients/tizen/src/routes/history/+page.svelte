@@ -10,6 +10,7 @@
   import { focusManager } from '$lib/focus/manager';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import TopNav from '$lib/components/TopNav.svelte';
   import { openItem } from '$lib/nav';
 
   let items = $state<HistoryItem[] | null>(null);
@@ -47,6 +48,7 @@
 </script>
 
 <div class="page">
+  <TopNav />
   <h1>History</h1>
 
   {#if error}
@@ -72,12 +74,15 @@
 
 <style>
   .page {
-    padding: var(--page-pad);
+    padding: 0 var(--page-pad) var(--page-pad);
     display: flex;
     flex-direction: column;
     gap: 24px;
   }
-  h1 { font-size: var(--font-2xl); margin: 0; }
+  .page > :global(header.topnav) {
+    margin: 0 calc(-1 * var(--page-pad));
+  }
+  h1 { font-size: var(--font-2xl); margin: 24px 0 0; }
   .empty { color: var(--text-secondary); font-size: var(--font-md); }
   .grid {
     display: grid;

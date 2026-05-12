@@ -2,13 +2,15 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { endpoints, Unauthorized, type MediaItem } from '$lib/api';
+  import { endpoints, Unauthorized, type MediaItem, type Library } from '$lib/api';
   import { focusManager } from '$lib/focus/manager';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
-  import { openItem } from '$lib/nav';
+  import TopNav from '$lib/components/TopNav.svelte';
+  import { openItem, goBack } from '$lib/nav';
 
   let items = $state<MediaItem[] | null>(null);
+  let library = $state<Library | null>(null);
   let error = $state('');
 
   const libraryID = $derived(page.params.id!);
@@ -16,7 +18,15 @@
   onMount(() => {
     (async () => {
       try {
-        items = await endpoints.libraries.listItems(libraryID);
+        // Fire item-list + library-list in parallel — list-by-id
+        // isn't exposed yet, so we filter the small library list
+        // client-side for the header label.
+        const [libs, libItems] = await Promise.all([
+          endpoints.libraries.list(),
+          endpoints.libraries.listItems(libraryID),
+        ]);
+        library = libs.find((l) => l.id === libraryID) ?? null;
+        items = libItems;
       } catch (e) {
         if (e instanceof Unauthorized) goto('#/login');
         else error = (e as Error).message;
@@ -24,13 +34,16 @@
     })();
 
     return focusManager.pushBack(() => {
-      goto('#/hub');
+      goBack();
       return true;
     });
   });
 </script>
 
 <div class="page">
+  <TopNav />
+  <h1>{library?.name ?? 'Library'}</h1>
+
   {#if error}
     <p class="error">{error}</p>
   {:else if !items}
@@ -52,7 +65,11 @@
 
 <style>
   .page {
-    padding: var(--page-pad);
+    padding: 0 var(--page-pad) var(--page-pad);
+  }
+  h1 {
+    font-size: var(--font-2xl);
+    margin: 24px 0 32px;
   }
 
   .grid {

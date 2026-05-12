@@ -125,11 +125,36 @@
   let onlineSubsError = $state('');
   let onlineSubsDownloading = $state(false);
 
+  // Item types that have no video — keep controls (scrubber, title,
+  // play/pause) visible permanently since there's no picture to dim
+  // behind them. Video items get the standard auto-hide-after-3s.
+  const isAudioItem = $derived(
+    !!item && (
+      item.type === 'track' ||
+      item.type === 'audiobook' ||
+      item.type === 'audiobook_chapter'
+    )
+  );
+
   function showControls() {
     controlsVisible = true;
     if (controlsTimer) clearTimeout(controlsTimer);
+    if (isAudioItem) return; // never auto-hide for music / audiobooks
     controlsTimer = setTimeout(() => (controlsVisible = false), 3000);
   }
+
+  // Cancel any pending auto-hide once we know the item is audio.
+  // showControls() can fire before item loads, queuing a timer; when
+  // the item resolves to a track we want controls to stay up.
+  $effect(() => {
+    if (isAudioItem) {
+      if (controlsTimer) {
+        clearTimeout(controlsTimer);
+        controlsTimer = null;
+      }
+      controlsVisible = true;
+    }
+  });
 
   function fmt(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -763,33 +788,38 @@
     });
   }
 
-  onMount(() => {
-    // Mark html + body so the watch-route's :global() rules clear the
-    // page background chain, letting AVPlay's hardware overlay show.
-    // Both classes needed: html is the topmost paint surface, body is
-    // styled separately in app.css.
+  // The body-level transparency tricks + the <object application/avplayer>
+  // anchor are needed ONLY when AVPlay actually engages (video items).
+  // For audio playback we use the HTML5 <video> path and want the page
+  // to render normally; an empty AVPlay <object> sitting at the body
+  // root paints opaque firmware-black and would cover the music view.
+  function enableAvplayCompositing() {
     document.documentElement.classList.add('player-route');
     document.body.classList.add('player-route');
-
-    // Create the AVPlay anchor as a direct child of <body> so the
-    // firmware's chroma reservation isn't clipped by any wrapper
-    // ancestors' overflow / transform / opacity. Inline-style instead
-    // of CSS class for the same reason — fewer surprises.
-    if (avplay.available()) {
-      const a = document.createElement('object') as HTMLObjectElement;
-      a.type = 'application/avplayer';
-      a.setAttribute('width', '1920');
-      a.setAttribute('height', '1080');
-      a.style.position = 'absolute';
-      a.style.left = '0';
-      a.style.top = '0';
-      a.style.width = '1920px';
-      a.style.height = '1080px';
-      a.style.zIndex = '0';
-      document.body.insertBefore(a, document.body.firstChild);
-      avplayAnchor = a;
+    if (avplayAnchor || !avplay.available()) return;
+    const a = document.createElement('object') as HTMLObjectElement;
+    a.type = 'application/avplayer';
+    a.setAttribute('width', '1920');
+    a.setAttribute('height', '1080');
+    a.style.position = 'absolute';
+    a.style.left = '0';
+    a.style.top = '0';
+    a.style.width = '1920px';
+    a.style.height = '1080px';
+    a.style.zIndex = '0';
+    document.body.insertBefore(a, document.body.firstChild);
+    avplayAnchor = a;
+  }
+  function disableAvplayCompositing() {
+    document.documentElement.classList.remove('player-route');
+    document.body.classList.remove('player-route');
+    if (avplayAnchor && avplayAnchor.parentNode) {
+      avplayAnchor.parentNode.removeChild(avplayAnchor);
     }
+    avplayAnchor = null;
+  }
 
+  onMount(() => {
     const offKey = focusManager.pushKeyHandler(onKey);
 
     (async () => {
@@ -848,10 +878,24 @@
             loading = false;
             return;
           }
-          video.src = api.assetUrl(file.stream_url);
           reporter = new ProgressReporter(itemID);
           reporter.start(() => ({ positionMs: position, durationMs: duration }));
+          // Attach listeners BEFORE setting src — otherwise a fast
+          // loadedmetadata fires before the handler is wired, loading
+          // stays true forever, and the music view never appears.
           attachVideoListeners(video, startMs);
+          video.src = api.assetUrl(file.stream_url);
+          // Belt + suspenders: some webviews don't fire loadedmetadata
+          // for audio-only sources reliably. If we haven't flipped
+          // loading inside 8 s, force it off so the music view paints.
+          setTimeout(() => {
+            if (loading) {
+              dbg('audio loadedmetadata timeout — forcing loading=false');
+              loading = false;
+              void video?.play();
+              showControls();
+            }
+          }, 8000);
           return;
         }
 
@@ -892,6 +936,7 @@
           // Tizen hardware path. AVPlay handles HLS demux +
           // hardware decode; the <video> element below stays unused.
           usingAvPlay = true;
+          enableAvplayCompositing();
           dbg('avplay.open …');
           // Surface silent AVPlay failures as a visible error after
           // 30 s with no progress tick. Without this the user sees a
@@ -990,12 +1035,7 @@
     })();
 
     return () => {
-      document.documentElement.classList.remove('player-route');
-      document.body.classList.remove('player-route');
-      if (avplayAnchor && avplayAnchor.parentNode) {
-        avplayAnchor.parentNode.removeChild(avplayAnchor);
-      }
-      avplayAnchor = null;
+      disableAvplayCompositing();
       destroyLoadingEl();
       offKey();
       reporter?.stopped(position, duration);
@@ -1018,16 +1058,61 @@
   const progressPct = $derived(duration > 0 ? (position / duration) * 100 : 0);
 </script>
 
+<!-- Music / audiobook view rendered at route root, OUTSIDE the
+     .player container. The video-player overlays and AVPlay anchor
+     were ending up between this and the user; pulling it up to a
+     direct child of the route's template fragment means nothing
+     can clip or cover the now-playing screen. -->
+{#if isAudioItem && !loading && !error && item}
+  <div class="music-view">
+    <div class="music-content">
+      {#if item.poster_path}
+        <img class="music-art" src={api.assetUrl(`/artwork/${item.poster_path}?w=720`)} alt="" />
+      {:else}
+        <div class="music-art music-art-placeholder">♪</div>
+      {/if}
+      <div class="music-title">{item.title}</div>
+      <div class="music-meta">
+        {#if item.year}<span>{item.year}</span>{/if}
+        <span>{paused ? '❚❚ Paused' : '▶ Playing'}</span>
+      </div>
+      <div class="music-bar">
+        <div class="music-elapsed">{fmt(position)}</div>
+        <div class="music-track">
+          <div class="music-fill" style="width: {progressPct}%"></div>
+          {#each chapters as ch (ch.start_ms)}
+            {#if duration > 0}
+              <div class="music-chapter-marker" style="left: {(ch.start_ms / duration) * 100}%"></div>
+            {/if}
+          {/each}
+        </div>
+        <div class="music-remaining">-{fmt(duration - position)}</div>
+      </div>
+      <div class="music-hints">
+        <span>OK play / pause</span>
+        <span>← → seek 10s</span>
+        <span>◀◀ ▶▶ seek 30s</span>
+        {#if chapters.length > 0}<span>red/green chapters</span>{/if}
+        <span>back exit</span>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="player" onmousemove={showControls}>
   <!-- AVPlay anchor lives directly under <body> — created in onMount.
        Do not place it inside .player; ancestor overflow:hidden /
        stacking contexts can clip the firmware's chroma reservation. -->
 
   <!-- svelte-ignore a11y_media_has_caption -->
-  <!-- HTML5 <video> only used by the dev fallback path when AVPlay
-       isn't available. Hidden when AVPlay is driving so it can't
-       cover the hardware overlay. -->
-  <video bind:this={video} class="video" class:hidden={usingAvPlay} playsinline></video>
+  <!-- HTML5 <video> drives the dev fallback (vite preview) and the
+       audio-only direct-play path on TV. Hidden when AVPlay is in
+       charge (would cover the hardware overlay), AND for audio items
+       — audio plays through the element with no visible track, but
+       browsers paint a black rect for empty video that would sit on
+       top of the music view. -->
+  <video bind:this={video} class="video" class:hidden={usingAvPlay || isAudioItem} playsinline></video>
 
   <!-- Loading overlay is rendered IMPERATIVELY in onMount as a direct
        child of <body> — same pattern Jellyfin uses (jellyfin-web
@@ -1131,7 +1216,7 @@
     </div>
   {/if}
 
-  {#if controlsVisible && !loading && !error}
+  {#if !isAudioItem && controlsVisible && !loading && !error}
     <div class="controls">
       <div class="top">
         {#if item}<div class="now-playing">{item.title}</div>{/if}
@@ -1252,6 +1337,106 @@
     color: var(--text-secondary);
   }
 
+
+  /* ── Music / audiobook view ────────────────────────────────── */
+  .music-view {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    /* Plain flex centering — most widely supported pattern on the
+       Tizen webview (Chromium ~76). place-items / inset weren't
+       reliably centering on the panel. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #0d0d18 0%, #07070d 100%);
+    color: var(--text-primary);
+  }
+  .music-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    width: 1400px;
+    max-width: 90%;
+  }
+
+  .music-art {
+    width: 460px;
+    height: 460px;
+    object-fit: cover;
+    border-radius: 18px;
+    background: var(--bg-elevated);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  }
+  .music-art-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 180px;
+    color: var(--text-muted);
+  }
+  .music-title {
+    font-size: var(--font-2xl);
+    font-weight: 600;
+    text-align: center;
+    max-width: 1400px;
+    line-height: 1.2;
+  }
+  .music-meta {
+    display: flex;
+    gap: 24px;
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+  }
+  .music-bar {
+    display: grid;
+    grid-template-columns: 120px 1fr 120px;
+    align-items: center;
+    gap: 28px;
+    width: 100%;
+    color: var(--text-primary);
+    font-size: var(--font-md);
+    font-variant-numeric: tabular-nums;
+  }
+  .music-elapsed {
+    text-align: right;
+    color: var(--text-secondary);
+  }
+  .music-remaining {
+    text-align: left;
+    color: var(--text-secondary);
+  }
+  .music-track {
+    position: relative;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
+    overflow: visible;
+  }
+  .music-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 5px;
+  }
+  .music-chapter-marker {
+    position: absolute;
+    top: -5px;
+    width: 2px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.6);
+    transform: translateX(-1px);
+  }
+  .music-hints {
+    display: flex;
+    gap: 32px;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
 
   .controls {
     position: absolute;

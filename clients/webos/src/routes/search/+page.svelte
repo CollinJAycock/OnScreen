@@ -12,6 +12,7 @@
   import { endpoints, type SearchResult, Unauthorized } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import PosterCard from '$lib/components/PosterCard.svelte';
+  import TopNav from '$lib/components/TopNav.svelte';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import { openItem } from '$lib/nav';
@@ -99,6 +100,7 @@
 </script>
 
 <div class="page">
+  <TopNav />
   <h1>Search</h1>
 
   <div class="filter-row">
@@ -163,14 +165,14 @@
 
 <style>
   .page {
-    padding: var(--page-pad);
+    padding: 0 var(--page-pad) var(--page-pad);
     display: flex;
     flex-direction: column;
     gap: 24px;
   }
   h1 {
     font-size: var(--font-2xl);
-    margin: 0;
+    margin: 24px 0 0;
   }
   .filter-row {
     display: flex;

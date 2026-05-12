@@ -16,6 +16,7 @@
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import Spinner from '$lib/components/Spinner.svelte';
+  import TopNav from '$lib/components/TopNav.svelte';
   import { pushTo } from '$lib/nav';
 
   let recordings = $state<Recording[]>([]);
@@ -92,13 +93,8 @@
 </script>
 
 <div class="page">
-  <header>
-    <h1>Recordings</h1>
-    <nav class="links">
-      <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
-      <a href="#/livetv/" data-sveltekit-preload-data="false">live tv</a>
-    </nav>
-  </header>
+  <TopNav />
+  <h1>Recordings</h1>
 
   {#if error}<p class="error">{error}</p>{/if}
 
@@ -169,26 +165,12 @@
 
 <style>
   .page {
-    padding: 32px var(--page-pad) 0;
-  }
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 32px;
+    padding: 0 var(--page-pad);
   }
   h1 {
-    font-size: var(--font-xl);
-    margin: 0;
-    color: var(--accent);
+    font-size: var(--font-2xl);
+    margin: 24px 0 32px;
   }
-  .links {
-    display: flex;
-    gap: 32px;
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-  }
-  .links a { color: inherit; text-decoration: none; }
 
   .error { color: #fca5a5; }
   .empty { color: var(--text-secondary); }

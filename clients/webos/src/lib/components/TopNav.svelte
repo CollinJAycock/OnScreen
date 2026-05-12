@@ -1,9 +1,8 @@
 <script lang="ts">
-  // Shared top navigation bar for the TV hub-level pages (hub,
-  // search, favorites, history, discover, livetv, recordings,
-  // settings). Renders as pill buttons; the current route lights
-  // up with the accent color and the focus manager picks each pill
-  // up via use:focusable so D-pad navigates the bar.
+  // Shared top navigation bar for the hub-level pages. Renders as
+  // pill buttons; the current route lights up with the accent color
+  // and the focus manager picks each pill up via use:focusable so
+  // D-pad navigates the bar.
   import { focusable } from '$lib/focus/focusable';
   import { page } from '$app/state';
 
@@ -24,15 +23,10 @@
     { href: '#/settings/',   label: 'Settings' },
   ];
 
-  // Match by hash to highlight the current route. `page.url.pathname`
-  // doesn't reflect hash-mode routing; pull the hash off location.
   const currentHash = $derived(typeof location !== 'undefined' ? location.hash : '');
-  // page is read so the $derived re-runs on route change.
   $effect(() => { void page.url; });
 
   function isActive(href: string): boolean {
-    // Strip leading '#' so the comparison works whether
-    // currentHash is '#/hub/' or '/hub/'.
     const a = href.replace(/^#/, '').replace(/\/$/, '');
     const b = currentHash.replace(/^#/, '').replace(/\/$/, '');
     return a === b;
@@ -66,8 +60,8 @@
   }
 
   .brand {
-    /* Hard-override defaults — Tizen webview sometimes wins with the
-       user-agent <a> rules before scoped CSS takes effect. */
+    /* Hard-override the user-agent <a> defaults — webOS Chromium 79
+       sometimes wins before scoped CSS applies. */
     color: var(--accent);
     text-decoration: none !important;
     font-size: var(--font-xl);

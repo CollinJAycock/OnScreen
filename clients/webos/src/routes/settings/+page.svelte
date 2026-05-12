@@ -13,6 +13,7 @@
   import { api } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import TopNav from '$lib/components/TopNav.svelte';
   import { APP_VERSION } from '$lib/version';
 
   const username = $derived(api.getUser()?.username ?? '');
@@ -54,12 +55,8 @@
 </script>
 
 <div class="page">
-  <header>
-    <h1>Settings</h1>
-    <nav class="links">
-      <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
-    </nav>
-  </header>
+  <TopNav />
+  <h1>Settings</h1>
 
   <section>
     <div class="section-title">Account</div>
@@ -156,28 +153,11 @@
 
 <style>
   .page {
-    padding: 32px var(--page-pad) 0;
-  }
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 48px;
+    padding: 0 var(--page-pad);
   }
   h1 {
-    font-size: var(--font-xl);
-    margin: 0;
-    color: var(--accent);
-  }
-  .links {
-    display: flex;
-    gap: 32px;
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-  }
-  .links a {
-    color: inherit;
-    text-decoration: none;
+    font-size: var(--font-2xl);
+    margin: 24px 0 32px;
   }
 
   section {

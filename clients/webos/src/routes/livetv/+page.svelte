@@ -23,6 +23,7 @@
   import { focusManager } from '$lib/focus/manager';
   import { loadHls } from '$lib/player/hls-loader';
   import Spinner from '$lib/components/Spinner.svelte';
+  import TopNav from '$lib/components/TopNav.svelte';
 
   let channels = $state<Channel[]>([]);
   // Map of channel_id → [current, next] from the now-next response.
@@ -150,13 +151,8 @@
 
 {#if mode === 'grid'}
   <div class="page">
-    <header>
-      <h1>Live TV</h1>
-      <nav class="links">
-        <a href="#/hub/" data-sveltekit-preload-data="false">home</a>
-        <a href="#/recordings/" data-sveltekit-preload-data="false">recordings</a>
-      </nav>
-    </header>
+    <TopNav />
+    <h1>Live TV</h1>
 
     {#if error}
       <p class="error">{error}</p>
@@ -236,26 +232,12 @@
 
 <style>
   .page {
-    padding: 32px var(--page-pad) 0;
-  }
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 32px;
+    padding: 0 var(--page-pad);
   }
   h1 {
-    font-size: var(--font-xl);
-    margin: 0;
-    color: var(--accent);
+    font-size: var(--font-2xl);
+    margin: 24px 0 32px;
   }
-  .links {
-    display: flex;
-    gap: 32px;
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-  }
-  .links a { color: inherit; text-decoration: none; }
 
   .error { color: #fca5a5; padding: 16px 0; }
   .empty { color: var(--text-secondary); }
