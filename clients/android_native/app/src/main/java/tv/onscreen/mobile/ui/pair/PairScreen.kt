@@ -113,8 +113,14 @@ private fun ServerEntry(error: String?, onSubmit: (String) -> Unit) {
         value = url,
         onValueChange = { url = it },
         singleLine = true,
-        label = { Text("Server URL") },
-        placeholder = { Text("https://onscreen.example.com") },
+        label = { Text("Server address") },
+        placeholder = { Text("myserver.com  or  192.168.1.50:7070") },
+        supportingText = {
+            // The viewmodel normalises bare hosts to http://<lan> or
+            // https://<public> automatically, so users typing a raw
+            // IP or hostname don't have to pick a scheme themselves.
+            Text("No need to type http:// or https:// — we'll pick the right one.")
+        },
         modifier = Modifier.widthIn(max = 360.dp),
     )
     Spacer(Modifier.height(16.dp))

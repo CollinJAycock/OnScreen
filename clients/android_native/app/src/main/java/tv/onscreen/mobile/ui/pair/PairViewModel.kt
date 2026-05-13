@@ -38,7 +38,7 @@ class PairViewModel @Inject constructor(
 
     fun submitServerUrl(url: String) {
         if (url.isBlank()) return
-        val normalized = url.trim().let { if (it.startsWith("http")) it else "https://$it" }
+        val normalized = normalizeServerUrl(url)
         viewModelScope.launch {
             _state.value = PairState.CheckingServer
             when (val result = authRepo.checkServer(normalized)) {
@@ -170,6 +170,46 @@ class PairViewModel @Inject constructor(
         pollJob?.cancel()
         _state.value = PairState.NeedsServer
     }
+}
+
+/**
+ * Pick a scheme for a bare-host URL the user typed into the server
+ * field. Inputs that already carry a scheme are passed through as-is.
+ *
+ * Heuristic: hosts that look like RFC1918 / loopback / `.local` /
+ * `localhost` default to `http://` because the typical HomeLab box
+ * isn't running TLS. Everything else defaults to `https://` because a
+ * public DNS name almost always has a cert (Cloudflare tunnels,
+ * Tailscale Funnel, Let's Encrypt). This stops the "I typed
+ * 192.168.1.50:7070 and got a confusing TLS error" case without
+ * surprising remote users whose servers are HTTPS-only.
+ *
+ * Internal (not private) so the unit suite can exercise the
+ * heuristic without standing up a ViewModel.
+ */
+internal fun normalizeServerUrl(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.startsWith("http://", ignoreCase = true) ||
+        trimmed.startsWith("https://", ignoreCase = true)
+    ) {
+        return trimmed
+    }
+    // Strip path / port to isolate the host portion. `host:port/path`
+    // → `host`. IPv6 literals would arrive bracketed (`[::1]:7070`)
+    // but that path is unusual enough to leave to the user.
+    val host = trimmed
+        .substringBefore('/')
+        .substringBefore(':')
+        .lowercase()
+    val isPrivate = host == "localhost" ||
+        host.endsWith(".local") ||
+        host.matches(Regex("""^127\.\d+\.\d+\.\d+$""")) ||
+        host.matches(Regex("""^10\.\d+\.\d+\.\d+$""")) ||
+        host.matches(Regex("""^192\.168\.\d+\.\d+$""")) ||
+        host.matches(Regex("""^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$""")) ||
+        host == "::1"
+    val scheme = if (isPrivate) "http" else "https"
+    return "$scheme://$trimmed"
 }
 
 sealed class PairState {
