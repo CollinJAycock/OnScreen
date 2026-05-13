@@ -18,6 +18,7 @@ import androidx.leanback.widget.Presenter
 import coil.load
 import tv.onscreen.android.R
 import tv.onscreen.android.data.artworkUrl
+import tv.onscreen.android.data.normaliseScheme
 import tv.onscreen.android.data.model.*
 import tv.onscreen.android.data.model.MediaCollection
 
@@ -149,7 +150,7 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
             data.posterPath != null && serverUrl.isNotEmpty() ->
                 artworkUrl(serverUrl, data.posterPath)
             data.itemId != null && serverUrl.isNotEmpty() ->
-                "$serverUrl/api/v1/items/${data.itemId}/image?w=500"
+                "${normaliseScheme(serverUrl)}/api/v1/items/${data.itemId}/image?w=500"
             else -> null
         }
         if (url != null) {

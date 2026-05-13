@@ -61,11 +61,15 @@ class HomeFragment : BrowseSupportFragment() {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[HomeViewModel::class.java]
 
+        // Read serverUrl FIRST, then start collecting UI state. Two
+        // parallel coroutines raced before — if the cached API response
+        // landed before the prefs read finished, buildRows ran with
+        // serverUrl="" and CardPresenter fell through to the
+        // "no-url" branch, setting a flat colour tile in place of every
+        // poster. Symptom: black tiles on Fire TV (where the race lost
+        // reliably); intermittent on faster boot paths elsewhere.
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first() ?: ""
-        }
-
-        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiState.collectLatest { state ->
                 if (state.isLoading) return@collectLatest
                 val hasContent = state.continueWatchingTV.isNotEmpty() ||

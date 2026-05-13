@@ -59,14 +59,17 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             selectEffectEnabled = false
         })
 
-        viewLifecycleOwner.lifecycleScope.launch {
-            serverUrl = prefs.serverUrl.first() ?: ""
-        }
-
         // Re-render whenever any of the input streams change.
         // collectLatest keeps the most recent state; rebuildRows is
         // idempotent (clears + repopulates the adapter).
+        //
+        // serverUrl is read inside each collector so the read completes
+        // BEFORE the first rebuildRows. The previous structure launched
+        // the prefs read as a separate coroutine that raced against the
+        // state collectors — same race that made hub posters render as
+        // flat colour tiles on Fire TV.
         viewLifecycleOwner.lifecycleScope.launch {
+            serverUrl = prefs.serverUrl.first() ?: ""
             viewModel.visibleResults.collectLatest { rebuildRows() }
         }
         viewLifecycleOwner.lifecycleScope.launch {

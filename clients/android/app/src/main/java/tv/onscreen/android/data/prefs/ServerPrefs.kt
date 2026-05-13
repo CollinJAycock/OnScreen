@@ -51,7 +51,15 @@ class ServerPrefs(private val context: Context) {
     suspend fun getRefreshToken(): String? = refreshToken.first()
 
     suspend fun setServerUrl(url: String) {
-        context.dataStore.edit { it[KEY_SERVER_URL] = url.trimEnd('/') }
+        // Lowercase the scheme + strip trailing slashes. OkHttp's HttpUrl
+        // parses scheme case-insensitively so this is cosmetic for the
+        // API path — but Coil's fetcher matcher is case-SENSITIVE and
+        // refuses `Https://` URLs with "Unable to create a fetcher".
+        // Canonicalising on the way in keeps every consumer (Retrofit,
+        // Coil, BaseUrlInterceptor) reading the same value.
+        val trimmed = url.trim().trimEnd('/')
+        val canonical = tv.onscreen.android.data.normaliseScheme(trimmed)
+        context.dataStore.edit { it[KEY_SERVER_URL] = canonical }
     }
 
     suspend fun setTokens(accessToken: String, refreshToken: String) {
