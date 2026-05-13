@@ -20,14 +20,18 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "tv.onscreen.android"
-    compileSdk = 34
+    // compileSdk + targetSdk pinned to 35 per Play Console's Aug 2025
+    // requirement for app updates. Android TV / Leanback compatibility
+    // with API 35 is documented (no breaking changes for the
+    // BrowseSupportFragment / DetailsSupportFragment stacks we use).
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "tv.onscreen.android"
         minSdk = 21
-        targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.2"
+        targetSdk = 35
+        versionCode = 4
+        versionName = "1.0.3"
     }
 
     signingConfigs {
