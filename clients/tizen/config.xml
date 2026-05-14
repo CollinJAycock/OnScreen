@@ -15,8 +15,8 @@
 -->
 <widget xmlns="http://www.w3.org/ns/widgets"
         xmlns:tizen="http://tizen.org/ns/widgets"
-        id="https://onscreen.tv/tizen"
-        version="0.1.0"
+        id="http://samsungapps.com/onscreen/3202605045527"
+        version="1.0.0"
         viewmodes="maximized">
 
     <name>OnScreen</name>

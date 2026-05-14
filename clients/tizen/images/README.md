@@ -7,7 +7,13 @@ at the path below before sideloading.
 
 | File | Dimensions | Format | config.xml key |
 |---|---|---|---|
-| `../icon.png` | 512 × 512 | PNG | `<icon src="icon.png" />` |
+| `../icon.png` | 512 × 423 | PNG | `<icon src="icon.png" />` |
+
+Samsung Apps Store launcher tiles are wider than square — main
+image content must fit inside the inner 423 × 423 region centered
+on the 512-wide canvas (Samsung Self Checklist items #168–169).
+Earlier drafts of this README documented 512 × 512, which is wrong
+for store submission though it satisfies the bundler.
 
 (The icon lives at the project root, not in this `images/` dir —
 `scripts/assemble-package.mjs` copies it into `build/` alongside
@@ -19,7 +25,3 @@ For Samsung Apps store submission, additional artwork is required
 through the Seller Portal (banners, screenshots, app preview
 images) — those are uploaded separately, not bundled in the
 `.wgt`.
-
-For dev placeholder art, even a solid-coloured 512×512 PNG is
-enough to satisfy the bundler. Real artwork matching the OnScreen
-brand can land later — same workflow as `web/static/`.
