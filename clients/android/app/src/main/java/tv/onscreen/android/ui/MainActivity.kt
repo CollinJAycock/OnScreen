@@ -8,7 +8,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.device.ClientName
@@ -120,19 +123,36 @@ class MainActivity : FragmentActivity() {
      * lands on Home rather than walking up a stale stack.
      */
     private suspend fun listenForPlaybackTransfers() {
-        notifications.subscribePlaybackTransfers().collect { ev ->
-            if (ev.target_client_name != clientName.value) return@collect
-            if (supportFragmentManager.isStateSaved) return@collect
-            supportFragmentManager.popBackStack(
-                null,
-                androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
-            )
-            supportFragmentManager.beginTransaction()
-                .replace(
-                    R.id.main_container,
-                    PlaybackFragment.newInstance(ev.item_id, ev.position_ms),
-                )
-                .commitAllowingStateLoss()
+        // Reconnect loop with timeout-tolerance. The underlying SSE
+        // socket times out (java.net.SocketTimeoutException) under load
+        // — typically while a video is playing and the connection
+        // starves enough to miss the server's keepalive. Without this
+        // try/catch the timeout propagates up to lifecycleScope.launch
+        // on the main dispatcher and crashes the activity, kicking the
+        // user back to the Fire TV launcher mid-show while audio
+        // continues briefly on its own thread until the process dies.
+        // Same shape as PlaybackFragment.startCrossDeviceSync.
+        while (currentCoroutineContext().isActive) {
+            try {
+                notifications.subscribePlaybackTransfers().collect { ev ->
+                    if (ev.target_client_name != clientName.value) return@collect
+                    if (supportFragmentManager.isStateSaved) return@collect
+                    supportFragmentManager.popBackStack(
+                        null,
+                        androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
+                    )
+                    supportFragmentManager.beginTransaction()
+                        .replace(
+                            R.id.main_container,
+                            PlaybackFragment.newInstance(ev.item_id, ev.position_ms),
+                        )
+                        .commitAllowingStateLoss()
+                }
+            } catch (_: Exception) {
+                // Stream dropped (timeout, server restart, network blip);
+                // reconnect after a short delay.
+            }
+            delay(5_000)
         }
     }
 
