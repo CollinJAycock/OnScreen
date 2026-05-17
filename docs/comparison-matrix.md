@@ -39,7 +39,7 @@ Anime is a first-class library type — AniList runs primary instead of fallback
 | Hardware encode (VAAPI)                            |    ⚠    |  💎  |  💎  |    ✅    |
 | AV1 encode (NVENC)                                 |    ✅    |  💎  |  💎  |    ⚠    |
 | AV1 encode (QSV, Arc / Xe2)                        |    ✅    |  💎  |  ❌  |    ⚠    |
-| HDR → SDR tonemap                                  |    ✅    |  💎  |  💎  |    ✅    |
+| HDR → SDR tonemap                                  |    ✅    |  💎  |  💎  |    ✅    |s
 | Subtitle burn-in (PGS / VOBSUB)                    |    ✅    |  ✅  |  ✅  |    ✅    |
 | Subtitle OCR (PGS / VOBSUB → text WebVTT)          |    ✅    |  ❌  |  ❌  |    ⚠    |
 | Trickplay sprite sheets (BIF-shape)                |    ✅    |  💎  |  💎  |    ✅    |

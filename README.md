@@ -4,7 +4,7 @@ A modern, open-source media server. PostgreSQL-native. Single binary. Native cli
 
 ![OnScreen hub page](screenshots/hero.png)
 
-> **Status:** v2.1.0 tagged 2026-05-04 (beta running at https://onscreen.wolverscreen.com). Public API is stable; breaking changes are called out in [CHANGELOG.md](CHANGELOG.md).
+> **Status:** v2.2.0 tagged 2026-05-09 — server API now frozen under the [server-lock posture](docs/server-lock.md); v2.3+ ships additively. Beta runs at https://onscreen.wolverscreen.com. Headline v2.2 features: anime as a typed library (AniList primary, per-season franchise walk), watching-status mirror, library hygiene admin trays, HLS-only streaming. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md). Public API is stable; breaking changes are called out in [CHANGELOG.md](CHANGELOG.md).
 
 ## Why another media server?
 
@@ -34,8 +34,9 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 ## Features
 
 **Library**
-- Movies, TV shows, music, photos, **audiobooks**, **books / comics** (CBZ + CBR + EPUB), **music videos**, **home videos**, podcasts (local files); all scanned with ffprobe / EXIF / tag readers
-- TMDB + TVDB + MusicBrainz metadata enrichment with Cover Art Archive fallback
+- Movies, TV shows, **anime** (typed library with AniList primary metadata), music, photos, **audiobooks**, **books / comics** (CBZ + CBR + EPUB), **music videos**, **home videos**, podcasts (local files); all scanned with ffprobe / EXIF / tag readers
+- TMDB + TVDB + AniList + MusicBrainz metadata enrichment with Cover Art Archive fallback
+- Watching status (Plan to Watch / Watching / On Hold / Completed / Dropped) — generic, not anime-only — synced across every client
 - Audiophile-grade music: ID3/Vorbis/MP4 tag reading, MusicBrainz IDs, ReplayGain (track + album), bit depth, sample rate, channel layout, lossless detection
 - Audiobook hierarchy: `book_author → book_series → audiobook → audiobook_chapter` with multi-file resume snapping to chapter boundary
 - Photo libraries with EXIF (camera, lens, GPS, capture time), date-grouped browsing, EXIF search, map view, user-curated photo albums
@@ -60,10 +61,12 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 **Native clients**
 - **Web** (SvelteKit) — touch-optimised player, bottom-sheet menus, orientation lock, safe-area insets
 - **Desktop** (Tauri 2 on Windows / macOS / Linux) — reuses the SvelteKit bundle in a system webview; native Rust audio engine outside the webview decodes through symphonia 0.5 and writes raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect, OS mixer bypassed); DSD-via-DoP; ReplayGain enforcement; OS now-playing widget; OS media keys; system tray
-- **Android TV / Google TV / Fire TV** (Leanback + Media3) — browse rows, episode picker, direct-play + transcode, OpenSubtitles in player, Watch Next launcher integration, MediaSessionService for background music, D-pad seek
-- **Android phone** (Compose + Material 3) — pairing PIN sign-in, picture-in-picture for video, offline downloads
-- **LG webOS / Samsung Tizen / Roku** — feature-complete (pairing → hub → search → playback → audio/subtitle pickers → cross-device resume)
-- See [docs/comparison-matrix.md](docs/comparison-matrix.md) for current per-platform validation status.
+- **Android TV / Google TV** (Leanback + Media3) — on the Play Store **closed-testing track** as of 2026-05-13. Same APK serves Fire TV via Amazon Appstore (review queue, pending appeal).
+- **Android phone** (Compose + Material 3) — book/comic reader (CBZ/CBR/EPUB), Chromecast support, picture-in-picture, WorkManager-backed offline downloads, pair-PIN SSO bridge. Submitted to Play Store 2026-05-13.
+- **Samsung Tizen** (SvelteKit + tizen-package) — hardware-verified on a Samsung QN75Q80B 2022 panel; AVPlay HEVC + HDR10 + audio passthrough confirmed. Samsung Apps Store submission prepped under [`clients/tizen/SAMSUNG_APP_DESCRIPTION.md`](clients/tizen/SAMSUNG_APP_DESCRIPTION.md).
+- **LG webOS** (SvelteKit + ares-package) — code-complete; real LG-hardware soak still pending.
+- **Roku** (BrightScript + SceneGraph) — code-complete; real-device soak pending.
+- See [docs/comparison-matrix.md](docs/comparison-matrix.md) for current per-platform store-submission state, and [docs/store-assets/](docs/store-assets/) for all the screenshots / icons / banners uploaded to each console.
 
 **Multi-user & policy**
 - OIDC, OAuth (Google / GitHub / Discord), SAML 2.0 SP-initiated SSO with JIT provisioning, LDAP with group sync — all core, no plugin install
