@@ -83,11 +83,22 @@ New-Item -ItemType Directory -Path $bundleDir | Out-Null
 if (-not $SkipFrontend) {
     Write-Host "==> Building frontend..." -ForegroundColor Cyan
     Push-Location web
-    npm install --silent
-    if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-    npm run build
-    if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
-    Pop-Location
+    # PowerShell 5.1 wraps native-command stderr lines as ErrorRecords;
+    # combined with $ErrorActionPreference="Stop" that promotes any vite
+    # warning (e.g. "Unused CSS selector") into a script-killing throw
+    # despite npm exiting 0. Relax EAP just for the npm calls so exit
+    # codes — not stderr text — decide failure.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        npm install --silent
+        if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+        npm run build
+        if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+        Pop-Location
+    }
     if (Test-Path internal\webui\dist) { Remove-Item -Recurse -Force internal\webui\dist }
     Copy-Item -Recurse web\dist internal\webui\dist
 } else {
