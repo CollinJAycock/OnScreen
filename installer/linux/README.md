@@ -44,9 +44,22 @@ behavior on real hardware (NVIDIA NVENC, Intel VAAPI/QSV, AMD VAAPI).
 ```bash
 tar -xzf onscreen-linux-amd64-<VERSION>.tar.gz
 cd onscreen-linux-amd64-<VERSION>
+chmod +x *.sh server worker devtoken ffmpeg/*    # Unix exec bits aren't carried from Windows-built archives
 cp .env.example .env
 ${EDITOR:-nano} .env       # SECRET_KEY at minimum; MEDIA_PATH if not /srv/media
 ```
+
+If `./start.sh` reports something like `bash: ./start.sh: bad
+interpreter: No such file or directory`, the build host didn't
+normalise line endings before tarring. Quick fix:
+
+```bash
+sed -i 's/\r$//' *.sh
+```
+
+(The build script normalises CRLF before tarring, so a freshly built
+tarball shouldn't hit this — only matters if you grabbed an older
+artifact.)
 
 The location matters for the systemd unit: `install-service.sh` bakes
 the absolute path of the install dir into the unit file at install

@@ -160,6 +160,22 @@ foreach ($t in $templates) {
     Copy-Item $src $bundleDir
 }
 
+# ── Normalise line endings on shell + service files ──────────────────────────
+# Build hosts are Windows so anything authored or edited locally lands with
+# CRLF. Linux bash chokes on a `#!/bin/bash\r` shebang with "bash: not
+# found" (looking for the literal `bash\r` interpreter), and systemd is
+# similarly fussy about CRLF in unit files. Rewrite as LF before tarring.
+$lfNormalize = @("*.sh", "*.service", ".env.example", "docker-compose.deps.yml")
+foreach ($pattern in $lfNormalize) {
+    Get-ChildItem -Path $bundleDir -Filter $pattern -File | ForEach-Object {
+        $raw = Get-Content $_.FullName -Raw
+        if ($null -eq $raw) { return }
+        $lf = $raw -replace "`r`n", "`n"
+        # Write as UTF-8 without BOM, no trailing CRLF appended by Set-Content.
+        [System.IO.File]::WriteAllText($_.FullName, $lf, [System.Text.UTF8Encoding]::new($false))
+    }
+}
+
 # ── Stamp version into README ─────────────────────────────────────────────────
 $readmePath = Join-Path $bundleDir "README.md"
 (Get-Content $readmePath -Raw) `
@@ -175,6 +191,16 @@ if (Test-Path $tarPath) { Remove-Item -Force $tarPath }
 # Pass --owner=0 --group=0 so the archive isn't tagged with the
 # build-host's user — keeps install-service.sh's chown step idempotent.
 Push-Location $stageDir
+# Pass --owner=0 --group=0 so the archive isn't tagged with the
+# build-host's user — keeps install-service.sh's chown step idempotent.
+#
+# Note on file modes: bsdtar on Windows doesn't pick up Unix execute
+# bits from NTFS, so .sh and the Go binaries come out 0644 in the
+# archive. The README's Quickstart includes the `chmod +x *.sh server
+# worker devtoken ffmpeg/*` step right after extraction. The CRLF
+# normalisation above is what actually fixes most of the "not
+# recognized" symptoms — wrong line endings in #!/bin/bash break the
+# shebang outright; missing exe bits just need one chmod.
 tar --owner=0 --group=0 -czf $tarPath $bundleName
 Pop-Location
 if ($LASTEXITCODE -ne 0) { throw "tar create failed for $tarPath" }
