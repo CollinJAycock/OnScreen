@@ -26,6 +26,12 @@ set -a
 . ./.env
 set +a
 
+# Apply pending migrations before booting the server. Idempotent — goose
+# is a no-op when the schema is already current, so this is safe to run
+# on every start.
+echo "==> Applying migrations..."
+./migrate.sh
+
 # Prepend the bundled ffmpeg dir so the server's encoder probe finds it
 # before any system ffmpeg.
 if [ -d "$(pwd)/ffmpeg" ]; then

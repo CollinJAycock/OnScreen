@@ -15,6 +15,9 @@ behavior on real hardware (NVIDIA NVENC, Intel VAAPI/QSV, AMD VAAPI).
 | `server` | Main HTTP API + embedded web UI (static, CGO-disabled binary — runs on glibc 2.17+ and musl) |
 | `worker` | Transcode worker (runs in-process by default; this binary is for the multi-host fan-out path) |
 | `devtoken` | Issues a dev JWT for smoke-testing |
+| `goose` | Migration runner (pressly/goose) — applied automatically by `start.sh` + `migrate.sh` |
+| `migrations/` | SQL migrations consumed by `goose` |
+| `migrate.sh` | Wrapper that applies pending migrations (called by `start.sh` and `onscreen.service`) |
 | `onscreen.service` | systemd unit template (rendered into `/etc/systemd/system/` by `install-service.sh`) |
 | `ffmpeg/ffmpeg` + `ffprobe` | John Van Sickle static build — has NVENC, **VAAPI**, libsvtav1, libdav1d |
 | `start.sh` | Foreground launch (interactive use, Ctrl+C to stop) |
@@ -44,7 +47,7 @@ behavior on real hardware (NVIDIA NVENC, Intel VAAPI/QSV, AMD VAAPI).
 ```bash
 tar -xzf onscreen-linux-amd64-<VERSION>.tar.gz
 cd onscreen-linux-amd64-<VERSION>
-chmod +x *.sh server worker devtoken ffmpeg/*    # Unix exec bits aren't carried from Windows-built archives
+chmod +x *.sh server worker devtoken goose ffmpeg/*    # Unix exec bits aren't carried from Windows-built archives
 cp .env.example .env
 ${EDITOR:-nano} .env       # SECRET_KEY at minimum; MEDIA_PATH if not /srv/media
 ```

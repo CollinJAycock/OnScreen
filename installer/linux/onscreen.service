@@ -23,6 +23,10 @@ EnvironmentFile=${INSTALL_DIR}/.env
 # Prepend bundled ffmpeg to PATH so the encoder probe picks it up
 # before any system install. Mirror of start.sh.
 Environment="PATH=${INSTALL_DIR}/ffmpeg:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Apply DB migrations before serving traffic. Idempotent — goose only
+# runs what's missing. EnvironmentFile above already populated
+# DATABASE_URL, so migrate.sh just consumes it.
+ExecStartPre=${INSTALL_DIR}/migrate.sh
 ExecStart=${INSTALL_DIR}/server
 # Graceful shutdown: SIGTERM lets Go run its signal handler (close DB
 # pool, drain in-flight transcodes, etc.). 30 s is generous; bump if

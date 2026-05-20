@@ -153,6 +153,27 @@ if (-not $NoFfmpeg) {
     Write-Host "==> Skipping ffmpeg bundle (-NoFfmpeg)" -ForegroundColor Yellow
 }
 
+# ── goose + migrations ───────────────────────────────────────────────────────
+# The server does not auto-migrate; it gates readiness on goose_db_version
+# matching the embedded migration count. Bundle goose + the SQL files so
+# start.sh / install-service.sh can run `goose up` before booting the server.
+$gooseVersion = "v3.27.1"
+$gooseUrl = "https://github.com/pressly/goose/releases/download/$gooseVersion/goose_linux_x86_64"
+$gooseCache = Join-Path $cacheDir "goose_linux_x86_64_$gooseVersion"
+if (-not (Test-Path $gooseCache)) {
+    Write-Host "==> Downloading goose $gooseVersion..." -ForegroundColor Cyan
+    Invoke-WebRequest -Uri $gooseUrl -OutFile $gooseCache -UseBasicParsing
+}
+Copy-Item $gooseCache (Join-Path $bundleDir "goose")
+
+Write-Host "==> Copying migrations..." -ForegroundColor Cyan
+$migrationsSrc = Join-Path $root "internal\db\migrations"
+$migrationsDst = Join-Path $bundleDir "migrations"
+New-Item -ItemType Directory -Path $migrationsDst -Force | Out-Null
+Get-ChildItem -Path $migrationsSrc -Filter "*.sql" -File | ForEach-Object {
+    Copy-Item $_.FullName $migrationsDst
+}
+
 # ── Static templates ─────────────────────────────────────────────────────────
 Write-Host "==> Copying templates..." -ForegroundColor Cyan
 $templates = @(
@@ -161,6 +182,7 @@ $templates = @(
     "install-service.sh",
     "uninstall-service.sh",
     "start-deps.sh",
+    "migrate.sh",
     "docker-compose.deps.yml",
     ".env.example",
     "README.md"
@@ -208,7 +230,7 @@ Push-Location $stageDir
 # Note on file modes: bsdtar on Windows doesn't pick up Unix execute
 # bits from NTFS, so .sh and the Go binaries come out 0644 in the
 # archive. The README's Quickstart includes the `chmod +x *.sh server
-# worker devtoken ffmpeg/*` step right after extraction. The CRLF
+# worker devtoken goose ffmpeg/*` step right after extraction. The CRLF
 # normalisation above is what actually fixes most of the "not
 # recognized" symptoms — wrong line endings in #!/bin/bash break the
 # shebang outright; missing exe bits just need one chmod.
