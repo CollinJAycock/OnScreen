@@ -561,8 +561,42 @@ func buildVideoFilter(a BuildArgs) string {
 	var filters []string
 
 	isNVENC := a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC
+	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF
+	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
 	useCUDADecode := isNVENC && a.IsAV1 && !a.NeedsToneMap
 
+	// HDR→SDR tone mapping (zscale + tonemap=hable in CPU). Has to run
+	// BEFORE any hwupload — the zscale chain operates on CPU frames and
+	// can't reach hardware surfaces. Emitting the tonemap step up front
+	// means every downstream encoder (software, NVENC, AMF, QSV, VAAPI)
+	// sees 8-bit bt709 yuv420p frames in CPU memory ready to either
+	// pass straight through or upload to a hardware surface.
+	//
+	// AMF + QSV + VAAPI included unconditionally because none of them
+	// has a working vendor tonemap filter we trust in mainline ffmpeg
+	// (`tonemap_amf` / `tonemap_qsv` don't exist; `tonemap_vaapi`
+	// exists but its HDR-metadata handling varies by driver). The
+	// zscale path is slower than a true GPU pipeline but correct
+	// across every encoder family the project supports.
+	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale &&
+		(a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware ||
+			isAMF || isQSV || isNVENC || a.IsVAAPI)
+	if needsSoftwareTonemap {
+		// zscale-based tonemapping (libzimg required in FFmpeg build).
+		toneMap := strings.Join([]string{
+			"zscale=t=linear:npl=100",
+			"format=gbrpf32le",
+			"zscale=p=bt709",
+			"tonemap=tonemap=hable:desat=0",
+			"zscale=t=bt709:m=bt709:r=tv",
+			"format=yuv420p",
+		}, ",")
+		filters = append(filters, toneMap)
+	}
+
+	// VAAPI hwupload prep. Runs AFTER the tonemap chain so HDR sources
+	// get downconverted to bt709 yuv420p in CPU first, then re-formatted
+	// to nv12 and uploaded to a VAAPI surface for scale_vaapi + encode.
 	if a.IsVAAPI {
 		filters = append(filters, "format=nv12", "hwupload")
 	}
@@ -595,32 +629,7 @@ func buildVideoFilter(a BuildArgs) string {
 		}
 	}
 
-	// HDR→SDR tone mapping — CPU-based fallback when tonemap_cuda is unavailable.
-	// Requires zscale (libzimg). If neither tonemap_cuda nor zscale is available,
-	// tonemapping is skipped entirely (HDR content will look washed out but will play).
-	//
-	// AMF + QSV included here unconditionally on HDR sources: neither
-	// has a vendor-specific tonemap filter in mainline ffmpeg
-	// (`tonemap_amf` / `tonemap_qsv` don't exist), so the only way to
-	// feed HDR HEVC into these encoders without a colorspace failure
-	// is the zscale software path. Slower than the GPU pipeline but
-	// the iGPUs these encoders run on aren't ABR-grade workhorses
-	// anyway, and an HDR-to-SDR transcode is the rarer case.
-	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF
-	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
-	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale && (a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware || isAMF || isQSV || isNVENC)
-	if needsSoftwareTonemap {
-		// zscale-based tonemapping (libzimg required in FFmpeg build).
-		toneMap := strings.Join([]string{
-			"zscale=t=linear:npl=100",
-			"format=gbrpf32le",
-			"zscale=p=bt709",
-			"tonemap=tonemap=hable:desat=0",
-			"zscale=t=bt709:m=bt709:r=tv",
-			"format=yuv420p",
-		}, ",")
-		filters = append(filters, toneMap)
-	} else if !useCUDADecode && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
+	if !needsSoftwareTonemap && !useCUDADecode && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
 		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
 		// ("10-bit input video is not supported"). libx264 *accepts*
 		// 10-bit input but emits 10-bit High 10 profile H.264 — valid
