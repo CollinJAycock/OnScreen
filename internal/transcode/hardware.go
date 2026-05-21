@@ -15,7 +15,7 @@ type EncoderEntry struct {
 }
 
 // DetectEncoders probes available hardware encoders at startup (ADR-028).
-// Returns encoders in priority order: NVENC → QSV → VAAPI → software.
+// Returns encoders in priority order: NVENC → AMF → VAAPI → QSV → software.
 // override: comma-separated encoder list (e.g. "software"), empty = auto-detect.
 func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 	if override != "" {
@@ -62,24 +62,25 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 		}
 	}
 
-	// QSV / VAAPI (Intel — Linux only, requires DRI device). Intel Arc
-	// + 11th-gen+ iGPUs do AV1 encode via QSV. VAAPI and QSV are both
-	// probed independently: Intel hardware exposes both encoder
-	// families through the same iHD driver, and operators sometimes
-	// pick VAAPI explicitly via TRANSCODE_ENCODERS for stability or
-	// because the libmfx runtime is unavailable. Auto-detect priority
-	// still puts QSV first (it appears earlier in the slice), so the
-	// default selection doesn't change on boxes where both work.
+	// VAAPI / QSV (Intel + AMD on Linux — requires DRI device). Intel
+	// Arc + 11th-gen+ iGPUs expose both encoder families through the
+	// same iHD driver; AMD GPUs on Linux expose VAAPI via the Mesa
+	// radeonsi driver. We probe both independently and add VAAPI to
+	// the slice first so the default selection on Intel hardware
+	// prefers `h264_vaapi` / `hevc_vaapi` / `av1_vaapi` over their
+	// `*_qsv` siblings.
+	//
+	// VAAPI-first priority is the result of same-hardware benchmarks
+	// on an Intel Arc A770 (2026-05-21): the native VAAPI path is
+	// consistently 2–5× faster than QSV/libmfx on HDR sources for
+	// first-segment delivery (Dune 1080p HDR 2.6 s vs 12.9 s,
+	// Interstellar 6.2 s vs 15.5 s, GoodFellas 4K HDR 23.0 s vs
+	// 34.2 s). VAAPI has a more direct pipeline to the iHD driver —
+	// QSV adds a libmfx → VA-API shim that costs per-frame overhead.
+	// Operators on Intel boxes who need QSV explicitly (libmfx-
+	// specific features, vendor support contract) can pin it via
+	// TRANSCODE_ENCODERS=h264_qsv,hevc_qsv,av1_qsv.
 	if !skipDRI {
-		if probeEncoder(ctx, "h264_qsv") {
-			available = append(available, EncoderQSV)
-			if probeEncoder(ctx, "hevc_qsv") {
-				available = append(available, EncoderHEVCQSV)
-			}
-			if probeEncoder(ctx, "av1_qsv") {
-				available = append(available, EncoderAV1QSV)
-			}
-		}
 		if probeEncoder(ctx, "h264_vaapi") {
 			available = append(available, EncoderVAAPI)
 			if probeEncoder(ctx, "hevc_vaapi") {
@@ -87,6 +88,15 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 			}
 			if probeEncoder(ctx, "av1_vaapi") {
 				available = append(available, EncoderAV1VAAPI)
+			}
+		}
+		if probeEncoder(ctx, "h264_qsv") {
+			available = append(available, EncoderQSV)
+			if probeEncoder(ctx, "hevc_qsv") {
+				available = append(available, EncoderHEVCQSV)
+			}
+			if probeEncoder(ctx, "av1_qsv") {
+				available = append(available, EncoderAV1QSV)
 			}
 		}
 	}
