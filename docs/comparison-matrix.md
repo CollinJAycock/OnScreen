@@ -38,18 +38,18 @@ Anime is a first-class library type — AniList runs primary instead of fallback
 | Hardware encode (AMF)                              |    ✅    |  💎  |  💎  |    ✅    |
 | Hardware encode (VA-API stack, via QSV/libmfx)     |    ✅    |  💎  |  💎  |    ✅    |
 | Hardware encode (native ffmpeg `*_vaapi`)          |    ✅    |  💎  |  💎  |    ✅    |
-| AV1 encode (NVENC)                                 |    ✅    |  💎  |  💎  |    ⚠    |
-| AV1 encode (QSV, Arc / Xe2)                        |    ✅    |  💎  |  ❌  |    ⚠    |
-| AV1 encode (native VAAPI, Arc / RDNA3)             |    ✅    |  💎  |  ❌  |    ⚠    |
-| AV1 encode (AMF, RDNA3 dGPU only)                  |    ⚠    |  💎  |  ❌  |    ⚠    |
+| AV1 encode (NVENC)                                 |    ✅    |  💎  |  💎  |    ⚠     |
+| AV1 encode (QSV, Arc / Xe2)                        |    ✅    |  💎  |  ❌  |    ⚠     |
+| AV1 encode (native VAAPI, Arc / RDNA3)             |    ✅    |  💎  |  ❌  |    ⚠     |
+| AV1 encode (AMF, RDNA3 dGPU only)                  |    ⚠     |  💎  |  ❌  |    ⚠     |
 | HDR → SDR tonemap                                  |    ✅    |  💎  |  💎  |    ✅    |
 | Subtitle burn-in (PGS / VOBSUB)                    |    ✅    |  ✅  |  ✅  |    ✅    |
-| Subtitle OCR (PGS / VOBSUB → text WebVTT)          |    ✅    |  ❌  |  ❌  |    ⚠    |
+| Subtitle OCR (PGS / VOBSUB → text WebVTT)          |    ✅    |  ❌  |  ❌  |    ⚠     |
 | Trickplay sprite sheets (BIF-shape)                |    ✅    |  💎  |  💎  |    ✅    |
 | fMP4 HLS for HEVC + AV1 (vs MPEG-TS)               |    ✅    |  ✅  |  ✅  |    ✅    |
 | Adaptive bitrate ladder (multi-rendition HLS)      |    ❌    |  ✅  |  ✅  |    ✅    |
 | Multi-worker fleet (separate worker binary)        |    ✅    |  ❌  |  ❌  |    ❌    |
-| Per-session supersede (one stream per user / item) |    ✅    |  ✅  |  ⚠   |    ⚠    |
+| Per-session supersede (one stream per user / item) |    ✅    |  ✅  |  ⚠   |    ⚠     |
 
 Every hardware encoder family — NVENC, QSV, native VAAPI, AMF, plus their HEVC and AV1 variants — is hardware-validated end-to-end against the nine-movie coverage set (H.264 1080p, HEVC 1080p 10-bit, HEVC 4K HDR10, AV1 4K). Three full matrix runs against four planner branches in one day (66/66 transcode-session tests pass total): AV1 NVENC on RTX 5080 (2026-04-30); the full QSV family — `h264_qsv` / `hevc_qsv` / `av1_qsv` — and the native `*_vaapi` family — `h264_vaapi` / `hevc_vaapi` / `av1_vaapi` — both on an Intel Arc A770 box (2026-05-21); AMF (`h264_amf` / `hevc_amf`) forced on the local Windows box the same day. The HDR-to-SDR tonemap chain (zscale-linear → tonemap=hable → zscale bt709 → format=yuv420p) was confirmed firing on every path with `color_transfer=bt709` in the output segments — a fix landed 2026-05-21 to insert the chain BEFORE the VAAPI hwupload, which was previously skipped on the VAAPI branch.
 
