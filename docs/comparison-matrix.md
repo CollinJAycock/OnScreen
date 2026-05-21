@@ -1,6 +1,6 @@
 # OnScreen vs Plex / Emby / Jellyfin
 
-**Snapshot:** 2026-05-13 against v2.2.0 on `main` (server lock active; v2.2 anime track landed 2026-05-04; Android TV client on Play Store closed-testing track as of 2026-05-13; Fire TV client live on Amazon Appstore test channel same day; Android phone client submitted to Play Store, in first-review queue; Tizen client hardware-verified on a Samsung QN75Q80B 2022 panel between 2026-05-11 and 2026-05-12).
+**Snapshot:** 2026-05-21 against v2.2.0 on `main` (server lock active; v2.2 anime track landed 2026-05-04; Android TV client on Play Store closed-testing track as of 2026-05-13; Fire TV client live on Amazon Appstore test channel same day; Android phone client submitted to Play Store, in first-review queue; Tizen client hardware-verified on a Samsung QN75Q80B 2022 panel between 2026-05-11 and 2026-05-12, Samsung Apps Store submission package prepared 2026-05-17; Intel Arc QSV transcode path end-to-end-validated 2026-05-21 on an A770 against the full media-coverage set — `h264_qsv` / `hevc_qsv` / `av1_qsv` + HDR tonemap + AV1-4K decode all confirmed).
 
 **Legend** — ✅ in core · 💎 paid tier · 🧩 official plugin · ⚠ partial · ❌ not supported
 
@@ -39,7 +39,7 @@ Anime is a first-class library type — AniList runs primary instead of fallback
 | Hardware encode (VAAPI)                            |    ⚠    |  💎  |  💎  |    ✅    |
 | AV1 encode (NVENC)                                 |    ✅    |  💎  |  💎  |    ⚠    |
 | AV1 encode (QSV, Arc / Xe2)                        |    ✅    |  💎  |  ❌  |    ⚠    |
-| HDR → SDR tonemap                                  |    ✅    |  💎  |  💎  |    ✅    |s
+| HDR → SDR tonemap                                  |    ✅    |  💎  |  💎  |    ✅    |
 | Subtitle burn-in (PGS / VOBSUB)                    |    ✅    |  ✅  |  ✅  |    ✅    |
 | Subtitle OCR (PGS / VOBSUB → text WebVTT)          |    ✅    |  ❌  |  ❌  |    ⚠    |
 | Trickplay sprite sheets (BIF-shape)                |    ✅    |  💎  |  💎  |    ✅    |
@@ -48,7 +48,7 @@ Anime is a first-class library type — AniList runs primary instead of fallback
 | Multi-worker fleet (separate worker binary)        |    ✅    |  ❌  |  ❌  |    ❌    |
 | Per-session supersede (one stream per user / item) |    ✅    |  ✅  |  ⚠   |    ⚠    |
 
-VAAPI is the last encoder family pending hardware validation — TrueNAS GPU box is NVIDIA-only, an Intel Arc test rig is in the v2.1 backlog. AV1 NVENC was end-to-end-validated 2026-04-30 on RTX 5080. AMD AV1 encode requires an RDNA3 dGPU (Ryzen 9900X iGPU's RDNA2 VCN3 doesn't have an AV1 encoder block).
+NVENC + QSV are both hardware-validated end-to-end: AV1 NVENC on RTX 5080 (2026-04-30), and the full QSV family — `h264_qsv` / `hevc_qsv` / `av1_qsv` — on an Intel Arc A770 box (2026-05-21) against the standard nine-movie coverage set (H.264 1080p, HEVC 1080p 10-bit, HEVC 4K HDR10, AV1 4K). The HDR-to-SDR tonemap chain (zscale-linear → tonemap=hable → zscale bt709) was confirmed firing on both paths with `color_transfer=bt709` in the output segments. The `*_vaapi` encoder family proper (distinct from `*_qsv`, which sits on top of VA-API via libmfx) is still pending — Intel Arc exposes QSV as the preferred path, so a VAAPI-only validation needs a non-Intel VAAPI-capable rig. AMD AV1 encode requires an RDNA3 dGPU (Ryzen 9900X iGPU's RDNA2 VCN3 doesn't have an AV1 encoder block).
 
 OnScreen runs Tesseract on PGS / VOBSUB / DVB / XSUB streams and persists the results as `external_subtitles` rows so every client gets text-based playback (smaller bandwidth, restyleable, searchable) rather than burning the bitmap into the video stream. Plex and Emby only do burn-in; Jellyfin has community-plugin OCR. Trickplay generates 10-per-row sprite sheets at 10 s intervals with WebVTT `xywh` cues — same shape Plex Pass / Emby Premiere ship paid; OnScreen ships in core.
 
@@ -313,8 +313,8 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **iOS + Apple TV apps** *(vs Plex / Emby / Jellyfin)*. Out of scope until a Swift ramp + App Store review budget land.
 - **Tidal / Qobuz integration** *(vs Plex Pass)*. Sized XL — OAuth bind, library import, streaming passthrough, ReplayGain absent on the source side; not a near-term track.
 - **ML-driven personalised recommendations** *(vs Plex / Emby)*. Item-to-item collaborative filtering shipped and was pulled — the row didn't earn its space; trending row stays. Pgvector embedding pipeline never landed.
-- **TV-client hardware soak** *(vs all three)*. Code-complete on every platform; Android TV is hardware-verified and shipping via Play Store closed testing as of 2026-05-13. Fire TV (same Leanback APK as Android TV) live on Amazon Appstore test channel the same day. Android phone is hardware-verified, submitted to Play and in first-review queue. Tizen is hardware-verified on a 2022 Q80B panel as of 2026-05-12 (sideloaded; store submission pending). webOS / Roku still need real-device soak before Plex-class confidence.
-- **VAAPI hardware encode validation** *(vs Plex / Emby paid tiers; Jellyfin core)*. Three of four encoder families validated on real hardware. VAAPI needs a Linux + non-NVIDIA GPU rig the project doesn't yet have.
+- **TV-client hardware soak** *(vs all three)*. Code-complete on every platform; Android TV is hardware-verified and shipping via Play Store closed testing as of 2026-05-13. Fire TV (same Leanback APK as Android TV) live on Amazon Appstore test channel the same day. Android phone is hardware-verified, submitted to Play and in first-review queue. Tizen is hardware-verified on a 2022 Q80B panel as of 2026-05-12; Samsung Apps Store submission package (manifest + screenshots + listing copy) prepared 2026-05-17 and is the gate to ✅ in the table above. webOS / Roku still need real-device soak before Plex-class confidence.
+- **VAAPI hardware encode validation** *(vs Plex / Emby paid tiers; Jellyfin core)*. QSV on Intel Arc was the third encoder family validated (2026-05-21) — NVENC, QSV, and the AMF/libx264 fallback chain are all green. The `*_vaapi` encoder strings proper (distinct from `*_qsv` despite both rolling through VA-API at the kernel layer) still need a non-Intel VAAPI-capable Linux rig: Arc preferentially exposes QSV, so the Arc box doesn't exercise that planner branch.
 - **Adaptive bitrate HLS ladder** *(vs all three)*. OnScreen transcodes a single rendition per session and lets the operator-side bandwidth profile pick. Multi-rendition variant playlists with bandwidth-aware client switching are absent.
 - **AirPlay out** *(vs Plex / Emby; partial on Jellyfin)*. No path from web or desktop into the Apple TV / HomePod ecosystem. Cast and DLNA are tracked separately under "Deferred" below — see that section for why those two don't sit here.
 - **iOS offline downloads** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; iOS is the only portable surface still uncovered (TV / set-top platforms aren't candidates — they sit on the network and never go offline). Web + desktop now ship a "save the original file" download (admin-toggleable, default off), so the laptop-on-a-flight use case is already covered through the browser path.
