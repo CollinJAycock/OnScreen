@@ -272,7 +272,22 @@ SELECT session_epoch FROM users WHERE id = $1;
 -- only CreateUser path. Closes the race where two concurrent POST
 -- /auth/register requests could each see count=0 and both become
 -- admin.
+--
+-- The bare `WHERE NOT EXISTS (SELECT 1 FROM users)` is not atomic
+-- under Postgres's default Read Committed isolation: both concurrent
+-- transactions can read the snapshot-before-other's-commit, both see
+-- the table empty, and both INSERTs succeed (each with a different
+-- random username, so the username UNIQUE doesn't catch it). The
+-- `pg_advisory_xact_lock` in the CTE serialises the entire INSERT
+-- path on a single bootstrap-only lock key, held until the txn
+-- commits — so the second caller waits, then re-runs WHERE NOT
+-- EXISTS against the post-commit snapshot and sees the first admin,
+-- causing the INSERT to skip and return zero rows.
+WITH bootstrap_lock AS (
+    SELECT pg_advisory_xact_lock(hashtext('onscreen:first_admin'))
+)
 INSERT INTO users (username, email, password_hash, is_admin)
 SELECT $1, $2, $3, true
+FROM bootstrap_lock
 WHERE NOT EXISTS (SELECT 1 FROM users)
 RETURNING *;
