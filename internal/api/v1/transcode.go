@@ -662,23 +662,57 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	// output use fMP4 (.m4s); MPEG-TS sessions use .ts. Both layouts
 	// are single-rendition muxed (audio + video in one segment file),
 	// so the only difference is the file extension.
+	seg0Name := "seg00000.ts"
 	seg1Name := "seg00001.ts"
 	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && (sess.HEVCOutput || sess.AV1Output) {
+		seg0Name = "seg00000.m4s"
 		seg1Name = "seg00001.m4s"
 	}
 
-	// Wait for at least 2 segments before serving the initial playlist so
-	// HLS.js has enough buffer to survive its first playlist-poll interval (4 s).
+	// Wait for seg0 to land — that's the minimum a client needs to start
+	// playback. Once it's ready, opportunistically wait a little longer
+	// for seg1 so HLS.js has 2 entries on its first playlist parse, but
+	// don't block on it indefinitely: on slow inputs (SW HDR tonemap,
+	// flaky media drive, large remux source) seg1 can lag the worker's
+	// 60 s start-of-session grace by several seconds, and seg0-only is
+	// already enough for HLS.js to begin fetching.
+	//
+	// Each poll iteration stamps TouchActivity on the session so the
+	// worker's supervisor doesn't reap an actively-waiting client as
+	// "idle." Without this stamp the supervisor sees LastActivityAt=0,
+	// uses CreatedAt as the anchor, and kills the session at the 60 s
+	// mark even though the client (this handler) is blocked in the
+	// loop below.
+	const seg1ExtraGrace = 10 * time.Second
+	haveSeg0 := false
+	var seg1Deadline time.Time
 	for time.Now().Before(deadline) {
-		if workerReady(ctx, workerAddr, sessID, seg1Name, filepath.Join(sessDir, seg1Name)) {
-			break
+		if !haveSeg0 {
+			if workerReady(ctx, workerAddr, sessID, seg0Name, filepath.Join(sessDir, seg0Name)) {
+				haveSeg0 = true
+				seg1Deadline = time.Now().Add(seg1ExtraGrace)
+			}
+		} else {
+			if !time.Now().Before(seg1Deadline) ||
+				workerReady(ctx, workerAddr, sessID, seg1Name, filepath.Join(sessDir, seg1Name)) {
+				break
+			}
 		}
+		h.sessions.TouchActivity(ctx, sessionID)
 		select {
 		case <-ctx.Done():
 			http.Error(w, "request cancelled", http.StatusServiceUnavailable)
 			return
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+	if !haveSeg0 {
+		// Never produced anything in the window. ffmpeg likely died on
+		// input open (bad path, corrupt source, encoder init failure).
+		// Surface 503 so the player can show a useful error instead of
+		// hanging on a stale playlist URL.
+		http.Error(w, "playlist not ready", http.StatusServiceUnavailable)
+		return
 	}
 
 	data, err := fetchFromWorker(ctx, workerAddr, sessID, "index.m3u8", filepath.Join(sessDir, "index.m3u8"))
