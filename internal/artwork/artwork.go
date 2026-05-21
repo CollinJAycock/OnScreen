@@ -12,6 +12,7 @@ import (
 	"image/jpeg"
 	_ "image/png" // register PNG decoder
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,6 +27,16 @@ import (
 
 	"github.com/onscreen/onscreen/internal/safehttp"
 )
+
+// maxArtworkRedirects caps how many 3xx hops the artwork client will
+// chase. Refusing redirects outright (as webhook.SafeClient does) would
+// break Cover Art Archive, which 307s every release-art request from
+// coverartarchive.org to archive.org. Capping at a small number gives
+// defense-in-depth against a malicious source trying to spin the
+// fetcher through an arbitrarily-long redirect chain — typical artwork
+// providers chain 0 or 1 hops; 3 is comfortable headroom and rejects
+// abusive depths. The SSRF policy still gates every intermediate hop.
+const maxArtworkRedirects = 3
 
 // DownloadHTTPError is returned when an artwork URL responds with a
 // non-200 status. Callers that surface user-supplied URLs (the manual
@@ -62,11 +73,32 @@ type Manager struct {
 // (TMDB, Cover Art Archive, etc.) can't return URLs that pivot the
 // fetch into the operator's internal network — every dial is gated
 // post-resolution against the loopback / RFC1918 / link-local /
-// metadata-service ranges.
+// metadata-service ranges. The CheckRedirect override caps the
+// redirect chain at maxArtworkRedirects hops (see the comment on
+// that constant); a malicious source can't spin the fetcher through
+// an unbounded redirect chain to exhaust the request budget, but
+// legitimate providers that chain through a single redirect (Cover
+// Art Archive → archive.org) still resolve cleanly.
 func New(cachePath string) *Manager {
+	client := safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second)
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxArtworkRedirects {
+			first := ""
+			if len(via) > 0 {
+				first = via[0].URL.String()
+			}
+			slog.Default().Warn("artwork download: redirect chain capped",
+				"first_url", first,
+				"current_target", req.URL.String(),
+				"hop_count", len(via)+1,
+				"cap", maxArtworkRedirects)
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
 	return &Manager{
 		cachePath:  cachePath,
-		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second),
+		httpClient: client,
 		resizeSem:  make(chan struct{}, runtime.GOMAXPROCS(0)),
 	}
 }
