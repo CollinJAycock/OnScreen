@@ -262,6 +262,8 @@ func (s *stubSettingsService) General(_ context.Context) settings.GeneralConfig 
 func (s *stubSettingsService) SetGeneral(_ context.Context, _ settings.GeneralConfig) error {
 	return nil
 }
+func (s *stubSettingsService) WebDownloadsEnabled(_ context.Context) bool      { return false }
+func (s *stubSettingsService) SetWebDownloadsEnabled(_ context.Context, _ bool) error { return nil }
 
 // stubInviteDB satisfies v1.InviteDB with the minimum the admin-gate test needs.
 type stubInviteDB struct{}

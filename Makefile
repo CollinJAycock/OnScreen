@@ -68,8 +68,15 @@ test-unit:
 	$(GO) test -tags dev -count=1 -short ./internal/...
 
 ## test-int: run integration tests (testcontainers-go, requires Docker, <2min)
+##
+## The `integration` build tag is required: every testcontainer-backed
+## test in internal/db/gen, internal/api/v1, internal/domain/settings,
+## and internal/db/migrations sits behind a `//go:build integration`
+## guard so it doesn't slow `make test-unit`. Without it those files
+## don't even compile in and the suite silently runs ~18 transcode
+## tests instead of the full DB-backed surface.
 test-int:
-	$(GO) test -tags dev -count=1 -run Integration ./cmd/... ./internal/... ./test/...
+	$(GO) test -tags 'dev integration' -count=1 -run Integration ./cmd/... ./internal/... ./test/...
 
 ## test-e2e: run full stack tests via docker-compose (<5min)
 test-e2e:
