@@ -363,8 +363,14 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	isSourceAV1 := file.VideoCodec != nil && strings.EqualFold(*file.VideoCodec, "av1")
 	isSourceHDR := file.HDRType != nil && *file.HDRType != ""
 
-	// Use HEVC output for 4K when client supports it — 40% bitrate savings.
-	preferHEVC := body.SupportsHEVC && height >= 2160 && !body.VideoCopy
+	// HEVC output preference fires in two cases:
+	//   - Output is 4K (≥2160 lines): saves ~40 % bitrate for the same
+	//     visual quality vs H.264 at the same resolution.
+	//   - Source is HEVC and the client supports it: preserves the
+	//     format the source already paid for, instead of round-tripping
+	//     HEVC → H.264 just because the client also speaks H.264.
+	// Mirrors the AV1 source-preservation rule below.
+	preferHEVC := body.SupportsHEVC && !body.VideoCopy && (height >= 2160 || isSourceHEVC)
 	// Auto-prefer AV1 output for AV1-source playback when the client supports it.
 	// Avoids the AV1 → H.264 round-trip we'd otherwise do (any non-Auto quality
 	// click on an AV1 source). The worker confirms an AV1 encoder is actually
