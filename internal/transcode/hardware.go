@@ -59,7 +59,13 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 	}
 
 	// QSV / VAAPI (Intel — Linux only, requires DRI device). Intel Arc
-	// + 11th-gen+ iGPUs do AV1 encode via QSV.
+	// + 11th-gen+ iGPUs do AV1 encode via QSV. VAAPI and QSV are both
+	// probed independently: Intel hardware exposes both encoder
+	// families through the same iHD driver, and operators sometimes
+	// pick VAAPI explicitly via TRANSCODE_ENCODERS for stability or
+	// because the libmfx runtime is unavailable. Auto-detect priority
+	// still puts QSV first (it appears earlier in the slice), so the
+	// default selection doesn't change on boxes where both work.
 	if !skipDRI {
 		if probeEncoder(ctx, "h264_qsv") {
 			available = append(available, EncoderQSV)
@@ -69,7 +75,8 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 			if probeEncoder(ctx, "av1_qsv") {
 				available = append(available, EncoderAV1QSV)
 			}
-		} else if probeEncoder(ctx, "h264_vaapi") {
+		}
+		if probeEncoder(ctx, "h264_vaapi") {
 			available = append(available, EncoderVAAPI)
 			if probeEncoder(ctx, "hevc_vaapi") {
 				available = append(available, EncoderHEVCVAAPI)
