@@ -46,15 +46,19 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 		}
 	}
 
-	// AMF (AMD GPU — Windows only). RDNA2+ adds HEVC. AV1 AMF
-	// (RDNA3+) needs an EncoderAV1AMF constant that doesn't exist
-	// yet; deferred until AMD-AV1 hardware is on the test bench.
+	// AMF (AMD GPU — Windows only). RDNA2+ adds HEVC; RDNA3+ (Radeon
+	// 7000-series dGPU, Ryzen Phoenix 7040+ iGPU) adds AV1. The probe
+	// is a 1-second null encode, so on hardware without the AV1 block
+	// it fails fast and we just don't add EncoderAV1AMF.
 	if runtime.GOOS == "windows" {
 		if probeEncoder(ctx, "h264_amf") {
 			available = append(available, EncoderAMF)
 		}
 		if probeEncoder(ctx, "hevc_amf") {
 			available = append(available, EncoderHEVCAMF)
+		}
+		if probeEncoder(ctx, "av1_amf") {
+			available = append(available, EncoderAV1AMF)
 		}
 	}
 
@@ -80,6 +84,9 @@ func DetectEncoders(ctx context.Context, override string) ([]Encoder, error) {
 			available = append(available, EncoderVAAPI)
 			if probeEncoder(ctx, "hevc_vaapi") {
 				available = append(available, EncoderHEVCVAAPI)
+			}
+			if probeEncoder(ctx, "av1_vaapi") {
+				available = append(available, EncoderAV1VAAPI)
 			}
 		}
 	}
@@ -175,6 +182,23 @@ func probeEncoder(ctx context.Context, encoder string) bool {
 			"-c:v", "h264_vaapi",
 			"-f", "null", "-",
 		}
+	case "av1_vaapi":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-vaapi_device", "/dev/dri/renderD128",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1",
+			"-vf", "format=nv12,hwupload",
+			"-c:v", "av1_vaapi",
+			"-f", "null", "-",
+		}
+	case "av1_amf":
+		args = []string{
+			"-hide_banner", "-loglevel", "quiet",
+			"-f", "lavfi", "-i", "nullsrc=s=1280x720",
+			"-t", "1", "-c:v", "av1_amf",
+			"-f", "null", "-",
+		}
 	case "h264_amf":
 		args = []string{
 			"-hide_banner", "-loglevel", "quiet",
@@ -203,11 +227,11 @@ func EncoderLabel(enc Encoder) string {
 	switch enc {
 	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
 		return "NVIDIA GPU"
-	case EncoderAMF, EncoderHEVCAMF:
+	case EncoderAMF, EncoderHEVCAMF, EncoderAV1AMF:
 		return "AMD GPU"
 	case EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV:
 		return "Intel Quick Sync"
-	case EncoderVAAPI, EncoderHEVCVAAPI:
+	case EncoderVAAPI, EncoderHEVCVAAPI, EncoderAV1VAAPI:
 		return "VA-API"
 	case EncoderSoftware, EncoderHEVCSoftware, EncoderAV1Software:
 		return "Software (CPU)"
@@ -474,10 +498,14 @@ func ParseOverride(override string) []Encoder {
 			encoders = append(encoders, EncoderAMF)
 		case "hevc_amf":
 			encoders = append(encoders, EncoderHEVCAMF)
+		case "av1_amf":
+			encoders = append(encoders, EncoderAV1AMF)
 		case "vaapi", "h264_vaapi":
 			encoders = append(encoders, EncoderVAAPI)
 		case "hevc_vaapi":
 			encoders = append(encoders, EncoderHEVCVAAPI)
+		case "av1_vaapi":
+			encoders = append(encoders, EncoderAV1VAAPI)
 		case "qsv", "h264_qsv":
 			encoders = append(encoders, EncoderQSV)
 		case "hevc_qsv":

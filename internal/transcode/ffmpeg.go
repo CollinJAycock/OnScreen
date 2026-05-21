@@ -31,6 +31,8 @@ const (
 	EncoderAV1Software Encoder = "libsvtav1"
 	EncoderAV1NVENC    Encoder = "av1_nvenc" // RTX 40-series only
 	EncoderAV1QSV      Encoder = "av1_qsv"   // Intel ARC and 11th-gen+ iGPU
+	EncoderAV1VAAPI    Encoder = "av1_vaapi" // Intel ARC / AMD RDNA3 via VA-API (native ffmpeg branch)
+	EncoderAV1AMF      Encoder = "av1_amf"   // AMD RDNA3 dGPU on Windows (Ryzen iGPUs through Phoenix lack the AV1 block)
 )
 
 // EncoderOpts holds per-deployment encoder tuning knobs. Operators set these
@@ -327,7 +329,7 @@ func BuildHLS(a BuildArgs) []string {
 			// AV1 NVENC requires RTX 40-series; on older cards FFmpeg
 			// fails fast with "No NVENC capable device found" — that's
 			// the operator's GPU detection job, not ours.
-		case EncoderAMF, EncoderHEVCAMF:
+		case EncoderAMF, EncoderHEVCAMF, EncoderAV1AMF:
 			args = append(args,
 				"-quality", "balanced", "-rc", "cbr",
 				"-g", gopUpperBound,
@@ -335,6 +337,8 @@ func BuildHLS(a BuildArgs) []string {
 			)
 			args = append(args, forceKey...)
 			if a.Encoder == EncoderHEVCAMF {
+				// HEVC main profile; AV1 AMF has no equivalent profile flag
+				// and picks the level automatically from input dimensions.
 				args = append(args, "-profile:v", "main")
 			}
 		case EncoderHEVCQSV, EncoderAV1QSV:
@@ -351,13 +355,17 @@ func BuildHLS(a BuildArgs) []string {
 			if a.Encoder == EncoderHEVCQSV {
 				args = append(args, "-profile:v", "main")
 			}
-		case EncoderHEVCVAAPI:
+		case EncoderHEVCVAAPI, EncoderAV1VAAPI:
 			args = append(args,
 				"-g", gopUpperBound,
 				"-sc_threshold:v:0", "0",
-				"-profile:v", "main",
 			)
 			args = append(args, forceKey...)
+			if a.Encoder == EncoderHEVCVAAPI {
+				// HEVC main profile; AV1 VAAPI takes the level from input
+				// dimensions and has no equivalent profile flag.
+				args = append(args, "-profile:v", "main")
+			}
 		case EncoderAV1Software:
 			// libsvtav1 is the only realtime-capable AV1 software
 			// encoder. preset 8 is the live-streaming sweet spot per
@@ -561,7 +569,7 @@ func buildVideoFilter(a BuildArgs) string {
 	var filters []string
 
 	isNVENC := a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC
-	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF
+	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF || a.Encoder == EncoderAV1AMF
 	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
 	useCUDADecode := isNVENC && a.IsAV1 && !a.NeedsToneMap
 
@@ -615,7 +623,7 @@ func buildVideoFilter(a BuildArgs) string {
 	// Scale to target resolution, maintaining aspect ratio.
 	if a.Width > 0 && a.Height > 0 {
 		switch {
-		case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI:
+		case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI:
 			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 		case useCUDADecode:
 			// AV1 NVDEC path: keep frames in VRAM through scaling.
@@ -695,7 +703,8 @@ func IsHEVCEncoder(enc Encoder) bool {
 // MPEG-TS muxer doesn't carry AV1 cleanly across all browsers.
 func IsAV1Encoder(enc Encoder) bool {
 	switch enc {
-	case EncoderAV1Software, EncoderAV1NVENC, EncoderAV1QSV:
+	case EncoderAV1Software, EncoderAV1NVENC, EncoderAV1QSV,
+		EncoderAV1VAAPI, EncoderAV1AMF:
 		return true
 	}
 	return false

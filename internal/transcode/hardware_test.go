@@ -85,6 +85,13 @@ func TestParseOverride(t *testing.T) {
 		{"h264_vaapi", []Encoder{EncoderVAAPI}},
 		{"h264_qsv", []Encoder{EncoderQSV}},
 		{"h264_nvenc,h264_amf,libx264", []Encoder{EncoderNVENC, EncoderAMF, EncoderSoftware}},
+		// AV1 encoder strings
+		{"av1_nvenc", []Encoder{EncoderAV1NVENC}},
+		{"av1_qsv", []Encoder{EncoderAV1QSV}},
+		{"av1_vaapi", []Encoder{EncoderAV1VAAPI}},
+		{"av1_amf", []Encoder{EncoderAV1AMF}},
+		{"av1_software", []Encoder{EncoderAV1Software}},
+		{"libsvtav1", []Encoder{EncoderAV1Software}},
 		// unknown values are skipped; empty result defaults to software
 		{"bogus", []Encoder{EncoderSoftware}},
 		// mixed case
