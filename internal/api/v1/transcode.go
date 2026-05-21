@@ -24,6 +24,7 @@ import (
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
 
@@ -243,6 +244,49 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("you already have %d active streams (cap %d); stop one before starting another",
 				active, maxSessionsPerUser))
 		return
+	}
+
+	// Lazy re-probe: scan-time probesize/analyzeduration limits or a
+	// transient I/O blip during the initial scan can leave a file row
+	// with nil VideoCodec / ResolutionW / ResolutionH / HDRType. Without
+	// source dimensions and codec the planner can't pick HW decode or
+	// emit the correct tonemap chain — the resulting transcode either
+	// stalls (mis-sized canvas, no scale) or produces HDR-tagged SDR
+	// pixels. Re-probe synchronously on the transcode-start path; cheap
+	// for healthy files (probe completes in <500 ms) and only fires when
+	// the row is actually missing data.
+	if file.VideoCodec == nil || file.ResolutionW == nil || file.ResolutionH == nil {
+		if probed, perr := scanner.ProbeFile(ctx, file.FilePath); perr == nil && probed != nil {
+			if probed.VideoCodec != nil && file.VideoCodec == nil {
+				file.VideoCodec = probed.VideoCodec
+			}
+			if probed.ResolutionW != nil && file.ResolutionW == nil {
+				file.ResolutionW = probed.ResolutionW
+			}
+			if probed.ResolutionH != nil && file.ResolutionH == nil {
+				file.ResolutionH = probed.ResolutionH
+			}
+			if probed.HDRType != nil && file.HDRType == nil {
+				file.HDRType = probed.HDRType
+			}
+			if probed.Bitrate != nil && file.Bitrate == nil {
+				file.Bitrate = probed.Bitrate
+			}
+			vc, hdr := "", ""
+			if file.VideoCodec != nil {
+				vc = *file.VideoCodec
+			}
+			if file.HDRType != nil {
+				hdr = *file.HDRType
+			}
+			h.logger.InfoContext(ctx, "transcode: lazy re-probe filled missing source metadata",
+				"file_id", file.ID,
+				"video_codec", vc,
+				"hdr", hdr)
+		} else if perr != nil {
+			h.logger.WarnContext(ctx, "transcode: lazy re-probe failed",
+				"file_id", file.ID, "path", file.FilePath, "err", perr)
+		}
 	}
 
 	// Video-copy mode: remux video (no re-encode), only transcode audio.
