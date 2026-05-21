@@ -230,8 +230,12 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 				return nil // continue
 			}
 			if d.IsDir() {
-				// Skip the .artwork directory tree (artwork storage, not media).
-				if d.Name() == ".artwork" {
+				// Skip OnScreen's own .artwork tree + every filesystem-trash
+				// pattern (Samba recycle, Windows $RECYCLE.BIN, freedesktop
+				// .Trash-*, Synology @eaDir, etc.). Scanning these creates
+				// zombie media rows that the dedupe pass can't reconcile
+				// against the live tree because the file_path differs.
+				if shouldSkipDir(d.Name()) {
 					return filepath.SkipDir
 				}
 				return nil
@@ -1318,6 +1322,39 @@ func isImageFile(path string) bool {
 func isMusicFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	return musicExtensions[ext]
+}
+
+// shouldSkipDir returns true for directory names the scanner must not
+// descend into. Two classes:
+//
+//   - OnScreen's own conventions: `.artwork` is the artwork storage tree
+//     written by the artwork manager; not user media.
+//   - OS / filesystem trash patterns: Samba's vfs_recycle puts SMB-deleted
+//     content into `.recycle/<original>/` (and variants `#recycle`,
+//     `.recycle.bin`); Windows SMB clients use `$RECYCLE.BIN`; the
+//     freedesktop.org trash spec puts deleted-via-file-manager content
+//     into `.Trash/`, `.Trash-1000/`, `.Trash-1000-1/`; Synology DSM
+//     writes `@eaDir/` next to user files for thumb caches; Syncthing
+//     versions go to `.stversions`; macOS-over-network uses
+//     `.AppleDouble`; `lost+found` is ext4 fsck recovery space.
+//
+// All of these can contain what look like complete media trees (Samba
+// recycle in particular preserves the full folder shape) and create
+// zombie DB rows that bypass the dedupe pass because their file_path
+// differs from the live tree. None should ever be scanned.
+func shouldSkipDir(name string) bool {
+	switch name {
+	case ".artwork",
+		".recycle", "#recycle", ".recycle.bin",
+		"$RECYCLE.BIN",
+		"lost+found",
+		".stversions",
+		"@eaDir",
+		".AppleDouble":
+		return true
+	}
+	// Freedesktop trash spec: `.Trash`, `.Trash-NNN`, `.Trash-NNN-N`.
+	return strings.HasPrefix(name, ".Trash")
 }
 
 // videoExtensions are the container formats routed through the video

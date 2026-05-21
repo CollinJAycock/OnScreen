@@ -46,6 +46,14 @@ func (w *Watcher) WatchLibrary(libraryID uuid.UUID, paths []string) error {
 			if err != nil || !d.IsDir() {
 				return nil
 			}
+			// Mirror the scan walk's skip list — no point watching
+			// .recycle / $RECYCLE.BIN / .Trash-* / @eaDir / etc.,
+			// since the scanner will never descend into them anyway.
+			// Watching them just burns inotify watch budget and fires
+			// useless triggers when SMB clients delete things.
+			if shouldSkipDir(d.Name()) {
+				return filepath.SkipDir
+			}
 			if err := w.inner.Add(path); err != nil {
 				w.logger.Warn("failed to watch dir", "path", path, "err", err)
 			}
@@ -96,9 +104,18 @@ func (w *Watcher) Run(ctx context.Context, libraryID uuid.UUID) {
 			// watcher so files dropped inside it are also detected.
 			if event.Op&fsnotify.Create != 0 {
 				if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
+					// Don't subscribe to newly-created trash directories.
+					// SMB clients creating a .recycle/<name>/ tree should
+					// be invisible to the watcher.
+					if shouldSkipDir(fi.Name()) {
+						continue
+					}
 					_ = filepath.WalkDir(event.Name, func(p string, d os.DirEntry, err error) error {
 						if err != nil || !d.IsDir() {
 							return nil
+						}
+						if shouldSkipDir(d.Name()) {
+							return filepath.SkipDir
 						}
 						_ = w.inner.Add(p)
 						return nil

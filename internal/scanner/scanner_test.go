@@ -353,3 +353,58 @@ func fmtIntPtr(p *int) string {
 	}
 	return fmt.Sprintf("%d", *p)
 }
+
+func TestShouldSkipDir(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		// OnScreen-own convention.
+		{".artwork", true},
+
+		// Samba vfs_recycle module variants. .recycle is the default
+		// repository name; #recycle and .recycle.bin appear on some
+		// distros and admin configs.
+		{".recycle", true},
+		{"#recycle", true},
+		{".recycle.bin", true},
+
+		// Windows SMB clients sending an SMB-deleted folder.
+		{"$RECYCLE.BIN", true},
+
+		// Freedesktop trash spec — GNOME, KDE, file managers writing
+		// .Trash, .Trash-NNN (per-uid), .Trash-NNN-N (per-filesystem).
+		{".Trash", true},
+		{".Trash-1000", true},
+		{".Trash-1000-1", true},
+
+		// Synology DSM thumb / metadata cache.
+		{"@eaDir", true},
+
+		// Syncthing versions.
+		{".stversions", true},
+
+		// macOS over network (AFP, sometimes SMB).
+		{".AppleDouble", true},
+
+		// ext4 fsck recovery.
+		{"lost+found", true},
+
+		// Real media folders that must NOT be skipped, including ones
+		// with leading dots or with `recycle` / `trash` as substrings.
+		{"Movies", false},
+		{".hidden_user_folder", false},
+		{"TrashTheRoom (2024)", false},     // title contains "Trash"
+		{"Recycle (1990)", false},          // title is "Recycle"
+		{".something_else", false},
+		{"$NOTRECYCLE", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldSkipDir(tc.name); got != tc.want {
+				t.Errorf("shouldSkipDir(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
