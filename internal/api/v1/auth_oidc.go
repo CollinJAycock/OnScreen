@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -20,7 +21,22 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
+
+// oidcCtx decorates the request context so go-oidc and golang.org/x/oauth2
+// fetch the IdP's discovery doc, JWKS, and token endpoint through a safehttp
+// client. Mirrors the SAML metadata fetch posture in [auth_saml.go]: an
+// admin-set IssuerURL must not be able to pivot the discovery / token /
+// JWKS fetches onto a cloud-metadata service or RFC1918 internal endpoint
+// just because a session got hijacked. 30 s timeout matches SAML.
+//
+// Both oidc.NewProvider and oauth2.Exchange honor the oauth2.HTTPClient
+// context key that oidc.ClientContext sets, so decorating the ctx once
+// before any of those calls covers every OIDC outbound site.
+func oidcCtx(parent context.Context) context.Context {
+	return oidc.ClientContext(parent, safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second))
+}
 
 // OIDCSettingsReader is the slice of settings.Service the OIDC handler needs.
 // Defined locally so tests can pass a fake without importing the full service.
@@ -135,7 +151,7 @@ func (h *OIDCHandler) resolve(ctx context.Context) (settings.OIDCConfig, *oauth2
 		return cfg, h.oauth2, h.verifier, nil
 	}
 
-	provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
+	provider, err := oidc.NewProvider(oidcCtx(ctx), cfg.IssuerURL)
 	if err != nil {
 		return cfg, nil, nil, fmt.Errorf("oidc discovery: %w", err)
 	}
@@ -259,7 +275,12 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := oauth.Exchange(r.Context(), code, oauth2.VerifierOption(flow.CodeVerifier))
+	// Route the token exchange + JWKS-backed Verify through safehttp.
+	// IssuerURL is admin-controlled, so the IdP's token + jwks endpoints
+	// (resolved from the discovery doc) must not be allowed to point at
+	// internal addresses. Same reason resolve() already wraps NewProvider.
+	safeCtx := oidcCtx(r.Context())
+	token, err := oauth.Exchange(safeCtx, code, oauth2.VerifierOption(flow.CodeVerifier))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "oidc: token exchange", "err", err)
 		http.Redirect(w, r, "/login?error=oidc_failed", http.StatusTemporaryRedirect)
@@ -271,7 +292,7 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=oidc_failed", http.StatusTemporaryRedirect)
 		return
 	}
-	idToken, err := verifier.Verify(r.Context(), rawID)
+	idToken, err := verifier.Verify(safeCtx, rawID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "oidc: verify id_token", "err", err)
 		http.Redirect(w, r, "/login?error=oidc_failed", http.StatusTemporaryRedirect)
