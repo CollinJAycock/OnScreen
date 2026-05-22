@@ -64,6 +64,8 @@ import (
 	"github.com/onscreen/onscreen/internal/worker"
 
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib" // database/sql "pgx" driver for goose migrate
+	"github.com/pressly/goose/v3"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -74,10 +76,50 @@ var (
 )
 
 func main() {
+	// `server.exe migrate` applies the embedded DB migrations and exits.
+	// The server itself does NOT auto-migrate (it only gates on schema
+	// version); deployments apply migrations explicitly — Docker via
+	// `goose up`, the Linux installer via migrate.sh, and the Windows
+	// installer by invoking this subcommand from postinstall before the
+	// service starts.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := runMigrate(); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runMigrate applies all pending embedded migrations to DATABASE_URL using
+// goose, then returns. Idempotent — goose only runs what's missing.
+func runMigrate() error {
+	loadDotEnv()
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return errors.New("DATABASE_URL not set")
+	}
+	db, err := goose.OpenDBWithDriver("pgx", dsn)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer db.Close()
+
+	goose.SetBaseFS(dbmigrations.FS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		return fmt.Errorf("set dialect: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := goose.UpContext(ctx, db, "."); err != nil {
+		return fmt.Errorf("goose up: %w", err)
+	}
+	fmt.Println("migrations applied")
+	return nil
 }
 
 // loadDotEnv populates process env vars from a `.env` file if one exists.

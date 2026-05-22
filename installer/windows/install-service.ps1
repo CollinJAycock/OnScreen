@@ -70,6 +70,21 @@ Write-Host "==> Registering OnScreen service..." -ForegroundColor Cyan
 & $winsw install $xmlPath
 if ($LASTEXITCODE -ne 0) { throw "WinSW install failed (exit $LASTEXITCODE)" }
 
+# Apply DB migrations before the service starts — the server doesn't
+# auto-migrate (it only gates on schema version), so a fresh database
+# needs the schema applied or the server crash-loops on its first query.
+# Idempotent: goose only runs what's missing.
+Write-Host "==> Applying database migrations..." -ForegroundColor Cyan
+Get-Content $envPath | ForEach-Object {
+    if ($_ -match '^\s*(?:export\s+)?(\w+)\s*=\s*["'']?(.*?)["'']?\s*$') {
+        if ($Matches[1] -and $Matches[1] -notmatch '^\s*#') {
+            [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], "Process")
+        }
+    }
+}
+& (Join-Path $PSScriptRoot "server.exe") migrate
+if ($LASTEXITCODE -ne 0) { throw "database migration failed (exit $LASTEXITCODE)" }
+
 if (-not $NoStart) {
     Write-Host "==> Starting OnScreen service..." -ForegroundColor Cyan
     & $winsw start $xmlPath

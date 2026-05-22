@@ -171,6 +171,33 @@ function Register-WinswService {
 # registered yet).
 Register-WinswService "service-postgres.xml"
 Register-WinswService "service-redis.xml"
+
+# ── 6. Apply database migrations BEFORE starting OnScreen. ──
+# The server does not auto-migrate — it only gates on schema version — so
+# a fresh cluster has no schema and the server would crash-loop on its
+# first DB query (the "installs but won't start" failure). Mirrors the
+# Linux installer's migrate.sh / systemd ExecStartPre. Postgres was just
+# registered + started; wait for it to accept connections, then run the
+# embedded migrations via `server.exe migrate`. Re-running the installer
+# (repair/upgrade) re-applies safely — goose is idempotent.
+Write-Log "Waiting for Postgres to accept connections..."
+$pgIsReady = "$InstallDir\pgsql\bin\pg_isready.exe"
+$pgUp = $false
+for ($i = 0; $i -lt 60; $i++) {
+    & $pgIsReady -h localhost -p 5432 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { $pgUp = $true; break }
+    Start-Sleep -Milliseconds 500
+}
+if (-not $pgUp) { throw "Postgres did not become ready within 30 s; cannot migrate" }
+
+Write-Log "Applying database migrations..."
+$dbUrl = ((Get-Content $envFile | Where-Object { $_ -match '^DATABASE_URL=' }) -replace '^DATABASE_URL=', '').Trim().Trim('"')
+$env:DATABASE_URL = $dbUrl
+& "$InstallDir\server.exe" migrate 2>&1 | ForEach-Object { Write-Log "  migrate: $_" }
+$migrateExit = $LASTEXITCODE
+$env:DATABASE_URL = $null
+if ($migrateExit -ne 0) { throw "database migration failed (exit $migrateExit)" }
+
 Register-WinswService "service-onscreen.xml"
 
 Write-Log "All services up. Open http://localhost:7070 for setup."

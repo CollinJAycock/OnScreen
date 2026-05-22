@@ -38,6 +38,13 @@ if ($env:TOOLS_PATH) {
     $env:Path = "$env:TOOLS_PATH;$env:Path"
 }
 
+# Apply DB migrations first — the server doesn't auto-migrate (it only
+# gates on schema version), so a fresh database needs the schema applied
+# before the server can serve. Idempotent (goose skips applied versions).
+Write-Host "==> Applying database migrations..." -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot "server.exe") migrate
+if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: migration failed." -ForegroundColor Red; exit 1 }
+
 Write-Host "==> OnScreen server starting on http://localhost:7070" -ForegroundColor Cyan
 Write-Host "    Ctrl+C to stop (graceful)." -ForegroundColor Gray
 Write-Host
