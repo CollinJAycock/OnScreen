@@ -80,6 +80,14 @@ type Config struct {
 	TranscodeMaxBitrate   int  `env:"TRANSCODE_MAX_BITRATE_KBPS" envDefault:"40000"`
 	TranscodeMaxWidth     int  `env:"TRANSCODE_MAX_WIDTH"        envDefault:"3840"`
 	TranscodeMaxHeight    int  `env:"TRANSCODE_MAX_HEIGHT"       envDefault:"2160"`
+	// TranscodeABR turns on the adaptive-bitrate HLS ladder: the server
+	// emits a multi-rendition master playlist and the player switches
+	// rungs on real-time bandwidth. Off keeps the single-rendition path
+	// (one ffmpeg per session) — the cheaper default. TranscodeABRMaxHeight
+	// pins the ladder's top rung (0 = up to source resolution) so a
+	// bandwidth- or cost-constrained fleet can cap renditions.
+	TranscodeABR          bool `env:"TRANSCODE_ABR"            envDefault:"false"`
+	TranscodeABRMaxHeight int  `env:"TRANSCODE_ABR_MAX_HEIGHT" envDefault:"0"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`
