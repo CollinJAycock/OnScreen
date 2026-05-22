@@ -64,6 +64,15 @@ type Session struct {
 	// child's ffmpeg began encoding at. The segment handler maps a requested
 	// global index to the child-local file as local = global - StartSeg.
 	StartSeg int `json:"start_seg,omitempty"`
+	// ParentID links a CHILD rung session back to its ABR parent. Set only on
+	// children; the /sessions listing filters these out so an ABR stream shows
+	// as one card (the parent) rather than one per rung.
+	ParentID string `json:"parent_id,omitempty"`
+	// SelectedRendition is the rung label ("720p") the client most recently
+	// pulled a segment for, recorded on the PARENT. Surfaced as
+	// selected_rendition on /api/v1/sessions so operators see which bitrate
+	// the player's ABR logic actually settled on.
+	SelectedRendition string `json:"selected_rendition,omitempty"`
 }
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.
@@ -344,6 +353,36 @@ func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, w
 		ttl = sessionTTL
 	}
 	return s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
+}
+
+// SetSelectedRendition records on an ABR PARENT session which rung the client
+// most recently fetched a segment for, and refreshes the parent's activity so
+// its /sessions card stays live while playback rides on rung children. A no-op
+// when the rung is unchanged and the activity stamp is recent, to skip a Valkey
+// write on the common steady-state segment-by-segment case.
+func (s *SessionStore) SetSelectedRendition(ctx context.Context, sessionID, rungLabel string) {
+	raw, err := s.v.Get(ctx, sessionKey(sessionID))
+	if err != nil {
+		return
+	}
+	var sess Session
+	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		return
+	}
+	if sess.SelectedRendition == rungLabel && time.Since(sess.LastActivityAt) < 2*time.Second {
+		return
+	}
+	sess.SelectedRendition = rungLabel
+	sess.LastActivityAt = time.Now()
+	b, err := json.Marshal(sess)
+	if err != nil {
+		return
+	}
+	ttl := s.v.Raw().TTL(ctx, sessionKey(sessionID)).Val()
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	_ = s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
 }
 
 // SetHeartbeat writes/refreshes the session heartbeat key (2s TTL reset to 10s).

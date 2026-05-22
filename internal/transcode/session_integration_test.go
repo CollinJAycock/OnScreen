@@ -81,6 +81,48 @@ func TestIntegration_SessionStore_List(t *testing.T) {
 	}
 }
 
+func TestIntegration_SessionStore_SetSelectedRendition(t *testing.T) {
+	v := testvalkey.New(t)
+	store := NewSessionStore(v)
+	ctx := context.Background()
+
+	sess := Session{
+		ID:          NewSessionID(),
+		UserID:      uuid.New(),
+		MediaItemID: uuid.New(),
+		FileID:      uuid.New(),
+		Decision:    "transcode",
+		FilePath:    "/media/movie.mkv",
+		CreatedAt:   time.Now().UTC(),
+		ABR:         true,
+	}
+	if err := store.Create(ctx, sess); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	store.SetSelectedRendition(ctx, sess.ID, "720p")
+	got, err := store.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.SelectedRendition != "720p" {
+		t.Errorf("SelectedRendition: got %q, want 720p", got.SelectedRendition)
+	}
+	if got.LastActivityAt.IsZero() {
+		t.Error("SetSelectedRendition should refresh LastActivityAt")
+	}
+
+	// A rung switch is recorded.
+	store.SetSelectedRendition(ctx, sess.ID, "480p")
+	got, _ = store.Get(ctx, sess.ID)
+	if got.SelectedRendition != "480p" {
+		t.Errorf("after switch: got %q, want 480p", got.SelectedRendition)
+	}
+
+	// Unknown session is a silent no-op (no panic).
+	store.SetSelectedRendition(ctx, "no-such-session", "1080p")
+}
+
 func TestIntegration_SessionStore_Heartbeat(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)

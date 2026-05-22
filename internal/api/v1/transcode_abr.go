@@ -226,6 +226,11 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Telemetry: record which rung the player's ABR logic is pulling, and keep
+	// the parent's /sessions card live (playback activity rides on the rung
+	// children otherwise). Cheap no-op when the rung is unchanged.
+	h.sessions.SetSelectedRendition(ctx, sessionID, rungLabel)
+
 	childID := abrChildID(sessionID, rungLabel)
 	// Create the rung child if absent (ensureRungChild also restarts it when
 	// the request is behind its StartSeg).
@@ -380,6 +385,7 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		CreatedAt:   time.Now(),
 		SegToken:    parent.SegToken,
 		StartSeg:    globalSeg,
+		ParentID:    parent.ID, // marks this as a rung child; hidden from /sessions
 	}
 	if err := h.sessions.Create(ctx, childSess); err != nil {
 		h.logger.ErrorContext(ctx, "create rung child session", "child", childID, "err", err)

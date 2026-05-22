@@ -55,6 +55,9 @@ type activeSession struct {
 	PosterPath  *string `json:"poster_path,omitempty"`
 	DurationMS  *int64  `json:"duration_ms,omitempty"`
 	BitrateKbps *int    `json:"bitrate_kbps,omitempty"`
+	// SelectedRendition is the ABR rung the player's adaptive logic settled on
+	// (e.g. "720p"). Empty for non-ABR sessions.
+	SelectedRendition *string `json:"selected_rendition,omitempty"`
 }
 
 // List handles GET /api/v1/sessions.
@@ -90,6 +93,12 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 			// LastActivityAt will have a zero value, so CreatedAt is used —
 			// sessions created more than sessionActivityTimeout ago with no
 			// activity are considered stale and hidden.
+			// Rung children of an ABR parent are internal — an ABR stream shows
+			// as the single parent card, not one per rung.
+			if s.ParentID != "" {
+				continue
+			}
+
 			activity := s.LastActivityAt
 			if activity.IsZero() {
 				activity = s.CreatedAt
@@ -109,6 +118,22 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 			if s.BitrateKbps > 0 {
 				br := s.BitrateKbps
 				as.BitrateKbps = &br
+			}
+			// ABR: surface the rung the player settled on, and report that
+			// rung's bitrate (the parent itself runs no encode, so its own
+			// BitrateKbps is 0).
+			if s.ABR && s.SelectedRendition != "" {
+				label := s.SelectedRendition
+				as.SelectedRendition = &label
+				for _, rd := range s.ABRRenditions {
+					if rd.Label == label {
+						if rd.BitrateKbps > 0 {
+							br := rd.BitrateKbps
+							as.BitrateKbps = &br
+						}
+						break
+					}
+				}
 			}
 			if mi, ok := itemMap[s.MediaItemID]; ok {
 				as.Title = mi.Title
