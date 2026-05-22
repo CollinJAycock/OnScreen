@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,7 +81,12 @@ func float64PtrToNumeric(f *float64) pgtype.Numeric {
 		return pgtype.Numeric{}
 	}
 	var n pgtype.Numeric
-	_ = n.Scan(*f)
+	// pgtype.Numeric.Scan rejects a raw float64 ("cannot scan float64") and
+	// leaves the value invalid → the column is written NULL. Scan the decimal
+	// string form instead. See cmd/server/adapter.go for the full story.
+	if err := n.Scan(strconv.FormatFloat(*f, 'f', -1, 64)); err != nil {
+		return pgtype.Numeric{}
+	}
 	return n
 }
 
@@ -313,10 +319,6 @@ func genMediaFileToFile(f gen.MediaFile) media.File {
 }
 
 func createFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
-	var frameRate pgtype.Numeric
-	if p.FrameRate != nil {
-		_ = frameRate.Scan(*p.FrameRate)
-	}
 	return gen.CreateMediaFileParams{
 		MediaItemID:     p.MediaItemID,
 		FilePath:        p.FilePath,
@@ -328,7 +330,7 @@ func createFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 		ResolutionH:     intPtrToInt32Ptr(p.ResolutionH),
 		Bitrate:         p.Bitrate,
 		HdrType:         p.HDRType,
-		FrameRate:       frameRate,
+		FrameRate:       float64PtrToNumeric(p.FrameRate),
 		AudioStreams:    p.AudioStreams,
 		SubtitleStreams: p.SubtitleStreams,
 		Chapters:        p.Chapters,
@@ -675,10 +677,6 @@ func (a *mediaAdapter) UpdateMediaFilePath(ctx context.Context, id uuid.UUID, ne
 }
 
 func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p media.CreateFileParams) error {
-	var frameRate pgtype.Numeric
-	if p.FrameRate != nil {
-		_ = frameRate.Scan(*p.FrameRate)
-	}
 	return a.q.UpdateMediaFileTechnicalMetadata(ctx, gen.UpdateMediaFileTechnicalMetadataParams{
 		ID:              id,
 		Container:       p.Container,
@@ -688,7 +686,7 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		ResolutionH:     intPtrToInt32Ptr(p.ResolutionH),
 		Bitrate:         p.Bitrate,
 		HdrType:         p.HDRType,
-		FrameRate:       frameRate,
+		FrameRate:       float64PtrToNumeric(p.FrameRate),
 		AudioStreams:    p.AudioStreams,
 		SubtitleStreams: p.SubtitleStreams,
 		Chapters:        p.Chapters,

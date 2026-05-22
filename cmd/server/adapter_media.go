@@ -350,10 +350,6 @@ func (a *mediaAdapter) UpdateMediaFilePath(ctx context.Context, id uuid.UUID, ne
 }
 
 func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p media.CreateFileParams) error {
-	var frameRate pgtype.Numeric
-	if p.FrameRate != nil {
-		_ = frameRate.Scan(*p.FrameRate)
-	}
 	return a.q.UpdateMediaFileTechnicalMetadata(ctx, gen.UpdateMediaFileTechnicalMetadataParams{
 		ID:              id,
 		Container:       p.Container,
@@ -363,7 +359,7 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		ResolutionH:     intPtrToInt32Ptr(p.ResolutionH),
 		Bitrate:         p.Bitrate,
 		HdrType:         p.HDRType,
-		FrameRate:       frameRate,
+		FrameRate:       float64PtrToNumeric(p.FrameRate),
 		AudioStreams:    p.AudioStreams,
 		SubtitleStreams: p.SubtitleStreams,
 		Chapters:        p.Chapters,
