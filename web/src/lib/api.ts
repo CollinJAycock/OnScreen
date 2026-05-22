@@ -645,6 +645,24 @@ export const missingArtApi = {
   list: () => api.get<MissingArtListResponse>('/admin/items/missing-art')
 };
 
+// ── Admin Maintenance (bulk one-shot operations) ──────────────────────────────
+
+export interface ReprobeResult {
+  files_cleared: number;
+  libraries_queued: number;
+}
+
+export const maintenanceApi = {
+  // Re-probes existing files to backfill technical metadata (frame_rate,
+  // replaygain_*) that the old persist bug dropped to NULL. Clears file
+  // hashes so the next scan can't fast-skip, then enqueues that scan.
+  // Optional libraryId scopes it; omit for every library.
+  reprobeMetadata: (libraryId?: string) => {
+    const qs = libraryId ? `?library_id=${encodeURIComponent(libraryId)}` : '';
+    return api.post<ReprobeResult>(`/maintenance/reprobe-metadata${qs}`);
+  }
+};
+
 // ── Invites (admin) ───────────────────────────────────────────────────────────
 
 export const inviteApi = {

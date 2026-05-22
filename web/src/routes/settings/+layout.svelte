@@ -40,11 +40,12 @@
     {
       label: 'Library',
       href: '/settings/unmatched',
-      matches: ['/settings/unmatched', '/settings/missing-art', '/settings/tasks'],
+      matches: ['/settings/unmatched', '/settings/missing-art', '/settings/tasks', '/settings/maintenance'],
       children: [
         { href: '/settings/unmatched', label: 'Fix Match' },
         { href: '/settings/missing-art', label: 'Set Poster' },
         { href: '/settings/tasks', label: 'Tasks' },
+        { href: '/settings/maintenance', label: 'Maintenance' },
       ],
     },
     {
