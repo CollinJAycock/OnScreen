@@ -398,11 +398,12 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 //
 // Routed through safehttp so an admin who pastes a malformed IdP URL
 // (or whose admin session is hijacked) can't pivot the metadata fetch
-// at a cloud-metadata service / RFC1918 internal HTTP endpoint. SAML
-// IdPs commonly live inside operator networks; for the genuinely-
-// private-IP case, switch to safehttp.LocalDevice() per-deployment.
+// at a cloud-metadata service. SAML IdPs commonly live inside operator
+// networks, so the policy allows RFC1918 + loopback (matching LDAP and
+// the OIDC path in auth_oidc.go) while keeping link-local — the
+// cloud-metadata range — blocked.
 func fetchIdPMetadata(ctx context.Context, idpURL string) (*saml.EntityDescriptor, error) {
-	hc := safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second)
+	hc := safehttp.NewClient(safehttp.DialPolicy{AllowPrivate: true, AllowLoopback: true}, 30*time.Second)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, idpURL, nil)
 	if err != nil {
 		return nil, err

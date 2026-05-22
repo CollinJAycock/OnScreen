@@ -26,16 +26,25 @@ import (
 
 // oidcCtx decorates the request context so go-oidc and golang.org/x/oauth2
 // fetch the IdP's discovery doc, JWKS, and token endpoint through a safehttp
-// client. Mirrors the SAML metadata fetch posture in [auth_saml.go]: an
-// admin-set IssuerURL must not be able to pivot the discovery / token /
-// JWKS fetches onto a cloud-metadata service or RFC1918 internal endpoint
-// just because a session got hijacked. 30 s timeout matches SAML.
+// client, blocking the cloud-metadata SSRF vector (a hijacked admin setting
+// IssuerURL to http://169.254.169.254/… can't pivot the discovery fetch
+// into AWS/GCP instance metadata).
+//
+// Policy matches LDAP ([auth_ldap.go]): AllowPrivate + AllowLoopback, but
+// link-local stays blocked. Self-hosted OnScreen overwhelmingly runs its
+// IdP (Keycloak / Authentik / Authelia) on the LAN, in the same Docker
+// network, or on localhost — exactly the RFC1918 / loopback ranges a bare
+// DialPolicy{} would reject. LDAP already accepts that same admin-
+// configured-URL trust model for directory servers; OIDC has no reason to
+// be stricter. Link-local (169.254.0.0/16) remains denied because that's
+// the cloud-metadata range, the one SSRF target worth keeping shut.
 //
 // Both oidc.NewProvider and oauth2.Exchange honor the oauth2.HTTPClient
 // context key that oidc.ClientContext sets, so decorating the ctx once
 // before any of those calls covers every OIDC outbound site.
 func oidcCtx(parent context.Context) context.Context {
-	return oidc.ClientContext(parent, safehttp.NewClient(safehttp.DialPolicy{}, 30*time.Second))
+	policy := safehttp.DialPolicy{AllowPrivate: true, AllowLoopback: true}
+	return oidc.ClientContext(parent, safehttp.NewClient(policy, 30*time.Second))
 }
 
 // OIDCSettingsReader is the slice of settings.Service the OIDC handler needs.
