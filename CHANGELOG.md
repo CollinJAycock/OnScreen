@@ -9,6 +9,84 @@ The server API is frozen as of **v2.2.0** — see [docs/server-lock.md](docs/ser
 for the lock posture and what's expected to land in v2.3+ minor
 releases without breaking v2.2 clients.
 
+## [v2.3.0] — 2026-05-22
+
+Additive release under the server lock — no breaking API changes. A
+sustained transcode-hardening pass (validated across NVENC, Intel QSV,
+Intel + AMD VAAPI, and AMF on real hardware), two new AV1 encoder
+families, SSRF hardening on the SSO paths, and a scanner fix for
+filesystem-trash directories.
+
+### Added — server
+
+- **AV1 encode via VAAPI and AMF** — `av1_vaapi` (Intel Arc + AMD
+  RDNA4 / radeonsi) and `av1_amf` (Windows AMD RDNA3+) join the
+  existing `av1_nvenc` / `av1_qsv` paths. Probe-gated: an encoder only
+  appears if a 1-second test encode succeeds on the host, so cards
+  without an AV1 block are silently skipped.
+- **Scanner skips filesystem-trash directories** — `.recycle`,
+  `#recycle`, `$RECYCLE.BIN`, `.Trash*`, `@eaDir`, `.stversions`,
+  `.AppleDouble`, `lost+found` are no longer walked. Samba's
+  `vfs_recycle` (which moves SMB-deleted content into `.recycle/` with
+  the folder tree intact) was causing the scanner to ingest deleted
+  shows as zombie duplicate rows.
+
+### Changed — server
+
+- **VAAPI preferred over QSV in auto-detect** on Intel hardware where
+  both are present — the native `*_vaapi` path is 2–5× faster than
+  QSV/libmfx on HDR sources on Arc. Operators can pin QSV via
+  `TRANSCODE_ENCODERS=h264_qsv,…`.
+- **`supports_hevc` honored for HEVC sources** — an HEVC source played
+  by an HEVC-capable client now stays HEVC instead of round-tripping
+  to H.264 (mirrors the existing AV1 source-preservation rule).
+
+### Fixed — transcode
+
+- **HDR tonemap on the VAAPI path** — the zscale tonemap chain now runs
+  before the VAAPI hwupload. HDR sources transcoded via `*_vaapi` were
+  producing 8-bit output still tagged `smpte2084`/`bt2020` (washed-out,
+  banded); they now correctly emit `bt709`.
+- **Playlist serves on the first segment** instead of waiting for two,
+  and the long-poll stamps session activity — slow-first-segment cases
+  (HDR, large remux, flaky media) no longer get reaped by the worker's
+  idle timer mid-startup. First-segment latency roughly halved on light
+  sources.
+- **Lazy re-probe at transcode start** — a file row left without
+  codec/dimensions/HDR metadata (transient I/O blip during scan, or an
+  oversized source) is re-probed before planning, so the planner picks
+  the right scale + tonemap chain instead of mis-sizing the canvas.
+- **VAAPI probed independently of QSV** — both Intel encoder families
+  are now detected when present rather than QSV short-circuiting VAAPI.
+
+### Fixed — security / auth
+
+- **OIDC discovery / token / JWKS routed through `safehttp`** — closes
+  an SSRF vector where an admin-set (or hijacked) issuer URL could
+  pivot the discovery fetch onto a cloud-metadata service. SAML already
+  did this.
+- **OIDC + SAML allow LAN / loopback IdPs** — the SSRF hardening uses
+  the same policy as LDAP (`AllowPrivate` + `AllowLoopback`, link-local
+  still denied), so a Keycloak / Authentik / Authelia on the LAN, in a
+  Docker network, or on localhost works while the cloud-metadata range
+  stays blocked. Validated end-to-end against Keycloak.
+- **First-admin creation serialized** with a Postgres advisory lock —
+  concurrent `/auth/register` calls during the bootstrap window could
+  each pass the `WHERE NOT EXISTS` guard and create multiple admins.
+- **Artwork download redirect chain capped** at 3 hops with logging —
+  bounds a malicious metadata source from spinning the fetcher through
+  an unbounded redirect chain (Cover Art Archive's single hop to
+  archive.org still resolves).
+
+### Fixed — tests / build
+
+- **Integration suite unblocked** — `make test-int` now passes the
+  `integration` build tag (17 testcontainer-gated files were silently
+  never compiling in), a stale settings stub gained its missing
+  methods, and the destructive migration round-trip test is skipped
+  with a documented reason. Running the suite this way is what surfaced
+  the first-admin race above.
+
 ## [v2.2.0] — 2026-05-09
 
 First "lock the server" cut. Anime track shipped, Live TV / DVR
