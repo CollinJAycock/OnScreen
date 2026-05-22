@@ -19,7 +19,6 @@ behavior on real hardware (NVIDIA NVENC, Intel VAAPI/QSV, AMD VAAPI).
 | `migrations/` | SQL migrations consumed by `goose` |
 | `migrate.sh` | Wrapper that applies pending migrations (called by `start.sh` and `onscreen.service`) |
 | `onscreen.service` | systemd unit template (rendered into `/etc/systemd/system/` by `install-service.sh`) |
-| `ffmpeg/ffmpeg` + `ffprobe` | John Van Sickle static build — has NVENC, **VAAPI**, libsvtav1, libdav1d |
 | `start.sh` | Foreground launch (interactive use, Ctrl+C to stop) |
 | `install-service.sh` | Register systemd unit + enable at boot |
 | `uninstall-service.sh` | Remove the unit (leaves files in place) |
@@ -32,22 +31,32 @@ behavior on real hardware (NVIDIA NVENC, Intel VAAPI/QSV, AMD VAAPI).
 
 - **Linux x86_64**, glibc 2.17+ or musl — no other system libs required
   for the server itself.
+- **ffmpeg + ffprobe on `PATH`** — this build does **not** bundle ffmpeg
+  on Linux; it uses the distro's, which already wires up the right VAAPI
+  driver for your GPU. Install via your package manager:
+  - Debian/Ubuntu: `sudo apt install ffmpeg`
+  - Fedora/RHEL: `sudo dnf install ffmpeg` (RPM Fusion) or `ffmpeg-free`
+  - Arch: `sudo pacman -S ffmpeg`
+  Confirm with `ffmpeg -hide_banner -encoders | grep -E 'nvenc|vaapi|qsv'`.
+  The server shells out to bare `ffmpeg`, so as long as it's on `PATH`
+  the encoder probe finds it.
 - **Docker Engine 20.10+** with the `compose` v2 plugin (or legacy
   `docker-compose`) for the dependencies (Postgres + Valkey).
   *Alternative:* install Postgres 16 + Valkey/Redis natively if you
   prefer — the server only cares about `DATABASE_URL` and `VALKEY_URL`.
 - **GPU drivers** (only if you want hardware transcoding):
-  - NVIDIA: proprietary driver + `cuda-runtime` package. The static
-    ffmpeg dlopens `libcuda.so.1` + `libnvidia-encode.so.1`.
-  - Intel/AMD VAAPI: `libva2` + vendor driver (`intel-media-driver`
-    or `mesa-va-drivers`). Verify with `vainfo`.
+  - NVIDIA: proprietary driver + `cuda-runtime`; a distro ffmpeg built
+    with `--enable-nvenc` (most are). Verify NVENC shows in the encoder
+    list above.
+  - Intel/AMD VAAPI: `libva2` + vendor driver (`intel-media-driver` for
+    Arc/iGPU, `mesa-va-drivers` for AMD radeonsi). Verify with `vainfo`.
 
 ### 2. Extract and configure
 
 ```bash
 tar -xzf onscreen-linux-amd64-<VERSION>.tar.gz
 cd onscreen-linux-amd64-<VERSION>
-chmod +x *.sh server worker devtoken goose ffmpeg/*    # Unix exec bits aren't carried from Windows-built archives
+chmod +x *.sh server worker devtoken goose    # Unix exec bits aren't carried from Windows-built archives
 cp .env.example .env
 ${EDITOR:-nano} .env       # SECRET_KEY at minimum; MEDIA_PATH if not /srv/media
 ```
@@ -110,8 +119,8 @@ directory, `.env`, media, and Postgres/Valkey state are untouched.
 ## Updating
 
 1. Stop the service: `sudo systemctl stop onscreen`.
-2. Replace `server` / `worker` / `devtoken` / `ffmpeg/*` with the new
-   binaries (preserve `.env` and any data you've put alongside).
+2. Replace `server` / `worker` / `devtoken` with the new binaries
+   (preserve `.env` and any data you've put alongside).
 3. Start the service: `sudo systemctl start onscreen`.
 
 The Postgres database holds all the state — schema migrations run
@@ -131,10 +140,12 @@ If your GPU isn't in the `active` list:
 
 - NVIDIA: confirm `nvidia-smi` works under your user. If it does but
   ffmpeg still doesn't see NVENC, check `ffmpeg -hide_banner -encoders | grep nvenc`
-  using the bundled `./ffmpeg/ffmpeg`.
+  — if it's empty, your distro ffmpeg was built without NVENC; install a
+  build that has it (e.g. RPM Fusion's `ffmpeg`, or a static johnvansickle
+  build placed on `PATH`).
 - VAAPI: `vainfo` must show `VAEntrypointEncSlice` for H.264 / HEVC.
-  Add the run user to the `video` group: `sudo usermod -aG video $USER`,
-  then re-login.
+  Add the run user to the `video` (and on some distros `render`) group:
+  `sudo usermod -aG video,render $USER`, then re-login.
 
 ## Troubleshooting
 
@@ -150,7 +161,10 @@ If your GPU isn't in the `active` list:
   which lets the user read their own home but blocks writes there —
   fine for media browsing.
 
-- **Container ffmpeg vs bundled ffmpeg**: the bundled one is in
-  `./ffmpeg/`. The systemd unit prepends that to `PATH` so it wins
-  over any system install. If you'd rather use a system ffmpeg, edit
-  the `Environment="PATH=…"` line in the unit file.
+- **ffmpeg not found / encoder probe empty**: this Linux build relies
+  on the distro's ffmpeg (see Prereqs). If `start.sh` logs no encoders
+  or the server can't transcode, confirm `which ffmpeg` resolves under
+  the run user and that the systemd unit's `PATH` includes its
+  directory (`/usr/bin` is on the default unit `PATH`). To pin a
+  specific ffmpeg, set `TOOLS_PATH` in `.env` to its directory — the
+  server prepends `TOOLS_PATH` to `PATH` at startup.

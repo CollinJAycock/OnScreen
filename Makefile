@@ -42,8 +42,12 @@ installer-windows-msi:
 	powershell -NoProfile -ExecutionPolicy Bypass -File installer/windows-msi/build.ps1
 
 ## installer-linux: build the portable Linux test tarball (dist/onscreen-linux-amd64-<ver>.tar.gz)
+## Linux ships WITHOUT bundled ffmpeg — the distro's ffmpeg wires up the
+## correct VAAPI driver (radeonsi/iHD) per GPU, and a bundled static
+## build can miss that. The tarball README tells operators to apt/dnf
+## install ffmpeg. Pass nothing to bundle (-NoFfmpeg is the default here).
 installer-linux:
-	powershell -NoProfile -ExecutionPolicy Bypass -File installer/linux/build.ps1
+	powershell -NoProfile -ExecutionPolicy Bypass -File installer/linux/build.ps1 -NoFfmpeg
 
 ## frontend: build SvelteKit SPA and sync into Go embed directory
 frontend:

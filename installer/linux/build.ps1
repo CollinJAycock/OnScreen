@@ -4,8 +4,14 @@
 #
 # Contents:
 #   - server / worker / devtoken      (Go binaries, linux/amd64, static)
-#   - ffmpeg/ffmpeg + ffprobe         (John Van Sickle static build, ships
-#                                      with NVENC + VAAPI + libsvtav1 + libdav1d)
+#   - ffmpeg/ffmpeg + ffprobe         (ONLY with -BundleFfmpeg; Linux ships
+#                                      without it by default — the distro's
+#                                      ffmpeg wires up the right VAAPI driver
+#                                      per GPU, which a bundled static build
+#                                      can miss. `make installer-linux` passes
+#                                      -NoFfmpeg; the README tells operators
+#                                      to install ffmpeg from their package
+#                                      manager.)
 #   - start.sh                        (foreground launch)
 #   - install-service.sh              (registers systemd unit)
 #   - uninstall-service.sh            (removes the unit)
