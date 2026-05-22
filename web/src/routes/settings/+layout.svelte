@@ -31,8 +31,11 @@
     {
       label: 'General',
       href: '/settings',
-      matches: ['/settings'],
-      children: [],
+      matches: ['/settings', '/settings/security'],
+      children: [
+        { href: '/settings', label: 'General' },
+        { href: '/settings/security', label: 'Security' },
+      ],
     },
     {
       label: 'Library',
@@ -88,11 +91,12 @@
     },
   ];
 
-  // The General group's "matches" is just /settings, but every other
-  // settings route also starts with /settings — so plain prefix
-  // matching makes General match everything. Special-case it.
+  // The General group's pages all live directly under /settings (the
+  // General page itself + Security), but every OTHER settings route also
+  // starts with /settings — so plain prefix matching would make General
+  // match everything. Enumerate its exact pages instead.
   function groupActive(g: Group, current: string): boolean {
-    if (g.label === 'General') return current === '/settings';
+    if (g.label === 'General') return current === '/settings' || current === '/settings/security';
     return g.matches.some((m) => current === m || current.startsWith(m + '/'));
   }
 

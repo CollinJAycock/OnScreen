@@ -310,6 +310,7 @@ export class ApiClient {
     method: string,
     path: string,
     body?: unknown,
+    retry = true,
   ): Promise<T> {
     const finalPath = this.withViewAs(method, path);
     return this.requestWithRetry(
@@ -328,7 +329,8 @@ export class ApiClient {
           throw new Error(err.error?.message ?? `HTTP ${resp.status}`);
         }
         return (json as ApiResponse<T>).data;
-      }
+      },
+      retry,
     );
   }
 
@@ -411,6 +413,10 @@ export class ApiClient {
 
   get = <T>(path: string) => this.request<T>('GET', path);
   post = <T>(path: string, body?: unknown) => this.request<T>('POST', path, body);
+  /** POST that does NOT attempt the 401→refresh→logout cascade. For
+   *  pre-session auth steps (TOTP verify) where a 401 means "wrong
+   *  code, retry", not "session dead, bounce to /login". */
+  postNoRefresh = <T>(path: string, body?: unknown) => this.request<T>('POST', path, body, false);
   put = <T>(path: string, body?: unknown) => this.request<T>('PUT', path, body);
   patch = <T>(path: string, body?: unknown) => this.request<T>('PATCH', path, body);
   del = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
@@ -475,6 +481,11 @@ export interface TokenPair {
   user_id: string;
   username: string;
   is_admin: boolean;
+  /** Set when a TOTP-enabled account cleared the password step but owes
+   *  a second factor. access/refresh are empty; post the code +
+   *  login_challenge_token to authApi.totp.verify to finish. */
+  totp_required?: boolean;
+  login_challenge_token?: string;
 }
 
 /** Capture the access + refresh + asset tokens from a successful auth
@@ -488,8 +499,26 @@ async function captureTokens(pair: TokenPair): Promise<TokenPair> {
 
 export const authApi = {
   setupStatus: () => api.get<{ setup_required: boolean }>('/setup/status'),
-  login: async (username: string, password: string) =>
-    captureTokens(await api.post<TokenPair>('/auth/login', { username, password })),
+  login: async (username: string, password: string) => {
+    const pair = await api.post<TokenPair>('/auth/login', { username, password });
+    // A TOTP-gated account returns no tokens yet — don't persist empties;
+    // the caller drives the second-factor step and captures on verify.
+    if (pair.totp_required) return pair;
+    return captureTokens(pair);
+  },
+  /** Two-factor auth. setup/activate/disable/status are authenticated
+   *  (Settings → Security); verify is the public login second step. */
+  totp: {
+    status: () => api.get<{ enabled: boolean; recovery_codes_remaining: number }>('/auth/totp/status'),
+    setup: () => api.post<{ otpauth_url: string; secret: string }>('/auth/totp/setup'),
+    activate: (code: string) => api.post<{ recovery_codes: string[] }>('/auth/totp/activate', { code }),
+    disable: (code: string) => api.post<{ enabled: boolean }>('/auth/totp/disable', { code }),
+    verify: async (loginChallengeToken: string, code: string) =>
+      captureTokens(await api.postNoRefresh<TokenPair>('/auth/totp/verify', {
+        login_challenge_token: loginChallengeToken,
+        code,
+      })),
+  },
   register: (username: string, password: string, email?: string) =>
     api.post<{ id: string; username: string }>('/auth/register', { username, password, email }),
   logout: async () => {

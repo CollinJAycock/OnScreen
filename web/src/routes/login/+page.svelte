@@ -16,6 +16,12 @@
   let useLdap = false; // toggle the password form to LDAP mode
   let setupRequired = false;
   let forgotEnabled = false;
+  // Two-factor step: set when login returns totp_required. The password
+  // form is swapped for a code entry that posts against the challenge.
+  let totpRequired = false;
+  let challengeToken = '';
+  let totpCode = '';
+  let useRecoveryCode = false;
   // Post-login redirect target. Set when the login page is reached
   // via ?next= (e.g. native client opens /pair?code=N → not signed
   // in → /login?next=%2Fpair%3Fcode%3DN). For local + LDAP we honor
@@ -83,6 +89,15 @@
       const pair = useLdap
         ? await authApi.ldapLogin(username, password)
         : await authApi.login(username, password);
+      if (pair.totp_required) {
+        // Password OK, second factor owed. Hold the challenge and show
+        // the code step — no session exists yet.
+        challengeToken = pair.login_challenge_token ?? '';
+        totpRequired = true;
+        password = '';
+        loading = false;
+        return;
+      }
       api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
       goto(nextRedirect ?? '/');
     } catch (e: unknown) {
@@ -91,6 +106,29 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function handleTotpVerify() {
+    error = '';
+    loading = true;
+    try {
+      const pair = await authApi.totp.verify(challengeToken, totpCode.trim());
+      api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
+      goto(nextRedirect ?? '/');
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : 'Verification failed.';
+      totpCode = '';
+    } finally {
+      loading = false;
+    }
+  }
+
+  function cancelTotp() {
+    totpRequired = false;
+    challengeToken = '';
+    totpCode = '';
+    error = '';
+    useRecoveryCode = false;
   }
 
   /** Called before kicking off an OIDC or SAML redirect. The IdP
@@ -115,8 +153,39 @@
       <img src="/favicon-96x96.png" alt="OnScreen" width="40" height="40" class="logo-icon" />
       <h1>OnScreen</h1>
     </div>
-    <p class="subtitle">Sign in to your media server</p>
+    <p class="subtitle">{totpRequired ? 'Two-factor authentication' : 'Sign in to your media server'}</p>
 
+    {#if totpRequired}
+      <form on:submit|preventDefault={handleTotpVerify}>
+        <div class="field">
+          <label for="totp">{useRecoveryCode ? 'Recovery code' : 'Authentication code'}</label>
+          <input
+            id="totp"
+            bind:value={totpCode}
+            type="text"
+            inputmode={useRecoveryCode ? 'text' : 'numeric'}
+            autocomplete="one-time-code"
+            autofocus
+            placeholder={useRecoveryCode ? 'XXXXX-XXXXX' : '123456'}
+          />
+          <p class="hint">
+            {useRecoveryCode
+              ? 'Enter one of the recovery codes you saved when enabling 2FA.'
+              : 'Open your authenticator app and enter the 6-digit code.'}
+          </p>
+        </div>
+        {#if error}
+          <div class="error-banner">{error}</div>
+        {/if}
+        <button type="submit" disabled={loading || !totpCode.trim()} class="btn-primary">
+          {loading ? 'Verifying…' : 'Verify'}
+        </button>
+        <button type="button" class="link-toggle" on:click={() => { useRecoveryCode = !useRecoveryCode; totpCode = ''; error = ''; }}>
+          {useRecoveryCode ? 'Use authenticator code' : 'Use a recovery code instead'}
+        </button>
+        <button type="button" class="link-toggle" on:click={cancelTotp}>Back to sign in</button>
+      </form>
+    {:else}
     <form on:submit|preventDefault={handleLogin}>
       <div class="field">
         <label for="username">Username</label>
@@ -170,6 +239,7 @@
       <p class="setup-link">
         <a href="/setup">First time? Set up OnScreen</a>
       </p>
+    {/if}
     {/if}
   </div>
 </div>
@@ -276,6 +346,13 @@
   input:focus {
     border-color: rgba(124,106,247,0.5);
     box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+
+  .hint {
+    margin: 0.45rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.4;
   }
 
   .error-banner {
