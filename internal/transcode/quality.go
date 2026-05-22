@@ -22,9 +22,18 @@ var Profiles = []QualityProfile{
 // HEVC achieves equivalent quality at ~60% of the H.264 bitrate.
 const HEVCBitrateRatio = 0.6
 
+// AV1BitrateRatio is the AV1-to-H.264 efficiency factor. AV1 is ~20%
+// more efficient than HEVC again, so ~50% of the H.264 bitrate.
+const AV1BitrateRatio = 0.5
+
 // ScaleBitrateForHEVC adjusts a reference H.264 bitrate for HEVC output.
 func ScaleBitrateForHEVC(h264Bitrate int) int {
 	return int(float64(h264Bitrate) * HEVCBitrateRatio)
+}
+
+// ScaleBitrateForAV1 adjusts a reference H.264 bitrate for AV1 output.
+func ScaleBitrateForAV1(h264Bitrate int) int {
+	return int(float64(h264Bitrate) * AV1BitrateRatio)
 }
 
 // SelectQuality picks the effective quality from client request params + server caps (ADR-017).

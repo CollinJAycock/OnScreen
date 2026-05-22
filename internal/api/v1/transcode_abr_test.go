@@ -162,7 +162,7 @@ func TestABRSegmentBoundary_FrameQuantizedMonotonic(t *testing.T) {
 func TestABRMasterURLsUseRungLabels(t *testing.T) {
 	// serveABRMaster uses BuildMasterPlaylist with label-keyed variant
 	// URLs — verify the wiring shape via the same generator.
-	ladder := transcode.BuildLadder(1920, 1080, 0, false, 0)
+	ladder := transcode.BuildLadder(1920, 1080, 0, "h264", 0)
 	master := transcode.BuildMasterPlaylist(ladder, "", func(rd transcode.Rendition) string {
 		return "/api/v1/transcode/sessions/SID/abr/" + rd.Label + "/index.m3u8?token=TOK"
 	})

@@ -399,14 +399,21 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if file.Bitrate != nil {
 			srcBitrate = int(*file.Bitrate / 1000)
 		}
-		// HEVC ladder when the client can decode it AND it pays off — an
-		// HEVC source (don't round-trip to H.264) or 4K (big bandwidth win).
-		// Otherwise H.264 .ts, the universally-decodable default. Mirrors the
-		// single-rendition preferHEVC rule above.
-		abrHEVC := body.SupportsHEVC && (isSourceHEVC || sourceH >= 2160)
-		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrHEVC, h.cfg.TranscodeABRMaxHeight)
+		// Pick the ladder codec, mirroring the single-rendition prefer
+		// rules. AV1 wins for an AV1 source the client can decode (don't
+		// round-trip to H.264/HEVC). Else HEVC when the client can decode it
+		// AND it pays off — an HEVC source or 4K. Else H.264 .ts, the
+		// universally-decodable default. HEVC/AV1 ladders are fMP4 (.m4s).
+		abrCodec := transcode.LadderH264
+		switch {
+		case body.SupportsAV1 && isSourceAV1:
+			abrCodec = transcode.LadderAV1
+		case body.SupportsHEVC && (isSourceHEVC || sourceH >= 2160):
+			abrCodec = transcode.LadderHEVC
+		}
+		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, h.cfg.TranscodeABRMaxHeight)
 		if len(ladder) > 1 {
-			h.startABR(w, r, sessionID, segTok, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, abrHEVC, body.PositionMS)
+			h.startABR(w, r, sessionID, segTok, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, abrCodec, body.PositionMS)
 			return
 		}
 	}

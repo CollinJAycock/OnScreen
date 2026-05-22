@@ -46,16 +46,24 @@ var ladderTiers = []struct {
 // the muxed audio track too.
 const audioAllowanceKbps = 160
 
+// Ladder codecs — passed to BuildLadder to scale each rung's reference
+// (H.264) bitrate for the chosen output codec's efficiency.
+const (
+	LadderH264 = "h264"
+	LadderHEVC = "hevc"
+	LadderAV1  = "av1"
+)
+
 // BuildLadder computes the ABR renditions for a source. Rungs above the
 // source height are dropped (never upscale); rungs above maxHeightCap
 // (an operator pin; 0 = no cap) are dropped; each rung's bitrate is
-// HEVC-scaled when hevc and never exceeds the source bitrate. There is
-// always at least one rung — a tiny source collapses to a single
-// source-resolution rendition.
+// scaled for the output codec (HEVC/AV1 more efficient than H.264) and
+// never exceeds the source bitrate. There is always at least one rung —
+// a tiny source collapses to a single source-resolution rendition.
 //
 // Returned highest-first, matching how players and the master playlist
 // conventionally list variants.
-func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, hevc bool, maxHeightCap int) []Rendition {
+func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, codec string, maxHeightCap int) []Rendition {
 	if sourceH <= 0 {
 		sourceH = 1080
 	}
@@ -72,7 +80,7 @@ func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, hevc bool, maxHeightCa
 		if maxHeightCap > 0 && t.Height > maxHeightCap {
 			continue // operator pinned the ceiling lower
 		}
-		out = append(out, renditionAt(t.Height, t.BitrateKbps, aspect, hevc, sourceBitrateKbps))
+		out = append(out, renditionAt(t.Height, t.BitrateKbps, aspect, codec, sourceBitrateKbps))
 	}
 
 	// Source smaller than the lowest standard rung (e.g. a 240p clip):
@@ -80,22 +88,31 @@ func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, hevc bool, maxHeightCa
 	// works rather than returning an empty ladder.
 	if len(out) == 0 {
 		br := ladderTiers[len(ladderTiers)-1].BitrateKbps
-		out = append(out, renditionAt(sourceH, br, aspect, hevc, sourceBitrateKbps))
+		out = append(out, renditionAt(sourceH, br, aspect, codec, sourceBitrateKbps))
 	}
 	return out
 }
 
-func renditionAt(height, refBitrateKbps int, aspect float64, hevc bool, sourceBitrateKbps int) Rendition {
-	br := refBitrateKbps
-	if hevc {
-		br = ScaleBitrateForHEVC(br)
+// scaleBitrateForCodec scales a reference H.264 bitrate for the output codec.
+func scaleBitrateForCodec(h264Bitrate int, codec string) int {
+	switch codec {
+	case LadderHEVC:
+		return ScaleBitrateForHEVC(h264Bitrate)
+	case LadderAV1:
+		return ScaleBitrateForAV1(h264Bitrate)
+	default:
+		return h264Bitrate
 	}
+}
+
+func renditionAt(height, refBitrateKbps int, aspect float64, codec string, sourceBitrateKbps int) Rendition {
+	br := scaleBitrateForCodec(refBitrateKbps, codec)
 	if sourceBitrateKbps > 0 && br > sourceBitrateKbps {
 		br = sourceBitrateKbps
 	}
 	w := int(math.Round(float64(height) * aspect))
 	if w%2 != 0 {
-		w++ // H.264/HEVC need even dimensions
+		w++ // H.264/HEVC/AV1 need even dimensions
 	}
 	return Rendition{
 		Label:       fmt.Sprintf("%dp", height),
@@ -150,4 +167,19 @@ func HEVCMasterCodecs(maxHeight int) string {
 		level = "L153" // 5.1 — up to 4K
 	}
 	return "hvc1.1.6." + level + ".B0,mp4a.40.2"
+}
+
+// AV1MasterCodecs returns the CODECS attribute value for an AV1 fMP4
+// ladder: Main-profile av01 (8-bit, our SDR yuv420p output) plus AAC-LC.
+// The seq_level_idx is sized to the tallest rung — 4.0 (1080p), 5.1 (4K),
+// 6.0 (8K) — over-advertising on smaller rungs, which players tolerate.
+func AV1MasterCodecs(maxHeight int) string {
+	level := "08" // 4.0 — up to 1080p
+	switch {
+	case maxHeight > 2160:
+		level = "16" // 6.0 — up to 8K
+	case maxHeight > 1080:
+		level = "13" // 5.1 — up to 4K
+	}
+	return "av01.0." + level + "M.08,mp4a.40.2"
 }

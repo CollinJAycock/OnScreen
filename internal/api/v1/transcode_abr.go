@@ -53,7 +53,7 @@ func (h *NativeTranscodeHandler) startABR(
 	w http.ResponseWriter, r *http.Request,
 	sessionID, segTok string, userID, itemID uuid.UUID,
 	file *media.File, ladder []transcode.Rendition,
-	audioStreamIndex int, needsToneMap, hevc bool, positionMS int64,
+	audioStreamIndex int, needsToneMap bool, codec string, positionMS int64,
 ) {
 	ctx := r.Context()
 	sess := transcode.Session{
@@ -72,10 +72,11 @@ func (h *NativeTranscodeHandler) startABR(
 		DurationMS:       *file.DurationMS,
 		AudioStreamIndex: audioStreamIndex,
 		NeedsToneMap:     needsToneMap,
-		// HEVC ladder: rungs are hevc_* fMP4 (.m4s + init.mp4). H.264 ladder
-		// stays mpegts .ts. One codec for the whole ladder, chosen by client
-		// capability in Start.
-		HEVCOutput: hevc,
+		// HEVC/AV1 ladders are fMP4 (.m4s + init.mp4); H.264 stays mpegts
+		// .ts. One codec for the whole ladder, chosen by client capability
+		// in Start.
+		HEVCOutput: codec == transcode.LadderHEVC,
+		AV1Output:  codec == transcode.LadderAV1,
 	}
 	if file.FrameRate != nil {
 		sess.FrameRate = *file.FrameRate
@@ -110,8 +111,14 @@ func (h *NativeTranscodeHandler) startABR(
 // Called by Playlist when the session is ABR. Instant — no ffmpeg.
 func (h *NativeTranscodeHandler) serveABRMaster(w http.ResponseWriter, r *http.Request, sess *transcode.Session, token string) {
 	codecs := ""
-	if sess.HEVCOutput && len(sess.ABRRenditions) > 0 {
-		codecs = transcode.HEVCMasterCodecs(sess.ABRRenditions[0].Height) // [0] = tallest rung
+	if len(sess.ABRRenditions) > 0 {
+		topH := sess.ABRRenditions[0].Height // [0] = tallest rung
+		switch {
+		case sess.AV1Output:
+			codecs = transcode.AV1MasterCodecs(topH)
+		case sess.HEVCOutput:
+			codecs = transcode.HEVCMasterCodecs(topH)
+		}
 	}
 	master := transcode.BuildMasterPlaylist(sess.ABRRenditions, codecs, func(rd transcode.Rendition) string {
 		return fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token)
@@ -146,14 +153,20 @@ func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *ht
 		return
 	}
 
-	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, sess.HEVCOutput)
+	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, abrIsFMP4(sess))
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write([]byte(playlist))
 }
 
+// abrIsFMP4 reports whether the ladder uses fMP4 (.m4s + init.mp4) segments.
+// Both HEVC and AV1 rungs do; H.264 uses MPEG-TS .ts.
+func abrIsFMP4(sess *transcode.Session) bool {
+	return sess.HEVCOutput || sess.AV1Output
+}
+
 // abrSegExt is the segment file extension for the ladder's codec: fMP4
-// (.m4s) for HEVC, MPEG-TS (.ts) for H.264.
+// (.m4s) for HEVC/AV1, MPEG-TS (.ts) for H.264.
 func abrSegExt(fmp4 bool) string {
 	if fmp4 {
 		return ".m4s"
@@ -251,7 +264,7 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	h.sessions.SetSelectedRendition(ctx, sessionID, rungLabel)
 
 	childID := abrChildID(sessionID, rungLabel)
-	ext := abrSegExt(parent.HEVCOutput)
+	ext := abrSegExt(abrIsFMP4(parent))
 
 	// fMP4 init segment is codec config only — position-independent. Ensure a
 	// child is running (from the start if none) and serve its init.mp4; any
@@ -451,10 +464,13 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		StartOffsetSec: abrSegmentBoundarySec(globalSeg, parent.FrameRate),
 		Decision:       "transcode",
 		// Encoder unset → the worker picks the best encoder of the requested
-		// family: an HEVC encoder (fMP4 .m4s) when PreferHEVC, else the best
-		// H.264 (.ts). One codec for the whole ladder, set in startABR.
+		// family: AV1 (PreferAV1) or HEVC (PreferHEVC) → fMP4 .m4s, else the
+		// best H.264 → .ts. One codec for the whole ladder, set in startABR.
+		// PreferAV1 wins at the worker when both are set, but startABR only
+		// ever sets one.
 		Encoder:          "",
 		PreferHEVC:       parent.HEVCOutput,
+		PreferAV1:        parent.AV1Output,
 		Width:            rung.Width,
 		Height:           rung.Height,
 		BitrateKbps:      rung.BitrateKbps,
