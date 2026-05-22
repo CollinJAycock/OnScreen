@@ -198,6 +198,23 @@ test.describe('Security — CSP nonce', () => {
         [401, 403],
         `general access token in ?token= on /artwork must be rejected (got ${r.status()})`,
       ).toContain(r.status());
+
+      // Route-grouping fix: /items/{id}/image (photos) and the Live TV
+      // stream playlist moved under RequiredAllowQueryToken, so the asset
+      // token now authenticates them via ?token=. A bogus-but-valid UUID
+      // exercises the auth gate without needing seeded content — anything
+      // other than 401 proves the token was accepted and the handler ran.
+      const bogus = '00000000-0000-0000-0000-000000000000';
+      for (const path of [
+        `/api/v1/items/${bogus}/image?token=${encodeURIComponent(data.asset_token)}`,
+        `/api/v1/tv/channels/${bogus}/stream.m3u8?token=${encodeURIComponent(data.asset_token)}`,
+      ]) {
+        const ok = await anon.get(path, { maxRedirects: 0 });
+        expect(
+          ok.status(),
+          `${path} must accept the asset token via ?token= (got 401 — route not under RequiredAllowQueryToken?)`,
+        ).not.toBe(401);
+      }
     } finally {
       await anon.dispose();
     }

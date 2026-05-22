@@ -378,6 +378,28 @@ func NewRouter(h *Handlers) http.Handler {
 			})
 		}
 
+		// Asset-style GETs that players / <img> load WITHOUT an
+		// Authorization header — Live TV HLS (hls.js / ExoPlayer / AVPlay
+		// segment fetches) and photo images (Poster / <img>). Same
+		// RequiredAllowQueryToken posture as artwork / trickplay / SSE:
+		// browsers ride the cookie, native clients send the asset token
+		// via ?token=, and the general access token is rejected in a URL.
+		// The handlers still enforce their own gates (Live TV = any
+		// authenticated user; photo image = the caller's library ACL +
+		// content-rating ceiling carried in the token claims). Kept out of
+		// the Required group below so the query-token carrier is accepted —
+		// without this, cross-origin players got a silent 401 on segments.
+		r.Group(func(r chi.Router) {
+			r.Use(h.Auth_mw.RequiredAllowQueryToken)
+			if h.LiveTV != nil {
+				r.Get("/tv/channels/{id}/stream.m3u8", h.LiveTV.StreamPlaylist)
+				r.Get("/tv/channels/{id}/segments/{name}", h.LiveTV.StreamSegment)
+			}
+			if h.Photos != nil {
+				r.Get("/items/{id}/image", h.Photos.Image)
+			}
+		})
+
 		// Authenticated API — require valid token, rate limit by session.
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth_mw.Required)
@@ -722,8 +744,11 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.LiveTV != nil {
 				r.Get("/tv/channels", h.LiveTV.ListChannels)
 				r.Get("/tv/channels/now-next", h.LiveTV.NowAndNext)
-				r.Get("/tv/channels/{id}/stream.m3u8", h.LiveTV.StreamPlaylist)
-				r.Get("/tv/channels/{id}/segments/{name}", h.LiveTV.StreamSegment)
+				// NOTE: /tv/channels/{id}/stream.m3u8 + /segments/{name}
+				// are NOT here — players (hls.js / ExoPlayer / AVPlay)
+				// can't attach an Authorization header to segment fetches,
+				// so they live in the RequiredAllowQueryToken group above
+				// (carry the asset token via ?token=).
 				r.Get("/tv/guide", h.LiveTV.Guide)
 				// DVR endpoints are user-scoped (not admin).
 				r.Post("/tv/schedules", h.LiveTV.CreateSchedule)
@@ -809,7 +834,10 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/photos/timeline", h.Photos.Timeline)
 				r.Get("/photos/map", h.Photos.Map)
 				r.Get("/photos/search", h.Photos.Search)
-				r.Get("/items/{id}/image", h.Photos.Image)
+				// NOTE: /items/{id}/image is NOT here — the photo viewers
+				// load it via <img>/Poster with no Authorization header,
+				// so it lives in the RequiredAllowQueryToken group above
+				// (carries the asset token via ?token=).
 
 				if h.Books != nil {
 					r.Get("/items/{id}/book/page/{n}", h.Books.Page)
