@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -476,6 +477,24 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 		http.ServeFile(rw, r, clean)
 	})
 
+	// /seghead/{session_id}?ext=.ts — non-blocking; returns the highest
+	// segment index produced so far (the encoder head), -1 if none. The API's
+	// ABR reachability check uses this to decide wait-vs-restart for a remote
+	// worker (the local-disk scan only works for a co-located embedded worker).
+	mux.HandleFunc("/seghead/", func(rw http.ResponseWriter, r *http.Request) {
+		sid := filepath.Base(r.URL.Path[len("/seghead/"):])
+		if sid == "." || sid == ".." || sid == "" {
+			http.Error(rw, "bad session", http.StatusBadRequest)
+			return
+		}
+		ext := r.URL.Query().Get("ext")
+		if ext == "" {
+			ext = ".ts"
+		}
+		head := HighestSegmentIndex(filepath.Join(segmentBaseDir, sid), ext)
+		fmt.Fprintf(rw, "%d", head)
+	})
+
 	srv := &http.Server{
 		Addr:         w.addr,
 		Handler:      mux,
@@ -511,6 +530,29 @@ func (w *Worker) sweepOrphanedSessions() {
 // SessionDir returns the local filesystem path for a session's HLS segments.
 func SessionDir(sessionID string) string {
 	return filepath.Join(segmentBaseDir, sessionID)
+}
+
+// HighestSegmentIndex returns the largest segNNNNN<ext> index present in dir
+// (the encoder's current head), or -1 if none. The ABR segment handler uses
+// it — locally or via the worker's /seghead endpoint — to decide whether a
+// requested segment is one the running child will reach soon (wait) or a
+// forward seek past it (restart).
+func HighestSegmentIndex(dir, ext string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return -1
+	}
+	hi := -1
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasPrefix(n, "seg") || !strings.HasSuffix(n, ext) {
+			continue
+		}
+		if idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(n, "seg"), ext)); err == nil && idx > hi {
+			hi = idx
+		}
+	}
+	return hi
 }
 
 // WorkerID generates a stable UUID-based worker ID.

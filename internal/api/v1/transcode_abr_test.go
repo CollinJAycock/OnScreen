@@ -4,7 +4,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -96,45 +95,35 @@ func TestHighestLocalSegOnDisk(t *testing.T) {
 }
 
 func TestABRReachableSoon(t *testing.T) {
-	// Lay down a child dir with a trailing window 30..40 (mimics
-	// delete_segments evicting everything below 30).
-	childID := "reach-test-child"
-	dir := transcode.SessionDir(childID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	for i := 30; i <= 40; i++ {
-		if err := os.WriteFile(filepath.Join(dir, "seg"+pad5(i)+".ts"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// head = 40: children keep every segment (hls_list_size 0), so anything at
+	// or below the head is present and reachable; only a forward seek past
+	// head+lookahead restarts.
+	const head = 40
 	cases := []struct {
 		name     string
 		localSeg int
 		want     bool
 	}{
-		{"present in window", 35, true},
+		{"well below head (present)", 5, true},
 		{"head", 40, true},
 		{"next sequential", 41, true},
-		{"within lookahead", 46, true},               // 40 + abrSeekLookahead
-		{"forward seek past lookahead", 47, false},   // 40 + 7
-		{"evicted below head", 5, false},             // absent, <= head
+		{"within lookahead", 46, true},             // 40 + abrSeekLookahead
+		{"forward seek past lookahead", 47, false}, // 40 + 7
 		{"negative", -1, false},
 	}
 	for _, c := range cases {
-		if got := abrReachableSoon(childID, c.localSeg, ".ts"); got != c.want {
-			t.Errorf("%s: abrReachableSoon(%d)=%v want %v", c.name, c.localSeg, got, c.want)
+		if got := abrReachableSoon(head, c.localSeg); got != c.want {
+			t.Errorf("%s: abrReachableSoon(%d, %d)=%v want %v", c.name, head, c.localSeg, got, c.want)
 		}
 	}
-}
 
-func pad5(i int) string {
-	s := strconv.Itoa(i)
-	for len(s) < 5 {
-		s = "0" + s
+	// No segments yet (head -1): seg 0..lookahead are imminent, beyond restarts.
+	if !abrReachableSoon(-1, 0) {
+		t.Error("head=-1 localSeg=0 should be reachable (child spinning up)")
 	}
-	return s
+	if abrReachableSoon(-1, abrSeekLookahead+1) {
+		t.Error("head=-1 far-ahead seek should not be reachable")
+	}
 }
 
 func TestABRSegmentBoundary_FrameQuantizedMonotonic(t *testing.T) {

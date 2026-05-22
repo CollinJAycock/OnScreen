@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -299,11 +300,13 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	localSeg := globalSeg - child.StartSeg
 
 	// Restart the encode at this segment unless the running child can serve it
-	// promptly — i.e. it's already on disk or is one of the next few the
-	// encoder is about to write. This turns every seek (forward past the
-	// encode head, or backward to a segment the muxer already evicted) into a
-	// ~1 s restart instead of a 30 s wait for a segment that will never land.
-	if !abrReachableSoon(childID, localSeg, ext) {
+	// promptly — i.e. it's at/before the encode head (already produced) or one
+	// of the next few about to be written. A forward seek past the head becomes
+	// a ~1 s restart at the target instead of a 30 s wait for a segment that
+	// won't land for many seconds. (Backward to before StartSeg was already
+	// handled by ensureRungChild above.)
+	head := segHead(ctx, child.WorkerAddr, childID, ext)
+	if !abrReachableSoon(head, localSeg) {
 		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, true) // restart at globalSeg
 		if child, err = h.sessions.Get(ctx, childID); err != nil {
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
@@ -356,45 +359,55 @@ func (h *NativeTranscodeHandler) serveChildFile(w http.ResponseWriter, r *http.R
 const abrSeekLookahead = 6
 
 // abrReachableSoon reports whether the running child can serve localSeg
-// without a restart: the segment is already on disk, or it's within the next
-// abrSeekLookahead segments the encoder is about to write. A request below the
-// encode head that's absent (evicted by delete_segments) or far above it
-// (forward seek) is NOT reachable and should trigger a restart.
-//
-// Disk-based: assumes the child's segments are local to this process (the
-// embedded-worker / single-instance ABR configuration). A multi-instance
-// worker tier would query the worker instead.
-func abrReachableSoon(childID string, localSeg int, ext string) bool {
+// without a restart: it's at or before the encode head — already produced, and
+// children keep every segment (hls_list_size 0 makes delete_segments a no-op)
+// — or within the next abrSeekLookahead the encoder is about to write. A
+// forward seek past that restarts at the target rather than waiting out a
+// segment that won't land for many seconds. head is the child's current encode
+// head (-1 = nothing produced yet).
+func abrReachableSoon(head, localSeg int) bool {
 	if localSeg < 0 {
 		return false
 	}
-	dir := transcode.SessionDir(childID)
-	if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("seg%05d%s", localSeg, ext))); err == nil {
-		return true // already produced
+	if head < 0 {
+		return localSeg <= abrSeekLookahead // child spinning up; seg 0..lookahead are imminent
 	}
-	hi := highestLocalSegOnDisk(dir, ext)
-	return localSeg > hi && localSeg <= hi+abrSeekLookahead
+	return localSeg <= head+abrSeekLookahead
 }
 
-// highestLocalSegOnDisk returns the largest segNNNNN.<ext> index present in
-// dir, or -1 if none. This is the child's current encode head (delete_segments
-// keeps a trailing window, so absent-below-head means evicted).
+// segHead returns the child's current encode head (highest produced segment
+// index for ext, -1 if none). Queries the owning worker's /seghead endpoint,
+// or scans local disk for a co-located embedded worker (workerAddr empty) —
+// worker-aware so the ABR seek/restart decision is correct across a fleet.
+func segHead(ctx context.Context, workerAddr, childID, ext string) int {
+	if workerAddr != "" {
+		url := fmt.Sprintf("http://%s/seghead/%s?ext=%s", workerAddr, childID, ext)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return -1
+		}
+		resp, err := workerClient.Do(req)
+		if err != nil {
+			return -1
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return -1
+		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 32))
+		n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil {
+			return -1
+		}
+		return n
+	}
+	return transcode.HighestSegmentIndex(transcode.SessionDir(childID), ext)
+}
+
+// highestLocalSegOnDisk scans the local session dir for the encode head. Thin
+// wrapper over transcode.HighestSegmentIndex (embedded-worker path + tests).
 func highestLocalSegOnDisk(dir, ext string) int {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return -1
-	}
-	hi := -1
-	for _, e := range entries {
-		n := e.Name()
-		if !strings.HasPrefix(n, "seg") || !strings.HasSuffix(n, ext) {
-			continue
-		}
-		if idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(n, "seg"), ext)); err == nil && idx > hi {
-			hi = idx
-		}
-	}
-	return hi
+	return transcode.HighestSegmentIndex(dir, ext)
 }
 
 // waitRungSegment polls (up to ~30s) for the child to produce localName,
