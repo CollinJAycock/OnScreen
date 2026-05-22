@@ -305,9 +305,14 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 	if err != nil {
 		return nil, fmt.Errorf("refresh: issue access token: %w", err)
 	}
+	assetToken, err := s.tokens.IssueAssetToken(refreshClaims)
+	if err != nil {
+		return nil, fmt.Errorf("refresh: issue asset token: %w", err)
+	}
 	return &v1.TokenPair{
 		AccessToken:  accessToken,
 		RefreshToken: raw,
+		AssetToken:   assetToken,
 		ExpiresAt:    expiry,
 		UserID:       user.ID,
 		Username:     user.Username,
@@ -354,6 +359,10 @@ func (s *authService) issueTokenPair(ctx context.Context, user gen.User) (*v1.To
 	if err != nil {
 		return nil, fmt.Errorf("issue access token: %w", err)
 	}
+	assetToken, err := s.tokens.IssueAssetToken(claims)
+	if err != nil {
+		return nil, fmt.Errorf("issue asset token: %w", err)
+	}
 
 	raw, hash, err := auth.IssueRefreshToken()
 	if err != nil {
@@ -372,6 +381,7 @@ func (s *authService) issueTokenPair(ctx context.Context, user gen.User) (*v1.To
 	return &v1.TokenPair{
 		AccessToken:  accessToken,
 		RefreshToken: raw,
+		AssetToken:   assetToken,
 		ExpiresAt:    expiry,
 		UserID:       user.ID,
 		Username:     user.Username,

@@ -8,7 +8,7 @@
 // auth-less requests too. Rate-limiting and admin-authz blocks do require
 // credentials; they skip when E2E_PASSWORD is not set.
 
-import { test, expect } from '@playwright/test';
+import { test, expect, request as pwRequest } from '@playwright/test';
 
 const USERNAME = process.env.E2E_USERNAME ?? 'admin';
 const PASSWORD = process.env.E2E_PASSWORD ?? '';
@@ -120,6 +120,86 @@ test.describe('Security re-probe', () => {
       const r = await request.get(probe, { maxRedirects: 0 });
       expect.soft([400, 401, 403, 404], `${probe} → ${r.status()}`).toContain(r.status());
       expect.soft(r.status(), probe).not.toBe(200);
+    }
+  });
+});
+
+// ── CSP nonce + asset token ──────────────────────────────────────────────────
+//
+// Guards Track C item 2 (nonce-based script-src) and item 1 (asset token).
+// All request-based — no browser render needed — but a full browser soak
+// (load the SPA, assert zero CSP violations in the console) is still the
+// final gate before shipping the nonce change.
+
+test.describe('Security — CSP nonce', () => {
+  test('script-src is nonce-based and the shell stamps the matching nonce', async ({ request }) => {
+    const r = await request.get('/');
+    expect(r.status()).toBe(200);
+    const csp = r.headers()['content-security-policy'] ?? '';
+    expect(csp, 'CSP header present').not.toBe('');
+
+    // Pull the script-src directive out of the header.
+    const scriptSrc = csp.split('; ').find((d) => d.startsWith('script-src ')) ?? '';
+    expect(scriptSrc, 'script-src directive present').not.toBe('');
+    expect(scriptSrc, "script-src must not carry 'unsafe-inline'").not.toContain("'unsafe-inline'");
+
+    const m = scriptSrc.match(/'nonce-([^']+)'/);
+    expect(m, 'script-src must carry a nonce').not.toBeNull();
+    const nonce = m![1];
+
+    // The served shell's inline <script> tags must carry the SAME nonce
+    // as the header, or the browser blocks them and the SPA never boots.
+    const html = await r.text();
+    expect(html, 'shell must stamp the header nonce on its inline scripts').toContain(
+      `<script nonce="${nonce}">`,
+    );
+    // No bare inline <script> should survive un-nonced.
+    expect(html, 'no un-nonced inline <script> may remain').not.toContain('<script>');
+  });
+
+  test('CSP nonce is fresh per request (not cached into the shell)', async ({ request }) => {
+    const nonceOf = async () => {
+      const r = await request.get('/');
+      const csp = r.headers()['content-security-policy'] ?? '';
+      return csp.match(/'nonce-([^']+)'/)?.[1] ?? '';
+    };
+    const a = await nonceOf();
+    const b = await nonceOf();
+    expect(a, 'first nonce present').not.toBe('');
+    expect(b, 'second nonce present').not.toBe('');
+    expect(a, 'nonce must rotate per request').not.toBe(b);
+  });
+
+  test.skip(!PASSWORD, 'set E2E_PASSWORD to run the asset-token contract');
+
+  test('login mints an asset token; general token is rejected in ?token=', async ({ request }) => {
+    const loginR = await request.post('/api/v1/auth/login', {
+      data: { username: USERNAME, password: PASSWORD },
+    });
+    expect(loginR.status()).toBe(200);
+    const { data } = await loginR.json();
+    // Asset token is present and is a PASETO v4.local — distinct from the
+    // access token, scoped purpose=asset.
+    expect(data.asset_token, 'login response must include an asset_token').toBeTruthy();
+    expect(data.asset_token, 'asset token is PASETO v4.local').toMatch(/^v4\.local\./);
+    expect(data.asset_token).not.toBe(data.access_token);
+
+    // The general access token must NOT authenticate an asset route via
+    // ?token= (that leak is what the asset token closes). Use a bogus
+    // artwork path — auth runs before the file lookup, so a general token
+    // yields 401, not 404.
+    const anon = await pwRequest.newContext();
+    try {
+      const r = await anon.get(
+        `/artwork/does-not-exist.jpg?token=${encodeURIComponent(data.access_token)}`,
+        { maxRedirects: 0 },
+      );
+      expect(
+        [401, 403],
+        `general access token in ?token= on /artwork must be rejected (got ${r.status()})`,
+      ).toContain(r.status());
+    } finally {
+      await anon.dispose();
     }
   });
 });

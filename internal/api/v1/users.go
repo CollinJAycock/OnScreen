@@ -496,16 +496,25 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Issue a new access token for the target user.
-	accessToken, err := h.tokens.IssueAccessToken(auth.Claims{
+	switchClaims := auth.Claims{
 		UserID:           result.UserID,
 		Username:         result.Username,
 		IsAdmin:          result.IsAdmin,
 		MaxContentRating: result.MaxContentRating,
 		SessionEpoch:     result.SessionEpoch,
-	})
+	}
+	accessToken, err := h.tokens.IssueAccessToken(switchClaims)
 	if err != nil {
 		if h.logger != nil {
 			h.logger.ErrorContext(r.Context(), "pin switch: issue access token", "err", err)
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	assetToken, err := h.tokens.IssueAssetToken(switchClaims)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "pin switch: issue asset token", "err", err)
 		}
 		respond.InternalError(w, r)
 		return
@@ -514,6 +523,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 	tokenPair := &TokenPair{
 		AccessToken:  accessToken,
 		RefreshToken: "",
+		AssetToken:   assetToken,
 		ExpiresAt:    time.Now().Add(auth.AccessTokenTTL),
 		UserID:       result.UserID,
 		Username:     result.Username,

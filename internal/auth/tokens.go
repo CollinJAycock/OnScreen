@@ -25,6 +25,20 @@ const (
 	// dies on session_epoch bumps (admin demote, force-logout) so a
 	// stale credential stays revocable in seconds.
 	StreamTokenTTL = 24 * time.Hour
+	// AssetTokenTTL covers the user-scoped asset token minted at login /
+	// refresh and embedded in `?token=` on the read-only asset routes —
+	// artwork, trickplay sprites, external subtitles, and the SSE
+	// notification stream — for cross-origin clients (Tauri, the TV
+	// fleet) where <img>/CSS-background/EventSource can't carry an
+	// Authorization header and cookies don't survive cross-origin.
+	// Same 24 h / epoch-revocable rationale as the stream token: long
+	// enough that a TV session idling on a poster wall doesn't 401, but
+	// killed instantly on logout/demote. Unlike the stream token it
+	// carries no file binding (artwork/SSE aren't file-scoped); unlike
+	// the access token it has purpose=asset so it is rejected on the
+	// Bearer/cookie path and can't be replayed as a general-API
+	// credential if a poster URL leaks via logs / Referer / history.
+	AssetTokenTTL = 24 * time.Hour
 )
 
 // Claims are the standard fields embedded in every Paseto access token.
@@ -117,6 +131,35 @@ func (m *TokenMaker) IssueStreamToken(claims Claims, fileID uuid.UUID) (string, 
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 	token.SetString("purpose", "stream")
 	token.SetString("file_id", fileID.String())
+	return token.V4Encrypt(m.key, nil), nil
+}
+
+// IssueAssetToken creates a Paseto v4 local token with AssetTokenTTL,
+// flagged purpose=asset. It carries the same user identity / content-
+// rating / epoch as the access token (the asset handlers still enforce
+// library ACLs and the rating ceiling), but no file binding: it
+// authenticates the read-only asset routes (artwork, trickplay,
+// external subtitles, SSE) for cross-origin clients via `?token=`.
+// Because purpose != "", validateGeneralPurposeToken rejects it on the
+// Bearer/cookie path, so a leaked asset URL can't grant general API
+// access.
+func (m *TokenMaker) IssueAssetToken(claims Claims) (string, error) {
+	token := paseto.NewToken()
+	token.SetIssuedAt(time.Now())
+	token.SetNotBefore(time.Now())
+	token.SetExpiration(time.Now().Add(AssetTokenTTL))
+	token.SetString("user_id", claims.UserID.String())
+	token.SetString("username", claims.Username)
+	isAdminStr := "false"
+	if claims.IsAdmin {
+		isAdminStr = "true"
+	}
+	token.SetString("is_admin", isAdminStr)
+	if claims.MaxContentRating != "" {
+		token.SetString("max_content_rating", claims.MaxContentRating)
+	}
+	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
+	token.SetString("purpose", "asset")
 	return token.V4Encrypt(m.key, nil), nil
 }
 

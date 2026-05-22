@@ -46,8 +46,17 @@ type AuthService interface {
 
 // TokenPair holds the access token and refresh token returned on login.
 type TokenPair struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	// AssetToken is a 24 h purpose=asset PASETO bound to the user.
+	// Cross-origin clients (Tauri, the TV fleet) embed it in `?token=`
+	// on the read-only asset routes — artwork, trickplay, external
+	// subtitles, SSE — where an Authorization header isn't reachable
+	// and the auth cookie doesn't survive cross-origin. Browsers ignore
+	// it (same-origin asset requests carry the httpOnly cookie). Empty
+	// only on builds that predate the asset-token work; clients fall
+	// back to omitting the param (same-origin) in that case.
+	AssetToken   string    `json:"asset_token,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	UserID       uuid.UUID `json:"user_id"`
 	Username     string    `json:"username"`

@@ -106,11 +106,24 @@ func TestRequired_ValidToken(t *testing.T) {
 // only addition is that a `?token=<paseto>` query param is accepted
 // when neither header nor cookie is present.
 
-func TestRequiredAllowQueryToken_QueryToken(t *testing.T) {
-	// The whole point of this variant — `<img src="…?token=…">` works.
+func issueAssetToken(t *testing.T, tm *auth.TokenMaker) string {
+	t.Helper()
+	tok, err := tm.IssueAssetToken(auth.Claims{
+		UserID:   uuid.New(),
+		Username: "assetuser",
+	})
+	if err != nil {
+		t.Fatalf("IssueAssetToken: %v", err)
+	}
+	return tok
+}
+
+func TestRequiredAllowQueryToken_AssetToken(t *testing.T) {
+	// The whole point of this variant — `<img src="…?token=…">` works,
+	// now with a purpose=asset token rather than a general access token.
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)
-	token := issueTestToken(t, tm, false)
+	token := issueAssetToken(t, tm)
 
 	var gotClaims *auth.Claims
 	handler := a.RequiredAllowQueryToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +138,52 @@ func TestRequiredAllowQueryToken_QueryToken(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status: got %d, want 200", rec.Code)
 	}
-	if gotClaims == nil || gotClaims.Username != "testuser" {
-		t.Errorf("claims not extracted from query token: got %v", gotClaims)
+	if gotClaims == nil || gotClaims.Username != "assetuser" {
+		t.Errorf("claims not extracted from asset query token: got %v", gotClaims)
+	}
+}
+
+func TestRequiredAllowQueryToken_GeneralTokenRejected(t *testing.T) {
+	// Security regression guard: a general access token must NOT be
+	// honoured in `?token=`. Putting a general-API credential in a URL
+	// (server logs, Referer, browser history) was the leak the asset
+	// token closes. Browsers authenticate assets via the httpOnly
+	// cookie (the Bearer/cookie path), not this query path.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token := issueTestToken(t, tm, false) // general access token
+
+	handler := a.RequiredAllowQueryToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("general access token must not authenticate via ?token=")
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/artwork/poster.jpg?w=300&token="+token, nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("general token in ?token=: got %d, want 401", rec.Code)
+	}
+}
+
+func TestRequiredAllowQueryToken_AssetTokenRejectedAsBearer(t *testing.T) {
+	// The asset token is purpose-scoped — it must not unlock general API
+	// routes if presented as a Bearer (the inverse of the leak we close).
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token := issueAssetToken(t, tm)
+
+	handler := a.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("asset token must not unlock general API routes")
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/items", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("asset token via Bearer: got %d, want 401", rec.Code)
 	}
 }
 
@@ -523,13 +580,66 @@ func TestSecurityHeaders_CSP(t *testing.T) {
 
 	// Substring checks — these directives carry expanding allow-lists.
 	containsChecks := []string{
-		"script-src 'self' 'unsafe-inline'",
+		"script-src 'self' 'nonce-",
 		"connect-src 'self'",
 	}
 	for _, sub := range containsChecks {
 		if !strings.Contains(csp, sub) {
 			t.Errorf("CSP missing prefix %q in %q", sub, csp)
 		}
+	}
+
+	// script-src must NOT carry 'unsafe-inline' anymore — that's the
+	// whole point of the nonce switch. (style-src legitimately keeps it.)
+	scriptDirective := ""
+	for _, part := range splitCSP(csp) {
+		if strings.HasPrefix(part, "script-src ") {
+			scriptDirective = part
+		}
+	}
+	if scriptDirective == "" {
+		t.Fatalf("no script-src directive in %q", csp)
+	}
+	if strings.Contains(scriptDirective, "'unsafe-inline'") {
+		t.Errorf("script-src must not contain 'unsafe-inline' (nonce-based now): %q", scriptDirective)
+	}
+}
+
+func TestSecurityHeaders_CSPNoncePerRequest(t *testing.T) {
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The handler must see the same nonce that's in the header so the
+		// shell can stamp its inline scripts to match.
+		if NonceFromContext(r.Context()) == "" {
+			t.Error("nonce missing from request context")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	nonceOf := func() (string, string) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+		csp := rec.Header().Get("Content-Security-Policy")
+		// Extract the nonce-… token from script-src.
+		const marker = "'nonce-"
+		i := strings.Index(csp, marker)
+		if i < 0 {
+			return "", csp
+		}
+		rest := csp[i+len(marker):]
+		j := strings.Index(rest, "'")
+		if j < 0 {
+			return "", csp
+		}
+		return rest[:j], csp
+	}
+
+	n1, csp1 := nonceOf()
+	n2, _ := nonceOf()
+	if n1 == "" || n2 == "" {
+		t.Fatalf("CSP carried no nonce: %q", csp1)
+	}
+	if n1 == n2 {
+		t.Errorf("nonce must be per-request; got the same value twice: %q", n1)
 	}
 }
 

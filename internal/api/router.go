@@ -2,6 +2,7 @@
 package api
 
 import (
+	"bytes"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -871,6 +872,26 @@ func NewRouter(h *Handlers) http.Handler {
 		info, err := f.Stat()
 		if err != nil {
 			http.NotFound(w, req)
+			return
+		}
+		// index.html is the only shell carrying inline <script> tags
+		// (theme bootstrap + SvelteKit start). Stamp the per-request CSP
+		// nonce onto them so they satisfy `script-src 'nonce-…'` now that
+		// 'unsafe-inline' is gone. The body must NOT be cached — a cached
+		// shell would carry a stale nonce that won't match the next
+		// response's freshly-generated CSP header, breaking the SPA boot.
+		if name == "index.html" {
+			body, err := io.ReadAll(f)
+			if err != nil {
+				http.NotFound(w, req)
+				return
+			}
+			if nonce := middleware.NonceFromContext(req.Context()); nonce != "" {
+				body = bytes.ReplaceAll(body, []byte("<script>"), []byte(`<script nonce="`+nonce+`">`))
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(body)
 			return
 		}
 		http.ServeContent(w, req, name, info.ModTime(), f.(io.ReadSeeker))

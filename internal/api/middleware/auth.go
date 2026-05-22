@@ -102,19 +102,28 @@ func (a *Authenticator) RequiredAllowQueryToken(next http.Handler) http.Handler 
 
 // extractClaimsAllowQuery layers a `?token=<paseto>` lookup on top
 // of the standard Bearer/cookie extraction. Used only by
-// RequiredAllowQueryToken — broadcasting it via plain
-// extractClaims would let a leaked artwork URL grant general
-// API access, which is exactly the trade-off this variant exists
-// to scope.
+// RequiredAllowQueryToken — broadcasting it via plain extractClaims
+// would let a leaked asset URL grant general API access, which is
+// exactly the trade-off this variant exists to scope.
 //
-// Stream-purpose tokens are also enforced to match the request's
-// {id} URL param against the token's FileID claim. The route
-// pattern uses chi {id} for /media/stream/{id} and {fileId} for
-// /media/subtitles/{fileId}/{streamIndex}; either match counts
-// since both name the same file UUID. Tokens without purpose=stream
-// (the standard 1 h access token reused as a `?token=` carrier on
-// older clients) skip the file-id check — those still behave as
-// before.
+// Only purpose-scoped tokens are honoured in the `?token=` carrier:
+//
+//   - purpose=stream — per-file token (24 h, file_id-bound). Valid only
+//     on a route that carries the matching file UUID as its {id} /
+//     {fileId} param (/media/stream, /media/download, /media/subtitles).
+//   - purpose=asset — user-scoped read token (24 h, no resource
+//     binding). Valid on any asset route; each handler still enforces
+//     its own ACL (artwork library check, trickplay item access,
+//     subtitle ownership). It is accepted on the file routes too, but
+//     first-party clients use the stronger file-bound stream token
+//     there — an asset token can read only what its user already can,
+//     same scope the old access-token-in-URL had, minus the Bearer
+//     replay surface.
+//   - empty purpose — the general access token. REJECTED here: putting
+//     a general-API credential in a URL (logs, Referer, history) was an
+//     SSRF/credential-leak vector. Browsers don't hit this path (they
+//     authenticate assets via the httpOnly cookie through extractClaims
+//     above); cross-origin clients send a stream/asset token instead.
 func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, error) {
 	if claims, err := a.extractClaims(r); err != nil || claims != nil {
 		return claims, err
@@ -127,12 +136,12 @@ func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, 
 	if err != nil || claims == nil {
 		return claims, err
 	}
-	if claims.Purpose == "stream" {
+	switch claims.Purpose {
+	case "stream":
 		// Bind enforcement: the token's file_id must match the
 		// {id} / {fileId} path param. If neither chi param is
-		// present (the artwork / trickplay routes), the token is
-		// out of scope here — stream tokens shouldn't be honoured
-		// on non-stream asset routes either.
+		// present, the token is out of scope here — a file-bound
+		// token shouldn't be honoured on a non-file route.
 		want := chi.URLParam(r, "id")
 		if want == "" {
 			want = chi.URLParam(r, "fileId")
@@ -143,6 +152,14 @@ func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, 
 		if claims.FileID == nil || claims.FileID.String() != want {
 			return nil, fmt.Errorf("validate token: stream token file_id mismatch")
 		}
+	case "asset":
+		// User-scoped; valid on any asset route. No binding check —
+		// the per-handler ACL is the authorization gate.
+	default:
+		// Empty (general access token) or any unknown purpose: not a
+		// legitimate URL credential. Closing this is the point of the
+		// asset-token work — a general token must never travel in a URL.
+		return nil, fmt.Errorf("validate token: %q tokens are not accepted as a ?token= query credential", claims.Purpose)
 	}
 	return claims, nil
 }
