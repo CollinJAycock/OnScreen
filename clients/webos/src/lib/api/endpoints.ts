@@ -66,7 +66,7 @@ export const items = {
    *  without an Authorization header. */
   trickplaySpriteUrl: (id: string, spritePath: string): string => {
     const origin = api.getOrigin();
-    const tok = api.getToken();
+    const tok = api.getAssetToken();
     if (!origin || !tok) return '';
     const base = spritePath.startsWith('/')
       ? `${origin}${spritePath}`

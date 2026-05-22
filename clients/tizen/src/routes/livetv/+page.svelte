@@ -89,16 +89,16 @@
 
   function play(channel: Channel) {
     const origin = api.getOrigin();
-    const tok = api.getToken();
+    const tok = api.getAssetToken();
     if (!origin || !tok) {
       error = 'Not signed in';
       return;
     }
     activeChannel = channel;
     mode = 'playing';
-    // The HLS endpoint takes the bearer as `?token=` because AVPlay
-    // can't attach an Authorization header. Same convention the
-    // /watch route uses for transcode sessions.
+    // The HLS endpoint takes the purpose=asset token as `?token=` —
+    // AVPlay can't attach an Authorization header, and the server
+    // rejects a general access token in a URL.
     const url = `${origin}/api/v1/tv/channels/${channel.id}/stream.m3u8`;
     if (usingAvPlay) {
       if (!avplayAnchor) {

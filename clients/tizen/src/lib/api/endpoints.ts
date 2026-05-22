@@ -67,7 +67,7 @@ export const items = {
    *  them without an Authorization header. */
   trickplaySpriteUrl: (id: string, spritePath: string): string => {
     const origin = api.getOrigin();
-    const tok = api.getToken();
+    const tok = api.getAssetToken();
     if (!origin || !tok) return '';
     // Cues sometimes carry a relative path (`sprite_0.jpg`),
     // sometimes a server-rooted one. Detect and route both.

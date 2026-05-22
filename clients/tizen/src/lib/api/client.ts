@@ -8,6 +8,9 @@
 const ORIGIN_KEY = 'onscreen.api_origin';
 const TOKEN_KEY = 'onscreen.access_token';
 const REFRESH_KEY = 'onscreen.refresh_token';
+// purpose=asset token. Goes in `?token=` on asset URLs instead of the
+// general access token — the server rejects a general token in a URL.
+const ASSET_KEY = 'onscreen.asset_token';
 const USER_KEY = 'onscreen.user';
 
 export interface UserMeta {
@@ -19,6 +22,9 @@ export interface UserMeta {
 export interface TokenPair {
   access_token: string;
   refresh_token: string;
+  /** purpose=asset token for cross-origin asset `?token=`. Optional —
+   *  absent on servers that predate the asset-token work. */
+  asset_token?: string;
   expires_at: string;
   user_id: string;
   username: string;
@@ -56,6 +62,11 @@ export class ApiClient {
     return localStorage.getItem(TOKEN_KEY);
   }
 
+  /** The purpose=asset token used for `?token=` on asset URLs. */
+  getAssetToken(): string | null {
+    return localStorage.getItem(ASSET_KEY);
+  }
+
   getUser(): UserMeta | null {
     const raw = localStorage.getItem(USER_KEY);
     if (!raw) return null;
@@ -69,6 +80,11 @@ export class ApiClient {
   setTokens(pair: TokenPair) {
     localStorage.setItem(TOKEN_KEY, pair.access_token);
     localStorage.setItem(REFRESH_KEY, pair.refresh_token);
+    if (pair.asset_token) {
+      localStorage.setItem(ASSET_KEY, pair.asset_token);
+    } else {
+      localStorage.removeItem(ASSET_KEY);
+    }
     localStorage.setItem(
       USER_KEY,
       JSON.stringify({
@@ -82,6 +98,7 @@ export class ApiClient {
   clearTokens() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
+    localStorage.removeItem(ASSET_KEY);
     localStorage.removeItem(USER_KEY);
   }
 
@@ -136,15 +153,16 @@ export class ApiClient {
   /**
    * URL for an asset endpoint (artwork, media stream, subtitles)
    * that `<img>` / `<video>` / `<track>` can load directly. Browsers
-   * can't attach Authorization headers to those element fetches,
-   * so we put the bearer token in `?token=<paseto>`. See the webOS
-   * sibling for the full rationale.
+   * can't attach Authorization headers to those element fetches, so
+   * we put the purpose=asset token in `?token=<paseto>` — the server
+   * rejects the general access token in a URL. See the webOS sibling
+   * for the full rationale.
    */
   assetUrl(path: string): string {
     const origin = this.getOrigin();
     if (!origin) throw new Error('API origin not configured');
     const url = `${origin}${path}`;
-    const tok = this.getToken();
+    const tok = this.getAssetToken();
     if (!tok) return url;
     if (/[?&]token=/.test(url)) return url;
     return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);

@@ -690,7 +690,10 @@
 
   function startSyncStream() {
     const origin = api.getOrigin();
-    const tok = api.getToken();
+    // SSE can't carry an Authorization header — pass the purpose=asset
+    // token in ?token=. The server rejects a general access token in a
+    // URL; the asset token authenticates /notifications/stream.
+    const tok = api.getAssetToken();
     if (!origin || !tok) return;
     try {
       syncEventSource = new EventSource(

@@ -85,17 +85,16 @@
 
   async function play(channel: Channel) {
     const origin = api.getOrigin();
-    const tok = api.getToken();
+    const tok = api.getAssetToken();
     if (!origin || !tok) {
       error = 'Not signed in';
       return;
     }
     activeChannel = channel;
     mode = 'playing';
-    // The HLS endpoint takes the bearer as `?token=` because the
-    // <video> element + hls.js can't attach an Authorization header
-    // to segment fetches. Same convention the /watch route uses for
-    // transcode sessions.
+    // The HLS endpoint takes the purpose=asset token as `?token=` —
+    // the <video> element + hls.js can't attach an Authorization
+    // header, and the server rejects a general access token in a URL.
     const url = `${origin}/api/v1/tv/channels/${channel.id}/stream.m3u8?token=${encodeURIComponent(tok)}`;
     // Wait one frame for the video element to mount in the new mode.
     await Promise.resolve();

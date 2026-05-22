@@ -602,13 +602,13 @@
 
   function startSyncStream() {
     const origin = api.getOrigin();
-    const tok = api.getToken();
+    const tok = api.getAssetToken();
     if (!origin || !tok) return;
     // EventSource doesn't support Authorization headers natively —
-    // pass the bearer as a ?token= query param instead. Server
-    // /notifications/stream is mounted under
-    // RequiredAllowQueryToken so the access token still works
-    // there even though the route isn't an asset endpoint.
+    // pass the purpose=asset token as a ?token= query param. Server
+    // /notifications/stream is mounted under RequiredAllowQueryToken,
+    // which now rejects a general access token in a URL; the asset
+    // token authenticates here and can't be replayed as a Bearer.
     try {
       syncEventSource = new EventSource(
         `${origin}/api/v1/notifications/stream?token=${encodeURIComponent(tok)}`
