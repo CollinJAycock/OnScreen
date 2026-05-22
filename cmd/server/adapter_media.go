@@ -349,6 +349,17 @@ func (a *mediaAdapter) UpdateMediaFilePath(ctx context.Context, id uuid.UUID, ne
 	return a.q.UpdateMediaFilePath(ctx, gen.UpdateMediaFilePathParams{ID: id, FilePath: newPath})
 }
 
+// ClearActiveFileHashesForReprobe NULLs file_hash on active files (optionally
+// scoped to one library) so the next scan re-probes them and re-persists
+// technical metadata. Backs the reprobe-metadata maintenance endpoint.
+func (a *mediaAdapter) ClearActiveFileHashesForReprobe(ctx context.Context, libraryID *uuid.UUID) (int64, error) {
+	var libParam pgtype.UUID
+	if libraryID != nil {
+		libParam = pgtype.UUID{Bytes: [16]byte(*libraryID), Valid: true}
+	}
+	return a.q.ClearActiveFileHashesForReprobe(ctx, libParam)
+}
+
 func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p media.CreateFileParams) error {
 	return a.q.UpdateMediaFileTechnicalMetadata(ctx, gen.UpdateMediaFileTechnicalMetadataParams{
 		ID:              id,

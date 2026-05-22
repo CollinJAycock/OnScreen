@@ -27,6 +27,7 @@ import (
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/people"
 	"github.com/onscreen/onscreen/internal/domain/settings"
@@ -1246,10 +1247,22 @@ type stubMaintenanceLibrary struct{}
 func (s *stubMaintenanceLibrary) PurgeDeleted(_ context.Context, _ uuid.UUID) (int64, error) {
 	return 0, nil
 }
+func (s *stubMaintenanceLibrary) List(_ context.Context) ([]library.Library, error) {
+	return nil, nil
+}
+func (s *stubMaintenanceLibrary) EnqueueScan(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
+type stubMetadataReprober struct{}
+
+func (s *stubMetadataReprober) ClearActiveFileHashesForReprobe(_ context.Context, _ *uuid.UUID) (int64, error) {
+	return 0, nil
+}
 
 func TestMaintenance_RefreshMissingArtRequiresAdmin(t *testing.T) {
 	ts := newExtrasServer(t, func(h *api.Handlers) {
-		h.Maintenance = v1.NewMaintenanceHandler(&stubMaintenanceMedia{}, &stubMaintenanceLibrary{}, &stubItemEnricher{}, slog.Default())
+		h.Maintenance = v1.NewMaintenanceHandler(&stubMaintenanceMedia{}, &stubMaintenanceLibrary{}, &stubMetadataReprober{}, &stubItemEnricher{}, slog.Default())
 	})
 
 	resp := ts.do("POST", "/api/v1/maintenance/refresh-missing-art", ts.userToken(), nil)

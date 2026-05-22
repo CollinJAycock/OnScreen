@@ -620,6 +620,21 @@ WHERE media_item_id IN (
     SELECT id FROM media_items WHERE library_id = $1
 );
 
+-- name: ClearActiveFileHashesForReprobe :execrows
+-- Maintenance backfill: NULL file_hash on active files so the scanner's
+-- mtime fast-skip AND its content-hash fast-path both miss on the next
+-- scan, forcing a full re-probe that re-persists technical metadata
+-- (frame_rate, replaygain_*, etc.) through the current write path. The
+-- hash is recomputed during that re-probe, so the only lasting effect is
+-- the one forced re-probe. Optional library_id scopes the reset; NULL
+-- clears every active file. Returns rows-affected.
+UPDATE media_files f
+SET file_hash = NULL
+FROM media_items mi
+WHERE mi.id = f.media_item_id
+  AND f.status = 'active'
+  AND (sqlc.narg('library_id')::uuid IS NULL OR mi.library_id = sqlc.narg('library_id'));
+
 -- name: PurgeDeletedLibraryBatch :execrows
 -- Hard-deletes UP TO sqlc.arg('batch_limit') media_items rows for
 -- [library_id]; FK cascades (added in 00007 + 00081) take care of

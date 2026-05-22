@@ -12,6 +12,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearActiveFileHashesForReprobe = `-- name: ClearActiveFileHashesForReprobe :execrows
+UPDATE media_files f
+SET file_hash = NULL
+FROM media_items mi
+WHERE mi.id = f.media_item_id
+  AND f.status = 'active'
+  AND ($1::uuid IS NULL OR mi.library_id = $1)
+`
+
+// Maintenance backfill: NULL file_hash on active files so the scanner's
+// mtime fast-skip AND its content-hash fast-path both miss on the next
+// scan, forcing a full re-probe that re-persists technical metadata
+// (frame_rate, replaygain_*, etc.) through the current write path. The
+// hash is recomputed during that re-probe, so the only lasting effect is
+// the one forced re-probe. Optional library_id scopes the reset; NULL
+// clears every active file. Returns rows-affected.
+func (q *Queries) ClearActiveFileHashesForReprobe(ctx context.Context, libraryID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, clearActiveFileHashesForReprobe, libraryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countMediaItems = `-- name: CountMediaItems :one
 SELECT COUNT(*) FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL

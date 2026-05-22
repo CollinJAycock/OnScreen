@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
@@ -19,10 +20,19 @@ type MaintenanceMediaService interface {
 }
 
 // MaintenanceLibraryService is the slice of library.Service the
-// purge endpoint needs. Separate from MaintenanceMediaService so
-// the existing media-only handlers can keep their narrow surface.
+// purge + reprobe endpoints need. Separate from MaintenanceMediaService
+// so the existing media-only handlers can keep their narrow surface.
 type MaintenanceLibraryService interface {
 	PurgeDeleted(ctx context.Context, id uuid.UUID) (int64, error)
+	List(ctx context.Context) ([]library.Library, error)
+	EnqueueScan(ctx context.Context, id uuid.UUID) error
+}
+
+// MetadataReprober clears the content hashes that gate the scanner's
+// fast-skip, forcing the next scan to re-probe and re-persist technical
+// metadata. Backs the reprobe-metadata maintenance endpoint.
+type MetadataReprober interface {
+	ClearActiveFileHashesForReprobe(ctx context.Context, libraryID *uuid.UUID) (int64, error)
 }
 
 // MaintenanceHandler exposes admin-only one-shot operations such as backfilling
@@ -30,13 +40,14 @@ type MaintenanceLibraryService interface {
 type MaintenanceHandler struct {
 	media    MaintenanceMediaService
 	library  MaintenanceLibraryService
+	reprober MetadataReprober
 	enricher ItemEnricher
 	logger   *slog.Logger
 }
 
 // NewMaintenanceHandler creates a MaintenanceHandler.
-func NewMaintenanceHandler(svc MaintenanceMediaService, lib MaintenanceLibraryService, enricher ItemEnricher, logger *slog.Logger) *MaintenanceHandler {
-	return &MaintenanceHandler{media: svc, library: lib, enricher: enricher, logger: logger}
+func NewMaintenanceHandler(svc MaintenanceMediaService, lib MaintenanceLibraryService, reprober MetadataReprober, enricher ItemEnricher, logger *slog.Logger) *MaintenanceHandler {
+	return &MaintenanceHandler{media: svc, library: lib, reprober: reprober, enricher: enricher, logger: logger}
 }
 
 // RefreshMissingArt handles POST /api/v1/maintenance/refresh-missing-art.
@@ -92,6 +103,76 @@ func (h *MaintenanceHandler) RefreshMissingArt(w http.ResponseWriter, r *http.Re
 	respond.Success(w, r, map[string]any{
 		"candidates": len(items),
 		"queued":     len(items),
+	})
+}
+
+// ReprobeMetadata handles POST /api/v1/maintenance/reprobe-metadata.
+// Backfills technical metadata that the float64→Numeric persist bug
+// silently dropped to NULL (frame_rate on video, replaygain_* on music)
+// for files scanned before the fix. It NULLs file_hash on active files —
+// which makes the scanner's mtime fast-skip AND content-hash fast-path
+// both miss — then enqueues a scan so each file is re-probed and
+// re-persisted through the corrected write path. Hashes are recomputed
+// during that re-probe.
+//
+// Optional ?library_id=UUID scopes the reset + scan to one library;
+// otherwise every library is reset and re-scanned. Returns the count of
+// files cleared and libraries queued.
+//
+// This covers probe-derived fields only. Item ratings (also NULLed by
+// the same bug) come from TMDB enrichment, not the probe — use
+// refresh-missing-art / per-item enrich for those.
+//
+// Admin-only — mounted under AdminRequired in router.go.
+func (h *MaintenanceHandler) ReprobeMetadata(w http.ResponseWriter, r *http.Request) {
+	var libID *uuid.UUID
+	if raw := r.URL.Query().Get("library_id"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			respond.BadRequest(w, r, "invalid library_id")
+			return
+		}
+		libID = &parsed
+	}
+
+	cleared, err := h.reprober.ClearActiveFileHashesForReprobe(r.Context(), libID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "reprobe: clear file hashes", "library_id", libID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
+	// Collect the libraries to re-scan: the one named, or all of them.
+	var libIDs []uuid.UUID
+	if libID != nil {
+		libIDs = []uuid.UUID{*libID}
+	} else {
+		libs, err := h.library.List(r.Context())
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "reprobe: list libraries", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		for _, l := range libs {
+			libIDs = append(libIDs, l.ID)
+		}
+	}
+
+	queued := 0
+	for _, id := range libIDs {
+		if err := h.library.EnqueueScan(r.Context(), id); err != nil {
+			h.logger.WarnContext(r.Context(), "reprobe: enqueue scan", "library_id", id, "err", err)
+			continue
+		}
+		queued++
+	}
+
+	h.logger.InfoContext(r.Context(), "reprobe metadata enqueued",
+		"library_id", libID, "files_cleared", cleared, "libraries_queued", queued)
+
+	respond.Success(w, r, map[string]any{
+		"files_cleared":    cleared,
+		"libraries_queued": queued,
 	})
 }
 
