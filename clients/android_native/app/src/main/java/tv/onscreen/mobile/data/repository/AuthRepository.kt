@@ -9,6 +9,10 @@ import tv.onscreen.mobile.data.model.LoginRequest
 import tv.onscreen.mobile.data.model.LogoutRequest
 import tv.onscreen.mobile.data.model.PairCodeResponse
 import tv.onscreen.mobile.data.model.TokenPair
+import tv.onscreen.mobile.data.model.TotpActivateResponse
+import tv.onscreen.mobile.data.model.TotpCodeRequest
+import tv.onscreen.mobile.data.model.TotpSetupResponse
+import tv.onscreen.mobile.data.model.TotpStatusResponse
 import tv.onscreen.mobile.data.model.TotpVerifyRequest
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import javax.inject.Inject
@@ -50,6 +54,14 @@ open class AuthRepository @Inject constructor(
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }
+
+    // ── 2FA self-management ───────────────────────────────────────────────────
+    open suspend fun totpStatus(): TotpStatusResponse = api.totpStatus().data
+    open suspend fun totpSetup(): TotpSetupResponse = api.totpSetup().data
+    open suspend fun totpActivate(code: String): TotpActivateResponse =
+        api.totpActivate(TotpCodeRequest(code)).data
+    open suspend fun totpDisable(code: String): TotpStatusResponse =
+        api.totpDisable(TotpCodeRequest(code)).data
 
     /** Discover which federated auth providers the server has
      *  enabled. Fans out the three /enabled endpoints in parallel —

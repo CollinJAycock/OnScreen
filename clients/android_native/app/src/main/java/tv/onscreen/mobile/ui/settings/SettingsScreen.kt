@@ -39,6 +39,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenSecurity: () -> Unit,
     vm: SettingsViewModel = hiltViewModel(),
 ) {
     val downloadOnWifiOnly by vm.downloadOnWifiOnly.collectAsState(initial = true)
@@ -122,6 +123,18 @@ fun SettingsScreen(
                 title = "Forget server",
                 description = "Remove the server URL and all session state. Use when switching to a different OnScreen deployment.",
                 onClick = { showDisconnectConfirm = true },
+            )
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            SectionHeader("Security")
+
+            ActionRow(
+                title = "Two-factor authentication",
+                description = "Add a code from an authenticator app to your password login.",
+                onClick = onOpenSecurity,
             )
 
             Spacer(Modifier.height(16.dp))

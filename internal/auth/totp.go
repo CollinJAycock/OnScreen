@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
+	"image/png"
 	"strings"
 
 	"github.com/pquerna/otp"
@@ -38,6 +40,27 @@ func GenerateTOTPSecret(accountName string) (secret, otpauthURL string, err erro
 		return "", "", fmt.Errorf("generate totp secret: %w", err)
 	}
 	return key.Secret(), key.URL(), nil
+}
+
+// RenderTOTPQRPNG turns an otpauth:// URI into a PNG QR code (256×256).
+// Rendering server-side (via the same pquerna/otp lib that minted the
+// secret) means native clients don't each need to ship a QR encoder —
+// they show the bytes directly. Web renders its own QR from the URL, so
+// it ignores this.
+func RenderTOTPQRPNG(otpauthURL string) ([]byte, error) {
+	key, err := otp.NewKeyFromURL(otpauthURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse otpauth url: %w", err)
+	}
+	img, err := key.Image(256, 256)
+	if err != nil {
+		return nil, fmt.Errorf("render qr: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, fmt.Errorf("encode png: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // ValidateTOTPCode reports whether code is valid for secret right now.

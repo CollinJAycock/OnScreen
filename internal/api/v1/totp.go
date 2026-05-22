@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/auth"
 )
 
 // TOTP error sentinels — the service returns these so the handler can map
@@ -122,10 +124,17 @@ func (h *TOTPHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.Success(w, r, map[string]any{
-		"otpauth_url": url,
-		"secret":      secret,
-	})
+	// Render the QR server-side so native clients don't each need a QR
+	// encoder; web ignores it and renders its own from otpauth_url. A
+	// render failure is non-fatal — clients can still scan via the URL or
+	// type the secret manually.
+	resp := map[string]any{"otpauth_url": url, "secret": secret}
+	if png, err := auth.RenderTOTPQRPNG(url); err == nil {
+		resp["qr_png"] = base64.StdEncoding.EncodeToString(png)
+	} else {
+		h.logErr(r, "totp qr render", err)
+	}
+	respond.Success(w, r, resp)
 }
 
 // Activate — POST /auth/totp/activate (authenticated). Confirms the

@@ -16,6 +16,19 @@ interface OnScreenApi {
     @POST("api/v1/auth/totp/verify")
     suspend fun verifyTotp(@Body body: TotpVerifyRequest): ApiResponse<TokenPair>
 
+    // ── 2FA self-management (authenticated) ───────────────────────────────────
+    @GET("api/v1/auth/totp/status")
+    suspend fun totpStatus(): ApiResponse<TotpStatusResponse>
+
+    @POST("api/v1/auth/totp/setup")
+    suspend fun totpSetup(): ApiResponse<TotpSetupResponse>
+
+    @POST("api/v1/auth/totp/activate")
+    suspend fun totpActivate(@Body body: TotpCodeRequest): ApiResponse<TotpActivateResponse>
+
+    @POST("api/v1/auth/totp/disable")
+    suspend fun totpDisable(@Body body: TotpCodeRequest): ApiResponse<TotpStatusResponse>
+
     @POST("api/v1/auth/refresh")
     suspend fun refresh(@Body body: RefreshRequest): ApiResponse<TokenPair>
 

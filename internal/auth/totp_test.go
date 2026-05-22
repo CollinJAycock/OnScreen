@@ -39,6 +39,21 @@ func TestGenerateTOTPSecret_ValidatesOwnCode(t *testing.T) {
 	}
 }
 
+func TestRenderTOTPQRPNG(t *testing.T) {
+	_, url, err := GenerateTOTPSecret("alice")
+	if err != nil {
+		t.Fatalf("GenerateTOTPSecret: %v", err)
+	}
+	png, err := RenderTOTPQRPNG(url)
+	if err != nil {
+		t.Fatalf("RenderTOTPQRPNG: %v", err)
+	}
+	// PNG magic number: 0x89 'P' 'N' 'G'.
+	if len(png) < 8 || png[0] != 0x89 || string(png[1:4]) != "PNG" {
+		t.Errorf("output is not a PNG (len=%d, head=%v)", len(png), png[:min(8, len(png))])
+	}
+}
+
 func TestValidateTOTPCode_RejectsBadInput(t *testing.T) {
 	secret, _, err := GenerateTOTPSecret("bob")
 	if err != nil {
