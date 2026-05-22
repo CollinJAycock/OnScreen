@@ -29,14 +29,24 @@ export function setApiBase(url: string) {
 // working unchanged.
 let bearerToken: string | null = null;
 let refreshTokenStore: string | null = null;
+// The purpose=asset token. Cross-origin clients put THIS (never the
+// general bearer) in `?token=` on asset routes — the server rejects a
+// general token in a URL. Browser builds leave it null and use cookies.
+let assetTokenStore: string | null = null;
 
-/** Set or clear the in-memory bearer token. The Tauri shell also
- *  persists it to its store, but this in-memory copy is what the
- *  fetch wrapper reads on every call so the persistence layer
- *  isn't on the hot path. */
-export function setBearerToken(access: string | null, refresh: string | null = null) {
+/** Set or clear the in-memory tokens. The Tauri shell also persists
+ *  them to its store, but this in-memory copy is what the fetch
+ *  wrapper / assetUrl read on every call so the persistence layer
+ *  isn't on the hot path. `asset` is the purpose=asset token used by
+ *  assetUrl for cross-origin `?token=`. */
+export function setBearerToken(
+  access: string | null,
+  refresh: string | null = null,
+  asset: string | null = null,
+) {
   bearerToken = access;
   refreshTokenStore = refresh;
+  assetTokenStore = asset;
 }
 
 /** Read the cached bearer token. Used by the native audio engine
@@ -45,6 +55,11 @@ export function setBearerToken(access: string | null, refresh: string | null = n
  *  it owns its own ureq client). Returns null in browser builds
  *  where bearer auth isn't used. */
 export function getBearerToken(): string | null { return bearerToken; }
+
+/** Read the cached purpose=asset token. Exposed for the native audio /
+ *  now-playing wiring that builds artwork URLs Rust-side (it can't read
+ *  assetUrl's module state through fetch). Null in browser builds. */
+export function getAssetToken(): string | null { return assetTokenStore; }
 
 /** Read the configured API base. Used by the native audio engine
  *  wiring to construct absolute media URLs the Rust-side ureq
@@ -68,14 +83,16 @@ export function getApiBase(): string { return apiBase; }
  *    httpOnly auth cookie attaches automatically — no token needed
  *    in the URL.
  *  - Cross-origin (Tauri client pointed at any server): prepends
- *    the configured server origin AND appends `&token=<bearer>` (or
- *    `?token=` if no other params) when a bearer is cached. The
- *    server's RequiredAllowQueryToken middleware accepts the query-
- *    string token specifically for asset routes (where `<img>` /
- *    `<audio>` can't carry an Authorization header). The token-in-
- *    URL trade-off is scoped to assets — leaks (logs, Referer)
- *    don't grant general API access because regular API routes
- *    still require Bearer/cookie.
+ *    the configured server origin AND appends `&token=<asset>` (or
+ *    `?token=` if no other params) using the purpose=asset token —
+ *    NOT the general bearer. The server rejects a general access
+ *    token in `?token=` (a general-API credential must never travel
+ *    in a URL that lands in logs / Referer / history); the asset
+ *    token authenticates the read-only asset routes and can't be
+ *    replayed as a Bearer. If no asset token is cached (talking to a
+ *    pre-asset-token server, or before the first login/refresh) the
+ *    URL is returned without a token — the request will 401 until an
+ *    asset token is available, which is the safe failure.
  *
  *  Caller-supplied tokens (e.g. transcode segment tokens) take
  *  precedence — the helper doesn't overwrite an existing `token=`
@@ -118,8 +135,8 @@ export function getClientName(): string {
 export function assetUrl(path: string): string {
   if (apiBase.startsWith('/')) return path;
   const base = apiBase.replace(/\/api\/v1\/?$/, '') + path;
-  if (!bearerToken || /[?&]token=/.test(base)) return base;
-  return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(bearerToken);
+  if (!assetTokenStore || /[?&]token=/.test(base)) return base;
+  return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(assetTokenStore);
 }
 
 /** Build the request headers, attaching Authorization when a bearer
@@ -161,11 +178,11 @@ function credentialsMode(): RequestCredentials {
 /** Persist new tokens via the Tauri shell, no-op in the browser.
  *  Fire-and-forget — failure to persist is non-fatal because the
  *  in-memory bearer is already updated. */
-async function persistTokensIfTauri(access: string, refresh: string): Promise<void> {
-  setBearerToken(access, refresh);
+async function persistTokensIfTauri(access: string, refresh: string, asset: string = ''): Promise<void> {
+  setBearerToken(access, refresh, asset || null);
   try {
     const { isTauri, setStoredTokens } = await import('./native');
-    if (isTauri()) await setStoredTokens(access, refresh);
+    if (isTauri()) await setStoredTokens(access, refresh, asset);
   } catch {
     // Tauri not present or store IPC unavailable — in-memory tokens
     // still work for this session.
@@ -383,7 +400,7 @@ export class ApiClient {
       // store update is fire-and-forget — if it fails we still have
       // the in-memory copy and the user can re-login next launch.
       this.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
-      void persistTokensIfTauri(pair.access_token, pair.refresh_token);
+      void persistTokensIfTauri(pair.access_token, pair.refresh_token, pair.asset_token ?? '');
       return true;
     } catch {
       // Malformed body — server returned 2xx but we can't parse it.
@@ -451,18 +468,21 @@ export function apiBeacon(method: 'PUT' | 'POST', path: string, body: unknown): 
 export interface TokenPair {
   access_token: string;
   refresh_token: string;
+  /** purpose=asset token for cross-origin asset `?token=`. Optional —
+   *  absent on servers that predate the asset-token work. */
+  asset_token?: string;
   expires_at: string;
   user_id: string;
   username: string;
   is_admin: boolean;
 }
 
-/** Capture the access + refresh tokens from a successful auth call
- *  so subsequent requests carry the bearer header. Browser builds
- *  short-circuit (the in-memory cache is unread there since the
- *  cookie path covers auth). */
+/** Capture the access + refresh + asset tokens from a successful auth
+ *  call so subsequent requests carry the bearer header and asset URLs
+ *  carry the asset token. Browser builds short-circuit (the in-memory
+ *  cache is unread there since the cookie path covers auth). */
 async function captureTokens(pair: TokenPair): Promise<TokenPair> {
-  await persistTokensIfTauri(pair.access_token, pair.refresh_token);
+  await persistTokensIfTauri(pair.access_token, pair.refresh_token, pair.asset_token ?? '');
   return pair;
 }
 
@@ -479,7 +499,7 @@ export const authApi = {
       // Clear bearer + persisted tokens regardless of whether the
       // server-side logout succeeded — a leaked refresh token is a
       // worse outcome than a transient API error.
-      setBearerToken(null, null);
+      setBearerToken(null, null, null);
       try {
         const { isTauri, clearStoredTokens } = await import('./native');
         if (isTauri()) await clearStoredTokens();

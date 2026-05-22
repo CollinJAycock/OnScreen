@@ -96,7 +96,7 @@
       // same flow as a 401 mid-session.
       const tokens = await getStoredTokens();
       if (tokens.access_token && tokens.refresh_token) {
-        setBearerToken(tokens.access_token, tokens.refresh_token);
+        setBearerToken(tokens.access_token, tokens.refresh_token, tokens.asset_token);
       }
     }
 

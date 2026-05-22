@@ -65,6 +65,11 @@ pub const KEY_SERVER_URL: &str = "server_url";
 // from a previous build doesn't have to re-login.
 const KEY_ACCESS_TOKEN: &str = "access_token";
 const KEY_REFRESH_TOKEN: &str = "refresh_token";
+// purpose=asset token. Read-only, 24 h, used in `?token=` on asset
+// URLs (artwork / trickplay / subtitles / SSE) where the webview
+// can't send an Authorization header. Persisted so a cold start can
+// render posters before the first /auth/refresh mints a new one.
+const KEY_ASSET_TOKEN: &str = "asset_token";
 
 // Keychain entry identifiers. Service is the bundle identifier so
 // "OnScreen" doesn't collide with another app named OnScreen on a
@@ -205,6 +210,7 @@ fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
 pub struct StoredTokens {
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
+    pub asset_token: Option<String>,
 }
 
 /// Reads tokens from the OS keychain. Falls through to the legacy
@@ -217,10 +223,12 @@ pub struct StoredTokens {
 fn get_tokens(app: AppHandle) -> Result<StoredTokens, String> {
     let access_kc = keychain_get(KEY_ACCESS_TOKEN);
     let refresh_kc = keychain_get(KEY_REFRESH_TOKEN);
+    let asset_kc = keychain_get(KEY_ASSET_TOKEN);
     if access_kc.is_some() || refresh_kc.is_some() {
         return Ok(StoredTokens {
             access_token: access_kc,
             refresh_token: refresh_kc,
+            asset_token: asset_kc,
         });
     }
     // Legacy fallback: tokens may be in the plaintext store from a
@@ -234,6 +242,9 @@ fn get_tokens(app: AppHandle) -> Result<StoredTokens, String> {
     let refresh_store = store
         .get(KEY_REFRESH_TOKEN)
         .and_then(|v| v.as_str().map(String::from));
+    let asset_store = store
+        .get(KEY_ASSET_TOKEN)
+        .and_then(|v| v.as_str().map(String::from));
     if access_store.is_none() && refresh_store.is_none() {
         return Ok(StoredTokens::default());
     }
@@ -245,14 +256,20 @@ fn get_tokens(app: AppHandle) -> Result<StoredTokens, String> {
         Some(r) => keychain_set(KEY_REFRESH_TOKEN, r),
         None => true,
     };
-    if migrated_access && migrated_refresh {
+    let migrated_asset = match asset_store.as_deref() {
+        Some(a) => keychain_set(KEY_ASSET_TOKEN, a),
+        None => true,
+    };
+    if migrated_access && migrated_refresh && migrated_asset {
         store.delete(KEY_ACCESS_TOKEN);
         store.delete(KEY_REFRESH_TOKEN);
+        store.delete(KEY_ASSET_TOKEN);
         let _ = store.save();
     }
     Ok(StoredTokens {
         access_token: access_store,
         refresh_token: refresh_store,
+        asset_token: asset_store,
     })
 }
 
@@ -261,14 +278,19 @@ fn get_tokens(app: AppHandle) -> Result<StoredTokens, String> {
 /// works, the store is wiped on every set so we never have a stale
 /// plaintext copy of a rotated refresh token sitting on disk.
 #[tauri::command]
-fn set_tokens(app: AppHandle, access: String, refresh: String) -> Result<(), String> {
+fn set_tokens(app: AppHandle, access: String, refresh: String, asset: String) -> Result<(), String> {
     let kc_access_ok = keychain_set(KEY_ACCESS_TOKEN, &access);
     let kc_refresh_ok = keychain_set(KEY_REFRESH_TOKEN, &refresh);
+    // The asset token is optional (empty when talking to a pre-asset-
+    // token server). Treat empty as "nothing to store, success" so a
+    // missing asset token doesn't trip the keychain-degraded path.
+    let kc_asset_ok = asset.is_empty() || keychain_set(KEY_ASSET_TOKEN, &asset);
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    if kc_access_ok && kc_refresh_ok {
-        // Both landed in the keychain — strip any legacy entries.
+    if kc_access_ok && kc_refresh_ok && kc_asset_ok {
+        // All landed in the keychain — strip any legacy entries.
         store.delete(KEY_ACCESS_TOKEN);
         store.delete(KEY_REFRESH_TOKEN);
+        store.delete(KEY_ASSET_TOKEN);
         store.save().map_err(|e| e.to_string())?;
     } else {
         // Keychain partially or fully unavailable; persist whichever
@@ -285,15 +307,19 @@ fn set_tokens(app: AppHandle, access: String, refresh: String) -> Result<(), Str
         if !kc_refresh_ok {
             store.set(KEY_REFRESH_TOKEN, refresh);
         }
+        if !kc_asset_ok {
+            store.set(KEY_ASSET_TOKEN, asset);
+        }
         store.save().map_err(|e| e.to_string())?;
         eprintln!(
-            "auth: keychain unavailable (access_ok={kc_access_ok} refresh_ok={kc_refresh_ok}) — credentials cached plaintext in settings store"
+            "auth: keychain unavailable (access_ok={kc_access_ok} refresh_ok={kc_refresh_ok} asset_ok={kc_asset_ok}) — credentials cached plaintext in settings store"
         );
         let _ = app.emit(
             "auth:keychain-degraded",
             serde_json::json!({
                 "access_ok": kc_access_ok,
                 "refresh_ok": kc_refresh_ok,
+                "asset_ok": kc_asset_ok,
             }),
         );
     }
@@ -306,9 +332,11 @@ fn set_tokens(app: AppHandle, access: String, refresh: String) -> Result<(), Str
 fn clear_tokens(app: AppHandle) -> Result<(), String> {
     keychain_clear(KEY_ACCESS_TOKEN);
     keychain_clear(KEY_REFRESH_TOKEN);
+    keychain_clear(KEY_ASSET_TOKEN);
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     store.delete(KEY_ACCESS_TOKEN);
     store.delete(KEY_REFRESH_TOKEN);
+    store.delete(KEY_ASSET_TOKEN);
     store.save().map_err(|e| e.to_string())?;
     Ok(())
 }

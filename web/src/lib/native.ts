@@ -79,18 +79,22 @@ export async function clearServerUrl(): Promise<void> {
 export type StoredTokens = {
   access_token: string | null;
   refresh_token: string | null;
+  // purpose=asset token, persisted so cold-start can authenticate
+  // cross-origin asset URLs before the first /auth/refresh lands.
+  // Null on shells/keychains written before the asset-token work.
+  asset_token: string | null;
 };
 
 export async function getStoredTokens(): Promise<StoredTokens> {
-  if (!isTauri()) return { access_token: null, refresh_token: null };
+  if (!isTauri()) return { access_token: null, refresh_token: null, asset_token: null };
   const { invoke } = await import('@tauri-apps/api/core');
   return await invoke<StoredTokens>('get_tokens');
 }
 
-export async function setStoredTokens(access: string, refresh: string): Promise<void> {
+export async function setStoredTokens(access: string, refresh: string, asset: string = ''): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import('@tauri-apps/api/core');
-  await invoke('set_tokens', { access, refresh });
+  await invoke('set_tokens', { access, refresh, asset });
 }
 
 export async function clearStoredTokens(): Promise<void> {
