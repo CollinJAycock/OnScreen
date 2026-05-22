@@ -53,7 +53,7 @@ func (h *NativeTranscodeHandler) startABR(
 	w http.ResponseWriter, r *http.Request,
 	sessionID, segTok string, userID, itemID uuid.UUID,
 	file *media.File, ladder []transcode.Rendition,
-	audioStreamIndex int, needsToneMap bool, positionMS int64,
+	audioStreamIndex int, needsToneMap, hevc bool, positionMS int64,
 ) {
 	ctx := r.Context()
 	sess := transcode.Session{
@@ -72,6 +72,10 @@ func (h *NativeTranscodeHandler) startABR(
 		DurationMS:       *file.DurationMS,
 		AudioStreamIndex: audioStreamIndex,
 		NeedsToneMap:     needsToneMap,
+		// HEVC ladder: rungs are hevc_* fMP4 (.m4s + init.mp4). H.264 ladder
+		// stays mpegts .ts. One codec for the whole ladder, chosen by client
+		// capability in Start.
+		HEVCOutput: hevc,
 	}
 	if file.FrameRate != nil {
 		sess.FrameRate = *file.FrameRate
@@ -105,7 +109,11 @@ func (h *NativeTranscodeHandler) startABR(
 // serveABRMaster writes the master playlist for an ABR parent session.
 // Called by Playlist when the session is ABR. Instant — no ffmpeg.
 func (h *NativeTranscodeHandler) serveABRMaster(w http.ResponseWriter, r *http.Request, sess *transcode.Session, token string) {
-	master := transcode.BuildMasterPlaylist(sess.ABRRenditions, func(rd transcode.Rendition) string {
+	codecs := ""
+	if sess.HEVCOutput && len(sess.ABRRenditions) > 0 {
+		codecs = transcode.HEVCMasterCodecs(sess.ABRRenditions[0].Height) // [0] = tallest rung
+	}
+	master := transcode.BuildMasterPlaylist(sess.ABRRenditions, codecs, func(rd transcode.Rendition) string {
 		return fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token)
 	})
 	w.Header().Set("Content-Type", "application/x-mpegURL")
@@ -138,10 +146,19 @@ func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *ht
 		return
 	}
 
-	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token)
+	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, sess.HEVCOutput)
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write([]byte(playlist))
+}
+
+// abrSegExt is the segment file extension for the ladder's codec: fMP4
+// (.m4s) for HEVC, MPEG-TS (.ts) for H.264.
+func abrSegExt(fmp4 bool) string {
+	if fmp4 {
+		return ".m4s"
+	}
+	return ".ts"
 }
 
 // abrSegmentBoundarySec returns the content time (seconds) at which segment
@@ -164,14 +181,19 @@ func abrSegmentBoundarySec(segIdx int, fps float64) float64 {
 // will actually cut (see abrSegmentBoundarySec); the last segment carries the
 // remainder. Segment URIs are global indices the segment handler maps to
 // on-demand transcode offsets.
-func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, token string) string {
+func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, token string, fmp4 bool) string {
 	segDur := transcode.SegmentDuration
 	total := float64(durationMS) / 1000.0
+	ext := abrSegExt(fmp4)
 
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:6\n")
 	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n", segDur)
 	b.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n")
+	// fMP4 (HEVC) segments need the shared init segment up front.
+	if fmp4 {
+		fmt.Fprintf(&b, "#EXT-X-MAP:URI=\"/api/v1/transcode/sessions/%s/abr/%s/seg/init.mp4?token=%s\"\n", sid, rung, token)
+	}
 	for i := 0; ; i++ {
 		start := abrSegmentBoundarySec(i, fps)
 		if i > 0 && start >= total {
@@ -186,7 +208,7 @@ func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, tok
 			break
 		}
 		fmt.Fprintf(&b, "#EXTINF:%.3f,\n", dur)
-		fmt.Fprintf(&b, "/api/v1/transcode/sessions/%s/abr/%s/seg/%d.ts?token=%s\n", sid, rung, i, token)
+		fmt.Fprintf(&b, "/api/v1/transcode/sessions/%s/abr/%s/seg/%d%s?token=%s\n", sid, rung, i, ext, token)
 		if end >= total {
 			break // this segment reached EOF
 		}
@@ -196,23 +218,20 @@ func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, tok
 }
 
 // ABRVariantSegment serves one segment of one rung, transcoding it on
-// demand. GET /sessions/{sid}/abr/{rung}/seg/{N}.ts — ensures a child
-// transcode session for the rung is producing global segment N (starting
-// /seeking ffmpeg to N*SegmentDuration when needed), then serves it.
+// demand. GET /sessions/{sid}/abr/{rung}/seg/{name} — name is "N.ts"
+// (H.264), "N.m4s" (HEVC fMP4), or "init.mp4" (the HEVC init segment).
+// Ensures a child transcode session for the rung is producing global
+// segment N (starting/seeking ffmpeg to its offset when needed), then
+// serves it.
 func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sessionID := chi.URLParam(r, "sid")
 	rungLabel := chi.URLParam(r, "rung")
-	name := chi.URLParam(r, "name")
+	name := filepath.Base(chi.URLParam(r, "name"))
 	token := r.URL.Query().Get("token")
 
 	if !h.abrTokenOK(ctx, token, sessionID) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	globalSeg, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(name), ".ts"))
-	if err != nil || globalSeg < 0 {
-		http.Error(w, "bad segment", http.StatusBadRequest)
 		return
 	}
 	parent, err := h.sessions.Get(ctx, sessionID)
@@ -232,6 +251,29 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	h.sessions.SetSelectedRendition(ctx, sessionID, rungLabel)
 
 	childID := abrChildID(sessionID, rungLabel)
+	ext := abrSegExt(parent.HEVCOutput)
+
+	// fMP4 init segment is codec config only — position-independent. Ensure a
+	// child is running (from the start if none) and serve its init.mp4; any
+	// child of this rung has a compatible init.
+	if name == "init.mp4" {
+		h.ensureRungChild(ctx, parent, *rung, childID, 0, false)
+		child, err := h.sessions.Get(ctx, childID)
+		if err != nil || !h.waitRungSegment(ctx, child.WorkerAddr, childID, "init.mp4") {
+			http.Error(w, "init not ready", http.StatusServiceUnavailable)
+			return
+		}
+		h.sessions.TouchActivity(ctx, childID)
+		h.serveChildFile(w, r, child, childID, "init.mp4")
+		return
+	}
+
+	globalSeg, err := strconv.Atoi(strings.TrimSuffix(name, ext))
+	if err != nil || globalSeg < 0 {
+		http.Error(w, "bad segment", http.StatusBadRequest)
+		return
+	}
+
 	// Create the rung child if absent (ensureRungChild also restarts it when
 	// the request is behind its StartSeg).
 	h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, false)
@@ -248,7 +290,7 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	// encoder is about to write. This turns every seek (forward past the
 	// encode head, or backward to a segment the muxer already evicted) into a
 	// ~1 s restart instead of a 30 s wait for a segment that will never land.
-	if !abrReachableSoon(childID, localSeg) {
+	if !abrReachableSoon(childID, localSeg, ext) {
 		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, true) // restart at globalSeg
 		if child, err = h.sessions.Get(ctx, childID); err != nil {
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
@@ -256,7 +298,7 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 		}
 		localSeg = 0
 	}
-	localName := fmt.Sprintf("seg%05d.ts", localSeg)
+	localName := fmt.Sprintf("seg%05d%s", localSeg, ext)
 
 	// Wait for the child to produce the local segment. A miss here means the
 	// child died or stalled spinning up; restart once and wait a final time.
@@ -266,7 +308,7 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		localName = "seg00000.ts"
+		localName = "seg00000" + ext
 		if !h.waitRungSegment(ctx, child.WorkerAddr, childID, localName) {
 			http.Error(w, "segment not ready", http.StatusServiceUnavailable)
 			return
@@ -274,12 +316,23 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	}
 
 	h.sessions.TouchActivity(ctx, childID)
+	h.serveChildFile(w, r, child, childID, localName)
+}
+
+// serveChildFile proxies a rung-child file to the owning worker, or serves it
+// from local disk (embedded worker), tagging the content type by extension.
+func (h *NativeTranscodeHandler) serveChildFile(w http.ResponseWriter, r *http.Request, child *transcode.Session, childID, name string) {
 	if child.WorkerAddr != "" {
-		proxyWorkerFile(w, r, child.WorkerAddr, childID, localName)
+		proxyWorkerFile(w, r, child.WorkerAddr, childID, name)
 		return
 	}
-	w.Header().Set("Content-Type", "video/MP2T")
-	http.ServeFile(w, r, filepath.Join(transcode.SessionDir(childID), localName))
+	switch {
+	case strings.HasSuffix(name, ".ts"):
+		w.Header().Set("Content-Type", "video/MP2T")
+	case strings.HasSuffix(name, ".m4s"), strings.HasSuffix(name, ".mp4"):
+		w.Header().Set("Content-Type", "video/mp4")
+	}
+	http.ServeFile(w, r, filepath.Join(transcode.SessionDir(childID), name))
 }
 
 // abrSeekLookahead is how many not-yet-written segments past the encode head
@@ -298,22 +351,22 @@ const abrSeekLookahead = 6
 // Disk-based: assumes the child's segments are local to this process (the
 // embedded-worker / single-instance ABR configuration). A multi-instance
 // worker tier would query the worker instead.
-func abrReachableSoon(childID string, localSeg int) bool {
+func abrReachableSoon(childID string, localSeg int, ext string) bool {
 	if localSeg < 0 {
 		return false
 	}
 	dir := transcode.SessionDir(childID)
-	if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("seg%05d.ts", localSeg))); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("seg%05d%s", localSeg, ext))); err == nil {
 		return true // already produced
 	}
-	hi := highestLocalSegOnDisk(dir)
+	hi := highestLocalSegOnDisk(dir, ext)
 	return localSeg > hi && localSeg <= hi+abrSeekLookahead
 }
 
-// highestLocalSegOnDisk returns the largest segNNNNN.ts index present in dir,
-// or -1 if none. This is the child's current encode head (delete_segments
+// highestLocalSegOnDisk returns the largest segNNNNN.<ext> index present in
+// dir, or -1 if none. This is the child's current encode head (delete_segments
 // keeps a trailing window, so absent-below-head means evicted).
-func highestLocalSegOnDisk(dir string) int {
+func highestLocalSegOnDisk(dir, ext string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return -1
@@ -321,10 +374,10 @@ func highestLocalSegOnDisk(dir string) int {
 	hi := -1
 	for _, e := range entries {
 		n := e.Name()
-		if !strings.HasPrefix(n, "seg") || !strings.HasSuffix(n, ".ts") {
+		if !strings.HasPrefix(n, "seg") || !strings.HasSuffix(n, ext) {
 			continue
 		}
-		if idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(n, "seg"), ".ts")); err == nil && idx > hi {
+		if idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(n, "seg"), ext)); err == nil && idx > hi {
 			hi = idx
 		}
 	}
@@ -397,15 +450,19 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		SessionDir:     transcode.SessionDir(childID),
 		StartOffsetSec: abrSegmentBoundarySec(globalSeg, parent.FrameRate),
 		Decision:       "transcode",
-		Encoder:        "", // worker picks the best H.264 encoder (.ts ladder)
-		Width:          rung.Width,
-		Height:         rung.Height,
-		BitrateKbps:    rung.BitrateKbps,
-		AudioCodec:     "aac",
-		AudioChannels:  2,
+		// Encoder unset → the worker picks the best encoder of the requested
+		// family: an HEVC encoder (fMP4 .m4s) when PreferHEVC, else the best
+		// H.264 (.ts). One codec for the whole ladder, set in startABR.
+		Encoder:          "",
+		PreferHEVC:       parent.HEVCOutput,
+		Width:            rung.Width,
+		Height:           rung.Height,
+		BitrateKbps:      rung.BitrateKbps,
+		AudioCodec:       "aac",
+		AudioChannels:    2,
 		AudioStreamIndex: parent.AudioStreamIndex,
-		NeedsToneMap:   parent.NeedsToneMap,
-		EnqueuedAt:     time.Now(),
+		NeedsToneMap:     parent.NeedsToneMap,
+		EnqueuedAt:       time.Now(),
 	}
 	if _, err := h.sessions.DispatchJob(ctx, job); err != nil {
 		h.logger.ErrorContext(ctx, "dispatch rung child job", "child", childID, "err", err)

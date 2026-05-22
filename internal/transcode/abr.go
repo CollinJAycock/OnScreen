@@ -111,18 +111,43 @@ func renditionAt(height, refBitrateKbps int, aspect float64, hevc bool, sourceBi
 // relative URL of its media playlist (e.g. "1080p/playlist.m3u8" plus
 // whatever auth/segment-token query the caller appends).
 //
+// codecs, when non-empty, is emitted as the CODECS attribute on every
+// variant (e.g. `hvc1.1.6.L153.B0,mp4a.40.2`). HEVC players often won't
+// even attempt a variant without it; H.264 players probe fine, so the
+// caller may pass "" there.
+//
 // BANDWIDTH is the rung's video bitrate + an audio allowance, in bits/s,
 // per the HLS spec's "peak segment bit rate" field — players use it to
 // pick the highest rung the measured throughput can sustain.
-func BuildMasterPlaylist(rends []Rendition, variantPath func(Rendition) string) string {
+func BuildMasterPlaylist(rends []Rendition, codecs string, variantPath func(Rendition) string) string {
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
 	b.WriteString("#EXT-X-VERSION:6\n")
 	for _, r := range rends {
 		bandwidth := (r.BitrateKbps + audioAllowanceKbps) * 1000
-		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d\n", bandwidth, r.Width, r.Height)
+		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d", bandwidth, r.Width, r.Height)
+		if codecs != "" {
+			fmt.Fprintf(&b, ",CODECS=%q", codecs)
+		}
+		b.WriteByte('\n')
 		b.WriteString(variantPath(r))
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// HEVCMasterCodecs returns the CODECS attribute value for an HEVC fMP4
+// ladder: Main-profile hvc1 plus AAC-LC audio. The level is sized to the
+// tallest rung so it covers every variant (over-advertising the level on
+// the smaller rungs is harmless — players only reject when the advertised
+// level is BELOW what the stream needs). L153 = level 5.1 (handles 4K).
+func HEVCMasterCodecs(maxHeight int) string {
+	level := "L123" // 4.1 — up to 1080p60
+	switch {
+	case maxHeight > 2160:
+		level = "L180" // 6.0 — up to 8K
+	case maxHeight > 1080:
+		level = "L153" // 5.1 — up to 4K
+	}
+	return "hvc1.1.6." + level + ".B0,mp4a.40.2"
 }

@@ -13,7 +13,7 @@ import (
 
 func TestBuildPredictedVariantPlaylist(t *testing.T) {
 	// 10s source @ 4s segments (fps unknown → flat grid) → segs 0,1,2 (last = 2s).
-	pl := buildPredictedVariantPlaylist(10_000, 0, "sid123", "720p", "tok")
+	pl := buildPredictedVariantPlaylist(10_000, 0, "sid123", "720p", "tok", false)
 
 	if !strings.HasPrefix(pl, "#EXTM3U\n") {
 		t.Fatalf("must start with #EXTM3U:\n%s", pl)
@@ -43,7 +43,7 @@ func TestBuildPredictedVariantPlaylist(t *testing.T) {
 
 func TestBuildPredictedVariantPlaylist_ExactMultiple(t *testing.T) {
 	// 8s → exactly 2 full segments, no partial tail.
-	pl := buildPredictedVariantPlaylist(8_000, 0, "s", "480p", "t")
+	pl := buildPredictedVariantPlaylist(8_000, 0, "s", "480p", "t", false)
 	if n := strings.Count(pl, "#EXTINF:"); n != 2 {
 		t.Errorf("got %d segments, want 2:\n%s", n, pl)
 	}
@@ -57,7 +57,7 @@ func TestBuildPredictedVariantPlaylist_FrameQuantized(t *testing.T) {
 	// 0, 96/fps=4.004, 192/fps=8.008. A 10s source yields segs at those
 	// boundaries with a 1.992s tail — matching the encoder, not a flat grid.
 	const fps = 24000.0 / 1001.0
-	pl := buildPredictedVariantPlaylist(10_000, fps, "sid", "720p", "tok")
+	pl := buildPredictedVariantPlaylist(10_000, fps, "sid", "720p", "tok", false)
 
 	if n := strings.Count(pl, "#EXTINF:"); n != 3 {
 		t.Fatalf("got %d segments, want 3:\n%s", n, pl)
@@ -74,18 +74,23 @@ func TestBuildPredictedVariantPlaylist_FrameQuantized(t *testing.T) {
 
 func TestHighestLocalSegOnDisk(t *testing.T) {
 	dir := t.TempDir()
-	if got := highestLocalSegOnDisk(dir); got != -1 {
+	if got := highestLocalSegOnDisk(dir, ".ts"); got != -1 {
 		t.Errorf("empty dir: got %d want -1", got)
 	}
-	for _, n := range []string{"seg00000.ts", "seg00001.ts", "seg00007.ts", "index.m3u8", "seg0000x.ts"} {
+	for _, n := range []string{"seg00000.ts", "seg00001.ts", "seg00007.ts", "index.m3u8", "seg0000x.ts", "init.mp4", "seg00009.m4s"} {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := highestLocalSegOnDisk(dir); got != 7 {
-		t.Errorf("got %d want 7", got)
+	// .ts head ignores the .m4s and init files.
+	if got := highestLocalSegOnDisk(dir, ".ts"); got != 7 {
+		t.Errorf(".ts: got %d want 7", got)
 	}
-	if got := highestLocalSegOnDisk(filepath.Join(dir, "nope")); got != -1 {
+	// .m4s head sees only the fMP4 segment, not init.mp4 or the .ts files.
+	if got := highestLocalSegOnDisk(dir, ".m4s"); got != 9 {
+		t.Errorf(".m4s: got %d want 9", got)
+	}
+	if got := highestLocalSegOnDisk(filepath.Join(dir, "nope"), ".ts"); got != -1 {
 		t.Errorf("missing dir: got %d want -1", got)
 	}
 }
@@ -118,7 +123,7 @@ func TestABRReachableSoon(t *testing.T) {
 		{"negative", -1, false},
 	}
 	for _, c := range cases {
-		if got := abrReachableSoon(childID, c.localSeg); got != c.want {
+		if got := abrReachableSoon(childID, c.localSeg, ".ts"); got != c.want {
 			t.Errorf("%s: abrReachableSoon(%d)=%v want %v", c.name, c.localSeg, got, c.want)
 		}
 	}
@@ -158,10 +163,26 @@ func TestABRMasterURLsUseRungLabels(t *testing.T) {
 	// serveABRMaster uses BuildMasterPlaylist with label-keyed variant
 	// URLs — verify the wiring shape via the same generator.
 	ladder := transcode.BuildLadder(1920, 1080, 0, false, 0)
-	master := transcode.BuildMasterPlaylist(ladder, func(rd transcode.Rendition) string {
+	master := transcode.BuildMasterPlaylist(ladder, "", func(rd transcode.Rendition) string {
 		return "/api/v1/transcode/sessions/SID/abr/" + rd.Label + "/index.m3u8?token=TOK"
 	})
 	if !strings.Contains(master, "/abr/1080p/index.m3u8?token=TOK") {
 		t.Errorf("master missing label-keyed variant URL:\n%s", master)
+	}
+}
+
+func TestBuildPredictedVariantPlaylist_FMP4(t *testing.T) {
+	// HEVC fMP4 ladder: the playlist references an init segment via EXT-X-MAP
+	// and uses .m4s media segments, not .ts.
+	pl := buildPredictedVariantPlaylist(10_000, 0, "sid", "1080p", "tok", true)
+
+	if !strings.Contains(pl, `#EXT-X-MAP:URI="/api/v1/transcode/sessions/sid/abr/1080p/seg/init.mp4?token=tok"`) {
+		t.Errorf("fMP4 playlist missing EXT-X-MAP init segment:\n%s", pl)
+	}
+	if !strings.Contains(pl, "/abr/1080p/seg/0.m4s?token=tok") {
+		t.Errorf("fMP4 playlist should use .m4s segments:\n%s", pl)
+	}
+	if strings.Contains(pl, ".ts?token=") {
+		t.Errorf("fMP4 playlist must not reference .ts segments:\n%s", pl)
 	}
 }

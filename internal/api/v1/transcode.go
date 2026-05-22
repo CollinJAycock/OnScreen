@@ -399,9 +399,14 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if file.Bitrate != nil {
 			srcBitrate = int(*file.Bitrate / 1000)
 		}
-		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, false, h.cfg.TranscodeABRMaxHeight)
+		// HEVC ladder when the client can decode it AND it pays off — an
+		// HEVC source (don't round-trip to H.264) or 4K (big bandwidth win).
+		// Otherwise H.264 .ts, the universally-decodable default. Mirrors the
+		// single-rendition preferHEVC rule above.
+		abrHEVC := body.SupportsHEVC && (isSourceHEVC || sourceH >= 2160)
+		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrHEVC, h.cfg.TranscodeABRMaxHeight)
 		if len(ladder) > 1 {
-			h.startABR(w, r, sessionID, segTok, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, body.PositionMS)
+			h.startABR(w, r, sessionID, segTok, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, abrHEVC, body.PositionMS)
 			return
 		}
 	}

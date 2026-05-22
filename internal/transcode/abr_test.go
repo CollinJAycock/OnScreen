@@ -101,7 +101,7 @@ func TestBuildLadder_WidthEvenAndAspectPreserved(t *testing.T) {
 
 func TestBuildMasterPlaylist(t *testing.T) {
 	rends := BuildLadder(1920, 1080, 0, false, 0)
-	master := BuildMasterPlaylist(rends, func(r Rendition) string {
+	master := BuildMasterPlaylist(rends, "", func(r Rendition) string {
 		return r.Label + "/playlist.m3u8"
 	})
 
@@ -122,6 +122,31 @@ func TestBuildMasterPlaylist(t *testing.T) {
 	wantBW := (8000 + audioAllowanceKbps) * 1000
 	if !strings.Contains(master, "BANDWIDTH="+itoa(wantBW)) {
 		t.Errorf("master missing expected BANDWIDTH=%d:\n%s", wantBW, master)
+	}
+	// No CODECS attribute when none is supplied (H.264 players probe fine).
+	if strings.Contains(master, "CODECS=") {
+		t.Errorf("H.264 master should omit CODECS:\n%s", master)
+	}
+}
+
+func TestBuildMasterPlaylist_HEVCCodecs(t *testing.T) {
+	rends := BuildLadder(3840, 2160, 0, true, 0)
+	codecs := HEVCMasterCodecs(rends[0].Height)
+	master := BuildMasterPlaylist(rends, codecs, func(r Rendition) string {
+		return r.Label + "/index.m3u8"
+	})
+
+	// Every variant carries the HEVC + AAC CODECS attribute.
+	n := strings.Count(master, "CODECS=\""+codecs+"\"")
+	if n != len(rends) {
+		t.Errorf("got %d CODECS attrs, want %d:\n%s", n, len(rends), master)
+	}
+	if !strings.HasPrefix(codecs, "hvc1.") || !strings.Contains(codecs, "mp4a.40.2") {
+		t.Errorf("HEVC codecs string looks wrong: %q", codecs)
+	}
+	// 4K ladder → level 5.1 (L153).
+	if !strings.Contains(codecs, "L153") {
+		t.Errorf("4K HEVC codecs should advertise L153, got %q", codecs)
 	}
 }
 
