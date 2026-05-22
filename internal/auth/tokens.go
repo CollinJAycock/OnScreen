@@ -39,6 +39,14 @@ const (
 	// Bearer/cookie path and can't be replayed as a general-API
 	// credential if a poster URL leaks via logs / Referer / history.
 	AssetTokenTTL = 24 * time.Hour
+	// TOTPChallengeTTL bounds the window between a correct password and
+	// the second factor. The token is minted when a TOTP-enabled user
+	// passes the password check; the client must post a valid 6-digit
+	// code (or a recovery code) against it before it expires. 5 minutes
+	// is long enough to fish a phone out of a pocket, short enough that
+	// a leaked challenge token (which on its own grants nothing without
+	// the code) ages out fast.
+	TOTPChallengeTTL = 5 * time.Minute
 )
 
 // Claims are the standard fields embedded in every Paseto access token.
@@ -160,6 +168,22 @@ func (m *TokenMaker) IssueAssetToken(claims Claims) (string, error) {
 	}
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 	token.SetString("purpose", "asset")
+	return token.V4Encrypt(m.key, nil), nil
+}
+
+// IssueTOTPChallengeToken mints the short-lived token that bridges the
+// password step and the TOTP step of a two-factor login. purpose=
+// totp_challenge means validateGeneralPurposeToken rejects it on the
+// Bearer/cookie path and the asset middleware rejects it too — it is
+// only ever accepted by the /auth/totp/verify handler, which checks the
+// purpose explicitly and reads UserID to issue the real token pair.
+func (m *TokenMaker) IssueTOTPChallengeToken(userID uuid.UUID) (string, error) {
+	token := paseto.NewToken()
+	token.SetIssuedAt(time.Now())
+	token.SetNotBefore(time.Now())
+	token.SetExpiration(time.Now().Add(TOTPChallengeTTL))
+	token.SetString("user_id", userID.String())
+	token.SetString("purpose", "totp_challenge")
 	return token.V4Encrypt(m.key, nil), nil
 }
 

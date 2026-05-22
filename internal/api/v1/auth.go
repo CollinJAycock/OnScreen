@@ -61,6 +61,14 @@ type TokenPair struct {
 	UserID       uuid.UUID `json:"user_id"`
 	Username     string    `json:"username"`
 	IsAdmin      bool      `json:"is_admin"`
+	// TOTPRequired is set when a TOTP-enabled local account clears the
+	// password check but still owes a second factor. AccessToken /
+	// RefreshToken / AssetToken are empty in that case; the client posts
+	// the 6-digit code (or a recovery code) plus LoginChallengeToken to
+	// /auth/totp/verify to finish login. Federated logins never set this
+	// — they get 2FA at their IdP.
+	TOTPRequired        bool   `json:"totp_required,omitempty"`
+	LoginChallengeToken string `json:"login_challenge_token,omitempty"`
 }
 
 // UserInfo is a public-safe user representation.
@@ -110,6 +118,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			h.audit.Log(r.Context(), nil, audit.ActionLoginFailed, body.Username, nil, audit.ClientIP(r))
 		}
 		respond.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid credentials")
+		return
+	}
+	if pair.TOTPRequired {
+		// Password verified but 2FA owed — no session exists yet, so no
+		// cookies and no success audit. The /auth/totp/verify step logs
+		// the login once the second factor lands.
+		respond.Success(w, r, pair)
 		return
 	}
 	if h.audit != nil {

@@ -42,6 +42,7 @@ type Handlers struct {
 	Library         *v1.LibraryHandler
 	Webhook         *v1.WebhookHandler
 	Auth            *v1.AuthHandler
+	TOTP            *v1.TOTPHandler
 	User            *v1.UserHandler
 	FS              *v1.FSHandler
 	Settings        *v1.SettingsHandler
@@ -361,6 +362,14 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.LDAPAuth != nil {
 				r.Post("/auth/ldap/login", h.LDAPAuth.Login)
 			}
+
+			// Second step of a two-factor login: exchanges the challenge
+			// token + code for a token pair. Public (no session yet) and
+			// IP-rate-limited under the same /auth bucket as login so a
+			// stolen challenge token can't be brute-forced for codes.
+			if h.TOTP != nil {
+				r.Post("/auth/totp/verify", h.TOTP.Verify)
+			}
 		})
 
 		// SSE notification stream — sibling to the authenticated API
@@ -412,6 +421,16 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
 				middleware.SessionKey("ratelimit:session")))
+
+			// TOTP / 2FA self-management (the verify step lives in the
+			// public auth group above). Setup stages a secret, activate
+			// confirms + returns recovery codes, disable turns it off.
+			if h.TOTP != nil {
+				r.Get("/auth/totp/status", h.TOTP.Status)
+				r.Post("/auth/totp/setup", h.TOTP.Setup)
+				r.Post("/auth/totp/activate", h.TOTP.Activate)
+				r.Post("/auth/totp/disable", h.TOTP.Disable)
+			}
 
 			// Libraries — reads are open to all authenticated users.
 			r.Get("/libraries", h.Library.List)

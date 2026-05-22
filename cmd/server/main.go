@@ -481,6 +481,7 @@ func run() error {
 	authSvc := &authService{
 		db:          gen.New(rwPool),
 		tokens:      tokenMaker,
+		enc:         encryptor, // at-rest encryption for the TOTP secret
 		logger:      logger,
 		rateLimiter: rateLimiter, // per-username brute-force throttle
 		// usernamePepper keys the HMAC used for Valkey rate-limit keys
@@ -503,6 +504,7 @@ func run() error {
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 
 	authHandler := v1.NewAuthHandler(authSvc, logger).WithAudit(auditLogger)
+	totpHandler := v1.NewTOTPHandler(authSvc, logger).WithAudit(auditLogger)
 
 	// Native device pairing — short-lived PIN codes stored in Valkey, claimed
 	// by an authenticated browser session to authorise a TV/phone.
@@ -945,6 +947,7 @@ func run() error {
 		Library:            libHandler,
 		Webhook:            webhookHandler,
 		Auth:               authHandler,
+		TOTP:               totpHandler,
 		User:               userHandler,
 		FS:                 fsHandler,
 		Settings:           settingsHandler,

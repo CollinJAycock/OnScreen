@@ -50,6 +50,11 @@ type CapabilitiesFeatures struct {
 	Lyrics            bool `json:"lyrics"`
 	IntroMarkers      bool `json:"intro_markers"`
 	Chapters          bool `json:"chapters"`
+	// TOTP advertises local-account two-factor auth so clients can show
+	// the Settings → Security "Enable 2FA" flow and handle the
+	// totp_required login step. Always true — it's built-in, no external
+	// tool to probe (federated accounts still 2FA at their IdP).
+	TOTP              bool `json:"totp"`
 	// WebDownloads gates the browser "Download" button on the watch
 	// page. Defaults off — admin toggle in /settings flips it. Public
 	// here so the web client can hide the button without a separate

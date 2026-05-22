@@ -291,3 +291,46 @@ SELECT $1, $2, $3, true
 FROM bootstrap_lock
 WHERE NOT EXISTS (SELECT 1 FROM users)
 RETURNING *;
+
+-- ── TOTP / 2FA ──────────────────────────────────────────────────────────────
+
+-- name: SetUserTOTPSecret :exec
+-- Stores the encrypted base32 secret for a pending setup. totp_enabled is
+-- left false until ActivateUserTOTP confirms the first code, so an
+-- abandoned setup can't lock the user out at next login.
+UPDATE users
+SET totp_secret = $2, totp_enabled = false, updated_at = NOW()
+WHERE id = $1;
+
+-- name: ActivateUserTOTP :exec
+-- Flips totp_enabled true once the user proves they can generate a code
+-- from the stored secret.
+UPDATE users
+SET totp_enabled = true, updated_at = NOW()
+WHERE id = $1;
+
+-- name: DisableUserTOTP :exec
+-- Clears the secret + flag. The caller deletes recovery codes separately
+-- (DeleteTOTPRecoveryCodes); both run in the disable handler.
+UPDATE users
+SET totp_secret = NULL, totp_enabled = false, updated_at = NOW()
+WHERE id = $1;
+
+-- name: InsertTOTPRecoveryCode :exec
+INSERT INTO totp_recovery_codes (user_id, code_hash) VALUES ($1, $2);
+
+-- name: DeleteTOTPRecoveryCodes :exec
+DELETE FROM totp_recovery_codes WHERE user_id = $1;
+
+-- name: ConsumeTOTPRecoveryCode :execrows
+-- Single-use: marks a matching unused code consumed and reports rows
+-- affected (1 = accepted, 0 = unknown or already used). The UPDATE-with-
+-- guard is atomic, so two concurrent attempts with the same code can't
+-- both succeed.
+UPDATE totp_recovery_codes
+SET used_at = NOW()
+WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL;
+
+-- name: CountUnusedTOTPRecoveryCodes :one
+SELECT count(*) FROM totp_recovery_codes
+WHERE user_id = $1 AND used_at IS NULL;

@@ -451,6 +451,14 @@ type TaskRun struct {
 	Error     string             `json:"error"`
 }
 
+type TotpRecoveryCode struct {
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	CodeHash  string             `json:"code_hash"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type TrickplayStatus struct {
 	ItemID          uuid.UUID          `json:"item_id"`
 	FileID          pgtype.UUID        `json:"file_id"`
@@ -509,6 +517,8 @@ type User struct {
 	SamlSubject           *string            `json:"saml_subject"`
 	InheritLibraryAccess  bool               `json:"inherit_library_access"`
 	EpisodeUseShowPoster  bool               `json:"episode_use_show_poster"`
+	TotpSecret            *string            `json:"totp_secret"`
+	TotpEnabled           bool               `json:"totp_enabled"`
 }
 
 type UserFavorite struct {

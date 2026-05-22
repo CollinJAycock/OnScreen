@@ -123,6 +123,8 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			// detector silently no-ops, so reflect honestly.
 			IntroMarkers: p.hasFPCalc && p.hasFFmpeg,
 			Chapters:     true,
+			// Built-in local-account 2FA — no external tool to probe.
+			TOTP:         true,
 			WebDownloads: p.settings.WebDownloadsEnabled(ctx),
 		},
 		Codecs: v1.CapabilitiesCodecs{

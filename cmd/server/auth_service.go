@@ -47,11 +47,20 @@ type authQuerier interface {
 	// middleware. Logout calls it; admin demote and user delete
 	// already do.
 	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
+	// TOTP / 2FA.
+	SetUserTOTPSecret(ctx context.Context, arg gen.SetUserTOTPSecretParams) error
+	ActivateUserTOTP(ctx context.Context, id uuid.UUID) error
+	DisableUserTOTP(ctx context.Context, id uuid.UUID) error
+	InsertTOTPRecoveryCode(ctx context.Context, arg gen.InsertTOTPRecoveryCodeParams) error
+	DeleteTOTPRecoveryCodes(ctx context.Context, userID uuid.UUID) error
+	ConsumeTOTPRecoveryCode(ctx context.Context, arg gen.ConsumeTOTPRecoveryCodeParams) (int64, error)
+	CountUnusedTOTPRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error)
 }
 
 type authService struct {
 	db     authQuerier
 	tokens *auth.TokenMaker
+	enc    *auth.Encryptor // at-rest encryption for the TOTP secret
 	logger *slog.Logger
 	// rateLimiter enforces per-username login throttling on top of
 	// the per-IP /auth/login rate limit. Per-IP alone doesn't stop
@@ -237,6 +246,22 @@ func (s *authService) LoginLocal(ctx context.Context, username, password string)
 	if s.rateLimiter != nil && username != "" {
 		s.rateLimiter.ResetFailures(ctx, rlKey)
 	}
+	// Second-factor gate: a TOTP-enabled local account doesn't get a
+	// session from the password alone. Mint a short-lived challenge token
+	// and tell the client to collect a code; /auth/totp/verify completes
+	// the login. (Federated accounts never have totp_enabled set.)
+	if user.TotpEnabled {
+		challenge, err := s.tokens.IssueTOTPChallengeToken(user.ID)
+		if err != nil {
+			return nil, fmt.Errorf("issue totp challenge: %w", err)
+		}
+		return &v1.TokenPair{
+			TOTPRequired:        true,
+			LoginChallengeToken: challenge,
+			UserID:              user.ID,
+			Username:            user.Username,
+		}, nil
+	}
 	return s.issueTokenPair(ctx, user)
 }
 
@@ -342,6 +367,168 @@ func (s *authService) Logout(ctx context.Context, refreshToken string) error {
 		s.logger.WarnContext(ctx, "logout: bump session epoch", "err", err, "user_id", session.UserID)
 	}
 	return nil
+}
+
+// ── TOTP / 2FA ──────────────────────────────────────────────────────────────
+
+// SetupTOTP stages a fresh encrypted secret (totp_enabled stays false)
+// and returns the otpauth URI + base32 secret for the client to render.
+func (s *authService) SetupTOTP(ctx context.Context, userID uuid.UUID, accountName string) (string, string, error) {
+	user, err := s.db.GetUser(ctx, userID)
+	if err != nil {
+		return "", "", fmt.Errorf("setup totp: get user: %w", err)
+	}
+	if user.TotpEnabled {
+		return "", "", v1.ErrTOTPAlreadyEnabled
+	}
+	// Federated (OIDC/SAML/LDAP) accounts have no password and never run
+	// LoginLocal, so a local TOTP secret would never be checked. Refuse
+	// rather than hand them a false sense of protection.
+	if user.PasswordHash == nil {
+		return "", "", v1.ErrTOTPLocalOnly
+	}
+	secret, url, err := auth.GenerateTOTPSecret(accountName)
+	if err != nil {
+		return "", "", err
+	}
+	ciphertext, err := s.enc.Encrypt(secret)
+	if err != nil {
+		return "", "", fmt.Errorf("setup totp: encrypt secret: %w", err)
+	}
+	if err := s.db.SetUserTOTPSecret(ctx, gen.SetUserTOTPSecretParams{ID: userID, TotpSecret: &ciphertext}); err != nil {
+		return "", "", fmt.Errorf("setup totp: store secret: %w", err)
+	}
+	return url, secret, nil
+}
+
+// ActivateTOTP confirms the staged secret with a live code, enables 2FA,
+// and returns fresh single-use recovery codes.
+func (s *authService) ActivateTOTP(ctx context.Context, userID uuid.UUID, code string) ([]string, error) {
+	user, err := s.db.GetUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("activate totp: get user: %w", err)
+	}
+	if user.TotpSecret == nil || *user.TotpSecret == "" {
+		return nil, v1.ErrTOTPNotPending
+	}
+	secret, err := s.enc.Decrypt(*user.TotpSecret)
+	if err != nil {
+		return nil, fmt.Errorf("activate totp: decrypt secret: %w", err)
+	}
+	if !auth.ValidateTOTPCode(code, secret) {
+		return nil, v1.ErrBadTOTPCode
+	}
+	if err := s.db.ActivateUserTOTP(ctx, userID); err != nil {
+		return nil, fmt.Errorf("activate totp: enable: %w", err)
+	}
+	// Fresh codes — clear any leftovers from a prior enrolment.
+	if err := s.db.DeleteTOTPRecoveryCodes(ctx, userID); err != nil {
+		return nil, fmt.Errorf("activate totp: clear old codes: %w", err)
+	}
+	display, hashes, err := auth.GenerateRecoveryCodes(auth.RecoveryCodeCount)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range hashes {
+		if err := s.db.InsertTOTPRecoveryCode(ctx, gen.InsertTOTPRecoveryCodeParams{UserID: userID, CodeHash: h}); err != nil {
+			return nil, fmt.Errorf("activate totp: store recovery code: %w", err)
+		}
+	}
+	return display, nil
+}
+
+// DisableTOTP turns 2FA off after re-proving possession (a current code
+// or recovery code) and wipes the secret + recovery codes.
+func (s *authService) DisableTOTP(ctx context.Context, userID uuid.UUID, code string) error {
+	user, err := s.db.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("disable totp: get user: %w", err)
+	}
+	if !user.TotpEnabled {
+		return nil // already off — idempotent
+	}
+	ok, err := s.validateSecondFactor(ctx, user, code)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return v1.ErrBadTOTPCode
+	}
+	if err := s.db.DisableUserTOTP(ctx, userID); err != nil {
+		return fmt.Errorf("disable totp: %w", err)
+	}
+	if err := s.db.DeleteTOTPRecoveryCodes(ctx, userID); err != nil {
+		return fmt.Errorf("disable totp: clear codes: %w", err)
+	}
+	return nil
+}
+
+// VerifyTOTPLogin validates the login challenge token + second factor and
+// issues the real token pair.
+func (s *authService) VerifyTOTPLogin(ctx context.Context, challengeToken, code string) (*v1.TokenPair, error) {
+	claims, err := s.tokens.ValidateAccessToken(challengeToken)
+	if err != nil || claims == nil || claims.Purpose != "totp_challenge" {
+		return nil, v1.ErrInvalidTOTPChallenge
+	}
+	user, err := s.db.GetUser(ctx, claims.UserID)
+	if err != nil {
+		return nil, v1.ErrInvalidTOTPChallenge
+	}
+	// 2FA disabled between password and verify → the challenge is stale.
+	if !user.TotpEnabled {
+		return nil, v1.ErrInvalidTOTPChallenge
+	}
+	ok, err := s.validateSecondFactor(ctx, user, code)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, v1.ErrBadTOTPCode
+	}
+	return s.issueTokenPair(ctx, user)
+}
+
+// TOTPStatus reports enablement + how many unused recovery codes remain.
+func (s *authService) TOTPStatus(ctx context.Context, userID uuid.UUID) (bool, int, error) {
+	user, err := s.db.GetUser(ctx, userID)
+	if err != nil {
+		return false, 0, fmt.Errorf("totp status: get user: %w", err)
+	}
+	if !user.TotpEnabled {
+		return false, 0, nil
+	}
+	n, err := s.db.CountUnusedTOTPRecoveryCodes(ctx, userID)
+	if err != nil {
+		return true, 0, fmt.Errorf("totp status: count codes: %w", err)
+	}
+	return true, int(n), nil
+}
+
+// validateSecondFactor accepts EITHER a live TOTP code OR an unused
+// recovery code (consumed on success). A valid TOTP code never consumes
+// a recovery code; a recovery code is single-use and burned atomically.
+func (s *authService) validateSecondFactor(ctx context.Context, user gen.User, code string) (bool, error) {
+	if user.TotpSecret != nil && *user.TotpSecret != "" {
+		secret, err := s.enc.Decrypt(*user.TotpSecret)
+		if err != nil {
+			return false, fmt.Errorf("validate 2fa: decrypt secret: %w", err)
+		}
+		if auth.ValidateTOTPCode(code, secret) {
+			return true, nil
+		}
+	}
+	norm := auth.NormalizeRecoveryCode(code)
+	if norm == "" {
+		return false, nil
+	}
+	rows, err := s.db.ConsumeTOTPRecoveryCode(ctx, gen.ConsumeTOTPRecoveryCodeParams{
+		UserID:   user.ID,
+		CodeHash: auth.HashToken(norm),
+	})
+	if err != nil {
+		return false, fmt.Errorf("validate 2fa: consume recovery code: %w", err)
+	}
+	return rows == 1, nil
 }
 
 // issueTokenPair creates an access + refresh token and persists the session.
