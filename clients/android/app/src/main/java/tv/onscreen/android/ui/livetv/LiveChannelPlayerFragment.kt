@@ -75,10 +75,13 @@ class LiveChannelPlayerFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             val serverUrl = (prefs.serverUrl.first() ?: "").trimEnd('/')
-            // Live channel routes don't ship a per-stream token; they
-            // accept the user's standard access token via ?token= the
-            // same way direct-play files do.
-            val token = prefs.accessToken.first() ?: ""
+            // Live channel routes don't ship a per-stream token; pass the
+            // purpose=asset token via ?token= (never the general access
+            // token, which the server rejects in a URL). NOTE: the live
+            // stream route must be mounted under RequiredAllowQueryToken
+            // for query-token auth to apply — see the live-stream-auth
+            // follow-up.
+            val token = prefs.assetToken.first() ?: ""
             val url = "$serverUrl/api/v1/tv/channels/$channelId/stream.m3u8?token=$token"
 
             val exo = ExoPlayer.Builder(requireContext()).build()

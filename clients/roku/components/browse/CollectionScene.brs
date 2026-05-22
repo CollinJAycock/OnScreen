@@ -49,7 +49,7 @@ sub onTaskState()
         node.addField("itemType", "string", false)
         node.itemType = it.type
         if it.poster_path <> invalid and serverUrl <> invalid and token <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, it.poster_path, 500, token)
+            node.HDPosterUrl = AssetArtwork(serverUrl, it.poster_path, 500, Prefs_GetAssetTokenStr())
         end if
     end for
     m.rows.content = root

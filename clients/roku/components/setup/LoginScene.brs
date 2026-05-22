@@ -42,7 +42,9 @@ sub onSignInPressed()
         return
     end if
 
-    Prefs_SetTokens(pair["access_token"], pair["refresh_token"])
+    assetTok = pair["asset_token"]
+    if assetTok = invalid then assetTok = ""
+    Prefs_SetTokens(pair["access_token"], pair["refresh_token"], assetTok)
     Prefs_Set(PrefsKeyUsername(), pair["username"])
 
     getMainScene().callFunc("navigateTo", "HomeScene")

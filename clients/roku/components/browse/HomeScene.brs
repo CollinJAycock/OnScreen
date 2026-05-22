@@ -117,7 +117,7 @@ sub addItemToRow(row as Object, item as Object)
         token = Prefs_GetAccessToken()
         serverUrl = Prefs_GetServerUrl()
         if token <> invalid and serverUrl <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, item.poster_path, 500, token)
+            node.HDPosterUrl = AssetArtwork(serverUrl, item.poster_path, 500, Prefs_GetAssetTokenStr())
         end if
     end if
 end sub

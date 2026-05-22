@@ -90,7 +90,9 @@ function pollOnce(deviceToken as String) as String
         if envelope = invalid then return "failed"
         pair = envelope.data
         if pair = invalid then return "failed"
-        Prefs_SetTokens(pair["access_token"], pair["refresh_token"])
+        assetTok = pair["asset_token"]
+        if assetTok = invalid then assetTok = ""
+        Prefs_SetTokens(pair["access_token"], pair["refresh_token"], assetTok)
         if pair["username"] <> invalid then Prefs_Set(PrefsKeyUsername(), pair["username"])
         return "done"
     end if

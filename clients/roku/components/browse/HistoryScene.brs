@@ -42,7 +42,7 @@ sub onTaskState()
         artPath = invalid
         if it.thumb_path <> invalid then artPath = it.thumb_path
         if artPath <> invalid and serverUrl <> invalid and token <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, token)
+            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
         end if
     end for
     m.rows.content = root

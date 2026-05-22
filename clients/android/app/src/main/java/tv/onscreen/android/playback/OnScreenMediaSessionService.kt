@@ -261,7 +261,9 @@ class OnScreenMediaSessionService : MediaSessionService() {
         val file = item.files.firstOrNull() ?: return
         val server = prefs.getServerUrl()?.trimEnd('/').orEmpty()
         if (server.isEmpty()) return
-        val token = file.stream_token ?: prefs.getAccessToken().orEmpty()
+        // Prefer the per-file stream token; fall back to the purpose=asset
+        // token (NOT the access token, which the server rejects in a URL).
+        val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
         if (token.isEmpty()) return
 
         // Audio direct-play URL — the service-side auto-advance is

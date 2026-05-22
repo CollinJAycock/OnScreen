@@ -296,15 +296,14 @@ class PlaybackViewModel @Inject constructor(
      * header.
      *
      * Prefer the per-file [streamToken] (24 h, baked into the file
-     * response) over the standard 1 h access token — ExoPlayer can't
-     * refresh on a 401 mid-stream, so the longer-lived token is what
-     * keeps a 90-minute movie from dying with
-     * ERROR_CODE_IO_BAD_HTTP_STATUS at the 1 h mark. Falls back to
-     * the access token for older server builds that don't ship the
-     * field.
+     * response); fall back to the 24 h purpose=asset token — NOT the
+     * access token, which the server rejects in a `?token=` URL.
+     * ExoPlayer can't refresh on a 401 mid-stream, so either
+     * long-lived token keeps a 90-minute movie from dying with
+     * ERROR_CODE_IO_BAD_HTTP_STATUS at the 1 h mark.
      */
     private suspend fun buildDirectPlayUrl(serverUrl: String, streamPath: String, streamToken: String?): String {
-        val token = if (!streamToken.isNullOrEmpty()) streamToken else serverPrefs.getAccessToken()
+        val token = if (!streamToken.isNullOrEmpty()) streamToken else serverPrefs.getAssetToken()
         val base = "$serverUrl$streamPath"
         if (token.isNullOrEmpty()) return base
         val sep = if (streamPath.contains("?")) "&" else "?"

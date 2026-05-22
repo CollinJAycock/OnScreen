@@ -178,7 +178,7 @@ sub renderResults()
         if r.poster_path <> invalid then artPath = r.poster_path
         if artPath = invalid and r.thumb_path <> invalid then artPath = r.thumb_path
         if artPath <> invalid and serverUrl <> invalid and token <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 400, token)
+            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 400, Prefs_GetAssetTokenStr())
         end if
     end for
     m.results.content = root

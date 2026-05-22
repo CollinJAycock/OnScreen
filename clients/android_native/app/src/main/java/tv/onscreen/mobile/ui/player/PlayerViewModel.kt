@@ -759,18 +759,20 @@ class PlayerViewModel @Inject constructor(
     /** Direct-play URL with a `?token=` carrier. ExoPlayer's
      *  DefaultHttpDataSource bypasses our OkHttp interceptor chain so
      *  a Bearer header isn't an option; the asset-route middleware
-     *  (RequiredAllowQueryToken) accepts the token via query string.
+     *  (RequiredAllowQueryToken) accepts purpose-scoped tokens via the
+     *  query string but rejects the general access token there.
      *
-     *  Prefer the per-file 24h stream token over the 1h access token
-     *  when the server provides it — ExoPlayer can't refresh on a 401
-     *  mid-stream, so the longer-lived token keeps a 90-min movie
-     *  from dying with ERROR_CODE_IO_BAD_HTTP_STATUS at the 1h mark. */
+     *  Prefer the per-file 24h stream token; fall back to the 24h
+     *  purpose=asset token (NOT the access token, which the server
+     *  rejects in a URL). ExoPlayer can't refresh on a 401 mid-stream,
+     *  so either long-lived token keeps a 90-min movie from dying with
+     *  ERROR_CODE_IO_BAD_HTTP_STATUS. */
     private suspend fun buildDirectPlayUrl(
         serverUrl: String,
         streamPath: String,
         streamToken: String?,
     ): String {
-        val token = if (!streamToken.isNullOrEmpty()) streamToken else serverPrefs.getAccessToken()
+        val token = if (!streamToken.isNullOrEmpty()) streamToken else serverPrefs.getAssetToken()
         val base = "$serverUrl$streamPath"
         if (token.isNullOrEmpty()) return base
         val sep = if (streamPath.contains("?")) "&" else "?"

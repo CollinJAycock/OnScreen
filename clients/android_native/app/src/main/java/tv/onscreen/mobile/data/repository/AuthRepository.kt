@@ -20,7 +20,7 @@ open class AuthRepository @Inject constructor(
 ) {
     open suspend fun login(username: String, password: String): TokenPair {
         val pair = api.login(LoginRequest(username, password)).data
-        prefs.setTokens(pair.access_token, pair.refresh_token)
+        prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
         return pair
     }
@@ -31,7 +31,7 @@ open class AuthRepository @Inject constructor(
      *  [login] so the UI is unchanged downstream. */
     open suspend fun loginLdap(username: String, password: String): TokenPair {
         val pair = api.loginLdap(LoginRequest(username, password)).data
-        prefs.setTokens(pair.access_token, pair.refresh_token)
+        prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
         return pair
     }
@@ -135,7 +135,7 @@ open class AuthRepository @Inject constructor(
      *  side effect so the pairing UI lands the user in the same
      *  signed-in state a password login would. */
     suspend fun completePairing(pair: TokenPair) {
-        prefs.setTokens(pair.access_token, pair.refresh_token)
+        prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }
 

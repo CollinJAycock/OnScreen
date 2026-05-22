@@ -71,15 +71,18 @@ end function
 
 ' Asset routes (auth via ?token= query param via the asset-route
 ' middleware on the Go server; the Roku Video / Poster nodes can't
-' attach an Authorization header to their HTTP fetches).
+' attach an Authorization header to their HTTP fetches). The server
+' accepts purpose-scoped tokens (per-file `stream`, user-scoped
+' `asset`) in ?token= but REJECTS the general access token there, so
+' callers must pass a stream or asset token — never Prefs_GetAccessToken.
 '
 ' AssetStream takes whichever token the caller has. PlayerScene
 ' prefers the per-file `stream_token` returned in item-detail
 ' (24 h TTL, file_id-bound — survives a long movie without
-' expiring mid-segment) and falls back to the access token only
-' for older server builds that don't ship the field. Roku's Video
-' node has no token-refresh hook, so without the per-file token a
-' 90-minute movie used to die at the 1 h mark with HTTP 401.
+' expiring mid-segment) and falls back to the purpose=asset token
+' (Prefs_GetAssetTokenStr). Roku's Video node has no token-refresh
+' hook, so without the per-file token a 90-minute movie used to die
+' at the 1 h mark with HTTP 401.
 function AssetStream(serverUrl as String, fileId as String, token as String) as String
     return serverUrl + "/media/stream/" + fileId + "?token=" + token
 end function

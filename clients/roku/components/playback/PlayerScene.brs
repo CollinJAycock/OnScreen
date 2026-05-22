@@ -154,9 +154,12 @@ sub onItemTaskState()
 end sub
 
 sub startDirectPlayback(serverUrl as String)
+    ' Prefer the per-file stream token (24 h, file_id-bound) from
+    ' item-detail. Fall back to the purpose=asset token — NOT the
+    ' access token, which the server now rejects in a `?token=` URL.
     streamToken = m.file.stream_token
     if streamToken = invalid or streamToken = ""
-        streamToken = Prefs_GetAccessToken()
+        streamToken = Prefs_GetAssetTokenStr()
     end if
     if streamToken = invalid or streamToken = ""
         bailToHome()

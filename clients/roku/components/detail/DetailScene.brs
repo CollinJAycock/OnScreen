@@ -119,11 +119,11 @@ sub renderItem()
     token = Prefs_GetAccessToken()
 
     if item.fanart_path <> invalid and serverUrl <> invalid and token <> invalid
-        m.fanart.uri = AssetArtwork(serverUrl, item.fanart_path, 1920, token)
+        m.fanart.uri = AssetArtwork(serverUrl, item.fanart_path, 1920, Prefs_GetAssetTokenStr())
     else if item.poster_path <> invalid and serverUrl <> invalid and token <> invalid
         ' Fall back to the poster scaled to 1920 — better than a
         ' bare dark rectangle for items without dedicated fanart.
-        m.fanart.uri = AssetArtwork(serverUrl, item.poster_path, 1920, token)
+        m.fanart.uri = AssetArtwork(serverUrl, item.poster_path, 1920, Prefs_GetAssetTokenStr())
     end if
 
     m.title.text = item.title
@@ -201,7 +201,7 @@ sub renderChildren()
         if child.thumb_path <> invalid then artPath = child.thumb_path
         if artPath = invalid and child.poster_path <> invalid then artPath = child.poster_path
         if artPath <> invalid and serverUrl <> invalid and token <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 400, token)
+            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 400, Prefs_GetAssetTokenStr())
         end if
     end for
     m.childrenList.content = root

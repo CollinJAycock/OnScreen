@@ -19,6 +19,10 @@ class ServerPrefs(private val context: Context) {
         private val KEY_SERVER_URL = stringPreferencesKey("server_url")
         private val KEY_ACCESS_TOKEN = stringPreferencesKey("access_token")
         private val KEY_REFRESH_TOKEN = stringPreferencesKey("refresh_token")
+        // purpose=asset token. Carried in `?token=` on asset URLs that
+        // ExoPlayer / the media session can't attach a Bearer header
+        // to. The server rejects the general access token in a URL.
+        private val KEY_ASSET_TOKEN = stringPreferencesKey("asset_token")
         private val KEY_USER_ID = stringPreferencesKey("user_id")
         private val KEY_USERNAME = stringPreferencesKey("username")
         // Search type-filter checkboxes — mirror the web /search
@@ -35,6 +39,7 @@ class ServerPrefs(private val context: Context) {
     val serverUrl: Flow<String?> = context.dataStore.data.map { it[KEY_SERVER_URL] }
     val accessToken: Flow<String?> = context.dataStore.data.map { it[KEY_ACCESS_TOKEN] }
     val refreshToken: Flow<String?> = context.dataStore.data.map { it[KEY_REFRESH_TOKEN] }
+    val assetToken: Flow<String?> = context.dataStore.data.map { it[KEY_ASSET_TOKEN] }
     val userId: Flow<String?> = context.dataStore.data.map { it[KEY_USER_ID] }
     val username: Flow<String?> = context.dataStore.data.map { it[KEY_USERNAME] }
 
@@ -49,6 +54,7 @@ class ServerPrefs(private val context: Context) {
     suspend fun getServerUrl(): String? = serverUrl.first()
     suspend fun getAccessToken(): String? = accessToken.first()
     suspend fun getRefreshToken(): String? = refreshToken.first()
+    suspend fun getAssetToken(): String? = assetToken.first()
 
     suspend fun setServerUrl(url: String) {
         // Lowercase the scheme + strip trailing slashes. OkHttp's HttpUrl
@@ -62,10 +68,17 @@ class ServerPrefs(private val context: Context) {
         context.dataStore.edit { it[KEY_SERVER_URL] = canonical }
     }
 
-    suspend fun setTokens(accessToken: String, refreshToken: String) {
+    /** assetToken is nullable — a server that predates the asset-token
+     *  work omits it; we clear any stale value in that case. */
+    suspend fun setTokens(accessToken: String, refreshToken: String, assetToken: String? = null) {
         context.dataStore.edit {
             it[KEY_ACCESS_TOKEN] = accessToken
             it[KEY_REFRESH_TOKEN] = refreshToken
+            if (assetToken.isNullOrEmpty()) {
+                it.remove(KEY_ASSET_TOKEN)
+            } else {
+                it[KEY_ASSET_TOKEN] = assetToken
+            }
         }
     }
 
@@ -80,6 +93,7 @@ class ServerPrefs(private val context: Context) {
         context.dataStore.edit {
             it.remove(KEY_ACCESS_TOKEN)
             it.remove(KEY_REFRESH_TOKEN)
+            it.remove(KEY_ASSET_TOKEN)
             it.remove(KEY_USER_ID)
             it.remove(KEY_USERNAME)
         }

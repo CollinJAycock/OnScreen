@@ -32,6 +32,13 @@ function PrefsKeyRefreshToken() as String
     return "refresh_token"
 end function
 
+' purpose=asset token. Carried in `?token=` on asset URLs (artwork,
+' stream, subtitles) instead of the general access token, which the
+' server now rejects in a URL.
+function PrefsKeyAssetToken() as String
+    return "asset_token"
+end function
+
 function PrefsKeyUsername() as String
     return "username"
 end function
@@ -70,20 +77,42 @@ function Prefs_GetAccessToken() as Dynamic
     return Prefs_Get(PrefsKeyAccessToken())
 end function
 
+' The purpose=asset token for `?token=` on asset URLs. Falls back to
+' invalid (empty) when the server predates the asset-token work or the
+' user hasn't logged in since the upgrade — callers treat invalid as
+' "no token" and let the resulting 401 trigger re-auth.
+function Prefs_GetAssetToken() as Dynamic
+    return Prefs_Get(PrefsKeyAssetToken())
+end function
+
+' String form of the asset token for direct use in URL builders that
+' take a `String` param (AssetArtwork / AssetStream). Returns "" when
+' unset so callers don't have to coerce invalid at every call site.
+function Prefs_GetAssetTokenStr() as String
+    t = Prefs_Get(PrefsKeyAssetToken())
+    if t = invalid then return ""
+    return t
+end function
+
 function Prefs_IsLoggedIn() as Boolean
     token = Prefs_GetAccessToken()
     return token <> invalid and token <> ""
 end function
 
-function Prefs_SetTokens(access as String, refresh as String) as Boolean
+' asset may be an empty string when talking to a pre-asset-token
+' server; we still write it (clearing any stale value) so a downgrade
+' doesn't leave an old asset token behind.
+function Prefs_SetTokens(access as String, refresh as String, asset as String) as Boolean
     a = Prefs_Set(PrefsKeyAccessToken(), access)
     b = Prefs_Set(PrefsKeyRefreshToken(), refresh)
-    return a and b
+    c = Prefs_Set(PrefsKeyAssetToken(), asset)
+    return a and b and c
 end function
 
 function Prefs_ClearAuth() as Boolean
     Prefs_Delete(PrefsKeyAccessToken())
     Prefs_Delete(PrefsKeyRefreshToken())
+    Prefs_Delete(PrefsKeyAssetToken())
     Prefs_Delete(PrefsKeyUsername())
     return true
 end function

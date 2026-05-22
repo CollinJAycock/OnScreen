@@ -135,12 +135,15 @@ end sub
 
 sub renderCurrent(itemId as String)
     serverUrl = Prefs_GetServerUrl()
-    token = Prefs_GetAccessToken()
-    if serverUrl = invalid or token = invalid then return
+    token = Prefs_GetAssetTokenStr()
+    if serverUrl = invalid or token = "" then return
     ' Photos route through /items/{id}/image (server-side resize +
-    ' cache); 1920×1080 with fit=contain mirrors the Android
-    ' viewer's request size. The asset middleware accepts the
-    ' access token via ?token= same as /artwork.
+    ' cache); 1920×1080 with fit=contain mirrors the Android viewer's
+    ' request size. A Roku Poster can't send an Authorization header,
+    ' so we carry the purpose=asset token in ?token= (the server
+    ' rejects a general access token in a URL). NOTE: the image route
+    ' must be mounted under RequiredAllowQueryToken for this to
+    ' authenticate — see the photo-image-route follow-up.
     m.photo.uri = serverUrl + "/api/v1/items/" + itemId + "/image?w=1920&h=1080&fit=contain&token=" + token
 end sub
 

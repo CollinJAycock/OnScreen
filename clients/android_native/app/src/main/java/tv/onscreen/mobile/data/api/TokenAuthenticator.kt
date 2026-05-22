@@ -57,7 +57,7 @@ class TokenAuthenticator(
                 }.data
 
                 runBlocking {
-                    prefs.setTokens(pair.access_token, pair.refresh_token)
+                    prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
                     prefs.setUser(pair.user_id, pair.username)
                 }
 

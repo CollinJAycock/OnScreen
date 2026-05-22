@@ -67,9 +67,10 @@ class DownloadWorker @AssistedInject constructor(
         }
         val server = prefs.getServerUrl()?.trimEnd('/').orEmpty()
         // Per-file 24h stream token survives the duration of any
-        // realistic download; the standard 1h access token would
-        // expire mid-fetch on a slow connection.
-        val token = file.stream_token ?: prefs.getAccessToken().orEmpty()
+        // realistic download; fall back to the 24h purpose=asset token
+        // (NOT the access token, which the server rejects in a `?token=`
+        // URL).
+        val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
         if (server.isEmpty() || token.isEmpty()) {
             markFailed(fileId, "Not signed in")
             return Result.failure()
