@@ -1,10 +1,22 @@
 # Server lock posture (as of v2.2.0)
 
-The OnScreen server API is **frozen for new breaking changes** as of
-v2.2.0 (tagged 2026-05-09). Engineering attention shifts to the
-client surfaces — Android phone / Android TV / Fire TV / web /
-desktop / iOS / Apple TV / webOS / Tizen / Roku — until the next
-major-version reason emerges.
+> **Status: LIFTED after v2.3.0 (2026-05-22).** The v2.2.0→v2.3.0 lock
+> served its purpose — it forced two additive minor releases while the
+> client fleet caught up. With v2.3.0 shipped, the lock is over: v2.4+
+> may make **coordinated breaking changes** when they buy real value,
+> provided the first-party clients move in lockstep. The first one is
+> the asset-token migration in v2.4 (the server stops accepting a
+> general access token in `?token=` on asset routes — every client now
+> sends a purpose-scoped asset/stream token instead). The historical
+> lock rationale below documents the v2.2.0–v2.3.0 period and still
+> describes the *default* posture: prefer additive change; break only
+> deliberately, with the clients updated in the same cut.
+
+The OnScreen server API was **frozen for new breaking changes** from
+v2.2.0 (tagged 2026-05-09) through v2.3.0 (tagged 2026-05-22).
+Engineering attention shifted to the client surfaces — Android phone /
+Android TV / Fire TV / web / desktop / iOS / Apple TV / webOS / Tizen /
+Roku — during that window.
 
 ## What "frozen" means
 
