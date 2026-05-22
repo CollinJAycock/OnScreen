@@ -320,6 +320,14 @@ func BuildHLS(a BuildArgs) []string {
 				"-rc", opts.NVENCRC,
 				"-g", gopUpperBound,
 				"-sc_threshold:v:0", "0",
+				// NVENC honors -force_key_frames only as a plain I-frame
+				// unless -forced-idr is set; without it the forced frames
+				// aren't IDR, the HLS muxer won't split on them, and
+				// segments fall back to the -g GOP boundary (e.g. 120
+				// frames = 5.0 s on a 23.976 fps source instead of the
+				// intended 4 s). Required for the on-demand ABR timeline,
+				// whose predicted playlist assumes exact SegmentDuration cuts.
+				"-forced-idr", "1",
 			)
 			args = append(args, forceKey...)
 			// HEVC: main profile, let NVENC auto-select the level from resolution.

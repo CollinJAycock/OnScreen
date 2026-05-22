@@ -387,6 +387,25 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		sessionBitrate = int(*file.Bitrate / 1000)
 	}
 
+	// ── Adaptive-bitrate ladder (on-demand) ───────────────────────────────
+	// When ABR is enabled and this is a full re-encode of a file with a
+	// known duration + resolution that yields more than one rung, serve a
+	// multi-rendition ladder instead of a single rendition. The parent
+	// session runs no ffmpeg; playlist.m3u8 returns a master and each rung
+	// transcodes on demand (transcode_abr.go). H.264 .ts only for now.
+	if h.cfg.TranscodeABR && decision == "transcode" &&
+		file.DurationMS != nil && *file.DurationMS > 0 && sourceH > 0 {
+		srcBitrate := 0
+		if file.Bitrate != nil {
+			srcBitrate = int(*file.Bitrate / 1000)
+		}
+		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, false, h.cfg.TranscodeABRMaxHeight)
+		if len(ladder) > 1 {
+			h.startABR(w, r, sessionID, segTok, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, body.PositionMS)
+			return
+		}
+	}
+
 	sess := transcode.Session{
 		ID:          sessionID,
 		UserID:      claims.UserID,
@@ -563,6 +582,10 @@ func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.S
 	if h.killer != nil {
 		h.killer.KillSession(sess.ID)
 	}
+	// ABR parents own per-rung child sessions; reap them too.
+	if sess.ABR {
+		h.cleanupRungChildren(ctx, sess)
+	}
 	revokeToken := sess.SegToken
 	if revokeToken == "" {
 		revokeToken = fallbackToken
@@ -637,6 +660,13 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	// Sanitize sessionID to prevent path traversal.
 	sessID := filepath.Base(sessionID)
 	sessDir := transcode.SessionDir(sessID)
+
+	// ABR parent: serve the master playlist (instant — no ffmpeg). The
+	// per-rung media playlists + on-demand segments are separate routes.
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.ABR {
+		h.serveABRMaster(w, r, sess, token)
+		return
+	}
 
 	// Resolve the worker address for this session. Once the worker claims the
 	// job it stamps WorkerAddr on the session; we use it to proxy requests in

@@ -42,6 +42,28 @@ type Session struct {
 	BitrateKbps    int       `json:"bitrate_kbps,omitempty"`
 	HEVCOutput     bool      `json:"hevc_output,omitempty"` // true = fMP4 segments (.m4s) with hvc1 codec
 	AV1Output      bool      `json:"av1_output,omitempty"`  // true = fMP4 segments (.m4s) with av01 codec; either fMP4 flag selects the .m4s wait path
+
+	// ── Adaptive-bitrate (on-demand ladder) ───────────────────────────────
+	// On an ABR PARENT session, ABR=true and the fields below describe the
+	// ladder + what the per-rung child sessions need. The parent runs no
+	// ffmpeg itself; playlist.m3u8 serves a master listing the rungs, and
+	// each rung is a CHILD session ({parent}-r{rung}) transcoded on demand
+	// by the segment handler. See transcode_abr.go.
+	ABR              bool         `json:"abr,omitempty"`
+	ABRRenditions    []Rendition  `json:"abr_renditions,omitempty"`
+	DurationMS       int64        `json:"duration_ms,omitempty"`
+	AudioStreamIndex int          `json:"audio_stream_index,omitempty"`
+	NeedsToneMap     bool         `json:"needs_tone_map,omitempty"`
+	// FrameRate (parent ABR session) is the source fps. The predicted
+	// variant playlist and each child's restart offset are quantized to the
+	// frame ffmpeg actually forces a keyframe on (ceil(i*SegmentDuration*fps)
+	// /fps), so the advertised timeline matches the encoded one to <1 frame
+	// regardless of fps. Zero falls back to a flat SegmentDuration grid.
+	FrameRate float64 `json:"frame_rate,omitempty"`
+	// StartSeg is set on CHILD rung sessions: the global segment index this
+	// child's ffmpeg began encoding at. The segment handler maps a requested
+	// global index to the child-local file as local = global - StartSeg.
+	StartSeg int `json:"start_seg,omitempty"`
 }
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.

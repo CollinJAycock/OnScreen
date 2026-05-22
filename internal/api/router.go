@@ -178,6 +178,11 @@ func NewRouter(h *Handlers) http.Handler {
 	if h.NativeTranscode != nil {
 		r.Get("/api/v1/transcode/sessions/{sid}/playlist.m3u8", h.NativeTranscode.Playlist)
 		r.Get("/api/v1/transcode/sessions/{sid}/seg/{name}", h.NativeTranscode.Segment)
+		// Adaptive-bitrate: per-rung media playlist (server-predicted) +
+		// on-demand per-rung segments. The parent playlist.m3u8 above
+		// serves the master when the session is ABR.
+		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", h.NativeTranscode.ABRVariantPlaylist)
+		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", h.NativeTranscode.ABRVariantSegment)
 	}
 
 	// ── Artwork file server ──────────────────────────────────────────────────
