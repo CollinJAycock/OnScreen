@@ -11,6 +11,11 @@ interface OnScreenApi {
     @POST("api/v1/auth/login")
     suspend fun login(@Body body: LoginRequest): ApiResponse<TokenPair>
 
+    /** Second step of a two-factor login — challenge token + code
+     *  (or recovery code) in exchange for a real token pair. */
+    @POST("api/v1/auth/totp/verify")
+    suspend fun verifyTotp(@Body body: TotpVerifyRequest): ApiResponse<TokenPair>
+
     @POST("api/v1/auth/refresh")
     suspend fun refresh(@Body body: RefreshRequest): ApiResponse<TokenPair>
 

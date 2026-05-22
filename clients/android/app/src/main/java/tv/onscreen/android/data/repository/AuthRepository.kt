@@ -5,6 +5,7 @@ import tv.onscreen.android.data.model.LoginRequest
 import tv.onscreen.android.data.model.LogoutRequest
 import tv.onscreen.android.data.model.PairCodeResponse
 import tv.onscreen.android.data.model.TokenPair
+import tv.onscreen.android.data.model.TotpVerifyRequest
 import tv.onscreen.android.data.prefs.ServerPrefs
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -16,9 +17,24 @@ class AuthRepository @Inject constructor(
 ) {
     suspend fun login(username: String, password: String): TokenPair {
         val pair = api.login(LoginRequest(username, password)).data
+        persistIfComplete(pair)
+        return pair
+    }
+
+    /** Second step of a two-factor login: challenge token + code (or
+     *  recovery code) -> real token pair. */
+    suspend fun verifyTotp(challengeToken: String, code: String): TokenPair {
+        val pair = api.verifyTotp(TotpVerifyRequest(challengeToken, code)).data
+        persistIfComplete(pair)
+        return pair
+    }
+
+    /** A TOTP-gated login returns totp_required with no tokens — don't
+     *  persist empties; the caller drives the second factor. */
+    private suspend fun persistIfComplete(pair: TokenPair) {
+        if (pair.totp_required) return
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
-        return pair
     }
 
     suspend fun logout() {

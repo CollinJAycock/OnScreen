@@ -29,6 +29,11 @@ export interface TokenPair {
   user_id: string;
   username: string;
   is_admin: boolean;
+  /** Set when a TOTP-enabled account cleared the password step but owes
+   *  a second factor. Tokens are empty; post the code +
+   *  login_challenge_token to totpVerify to finish. */
+  totp_required?: boolean;
+  login_challenge_token?: string;
 }
 
 export class ApiError extends Error {
@@ -104,6 +109,19 @@ export class ApiClient {
 
   async login(username: string, password: string): Promise<TokenPair> {
     const pair = await this.raw<TokenPair>('POST', '/api/v1/auth/login', { username, password });
+    // A TOTP-gated account returns no tokens yet — the caller drives the
+    // second-factor step and calls totpVerify, which persists tokens.
+    if (!pair.totp_required) this.setTokens(pair);
+    return pair;
+  }
+
+  /** Second step of a two-factor login: exchange the challenge token +
+   *  code (or recovery code) for a real token pair. */
+  async totpVerify(loginChallengeToken: string, code: string): Promise<TokenPair> {
+    const pair = await this.raw<TokenPair>('POST', '/api/v1/auth/totp/verify', {
+      login_challenge_token: loginChallengeToken,
+      code,
+    });
     this.setTokens(pair);
     return pair;
   }

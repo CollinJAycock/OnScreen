@@ -77,10 +77,29 @@ class PairViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = PairState.LoggingIn
             try {
-                authRepo.login(username, password)
-                _state.value = PairState.Done
+                val pair = authRepo.login(username, password)
+                _state.value = if (pair.totp_required) {
+                    PairState.TotpRequired(pair.login_challenge_token.orEmpty())
+                } else {
+                    PairState.Done
+                }
             } catch (e: Exception) {
                 _state.value = PairState.Error(e.message ?: "login failed")
+            }
+        }
+    }
+
+    /** Second step of a two-factor login. On a wrong code we stay in the
+     *  TotpRequired state (with an inline error) so the user can retry
+     *  without re-entering their password. */
+    fun verifyTotp(challengeToken: String, code: String) {
+        viewModelScope.launch {
+            _state.value = PairState.LoggingIn
+            try {
+                authRepo.verifyTotp(challengeToken, code)
+                _state.value = PairState.Done
+            } catch (e: Exception) {
+                _state.value = PairState.TotpRequired(challengeToken, e.message ?: "verification failed")
             }
         }
     }
@@ -220,6 +239,10 @@ sealed class PairState {
     data object RequestingCode : PairState()
     data object LoggingIn : PairState()
     data class WaitingForClaim(val code: String) : PairState()
+    // Password accepted, second factor owed. Carries the challenge token
+    // the verify step posts back; `error` surfaces a wrong-code retry
+    // without dropping out of the TOTP step.
+    data class TotpRequired(val challengeToken: String, val error: String? = null) : PairState()
     data object Done : PairState()
     data class Error(val message: String) : PairState()
 }

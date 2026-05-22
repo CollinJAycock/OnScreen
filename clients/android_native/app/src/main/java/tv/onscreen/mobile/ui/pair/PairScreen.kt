@@ -90,6 +90,12 @@ fun PairScreen(
 
             is PairState.WaitingForClaim -> WaitingForClaim(code = s.code, onCancel = vm::reset)
 
+            is PairState.TotpRequired -> TotpEntry(
+                error = s.error,
+                onSubmit = { code -> vm.verifyTotp(s.challengeToken, code) },
+                onCancel = vm::reset,
+            )
+
             PairState.LoggingIn -> Loading("Signing in…")
 
             PairState.Done -> Loading("Done")
@@ -224,6 +230,33 @@ private fun ServerReadyChoice(
     }) {
         Text(if (useLdap) "Sign in with LDAP" else "Sign in with password")
     }
+}
+
+@Composable
+private fun TotpEntry(error: String?, onSubmit: (String) -> Unit, onCancel: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    Text("Two-factor authentication", style = MaterialTheme.typography.titleLarge)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Enter the 6-digit code from your authenticator app, or a recovery code.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Spacer(Modifier.height(16.dp))
+    OutlinedTextField(
+        value = code,
+        onValueChange = { code = it },
+        singleLine = true,
+        label = { Text("Code") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+        modifier = Modifier.widthIn(max = 360.dp),
+    )
+    if (error != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
+    Spacer(Modifier.height(12.dp))
+    TextButton(onClick = { if (code.isNotBlank()) onSubmit(code.trim()) }) { Text("Verify") }
+    TextButton(onClick = onCancel) { Text("Back") }
 }
 
 @Composable

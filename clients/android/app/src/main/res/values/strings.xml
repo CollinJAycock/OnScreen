@@ -10,6 +10,10 @@
     <string name="username">Username</string>
     <string name="password">Password</string>
     <string name="sign_in">Sign In</string>
+    <string name="totp_title">Two-factor authentication</string>
+    <string name="totp_description">Enter the code from your authenticator app, or a recovery code</string>
+    <string name="totp_code">Code</string>
+    <string name="verify">Verify</string>
     <string name="connect">Connect</string>
     <string name="continue_watching">Continue Watching</string>
     <string name="view_all">View all</string>

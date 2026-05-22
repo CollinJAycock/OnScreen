@@ -4,9 +4,11 @@
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import { focusable } from '$lib/focus/focusable';
 
-  let step = $state<'username' | 'password'>('username');
+  let step = $state<'username' | 'password' | 'totp'>('username');
   let username = $state('');
   let password = $state('');
+  let totpCode = $state('');
+  let challengeToken = $state('');
   let error = $state('');
   let submitting = $state(false);
 
@@ -16,10 +18,31 @@
       step = 'password';
       return;
     }
+    if (step === 'totp') {
+      if (!totpCode.trim()) return;
+      error = '';
+      submitting = true;
+      try {
+        await api.totpVerify(challengeToken, totpCode.trim());
+        goto('#/hub');
+      } catch (e) {
+        error = e instanceof ApiError ? e.message : 'Verification failed';
+        totpCode = '';
+      } finally {
+        submitting = false;
+      }
+      return;
+    }
     error = '';
     submitting = true;
     try {
-      await api.login(username.trim(), password);
+      const pair = await api.login(username.trim(), password);
+      if (pair.totp_required) {
+        challengeToken = pair.login_challenge_token ?? '';
+        password = '';
+        step = 'totp';
+        return;
+      }
       goto('#/hub');
     } catch (e) {
       error = e instanceof ApiError ? e.message : 'Login failed';
@@ -36,6 +59,12 @@
   {#if step === 'username'}
     <div class="label">Username</div>
     <OnScreenKeyboard bind:value={username} onchange={(v) => (username = v)} onsubmit={submit} />
+  {:else if step === 'totp'}
+    <div class="label">Enter the code from your authenticator app (or a recovery code)</div>
+    <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} />
+    <button use:focusable class="back-btn" onclick={() => { step = 'password'; totpCode = ''; error = ''; }}>
+      back
+    </button>
   {:else}
     <div class="label">Password for <strong>{username}</strong></div>
     <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} />

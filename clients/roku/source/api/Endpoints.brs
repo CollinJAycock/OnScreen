@@ -18,6 +18,12 @@ function ApiAuthLogin() as String
     return "/api/v1/auth/login"
 end function
 
+' Second step of a two-factor login: challenge token + code (or recovery
+' code) in exchange for a real token pair.
+function ApiTotpVerify() as String
+    return "/api/v1/auth/totp/verify"
+end function
+
 function ApiAuthRefresh() as String
     return "/api/v1/auth/refresh"
 end function

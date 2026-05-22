@@ -23,12 +23,12 @@
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
 
-            <Label translation="[160, 220]" text="Username" color="0xa0a0a0ff" />
+            <Label id="usernameLabel" translation="[160, 220]" text="Username" color="0xa0a0a0ff" />
             <MiniKeyboard id="usernameField"
                           translation="[160, 260]"
                           width="800" />
 
-            <Label translation="[160, 460]" text="Password" color="0xa0a0a0ff" />
+            <Label id="passwordLabel" translation="[160, 460]" text="Password" color="0xa0a0a0ff" />
             <MiniKeyboard id="passwordField"
                           translation="[160, 500]"
                           width="800"
@@ -38,6 +38,24 @@
                     text="Sign in"
                     translation="[160, 720]"
                     minWidth="320" />
+
+            <!-- Two-factor step. Hidden until /auth/login reports
+                 totp_required; then the username/password rows are
+                 hidden and these take over. -->
+            <Label id="totpLabel"
+                   translation="[160, 220]"
+                   text="Enter your authenticator code (or a recovery code)"
+                   color="0xa0a0a0ff"
+                   visible="false" />
+            <MiniKeyboard id="totpField"
+                          translation="[160, 260]"
+                          width="800"
+                          visible="false" />
+            <Button id="verifyBtn"
+                    text="Verify"
+                    translation="[160, 460]"
+                    minWidth="320"
+                    visible="false" />
 
             <Button id="changeServerBtn"
                     text="Change server"

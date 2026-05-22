@@ -9,6 +9,7 @@ import tv.onscreen.mobile.data.model.LoginRequest
 import tv.onscreen.mobile.data.model.LogoutRequest
 import tv.onscreen.mobile.data.model.PairCodeResponse
 import tv.onscreen.mobile.data.model.TokenPair
+import tv.onscreen.mobile.data.model.TotpVerifyRequest
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,8 +21,7 @@ open class AuthRepository @Inject constructor(
 ) {
     open suspend fun login(username: String, password: String): TokenPair {
         val pair = api.login(LoginRequest(username, password)).data
-        prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
-        prefs.setUser(pair.user_id, pair.username)
+        persistIfComplete(pair)
         return pair
     }
 
@@ -31,9 +31,24 @@ open class AuthRepository @Inject constructor(
      *  [login] so the UI is unchanged downstream. */
     open suspend fun loginLdap(username: String, password: String): TokenPair {
         val pair = api.loginLdap(LoginRequest(username, password)).data
+        persistIfComplete(pair)
+        return pair
+    }
+
+    /** Second step of a two-factor login: exchange the challenge token +
+     *  code (or recovery code) for a real token pair, then persist it. */
+    open suspend fun verifyTotp(challengeToken: String, code: String): TokenPair {
+        val pair = api.verifyTotp(TotpVerifyRequest(challengeToken, code)).data
+        persistIfComplete(pair)
+        return pair
+    }
+
+    /** A TOTP-gated login returns totp_required with no tokens — don't
+     *  persist empties; the caller drives the second factor. */
+    private suspend fun persistIfComplete(pair: TokenPair) {
+        if (pair.totp_required) return
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
-        return pair
     }
 
     /** Discover which federated auth providers the server has

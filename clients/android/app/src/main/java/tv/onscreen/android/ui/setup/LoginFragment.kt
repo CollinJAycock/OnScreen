@@ -122,7 +122,15 @@ class LoginFragment : GuidedStepSupportFragment() {
 
         lifecycleScope.launch {
             try {
-                authRepo.login(username, password)
+                val pair = authRepo.login(username, password)
+                if (pair.totp_required) {
+                    // Password OK, second factor owed — push the code step.
+                    GuidedStepSupportFragment.add(
+                        parentFragmentManager,
+                        TotpLoginFragment.create(pair.login_challenge_token.orEmpty()),
+                    )
+                    return@launch
+                }
                 (activity as? MainActivity)?.navigateTo(NavigationDestination.HOME)
             } catch (e: Exception) {
                 Toast.makeText(

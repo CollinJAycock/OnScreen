@@ -70,3 +70,9 @@ data class RefreshRequest(
 data class LogoutRequest(
     val refresh_token: String,
 )
+
+@JsonClass(generateAdapter = true)
+data class TotpVerifyRequest(
+    val login_challenge_token: String,
+    val code: String,
+)
