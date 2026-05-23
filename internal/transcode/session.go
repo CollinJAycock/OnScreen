@@ -33,6 +33,13 @@ type Session struct {
 	WorkerAddr     string    `json:"worker_addr"`
 	Decision       string    `json:"decision"` // "directPlay"|"directStream"|"transcode"
 	FilePath       string    `json:"file_path"`
+	// SourceURL is an HTTP fallback the worker reads when FilePath isn't
+	// reachable on its own filesystem (a remote worker with no shared
+	// storage). It points at this server's /media/stream/{file_id} with a
+	// 24 h stream token, so the worker pulls the source over the LAN.
+	// Embedded / shared-storage workers ignore it (FilePath wins). See
+	// transcode_abr.go buildSourceURL.
+	SourceURL      string    `json:"source_url,omitempty"`
 	PositionMS     int64     `json:"position_ms"`
 	CreatedAt      time.Time `json:"created_at"`
 	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
@@ -570,6 +577,9 @@ func isGPUEncoder(enc string) bool {
 type TranscodeJob struct {
 	SessionID        string    `json:"session_id"`
 	FilePath         string    `json:"file_path"`
+	// SourceURL is the HTTP fallback input (see Session.SourceURL). The
+	// worker uses it only when FilePath can't be stat'd locally.
+	SourceURL        string    `json:"source_url,omitempty"`
 	SessionDir       string    `json:"session_dir"`
 	StartOffsetSec   float64   `json:"start_offset_sec"`
 	Decision         string    `json:"decision"`

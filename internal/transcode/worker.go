@@ -188,6 +188,16 @@ func (w *Worker) jobLoop(ctx context.Context) error {
 	}
 }
 
+// redactURLToken masks the token query value in a source URL so stream
+// tokens don't land in worker logs. Everything from "token=" onward is
+// replaced; the host/path stays visible for debugging.
+func redactURLToken(raw string) string {
+	if i := strings.Index(raw, "token="); i >= 0 {
+		return raw[:i+len("token=")] + "REDACTED"
+	}
+	return raw
+}
+
 // runJob executes a single transcode job.
 func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	ctx, span := tracer.Start(ctx, "transcode.run_job", trace.WithAttributes(
@@ -213,11 +223,23 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		return fmt.Errorf("mkdir session dir: %w", err)
 	}
 
+	// Resolve the ffmpeg input. Prefer the local path (shared storage or the
+	// embedded worker); fall back to the HTTP source URL when the file isn't
+	// reachable on this worker's filesystem (a remote worker with no shared
+	// mount). The primary serves it from /media/stream with a stream token,
+	// and ffmpeg seeks via HTTP Range — see buildSourceURL in the API.
+	input := job.FilePath
+	if _, statErr := os.Stat(job.FilePath); statErr != nil && job.SourceURL != "" {
+		input = job.SourceURL
+		w.logger.Info("source not local; pulling over HTTP",
+			"session_id", job.SessionID, "source", redactURLToken(job.SourceURL))
+	}
+
 	var ffArgs []string
 	var actualEncoder Encoder
 	switch job.Decision {
 	case "directStream":
-		ffArgs = BuildDirectStream(job.FilePath, job.SessionDir, job.StartOffsetSec)
+		ffArgs = BuildDirectStream(input, job.SessionDir, job.StartOffsetSec)
 	default:
 		enc := Encoder(job.Encoder)
 		if enc == "" {
@@ -263,7 +285,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		)
 
 		ffArgs = BuildHLS(BuildArgs{
-			InputPath:            job.FilePath,
+			InputPath:            input,
 			StartOffset:          job.StartOffsetSec,
 			Encoder:              enc,
 			IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI || enc == EncoderAV1VAAPI,

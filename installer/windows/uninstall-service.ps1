@@ -33,5 +33,9 @@ Write-Host "==> Unregistering service..." -ForegroundColor Cyan
 & $svcExe uninstall
 if ($LASTEXITCODE -ne 0) { throw "WinSW uninstall failed (exit $LASTEXITCODE)" }
 
+# Remove the LAN firewall rule install-service.ps1 added (no-op if absent).
+Get-NetFirewallRule -DisplayName 'OnScreen Server (LAN)' -ErrorAction SilentlyContinue |
+    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+
 Write-Host
 Write-Host "==> Done." -ForegroundColor Green

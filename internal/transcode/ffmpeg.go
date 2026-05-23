@@ -127,6 +127,13 @@ type BuildArgs struct {
 // SegmentDuration is the HLS segment duration in seconds (ADR-007).
 const SegmentDuration = 4
 
+// isHTTPURL reports whether p is an http(s) URL (a remote HTTP source
+// input) rather than a local filesystem path, so the input-side reconnect
+// options are only added when they apply.
+func isHTTPURL(p string) bool {
+	return strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://")
+}
+
 // BuildHLS constructs the FFmpeg argv for an HLS transcode session.
 // The caller is responsible for creating SessionDir before executing.
 //
@@ -251,6 +258,21 @@ func BuildHLS(a BuildArgs) []string {
 		// updates; dropping input hwaccel for AMF lets AMF own its
 		// device unambiguously, and software decode is plenty on the
 		// CPU class that ships with an iGPU worth encoding through.
+	}
+
+	// HTTP source input (a remote worker pulling the source from the primary
+	// over the LAN — see TranscodeJob.SourceURL). Reconnect on transient
+	// blips and reuse the TCP connection for the Range requests ffmpeg issues
+	// while seeking; without these a dropped connection aborts the encode
+	// mid-segment. These options apply to the http(s) protocol and must
+	// precede -i. No-op for a local file input.
+	if isHTTPURL(a.InputPath) {
+		args = append(args,
+			"-reconnect", "1",
+			"-reconnect_streamed", "1",
+			"-reconnect_delay_max", "2",
+			"-multiple_requests", "1",
+		)
 	}
 
 	// Speed up container probing for files with many streams (e.g. Blu-ray
@@ -557,6 +579,16 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 	// remux runs at 50-100× real-time which would race the worker's
 	// post-completion cleanup just as hard as the transcode path.
 	args = append(args, "-readrate", "1.0", "-readrate_initial_burst", "30")
+	// HTTP source resilience for a remote worker pulling the source over the
+	// LAN (see BuildHLS). No-op for a local file input.
+	if isHTTPURL(inputPath) {
+		args = append(args,
+			"-reconnect", "1",
+			"-reconnect_streamed", "1",
+			"-reconnect_delay_max", "2",
+			"-multiple_requests", "1",
+		)
+	}
 	args = append(args,
 		"-i", inputPath,
 		"-c", "copy", // copy all streams

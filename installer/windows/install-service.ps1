@@ -91,6 +91,17 @@ Get-Content $envPath | ForEach-Object {
 & (Join-Path $PSScriptRoot "server.exe") migrate
 if ($LASTEXITCODE -ne 0) { throw "database migration failed (exit $LASTEXITCODE)" }
 
+# Open the API/UI port to the LAN so other devices can reach the web UI and,
+# in a fleet, remote workers can pull source media + segments from this primary
+# over HTTP. Scoped to the local subnet; requests stay auth-gated. (Postgres +
+# Valkey stay loopback-only — exposing them to attach workers is a separate
+# deliberate step.)
+$fwServer = 'OnScreen Server (LAN)'
+if (-not (Get-NetFirewallRule -DisplayName $fwServer -ErrorAction SilentlyContinue)) {
+    Write-Host "==> Opening firewall: inbound tcp/7070 (LocalSubnet)..." -ForegroundColor Cyan
+    New-NetFirewallRule -DisplayName $fwServer -Direction Inbound -Protocol TCP -LocalPort 7070 -Action Allow -RemoteAddress LocalSubnet | Out-Null
+}
+
 if (-not $NoStart) {
     Write-Host "==> Starting OnScreen service..." -ForegroundColor Cyan
     & $svcExe start

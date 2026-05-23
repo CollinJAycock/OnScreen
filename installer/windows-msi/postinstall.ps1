@@ -243,6 +243,24 @@ $migrateExit = $LASTEXITCODE
 $env:DATABASE_URL = $null
 if ($migrateExit -ne 0) { throw "database migration failed (exit $migrateExit)" }
 
+# ── 6b. Open the API/UI port to the LAN. Lets other devices reach the web UI
+#       and, in a fleet, lets remote workers pull source media + transcoded
+#       segments from this primary over HTTP (TranscodeJob.SourceURL). Scoped
+#       to the local subnet; every request is still auth-gated.
+#
+#       Postgres (5432) and Valkey (6379) stay loopback-only by default —
+#       exposing them to the LAN is what lets a worker JOIN the fleet, but it's
+#       a deliberate admin decision (the worker needs the shared DATABASE_URL /
+#       VALKEY_URL), not something a single-box install should do silently.
+$fwServer = 'OnScreen Server (LAN)'
+if (Get-NetFirewallRule -DisplayName $fwServer -ErrorAction SilentlyContinue) {
+    Write-Log "firewall rule '$fwServer' already exists"
+} else {
+    New-NetFirewallRule -DisplayName $fwServer -Direction Inbound -Protocol TCP -LocalPort 7070 -Action Allow -RemoteAddress LocalSubnet | Out-Null
+    Write-Log "firewall: opened inbound tcp/7070 (LocalSubnet) for UI + fleet source/segment fetches"
+}
+
 Register-WinswService "service-onscreen.xml"
 
 Write-Log "All services up. Open http://localhost:7070 for setup."
+Write-Log "To attach remote workers, also expose Postgres (5432) + Valkey (6379) to the LAN — see Settings -> Transcode on the primary."

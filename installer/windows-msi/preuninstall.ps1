@@ -34,10 +34,13 @@ Stop-And-Unregister "service-worker.xml"
 Stop-And-Unregister "service-redis.xml"
 Stop-And-Unregister "service-postgres.xml"
 
-# Remove the worker segment-port firewall rule added on worker-only installs
-# (no-op on a full install / if absent).
-Get-NetFirewallRule -DisplayName 'OnScreen Worker (segments)' -ErrorAction SilentlyContinue |
-    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+# Remove the firewall rules our installer added (no-op if absent):
+#   'OnScreen Worker (segments)' — worker-only installs (the WORKER_ADDR port)
+#   'OnScreen Server (LAN)'      — full installs (the API/UI port 7070)
+foreach ($rule in @('OnScreen Worker (segments)', 'OnScreen Server (LAN)')) {
+    Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue |
+        Remove-NetFirewallRule -ErrorAction SilentlyContinue
+}
 
 # Brief wait so SCM finalizes deregistration before Inno Setup tries
 # to delete the files. Without this, file-lock errors are common.

@@ -52,7 +52,7 @@ func abrChildLock(childID string) *sync.Mutex {
 // decision is a full re-encode, and the source has a usable ladder.
 func (h *NativeTranscodeHandler) startABR(
 	w http.ResponseWriter, r *http.Request,
-	sessionID, segTok string, userID, itemID uuid.UUID,
+	sessionID, segTok, sourceURL string, userID, itemID uuid.UUID,
 	file *media.File, ladder []transcode.Rendition,
 	audioStreamIndex int, needsToneMap bool, codec string, positionMS int64,
 ) {
@@ -64,6 +64,9 @@ func (h *NativeTranscodeHandler) startABR(
 		FileID:           file.ID,
 		Decision:         "transcode",
 		FilePath:         file.FilePath,
+		// One HTTP source URL for the whole ladder — every rung child reuses
+		// it (all rungs read the same source file). See buildSourceURL.
+		SourceURL:        sourceURL,
 		PositionMS:       positionMS,
 		CreatedAt:        time.Now(),
 		ClientName:       "OnScreenWeb",
@@ -473,6 +476,7 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 	job := transcode.TranscodeJob{
 		SessionID:      childID,
 		FilePath:       parent.FilePath,
+		SourceURL:      parent.SourceURL, // shared across all rungs; minted once in startABR
 		SessionDir:     transcode.SessionDir(childID),
 		StartOffsetSec: abrSegmentBoundarySec(globalSeg, parent.FrameRate),
 		Decision:       "transcode",

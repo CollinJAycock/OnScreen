@@ -613,7 +613,10 @@ func run() error {
 	favoritesChecker := &favoritesChecker{q: gen.New(roPool)}
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger).
 		WithLibraryAccess(libSvc).
-		WithAudit(auditLogger)
+		WithAudit(auditLogger).
+		// Lets a remote worker without shared storage pull the source from this
+		// server over HTTP (a per-file stream token in the job's SourceURL).
+		WithStreamTokenMaker(tokenMaker)
 
 	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
 	// rootDir holds sprite_NNN.jpg + index.vtt per item. Lives alongside the

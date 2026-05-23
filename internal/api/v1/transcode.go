@@ -9,7 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -61,6 +64,11 @@ type NativeTranscodeHandler struct {
 	cfg      *config.Config
 	logger   *slog.Logger
 	killer   SessionKiller // optional — set for embedded worker deployments
+	// tokens mints the per-file stream token embedded in a job's SourceURL
+	// so a remote worker without shared storage can pull the source over
+	// HTTP. Optional — when nil, jobs carry no SourceURL and workers must
+	// reach the file on a local/shared path.
+	tokens *auth.TokenMaker
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.
@@ -95,6 +103,43 @@ func (h *NativeTranscodeHandler) WithAudit(a *audit.Logger) *NativeTranscodeHand
 // SetSessionKiller wires the embedded worker so Stop can kill FFmpeg immediately.
 func (h *NativeTranscodeHandler) SetSessionKiller(k SessionKiller) {
 	h.killer = k
+}
+
+// WithStreamTokenMaker wires the token maker used to mint a job's HTTP
+// source URL (a stream token bound to the source file). Without it, jobs
+// carry no SourceURL and remote workers must reach the file on a shared
+// path. Returns the handler for chaining.
+func (h *NativeTranscodeHandler) WithStreamTokenMaker(m *auth.TokenMaker) *NativeTranscodeHandler {
+	h.tokens = m
+	return h
+}
+
+// buildSourceURL returns an HTTP URL a worker can read the source from
+// when it can't reach the file on its own filesystem: this server's
+// /media/stream/{file_id} with a 24 h stream token bound to that file.
+// One token per playback session — startABR builds it once on the parent
+// and every rung child reuses it (all rungs read the same source file).
+// Returns "" when no token maker is wired or no LAN IP is detectable, in
+// which case the worker falls back to the local FilePath.
+func (h *NativeTranscodeHandler) buildSourceURL(claims *auth.Claims, fileID uuid.UUID) string {
+	if h.tokens == nil || claims == nil {
+		return ""
+	}
+	lan := detectLANIP()
+	if lan == "" {
+		return ""
+	}
+	tok, err := h.tokens.IssueStreamToken(*claims, fileID)
+	if err != nil {
+		h.logger.Warn("build source url: issue stream token", "err", err)
+		return ""
+	}
+	port := "7070"
+	if _, p, err := net.SplitHostPort(h.cfg.ListenAddr); err == nil && p != "" {
+		port = p
+	}
+	return fmt.Sprintf("http://%s:%s/media/stream/%s?token=%s",
+		lan, port, fileID, url.QueryEscape(tok))
 }
 
 type transcodeStartRequest struct {
@@ -349,6 +394,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// HTTP source fallback for remote workers without shared storage (see
+	// buildSourceURL). Minted once and reused by both the ABR ladder (every
+	// rung child) and the single-rendition job below — one stream token per
+	// playback session regardless of ladder size.
+	sourceURL := h.buildSourceURL(claims, file.ID)
+
 	decision := "transcode"
 	if body.VideoCopy {
 		decision = "remux"
@@ -413,7 +464,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, h.cfg.TranscodeABRMaxHeight)
 		if len(ladder) > 1 {
-			h.startABR(w, r, sessionID, segTok, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, abrCodec, body.PositionMS)
+			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, abrCodec, body.PositionMS)
 			return
 		}
 	}
@@ -425,6 +476,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		FileID:      file.ID,
 		Decision:    decision,
 		FilePath:    file.FilePath,
+		SourceURL:   sourceURL,
 		PositionMS:  body.PositionMS,
 		CreatedAt:   time.Now(),
 		ClientName:  "OnScreenWeb",
@@ -469,6 +521,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	job := transcode.TranscodeJob{
 		SessionID:        sessionID,
 		FilePath:         file.FilePath,
+		SourceURL:        sourceURL,
 		SessionDir:       transcode.SessionDir(sessionID),
 		StartOffsetSec:   startOffsetSec,
 		Decision:         decision,
