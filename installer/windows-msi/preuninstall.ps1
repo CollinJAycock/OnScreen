@@ -15,12 +15,16 @@ $ErrorActionPreference = "Continue"
 
 function Stop-And-Unregister {
     param([string]$XmlName)
-    $xmlFull = "$InstallDir\$XmlName"
-    if (-not (Test-Path $xmlFull)) { return }
+    # Match the per-service exe naming Register-WinswService uses
+    # (service-worker.exe <-> service-worker.xml); WinSW finds its config by the
+    # exe's own base name, so stop/uninstall must go through that same exe.
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($XmlName)
+    $svcExe = "$InstallDir\$base.exe"
+    if (-not (Test-Path $svcExe)) { return }
     Write-Host "Stopping $XmlName..."
-    & "$InstallDir\WinSW.exe" stop $xmlFull 2>&1 | Out-Host
+    & $svcExe stop 2>&1 | Out-Host
     Write-Host "Unregistering $XmlName..."
-    & "$InstallDir\WinSW.exe" uninstall $xmlFull 2>&1 | Out-Host
+    & $svcExe uninstall 2>&1 | Out-Host
 }
 
 # Tear down in reverse-dependency order: OnScreen first (depends on

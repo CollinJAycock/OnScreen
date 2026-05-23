@@ -66,8 +66,14 @@ $envBlock = ($envLines -join "`n")
 $xml = $xml -replace '</service>', "`n$envBlock`n</service>"
 Set-Content -Path $xmlPath -Value $xml -Encoding utf8
 
+# WinSW finds its config by the running exe's own base name, not a path arg.
+# Copy WinSW.exe -> onscreen.exe so it pairs with onscreen.xml; passing the
+# path fails with "Unable to locate WinSW.[xml|yml]".
+$svcExe = Join-Path $PSScriptRoot "onscreen.exe"
+Copy-Item $winsw $svcExe -Force
+
 Write-Host "==> Registering OnScreen service..." -ForegroundColor Cyan
-& $winsw install $xmlPath
+& $svcExe install
 if ($LASTEXITCODE -ne 0) { throw "WinSW install failed (exit $LASTEXITCODE)" }
 
 # Apply DB migrations before the service starts — the server doesn't
@@ -87,7 +93,7 @@ if ($LASTEXITCODE -ne 0) { throw "database migration failed (exit $LASTEXITCODE)
 
 if (-not $NoStart) {
     Write-Host "==> Starting OnScreen service..." -ForegroundColor Cyan
-    & $winsw start $xmlPath
+    & $svcExe start
     if ($LASTEXITCODE -ne 0) { throw "WinSW start failed (exit $LASTEXITCODE)" }
 }
 

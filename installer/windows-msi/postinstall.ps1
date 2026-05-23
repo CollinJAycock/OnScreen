@@ -69,11 +69,17 @@ function Set-ServiceEnv {
 
 function Register-WinswService {
     param([string]$XmlName)
-    $xmlFull = "$InstallDir\$XmlName"
-    Write-Log "Registering service from $XmlName"
-    & "$InstallDir\WinSW.exe" install $xmlFull 2>&1 | ForEach-Object { Write-Log "  $_" }
+    # WinSW locates its config by matching the running exe's own base name
+    # (service-worker.exe -> service-worker.xml in the same dir), NOT by a path
+    # argument. So copy WinSW.exe to a per-service name and invoke that — passing
+    # the XML path fails with "Unable to locate WinSW.[xml|yml]".
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($XmlName)
+    $svcExe = "$InstallDir\$base.exe"
+    Copy-Item "$InstallDir\WinSW.exe" $svcExe -Force
+    Write-Log "Registering service from $XmlName (via $base.exe)"
+    & $svcExe install 2>&1 | ForEach-Object { Write-Log "  $_" }
     if ($LASTEXITCODE -ne 0) { throw "$XmlName install failed (exit $LASTEXITCODE)" }
-    & "$InstallDir\WinSW.exe" start $xmlFull 2>&1 | ForEach-Object { Write-Log "  $_" }
+    & $svcExe start 2>&1 | ForEach-Object { Write-Log "  $_" }
     if ($LASTEXITCODE -ne 0) { throw "$XmlName start failed (exit $LASTEXITCODE)" }
 }
 

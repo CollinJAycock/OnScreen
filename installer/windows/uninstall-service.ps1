@@ -19,17 +19,18 @@ if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Adm
     return
 }
 
-$xmlPath = Join-Path $PSScriptRoot "onscreen.xml"
-$winsw   = Join-Path $PSScriptRoot "WinSW.exe"
-if (-not (Test-Path $winsw)) { throw "WinSW.exe missing." }
-if (-not (Test-Path $xmlPath)) { throw "onscreen.xml missing." }
+# WinSW pairs with onscreen.exe (a renamed copy made at install time), not the
+# bare WinSW.exe + path. Fall back to WinSW.exe if the renamed copy is absent.
+$svcExe = Join-Path $PSScriptRoot "onscreen.exe"
+if (-not (Test-Path $svcExe)) { $svcExe = Join-Path $PSScriptRoot "WinSW.exe" }
+if (-not (Test-Path $svcExe)) { throw "WinSW.exe missing." }
 
 # Stop first; ignore errors if it wasn't running.
 Write-Host "==> Stopping service (best-effort)..." -ForegroundColor Cyan
-& $winsw stop $xmlPath 2>&1 | Out-Host
+& $svcExe stop 2>&1 | Out-Host
 
 Write-Host "==> Unregistering service..." -ForegroundColor Cyan
-& $winsw uninstall $xmlPath
+& $svcExe uninstall
 if ($LASTEXITCODE -ne 0) { throw "WinSW uninstall failed (exit $LASTEXITCODE)" }
 
 Write-Host
