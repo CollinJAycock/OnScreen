@@ -990,6 +990,12 @@ export interface TranscodeConfig {
   maxrate_ratio: number;
 }
 
+export interface WorkerCredentials {
+  database_url: string;
+  valkey_url: string;
+  secret_key: string;
+}
+
 export const settingsApi = {
   get: () => api.get<ServerSettings>('/settings'),
   update: (body: Partial<ServerSettings>) => api.patch<void>('/settings', body),
@@ -997,6 +1003,8 @@ export const settingsApi = {
   getWorkers: () => api.get<WorkerInfo[]>('/settings/workers'),
   getFleet: () => api.get<FleetStatus>('/settings/fleet'),
   updateFleet: (body: FleetConfig) => api.put<void>('/settings/fleet', body),
+  revealWorkerCredentials: (password: string, totpCode: string) =>
+    api.post<WorkerCredentials>('/settings/worker-credentials', { password, totp_code: totpCode }),
   getTranscodeConfig: () => api.get<TranscodeConfig>('/settings/transcode-config'),
   updateTranscodeConfig: (body: TranscodeConfig) => api.put<void>('/settings/transcode-config', body),
   testEmail: (to: string) => api.post<{ message: string }>('/email/test', { to }),

@@ -504,6 +504,34 @@ func (s *authService) TOTPStatus(ctx context.Context, userID uuid.UUID) (bool, i
 	return true, int(n), nil
 }
 
+// VerifyReauth re-checks a user's password (and second factor, if 2FA is
+// enabled) for step-up auth before revealing sensitive data such as the
+// worker connection credentials. Returns nil only on a full match.
+func (s *authService) VerifyReauth(ctx context.Context, userID uuid.UUID, password, totpCode string) error {
+	user, err := s.db.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("reauth: get user: %w", err)
+	}
+	if user.PasswordHash == nil {
+		// Federated (OIDC/SAML/LDAP) accounts have no local password to
+		// re-verify against; their IdP owns the credential.
+		return fmt.Errorf("re-verification requires a password-based account")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password)); err != nil {
+		return fmt.Errorf("invalid password")
+	}
+	if user.TotpEnabled {
+		ok, err := s.validateSecondFactor(ctx, user, totpCode)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("invalid 2FA code")
+		}
+	}
+	return nil
+}
+
 // validateSecondFactor accepts EITHER a live TOTP code OR an unused
 // recovery code (consumed on success). A valid TOTP code never consumes
 // a recovery code; a recovery code is single-use and burned atomically.

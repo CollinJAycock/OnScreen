@@ -568,6 +568,8 @@ func run() error {
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
+	// Worker-node connection secrets, revealed via step-up reauth (authSvc).
+	settingsHandler.SetWorkerCredentials(authSvc, cfg.DatabaseURL, cfg.ValkeyURL, cfg.SecretKey)
 	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
 	streamTracker := streaming.NewValkeyTracker(valkeyClient)
 	analyticsHandler := v1.NewAnalyticsHandler(gen.New(roPool), logger)

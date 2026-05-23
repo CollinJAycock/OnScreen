@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -58,6 +59,12 @@ type WorkerLister interface {
 	ListWorkers(ctx context.Context) ([]transcode.WorkerRegistration, error)
 }
 
+// ReauthVerifier re-checks the current user's password (and second factor, if
+// 2FA is enabled) for step-up auth before revealing secrets.
+type ReauthVerifier interface {
+	VerifyReauth(ctx context.Context, userID uuid.UUID, password, totpCode string) error
+}
+
 // SettingsHandler handles GET/PATCH /api/v1/settings.
 type SettingsHandler struct {
 	svc              SettingsServiceIface
@@ -66,6 +73,14 @@ type SettingsHandler struct {
 	detectedEncoders []transcode.EncoderEntry // populated at startup by DetectEncoders
 	workerLister     WorkerLister             // set at startup to query registered workers
 	embeddedDisabled bool                     // true when DISABLE_EMBEDDED_WORKER env is set
+
+	// Worker connection secrets, revealed by WorkerCredentials after step-up
+	// reauth. Set at startup from config so a fleet operator can copy the exact
+	// values a worker node needs without hunting for the server's .env.
+	reauth         ReauthVerifier
+	cfgDatabaseURL string
+	cfgValkeyURL   string
+	cfgSecretKey   string
 }
 
 // NewSettingsHandler creates a SettingsHandler.
@@ -92,6 +107,74 @@ func (h *SettingsHandler) SetWorkerLister(wl WorkerLister) {
 // SetEmbeddedDisabled marks that the DISABLE_EMBEDDED_WORKER env var is set.
 func (h *SettingsHandler) SetEmbeddedDisabled(disabled bool) {
 	h.embeddedDisabled = disabled
+}
+
+// SetWorkerCredentials wires the step-up reauth verifier + the connection
+// secrets a worker node needs, revealed by the worker-credentials endpoint.
+func (h *SettingsHandler) SetWorkerCredentials(reauth ReauthVerifier, databaseURL, valkeyURL, secretKey string) {
+	h.reauth = reauth
+	h.cfgDatabaseURL = databaseURL
+	h.cfgValkeyURL = valkeyURL
+	h.cfgSecretKey = secretKey
+}
+
+// rewriteHostToLAN swaps a loopback host in a DSN for the server's LAN IP so a
+// remote worker can connect. Targeted string replace (not URL parse) to avoid
+// re-encoding the password. No-op when lan is empty.
+func rewriteHostToLAN(rawURL, lan string) string {
+	if lan == "" {
+		return rawURL
+	}
+	out := rawURL
+	out = strings.ReplaceAll(out, "@localhost:", "@"+lan+":")   // DATABASE_URL host
+	out = strings.ReplaceAll(out, "@127.0.0.1:", "@"+lan+":")
+	out = strings.ReplaceAll(out, "//localhost:", "//"+lan+":") // VALKEY_URL host
+	out = strings.ReplaceAll(out, "//127.0.0.1:", "//"+lan+":")
+	return out
+}
+
+// WorkerCredentials handles POST /api/v1/settings/worker-credentials.
+// Step-up auth: the admin re-enters their password (+ TOTP if 2FA is on) to
+// reveal the exact DATABASE_URL / VALKEY_URL / SECRET_KEY a worker node needs.
+// Loopback hosts in the DSNs are rewritten to the server's LAN IP. Admin-only
+// (mounted under AdminRequired).
+func (h *SettingsHandler) WorkerCredentials(w http.ResponseWriter, r *http.Request) {
+	if h.reauth == nil {
+		respond.Error(w, r, http.StatusNotImplemented, "NOT_CONFIGURED", "worker credentials reveal is not available")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+		TOTPCode string `json:"totp_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	if err := h.reauth.VerifyReauth(r.Context(), claims.UserID, body.Password, body.TOTPCode); err != nil {
+		if h.audit != nil {
+			actor := claims.UserID
+			h.audit.Log(r.Context(), &actor, "settings.worker_credentials.denied", "worker-credentials", nil, audit.ClientIP(r))
+		}
+		respond.Error(w, r, http.StatusUnauthorized, "REAUTH_FAILED", "password or 2FA code incorrect")
+		return
+	}
+
+	lan := detectLANIP()
+	if h.audit != nil {
+		actor := claims.UserID
+		h.audit.Log(r.Context(), &actor, "settings.worker_credentials.revealed", "worker-credentials", nil, audit.ClientIP(r))
+	}
+	respond.Success(w, r, map[string]string{
+		"database_url": rewriteHostToLAN(h.cfgDatabaseURL, lan),
+		"valkey_url":   rewriteHostToLAN(h.cfgValkeyURL, lan),
+		"secret_key":   h.cfgSecretKey,
+	})
 }
 
 // GetEncoders handles GET /api/v1/settings/encoders — returns available hw encoders.

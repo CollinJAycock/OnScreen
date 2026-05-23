@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { settingsApi } from '$lib/api';
-  import type { EncoderInfo, FleetStatus, TranscodeConfig } from '$lib/api';
+  import type { EncoderInfo, FleetStatus, TranscodeConfig, WorkerCredentials } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   // Fleet management state
@@ -84,6 +84,40 @@
     } catch {
       toast.error('Copy failed — select and copy manually');
     }
+  }
+
+  // Step-up reveal of the real DATABASE_URL + SECRET_KEY (re-enter password).
+  let showRevealForm = false;
+  let revealPassword = '';
+  let revealTotp = '';
+  let revealLoading = false;
+  let revealed: WorkerCredentials | null = null;
+
+  // Once revealed, show the real values; otherwise the copy-shapes with the
+  // password elided. database_url from the API already has the LAN-IP host.
+  $: dbValue = revealed ? revealed.database_url : dbExample;
+  $: valkeyValue = revealed ? revealed.valkey_url : valkeyExample;
+
+  async function doReveal() {
+    revealLoading = true;
+    try {
+      revealed = await settingsApi.revealWorkerCredentials(revealPassword, revealTotp);
+      showRevealForm = false;
+      revealPassword = '';
+      revealTotp = '';
+      toast.success('Credentials revealed');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Re-verification failed');
+    } finally {
+      revealLoading = false;
+    }
+  }
+
+  function hideRevealed() {
+    revealed = null;
+    showRevealForm = false;
+    revealPassword = '';
+    revealTotp = '';
   }
 
   // Encoder tuning state
@@ -400,17 +434,22 @@
       <div class="worker-info">
         <div class="info-row">
           <span class="info-key">DATABASE_URL</span>
-          <code class="info-val">{dbExample}</code>
-          <button class="btn-copy" title="Copy" on:click={() => copyText(dbExample)}>Copy</button>
+          <code class="info-val">{dbValue}</code>
+          <button class="btn-copy" title="Copy" on:click={() => copyText(dbValue)}>Copy</button>
         </div>
         <div class="info-row">
           <span class="info-key">VALKEY_URL</span>
-          <code class="info-val">{valkeyExample}</code>
-          <button class="btn-copy" title="Copy" on:click={() => copyText(valkeyExample)}>Copy</button>
+          <code class="info-val">{valkeyValue}</code>
+          <button class="btn-copy" title="Copy" on:click={() => copyText(valkeyValue)}>Copy</button>
         </div>
         <div class="info-row">
           <span class="info-key">SECRET_KEY</span>
-          <span class="info-val muted">Copy <em>exactly</em> from this server's <code>.env</code> — not shown here for security.</span>
+          {#if revealed}
+            <code class="info-val">{revealed.secret_key}</code>
+            <button class="btn-copy" title="Copy" on:click={() => revealed && copyText(revealed.secret_key)}>Copy</button>
+          {:else}
+            <span class="info-val muted">Hidden — click <em>Show full values</em> below to reveal.</span>
+          {/if}
         </div>
         <div class="info-row">
           <span class="info-key">WORKER_ADDR</span>
@@ -418,9 +457,42 @@
         </div>
       </div>
 
+      <!-- Step-up reveal -->
+      {#if revealed}
+        <div class="reveal-row">
+          <span class="hint warn">⚠ Full credentials shown — they include the database password and your server's master key.</span>
+          <button class="btn-outline btn-add-mapping" on:click={hideRevealed}>Hide</button>
+        </div>
+      {:else if showRevealForm}
+        <div class="reveal-form">
+          <p class="hint" style="margin:0;">Re-enter your password to reveal the real DATABASE_URL and SECRET_KEY.</p>
+          <div class="field-row">
+            <div class="field" style="flex:2;">
+              <label for="reveal-pw">Password</label>
+              <!-- svelte-ignore a11y-autofocus -->
+              <input id="reveal-pw" type="password" bind:value={revealPassword} autocomplete="current-password" autofocus />
+            </div>
+            <div class="field" style="flex:1;">
+              <label for="reveal-totp">2FA code <span class="muted">(if enabled)</span></label>
+              <input id="reveal-totp" type="text" inputmode="numeric" bind:value={revealTotp} placeholder="000000" autocomplete="one-time-code" />
+            </div>
+          </div>
+          <div class="reveal-actions">
+            <button class="btn-save" disabled={revealLoading || !revealPassword} on:click={doReveal}>
+              {revealLoading ? 'Verifying…' : 'Reveal'}
+            </button>
+            <button class="btn-outline btn-add-mapping" on:click={() => { showRevealForm = false; revealPassword = ''; revealTotp = ''; }}>Cancel</button>
+          </div>
+        </div>
+      {:else}
+        <button class="btn-outline btn-add-mapping" style="margin-top:0.25rem;" on:click={() => showRevealForm = true}>
+          Show full values (re-enter password)
+        </button>
+      {/if}
+
       <p class="hint">
-        The host above is this server's detected LAN address. The
-        <code>‹password›</code> in DATABASE_URL and the SECRET_KEY are in this
+        The host above is this server's detected LAN address. Until you reveal them,
+        the <code>‹password›</code> in DATABASE_URL and the SECRET_KEY live in this
         server's <code>.env</code> (e.g. <code>C:\Program&nbsp;Files\OnScreen\.env</code>);
         if the host shows a placeholder, fill in this server's LAN IP manually.
       </p>
@@ -650,6 +722,26 @@
   }
   .btn-copy:hover { background: var(--bg-hover); border-color: var(--text-muted); }
   .hint.warn { color: #d9a441; }
+  .muted { color: var(--text-muted); }
+
+  .reveal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin: 0.5rem 0;
+    padding: 0.75rem 0.9rem;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 0.5rem;
+  }
+  .reveal-actions { display: flex; gap: 0.5rem; align-items: center; }
+  .reveal-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 0.4rem 0;
+  }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
