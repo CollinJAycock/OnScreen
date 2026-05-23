@@ -111,6 +111,20 @@ LOG_LEVEL="info"
 "@ | Set-Content -Encoding utf8 $envFile
     Write-Log "worker .env written (worker_addr=$($cfg.WORKER_ADDR))"
 
+    # Open the worker's segment port (the WORKER_ADDR port) inbound so the
+    # primary can pull transcoded segments from this node — without it the
+    # worker registers and looks healthy but playback from it stalls.
+    # Scoped to the local subnet (where the primary lives).
+    $workerPort = ($cfg.WORKER_ADDR -split ':')[-1]
+    if ($workerPort -notmatch '^\d+$') { $workerPort = '7073' }
+    $fwName = 'OnScreen Worker (segments)'
+    if (Get-NetFirewallRule -DisplayName $fwName -ErrorAction SilentlyContinue) {
+        Write-Log "firewall rule '$fwName' already exists"
+    } else {
+        New-NetFirewallRule -DisplayName $fwName -Direction Inbound -Protocol TCP -LocalPort $workerPort -Action Allow -RemoteAddress LocalSubnet | Out-Null
+        Write-Log "firewall: opened inbound tcp/$workerPort (LocalSubnet) for segment fetches"
+    }
+
     Set-ServiceEnv "service-worker.xml"
     Register-WinswService "service-worker.xml"
     Write-Log "Worker registered + started. It joins the primary's fleet once it connects; check Settings -> Transcode on the primary."
