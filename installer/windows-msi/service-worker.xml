@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <id>OnScreenWorker</id>
+  <name>OnScreen Transcode Worker</name>
+  <description>OnScreen transcode worker — joins a remote OnScreen server's fleet via the shared DATABASE_URL + VALKEY_URL. Runs no local database; pulls transcode jobs from the primary and serves segments on WORKER_ADDR.</description>
+  <executable>{app}\worker.exe</executable>
+  <workingdirectory>{app}</workingdirectory>
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="none"/>
+  <resetfailure>1 hour</resetfailure>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <logpath>{userpf}\OnScreen\logs</logpath>
+  <!-- No <depend/> on local Postgres/Redis — a worker node uses the
+       primary's, reached over the network. The installer rewrites the
+       <env/> tags below from the worker .env before registering. -->
+  <env name="PATH" value="{app}\ffmpeg;%PATH%"/>
+</service>

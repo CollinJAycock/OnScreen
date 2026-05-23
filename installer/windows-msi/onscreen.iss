@@ -79,6 +79,8 @@ Source: "stage\WinSW.exe";     DestDir: "{app}"; Flags: ignoreversion
 Source: "service-onscreen.xml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "service-postgres.xml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "service-redis.xml";    DestDir: "{app}"; Flags: ignoreversion
+; Worker-only mode uses this instead of the three above.
+Source: "service-worker.xml";   DestDir: "{app}"; Flags: ignoreversion
 
 ; Post/pre-install scripts.
 Source: "postinstall.ps1";  DestDir: "{app}"; Flags: ignoreversion
@@ -103,18 +105,27 @@ Name: "{group}\OnScreen Logs";       Filename: "{commonappdata}\{#MyAppShort}\lo
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Run]
-; Run postinstall as admin in a hidden window. Errors propagate up
-; (Inno will roll back the install on non-zero).
+; Full server: initialise DB + register Postgres/Redis/OnScreen services.
 Filename: "powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\postinstall.ps1"" -InstallDir ""{app}"""; \
   StatusMsg: "Initialising database and registering services..."; \
-  Flags: runhidden waituntilterminated
+  Flags: runhidden waituntilterminated; \
+  Check: IsFullMode
 
-; Open browser if the user opted in.
+; Worker only: write a .env pointing at the primary + register the worker
+; service. The wizard wrote the connection details to {tmp}\onscreen-worker.conf.
+Filename: "powershell.exe"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\postinstall.ps1"" -InstallDir ""{app}"" -Mode worker -WorkerConfig ""{tmp}\onscreen-worker.conf"""; \
+  StatusMsg: "Registering transcode worker..."; \
+  Flags: runhidden waituntilterminated; \
+  Check: IsWorkerMode
+
+; Open browser if the user opted in (full server only — a worker has no UI).
 Filename: "http://localhost:7070"; \
   Description: "Open OnScreen now"; \
   Flags: shellexec postinstall nowait skipifsilent; \
-  Tasks: openbrowser
+  Tasks: openbrowser; \
+  Check: IsFullMode
 
 [UninstallRun]
 Filename: "powershell.exe"; \
@@ -128,7 +139,19 @@ Type: filesandordirs; Name: "{app}\logs"
 
 [Code]
 var
-  RemoveDataPage: TInputOptionWizardPage;
+  SetupTypePage: TInputOptionWizardPage;
+  WorkerPage: TInputQueryWizardPage;
+
+// Worker-only is option index 1 on the setup-type page.
+function IsWorkerMode(): Boolean;
+begin
+  Result := (SetupTypePage <> nil) and (SetupTypePage.SelectedValueIndex = 1);
+end;
+
+function IsFullMode(): Boolean;
+begin
+  Result := not IsWorkerMode();
+end;
 
 procedure InitializeUninstallProgressForm();
 begin
@@ -167,5 +190,60 @@ end;
 
 procedure InitializeWizard();
 begin
-  // No extra wizard pages for now — keep the install simple.
+  // Setup-type chooser: full all-in-one server vs. a transcode worker that
+  // joins an existing server's fleet.
+  SetupTypePage := CreateInputOptionPage(wpSelectDir,
+    'Setup Type', 'How should this machine run OnScreen?',
+    'Pick an install type, then click Next.',
+    True {exclusive radio}, False);
+  SetupTypePage.Add('Full server  —  bundled database + media server (default; one machine)');
+  SetupTypePage.Add('Worker only  —  transcode worker that joins an existing OnScreen server''s fleet');
+  SetupTypePage.SelectedValueIndex := 0;
+
+  // Worker connection details. Shown only when "Worker only" is selected.
+  WorkerPage := CreateInputQueryPage(SetupTypePage.ID,
+    'Worker Configuration', 'Connect this worker to the primary OnScreen server',
+    'Enter the primary server''s shared connection details. The primary''s Postgres and Valkey must be reachable from this machine over the network, and SECRET_KEY must match the primary''s exactly.');
+  WorkerPage.Add('Primary DATABASE_URL  (postgres://postgres:PASS@HOST:5432/onscreen?sslmode=disable):', False);
+  WorkerPage.Add('Primary VALKEY_URL  (redis://HOST:6379):', False);
+  WorkerPage.Add('SECRET_KEY  (copy from the primary''s .env — must match):', False);
+  WorkerPage.Add('This machine''s WORKER_ADDR  (host:port other nodes reach it on, e.g. 10.0.0.5:7073):', False);
+  WorkerPage.Values[3] := ':7073';
+end;
+
+// Skip the worker-config page for a full-server install.
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if (WorkerPage <> nil) and (PageID = WorkerPage.ID) then
+    Result := IsFullMode();
+end;
+
+// Validate worker fields and stash them in a temp file the [Run] postinstall
+// reads (keeps the SECRET_KEY / DSN off the command line).
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  conf: string;
+begin
+  Result := True;
+  if (WorkerPage <> nil) and (CurPageID = WorkerPage.ID) then
+  begin
+    if (Trim(WorkerPage.Values[0]) = '') or (Trim(WorkerPage.Values[1]) = '') or
+       (Trim(WorkerPage.Values[2]) = '') or (Trim(WorkerPage.Values[3]) = '') then
+    begin
+      MsgBox('All four fields are required for a worker install.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    conf :=
+      'DATABASE_URL=' + Trim(WorkerPage.Values[0]) + #13#10 +
+      'VALKEY_URL='   + Trim(WorkerPage.Values[1]) + #13#10 +
+      'SECRET_KEY='   + Trim(WorkerPage.Values[2]) + #13#10 +
+      'WORKER_ADDR='  + Trim(WorkerPage.Values[3]) + #13#10;
+    if not SaveStringToFile(ExpandConstant('{tmp}\onscreen-worker.conf'), conf, False) then
+    begin
+      MsgBox('Could not write the temporary worker config file.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
 end;

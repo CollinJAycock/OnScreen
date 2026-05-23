@@ -26,6 +26,7 @@ function Stop-And-Unregister {
 # Tear down in reverse-dependency order: OnScreen first (depends on
 # the others), then Redis + Postgres.
 Stop-And-Unregister "service-onscreen.xml"
+Stop-And-Unregister "service-worker.xml"
 Stop-And-Unregister "service-redis.xml"
 Stop-And-Unregister "service-postgres.xml"
 
