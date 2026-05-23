@@ -69,6 +69,23 @@
   // Encoder info (available encoders)
   let encoderInfo: EncoderInfo | null = null;
 
+  // "Add a worker node" helper. The host the admin used to reach this UI is a
+  // good guess for the address a worker should target (it's the server's LAN
+  // address when the admin is browsing over the LAN). Falls back to a
+  // placeholder during SSR / localhost.
+  let serverHost = 'this-server-ip';
+  $: dbExample = `postgres://postgres:‹password›@${serverHost}:5432/onscreen?sslmode=disable`;
+  $: valkeyExample = `redis://${serverHost}:6379`;
+
+  async function copyText(s: string) {
+    try {
+      await navigator.clipboard.writeText(s);
+      toast.success('Copied to clipboard');
+    } catch {
+      toast.error('Copy failed — select and copy manually');
+    }
+  }
+
   // Encoder tuning state
   let nvencPreset = 'p4';
   let nvencTune = 'hq';
@@ -78,6 +95,10 @@
   let tuningLoaded = false;
 
   onMount(async () => {
+    if (typeof location !== 'undefined' && location.hostname) {
+      serverHost = location.hostname;
+    }
+
     // Load encoder info
     try {
       encoderInfo = await settingsApi.getEncoders();
@@ -358,6 +379,53 @@
         {fleetSaving ? 'Saving...' : 'Save Fleet Config'}
       </button>
     </div>
+
+    <!-- How to add a worker on another machine -->
+    <div class="fleet-group" style="margin-top: 1.25rem;">
+      <div class="fleet-group-header">
+        <span class="fleet-group-title">Add a worker on another machine</span>
+      </div>
+      <p class="hint" style="margin-top: -0.25rem;">
+        Offload transcoding to another computer: install OnScreen there, choose
+        <strong>Worker only</strong> in the installer, and enter the values below.
+        The worker pulls jobs from this server and streams segments back — it shows
+        up under <em>Local Workers</em> above once it connects.
+      </p>
+
+      <div class="worker-info">
+        <div class="info-row">
+          <span class="info-key">DATABASE_URL</span>
+          <code class="info-val">{dbExample}</code>
+          <button class="btn-copy" title="Copy" on:click={() => copyText(dbExample)}>Copy</button>
+        </div>
+        <div class="info-row">
+          <span class="info-key">VALKEY_URL</span>
+          <code class="info-val">{valkeyExample}</code>
+          <button class="btn-copy" title="Copy" on:click={() => copyText(valkeyExample)}>Copy</button>
+        </div>
+        <div class="info-row">
+          <span class="info-key">SECRET_KEY</span>
+          <span class="info-val muted">Copy <em>exactly</em> from this server's <code>.env</code> — not shown here for security.</span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">WORKER_ADDR</span>
+          <span class="info-val muted">The worker machine's own address, e.g. <code>10.0.0.5:7073</code>.</span>
+        </div>
+      </div>
+
+      <p class="hint">
+        The <code>‹password›</code> in DATABASE_URL and the SECRET_KEY are in this
+        server's <code>.env</code> (e.g. <code>C:\Program&nbsp;Files\OnScreen\.env</code>).
+        If you're viewing this over <code>localhost</code>, replace the host with this
+        server's LAN address.
+      </p>
+      <p class="hint warn">
+        ⚠ This server binds Postgres and Redis to localhost by default. For a worker to
+        connect, expose them on your LAN: set <code>listen_addresses</code> + add a
+        <code>pg_hba.conf</code> rule for the worker's subnet in Postgres, bind Redis to
+        the LAN interface, then restart the OnScreenPostgres / OnScreenRedis services.
+      </p>
+    </div>
   </section>
   {/if}
 
@@ -529,6 +597,54 @@
     margin-bottom: 0.25rem;
   }
   .btn-remove:hover { background: rgba(248,113,113,0.08); }
+
+  /* ── Add-a-worker info panel ───────────────────────────────────────────── */
+  .worker-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin: 0.25rem 0 0.25rem;
+  }
+  .info-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .info-key {
+    flex-shrink: 0;
+    width: 7.5rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-family: monospace;
+  }
+  .info-val {
+    flex: 1;
+    font-size: 0.72rem;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+  .info-val.muted { color: var(--text-muted); font-family: inherit; }
+  .info-val code, .hint code {
+    background: var(--bg-hover);
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+    font-size: 0.92em;
+  }
+  .btn-copy {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .btn-copy:hover { background: var(--bg-hover); border-color: var(--text-muted); }
+  .hint.warn { color: #d9a441; }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
