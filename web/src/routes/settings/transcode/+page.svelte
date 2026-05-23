@@ -69,11 +69,11 @@
   // Encoder info (available encoders)
   let encoderInfo: EncoderInfo | null = null;
 
-  // "Add a worker node" helper. The host the admin used to reach this UI is a
-  // good guess for the address a worker should target (it's the server's LAN
-  // address when the admin is browsing over the LAN). Falls back to a
-  // placeholder during SSR / localhost.
-  let serverHost = 'this-server-ip';
+  // "Add a worker node" helper. Prefer the server's detected LAN IP (from the
+  // fleet API) — that's the address a remote worker can actually reach. Fall
+  // back to the host the admin used to reach the UI, but never "localhost"
+  // (useless for a remote worker) — show a clear placeholder instead.
+  let serverHost = '‹this-server-LAN-IP›';
   $: dbExample = `postgres://postgres:‹password›@${serverHost}:5432/onscreen?sslmode=disable`;
   $: valkeyExample = `redis://${serverHost}:6379`;
 
@@ -95,7 +95,11 @@
   let tuningLoaded = false;
 
   onMount(async () => {
-    if (typeof location !== 'undefined' && location.hostname) {
+    // The browser host is a usable fallback only when it isn't loopback (a
+    // remote worker can't reach the admin's localhost). The fleet API's
+    // detected LAN IP, loaded below, takes precedence.
+    if (typeof location !== 'undefined' && location.hostname &&
+        !['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname)) {
       serverHost = location.hostname;
     }
 
@@ -115,6 +119,7 @@
       fleetEmbeddedMaxSessions = f.embedded_max_sessions;
       fleetEmbeddedCapabilities = f.embedded_capabilities || [];
       fleetWorkers = (f.workers || []).map(w => ({ ...w }));
+      if (f.server_lan_ip) serverHost = f.server_lan_ip; // best: worker-reachable
       fleetLoaded = true;
     } catch (e) { console.error('fleet load failed:', e); fleetLoaded = true; }
 
@@ -414,10 +419,10 @@
       </div>
 
       <p class="hint">
-        The <code>‹password›</code> in DATABASE_URL and the SECRET_KEY are in this
-        server's <code>.env</code> (e.g. <code>C:\Program&nbsp;Files\OnScreen\.env</code>).
-        If you're viewing this over <code>localhost</code>, replace the host with this
-        server's LAN address.
+        The host above is this server's detected LAN address. The
+        <code>‹password›</code> in DATABASE_URL and the SECRET_KEY are in this
+        server's <code>.env</code> (e.g. <code>C:\Program&nbsp;Files\OnScreen\.env</code>);
+        if the host shows a placeholder, fill in this server's LAN IP manually.
       </p>
       <p class="hint warn">
         ⚠ This server binds Postgres and Redis to localhost by default. For a worker to

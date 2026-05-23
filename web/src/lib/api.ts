@@ -979,6 +979,8 @@ export interface FleetStatus {
   embedded_max_sessions: number;
   embedded_capabilities: string[];
   workers: FleetWorkerStatus[];
+  /** This server's LAN IPv4, for showing worker-reachable connection URLs. "" if undetected. */
+  server_lan_ip: string;
 }
 
 export interface TranscodeConfig {

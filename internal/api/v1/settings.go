@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -266,6 +267,9 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 		EmbeddedMax      int            `json:"embedded_max_sessions"`
 		EmbeddedCaps     []string       `json:"embedded_capabilities"`
 		Workers          []workerStatus `json:"workers"`
+		// ServerLANIP is this host's LAN address, so the UI can show a
+		// worker-reachable DATABASE_URL/VALKEY_URL instead of "localhost".
+		ServerLANIP string `json:"server_lan_ip"`
 	}{
 		EmbeddedEnabled:  embeddedEnabled,
 		EmbeddedDisabled: h.embeddedDisabled,
@@ -275,7 +279,38 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 		EmbeddedMax:      embeddedMax,
 		EmbeddedCaps:     embeddedCaps,
 		Workers:          workers,
+		ServerLANIP:      detectLANIP(),
 	})
+}
+
+// detectLANIP returns this host's primary LAN IPv4 ("" if none). The UDP
+// "dial" sends no packets, but the OS selects the egress interface, whose
+// local IP is the address other machines on the network reach this server
+// on. Falls back to scanning up, non-loopback interfaces.
+func detectLANIP() string {
+	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
+		defer conn.Close()
+		if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok && ua.IP != nil {
+			if v4 := ua.IP.To4(); v4 != nil && !v4.IsLoopback() {
+				return v4.String()
+			}
+		}
+	}
+	ifaces, _ := net.Interfaces()
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok {
+				if v4 := ipn.IP.To4(); v4 != nil && !v4.IsLoopback() {
+					return v4.String()
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // UpdateFleet handles PUT /api/v1/settings/fleet — saves the worker fleet configuration.
