@@ -79,6 +79,11 @@ type BuildArgs struct {
 	OpenCLDevice string
 	IsVAAPI          bool // VAAPI needs hwupload filter
 	IsHEVC           bool // source is HEVC (informational, NVDEC auto-selects decoder)
+	// QSVDecode opts into Intel QSV hardware HEVC decode (-hwaccel qsv -c:v
+	// hevc_qsv) on the input, offloading the 4K HEVC decode from the CPU.
+	// Only honored for HEVC sources on a re-encode; the worker sets it from
+	// TRANSCODE_QSV_DECODE and falls back to software decode on failure.
+	QSVDecode        bool
 	// IsAV1 marks an AV1 source. Required so video_copy remux switches
 	// the HLS container to fMP4 + av01 tag — mpegts has no AV1 stream
 	// type, so an `-c:v copy` into mpegts segments crashes the muxer
@@ -222,6 +227,20 @@ func BuildHLS(a BuildArgs) []string {
 			// Pin AV1 decode to NVDEC and keep frames in VRAM through
 			// the encoder. scale filter switches to scale_cuda below.
 			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda")
+		}
+
+		// QSV hardware HEVC decode (opt-in per worker via TRANSCODE_QSV_DECODE).
+		// Offloads the 4K HEVC decode to the Intel iGPU. We deliberately DON'T
+		// set -hwaccel_output_format qsv: decoded frames land back in system
+		// memory, so the existing software scale/tonemap chain and the chosen
+		// encoder (NVENC/AMF/software) run unchanged downstream — no cross-GPU
+		// surface sharing (the worker's iGPU decodes, the dGPU encodes). Guarded
+		// to HEVC sources on a re-encode; AV1 has its own CUDA carve-out above
+		// and the two are mutually exclusive by source codec. Opt-in per worker
+		// (TRANSCODE_QSV_DECODE); disable it for a worker if a source fails to
+		// decode on QSV.
+		if a.QSVDecode && a.IsHEVC && !useCUDADecode {
+			args = append(args, "-hwaccel", "qsv", "-c:v", "hevc_qsv")
 		}
 
 		// NVENC: software decode + NVENC encode (default path).

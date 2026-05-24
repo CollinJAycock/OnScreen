@@ -40,12 +40,18 @@ type Worker struct {
 	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
+	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
 	maxSessions      int
 	mu               sync.Mutex
 	activeJobs       map[string]*os.Process // session_id → ffmpeg PID
 }
+
+// SetQSVDecode enables Intel QSV hardware HEVC decode on this worker
+// (TRANSCODE_QSV_DECODE). Off by default; the worker falls back to software
+// decode if a QSV-decode ffmpeg fails before producing its first segment.
+func (w *Worker) SetQSVDecode(v bool) { w.qsvDecode = v }
 
 // NewWorker creates a transcode Worker.
 func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSessions int, encOpts EncoderOpts, logger *slog.Logger) *Worker {
@@ -314,6 +320,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			AudioStreamIndex:     job.AudioStreamIndex,
 			SubtitleStreams:      job.SubtitleStreams,
 			EncoderOpts:          w.encoderOpts,
+			QSVDecode:            w.qsvDecode,
 			ReadRate:             1.0,
 			ReadRateInitialBurst: 30,
 			SessionDir:           sessionDir,

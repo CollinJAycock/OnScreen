@@ -949,6 +949,74 @@ func TestBuildHLS_NVENC_NoTonemapAvailable(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_QSVDecode(t *testing.T) {
+	// QSV decode opt-in on an HEVC source: -hwaccel qsv -c:v hevc_qsv before -i,
+	// frames downloaded to CPU (no -hwaccel_output_format qsv), NVENC encode.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderNVENC,
+		IsHEVC:        true,
+		QSVDecode:     true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	hwIdx := strings.Index(argStr, "-hwaccel qsv")
+	decIdx := strings.Index(argStr, "-c:v hevc_qsv")
+	iIdx := strings.Index(argStr, " -i ")
+	if hwIdx < 0 || decIdx < 0 {
+		t.Fatalf("expected -hwaccel qsv -c:v hevc_qsv for QSV decode: %s", argStr)
+	}
+	if iIdx < 0 || hwIdx > iIdx || decIdx > iIdx {
+		t.Errorf("QSV decode flags must precede -i: %s", argStr)
+	}
+	// Must NOT pin frames to a QSV surface — the software filter chain needs CPU frames.
+	if strings.Contains(argStr, "-hwaccel_output_format qsv") {
+		t.Errorf("QSV decode must download to CPU (no -hwaccel_output_format qsv): %s", argStr)
+	}
+}
+
+func TestBuildHLS_QSVDecode_OffByDefault(t *testing.T) {
+	// Without QSVDecode, an HEVC source decodes in software (no qsv hwaccel).
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderNVENC,
+		IsHEVC:        true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	if strings.Contains(strings.Join(args, " "), "hevc_qsv") {
+		t.Errorf("QSV decode must be off unless QSVDecode is set: %v", args)
+	}
+}
+
+func TestBuildHLS_QSVDecode_IgnoredForNonHEVC(t *testing.T) {
+	// QSVDecode is HEVC-only; an H.264 source must not get -c:v hevc_qsv.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderNVENC,
+		IsHEVC:        false,
+		QSVDecode:     true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	if strings.Contains(strings.Join(args, " "), "hevc_qsv") {
+		t.Errorf("QSV decode must be HEVC-only: %v", args)
+	}
+}
+
 func TestBuildHLS_HDR_ScaleBeforeTonemap_SoftwarePath(t *testing.T) {
 	// 4K HDR → 1080p on NVENC: the software zscale tonemap is the dominant CPU
 	// cost, so scale must run BEFORE it (tonemap then processes 1080p, not 4K).

@@ -88,6 +88,17 @@ type Config struct {
 	// bandwidth- or cost-constrained fleet can cap renditions.
 	TranscodeABR          bool `env:"TRANSCODE_ABR"            envDefault:"false"`
 	TranscodeABRMaxHeight int  `env:"TRANSCODE_ABR_MAX_HEIGHT" envDefault:"0"`
+	// TranscodeQSVDecode opts a worker into Intel Quick Sync hardware HEVC
+	// decode (`-hwaccel qsv -c:v hevc_qsv`), offloading the 4K HEVC decode
+	// from the CPU. Off by default and opt-in per worker: HW decode has
+	// historically been fragile on mainline ffmpeg across sources/drivers
+	// (the all-CUDA pipeline was retired for exactly this), so a worker only
+	// turns it on once its QSV stack is known good. Decoded frames are
+	// downloaded to system memory, so the existing software scale/tonemap
+	// chain and the chosen encoder (NVENC/AMF/software) run unchanged — no
+	// cross-GPU surface sharing. Only applies to HEVC sources on a re-encode.
+	// If a source fails to decode on QSV, disable the flag for that worker.
+	TranscodeQSVDecode bool `env:"TRANSCODE_QSV_DECODE" envDefault:"false"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`

@@ -181,6 +181,12 @@ func run() error {
 		},
 		logger,
 	)
+	// Opt-in Intel QSV hardware HEVC decode (TRANSCODE_QSV_DECODE) — offloads
+	// the 4K HEVC decode from the CPU on workers with a known-good QSV stack.
+	transcodeWorker.SetQSVDecode(cfg.TranscodeQSVDecode)
+	if cfg.TranscodeQSVDecode {
+		logger.Info("QSV hardware HEVC decode enabled")
+	}
 
 	// ── Health server ─────────────────────────────────────────────────────────
 	liveH, readyH := observability.HealthHandler(
