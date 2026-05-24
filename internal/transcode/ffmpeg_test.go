@@ -619,6 +619,55 @@ func TestBuildHLS_AV1Source_NVENC_HDRSkipsCUDADecode(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_AV1Source_AV1NVENC_SDRUsesCUDADecode(t *testing.T) {
+	// AV1 source → AV1 output (av1_nvenc), SDR: must use NVDEC cuda decode +
+	// scale_cuda, not software dav1d. The carve-out previously keyed on an
+	// isNVENC that excluded av1_nvenc, so an AV1→AV1 ABR ladder silently
+	// software-decoded the 4K source and played laggy.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k_av1.mkv",
+		Encoder:       EncoderAV1NVENC,
+		IsAV1:         true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-hwaccel cuda") {
+		t.Errorf("AV1 → av1_nvenc (SDR) must use NVDEC cuda decode: %s", argStr)
+	}
+	if !strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("AV1 → av1_nvenc (SDR) must use scale_cuda (VRAM-resident): %s", argStr)
+	}
+	if !strings.Contains(argStr, "-c:v av1_nvenc") {
+		t.Errorf("expected av1_nvenc encoder: %s", argStr)
+	}
+}
+
+func TestBuildHLS_AV1Source_AV1NVENC_HDRStaysSoftware(t *testing.T) {
+	// HDR AV1 → av1_nvenc still skips cuda (the tonemap chain needs CPU
+	// frames); my SDR fix must not pull the HDR path onto cuda.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/hdr_av1.mkv",
+		Encoder:       EncoderAV1NVENC,
+		IsAV1:         true,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	if strings.Contains(strings.Join(args, " "), "-hwaccel cuda") {
+		t.Errorf("HDR AV1 → av1_nvenc must stay on software decode: %v", args)
+	}
+}
+
 // TestBuildHLS_H264_NVENC_NoCUDADecode guards the inverse: H.264 source
 // + NVENC must NOT trigger the CUDA decode carve-out (the AV1 fix
 // should not regress the uniform software-decode pipeline that NVENC

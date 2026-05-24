@@ -194,8 +194,6 @@ func BuildHLS(a BuildArgs) []string {
 		}
 	}
 
-	isNVENC := !videoCopy && (a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC)
-
 	// NVDEC for AV1 sources is a narrow exception to the
 	// software-decode default. The mainline-ffmpeg + driver
 	// fragility documented below is HEVC-specific (decoder-surfaces
@@ -215,7 +213,7 @@ func BuildHLS(a BuildArgs) []string {
 	// HDR + AV1 paths still skip cuda decode (would need scale_cuda
 	// + tonemap_cuda chain that the broader pipeline doesn't yet
 	// guarantee). Tonemap branches stay on the software path.
-	useCUDADecode := isNVENC && a.IsAV1 && !a.NeedsToneMap
+	useCUDADecode := IsNVENCEncoder(a.Encoder) && a.IsAV1 && !a.NeedsToneMap
 
 	if !videoCopy {
 		// VAAPI init filter (must come before input for hardware decode).
@@ -630,7 +628,7 @@ func buildVideoFilter(a BuildArgs) string {
 	isNVENC := a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC
 	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF || a.Encoder == EncoderAV1AMF
 	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
-	useCUDADecode := isNVENC && a.IsAV1 && !a.NeedsToneMap
+	useCUDADecode := IsNVENCEncoder(a.Encoder) && a.IsAV1 && !a.NeedsToneMap
 
 	// HDR→SDR tone mapping (zscale + tonemap=hable on the CPU). zscale operates
 	// on CPU frames and can't reach hardware surfaces, so it runs before any
@@ -753,6 +751,18 @@ func subtitleBurnFilter(input string, si int) string {
 	path = strings.ReplaceAll(path, `:`, `\:`)
 	path = strings.ReplaceAll(path, `'`, `\'`)
 	return fmt.Sprintf("subtitles='%s':si=%d", path, si)
+}
+
+// IsNVENCEncoder reports whether enc is any NVENC encoder. All three (H.264,
+// HEVC, AV1) can consume NVDEC cuda frames directly, so they share the AV1
+// cuda-decode fast path — `av1_nvenc` must be included or an AV1→AV1 ladder
+// silently falls back to software dav1d decode (too slow for 4K).
+func IsNVENCEncoder(enc Encoder) bool {
+	switch enc {
+	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
+		return true
+	}
+	return false
 }
 
 // IsHEVCEncoder returns true if the encoder produces HEVC (H.265) output.
