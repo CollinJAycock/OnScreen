@@ -60,6 +60,11 @@ func run() error {
 
 	logger.Info("starting onscreen worker", "version", version, "build_time", buildTime)
 
+	// Make the bundled ffmpeg (the installer drops it next to worker.exe)
+	// resolvable for the bare "ffmpeg"/"ffprobe" exec calls, even when this
+	// process didn't inherit the service XML's PATH (e.g. run directly).
+	transcode.EnsureFFmpegOnPath(logger)
+
 	hot := config.NewHotReloadable(cfg)
 	config.WatchSIGHUP(logger, hot, cfg)
 

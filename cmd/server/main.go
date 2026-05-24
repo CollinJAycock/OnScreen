@@ -202,6 +202,11 @@ func run() error {
 
 	logger.Info("starting onscreen server", "version", version, "build_time", buildTime)
 
+	// Make the bundled ffmpeg (next to server.exe in the installer layout)
+	// resolvable for the embedded worker + live-tv/trickplay exec calls, even
+	// when this process didn't inherit the service XML's PATH.
+	transcode.EnsureFFmpegOnPath(logger)
+
 	// Resolve BaseURL — settings value wins; fall back to localhost on the
 	// configured listen addr so the discovery info and OAuth redirects have
 	// a sensible default before an admin sets the public URL.
