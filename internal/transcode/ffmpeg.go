@@ -613,67 +613,75 @@ func buildVideoFilter(a BuildArgs) string {
 	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
 	useCUDADecode := isNVENC && a.IsAV1 && !a.NeedsToneMap
 
-	// HDR→SDR tone mapping (zscale + tonemap=hable in CPU). Has to run
-	// BEFORE any hwupload — the zscale chain operates on CPU frames and
-	// can't reach hardware surfaces. Emitting the tonemap step up front
-	// means every downstream encoder (software, NVENC, AMF, QSV, VAAPI)
-	// sees 8-bit bt709 yuv420p frames in CPU memory ready to either
-	// pass straight through or upload to a hardware surface.
+	// HDR→SDR tone mapping (zscale + tonemap=hable on the CPU). zscale operates
+	// on CPU frames and can't reach hardware surfaces, so it runs before any
+	// hwupload; its output is 8-bit bt709 yuv420p in CPU memory, ready for any
+	// downstream encoder (software, NVENC, AMF, QSV, VAAPI) to pass through or
+	// upload to a hardware surface.
 	//
-	// AMF + QSV + VAAPI included unconditionally because none of them
-	// has a working vendor tonemap filter we trust in mainline ffmpeg
-	// (`tonemap_amf` / `tonemap_qsv` don't exist; `tonemap_vaapi`
-	// exists but its HDR-metadata handling varies by driver). The
-	// zscale path is slower than a true GPU pipeline but correct
-	// across every encoder family the project supports.
+	// AMF + QSV + VAAPI included unconditionally because none has a vendor
+	// tonemap filter we trust in mainline ffmpeg (`tonemap_amf` / `tonemap_qsv`
+	// don't exist; `tonemap_vaapi`'s HDR-metadata handling varies by driver).
+	// The all-CUDA pipeline (-hwaccel cuda → scale_cuda → tonemap_opencl) was
+	// also retired for fragility on mainline ffmpeg 8.x + recent NVIDIA drivers
+	// (see the BuildArgs comment) — NVENC/AMF/QSV all share this software path.
+	// zscale is slower than a true GPU pipeline but correct across every family.
 	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale &&
 		(a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware ||
 			isAMF || isQSV || isNVENC || a.IsVAAPI)
-	if needsSoftwareTonemap {
-		// zscale-based tonemapping (libzimg required in FFmpeg build).
-		toneMap := strings.Join([]string{
-			"zscale=t=linear:npl=100",
-			"format=gbrpf32le",
-			"zscale=p=bt709",
-			"tonemap=tonemap=hable:desat=0",
-			"zscale=t=bt709:m=bt709:r=tv",
-			"format=yuv420p",
-		}, ",")
-		filters = append(filters, toneMap)
-	}
 
-	// VAAPI hwupload prep. Runs AFTER the tonemap chain so HDR sources
-	// get downconverted to bt709 yuv420p in CPU first, then re-formatted
-	// to nv12 and uploaded to a VAAPI surface for scale_vaapi + encode.
-	if a.IsVAAPI {
-		filters = append(filters, "format=nv12", "hwupload")
-	}
+	// zscale-based HDR→SDR chain (libzimg required in the FFmpeg build).
+	toneMap := strings.Join([]string{
+		"zscale=t=linear:npl=100",
+		"format=gbrpf32le",
+		"zscale=p=bt709",
+		"tonemap=tonemap=hable:desat=0",
+		"zscale=t=bt709:m=bt709:r=tv",
+		"format=yuv420p",
+	}, ",")
 
-	// NVENC falls through to the software-scale + zscale-tonemap path
-	// below alongside AMF/QSV. The previous all-CUDA pipeline
-	// (-hwaccel cuda → scale_cuda → tonemap_opencl → hevc_nvenc) was
-	// fragile on mainline ffmpeg 8.x + recent NVIDIA drivers — see
-	// the BuildArgs comment for the full failure-mode rundown.
-	// Uniform software-decode pipeline trades a small efficiency hit
-	// (NVDEC was decoding 10× cheaper than libhevc on 4K) for
-	// reliability across every source file, ffmpeg version, and
-	// driver release the project sees.
-
-	// ── Software / vendor-encoder paths (NVENC + AMF + QSV + libx264) ──────
-	// Scale to target resolution, maintaining aspect ratio.
+	// Software scale shared by the NVENC / AMF / QSV / software encoders.
+	swScale := ""
 	if a.Width > 0 && a.Height > 0 {
-		switch {
-		case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI:
-			filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
-		case useCUDADecode:
-			// AV1 NVDEC path: keep frames in VRAM through scaling.
-			// scale_cuda outputs nv12 (8-bit) so 10-bit AV1 sources
-			// are downconverted in GPU memory — no CPU touch, no
-			// pad filter (no pad_cuda exists; aspect ratio is
-			// preserved by the decrease flag).
-			filters = append(filters, fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
-		default:
-			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", a.Width, a.Height, a.Width, a.Height))
+		swScale = fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", a.Width, a.Height, a.Width, a.Height)
+	}
+
+	// On the pure software-scale path, scale BEFORE tonemapping so the
+	// expensive zscale chain processes OUTPUT-resolution frames (e.g. 1080p)
+	// instead of the source's (e.g. 4K) — for a 4K→1080p HDR transcode that's
+	// ~4× fewer pixels through the dominant CPU stage. The `scale` filter
+	// preserves the input's transfer/primaries metadata, so the subsequent
+	// zscale chain still linearizes the HDR signal correctly. VAAPI keeps
+	// tonemap → hwupload → scale_vaapi (scale_vaapi needs hardware frames),
+	// and the AV1 cuda-decode path carries no tonemap.
+	swTonemapScaleFirst := needsSoftwareTonemap && swScale != "" && !a.IsVAAPI && !useCUDADecode
+
+	if swTonemapScaleFirst {
+		filters = append(filters, swScale, toneMap)
+	} else {
+		if needsSoftwareTonemap {
+			filters = append(filters, toneMap)
+		}
+		// VAAPI hwupload prep — after the tonemap chain so HDR sources are
+		// downconverted to bt709 yuv420p in CPU first, then re-formatted to
+		// nv12 and uploaded to a VAAPI surface for scale_vaapi + encode.
+		if a.IsVAAPI {
+			filters = append(filters, "format=nv12", "hwupload")
+		}
+		// Scale to target resolution, maintaining aspect ratio.
+		if a.Width > 0 && a.Height > 0 {
+			switch {
+			case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI:
+				filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
+			case useCUDADecode:
+				// AV1 NVDEC path: keep frames in VRAM through scaling.
+				// scale_cuda outputs nv12 (8-bit) so 10-bit AV1 sources are
+				// downconverted in GPU memory — no CPU touch, no pad filter
+				// (no pad_cuda exists; the decrease flag preserves aspect).
+				filters = append(filters, fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
+			default:
+				filters = append(filters, swScale)
+			}
 		}
 	}
 

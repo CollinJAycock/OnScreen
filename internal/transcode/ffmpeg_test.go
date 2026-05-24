@@ -949,6 +949,62 @@ func TestBuildHLS_NVENC_NoTonemapAvailable(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_HDR_ScaleBeforeTonemap_SoftwarePath(t *testing.T) {
+	// 4K HDR → 1080p on NVENC: the software zscale tonemap is the dominant CPU
+	// cost, so scale must run BEFORE it (tonemap then processes 1080p, not 4K).
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k_hdr.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	scaleIdx := strings.Index(argStr, "scale=1920:1080")
+	toneIdx := strings.Index(argStr, "zscale=t=linear")
+	if scaleIdx < 0 || toneIdx < 0 {
+		t.Fatalf("expected both scale and zscale tonemap: %s", argStr)
+	}
+	if scaleIdx > toneIdx {
+		t.Errorf("scale must precede tonemap on the software path (scale@%d > tonemap@%d): %s",
+			scaleIdx, toneIdx, argStr)
+	}
+}
+
+func TestBuildHLS_HDR_VAAPI_TonemapBeforeScale(t *testing.T) {
+	// VAAPI must KEEP tonemap → hwupload → scale_vaapi: scale_vaapi needs
+	// hardware frames, so the CPU zscale tonemap has to run first. The
+	// scale-before-tonemap optimization applies only to the software path.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k_hdr.mkv",
+		Encoder:       EncoderVAAPI,
+		IsVAAPI:       true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	toneIdx := strings.Index(argStr, "zscale=t=linear")
+	scaleIdx := strings.Index(argStr, "scale_vaapi")
+	if toneIdx < 0 || scaleIdx < 0 {
+		t.Fatalf("expected zscale tonemap and scale_vaapi: %s", argStr)
+	}
+	if toneIdx > scaleIdx {
+		t.Errorf("VAAPI tonemap must precede scale_vaapi (tonemap@%d > scale_vaapi@%d): %s",
+			toneIdx, scaleIdx, argStr)
+	}
+}
+
 func TestBuildHLS_HEVC_NVENC_HDRSourceUsesZscale(t *testing.T) {
 	// HEVC NVENC HDR → still goes through zscale (matches H.264 NVENC).
 	// The cuda-frame pipeline that drove tonemap_cuda / tonemap_opencl
