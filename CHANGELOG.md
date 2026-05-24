@@ -9,6 +9,64 @@ The server API is frozen as of **v2.2.0** — see [docs/server-lock.md](docs/ser
 for the lock posture and what's expected to land in v2.3+ minor
 releases without breaking v2.2 clients.
 
+## [v2.4.0] — unreleased
+
+The server lock was lifted after v2.3.0 (see [docs/server-lock.md](docs/server-lock.md)).
+v2.4 adds new auth surface and a multi-node transcode fleet alongside an
+on-demand adaptive-bitrate pipeline; first-party clients move in lockstep for
+the asset-token migration.
+
+### Added — server
+
+- **Two-factor authentication (TOTP)** for local accounts — enrolment + QR
+  provisioning and verify-on-login, honored across the web app and the native
+  client fleet (including an Android-phone enable flow).
+- **Purpose-scoped asset token + nonce-based CSP** — a `purpose=asset` token
+  authenticates read-only cross-origin `?token=` URLs (artwork, trickplay,
+  external subtitles, SSE) without being usable as a general API credential,
+  and `script-src` moves to a per-response nonce. All first-party clients
+  (web, desktop, Android, Roku, webOS, Tizen) send the asset token for
+  cross-origin asset URLs.
+- **On-demand adaptive-bitrate HLS (Jellyfin model)** — the parent session
+  runs no ffmpeg; a master playlist lists the ladder and each rung is
+  transcoded on demand with at most one rung active at a time. H.264 (MPEG-TS)
+  plus HEVC and AV1 (fMP4) ladders; the ladder is capped at the
+  client-requested height; multi-instance-safe; `selected_rendition` surfaced
+  on `/api/v1/sessions`.
+- **Multi-node transcode fleet** — worker nodes join via the primary's shared
+  DATABASE_URL + VALKEY_URL. Workers with no shared storage pull the source
+  from the primary over HTTP with a per-file stream token, so the fleet works
+  without shared mounts. Settings → Transcode shows worker setup info, with
+  DATABASE_URL + SECRET_KEY revealed only behind step-up reauth.
+- **Intel QSV hardware HEVC decode** (opt-in via `TRANSCODE_QSV_DECODE`) —
+  offloads the 4K HEVC decode from the CPU on workers with a known-good QSV
+  stack; auto-falls-back to software decode if a source fails to decode on QSV.
+- **Maintenance: re-probe metadata** — admin endpoint + a Settings →
+  Maintenance action that clears file hashes so the next scan re-probes and
+  backfills missing source metadata.
+
+### Changed — server
+
+- **Scale before tonemap on the software HDR path** — the zscale HDR→SDR chain
+  now runs at output resolution instead of source resolution, dramatically
+  cutting CPU on 4K→1080p HDR transcodes.
+
+### Fixed — server
+
+- **Persist float Numeric columns** (frame_rate, item rating, ReplayGain) —
+  pgx can't scan a float64 into a `Numeric`, so these were silently nulled;
+  scan the decimal string form instead.
+- **Index the FK cascade columns** the schema squash missed.
+
+### Added — Windows installer
+
+- **Worker-only install mode** — a node joins an existing primary's fleet with
+  no local database, and opens its segment port inbound.
+- Applies database migrations on install (fixes a won't-start on a fresh DB);
+  registers WinSW services by per-service exe name; idempotent re-register on
+  upgrade; opens the API/UI port to the LAN; and resolves the bundled ffmpeg
+  even when a binary is run outside its service.
+
 ## [v2.3.0] — 2026-05-22
 
 Additive release under the server lock — no breaking API changes. A
