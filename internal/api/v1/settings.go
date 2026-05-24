@@ -59,6 +59,13 @@ type WorkerLister interface {
 	ListWorkers(ctx context.Context) ([]transcode.WorkerRegistration, error)
 }
 
+// EmbeddedWorkerControl lets the fleet admin retune the in-process worker live.
+// Implemented by *transcode.Worker. Optional (nil when the embedded worker is
+// disabled), so callers must nil-check.
+type EmbeddedWorkerControl interface {
+	SetMaxSessions(n int)
+}
+
 // ReauthVerifier re-checks the current user's password (and second factor, if
 // 2FA is enabled) for step-up auth before revealing secrets.
 type ReauthVerifier interface {
@@ -72,6 +79,7 @@ type SettingsHandler struct {
 	audit            *audit.Logger
 	detectedEncoders []transcode.EncoderEntry // populated at startup by DetectEncoders
 	workerLister     WorkerLister             // set at startup to query registered workers
+	embedded         EmbeddedWorkerControl    // in-process worker, for live retuning (nil if disabled)
 	embeddedDisabled bool                     // true when DISABLE_EMBEDDED_WORKER env is set
 
 	// Worker connection secrets, revealed by WorkerCredentials after step-up
@@ -107,6 +115,12 @@ func (h *SettingsHandler) SetWorkerLister(wl WorkerLister) {
 // SetEmbeddedDisabled marks that the DISABLE_EMBEDDED_WORKER env var is set.
 func (h *SettingsHandler) SetEmbeddedDisabled(disabled bool) {
 	h.embeddedDisabled = disabled
+}
+
+// SetEmbeddedWorker wires the in-process worker so fleet edits (e.g. max
+// sessions) apply live without a restart.
+func (h *SettingsHandler) SetEmbeddedWorker(w EmbeddedWorkerControl) {
+	h.embedded = w
 }
 
 // SetWorkerCredentials wires the step-up reauth verifier + the connection
@@ -353,6 +367,12 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 	if h.embeddedDisabled {
 		embeddedEnabled = false
 	}
+	// Surface the admin-configured cap even if the worker's heartbeat hasn't yet
+	// re-reported it (live SetMaxSessions reflects within ~workerRefresh), and so
+	// the value persists in the UI when the embedded worker is offline.
+	if fleet.EmbeddedMax > 0 {
+		embeddedMax = fleet.EmbeddedMax
+	}
 
 	respond.Success(w, r, struct {
 		EmbeddedEnabled  bool           `json:"embedded_enabled"`
@@ -442,6 +462,11 @@ func (h *SettingsHandler) UpdateFleet(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(ctx, "update fleet config", "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	// Apply the embedded-worker session cap live so it takes effect without a
+	// restart (the persisted value also re-applies at next startup).
+	if h.embedded != nil && body.EmbeddedMax > 0 {
+		h.embedded.SetMaxSessions(body.EmbeddedMax)
 	}
 	if h.audit != nil {
 		claims := middleware.ClaimsFromContext(ctx)

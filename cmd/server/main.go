@@ -24,13 +24,13 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/artwork"
-	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	dbmigrations "github.com/onscreen/onscreen/internal/db/migrations"
+	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/people"
@@ -41,7 +41,6 @@ import (
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/lyrics"
-	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/anilist"
 	"github.com/onscreen/onscreen/internal/metadata/animedb"
@@ -51,14 +50,15 @@ import (
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/observability"
+	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/plugin"
 	"github.com/onscreen/onscreen/internal/requests"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/scheduler"
 	"github.com/onscreen/onscreen/internal/streaming"
-	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/subtitles"
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
+	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/trickplay"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
@@ -561,7 +561,6 @@ func run() error {
 		logger,
 	)
 
-
 	userSvc := newUserService(gen.New(rwPool))
 
 	userHandler := v1.NewUserHandler(userSvc).
@@ -831,12 +830,18 @@ func run() error {
 		// Safety: never use an encoder that wasn't actually detected.
 		encoders = transcode.FilterAvailable(encoders, allEncoders)
 		logger.Info("transcode encoders", "active", transcode.EncoderNames(encoders), "detected", transcode.EncoderNames(allEncoders))
+		// Session cap: admin fleet override (set live + persisted via the UI)
+		// wins over the TRANSCODE_MAX_SESSIONS env default.
+		embeddedMaxSessions := cfg.TranscodeMaxSessions
+		if fleetCfg.EmbeddedMax > 0 {
+			embeddedMaxSessions = fleetCfg.EmbeddedMax
+		}
 		embeddedWorker = transcode.NewWorker(
 			transcode.WorkerID(),
 			"127.0.0.1:7073",
 			sessionStore,
 			encoders,
-			cfg.TranscodeMaxSessions,
+			embeddedMaxSessions,
 			transcode.EncoderOpts{
 				NVENCPreset:  cfg.TranscodeNVENCPreset,
 				NVENCTune:    cfg.TranscodeNVENCTune,
@@ -848,6 +853,8 @@ func run() error {
 
 		// Wire embedded worker into transcode handler so Stop can kill FFmpeg immediately.
 		nativeTranscodeHandler.SetSessionKiller(embeddedWorker)
+		// Wire into settings so the fleet UI can retune its session cap live.
+		settingsHandler.SetEmbeddedWorker(embeddedWorker)
 	} else {
 		logger.Info("embedded transcode worker disabled — using remote workers only")
 	}

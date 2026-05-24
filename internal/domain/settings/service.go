@@ -165,7 +165,8 @@ func (s *Service) SetTranscodeEncoders(ctx context.Context, value string) error 
 // WorkerFleetConfig is the admin-managed fleet of transcode workers.
 type WorkerFleetConfig struct {
 	EmbeddedEnabled bool               `json:"embedded_enabled"`
-	EmbeddedEncoder string             `json:"embedded_encoder"` // e.g. "h264_nvenc", "" = auto
+	EmbeddedEncoder string             `json:"embedded_encoder"`                // e.g. "h264_nvenc", "" = auto
+	EmbeddedMax     int                `json:"embedded_max_sessions,omitempty"` // admin cap on embedded concurrent sessions, 0 = TRANSCODE_MAX_SESSIONS default
 	Workers         []WorkerSlotConfig `json:"workers"`
 }
 
@@ -334,7 +335,7 @@ type OIDCConfig struct {
 	IssuerURL     string `json:"issuer_url"`
 	ClientID      string `json:"client_id"`
 	ClientSecret  string `json:"client_secret,omitempty"`
-	Scopes        string `json:"scopes,omitempty"`        // space-separated; default "openid profile email"
+	Scopes        string `json:"scopes,omitempty"`         // space-separated; default "openid profile email"
 	UsernameClaim string `json:"username_claim,omitempty"` // default "preferred_username", falls back to email-prefix
 	GroupsClaim   string `json:"groups_claim,omitempty"`   // default "groups"
 	AdminGroup    string `json:"admin_group,omitempty"`
@@ -384,16 +385,16 @@ func (s *Service) SetOIDC(ctx context.Context, cfg OIDCConfig) error {
 // — leaving these empty falls back to the SAML Subject NameID for
 // email and the email-prefix for username.
 type SAMLConfig struct {
-	Enabled            bool   `json:"enabled"`
-	DisplayName        string `json:"display_name,omitempty"` // shown on the "Sign in with X" button
-	IdPMetadataURL     string `json:"idp_metadata_url"`
-	EntityID           string `json:"entity_id,omitempty"` // SP entity ID; defaults to baseURL+/api/v1/auth/saml/metadata
-	SPCertificatePEM   string `json:"sp_certificate_pem,omitempty"`
-	SPPrivateKeyPEM    string `json:"sp_private_key_pem,omitempty"`
-	EmailAttribute     string `json:"email_attribute,omitempty"`
-	UsernameAttribute  string `json:"username_attribute,omitempty"`
-	GroupsAttribute    string `json:"groups_attribute,omitempty"`
-	AdminGroup         string `json:"admin_group,omitempty"`
+	Enabled           bool   `json:"enabled"`
+	DisplayName       string `json:"display_name,omitempty"` // shown on the "Sign in with X" button
+	IdPMetadataURL    string `json:"idp_metadata_url"`
+	EntityID          string `json:"entity_id,omitempty"` // SP entity ID; defaults to baseURL+/api/v1/auth/saml/metadata
+	SPCertificatePEM  string `json:"sp_certificate_pem,omitempty"`
+	SPPrivateKeyPEM   string `json:"sp_private_key_pem,omitempty"`
+	EmailAttribute    string `json:"email_attribute,omitempty"`
+	UsernameAttribute string `json:"username_attribute,omitempty"`
+	GroupsAttribute   string `json:"groups_attribute,omitempty"`
+	AdminGroup        string `json:"admin_group,omitempty"`
 }
 
 // SAML returns the stored SAML config or the zero value if not persisted.

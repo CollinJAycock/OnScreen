@@ -956,6 +956,8 @@ export interface WorkerSlotConfig {
 export interface FleetConfig {
   embedded_enabled: boolean;
   embedded_encoder: string;
+  /** Cap on embedded concurrent sessions; omit/0 = TRANSCODE_MAX_SESSIONS default. */
+  embedded_max_sessions?: number;
   workers: WorkerSlotConfig[];
 }
 

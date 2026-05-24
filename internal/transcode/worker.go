@@ -45,9 +45,19 @@ type Worker struct {
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
 	activeCostCenti  atomic.Int64 // summed CostCenti of in-flight jobs; reported for weighted dispatch
-	maxSessions      int
+	maxSessions      atomic.Int32 // concurrent-session cap; live-adjustable via SetMaxSessions
 	mu               sync.Mutex
 	activeJobs       map[string]*os.Process // session_id → ffmpeg PID
+}
+
+// SetMaxSessions adjusts the worker's concurrent-session cap at runtime. Takes
+// effect on the next dequeue + the next heartbeat (so the dispatcher sees the
+// new cap within ~workerRefresh). A non-positive value is ignored. Used by the
+// fleet admin UI to retune the embedded worker without a restart.
+func (w *Worker) SetMaxSessions(n int) {
+	if n > 0 {
+		w.maxSessions.Store(int32(n))
+	}
 }
 
 // SetQSVDecode enables Intel QSV hardware HEVC decode on this worker
@@ -83,7 +93,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	if hasTonemapOCL {
 		openclDevices = ListOpenCLDevices(ctx)
 	}
-	return &Worker{
+	w := &Worker{
 		id:               id,
 		addr:             addr,
 		store:            store,
@@ -95,10 +105,11 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasLibplacebo:    hasLibplacebo,
 		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
-		maxSessions:      maxSessions,
 		logger:           logger,
 		activeJobs:       make(map[string]*os.Process),
 	}
+	w.maxSessions.Store(int32(maxSessions))
+	return w
 }
 
 // Start runs the worker: registers, starts the HTTP segment server,
@@ -122,7 +133,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"id", w.id,
 		"addr", w.addr,
 		"encoders", EncoderNames(w.encoders),
-		"max_sessions", w.maxSessions,
+		"max_sessions", int(w.maxSessions.Load()),
 		"tonemap_cuda", w.hasTonemapCuda,
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
@@ -140,7 +151,7 @@ func (w *Worker) register(ctx context.Context) error {
 		Addr:            w.addr,
 		Capabilities:    EncoderNames(w.encoders),
 		EncoderLabels:   w.encoderLabels,
-		MaxSessions:     w.maxSessions,
+		MaxSessions:     int(w.maxSessions.Load()),
 		ActiveSessions:  int(w.activeSessions.Load()),
 		ActiveCostCenti: int(w.activeCostCenti.Load()),
 		HasGPUTonemap:   w.hasLibplacebo || w.hasTonemapCuda || w.hasTonemapOpenCL,
@@ -174,7 +185,7 @@ func (w *Worker) jobLoop(ctx context.Context) error {
 		default:
 		}
 
-		if int(w.activeSessions.Load()) >= w.maxSessions {
+		if int(w.activeSessions.Load()) >= int(w.maxSessions.Load()) {
 			select {
 			case <-ctx.Done():
 				return nil

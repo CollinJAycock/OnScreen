@@ -214,6 +214,7 @@
         // Already a comma-separated string — the device dropdown
         // emits all codecs for the picked card joined by commas.
         embedded_encoder: fleetEmbeddedEncoder,
+        embedded_max_sessions: fleetEmbeddedMaxSessions || undefined,
         workers
       });
       toast.success('Fleet config saved');
@@ -364,6 +365,15 @@
           Picking a device enables every codec it can hardware-encode
           (H.264 for 1080p, HEVC for 4K bitrate savings, AV1 on
           Ada/Blackwell). The worker picks the right codec per session.
+        </p>
+      </div>
+      <div class="field" style="max-width: 12rem;">
+        <label for="embedded-max">Max Sessions</label>
+        <input id="embedded-max" type="number" min="0" max="100"
+          bind:value={fleetEmbeddedMaxSessions} placeholder="default" />
+        <p class="hint">
+          Cap on concurrent transcodes. Applies live on save — no restart.
+          Leave 0 to use the server default (TRANSCODE_MAX_SESSIONS).
         </p>
       </div>
       {#if fleetEmbeddedOnline}

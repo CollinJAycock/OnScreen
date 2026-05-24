@@ -263,11 +263,11 @@ func TestSettings_Update_ServiceError(t *testing.T) {
 // TestSettings_Update_SAMLRoundTrip covers the new SAML admin surface
 // (settings DTO field + Update handler block). Exercises the four
 // behaviors the form depends on:
-//   1. Fields are accepted and persisted.
-//   2. The "****" private-key sentinel is not written back over the
-//      stored value (so toggling Enabled doesn't wipe the SP key).
-//   3. Auto-generation of SP keypair on first Enable when not supplied.
-//   4. Mask round-trip — GET returns "****" for the stored private key.
+//  1. Fields are accepted and persisted.
+//  2. The "****" private-key sentinel is not written back over the
+//     stored value (so toggling Enabled doesn't wipe the SP key).
+//  3. Auto-generation of SP keypair on first Enable when not supplied.
+//  4. Mask round-trip — GET returns "****" for the stored private key.
 func TestSettings_Update_SAMLRoundTrip(t *testing.T) {
 	t.Run("persists supplied SAML fields", func(t *testing.T) {
 		svc := &mockSettingsService{}
@@ -693,6 +693,34 @@ func TestSettings_UpdateFleet_Success(t *testing.T) {
 	}
 	if svc.setFleetCall.Workers[0].Encoder != "h264_nvenc" {
 		t.Errorf("workers[0].encoder: got %q", svc.setFleetCall.Workers[0].Encoder)
+	}
+}
+
+type mockEmbeddedWorker struct{ maxSessions int }
+
+func (m *mockEmbeddedWorker) SetMaxSessions(n int) { m.maxSessions = n }
+
+func TestSettings_UpdateFleet_EmbeddedMaxSessionsAppliedLive(t *testing.T) {
+	svc := &mockSettingsService{fleet: settings.WorkerFleetConfig{EmbeddedEnabled: true}}
+	h := newSettingsHandler(svc)
+	emb := &mockEmbeddedWorker{}
+	h.SetEmbeddedWorker(emb)
+
+	body := `{"embedded_enabled":true,"embedded_encoder":"","embedded_max_sessions":6,"workers":[]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/settings/fleet", strings.NewReader(body))
+	h.UpdateFleet(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	// Persisted to config…
+	if svc.setFleetCall == nil || svc.setFleetCall.EmbeddedMax != 6 {
+		t.Fatalf("embedded_max_sessions not persisted: %+v", svc.setFleetCall)
+	}
+	// …and applied to the live worker without a restart.
+	if emb.maxSessions != 6 {
+		t.Errorf("live SetMaxSessions: got %d, want 6", emb.maxSessions)
 	}
 }
 

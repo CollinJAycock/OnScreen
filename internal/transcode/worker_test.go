@@ -22,8 +22,8 @@ func TestNewWorker_Defaults(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
 	w := NewWorker("w1", ":7073", store, []Encoder{EncoderSoftware}, 0, EncoderOpts{}, nopLogger())
-	if w.maxSessions != 4 {
-		t.Errorf("want default maxSessions=4 when 0 given, got %d", w.maxSessions)
+	if w.maxSessions.Load() != 4 {
+		t.Errorf("want default maxSessions=4 when 0 given, got %d", w.maxSessions.Load())
 	}
 	if w.id != "w1" {
 		t.Errorf("want id=w1, got %s", w.id)
@@ -34,8 +34,8 @@ func TestNewWorker_ExplicitMaxSessions(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
 	w := NewWorker("w2", ":7074", store, []Encoder{EncoderSoftware}, 8, EncoderOpts{}, nopLogger())
-	if w.maxSessions != 8 {
-		t.Errorf("want maxSessions=8, got %d", w.maxSessions)
+	if w.maxSessions.Load() != 8 {
+		t.Errorf("want maxSessions=8, got %d", w.maxSessions.Load())
 	}
 }
 
