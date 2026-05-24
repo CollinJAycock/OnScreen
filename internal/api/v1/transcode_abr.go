@@ -82,6 +82,17 @@ func (h *NativeTranscodeHandler) startABR(
 		HEVCOutput: codec == transcode.LadderHEVC,
 		AV1Output:  codec == transcode.LadderAV1,
 	}
+	// Carry the SOURCE codec so rung children can request hardware decode
+	// (AV1 NVDEC, opt-in QSV HEVC) — the worker keys decode off the source,
+	// and without this the per-rung jobs lose it and fall back to software.
+	if file.VideoCodec != nil {
+		switch strings.ToLower(*file.VideoCodec) {
+		case "hevc", "h265":
+			sess.SourceIsHEVC = true
+		case "av1":
+			sess.SourceIsAV1 = true
+		}
+	}
 	if file.FrameRate != nil {
 		sess.FrameRate = *file.FrameRate
 	}
@@ -488,6 +499,10 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		Encoder:          "",
 		PreferHEVC:       parent.HEVCOutput,
 		PreferAV1:        parent.AV1Output,
+		// Source codec — drives hardware decode on the worker (AV1 NVDEC,
+		// opt-in QSV HEVC). Distinct from Prefer* (the output codec).
+		IsHEVC:           parent.SourceIsHEVC,
+		IsAV1:            parent.SourceIsAV1,
 		Width:            rung.Width,
 		Height:           rung.Height,
 		BitrateKbps:      rung.BitrateKbps,

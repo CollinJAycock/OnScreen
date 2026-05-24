@@ -49,6 +49,12 @@ type Session struct {
 	BitrateKbps    int       `json:"bitrate_kbps,omitempty"`
 	HEVCOutput     bool      `json:"hevc_output,omitempty"` // true = fMP4 segments (.m4s) with hvc1 codec
 	AV1Output      bool      `json:"av1_output,omitempty"`  // true = fMP4 segments (.m4s) with av01 codec; either fMP4 flag selects the .m4s wait path
+	// Source codec markers (distinct from the *Output flags, which are the
+	// chosen OUTPUT codec). Carried so ABR rung children can set job.IsHEVC /
+	// job.IsAV1 — the worker keys hardware decode (AV1 NVDEC, opt-in QSV HEVC)
+	// off the SOURCE codec, and rung-child jobs would otherwise lose it.
+	SourceIsHEVC bool `json:"source_is_hevc,omitempty"`
+	SourceIsAV1  bool `json:"source_is_av1,omitempty"`
 
 	// ── Adaptive-bitrate (on-demand ladder) ───────────────────────────────
 	// On an ABR PARENT session, ABR=true and the fields below describe the
