@@ -1603,8 +1603,23 @@
         await switchToTranscode(defaultHeight, posMs);
       }
     } else {
-      // Explicit resolution selected — full transcode.
-      await switchToTranscode(q.height, posMs);
+      // Explicit resolution pick. Picking the SOURCE tier (the top quality)
+      // means "full quality" — prefer direct-play / remux when the client can
+      // handle the source, instead of a full transcode. A full transcode at
+      // source resolution is pure overhead, and for a 4K HDR source it can't
+      // sustain realtime (software tonemap at 4K) and times out. A LOWER pick
+      // is a deliberate downscale → transcode as before.
+      const file = item.files[0];
+      const srcH = file?.resolution_h ?? 0;
+      const srcW = file?.resolution_w ?? 0;
+      const isSourceTier = q.height >= srcH || q.width >= srcW;
+      if (isSourceTier && canDirectPlay(file)) {
+        await switchToDirectPlay(posMs);
+      } else if (isSourceTier && canRemuxVideo(file)) {
+        await switchToTranscode(0, posMs, true); // remux (video copy), no re-encode/tonemap
+      } else {
+        await switchToTranscode(q.height, posMs);
+      }
     }
   }
 
