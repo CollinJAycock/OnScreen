@@ -70,6 +70,11 @@ type BuildArgs struct {
 	HasTonemapCuda   bool // tonemap_cuda filter available in FFmpeg
 	HasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
 	HasZscale        bool // zscale filter available (libzimg) for software tonemap
+	// HasLibplacebo enables GPU HDR→SDR tonemap via the libplacebo (Vulkan)
+	// filter — the preferred path: vendor-agnostic, GPU-resident, and far
+	// faster than software zscale on 4K HDR (it also does the downscale). When
+	// set, the tonemap runs on the GPU and the zscale chain is skipped.
+	HasLibplacebo    bool
 	// OpenCL platform.device index for `-init_hw_device opencl=ocl:N.M`.
 	// Empty falls back to `0.0`. Probed once per worker startup so we
 	// pick the platform that matches the active encoder's vendor —
@@ -239,6 +244,14 @@ func BuildHLS(a BuildArgs) []string {
 		// decode on QSV.
 		if a.QSVDecode && a.IsHEVC && !useCUDADecode {
 			args = append(args, "-hwaccel", "qsv", "-c:v", "hevc_qsv")
+		}
+
+		// Vulkan device for the libplacebo GPU tonemap (buildVideoFilter emits
+		// the libplacebo filter when HasLibplacebo + an HDR source). Must be
+		// initialized before -i so the filter can bind it. Mirrors the
+		// lpTonemap condition in buildVideoFilter.
+		if a.NeedsToneMap && a.HasLibplacebo && !a.IsVAAPI {
+			args = append(args, "-init_hw_device", "vulkan")
 		}
 
 		// NVENC: software decode + NVENC encode (default path).
@@ -643,7 +656,18 @@ func buildVideoFilter(a BuildArgs) string {
 	// also retired for fragility on mainline ffmpeg 8.x + recent NVIDIA drivers
 	// (see the BuildArgs comment) — NVENC/AMF/QSV all share this software path.
 	// zscale is slower than a true GPU pipeline but correct across every family.
-	needsSoftwareTonemap := a.NeedsToneMap && a.HasZscale &&
+	// Preferred GPU tonemap: libplacebo (Vulkan). Vendor-agnostic and
+	// GPU-resident, so it sustains 4K HDR where software zscale can't (a 4K
+	// HDR transcode tonemaps at full resolution — the scale-before-tonemap
+	// trick can't help when output is also 4K — and a laptop falls below
+	// realtime and times out). libplacebo also does the downscale and the
+	// 8-bit downconvert, so it replaces BOTH the zscale chain and the software
+	// scale; -init_hw_device vulkan is added in BuildHLS. Skipped on the VAAPI
+	// encode path (that stays on VAAPI surfaces). Software zscale is the
+	// fallback when libplacebo/Vulkan isn't available on the host.
+	lpTonemap := a.NeedsToneMap && a.HasLibplacebo && !a.IsVAAPI
+
+	needsSoftwareTonemap := !lpTonemap && a.NeedsToneMap && a.HasZscale &&
 		(a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware ||
 			isAMF || isQSV || isNVENC || a.IsVAAPI)
 
@@ -673,9 +697,19 @@ func buildVideoFilter(a BuildArgs) string {
 	// and the AV1 cuda-decode path carries no tonemap.
 	swTonemapScaleFirst := needsSoftwareTonemap && swScale != "" && !a.IsVAAPI && !useCUDADecode
 
-	if swTonemapScaleFirst {
+	switch {
+	case lpTonemap:
+		// libplacebo (Vulkan): tonemap + scale + 8-bit downconvert in one GPU
+		// pass, then hwdownload to CPU yuv420p for the encoder. a.Width/Height
+		// are already aspect-correct (computed by the API / ladder), so no pad.
+		lp := "libplacebo=tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p"
+		if a.Width > 0 && a.Height > 0 {
+			lp = fmt.Sprintf("libplacebo=w=%d:h=%d:tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p", a.Width, a.Height)
+		}
+		filters = append(filters, lp, "hwdownload", "format=yuv420p")
+	case swTonemapScaleFirst:
 		filters = append(filters, swScale, toneMap)
-	} else {
+	default:
 		if needsSoftwareTonemap {
 			filters = append(filters, toneMap)
 		}
@@ -702,7 +736,7 @@ func buildVideoFilter(a BuildArgs) string {
 		}
 	}
 
-	if !needsSoftwareTonemap && !useCUDADecode && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
+	if !needsSoftwareTonemap && !lpTonemap && !useCUDADecode && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
 		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
 		// ("10-bit input video is not supported"). libx264 *accepts*
 		// 10-bit input but emits 10-bit High 10 profile H.264 — valid

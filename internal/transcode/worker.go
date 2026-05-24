@@ -38,6 +38,7 @@ type Worker struct {
 	hasTonemapCuda   bool              // tonemap_cuda filter available in FFmpeg
 	hasTonemapOpenCL bool              // tonemap_opencl filter available in FFmpeg
 	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
+	hasLibplacebo    bool              // libplacebo+Vulkan HDR→SDR tonemap works (GPU, vendor-agnostic; preferred over zscale)
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
@@ -67,6 +68,10 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	hasTonemap := ProbeFilter(ctx, "tonemap_cuda")
 	hasTonemapOCL := ProbeFilter(ctx, "tonemap_opencl")
 	hasZscale := ProbeFilter(ctx, "zscale")
+	// GPU HDR→SDR via libplacebo (Vulkan) — the preferred tonemap path. Real
+	// end-to-end probe (not just filter presence) so a host with the filter but
+	// no working Vulkan device falls back to software zscale.
+	hasLibplacebo := ProbeLibplaceboVulkan(ctx)
 	// Probe OpenCL platforms once at worker startup. Result is cached
 	// for the worker's lifetime; ffmpeg arg-builder reads
 	// PickOpenCLDevice(this list, encoder) at session-start to avoid
@@ -86,6 +91,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasTonemapCuda:   hasTonemap,
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
+		hasLibplacebo:    hasLibplacebo,
 		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
 		maxSessions:      maxSessions,
@@ -119,6 +125,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"tonemap_cuda", w.hasTonemapCuda,
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
+		"libplacebo", w.hasLibplacebo,
 		"opencl_platforms", openclSummary,
 	)
 
@@ -305,6 +312,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"tonemap_cuda", w.hasTonemapCuda,
 			"tonemap_opencl", w.hasTonemapOpenCL,
 			"zscale", w.hasZscale,
+			"libplacebo", w.hasLibplacebo,
 		)
 
 		buildTranscodeArgs = func(useQSV bool) []string {
@@ -322,6 +330,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				HasTonemapCuda:       w.hasTonemapCuda,
 				HasTonemapOpenCL:     w.hasTonemapOpenCL,
 				HasZscale:            w.hasZscale,
+				HasLibplacebo:        w.hasLibplacebo,
 				OpenCLDevice:         PickOpenCLDevice(w.openclDevices, enc),
 				AudioCodec:           job.AudioCodec,
 				AudioChannels:        job.AudioChannels,

@@ -494,6 +494,36 @@ func ProbeFilter(ctx context.Context, name string) bool {
 	return false
 }
 
+// ProbeLibplaceboVulkan reports whether GPU HDR→SDR tonemapping via the
+// libplacebo (Vulkan) filter actually works on this host — not just that the
+// filter is compiled in, but that a Vulkan device initializes and a libplacebo
+// pass runs. It's the preferred tonemap path: vendor-agnostic (NVIDIA / Intel /
+// AMD all expose Vulkan), GPU-resident, and far faster than software zscale on
+// 4K HDR. A real run is required because the filter can be present while Vulkan
+// has no driver/ICD (common on a headless Linux box), in which case we must
+// fall back to software zscale rather than emit a pipeline that fails at
+// runtime.
+func ProbeLibplaceboVulkan(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+	// Tonemap a 1-frame synthetic HDR (bt2020/PQ) source through libplacebo on a
+	// Vulkan device. Succeeds only if -init_hw_device vulkan brings up a device
+	// and the filter runs end to end.
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-hide_banner", "-loglevel", "error",
+		"-init_hw_device", "vulkan",
+		"-f", "lavfi",
+		"-i", "color=c=black:s=256x256:r=1,format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc",
+		"-frames:v", "1",
+		"-vf", "libplacebo=w=128:h=128:tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p,hwdownload,format=yuv420p",
+		"-f", "null", "-",
+	)
+	return cmd.Run() == nil
+}
+
 func ParseOverride(override string) []Encoder {
 	var encoders []Encoder
 	for _, s := range strings.Split(override, ",") {

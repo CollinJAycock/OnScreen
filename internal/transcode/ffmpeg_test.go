@@ -1066,6 +1066,66 @@ func TestBuildHLS_QSVDecode_IgnoredForNonHEVC(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_HDR_LibplaceboPreferredOverZscale(t *testing.T) {
+	// HDR + HasLibplacebo: GPU tonemap via libplacebo (Vulkan), NOT software
+	// zscale — even when zscale is also available. libplacebo does tonemap +
+	// scale, so no separate scale filter, and -init_hw_device vulkan is set.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k_hdr.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		NeedsToneMap:  true,
+		HasLibplacebo: true,
+		HasZscale:     true, // available, but libplacebo wins
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-init_hw_device vulkan") {
+		t.Errorf("expected -init_hw_device vulkan for libplacebo: %s", argStr)
+	}
+	if !strings.Contains(argStr, "libplacebo=w=1920:h=1080") {
+		t.Errorf("expected libplacebo tonemap+scale filter: %s", argStr)
+	}
+	if !strings.Contains(argStr, "hwdownload") {
+		t.Errorf("expected hwdownload after libplacebo (back to CPU for the encoder): %s", argStr)
+	}
+	if strings.Contains(argStr, "zscale") {
+		t.Errorf("software zscale must be skipped when libplacebo is used: %s", argStr)
+	}
+	// No separate software scale — libplacebo did it.
+	if strings.Contains(argStr, "scale=1920:1080") {
+		t.Errorf("no separate scale filter expected (libplacebo scaled): %s", argStr)
+	}
+}
+
+func TestBuildHLS_HDR_ZscaleFallbackWhenNoLibplacebo(t *testing.T) {
+	// Without HasLibplacebo, HDR falls back to software zscale (no Vulkan).
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k_hdr.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		NeedsToneMap:  true,
+		HasLibplacebo: false,
+		HasZscale:     true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "libplacebo") || strings.Contains(argStr, "-init_hw_device vulkan") {
+		t.Errorf("must not use libplacebo/vulkan when HasLibplacebo is false: %s", argStr)
+	}
+	if !strings.Contains(argStr, "zscale=t=linear") {
+		t.Errorf("expected zscale software fallback: %s", argStr)
+	}
+}
+
 func TestBuildHLS_HDR_ScaleBeforeTonemap_SoftwarePath(t *testing.T) {
 	// 4K HDR → 1080p on NVENC: the software zscale tonemap is the dominant CPU
 	// cost, so scale must run BEFORE it (tonemap then processes 1080p, not 4K).
