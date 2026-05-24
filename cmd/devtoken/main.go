@@ -24,10 +24,15 @@ func main() {
 	if userID == "" {
 		userID = "00000000-0000-0000-0000-000000000000"
 	}
+	var epoch int64
+	if e := os.Getenv("SESSION_EPOCH"); e != "" {
+		fmt.Sscan(e, &epoch)
+	}
 	token, err := tm.IssueAccessToken(auth.Claims{
-		UserID:   uuid.MustParse(userID),
-		Username: "dev",
-		IsAdmin:  true,
+		UserID:       uuid.MustParse(userID),
+		Username:     "dev",
+		IsAdmin:      true,
+		SessionEpoch: epoch,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
