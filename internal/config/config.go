@@ -88,6 +88,15 @@ type Config struct {
 	// bandwidth- or cost-constrained fleet can cap renditions.
 	TranscodeABR          bool `env:"TRANSCODE_ABR"            envDefault:"false"`
 	TranscodeABRMaxHeight int  `env:"TRANSCODE_ABR_MAX_HEIGHT" envDefault:"0"`
+	// TranscodeABRAutoMaxHeight is the soft ladder ceiling for AUTO playback
+	// (no explicit client quality pick). Defaults to 1080: a client that hits
+	// the transcode ladder is transcoding BECAUSE it can't direct-play, so it
+	// doesn't need a 4K rung — and offering one makes the player oscillate up
+	// into a 4K decode it can't sustain (each rung switch restarts ffmpeg and
+	// re-probes the source over HTTP on a fleet worker), thrashing playback.
+	// An explicit quality pick overrides this; the hard TranscodeABRMaxHeight
+	// cap still applies on top. Set 0 to let Auto build rungs to source height.
+	TranscodeABRAutoMaxHeight int `env:"TRANSCODE_ABR_AUTO_MAX_HEIGHT" envDefault:"1080"`
 	// TranscodeQSVDecode opts a worker into Intel Quick Sync hardware HEVC
 	// decode (`-hwaccel qsv -c:v hevc_qsv`), offloading the 4K HEVC decode
 	// from the CPU. Off by default and opt-in per worker: HW decode has

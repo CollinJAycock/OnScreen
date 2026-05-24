@@ -526,6 +526,22 @@ func (h *NativeTranscodeHandler) abrTokenOK(ctx context.Context, token, sessionI
 	return err == nil && tokSession == sessionID
 }
 
+// abrLadderCap resolves the ABR ladder height ceiling. An explicit client
+// quality pick (requestedHeight>0) wins; otherwise Auto uses autoMax — the soft
+// default that keeps Auto off a thrash-prone 4K rung. The operator hard cap
+// (hardCap, 0 = none) always applies on top. A 0 return means no cap (the
+// ladder runs to source height). autoMax of 0 leaves Auto uncapped.
+func abrLadderCap(requestedHeight, autoMax, hardCap int) int {
+	ceiling := requestedHeight
+	if ceiling == 0 {
+		ceiling = autoMax
+	}
+	if hardCap > 0 && (ceiling == 0 || hardCap < ceiling) {
+		ceiling = hardCap
+	}
+	return ceiling
+}
+
 func abrChildID(parentID, rungLabel string) string {
 	return filepath.Base(parentID) + "-r" + rungLabel
 }
