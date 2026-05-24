@@ -286,8 +286,15 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	// child of this rung has a compatible init.
 	if name == "init.mp4" {
 		h.ensureRungChild(ctx, parent, *rung, childID, 0, false)
+		if !h.waitRungSegment(ctx, childID, "init.mp4") {
+			http.Error(w, "init not ready", http.StatusServiceUnavailable)
+			return
+		}
+		// Re-fetch AFTER the wait so WorkerAddr is the now-stamped value — a
+		// cold child stamps it ~1 s in, and serveChildFile uses it to decide
+		// proxy-to-worker vs. local disk.
 		child, err := h.sessions.Get(ctx, childID)
-		if err != nil || !h.waitRungSegment(ctx, child.WorkerAddr, childID, "init.mp4") {
+		if err != nil {
 			http.Error(w, "init not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -332,19 +339,24 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 
 	// Wait for the child to produce the local segment. A miss here means the
 	// child died or stalled spinning up; restart once and wait a final time.
-	if !h.waitRungSegment(ctx, child.WorkerAddr, childID, localName) {
+	if !h.waitRungSegment(ctx, childID, localName) {
 		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, true)
 		if child, err = h.sessions.Get(ctx, childID); err != nil {
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		localName = "seg00000" + ext
-		if !h.waitRungSegment(ctx, child.WorkerAddr, childID, localName) {
+		if !h.waitRungSegment(ctx, childID, localName) {
 			http.Error(w, "segment not ready", http.StatusServiceUnavailable)
 			return
 		}
 	}
 
+	// Re-fetch so serveChildFile uses the now-stamped WorkerAddr (a cold child's
+	// address lands ~1 s after dispatch, after the earlier Get above).
+	if fresh, err := h.sessions.Get(ctx, childID); err == nil {
+		child = fresh
+	}
 	h.sessions.TouchActivity(ctx, childID)
 	h.serveChildFile(w, r, child, childID, localName)
 }
@@ -427,10 +439,21 @@ func highestLocalSegOnDisk(dir, ext string) int {
 // waitRungSegment polls (up to ~30s) for the child to produce localName,
 // stamping activity so the worker's reaper keeps the child alive while a
 // client is blocked here.
-func (h *NativeTranscodeHandler) waitRungSegment(ctx context.Context, workerAddr, childID, localName string) bool {
+func (h *NativeTranscodeHandler) waitRungSegment(ctx context.Context, childID, localName string) bool {
 	deadline := time.Now().Add(30 * time.Second)
 	local := filepath.Join(transcode.SessionDir(childID), localName)
 	for time.Now().Before(deadline) {
+		// Re-read the child's WorkerAddr every poll. A freshly-dispatched rung
+		// child hasn't stamped its address yet (~1 s until the worker claims the
+		// job and calls SetWorkerInfo), and polling with an empty addr falls
+		// back to the PRIMARY's local disk — where a REMOTE worker never writes
+		// — so we'd spin the whole 30 s deadline, 503, and only recover on the
+		// player's retry. Re-reading means that as soon as WorkerAddr lands we
+		// poll that worker's segment server and find the file in ~1 s.
+		workerAddr := ""
+		if child, err := h.sessions.Get(ctx, childID); err == nil {
+			workerAddr = child.WorkerAddr
+		}
 		if workerReady(ctx, workerAddr, childID, localName, local) {
 			return true
 		}
