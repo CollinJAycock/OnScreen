@@ -143,6 +143,37 @@ func TestRequiredAllowQueryToken_AssetToken(t *testing.T) {
 	}
 }
 
+func TestRequiredAllowQueryToken_StaleCookieDoesNotShadowQueryToken(t *testing.T) {
+	// Regression: an expired/invalid access-token cookie must NOT short-circuit
+	// the ?token= asset-token fallback. SSE (EventSource), <img>, and native
+	// players can't resend a Bearer, so a cookie that lapsed mid-stream would
+	// otherwise 401 the request even though a valid asset token is in the URL —
+	// exactly the notifications/stream 401 seen on the beta.
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token := issueAssetToken(t, tm)
+
+	var gotClaims *auth.Claims
+	handler := a.RequiredAllowQueryToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotClaims = ClaimsFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/notifications/stream?token="+token, nil)
+	// A cookie that fails validation (stands in for an expired one — both make
+	// extractClaims return an error rather than nil).
+	req.AddCookie(&http.Cookie{Name: "onscreen_at", Value: "stale-invalid-cookie"})
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("stale cookie shadowed the asset token: got %d, want 200", rec.Code)
+	}
+	if gotClaims == nil || gotClaims.Username != "assetuser" {
+		t.Errorf("asset token claims not used after stale cookie: got %v", gotClaims)
+	}
+}
+
 func TestRequiredAllowQueryToken_GeneralTokenRejected(t *testing.T) {
 	// Security regression guard: a general access token must NOT be
 	// honoured in `?token=`. Putting a general-API credential in a URL

@@ -125,12 +125,21 @@ func (a *Authenticator) RequiredAllowQueryToken(next http.Handler) http.Handler 
 //     authenticate assets via the httpOnly cookie through extractClaims
 //     above); cross-origin clients send a stream/asset token instead.
 func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, error) {
-	if claims, err := a.extractClaims(r); err != nil || claims != nil {
-		return claims, err
+	// A valid Bearer/cookie session wins outright.
+	hdrClaims, hdrErr := a.extractClaims(r)
+	if hdrClaims != nil {
+		return hdrClaims, nil
 	}
+	// Otherwise fall back to the purpose-scoped ?token= carrier. This fires even
+	// when the header/cookie path *errored* (e.g. an expired cookie): EventSource
+	// (SSE), <img>, and native players can't resend a Bearer, so a short-lived
+	// access-token cookie that lapsed mid-stream must not shadow a still-valid
+	// asset/stream token sitting in the URL. Safe because the query path below
+	// only honours purpose=stream (file-bound) / purpose=asset and rejects the
+	// general token outright — a stale cookie can't widen what a URL token grants.
 	tok := r.URL.Query().Get("token")
 	if tok == "" {
-		return nil, nil
+		return nil, hdrErr // no query carrier — preserve the header/cookie result
 	}
 	claims, err := a.tokens.ValidateAccessToken(tok)
 	if err != nil || claims == nil {
