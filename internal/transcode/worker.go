@@ -218,8 +218,18 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		span.End()
 	}()
 
+	// Resolve the session dir LOCALLY rather than trusting job.SessionDir.
+	// job.SessionDir is computed on the dispatching server; on a remote worker
+	// whose temp path differs (different OS user, OS, or TMPDIR) it points at a
+	// directory that doesn't belong to this machine. The worker's own segment
+	// server serves from SessionDir(id), so ffmpeg must write there too — using
+	// job.SessionDir would scatter segments where the segment server can't find
+	// them (and mismatch ffmpeg's working dir). On the embedded/single-box path
+	// the two are identical, so this is a no-op there.
+	sessionDir := SessionDir(job.SessionID)
+
 	// Ensure session directory exists.
-	if err := os.MkdirAll(job.SessionDir, 0755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
 		return fmt.Errorf("mkdir session dir: %w", err)
 	}
 
@@ -239,7 +249,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	var actualEncoder Encoder
 	switch job.Decision {
 	case "directStream":
-		ffArgs = BuildDirectStream(input, job.SessionDir, job.StartOffsetSec)
+		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
 	default:
 		enc := Encoder(job.Encoder)
 		if enc == "" {
@@ -306,7 +316,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			EncoderOpts:          w.encoderOpts,
 			ReadRate:             1.0,
 			ReadRateInitialBurst: 30,
-			SessionDir:           job.SessionDir,
+			SessionDir:           sessionDir,
 			SegmentPrefix:        "seg",
 		})
 		actualEncoder = enc
@@ -324,7 +334,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// land where the segment server expects them. Without this, the
 	// fMP4 init segment is written to the server's launch dir and
 	// the segment proxy 502s on every init fetch.
-	cmd.Dir = SessionDir(job.SessionID)
+	cmd.Dir = sessionDir
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start ffmpeg: %w", err)
