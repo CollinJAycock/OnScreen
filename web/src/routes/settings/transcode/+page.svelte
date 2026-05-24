@@ -13,6 +13,8 @@
     online: boolean;
     active_sessions: number;
     max_sessions: number;
+    load_percent: number;
+    gpu_tonemap: boolean;
     capabilities: string[];
     isNew?: boolean;
   }
@@ -21,6 +23,14 @@
   let fleetEmbeddedEnabled = true;
   let fleetEmbeddedDisabledByEnv = false;
   let fleetEmbeddedEncoder = '';
+
+  // Color tier for the cost-weighted load badge: green under half, amber
+  // approaching saturation, red when effectively full.
+  function loadClass(p: number): string {
+    if (p >= 85) return 'load-high';
+    if (p >= 50) return 'load-mid';
+    return 'load-low';
+  }
 
   // Friendly codec names for the device-group label.
   function codecForEncoder(enc: string): string {
@@ -62,6 +72,8 @@
   let fleetEmbeddedOnline = false;
   let fleetEmbeddedActiveSessions = 0;
   let fleetEmbeddedMaxSessions = 0;
+  let fleetEmbeddedLoad = 0;
+  let fleetEmbeddedTonemap = false;
   let fleetEmbeddedCapabilities: string[] = [];
   let fleetWorkers: FleetWorkerRow[] = [];
   let fleetSaving = false;
@@ -151,6 +163,8 @@
       fleetEmbeddedOnline = f.embedded_online;
       fleetEmbeddedActiveSessions = f.embedded_active_sessions;
       fleetEmbeddedMaxSessions = f.embedded_max_sessions;
+      fleetEmbeddedLoad = f.embedded_load_percent ?? 0;
+      fleetEmbeddedTonemap = f.embedded_gpu_tonemap ?? false;
       fleetEmbeddedCapabilities = f.embedded_capabilities || [];
       fleetWorkers = (f.workers || []).map(w => ({ ...w }));
       if (f.server_lan_ip) serverHost = f.server_lan_ip; // best: worker-reachable
@@ -178,6 +192,8 @@
       online: false,
       active_sessions: 0,
       max_sessions: 0,
+      load_percent: 0,
+      gpu_tonemap: false,
       capabilities: [],
       isNew: true
     }];
@@ -208,6 +224,8 @@
       fleetEmbeddedOnline = updated.embedded_online;
       fleetEmbeddedActiveSessions = updated.embedded_active_sessions;
       fleetEmbeddedMaxSessions = updated.embedded_max_sessions;
+      fleetEmbeddedLoad = updated.embedded_load_percent ?? 0;
+      fleetEmbeddedTonemap = updated.embedded_gpu_tonemap ?? false;
       fleetEmbeddedCapabilities = updated.embedded_capabilities || [];
       fleetWorkers = (updated.workers || []).map(w => ({ ...w }));
     } catch (e: unknown) {
@@ -351,6 +369,10 @@
       {#if fleetEmbeddedOnline}
       <div class="fleet-live-info">
         <span>{fleetEmbeddedActiveSessions}/{fleetEmbeddedMaxSessions} sessions</span>
+        <span class="load-badge {loadClass(fleetEmbeddedLoad)}" title="Cost-weighted load (a 4K stream counts ~4× a 1080p one)">{fleetEmbeddedLoad}% load</span>
+        {#if fleetEmbeddedTonemap}
+          <span class="worker-cap cap-tonemap" title="GPU HDR→SDR tonemap (libplacebo/Vulkan) — HDR jobs route here first">HDR tonemap</span>
+        {/if}
         {#each fleetEmbeddedCapabilities as cap}
           <span class="worker-cap">{cap}</span>
         {/each}
@@ -393,6 +415,10 @@
             {#if row.online}
               <span class="status-dot online"></span>
               <span>{row.active_sessions}/{row.max_sessions} sessions</span>
+              <span class="load-badge {loadClass(row.load_percent)}" title="Cost-weighted load (a 4K stream counts ~4× a 1080p one)">{row.load_percent}% load</span>
+              {#if row.gpu_tonemap}
+                <span class="worker-cap cap-tonemap" title="GPU HDR→SDR tonemap (libplacebo/Vulkan) — HDR jobs route here first">HDR tonemap</span>
+              {/if}
               {#each row.capabilities || [] as cap}
                 <span class="worker-cap">{cap}</span>
               {/each}
@@ -660,6 +686,21 @@
     background: var(--accent-bg);
     color: var(--accent);
   }
+  .cap-tonemap {
+    background: rgba(167,139,250,0.14);
+    color: #a78bfa;
+    font-weight: 600;
+  }
+  .load-badge {
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+  }
+  .load-badge.load-low { background: rgba(74,222,128,0.12); color: var(--success); }
+  .load-badge.load-mid { background: rgba(250,204,21,0.12); color: #facc15; }
+  .load-badge.load-high { background: rgba(248,113,113,0.12); color: var(--error); }
   .btn-remove {
     flex-shrink: 0;
     background: transparent;

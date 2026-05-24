@@ -44,6 +44,7 @@ type Worker struct {
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
+	activeCostCenti  atomic.Int64 // summed CostCenti of in-flight jobs; reported for weighted dispatch
 	maxSessions      int
 	mu               sync.Mutex
 	activeJobs       map[string]*os.Process // session_id → ffmpeg PID
@@ -135,13 +136,15 @@ func (w *Worker) Start(ctx context.Context) error {
 // register writes the worker registration record to Valkey.
 func (w *Worker) register(ctx context.Context) error {
 	return w.store.RegisterWorker(ctx, WorkerRegistration{
-		ID:             w.id,
-		Addr:           w.addr,
-		Capabilities:   EncoderNames(w.encoders),
-		EncoderLabels:  w.encoderLabels,
-		MaxSessions:    w.maxSessions,
-		ActiveSessions: int(w.activeSessions.Load()),
-		RegisteredAt:   time.Now(),
+		ID:              w.id,
+		Addr:            w.addr,
+		Capabilities:    EncoderNames(w.encoders),
+		EncoderLabels:   w.encoderLabels,
+		MaxSessions:     w.maxSessions,
+		ActiveSessions:  int(w.activeSessions.Load()),
+		ActiveCostCenti: int(w.activeCostCenti.Load()),
+		HasGPUTonemap:   w.hasLibplacebo || w.hasTonemapCuda || w.hasTonemapOpenCL,
+		RegisteredAt:    time.Now(),
 	})
 }
 
@@ -189,10 +192,18 @@ func (w *Worker) jobLoop(ctx context.Context) error {
 			continue // timeout, loop again
 		}
 
+		// Jobs routed via DispatchJob arrive pre-stamped; those pushed onto the
+		// global queue (no registered workers at enqueue time) don't, so derive
+		// the cost here to keep load accounting honest either way.
+		if job.CostCenti == 0 {
+			job.CostCenti = JobCostCenti(job.Width, job.Height, job.Decision)
+		}
 		w.activeSessions.Add(1)
-		w.store.AckDispatch(ctx, w.addr)
+		w.activeCostCenti.Add(int64(job.CostCenti))
+		w.store.AckDispatch(ctx, w.addr, job.CostCenti)
 		go func(j TranscodeJob) {
 			defer w.activeSessions.Add(-1)
+			defer w.activeCostCenti.Add(-int64(j.CostCenti))
 			if err := w.runJob(ctx, j); err != nil {
 				w.logger.Error("transcode job failed",
 					"session_id", j.SessionID, "err", err)

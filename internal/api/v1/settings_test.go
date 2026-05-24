@@ -27,22 +27,22 @@ func (m *mockWorkerLister) ListWorkers(_ context.Context) ([]transcode.WorkerReg
 // ── mock settings service ────────────────────────────────────────────────────
 
 type mockSettingsService struct {
-	key             string
-	tvdbKey         string
-	setErr          error
-	setTVDBErr      error
-	fleet           settings.WorkerFleetConfig
-	setFleetErr     error
-	setFleetCall    *settings.WorkerFleetConfig // captures last SetWorkerFleet call
-	oidc            settings.OIDCConfig
-	ldap            settings.LDAPConfig
-	saml            settings.SAMLConfig
-	smtp            settings.SMTPConfig
-	otel            settings.OTelConfig
-	general         settings.GeneralConfig
-	webDownloads    bool
-	setWebDLErr     error
-	setWebDLCalled  bool
+	key            string
+	tvdbKey        string
+	setErr         error
+	setTVDBErr     error
+	fleet          settings.WorkerFleetConfig
+	setFleetErr    error
+	setFleetCall   *settings.WorkerFleetConfig // captures last SetWorkerFleet call
+	oidc           settings.OIDCConfig
+	ldap           settings.LDAPConfig
+	saml           settings.SAMLConfig
+	smtp           settings.SMTPConfig
+	otel           settings.OTelConfig
+	general        settings.GeneralConfig
+	webDownloads   bool
+	setWebDLErr    error
+	setWebDLCalled bool
 }
 
 func (m *mockSettingsService) TMDBAPIKey(_ context.Context) string {
@@ -516,7 +516,8 @@ func TestSettings_GetFleet_WithDiscoveredWorkers(t *testing.T) {
 
 	// Simulate two live workers discovered via Valkey.
 	h.SetWorkerLister(&mockWorkerLister{workers: []transcode.WorkerRegistration{
-		{ID: "w1", Addr: "10.0.0.5:7073", Capabilities: []string{"h264_nvenc", "libx264"}, MaxSessions: 8, ActiveSessions: 2},
+		// w1: budget 8×100=800 centi; 400 centi in flight (≈ one 4K stream) → 50% load. GPU tonemap capable.
+		{ID: "w1", Addr: "10.0.0.5:7073", Capabilities: []string{"h264_nvenc", "libx264"}, MaxSessions: 8, ActiveSessions: 2, ActiveCostCenti: 400, HasGPUTonemap: true},
 		{ID: "w2", Addr: "10.0.0.6:7073", Capabilities: []string{"h264_amf", "libx264"}, MaxSessions: 4, ActiveSessions: 0},
 	}})
 
@@ -537,6 +538,8 @@ func TestSettings_GetFleet_WithDiscoveredWorkers(t *testing.T) {
 				Online         bool     `json:"online"`
 				ActiveSessions int      `json:"active_sessions"`
 				MaxSessions    int      `json:"max_sessions"`
+				LoadPercent    int      `json:"load_percent"`
+				GPUTonemap     bool     `json:"gpu_tonemap"`
 				Capabilities   []string `json:"capabilities"`
 			} `json:"workers"`
 		} `json:"data"`
@@ -567,7 +570,20 @@ func TestSettings_GetFleet_WithDiscoveredWorkers(t *testing.T) {
 	if w0.MaxSessions != 8 {
 		t.Errorf("workers[0].max_sessions: got %d", w0.MaxSessions)
 	}
+	// Cost-weighted load: 400 centi against an 800-centi budget = 50%.
+	if w0.LoadPercent != 50 {
+		t.Errorf("workers[0].load_percent: got %d, want 50", w0.LoadPercent)
+	}
+	if !w0.GPUTonemap {
+		t.Error("workers[0].gpu_tonemap: want true")
+	}
 	w1 := resp.Data.Workers[1]
+	if w1.LoadPercent != 0 {
+		t.Errorf("workers[1].load_percent: got %d, want 0", w1.LoadPercent)
+	}
+	if w1.GPUTonemap {
+		t.Error("workers[1].gpu_tonemap: want false")
+	}
 	if w1.Addr != "10.0.0.6:7073" {
 		t.Errorf("workers[1].addr: got %q", w1.Addr)
 	}

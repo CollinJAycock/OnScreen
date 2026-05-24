@@ -967,6 +967,10 @@ export interface FleetWorkerStatus {
   online: boolean;
   active_sessions: number;
   max_sessions: number;
+  /** Cost-weighted utilization 0–100 (a 4K stream reads far higher than a 480p one). */
+  load_percent: number;
+  /** Node has a GPU HDR→SDR tonemap path; the dispatcher routes HDR jobs here first. */
+  gpu_tonemap: boolean;
   capabilities: string[];
 }
 
@@ -977,6 +981,10 @@ export interface FleetStatus {
   embedded_online: boolean;
   embedded_active_sessions: number;
   embedded_max_sessions: number;
+  /** Cost-weighted utilization 0–100 of the embedded worker. */
+  embedded_load_percent: number;
+  /** Embedded worker has a GPU HDR→SDR tonemap path. */
+  embedded_gpu_tonemap: boolean;
   embedded_capabilities: string[];
   workers: FleetWorkerStatus[];
   /** This server's LAN IPv4, for showing worker-reachable connection URLs. "" if undetected. */

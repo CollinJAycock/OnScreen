@@ -126,7 +126,7 @@ func rewriteHostToLAN(rawURL, lan string) string {
 		return rawURL
 	}
 	out := rawURL
-	out = strings.ReplaceAll(out, "@localhost:", "@"+lan+":")   // DATABASE_URL host
+	out = strings.ReplaceAll(out, "@localhost:", "@"+lan+":") // DATABASE_URL host
 	out = strings.ReplaceAll(out, "@127.0.0.1:", "@"+lan+":")
 	out = strings.ReplaceAll(out, "//localhost:", "//"+lan+":") // VALKEY_URL host
 	out = strings.ReplaceAll(out, "//127.0.0.1:", "//"+lan+":")
@@ -260,19 +260,28 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type workerStatus struct {
-		ID             string   `json:"id"`
-		Addr           string   `json:"addr"`
-		Name           string   `json:"name"`
-		Encoder        string   `json:"encoder"`
-		Online         bool     `json:"online"`
-		ActiveSessions int      `json:"active_sessions"`
-		MaxSessions    int      `json:"max_sessions"`
-		Capabilities   []string `json:"capabilities"`
+		ID             string `json:"id"`
+		Addr           string `json:"addr"`
+		Name           string `json:"name"`
+		Encoder        string `json:"encoder"`
+		Online         bool   `json:"online"`
+		ActiveSessions int    `json:"active_sessions"`
+		MaxSessions    int    `json:"max_sessions"`
+		// LoadPercent is cost-weighted utilization (0–100): a single 4K stream
+		// reads far higher than a single 480p one, unlike ActiveSessions. See
+		// transcode.JobCostCenti.
+		LoadPercent int `json:"load_percent"`
+		// GPUTonemap is true when the node has a GPU HDR→SDR tonemap path
+		// (libplacebo/tonemap_cuda/tonemap_opencl); the dispatcher routes HDR
+		// jobs here in preference to software-only nodes.
+		GPUTonemap   bool     `json:"gpu_tonemap"`
+		Capabilities []string `json:"capabilities"`
 	}
 
 	// Check embedded worker status.
 	embeddedOnline := false
-	embeddedActive, embeddedMax := 0, 0
+	embeddedActive, embeddedMax, embeddedCost := 0, 0, 0
+	embeddedTonemap := false
 	var embeddedCaps []string
 
 	seen := make(map[string]bool, len(liveWorkers))
@@ -284,6 +293,8 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 			embeddedOnline = true
 			embeddedActive = live.ActiveSessions
 			embeddedMax = live.MaxSessions
+			embeddedCost = live.ActiveCostCenti
+			embeddedTonemap = live.HasGPUTonemap
 			embeddedCaps = live.Capabilities
 			continue
 		}
@@ -295,6 +306,7 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 			Online:         true,
 			ActiveSessions: live.ActiveSessions,
 			MaxSessions:    live.MaxSessions,
+			GPUTonemap:     live.HasGPUTonemap,
 			Capabilities:   live.Capabilities,
 		}
 		if override, ok := overrides[live.Addr]; ok {
@@ -304,6 +316,7 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 				ws.MaxSessions = override.MaxSessions
 			}
 		}
+		ws.LoadPercent = loadPercent(live.ActiveCostCenti, ws.MaxSessions)
 		workers = append(workers, ws)
 	}
 
@@ -348,6 +361,8 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 		EmbeddedOnline   bool           `json:"embedded_online"`
 		EmbeddedActive   int            `json:"embedded_active_sessions"`
 		EmbeddedMax      int            `json:"embedded_max_sessions"`
+		EmbeddedLoad     int            `json:"embedded_load_percent"`
+		EmbeddedTonemap  bool           `json:"embedded_gpu_tonemap"`
 		EmbeddedCaps     []string       `json:"embedded_capabilities"`
 		Workers          []workerStatus `json:"workers"`
 		// ServerLANIP is this host's LAN address, so the UI can show a
@@ -360,10 +375,29 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 		EmbeddedOnline:   embeddedOnline,
 		EmbeddedActive:   embeddedActive,
 		EmbeddedMax:      embeddedMax,
+		EmbeddedLoad:     loadPercent(embeddedCost, embeddedMax),
+		EmbeddedTonemap:  embeddedTonemap,
 		EmbeddedCaps:     embeddedCaps,
 		Workers:          workers,
 		ServerLANIP:      detectLANIP(),
 	})
+}
+
+// loadPercent converts a worker's in-flight cost (centi-units of a 1080p
+// transcode) into a 0–100 utilization figure against its cost budget
+// (maxSessions × 100 centi). Returns 0 when the worker reports no capacity.
+func loadPercent(activeCostCenti, maxSessions int) int {
+	if maxSessions <= 0 {
+		return 0
+	}
+	pct := activeCostCenti / maxSessions // (cost / (max*100)) * 100
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
 }
 
 // detectLANIP returns this host's primary LAN IPv4 ("" if none). The UDP
@@ -678,33 +712,33 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	_ = arrKey // returned in the response below; the admin pastes it into the X-Api-Key custom header
 
 	respond.Success(w, r, settingsResponse{
-		TMDBAPIKey:        maskAPIKey(h.svc.TMDBAPIKey(ctx)),
-		TVDBAPIKey:        maskAPIKey(h.svc.TVDBAPIKey(ctx)),
-		ArrAPIKey:         maskAPIKey(arrKey),
-		ArrWebhookURL:     webhookURL,
-		ArrPathMappings:   h.svc.ArrPathMappings(ctx),
+		TMDBAPIKey:          maskAPIKey(h.svc.TMDBAPIKey(ctx)),
+		TVDBAPIKey:          maskAPIKey(h.svc.TVDBAPIKey(ctx)),
+		ArrAPIKey:           maskAPIKey(arrKey),
+		ArrWebhookURL:       webhookURL,
+		ArrPathMappings:     h.svc.ArrPathMappings(ctx),
 		TranscodeEncoders:   h.svc.TranscodeEncoders(ctx),
 		WebDownloadsEnabled: h.svc.WebDownloadsEnabled(ctx),
 		OpenSubtitles:       toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
-		OIDC:              toOIDCDTO(h.svc.OIDC(ctx)),
-		LDAP:              toLDAPDTO(h.svc.LDAP(ctx)),
-		SAML:              toSAMLDTO(h.svc.SAML(ctx)),
-		SMTP:              toSMTPDTO(h.svc.SMTP(ctx)),
-		OTel:              toOTelDTO(h.svc.OTel(ctx)),
-		General:           toGeneralDTO(h.svc.General(ctx)),
+		OIDC:                toOIDCDTO(h.svc.OIDC(ctx)),
+		LDAP:                toLDAPDTO(h.svc.LDAP(ctx)),
+		SAML:                toSAMLDTO(h.svc.SAML(ctx)),
+		SMTP:                toSMTPDTO(h.svc.SMTP(ctx)),
+		OTel:                toOTelDTO(h.svc.OTel(ctx)),
+		General:             toGeneralDTO(h.svc.General(ctx)),
 	})
 }
 
 // Update handles PATCH /api/v1/settings.
 func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		TMDBAPIKey        *string            `json:"tmdb_api_key"`
-		TVDBAPIKey        *string            `json:"tvdb_api_key"`
-		ArrAPIKey         *string            `json:"arr_api_key"`
+		TMDBAPIKey          *string            `json:"tmdb_api_key"`
+		TVDBAPIKey          *string            `json:"tvdb_api_key"`
+		ArrAPIKey           *string            `json:"arr_api_key"`
 		ArrPathMappings     *map[string]string `json:"arr_path_mappings"`
 		TranscodeEncoders   *string            `json:"transcode_encoders"`
 		WebDownloadsEnabled *bool              `json:"web_downloads_enabled"`
-		OpenSubtitles     *struct {
+		OpenSubtitles       *struct {
 			APIKey    *string `json:"api_key"`
 			Username  *string `json:"username"`
 			Password  *string `json:"password"`
