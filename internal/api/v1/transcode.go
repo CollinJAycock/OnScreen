@@ -462,7 +462,19 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		case body.SupportsHEVC && (isSourceHEVC || sourceH >= 2160):
 			abrCodec = transcode.LadderHEVC
 		}
-		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, h.cfg.TranscodeABRMaxHeight)
+		// Cap the ladder at the height the client asked for. body.Height is
+		// the quality the user picked (0 = Auto). Honoring it as the ABR
+		// ceiling stops the player from oscillating up to a 2160p/1440p rung
+		// — and re-decoding the 4K source per switch — when someone explicitly
+		// chose 1080p; on a heavy 4K HDR source over a fleet link that
+		// oscillation thrashes (each rung switch restarts ffmpeg + re-probes
+		// the source over HTTP). The operator pin (TranscodeABRMaxHeight)
+		// still applies; take whichever ceiling is lower.
+		ladderCap := h.cfg.TranscodeABRMaxHeight
+		if body.Height > 0 && (ladderCap == 0 || body.Height < ladderCap) {
+			ladderCap = body.Height
+		}
+		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap)
 		if len(ladder) > 1 {
 			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, abrCodec, body.PositionMS)
 			return
