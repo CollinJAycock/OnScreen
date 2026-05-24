@@ -444,7 +444,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// multi-rendition ladder instead of a single rendition. The parent
 	// session runs no ffmpeg; playlist.m3u8 returns a master and each rung
 	// transcodes on demand (transcode_abr.go). H.264 .ts only for now.
-	if h.cfg.TranscodeABR && decision == "transcode" &&
+	// ABR is for AUTO playback only (body.Height == 0). An explicit quality
+	// pick means "give me exactly this" — serving a single rendition makes
+	// rung-switching (and therefore thrash) structurally impossible, which is
+	// what a user who picked 1080p/4K expects. Auto still gets the adaptive
+	// ladder.
+	if h.cfg.TranscodeABR && decision == "transcode" && body.Height == 0 &&
 		file.DurationMS != nil && *file.DurationMS > 0 && sourceH > 0 {
 		srcBitrate := 0
 		if file.Bitrate != nil {
