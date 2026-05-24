@@ -253,6 +253,13 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 
 	var ffArgs []string
 	var actualEncoder Encoder
+	// buildTranscodeArgs rebuilds the re-encode argv with QSV decode on/off, so
+	// the QSV-decode path can retry with software decode on an early failure.
+	// nil for the directStream branch (no QSV, no fallback).
+	var buildTranscodeArgs func(useQSV bool) []string
+	// qsvDecodeUsable: this run actually attempts QSV hardware decode (HEVC
+	// re-encode on a QSV-enabled worker). Gates the fallback below.
+	qsvDecodeUsable := false
 	switch job.Decision {
 	case "directStream":
 		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
@@ -300,51 +307,38 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"zscale", w.hasZscale,
 		)
 
-		ffArgs = BuildHLS(BuildArgs{
-			InputPath:            input,
-			StartOffset:          job.StartOffsetSec,
-			Encoder:              enc,
-			IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI || enc == EncoderAV1VAAPI,
-			IsHEVC:               job.IsHEVC,
-			IsAV1:                job.IsAV1,
-			Width:                job.Width,
-			Height:               job.Height,
-			BitrateKbps:          bitrate,
-			NeedsToneMap:         job.NeedsToneMap,
-			HasTonemapCuda:       w.hasTonemapCuda,
-			HasTonemapOpenCL:     w.hasTonemapOpenCL,
-			HasZscale:            w.hasZscale,
-			OpenCLDevice:         PickOpenCLDevice(w.openclDevices, enc),
-			AudioCodec:           job.AudioCodec,
-			AudioChannels:        job.AudioChannels,
-			AudioStreamIndex:     job.AudioStreamIndex,
-			SubtitleStreams:      job.SubtitleStreams,
-			EncoderOpts:          w.encoderOpts,
-			QSVDecode:            w.qsvDecode,
-			ReadRate:             1.0,
-			ReadRateInitialBurst: 30,
-			SessionDir:           sessionDir,
-			SegmentPrefix:        "seg",
-		})
+		buildTranscodeArgs = func(useQSV bool) []string {
+			return BuildHLS(BuildArgs{
+				InputPath:            input,
+				StartOffset:          job.StartOffsetSec,
+				Encoder:              enc,
+				IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI || enc == EncoderAV1VAAPI,
+				IsHEVC:               job.IsHEVC,
+				IsAV1:                job.IsAV1,
+				Width:                job.Width,
+				Height:               job.Height,
+				BitrateKbps:          bitrate,
+				NeedsToneMap:         job.NeedsToneMap,
+				HasTonemapCuda:       w.hasTonemapCuda,
+				HasTonemapOpenCL:     w.hasTonemapOpenCL,
+				HasZscale:            w.hasZscale,
+				OpenCLDevice:         PickOpenCLDevice(w.openclDevices, enc),
+				AudioCodec:           job.AudioCodec,
+				AudioChannels:        job.AudioChannels,
+				AudioStreamIndex:     job.AudioStreamIndex,
+				SubtitleStreams:      job.SubtitleStreams,
+				EncoderOpts:          w.encoderOpts,
+				QSVDecode:            useQSV,
+				ReadRate:             1.0,
+				ReadRateInitialBurst: 30,
+				SessionDir:           sessionDir,
+				SegmentPrefix:        "seg",
+			})
+		}
+		// QSV decode is HEVC-only and not used for stream-copy (remux).
+		qsvDecodeUsable = w.qsvDecode && job.IsHEVC && enc != "copy"
+		ffArgs = buildTranscodeArgs(qsvDecodeUsable)
 		actualEncoder = enc
-	}
-
-	w.logger.Info("ffmpeg args",
-		"session_id", job.SessionID,
-		"args", strings.Join(ffArgs, " "),
-	)
-	cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	// Anchor ffmpeg's working dir to the session dir so bare
-	// filenames in HLS muxer options (notably -hls_fmp4_init_filename)
-	// land where the segment server expects them. Without this, the
-	// fMP4 init segment is written to the server's launch dir and
-	// the segment proxy 502s on every init fetch.
-	cmd.Dir = sessionDir
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 
 	// Stamp the session with this worker's address and actual HEVC/AV1
@@ -362,75 +356,118 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	if string(actualEncoder) == "copy" && job.IsAV1 {
 		actualAV1 = true
 	}
-	if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr, actualHEVC, actualAV1); err != nil {
-		w.logger.Warn("set worker info on session", "session_id", job.SessionID, "err", err)
+	segExt := ".ts"
+	if actualHEVC || actualAV1 {
+		segExt = ".m4s"
 	}
 
-	// Track PID for kill on session stop.
-	w.mu.Lock()
-	w.activeJobs[job.SessionID] = cmd.Process
-	w.mu.Unlock()
+	// runFFmpeg execs ffmpeg with the given args and monitors it until exit or
+	// kill. Returns the exit error and whether ffmpeg exited on its own
+	// (selfExited) vs. we killed it for session-stop / idle / ctx-cancel.
+	// Extracted so the QSV-decode path can retry with software decode.
+	runFFmpeg := func(ffArgs []string) (exitErr error, selfExited bool) {
+		w.logger.Info("ffmpeg args",
+			"session_id", job.SessionID,
+			"args", strings.Join(ffArgs, " "),
+		)
+		cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		// Anchor ffmpeg's working dir to the session dir so bare
+		// filenames in HLS muxer options (notably -hls_fmp4_init_filename)
+		// land where the segment server expects them. Without this, the
+		// fMP4 init segment is written to the server's launch dir and
+		// the segment proxy 502s on every init fetch.
+		cmd.Dir = sessionDir
 
-	// Heartbeat loop while FFmpeg runs.
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	t := time.NewTicker(heartbeatInterval)
-	defer t.Stop()
-
-loop:
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				w.logger.Warn("ffmpeg exited with error",
-					"session_id", job.SessionID, "err", err)
-			} else {
-				w.logger.Info("ffmpeg completed", "session_id", job.SessionID)
-			}
-			break loop
-		case <-t.C:
-			bg := context.Background()
-			// If the session no longer exists in Valkey (client stopped it), kill FFmpeg.
-			sess, err := w.store.Get(bg, job.SessionID)
-			if err != nil {
-				w.logger.Info("session deleted — killing ffmpeg", "session_id", job.SessionID)
-				_ = cmd.Process.Kill()
-				break loop
-			}
-			// Idle-kill: a client that closes its tab without firing
-			// DELETE leaves ffmpeg encoding for the full 4 h session
-			// TTL with `-readrate 1.0`. The Segment endpoint stamps
-			// LastActivityAt on every segment fetch (~every 4 s of
-			// playback), so a 60 s gap means the client crashed,
-			// network dropped, or the user navigated away. Kill the
-			// process to free the GPU and stop disk-fill.
-			//
-			// Grace period for the start-of-session window: until the
-			// player has fetched its first segment, LastActivityAt is
-			// zero. Use CreatedAt as the anchor so we don't kill a
-			// session that's still buffering seg 0.
-			const idleKillThreshold = 60 * time.Second
-			anchor := sess.LastActivityAt
-			if anchor.IsZero() {
-				anchor = sess.CreatedAt
-			}
-			if !anchor.IsZero() && time.Since(anchor) > idleKillThreshold {
-				w.logger.Info("client idle — killing ffmpeg",
-					"session_id", job.SessionID,
-					"last_activity_at", sess.LastActivityAt,
-					"idle_for", time.Since(anchor).Round(time.Second))
-				_ = cmd.Process.Kill()
-				break loop
-			}
-			if err := w.store.SetHeartbeat(bg, job.SessionID); err != nil {
-				w.logger.Warn("heartbeat write failed",
-					"session_id", job.SessionID, "err", err)
-			}
-		case <-ctx.Done():
-			_ = cmd.Process.Kill()
-			break loop
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("start ffmpeg: %w", err), true
 		}
+
+		if err := w.store.SetWorkerInfo(ctx, job.SessionID, w.id, w.addr, actualHEVC, actualAV1); err != nil {
+			w.logger.Warn("set worker info on session", "session_id", job.SessionID, "err", err)
+		}
+
+		// Track PID for kill on session stop.
+		w.mu.Lock()
+		w.activeJobs[job.SessionID] = cmd.Process
+		w.mu.Unlock()
+
+		// Heartbeat loop while FFmpeg runs.
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+
+		t := time.NewTicker(heartbeatInterval)
+		defer t.Stop()
+
+		for {
+			select {
+			case err := <-done:
+				if err != nil {
+					w.logger.Warn("ffmpeg exited with error",
+						"session_id", job.SessionID, "err", err)
+				} else {
+					w.logger.Info("ffmpeg completed", "session_id", job.SessionID)
+				}
+				return err, true
+			case <-t.C:
+				bg := context.Background()
+				// If the session no longer exists in Valkey (client stopped it), kill FFmpeg.
+				sess, err := w.store.Get(bg, job.SessionID)
+				if err != nil {
+					w.logger.Info("session deleted — killing ffmpeg", "session_id", job.SessionID)
+					_ = cmd.Process.Kill()
+					return nil, false
+				}
+				// Idle-kill: a client that closes its tab without firing
+				// DELETE leaves ffmpeg encoding for the full 4 h session
+				// TTL with `-readrate 1.0`. The Segment endpoint stamps
+				// LastActivityAt on every segment fetch (~every 4 s of
+				// playback), so a 60 s gap means the client crashed,
+				// network dropped, or the user navigated away. Kill the
+				// process to free the GPU and stop disk-fill.
+				//
+				// Grace period for the start-of-session window: until the
+				// player has fetched its first segment, LastActivityAt is
+				// zero. Use CreatedAt as the anchor so we don't kill a
+				// session that's still buffering seg 0.
+				const idleKillThreshold = 60 * time.Second
+				anchor := sess.LastActivityAt
+				if anchor.IsZero() {
+					anchor = sess.CreatedAt
+				}
+				if !anchor.IsZero() && time.Since(anchor) > idleKillThreshold {
+					w.logger.Info("client idle — killing ffmpeg",
+						"session_id", job.SessionID,
+						"last_activity_at", sess.LastActivityAt,
+						"idle_for", time.Since(anchor).Round(time.Second))
+					_ = cmd.Process.Kill()
+					return nil, false
+				}
+				if err := w.store.SetHeartbeat(bg, job.SessionID); err != nil {
+					w.logger.Warn("heartbeat write failed",
+						"session_id", job.SessionID, "err", err)
+				}
+			case <-ctx.Done():
+				_ = cmd.Process.Kill()
+				return ctx.Err(), false
+			}
+		}
+	}
+
+	exitErr, selfExited := runFFmpeg(ffArgs)
+	// QSV-decode fallback: if the QSV-decode run died on its own before
+	// producing any segment (the historical HW-decode failure mode — ffmpeg
+	// aborts at decode init), retry once with software decode so a source QSV
+	// can't handle still plays. A kill (session stop / idle / ctx) is not a
+	// decode failure, so selfExited gates this.
+	if qsvDecodeUsable && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
+		w.logger.Warn("QSV decode produced no segments; retrying with software decode",
+			"session_id", job.SessionID, "err", exitErr)
+		// Clear any partial output so segment numbering restarts at 0.
+		_ = os.RemoveAll(sessionDir)
+		_ = os.MkdirAll(sessionDir, 0755)
+		_, _ = runFFmpeg(buildTranscodeArgs(false))
 	}
 
 	w.mu.Lock()
