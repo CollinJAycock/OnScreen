@@ -108,6 +108,14 @@ type Config struct {
 	// cross-GPU surface sharing. Only applies to HEVC sources on a re-encode.
 	// If a source fails to decode on QSV, disable the flag for that worker.
 	TranscodeQSVDecode bool `env:"TRANSCODE_QSV_DECODE" envDefault:"false"`
+	// AutoMigrate runs pending embedded DB migrations on startup, before serving.
+	// Off by default — most deploys apply migrations as an explicit step (Docker
+	// migrate service, installer migrate.sh, `server migrate`). Set true for
+	// single-container deploys (e.g. the TrueNAS Custom App) where there's no
+	// separate migrate step, so a code update that adds migrations can't end up
+	// serving against a stale schema (which surfaces as login 401s — the auth
+	// query selects columns the migration adds).
+	AutoMigrate bool `env:"AUTO_MIGRATE" envDefault:"false"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`
@@ -118,7 +126,7 @@ type Config struct {
 	// ── Metadata ─────────────────────────────────────────────────────────────
 	TMDBAPIKey    string `env:"TMDB_API_KEY"`
 	TMDBRateLimit int    `env:"TMDB_RATE_LIMIT" envDefault:"5"` // req/s — conservative; TMDB auto-throttles abusive keys
-	TVDBAPIKey    string `env:"TVDB_API_KEY"`                    // TheTVDB v4 project key; enables episode fallback
+	TVDBAPIKey    string `env:"TVDB_API_KEY"`                   // TheTVDB v4 project key; enables episode fallback
 
 	// ── Worker ───────────────────────────────────────────────────────────────
 	WorkerHealthAddr string `env:"WORKER_HEALTH_ADDR" envDefault:":7074"`

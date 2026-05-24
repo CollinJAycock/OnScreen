@@ -77,11 +77,12 @@ var (
 
 func main() {
 	// `server.exe migrate` applies the embedded DB migrations and exits.
-	// The server itself does NOT auto-migrate (it only gates on schema
+	// By default the server does NOT auto-migrate (it only gates on schema
 	// version); deployments apply migrations explicitly — Docker via
 	// `goose up`, the Linux installer via migrate.sh, and the Windows
 	// installer by invoking this subcommand from postinstall before the
-	// service starts.
+	// service starts. The exception is AUTO_MIGRATE=true (see run()), for
+	// single-container deploys with no separate migrate step.
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		if err := runMigrate(); err != nil {
 			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
@@ -201,6 +202,18 @@ func run() error {
 	slog.SetDefault(logger)
 
 	logger.Info("starting onscreen server", "version", version, "build_time", buildTime)
+
+	// AUTO_MIGRATE: apply pending embedded migrations before anything queries the
+	// DB. For single-container deploys (e.g. the TrueNAS Custom App) with no
+	// separate migrate step — without it, a code update that adds migrations
+	// serves against a stale schema and login 401s. Fail fast if it errors:
+	// better to not boot than to serve broken auth that looks like bad passwords.
+	if cfg.AutoMigrate {
+		logger.Info("AUTO_MIGRATE set — applying pending DB migrations")
+		if err := runMigrate(); err != nil {
+			return fmt.Errorf("auto-migrate: %w", err)
+		}
+	}
 
 	// Make the bundled ffmpeg (next to server.exe in the installer layout)
 	// resolvable for the embedded worker + live-tv/trickplay exec calls, even
