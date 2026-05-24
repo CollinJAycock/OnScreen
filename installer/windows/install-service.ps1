@@ -72,6 +72,15 @@ Set-Content -Path $xmlPath -Value $xml -Encoding utf8
 $svcExe = Join-Path $PSScriptRoot "onscreen.exe"
 Copy-Item $winsw $svcExe -Force
 
+# Tear down any prior registration so re-running this script re-applies cleanly
+# (WinSW `install` errors if the service already exists). Best-effort — relax
+# the Stop preference so stderr on a fresh install doesn't abort the script.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& $svcExe stop      2>&1 | Out-Host
+& $svcExe uninstall 2>&1 | Out-Host
+$ErrorActionPreference = $prevEAP
+
 Write-Host "==> Registering OnScreen service..." -ForegroundColor Cyan
 & $svcExe install
 if ($LASTEXITCODE -ne 0) { throw "WinSW install failed (exit $LASTEXITCODE)" }

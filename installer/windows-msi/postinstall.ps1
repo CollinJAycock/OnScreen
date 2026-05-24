@@ -76,6 +76,19 @@ function Register-WinswService {
     $base = [System.IO.Path]::GetFileNameWithoutExtension($XmlName)
     $svcExe = "$InstallDir\$base.exe"
     Copy-Item "$InstallDir\WinSW.exe" $svcExe -Force
+    # Tear down any prior registration first so a reinstall/upgrade re-applies
+    # cleanly — WinSW `install` errors if the service already exists, and the
+    # MSI doesn't run preuninstall on an in-place upgrade. Best-effort: a fresh
+    # install has nothing to stop/uninstall, and uninstall reads the service id
+    # from the (already env-injected) XML so it targets the right service even
+    # if a prior run registered it via a different exe name. Relax the Stop
+    # preference here: on a fresh install these write to stderr, which under
+    # ErrorActionPreference=Stop would otherwise throw and abort the install.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $svcExe stop      2>&1 | ForEach-Object { Write-Log "  $_" }
+    & $svcExe uninstall 2>&1 | ForEach-Object { Write-Log "  $_" }
+    $ErrorActionPreference = $prevEAP
     Write-Log "Registering service from $XmlName (via $base.exe)"
     & $svcExe install 2>&1 | ForEach-Object { Write-Log "  $_" }
     if ($LASTEXITCODE -ne 0) { throw "$XmlName install failed (exit $LASTEXITCODE)" }
