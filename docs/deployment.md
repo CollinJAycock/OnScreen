@@ -740,6 +740,21 @@ Lower `SCAN_FILE_CONCURRENCY` (hot-reloadable via SIGHUP). The default is `NumCP
 
 ### Health check endpoint
 
-The server exposes `GET /health/live` on the main listen address. A `200` response means the server is running. Use this for load balancer health checks.
+The server exposes `GET /health/live` on the main listen address. A `200` response means the server is running. Use this for load balancer health checks. `GET /health/ready` additionally verifies DB + Valkey reachability and that no migrations are pending.
 
 The metrics endpoint at `METRICS_ADDR` (default `:7071`) exposes Prometheus-compatible metrics. Keep this port firewalled from public access.
+
+---
+
+## High Availability, Object Storage & Multi-Site
+
+Every HA/scale feature is **opt-in and off by default** — the deployment above is a standard single node. To go further:
+
+- **Object storage** (remove the local-disk SPOF; enable CDN offload): configure S3 / MinIO / Backblaze B2 / Wasabi / Cloudflare R2 from **Settings ▸ Integrations ▸ Storage** (no env var — it hot-swaps live). Every read and write path then routes through it.
+- **Valkey Sentinel** (HA lock/session/cache): deploy `docker/docker-compose.valkey-ha.yml`, set `VALKEY_SENTINEL_ADDRS`.
+- **PostgreSQL failover**: deploy `docker/docker-compose.postgres-ha.yml`, point `DATABASE_URL` at a multi-host failover DSN; add a promotion orchestrator (managed Multi-AZ / Patroni).
+- **CDN offload**: object-storage bytes offload via signed URLs automatically once a CDN base is set in Storage settings; for local-disk artwork set `PUBLIC_ASSET_CACHE=true`.
+- **Static-ABR** (`STATIC_ABR_ENABLED=true`): pre-encodes popular titles' ABR ladders to the store so hot-title playback serves from the CDN, not the live fleet.
+- **Multi-site DR**: set `SITE_ID`, monitor `GET /health/cluster` (`{site_id, role, replication_lag_seconds}`), and follow the failover/fail-back procedures.
+
+Full operational procedures — enabling each tier, monitoring, and failover/fail-back: **[dr-runbook.md](dr-runbook.md)**. Design and rationale: **[ha-roadmap.md](ha-roadmap.md)**.

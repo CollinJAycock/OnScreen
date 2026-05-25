@@ -251,17 +251,26 @@ Outbound metadata + artwork fetches go through a `safehttp` dial policy that rej
 
 ## 11. Storage & infrastructure
 
-| Feature                                            | OnScreen   | Plex   | Emby   | Jellyfin |
-| -------------------------------------------------- | :--------: | :----: | :----: | :------: |
-| Database                                           | PostgreSQL | SQLite | SQLite |  SQLite  |
-| Stateless API tier (horizontally scalable)         |     ✅     |   ❌   |   ❌   |    ❌    |
-| Event-sourced watch state (immutable log)          |     ✅     |   ❌   |   ❌   |    ❌    |
-| Materialized hub cache                             |     ✅     |   ❌   |   ❌   |    ❌    |
-| Single-binary deployment                           |     ✅     |   ✅   |   ✅   |    ✅    |
-| Docker / Compose first-class                       |     ✅     |   ✅   |   ✅   |    ✅    |
-| Direct cloud storage (S3 / GCS)                    |     ❌     |   ❌   |   ❌   |    ❌    |
+| Feature                                              | OnScreen   | Plex   | Emby   | Jellyfin |
+| ---------------------------------------------------- | :--------: | :----: | :----: | :------: |
+| Database                                             | PostgreSQL | SQLite | SQLite |  SQLite  |
+| Stateless API tier (horizontally scalable)           |     ✅     |   ❌   |   ❌   |    ❌    |
+| Event-sourced watch state (immutable log)            |     ✅     |   ❌   |   ❌   |    ❌    |
+| Materialized hub cache                               |     ✅     |   ❌   |   ❌   |    ❌    |
+| Single-binary deployment                             |     ✅     |   ✅   |   ✅   |    ✅    |
+| Docker / Compose first-class                         |     ✅     |   ✅   |   ✅   |    ✅    |
+| Native object storage (S3 / MinIO / B2 / Wasabi / R2)|     ✅     |   ❌   |   ❌   |    ❌    |
+| Object-storage write-back (artwork, covers)          |     ✅     |   ❌   |   ❌   |    ❌    |
+| CDN offload via signed URLs                           |     ✅     |   ❌   |   ❌   |    ❌    |
+| Leader-elected singleton work (auto-failover)        |     ✅     |   ❌   |   ❌   |    ❌    |
+| Postgres streaming replication + failover DSN        |     ✅     |   ❌   |   ❌   |    ❌    |
+| Valkey/Redis Sentinel HA (lock/session tier)         |     ✅     |   ❌   |   ❌   |    ❌    |
+| Static-ABR pre-encode (popular titles → CDN)         |     ✅     |   ❌   |   ❌   |    ❌    |
+| Multi-site active/passive DR                          |     ✅     |   ❌   |   ❌   |    ❌    |
+| Per-site content addressing (path remap)             |     ✅     |   ❌   |   ❌   |    ❌    |
+| Cluster role / replication-lag endpoint              |     ✅     |   ❌   |   ❌   |    ❌    |
 
-PostgreSQL-native is the foundational architecture choice — partitioned `watch_events` tables, tsvector full-text search, materialized views for the home hub, no SQLite write-contention pain at scale. None of the four ship native S3/GCS libraries; all four expect the operator to mount with rclone or similar.
+PostgreSQL-native is the foundational choice and the structural moat: partitioned `watch_events` tables, tsvector full-text search, materialized hub views, and — because it's Postgres, not SQLite — **streaming replication, a multi-host failover DSN, and multi-site DR are first-class**, which the SQLite-based trio can't do without re-architecting. Storage is pluggable behind a `MediaStore` abstraction: local disk by default, or S3-compatible object storage configured live from the admin UI, with every read **and** write path routing through it and `SignedURL` CDN offload. The other three ship no native S3/GCS layer — operators mount with rclone or similar, and none can pre-encode popular titles to a CDN, fail over the database, or run a warm second site. All HA/multi-site features are opt-in and off by default. See [dr-runbook.md](dr-runbook.md) and [ha-roadmap.md](ha-roadmap.md).
 
 ---
 
@@ -327,6 +336,9 @@ OnScreen plugins are MCP servers OnScreen calls out to (outbound MCP). Inbound M
 - **Library hygiene trays** — Fix Match (every unmatched row, paged) and Set Poster (TMDB variants + paste-URL fallback with proper 4xx surfacing) are first-class admin pages. Competitors expose per-item match/poster pickers but not bulk-tray surfaces.
 - **Embedded lyrics + LRCLIB synced fallback** — USLT / Vorbis lyrics extracted at scan, LRCLIB filled in afterwards; Plexamp gates this behind Plex Pass and the rest are plugin-only.
 - **Strict CSP + SSRF-hardened outbound HTTP** — `safehttp` denies post-resolution loopback / RFC1918 / link-local destinations on every metadata fetch; CSP, HSTS, X-Frame-DENY, Permissions-Policy all set out of the box.
+- **HA across every tier + multi-site DR** — opt-in (off by default): Valkey Sentinel for the lock/session tier, a multi-host Postgres failover DSN over streaming replication, leader-elected singleton work, and active/passive DR across two sites with per-site content addressing + a `/health/cluster` role/lag surface. This is a *structural* lead — the SQLite-based trio can't stream-replicate the database or run a warm second site without re-architecting. Procedures in [dr-runbook.md](dr-runbook.md).
+- **Pluggable object storage with CDN offload** — local disk or S3 / MinIO / Backblaze B2 / Wasabi / Cloudflare R2, set live from the admin UI; reads and writes both route through it and `SignedURL` 302-offloads cacheable bytes to a CDN so they skip the app tier. The other three ship no native object-storage layer (operators rclone-mount).
+- **Static-ABR pre-encode** — the most-played titles' ABR ladders are pre-encoded once to object storage and served straight from the CDN, so the live-transcode fleet handles only the cold tail — "scales with cache, not GPUs." No competitor pre-encodes a popularity-driven ladder for CDN serving.
 
 ---
 

@@ -44,6 +44,28 @@ the asset-token migration.
 - **Maintenance: re-probe metadata** — admin endpoint + a Settings →
   Maintenance action that clears file hashes so the next scan re-probes and
   backfills missing source metadata.
+- **Pluggable media storage (`MediaStore`)** — local disk by default, or
+  S3-compatible object storage (S3 / MinIO / Backblaze B2 / Wasabi / Cloudflare
+  R2) configured live from Settings → Integrations → Storage. Every read path
+  (direct play, download, transcode source, artwork, scanner discovery + music/
+  photo reads) and write path (cover/folder-art extraction, external-art
+  downloads) routes through it; `SignedURL` 302-offloads cacheable bytes to a
+  CDN. Default local behaviour is byte-for-byte unchanged.
+- **High availability (opt-in, off by default)** — Valkey Sentinel client
+  (`VALKEY_SENTINEL_ADDRS`); multi-host Postgres failover DSN that re-homes to
+  the read-write node, over a streaming-replication substrate
+  (`docker/docker-compose.{valkey,postgres}-ha.yml`).
+- **Static-ABR pre-encode** (`STATIC_ABR_ENABLED`) — pre-encodes popular titles'
+  ABR ladders (top-played from `watch_plays`) to the media store; playback serves
+  the static master + signed segment URLs instead of a live session, so the
+  fleet handles only the cold tail.
+- **Multi-site DR surface** — per-site content addressing (`Local.Remap` / S3
+  `MediaRoot`, multi-site path mappings in Settings), `SITE_ID`, and
+  `GET /health/cluster` reporting `{site_id, role, replication_lag_seconds}`; a
+  write to a read-only standby degrades to a 503. See
+  [docs/dr-runbook.md](docs/dr-runbook.md).
+- **CDN-cacheable artwork** (`PUBLIC_ASSET_CACHE`) — immutable resized artwork
+  emits `Cache-Control: public` so a CDN fronting the app can cache it.
 
 ### Changed — server
 

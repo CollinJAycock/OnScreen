@@ -140,21 +140,24 @@ In the default deployment, `cmd/server` embeds the transcode worker in-process. 
 
 ## High Availability & Scale
 
-The API tier is **stateless and horizontally scalable** — `docker/docker-compose.ha.yml` runs N instances behind pgBouncer (session mode, ADR-020). Singleton background work (hub/matview refresh, partition maintenance, scheduled scans) runs on a single elected leader and **fails over automatically**: a Valkey-lease lock (`internal/worker/master.go`, 15s TTL) is re-acquired by another instance when the holder disappears. Reads can fan out to replicas via the RW/RO pool split (ADR-021). The transcode tier already scales out as an independent fleet with cost- and capability-aware dispatch.
+The API tier is **stateless and horizontally scalable** — `docker/docker-compose.ha.yml` runs N instances behind pgBouncer (session mode, ADR-020). Singleton background work (hub/matview refresh, partition maintenance, scheduled scans) runs on a single elected leader and **fails over automatically**: a Valkey-lease lock (`internal/worker/master.go`, 15s TTL) is re-acquired by another instance when the holder disappears. Reads fan out to replicas via the RW/RO pool split (ADR-021). The transcode tier scales out as an independent fleet with cost- and capability-aware dispatch.
 
-What's **not** yet HA — the remaining single points of failure, even in the HA compose:
+Every former single point of failure now has a landed, **opt-in** close — defaults stay single-node, so a standard install is unaffected:
 
-| Tier | Today | To close |
+| Tier | Mechanism | Where |
 |---|---|---|
-| PostgreSQL | single primary (writes stop on failure) | streaming replication + automated failover (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint pgBouncer follows |
-| Valkey | single node (holds leader lock, sessions, dispatch counters, rate limits, caches) | Valkey Sentinel (failover) → Cluster (sharded) |
-| Storage | local/NFS path (`http.ServeFile(file.FilePath)`) — SPOF + scaling ceiling | a `MediaStore` abstraction with local / object-storage (S3/GCS) backends + `SignedURL` for CDN offload |
+| **Valkey** | Sentinel client (`valkey.NewFailover`) — set `VALKEY_SENTINEL_ADDRS`; ~10s failover < the 15s lock TTL | `docker/docker-compose.valkey-ha.yml` |
+| **PostgreSQL** | multi-host failover DSN — pgx re-homes to the read-write node (ADR-033) — over a streaming-replication substrate; auto-promotion via managed Multi-AZ / Patroni | `internal/db/db.go`, `docker/docker-compose.postgres-ha.yml` |
+| **Storage** | `MediaStore` abstraction (ADR-034) — `Local` / `S3` backends (`Open`/`Stat`/`SignedURL`/`Walk`/`Put`); every read **and** write path routes through it | `internal/mediastore`, Settings ▸ Storage |
+| **Byte delivery** | `SignedURL` 302-offloads cacheable bytes to a CDN; `PUBLIC_ASSET_CACHE` makes app-served artwork CDN-cacheable | serve paths in `internal/api/v1` |
+| **Concurrency** | **static-ABR** (ADR-035) pre-encodes popular titles' ladders to the store; playback serves them statically, the fleet handles only the cold tail | `internal/staticabr`, `internal/preencode` |
+| **Multi-site** | per-site content addressing (`Local.Remap` / S3 `MediaRoot`), role/lag at `/health/cluster`, read-only-write → 503 degradation | `internal/cluster`, `internal/mediastore` |
 
-Beyond HA, the byte-delivery path is the scaling lever: a CDN in front of cacheable assets (artwork, direct-play files, static segments — the asset token already produces CDN-shaped signed URLs), and **pre-encoded static ABR ladders for popular titles** (top-played from the `watch_plays` matview) so the live transcode fleet only handles the long tail.
+What remains is **operations, not application code**: a Postgres auto-promotion orchestrator, the second-site deployment (cross-WAN standby + ZFS content replication), and geo-routing.
 
 Explicitly **out of scope:** a licensed-studio catalog (requires certified DRM — Widevine L1 / PlayReady / FairPlay — which a self-hostable OSS server can't hold). OnScreen targets *content you own or have rights to*; the ambitious-but-coherent targets are a best-in-class self-hosted HA platform, or a multi-tenant streaming-platform *engine* others run for their own catalogs.
 
-Full plan, sequencing, and the `MediaStore` interface sketch: **[docs/ha-roadmap.md](docs/ha-roadmap.md)**.
+Full plan and sequencing: **[docs/ha-roadmap.md](docs/ha-roadmap.md)**. Operational procedures (enable each tier, monitor, fail over / back): **[docs/dr-runbook.md](docs/dr-runbook.md)**.
 
 ---
 
@@ -449,17 +452,22 @@ Two layers: **bootstrap env vars** (required to bind sockets and reach the datab
 
 | Var | Required | Default | Description |
 |---|---|---|---|
-| `DATABASE_URL` | ✓ | — | PostgreSQL DSN (`postgres://user:pass@host:5432/db?sslmode=disable`) |
-| `VALKEY_URL` | ✓ | — | Valkey/Redis URL (`redis://host:6379`) |
+| `DATABASE_URL` | ✓ | — | PostgreSQL DSN. Accepts a **multi-host failover DSN** for HA: `postgres://u:p@primary:5432,standby:5432/db?target_session_attrs=read-write` — pgx re-homes to the read-write node (ADR-033) |
+| `VALKEY_URL` | ✓ | — | Valkey/Redis URL (`redis://host:6379`). In Sentinel mode the host is ignored; this still supplies auth/db |
 | `MEDIA_PATH` | ✓ | — | Root directory where media files live |
 | `SECRET_KEY` | ✓ | — | 32-byte key for Paseto tokens + secret encryption (hex, base64, or raw) |
-| `DATABASE_RO_URL` | | `DATABASE_URL` | Read replica DSN |
+| `DATABASE_RO_URL` | | `DATABASE_URL` | Read replica DSN (active/active reads: point at the local replica per site) |
 | `CACHE_PATH` | | `$MEDIA_PATH/.cache/artwork` | Artwork resize cache |
 | `LISTEN_ADDR` | | `:7070` | API server bind address |
 | `METRICS_ADDR` | | `:7071` | Prometheus metrics bind |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | | — | Built-in HTTPS (operator-provided PEM) |
 | `TMDB_API_KEY` | | — | Seeded into Settings on first run |
 | `TVDB_API_KEY` | | — | Seeded into Settings on first run |
+| `AUTO_MIGRATE` | | `false` | Apply pending DB migrations on startup (single-container deploys) |
+| `VALKEY_SENTINEL_ADDRS` | | — | Comma-separated Sentinel addrs → HA Valkey failover (`VALKEY_SENTINEL_MASTER`, default `onscreen`; `VALKEY_SENTINEL_PASSWORD`) |
+| `PUBLIC_ASSET_CACHE` | | `false` | Emit `Cache-Control: public` on immutable artwork so a CDN fronting the app caches it |
+| `STATIC_ABR_ENABLED` | | `false` | Pre-encode popular titles' ABR ladders to the store (`STATIC_ABR_ROOT` = key prefix; empty = bucket-relative) |
+| `SITE_ID` | | — | Names this site for multi-site DR; surfaced at `/health/cluster` |
 | `OS_AUTH_RATE_LIMIT_PER_MIN` | | `10` | Auth-route rate-limit override (test/dev) |
 | `OS_TRANSCODE_START_RATE_LIMIT_PER_MIN` | | `10` | Transcode-start rate-limit override |
 
@@ -539,6 +547,9 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | ADR-027 | Hot-reload via SIGHUP | Runtime tuning without restart; no-op on Windows |
 | ADR-031 | Multiple files per media item | Supports multi-version libraries (1080p + 4K editions) |
 | ADR-032 | Valkey-lease leader election for singleton work | One elected instance runs hub/matview refresh, partition maintenance, and scheduled jobs; auto-fails-over on lease expiry so a multi-instance deployment has no singleton SPOF (`internal/worker/master.go`). See [HA roadmap](docs/ha-roadmap.md). |
+| ADR-033 | Multi-host failover DSN for Postgres HA | A `DATABASE_URL` with 2+ hosts + `target_session_attrs=read-write` lets pgx pick the read-write primary and re-home after a promotion; the pool shortens `MaxConnLifetime` to 60s when fallbacks are present so writes re-home within ~1 min of a graceful switchover (`internal/db/db.go`). |
+| ADR-034 | `MediaStore` abstraction for media bytes | A `Store` interface (`Open`/`Stat`/`SignedURL`) + optional `Lister`/`Putter`, with `Local` and S3-compatible backends and a hot-swappable `Provider`. Removes the local-FS SPOF, enables CDN offload + multi-site content addressing; default `Local` keeps single-node behaviour byte-for-byte (`internal/mediastore`). |
+| ADR-035 | Static-ABR pre-encode for popular titles | The top-played set (from the `watch_plays` matview) is pre-encoded once to the store; playback serves the static master + signed segment URLs instead of a live session, so the transcode fleet handles only the cold tail — "scales with cache, not GPUs" (`internal/staticabr`, `internal/preencode`). |
 
 ---
 

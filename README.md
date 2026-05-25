@@ -84,6 +84,8 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - Image proxy / thumbnailer with `?w=` resize, responsive `srcset`, CDN-friendly cache headers
 - Multi-node transcode fleet: a separate `worker` binary joins the primary's queue, with **cost-weighted, capability-aware dispatch** — a 4K stream weighs ~4× a 1080p one (not "one session"), HDR jobs route to GPU-tonemap nodes and AV1 output to AV1-capable nodes, with per-node load % and an admin-settable max-sessions cap in the fleet UI
 - **Storage-less workers** pull the source from the primary over HTTP (per-file token) — no shared NFS/SMB mount required on every node; opt-in Intel QSV hardware HEVC decode offload per worker
+- **Pluggable media storage** — local disk by default, or S3-compatible object storage (S3 / MinIO / Backblaze B2 / Wasabi / Cloudflare R2) set live from the admin UI; every read **and** write path routes through it, with `SignedURL` CDN offload so cacheable bytes skip the app tier
+- **Optional HA across every tier** (all off by default): Valkey Sentinel, a multi-host Postgres failover DSN over streaming replication, **static-ABR** pre-encode of popular titles (served straight from the CDN, not the live fleet), and multi-site active/passive DR with per-site content addressing + a `/health/cluster` role/lag surface — see [docs/dr-runbook.md](docs/dr-runbook.md)
 - Webhooks with HMAC-SHA256 signing and retry (compatible with Overseerr/Tautulli receivers)
 - TMDB discover + request workflow inline in search — no Overseerr / Ombi / Jellyseerr companion needed
 - `/health/ready` gated on schema-vs-code parity — container stays unhealthy until `goose up` has run; optional `AUTO_MIGRATE=true` applies pending migrations on startup for single-container deploys with no separate migrate step
@@ -154,7 +156,7 @@ Bootstrap-class settings — needed before the admin Settings UI exists — live
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | ✓ | PostgreSQL connection string |
+| `DATABASE_URL` | ✓ | PostgreSQL DSN. Accepts a multi-host failover DSN (`…@primary,standby/db?target_session_attrs=read-write`) for HA |
 | `VALKEY_URL` | ✓ | Valkey/Redis connection string |
 | `SECRET_KEY` | ✓ | 32+ byte secret for token encryption |
 | `MEDIA_PATH` | ✓ | Root path to media files |
@@ -165,10 +167,14 @@ Bootstrap-class settings — needed before the admin Settings UI exists — live
 | `TMDB_API_KEY` | | TMDB v3 key — seeded into Settings on first run |
 | `TVDB_API_KEY` | | TVDB v4 key — seeded into Settings on first run |
 | `AUTO_MIGRATE` | | Apply pending DB migrations on startup (default off; for single-container deploys) |
+| `VALKEY_SENTINEL_ADDRS` | | Sentinel addrs → HA Valkey failover (default off) |
+| `PUBLIC_ASSET_CACHE` | | Make app-served artwork CDN-cacheable (default off) |
+| `STATIC_ABR_ENABLED` | | Pre-encode popular titles' ABR ladders to the store (default off) |
+| `SITE_ID` | | Names this site for multi-site DR; shown at `/health/cluster` |
 
-Everything else — public URL, log level, CORS allow-list, OIDC / OAuth / SAML / LDAP, SMTP, OpenTelemetry endpoint, transcode tuning — is configured from the admin Settings UI, stored in `server_settings`, and bootstrap-read at startup. Restart required after changes; the UI surfaces this notice.
+Everything else — public URL, log level, CORS allow-list, OIDC / OAuth / SAML / LDAP, SMTP, OpenTelemetry endpoint, transcode tuning, **object storage (S3 / MinIO / Backblaze B2 / Wasabi / R2)** — is configured from the admin Settings UI, stored in `server_settings`, and bootstrap-read at startup. Restart required after changes; the UI surfaces this notice.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full configuration reference and design notes.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full configuration reference, and [docs/dr-runbook.md](docs/dr-runbook.md) for HA / multi-site operations.
 
 ## Architecture
 
