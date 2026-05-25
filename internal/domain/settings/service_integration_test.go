@@ -104,7 +104,10 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 		if got := svc.TranscodeConfigGet(ctx); got != (TranscodeConfig{}) {
 			t.Errorf("initial: got %+v, want zero value", got)
 		}
-		want := TranscodeConfig{NVENCPreset: "p7", NVENCTune: "hq", NVENCRC: "vbr", MaxrateRatio: 2.0}
+		want := TranscodeConfig{
+			NVENCPreset: "p7", NVENCTune: "hq", NVENCRC: "vbr", MaxrateRatio: 2.0,
+			MaxBitrateKbps: 25000, MaxWidth: 1920, MaxHeight: 1080,
+		}
 		if err := svc.SetTranscodeConfig(ctx, want); err != nil {
 			t.Fatalf("Set: %v", err)
 		}

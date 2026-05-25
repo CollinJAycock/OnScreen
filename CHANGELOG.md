@@ -66,6 +66,18 @@ the asset-token migration.
   [docs/dr-runbook.md](docs/dr-runbook.md).
 - **CDN-cacheable artwork** (`PUBLIC_ASSET_CACHE`) — immutable resized artwork
   emits `Cache-Control: public` so a CDN fronting the app can cache it.
+- **Settings ▸ System** — cluster-wide startup toggles that were env-only move
+  into the admin UI: server name, watch-history retention, TMDB rate limit,
+  adaptive-bitrate (on/off + max heights), public asset cache, static-ABR, plus
+  scanner concurrency and the missing-file grace period. The matching env vars
+  become the initial default (a saved override wins), so existing installs are
+  unaffected. Node/site-specific config (connection strings, `SECRET_KEY`, bind
+  addresses, paths, `SITE_ID`, per-worker hardware) stays env-only because
+  `server_settings` replicates across sites. A standalone worker now applies the
+  same System overrides (retention + grace period) as the server.
+- **Settings ▸ Transcode — Output Limits** — the global transcode ceilings (max
+  bitrate / width / height), previously env-only, are editable in the admin UI
+  (restart-required; the env vars remain the initial default).
 
 ### Changed — server
 
@@ -75,6 +87,14 @@ the asset-token migration.
 
 ### Fixed — server
 
+- **Settings ▸ System values weren't read back** — `GET /settings/system`
+  returned its body un-enveloped while the web client unwraps `{"data": …}`, so
+  saved values never repopulated the form. It now uses the standard envelope
+  like every other settings endpoint.
+- **`DEV_FRONTEND_URL` now actually proxies** — in a `-tags dev` build the
+  server reverse-proxies non-API requests to the Vite dev server, so the whole
+  app (UI + HMR) is reachable on the single API port. The flag was documented
+  but previously a no-op; production builds always serve the embedded SPA.
 - **Persist float Numeric columns** (frame_rate, item rating, ReplayGain) —
   pgx can't scan a float64 into a `Numeric`, so these were silently nulled;
   scan the decimal string form instead.

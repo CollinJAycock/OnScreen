@@ -237,10 +237,6 @@ func run() error {
 	}
 	corsAllowedOrigins := generalCfg.CORSAllowedOrigins
 
-	// ── Hot-reloadable config (ADR-027) ───────────────────────────────────────
-	hot := config.NewHotReloadable(cfg)
-	config.WatchSIGHUP(logger, hot, cfg)
-
 	// ── Prometheus ────────────────────────────────────────────────────────────
 	promReg := prometheus.NewRegistry()
 	promReg.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
@@ -332,6 +328,23 @@ func run() error {
 	// plaintext rows keep working — they migrate to encrypted form on
 	// the next admin save of that setting.
 	settingsSvc := settings.New(rwPool, logger).WithEncryptor(encryptor)
+
+	// Merge cluster-wide System settings over the env-derived config: a value set
+	// in the admin UI wins, otherwise the env var / built-in default stands. Done
+	// here, before any consumer reads cfg, so the rest of startup is unchanged.
+	// Only cluster-wide, startup-read knobs live here — node/site-specific config
+	// (connection strings, bind addrs, paths, SITE_ID, per-worker hardware) stays
+	// env, since server_settings replicates across sites in multi-site DR.
+	applySystemSettings(ctx, cfg, settingsSvc.System(ctx), logger)
+	// Same idea for the transcode output ceilings (Settings ▸ Transcode).
+	applyTranscodeConfig(cfg, settingsSvc.TranscodeConfigGet(ctx), logger)
+
+	// ── Hot-reloadable config (ADR-027) ───────────────────────────────────────
+	// Built from the *merged* cfg so a UI-set scan concurrency is the startup
+	// value. SIGHUP reload no longer mutates scan concurrency (config.Reload), so
+	// the env value can't silently clobber the UI override on a reload.
+	hot := config.NewHotReloadable(cfg)
+	config.WatchSIGHUP(logger, hot, cfg)
 
 	// Seed TMDB key from environment on first run (won't overwrite a DB value).
 	if cfg.TMDBAPIKey != "" {
@@ -596,6 +609,12 @@ func run() error {
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
+	// Effective System knobs (env merged with any stored overrides above) so the
+	// System settings page shows running values where no override is set.
+	settingsHandler.SetSystemDefaults(systemEffective(cfg))
+	// Effective transcode output ceilings, so the Transcode page shows the
+	// running caps when the stored TranscodeConfig values are unset (0).
+	settingsHandler.SetTranscodeDefaults(transcodeEffective(cfg))
 	// Worker-node connection secrets, revealed via step-up reauth (authSvc).
 	settingsHandler.SetWorkerCredentials(authSvc, cfg.DatabaseURL, cfg.ValkeyURL, cfg.SecretKey)
 	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
@@ -1143,6 +1162,7 @@ func run() error {
 		ViewAsAuditor:      &viewAsAuditAdapter{audit: auditLogger},
 		RateLimiter:        rateLimiter,
 		CORSAllowedOrigins: corsAllowedOrigins,
+		DevFrontendURL:     cfg.DevFrontendURL,
 	}
 	router := api.NewRouter(h)
 

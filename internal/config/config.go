@@ -367,9 +367,12 @@ func (h *HotReloadable) Reload(logger *slog.Logger, current *Config) {
 	warnIfChanged(logger, "MEDIA_PATH", current.MediaPath, next.MediaPath)
 
 	// Apply reloadable changes.
+	//
+	// Scan concurrency is intentionally NOT reloaded here: it moved to the admin
+	// UI (Settings ▸ System) as a restart-required override merged onto cfg at
+	// startup. Re-reading the env on SIGHUP would silently revert a UI-set value,
+	// so we leave the startup (merged) value in place until the next restart.
 	h.mu.Lock()
-	h.scanFileConcurrency = next.ScanFileConcurrency
-	h.scanLibraryConcurrency = next.ScanLibraryConcurrency
 	h.transcodeMaxSessions = next.TranscodeMaxSessions
 	h.transcodeMaxBitrate = next.TranscodeMaxBitrate
 	h.transcodeMaxWidth = next.TranscodeMaxWidth

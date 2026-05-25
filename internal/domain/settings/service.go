@@ -35,6 +35,7 @@ const keySMTPConfig = "smtp_config"
 const keyOTelConfig = "otel_config"
 const keyGeneralConfig = "general_config"
 const keyStorageConfig = "storage_config"
+const keySystemConfig = "system_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -213,6 +214,11 @@ type TranscodeConfig struct {
 	NVENCTune    string  `json:"nvenc_tune,omitempty"`    // hq, ll, ull
 	NVENCRC      string  `json:"nvenc_rc,omitempty"`      // vbr, cbr, constqp
 	MaxrateRatio float64 `json:"maxrate_ratio,omitempty"` // e.g. 1.5
+	// Global output ceilings, formerly env-only (TRANSCODE_MAX_BITRATE_KBPS,
+	// TRANSCODE_MAX_WIDTH, TRANSCODE_MAX_HEIGHT). 0 = use the server default.
+	MaxBitrateKbps int `json:"max_bitrate_kbps,omitempty"`
+	MaxWidth       int `json:"max_width,omitempty"`
+	MaxHeight      int `json:"max_height,omitempty"`
 }
 
 // TranscodeConfigGet returns the transcode encoder tuning config.
@@ -605,6 +611,60 @@ func (s *Service) SetStorage(ctx context.Context, cfg StorageConfig) error {
 		return err
 	}
 	return s.set(ctx, keyStorageConfig, string(b))
+}
+
+// SystemConfig groups cluster-wide server toggles that used to be env-only but
+// are safe to manage from the admin UI: behaviour the whole deployment shares,
+// read once at startup. Every field is a pointer so "unset" (nil) falls back to
+// the corresponding env var / built-in default — existing env-configured installs
+// keep working, and the UI overrides going forward. Restart-required, like the
+// other startup-read settings.
+//
+// Deliberately NOT here (must stay env): anything node- or site-specific, because
+// server_settings *replicates across sites* in multi-site DR — connection strings,
+// SECRET_KEY, bind addresses, file paths, SITE_ID, and per-worker hardware toggles
+// (TRANSCODE_QSV_DECODE). Scan concurrency moved here as restart-required; the
+// SIGHUP path no longer mutates it (config.Reload), so the two don't fight.
+// Transcode output caps + NVENC tuning live in TranscodeConfig (Settings ▸ Transcode).
+type SystemConfig struct {
+	ServerName                *string `json:"server_name,omitempty"`
+	RetainMonths              *int    `json:"retain_months,omitempty"`
+	TMDBRateLimit             *int    `json:"tmdb_rate_limit,omitempty"`
+	TranscodeABR              *bool   `json:"transcode_abr,omitempty"`
+	TranscodeABRMaxHeight     *int    `json:"transcode_abr_max_height,omitempty"`
+	TranscodeABRAutoMaxHeight *int    `json:"transcode_abr_auto_max_height,omitempty"`
+	PublicAssetCache          *bool   `json:"public_asset_cache,omitempty"`
+	StaticABREnabled          *bool   `json:"static_abr_enabled,omitempty"`
+	// Scanner policy, formerly env-only. MissingFileGraceMinutes is how long a
+	// vanished file waits before being marked gone (env MISSING_FILE_GRACE_PERIOD,
+	// expressed here in whole minutes for the UI). The two concurrency knobs
+	// (env SCAN_FILE_CONCURRENCY / SCAN_LIBRARY_CONCURRENCY) tune scan parallelism.
+	MissingFileGraceMinutes *int `json:"missing_file_grace_minutes,omitempty"`
+	ScanFileConcurrency     *int `json:"scan_file_concurrency,omitempty"`
+	ScanLibraryConcurrency  *int `json:"scan_library_concurrency,omitempty"`
+}
+
+// System returns the stored system config or the zero value (all nil → use env).
+func (s *Service) System(ctx context.Context) SystemConfig {
+	raw := s.get(ctx, keySystemConfig)
+	if raw == "" {
+		return SystemConfig{}
+	}
+	var cfg SystemConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse system_config", "err", err)
+		return SystemConfig{}
+	}
+	return cfg
+}
+
+// SetSystem persists the system config as JSON.
+func (s *Service) SetSystem(ctx context.Context, cfg SystemConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keySystemConfig, string(b))
 }
 
 // GeneralConfig groups the general server settings that used to live in

@@ -465,8 +465,8 @@ Two layers: **bootstrap env vars** (required to bind sockets and reach the datab
 | `TVDB_API_KEY` | | — | Seeded into Settings on first run |
 | `AUTO_MIGRATE` | | `false` | Apply pending DB migrations on startup (single-container deploys) |
 | `VALKEY_SENTINEL_ADDRS` | | — | Comma-separated Sentinel addrs → HA Valkey failover (`VALKEY_SENTINEL_MASTER`, default `onscreen`; `VALKEY_SENTINEL_PASSWORD`) |
-| `PUBLIC_ASSET_CACHE` | | `false` | Emit `Cache-Control: public` on immutable artwork so a CDN fronting the app caches it |
-| `STATIC_ABR_ENABLED` | | `false` | Pre-encode popular titles' ABR ladders to the store (`STATIC_ABR_ROOT` = key prefix; empty = bucket-relative) |
+| `PUBLIC_ASSET_CACHE` | | `false` | Emit `Cache-Control: public` on immutable artwork so a CDN fronting the app caches it. *Initial default for* Settings ▸ System |
+| `STATIC_ABR_ENABLED` | | `false` | Pre-encode popular titles' ABR ladders to the store. *Initial default for* Settings ▸ System (`STATIC_ABR_ROOT` = key prefix, stays env) |
 | `SITE_ID` | | — | Names this site for multi-site DR; surfaced at `/health/cluster` |
 | `OS_AUTH_RATE_LIMIT_PER_MIN` | | `10` | Auth-route rate-limit override (test/dev) |
 | `OS_TRANSCODE_START_RATE_LIMIT_PER_MIN` | | `10` | Transcode-start rate-limit override |
@@ -485,6 +485,8 @@ These were env vars in v1.x and earlier; they're now table-stored under typed ke
 - Transcode quality cap, max sessions, encoder filters, NVENC preset / tune / rate control
 - Scan concurrency (per-file, per-library), missing-file grace period, retention months
 - TMDB / TVDB rate limits
+- Object storage backend + CDN base (`storage_config`) — Settings ▸ Integrations ▸ Storage
+- **System (`system_config`)** — cluster-wide startup toggles surfaced under Settings ▸ System: server name, retention months, TMDB rate limit, adaptive-bitrate (on/off + max heights), public asset cache, static-ABR enable. The matching env vars remain as the **initial default / fallback** (a stored override wins), so env-configured installs are unaffected. *Node- and site-specific* config stays env-only on purpose — `server_settings` replicates across sites in multi-site DR, so connection strings, `SECRET_KEY`, bind addresses, file paths, `SITE_ID`, and per-worker hardware toggles (`TRANSCODE_QSV_DECODE`) must not be shared.
 
 A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger, OTel tracer provider, and HTTP handlers can be built with the right config before the main pool opens. Restart required after changes; the UI surfaces this notice on each settings tab.
 

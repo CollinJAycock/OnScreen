@@ -104,6 +104,13 @@ func run() error {
 	}
 	defer rwPool.Close()
 
+	// Merge cluster-wide System settings (partition retention, missing-file grace)
+	// over the env-derived config so a standalone worker honours the same admin
+	// overrides as the server. Node/site-specific config stays env. Done before
+	// the workers below read cfg. SystemConfig is plaintext (not a secret), so no
+	// encryptor is needed here.
+	applyWorkerSystemSettings(cfg, settings.New(rwPool, logger).System(ctx), logger)
+
 	// ── Valkey ────────────────────────────────────────────────────────────────
 	// Sentinel (HA) when VALKEY_SENTINEL_ADDRS is set, else a single node.
 	var valkeyClient *valkey.Client
@@ -253,4 +260,24 @@ type hotGracePeriod struct {
 
 func (h *hotGracePeriod) MissingFileGracePeriod() time.Duration {
 	return h.cfg.MissingFileGracePeriod
+}
+
+// applyWorkerSystemSettings overrides env-derived config with the cluster-wide
+// System settings an admin set in the UI, for the subset the worker consumes:
+// partition retention and the missing-file grace period. Mirrors the server's
+// applySystemSettings so a standalone worker and the server agree on policy. A
+// nil field keeps the env value. Restart-required.
+func applyWorkerSystemSettings(cfg *config.Config, sys settings.SystemConfig, logger *slog.Logger) {
+	changed := 0
+	if sys.RetainMonths != nil && *sys.RetainMonths > 0 {
+		cfg.RetainMonths = *sys.RetainMonths
+		changed++
+	}
+	if sys.MissingFileGraceMinutes != nil && *sys.MissingFileGraceMinutes > 0 {
+		cfg.MissingFileGracePeriod = time.Duration(*sys.MissingFileGraceMinutes) * time.Minute
+		changed++
+	}
+	if changed > 0 {
+		logger.Info("applied System settings over env config", "overrides", changed)
+	}
 }

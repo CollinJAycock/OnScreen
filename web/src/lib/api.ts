@@ -916,6 +916,21 @@ export interface StorageTestResult {
   error?: string;
 }
 
+// Cluster-wide server toggles that used to be env-only. Restart-required.
+export interface SystemSettings {
+  server_name: string;
+  retain_months: number;
+  tmdb_rate_limit: number;
+  transcode_abr: boolean;
+  transcode_abr_max_height: number;
+  transcode_abr_auto_max_height: number;
+  public_asset_cache: boolean;
+  static_abr_enabled: boolean;
+  missing_file_grace_minutes: number;
+  scan_file_concurrency: number;
+  scan_library_concurrency: number;
+}
+
 export interface GeneralSettings {
   base_url: string;            // public URL — used for OAuth redirects, LAN discovery
   log_level: string;           // debug | info | warn | error
@@ -1018,6 +1033,9 @@ export interface TranscodeConfig {
   nvenc_tune: string;
   nvenc_rc: string;
   maxrate_ratio: number;
+  max_bitrate_kbps: number;
+  max_width: number;
+  max_height: number;
 }
 
 export interface WorkerCredentials {
@@ -1041,6 +1059,8 @@ export const settingsApi = {
   getStorage: () => api.get<StorageSettings>('/settings/storage'),
   updateStorage: (body: StorageSettings) => api.put<void>('/settings/storage', body),
   testStorage: (body: StorageSettings) => api.post<StorageTestResult>('/settings/storage/test', body),
+  getSystem: () => api.get<SystemSettings>('/settings/system'),
+  updateSystem: (body: SystemSettings) => api.put<void>('/settings/system', body),
 };
 
 // ── Filesystem browser ────────────────────────────────────────────────────────

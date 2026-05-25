@@ -55,6 +55,8 @@ type SettingsServiceIface interface {
 	SetWebDownloadsEnabled(ctx context.Context, enabled bool) error
 	Storage(ctx context.Context) settings.StorageConfig
 	SetStorage(ctx context.Context, cfg settings.StorageConfig) error
+	System(ctx context.Context) settings.SystemConfig
+	SetSystem(ctx context.Context, cfg settings.SystemConfig) error
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -97,6 +99,29 @@ type SettingsHandler struct {
 	// storage settings rebuilds and swaps the live backend without a restart.
 	// Optional — nil in tests / when storage isn't wired.
 	storeProvider *mediastore.Provider
+
+	// systemDefaults is the effective (env-derived) value of each cluster-wide
+	// System knob, so GET /settings/system can show the running config where no
+	// override is stored. Set at startup via SetSystemDefaults.
+	systemDefaults settings.SystemConfig
+	// transcodeDefaults is the effective transcode output ceiling, so
+	// GET /settings/transcode-config can fill unset (0) caps with running values.
+	transcodeDefaults settings.TranscodeConfig
+}
+
+// SetSystemDefaults records the env-effective System config so the System
+// settings endpoint can surface running values as defaults. Returns the handler
+// for chaining.
+func (h *SettingsHandler) SetSystemDefaults(d settings.SystemConfig) *SettingsHandler {
+	h.systemDefaults = d
+	return h
+}
+
+// SetTranscodeDefaults records the env-effective transcode output ceilings so
+// GetTranscodeConfig can show running values where no override is stored.
+func (h *SettingsHandler) SetTranscodeDefaults(d settings.TranscodeConfig) *SettingsHandler {
+	h.transcodeDefaults = d
+	return h
 }
 
 // NewSettingsHandler creates a SettingsHandler.
@@ -1170,9 +1195,21 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
-// GetTranscodeConfig handles GET /api/v1/settings/transcode-config.
+// GetTranscodeConfig handles GET /api/v1/settings/transcode-config. Unset (0)
+// output ceilings are filled with the effective running caps so the page shows
+// the active values rather than blanks.
 func (h *SettingsHandler) GetTranscodeConfig(w http.ResponseWriter, r *http.Request) {
-	respond.Success(w, r, h.svc.TranscodeConfigGet(r.Context()))
+	tc := h.svc.TranscodeConfigGet(r.Context())
+	if tc.MaxBitrateKbps == 0 {
+		tc.MaxBitrateKbps = h.transcodeDefaults.MaxBitrateKbps
+	}
+	if tc.MaxWidth == 0 {
+		tc.MaxWidth = h.transcodeDefaults.MaxWidth
+	}
+	if tc.MaxHeight == 0 {
+		tc.MaxHeight = h.transcodeDefaults.MaxHeight
+	}
+	respond.Success(w, r, tc)
 }
 
 // UpdateTranscodeConfig handles PUT /api/v1/settings/transcode-config.

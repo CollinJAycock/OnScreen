@@ -8,6 +8,14 @@ failures. For the *why* and the design, see [ha-roadmap.md](ha-roadmap.md) and
 
 > **Single-node deployments need none of this.** Every HA/multi-site feature is
 > opt-in and off by default — a standard install behaves exactly as before.
+>
+> **Env vs UI:** cluster-wide toggles (ABR, public asset cache, static-ABR
+> enable, server name, retention, TMDB rate limit) are editable in **Settings ▸
+> System** — the env vars below are the initial default, and a saved override
+> wins. Node/site-specific config (connection strings, `SECRET_KEY`, bind
+> addresses, paths, `SITE_ID`, per-worker `TRANSCODE_QSV_DECODE`,
+> `STATIC_ABR_ROOT`) stays env-only because `server_settings` replicates across
+> sites.
 
 ## Contents
 - [Topology at a glance](#topology-at-a-glance)

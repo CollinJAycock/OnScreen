@@ -34,6 +34,7 @@ type mockSettingsService struct {
 	fleet          settings.WorkerFleetConfig
 	setFleetErr    error
 	setFleetCall   *settings.WorkerFleetConfig // captures last SetWorkerFleet call
+	transcodeCfg   settings.TranscodeConfig
 	oidc           settings.OIDCConfig
 	ldap           settings.LDAPConfig
 	saml           settings.SAMLConfig
@@ -44,6 +45,7 @@ type mockSettingsService struct {
 	setWebDLErr    error
 	setWebDLCalled bool
 	storage        settings.StorageConfig
+	system         settings.SystemConfig
 }
 
 func (m *mockSettingsService) TMDBAPIKey(_ context.Context) string {
@@ -78,7 +80,7 @@ func (m *mockSettingsService) SetArrPathMappings(_ context.Context, _ map[string
 func (m *mockSettingsService) TranscodeEncoders(_ context.Context) string             { return "" }
 func (m *mockSettingsService) SetTranscodeEncoders(_ context.Context, _ string) error { return nil }
 func (m *mockSettingsService) TranscodeConfigGet(_ context.Context) settings.TranscodeConfig {
-	return settings.TranscodeConfig{}
+	return m.transcodeCfg
 }
 func (m *mockSettingsService) SetTranscodeConfig(_ context.Context, _ settings.TranscodeConfig) error {
 	return nil
@@ -175,6 +177,14 @@ func (m *mockSettingsService) SetStorage(_ context.Context, cfg settings.Storage
 		return m.setErr
 	}
 	m.storage = cfg
+	return nil
+}
+func (m *mockSettingsService) System(_ context.Context) settings.SystemConfig { return m.system }
+func (m *mockSettingsService) SetSystem(_ context.Context, cfg settings.SystemConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.system = cfg
 	return nil
 }
 

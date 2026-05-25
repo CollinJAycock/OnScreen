@@ -168,11 +168,11 @@ Bootstrap-class settings — needed before the admin Settings UI exists — live
 | `TVDB_API_KEY` | | TVDB v4 key — seeded into Settings on first run |
 | `AUTO_MIGRATE` | | Apply pending DB migrations on startup (default off; for single-container deploys) |
 | `VALKEY_SENTINEL_ADDRS` | | Sentinel addrs → HA Valkey failover (default off) |
-| `PUBLIC_ASSET_CACHE` | | Make app-served artwork CDN-cacheable (default off) |
-| `STATIC_ABR_ENABLED` | | Pre-encode popular titles' ABR ladders to the store (default off) |
+| `PUBLIC_ASSET_CACHE` | | Make app-served artwork CDN-cacheable (default off; or **Settings ▸ System**) |
+| `STATIC_ABR_ENABLED` | | Pre-encode popular titles' ABR ladders to the store (default off; or **Settings ▸ System**) |
 | `SITE_ID` | | Names this site for multi-site DR; shown at `/health/cluster` |
 
-Everything else — public URL, log level, CORS allow-list, OIDC / OAuth / SAML / LDAP, SMTP, OpenTelemetry endpoint, transcode tuning, **object storage (S3 / MinIO / Backblaze B2 / Wasabi / R2)** — is configured from the admin Settings UI, stored in `server_settings`, and bootstrap-read at startup. Restart required after changes; the UI surfaces this notice.
+Everything else — public URL, log level, CORS allow-list, OIDC / OAuth / SAML / LDAP, SMTP, OpenTelemetry endpoint, transcode tuning, **object storage (S3 / MinIO / Backblaze B2 / Wasabi / R2)**, and cluster-wide toggles (ABR, retention, asset cache, static-ABR) under **Settings ▸ System** — is configured from the admin Settings UI, stored in `server_settings`. Env vars above act as the initial default; a stored override wins. Node/site-specific values (connection strings, secret key, bind addresses, paths, `SITE_ID`, per-worker hardware) stay env, since settings replicate across sites.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full configuration reference, and [docs/dr-runbook.md](docs/dr-runbook.md) for HA / multi-site operations.
 

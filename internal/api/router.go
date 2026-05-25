@@ -114,6 +114,11 @@ type Handlers struct {
 	// CORSAllowedOrigins enables cross-origin API access (TV app, third-party
 	// native clients). Empty disables CORS — same-origin only.
 	CORSAllowedOrigins []string
+	// DevFrontendURL, when set in a `-tags dev` build, makes the server proxy
+	// all non-API/non-asset requests to the Vite dev server so the whole app
+	// is reachable on the single API port. Ignored in production builds (the
+	// embedded SPA is always served). See frontend_dev.go.
+	DevFrontendURL string
 }
 
 // NewRouter builds the full Chi router.
@@ -568,6 +573,8 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/settings/storage", h.Settings.GetStorage)
 					r.Put("/settings/storage", h.Settings.UpdateStorage)
 					r.Post("/settings/storage/test", h.Settings.TestStorage)
+					r.Get("/settings/system", h.Settings.GetSystem)
+					r.Put("/settings/system", h.Settings.UpdateSystem)
 				})
 			}
 
@@ -954,6 +961,11 @@ func NewRouter(h *Handlers) http.Handler {
 	// ── SvelteKit SPA ─────────────────────────────────────────────────────────
 	// Serves the embedded frontend. Uses http.ServeContent (not FileServer) to
 	// avoid redirect loops caused by FileServer's directory canonicalisation.
+	//
+	// In a `-tags dev` build with DEV_FRONTEND_URL set, devFrontendProxy is the
+	// Vite dev server — so the live UI (HMR included) is reachable on the API
+	// port instead of the stale compile-time dist. nil in production.
+	devFrontendProxy := newDevFrontendProxy(h.DevFrontendURL, h.Logger)
 	uiFS := webui.FS()
 	serveUI := func(w http.ResponseWriter, req *http.Request, name string) {
 		f, err := uiFS.Open(name)
@@ -1000,6 +1012,12 @@ func NewRouter(h *Handlers) http.Handler {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		// Dev builds proxy every frontend request to Vite (HMR, /@vite, /src,
+		// the SPA shell) so the live UI is served on the API port. nil in prod.
+		if devFrontendProxy != nil {
+			devFrontendProxy.ServeHTTP(w, req)
 			return
 		}
 		target := strings.TrimPrefix(req.URL.Path, "/")

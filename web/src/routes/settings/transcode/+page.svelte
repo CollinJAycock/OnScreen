@@ -137,6 +137,10 @@
   let nvencTune = 'hq';
   let nvencRc = 'vbr';
   let maxrateRatio = 1.5;
+  // Global output ceilings (formerly env-only). Restart-required.
+  let maxBitrateKbps = 40000;
+  let maxWidth = 3840;
+  let maxHeight = 2160;
   let tuningSaving = false;
   let tuningLoaded = false;
 
@@ -178,6 +182,9 @@
       nvencTune = tc.nvenc_tune || 'hq';
       nvencRc = tc.nvenc_rc || 'vbr';
       maxrateRatio = tc.maxrate_ratio || 1.5;
+      maxBitrateKbps = tc.max_bitrate_kbps || 40000;
+      maxWidth = tc.max_width || 3840;
+      maxHeight = tc.max_height || 2160;
       tuningLoaded = true;
     } catch { tuningLoaded = true; }
   });
@@ -244,8 +251,11 @@
         nvenc_tune: nvencTune,
         nvenc_rc: nvencRc,
         maxrate_ratio: maxrateRatio,
+        max_bitrate_kbps: maxBitrateKbps,
+        max_width: maxWidth,
+        max_height: maxHeight,
       });
-      toast.success('Encoder tuning saved');
+      toast.success('Encoder tuning saved — output limit changes need a restart');
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to save encoder tuning');
     } finally {
@@ -317,6 +327,30 @@
           Peak bitrate = target bitrate x ratio. Higher values handle complex scenes
           (action, grain) better but use more bandwidth.
         </div>
+      </div>
+    </div>
+
+    <div class="sec-label" style="margin-top: 1.25rem;">Output Limits</div>
+    <div class="hint" style="margin-top: -0.5rem;">
+      Global ceilings on transcode output — clients can request lower, never higher.
+      Applied at startup, so <strong>changes take effect after a server restart</strong>.
+    </div>
+
+    <div class="field-row">
+      <div class="field" style="flex:1;">
+        <label for="max-bitrate">Max Bitrate (kbps)</label>
+        <input id="max-bitrate" type="number" min="1000" max="200000" step="1000" bind:value={maxBitrateKbps} />
+        <div class="hint">Upper bound on the transcode target bitrate. Default 40000.</div>
+      </div>
+      <div class="field" style="flex:1;">
+        <label for="max-width">Max Width (px)</label>
+        <input id="max-width" type="number" min="640" max="7680" step="2" bind:value={maxWidth} />
+        <div class="hint">Default 3840 (4K).</div>
+      </div>
+      <div class="field" style="flex:1;">
+        <label for="max-height">Max Height (px)</label>
+        <input id="max-height" type="number" min="360" max="4320" step="2" bind:value={maxHeight} />
+        <div class="hint">Default 2160 (4K).</div>
       </div>
     </div>
 

@@ -53,7 +53,10 @@
 |----------|---------|-------------|
 | `WORKER_ADDR` | (none) | Address the standalone worker listens on, e.g. `:7073` |
 
-### Scanning (hot-reloadable via SIGHUP)
+### Scanning
+
+These are the initial defaults; the effective values are editable in the admin UI
+under **Settings ▸ System** (restart-required, a saved value wins over the env var).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -61,7 +64,12 @@
 | `SCAN_LIBRARY_CONCURRENCY` | `2` | Concurrent library scans |
 | `MISSING_FILE_GRACE_PERIOD` | `15m` | How long to wait before marking a missing file as unavailable |
 
-### Transcoding (hot-reloadable via SIGHUP)
+### Transcoding
+
+`TRANSCODE_MAX_SESSIONS` and the NVENC tuning are hot-reloadable via SIGHUP. The
+output ceilings (`TRANSCODE_MAX_BITRATE_KBPS` / `_WIDTH` / `_HEIGHT`) are the
+initial defaults — edit the effective values in the admin UI under
+**Settings ▸ Transcode ▸ Output Limits** (restart-required; a saved value wins).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -660,7 +668,9 @@ Several settings can be updated without restarting the server by sending `SIGHUP
 kill -HUP $(pidof server)
 ```
 
-Hot-reloadable values: `LOG_LEVEL`, `SCAN_FILE_CONCURRENCY`, `SCAN_LIBRARY_CONCURRENCY`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_MAX_BITRATE_KBPS`, `TRANSCODE_MAX_WIDTH`, `TRANSCODE_MAX_HEIGHT`, `TRANSCODE_NVENC_PRESET`, `TRANSCODE_NVENC_TUNE`, `TRANSCODE_NVENC_RC`, `TRANSCODE_MAXRATE_RATIO`.
+Hot-reloadable values: `LOG_LEVEL`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_NVENC_PRESET`, `TRANSCODE_NVENC_TUNE`, `TRANSCODE_NVENC_RC`, `TRANSCODE_MAXRATE_RATIO`.
+
+Scan concurrency and the transcode output ceilings moved into the admin UI (Settings ▸ System / Settings ▸ Transcode) and are now **restart-required** — SIGHUP no longer touches them, so a UI-set value isn't silently reverted by a reload.
 
 Changes to `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, `LISTEN_ADDR`, or `MEDIA_PATH` require a full restart.
 
