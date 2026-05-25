@@ -291,6 +291,33 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("Storage", func(t *testing.T) {
+		// keyStorageConfig is in secretKeys, so this also exercises the
+		// encrypt-on-write / decrypt-on-read path for the whole blob (the
+		// service here has no encryptor, so it round-trips as plaintext JSON —
+		// the encrypted path is covered by the secret-key keys above).
+		want := StorageConfig{
+			Enabled:    true,
+			Backend:    "s3",
+			Endpoint:   "s3.us-west-002.backblazeb2.com",
+			Region:     "us-west-002",
+			Bucket:     "onscreen-media",
+			AccessKey:  "0012abc",
+			SecretKey:  "K001secretvalue",
+			UseSSL:     true,
+			MediaRoot:  "/mnt/c/media",
+			PathPrefix: "library/",
+			CDNBaseURL: "https://cdn.example.com",
+		}
+		if err := svc.SetStorage(ctx, want); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		got := svc.Storage(ctx)
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("Update_OverwritesExistingValue", func(t *testing.T) {
 		// The set() helper uses INSERT ... ON CONFLICT DO UPDATE; this
 		// asserts the second write actually replaces the first rather
@@ -336,5 +363,8 @@ func TestService_GetUnsetReturnsZeroValues(t *testing.T) {
 	}
 	if got := svc.TranscodeConfigGet(ctx); got != (TranscodeConfig{}) {
 		t.Errorf("TranscodeConfig unset: got %+v", got)
+	}
+	if got := svc.Storage(ctx); got != (StorageConfig{}) {
+		t.Errorf("Storage unset: got %+v, want zero (local default)", got)
 	}
 }

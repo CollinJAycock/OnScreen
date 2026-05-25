@@ -34,6 +34,7 @@ const keyLDAPConfig = "ldap_config"
 const keySMTPConfig = "smtp_config"
 const keyOTelConfig = "otel_config"
 const keyGeneralConfig = "general_config"
+const keyStorageConfig = "storage_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -91,6 +92,7 @@ var secretKeys = map[string]struct{}{
 	keySAMLConfig:          {}, // contains SP private key PEM
 	keyLDAPConfig:          {}, // contains bind password
 	keySMTPConfig:          {}, // contains password
+	keyStorageConfig:       {}, // contains object-storage secret key
 }
 
 func (s *Service) isSecretKey(key string) bool {
@@ -543,6 +545,61 @@ func (s *Service) SetOTel(ctx context.Context, cfg OTelConfig) error {
 		return err
 	}
 	return s.set(ctx, keyOTelConfig, string(b))
+}
+
+// StorageConfig selects where media bytes live (HA roadmap §3). When Enabled is
+// false (the default) the server uses the local filesystem — byte-for-byte the
+// behaviour before object storage existed. When Enabled with Backend "s3", the
+// media store can offload reads to the bucket / CDN via signed URLs.
+//
+// The whole blob is encrypted at rest (keyStorageConfig is in secretKeys)
+// because it carries SecretKey. The API masks SecretKey on read so the UI never
+// receives it back in plaintext.
+//
+// Endpoint is the S3 host without scheme (e.g. "s3.us-west-2.amazonaws.com",
+// "s3.us-west-002.backblazeb2.com", or a MinIO host); UseSSL picks http vs
+// https. MediaRoot is the local path prefix stripped from a file's absolute
+// FilePath to derive its object key, and PathPrefix is prepended inside the
+// bucket — together they map FilePath → object key until content addressing
+// lands. CDNBaseURL, when set, is the origin SignedURL builds against (so a
+// CDN in front of the bucket serves the bytes); empty signs against the bucket
+// endpoint directly.
+type StorageConfig struct {
+	Enabled    bool   `json:"enabled"`
+	Backend    string `json:"backend"` // "local" | "s3"
+	Endpoint   string `json:"endpoint"`
+	Region     string `json:"region,omitempty"`
+	Bucket     string `json:"bucket"`
+	AccessKey  string `json:"access_key,omitempty"`
+	SecretKey  string `json:"secret_key,omitempty"`
+	UseSSL     bool   `json:"use_ssl"`
+	MediaRoot  string `json:"media_root,omitempty"`
+	PathPrefix string `json:"path_prefix,omitempty"`
+	CDNBaseURL string `json:"cdn_base_url,omitempty"`
+}
+
+// Storage returns the stored storage config or the zero value (local) if not
+// persisted.
+func (s *Service) Storage(ctx context.Context) StorageConfig {
+	raw := s.get(ctx, keyStorageConfig)
+	if raw == "" {
+		return StorageConfig{}
+	}
+	var cfg StorageConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse storage_config", "err", err)
+		return StorageConfig{}
+	}
+	return cfg
+}
+
+// SetStorage persists the storage config as JSON.
+func (s *Service) SetStorage(ctx context.Context, cfg StorageConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyStorageConfig, string(b))
 }
 
 // GeneralConfig groups the general server settings that used to live in
