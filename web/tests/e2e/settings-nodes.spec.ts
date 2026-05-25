@@ -119,7 +119,11 @@ test.describe('Settings ▸ Nodes — UI', () => {
 
     await page.goto('/settings/nodes');
     await expect(page.getByText(/Per-node configuration/i)).toBeVisible();
-    await expect(page.getByText(/this node/i)).toBeVisible();
+    // The node picker rendered (its <select> is labelled "Configuring") and lists
+    // the current node — proves the list loaded without the null-map crash.
+    const picker = page.getByLabel(/Configuring/i);
+    await expect(picker).toBeVisible();
+    await expect(picker.locator('option', { hasText: /this node/i })).toHaveCount(1);
 
     const real = errors.filter((e) => !/cloudflareinsights/i.test(e));
     expect(real, `console errors:\n${real.join('\n')}`).toEqual([]);
