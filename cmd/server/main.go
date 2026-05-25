@@ -41,6 +41,7 @@ import (
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/lyrics"
+	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/anilist"
 	"github.com/onscreen/onscreen/internal/metadata/animedb"
@@ -635,12 +636,26 @@ func run() error {
 	arrHandler := v1.NewArrHandler(settingsSvc, arrAdapter, logger)
 	favoritesHandler := v1.NewFavoritesHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc)
 	favoritesChecker := &favoritesChecker{q: gen.New(roPool)}
+	// Media-byte backend (HA roadmap §3). Built from persisted storage settings —
+	// defaults to local FS when object storage isn't enabled, so existing installs
+	// are unchanged. Wrapped in a Provider so the storage settings endpoint can
+	// hot-swap the backend (e.g. enable S3) without a restart.
+	initialStore, err := v1.BuildMediaStore(settingsSvc.Storage(ctx))
+	if err != nil {
+		logger.Warn("media store init from settings failed; using local FS", "err", err)
+		initialStore = mediastore.Local{}
+	}
+	mediaStoreProvider := mediastore.NewProvider(initialStore)
+	settingsHandler.SetMediaStoreProvider(mediaStoreProvider)
+
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger).
 		WithLibraryAccess(libSvc).
 		WithAudit(auditLogger).
 		// Lets a remote worker without shared storage pull the source from this
 		// server over HTTP (a per-file stream token in the job's SourceURL).
-		WithStreamTokenMaker(tokenMaker)
+		WithStreamTokenMaker(tokenMaker).
+		// Prefer an object-storage / CDN signed source URL when configured.
+		WithMediaStore(mediaStoreProvider)
 
 	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
 	// rootDir holds sprite_NNN.jpg + index.vtt per item. Lives alongside the
@@ -719,7 +734,8 @@ func run() error {
 		WithPosterPicker(metaAgent).
 		WithSubtreeDeleter(&subtreeDeleter{q: gen.New(rwPool)}).
 		WithCreditsRefresher(peopleSvc).
-		WithDownloadGate(settingsSvc)
+		WithDownloadGate(settingsSvc).
+		WithMediaStore(mediaStoreProvider)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)

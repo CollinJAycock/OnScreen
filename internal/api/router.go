@@ -529,6 +529,9 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/settings/worker-credentials", h.Settings.WorkerCredentials)
 					r.Get("/settings/transcode-config", h.Settings.GetTranscodeConfig)
 					r.Put("/settings/transcode-config", h.Settings.UpdateTranscodeConfig)
+					r.Get("/settings/storage", h.Settings.GetStorage)
+					r.Put("/settings/storage", h.Settings.UpdateStorage)
+					r.Post("/settings/storage/test", h.Settings.TestStorage)
 				})
 			}
 

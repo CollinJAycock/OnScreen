@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
 
@@ -52,6 +53,8 @@ type SettingsServiceIface interface {
 	SetGeneral(ctx context.Context, cfg settings.GeneralConfig) error
 	WebDownloadsEnabled(ctx context.Context) bool
 	SetWebDownloadsEnabled(ctx context.Context, enabled bool) error
+	Storage(ctx context.Context) settings.StorageConfig
+	SetStorage(ctx context.Context, cfg settings.StorageConfig) error
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -89,6 +92,11 @@ type SettingsHandler struct {
 	cfgDatabaseURL string
 	cfgValkeyURL   string
 	cfgSecretKey   string
+
+	// storeProvider is the hot-swappable media-byte backend. When set, saving
+	// storage settings rebuilds and swaps the live backend without a restart.
+	// Optional — nil in tests / when storage isn't wired.
+	storeProvider *mediastore.Provider
 }
 
 // NewSettingsHandler creates a SettingsHandler.
@@ -121,6 +129,14 @@ func (h *SettingsHandler) SetEmbeddedDisabled(disabled bool) {
 // sessions) apply live without a restart.
 func (h *SettingsHandler) SetEmbeddedWorker(w EmbeddedWorkerControl) {
 	h.embedded = w
+}
+
+// SetMediaStoreProvider wires the hot-swappable media-byte backend so the
+// storage settings endpoints can apply a new backend live. Returns the handler
+// for chaining.
+func (h *SettingsHandler) SetMediaStoreProvider(p *mediastore.Provider) *SettingsHandler {
+	h.storeProvider = p
+	return h
 }
 
 // SetWorkerCredentials wires the step-up reauth verifier + the connection

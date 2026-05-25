@@ -43,6 +43,7 @@ type mockSettingsService struct {
 	webDownloads   bool
 	setWebDLErr    error
 	setWebDLCalled bool
+	storage        settings.StorageConfig
 }
 
 func (m *mockSettingsService) TMDBAPIKey(_ context.Context) string {
@@ -166,6 +167,14 @@ func (m *mockSettingsService) SetWebDownloadsEnabled(_ context.Context, enabled 
 	}
 	m.webDownloads = enabled
 	m.setWebDLCalled = true
+	return nil
+}
+func (m *mockSettingsService) Storage(_ context.Context) settings.StorageConfig { return m.storage }
+func (m *mockSettingsService) SetStorage(_ context.Context, cfg settings.StorageConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.storage = cfg
 	return nil
 }
 
