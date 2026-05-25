@@ -53,9 +53,11 @@ import (
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/plugin"
+	"github.com/onscreen/onscreen/internal/preencode"
 	"github.com/onscreen/onscreen/internal/requests"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/scheduler"
+	"github.com/onscreen/onscreen/internal/staticabr"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/subtitles"
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
@@ -65,6 +67,7 @@ import (
 	"github.com/onscreen/onscreen/internal/worker"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql "pgx" driver for goose migrate
 	"github.com/pressly/goose/v3"
 	"github.com/prometheus/client_golang/prometheus"
@@ -1023,6 +1026,33 @@ func run() error {
 	// full-history lead() window on every load (migration 00004).
 	schedRegistry.Register("refresh_watch_plays",
 		scheduler.NewRefreshWatchPlaysHandler(rwPool, logger))
+	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
+	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
+	// really worthwhile only with object storage + a CDN. It pre-encodes the
+	// hottest titles' ABR ladders to the media store so their segments serve
+	// statically instead of from the live-transcode fleet.
+	if cfg.StaticABREnabled {
+		staticSvc := staticabr.NewService(
+			staticPopularity{q: gen.New(roPool)},
+			staticResolver{media: mediaSvc},
+			staticabr.StoreChecker{Store: mediaStoreProvider},
+			preencode.New(mediaStoreProvider, cfg.StaticABRRoot, "ffmpeg", 6 /*seg sec*/, 0 /*no height cap*/, logger),
+			3 /*min plays*/, 10 /*titles per run*/, logger,
+		)
+		schedRegistry.Register("static_abr_preencode", scheduler.NewStaticABRPreencodeHandler(staticSvc))
+		if next, err := scheduler.NextRun("17 4 * * *", time.Now().UTC()); err == nil {
+			if err := gen.New(rwPool).EnsureSystemTask(ctx, gen.EnsureSystemTaskParams{
+				Name:      "Static-ABR pre-encode",
+				TaskType:  "static_abr_preencode",
+				CronExpr:  "17 4 * * *", // daily, off-peak
+				Enabled:   true,
+				NextRunAt: pgtype.Timestamptz{Time: next, Valid: true},
+			}); err != nil {
+				logger.WarnContext(ctx, "seed static_abr task", "err", err)
+			}
+		}
+		logger.InfoContext(ctx, "static-ABR pre-encode enabled", "root", cfg.StaticABRRoot)
+	}
 	// Seed the scheduled_tasks rows our handlers depend on. Idempotent:
 	// admin edits to existing rows are preserved (EnsureSystemTask uses
 	// WHERE NOT EXISTS on task_type), so this is safe on every boot.

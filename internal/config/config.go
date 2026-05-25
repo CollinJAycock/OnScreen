@@ -141,6 +141,15 @@ type Config struct {
 	// since the resized bytes are identical for every user). Object-storage
 	// deployments don't need this — those bytes already offload via signed URLs.
 	PublicAssetCache bool `env:"PUBLIC_ASSET_CACHE" envDefault:"false"`
+	// StaticABREnabled turns on the static-ABR pre-encode background task: it
+	// pre-encodes the ABR ladder for the most-played titles to the media store so
+	// their segments serve from object storage / CDN instead of the live-transcode
+	// fleet (HA roadmap §5). Off by default — a pass spawns ffmpeg encodes and is
+	// really only worthwhile with object storage + a CDN in front. StaticABRRoot
+	// is the key prefix for the output: leave empty for object storage
+	// (bucket-relative), or set a directory for a local static root.
+	StaticABREnabled bool   `env:"STATIC_ABR_ENABLED" envDefault:"false"`
+	StaticABRRoot    string `env:"STATIC_ABR_ROOT"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`

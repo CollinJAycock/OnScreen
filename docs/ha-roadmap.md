@@ -265,14 +265,24 @@ exists + source hash matches), and the **`Service`** orchestration
 `PopularitySource` → `SourceResolver` → `Plan` → `LadderEncoder.Encode`, with
 per-title failures logged and skipped. All injected interfaces, fully unit-tested.
 
-**Still to do:** (1) the real **`LadderEncoder`** — builds `BuildLadder`, runs
-ffmpeg per rung (reusing the fleet), and `Put`s segments + playlists + the
-`source.hash` sidecar — plus the adapters (`getTopPlayed`→`PopularitySource`,
-media-service→`SourceResolver`) and a scheduler cron calling `Service.RunOnce`;
-(2) **serve-from-static** — the ABR handler checks `StoreChecker` and, on a hit,
-hands back `SignedURL`s to the static master/segments instead of starting a live
-session; (3) **invalidation/cleanup** on source change + admin controls (enable,
-cache budget).
+**Encoder + activation landed.** The real encoder is
+[`internal/preencode`](../internal/preencode/encoder.go): per `BuildLadder` rung
+it runs ffmpeg (software encoders) to VOD HLS, `Put`s the segments + rung
+playlist, composes the master via `BuildMasterPlaylist`, and writes the
+`source.hash` sidecar last (so a crash leaves the ladder stale, not partial) —
+ffmpeg-integration-tested. The adapters (`getTopPlayed`→`PopularitySource`,
+media-service→`SourceResolver`, restricted to movies/episodes) and a daily
+scheduler cron (`static_abr_preencode`) are wired in `main.go`, gated behind
+`STATIC_ABR_ENABLED` (off by default — a pass spawns ffmpeg encodes and is really
+worthwhile only with object storage + a CDN).
+
+**Still to do:** (1) **serve-from-static** — the ABR handler checks `StoreChecker`
+and, on a hit, hands back `SignedURL`s to the static master/segments instead of
+starting a live session (this is where the offload win is realised); (2)
+**invalidation/cleanup** of stale ladders (`Walk(Prefix)` + delete) on source
+change or cache pressure; (3) **admin controls** (enable, min-plays, per-run
+limit, cache budget) surfaced in the UI; (4) optionally distribute the encode
+jobs across the **fleet** rather than encoding in-process.
 
 ### Multi-region (deferred)
 True global low-latency needs read-local replicas per region + CDN edge +
@@ -362,7 +372,7 @@ reads** if both sites should be live. Active/active writes only if forced.
 2. **Postgres failover** — ✅ app-side (multi-host failover DSN + lifetime tuning) + replication substrate (`docker-compose.postgres-ha.yml`) landed & validated. Remaining: the **automatic promotion** orchestrator (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint — pure ops.
 3. **`MediaStore` abstraction + object-storage backend** — ✅ landed: abstraction, `Local` + S3 backends, hot-swap provider, admin UI, and every read path routed (direct play, download, transcode source, artwork, scanner discovery + music/photo/faststart reads), plus per-site content addressing. Remaining: a writable `Putter` for cover/folder-art write-back + static-ABR segments; object-storage live ingest (watcher).
 4. **CDN + `SignedURL` offload** — ✅ object-storage bytes offload via signed/CDN URLs on every serve path; app-served artwork is CDN-cacheable via `PUBLIC_ASSET_CACHE`. Static *segments* wait on step 5.
-5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock. 🚧 foundation landed (`internal/staticabr`: key scheme + popularity plan + store-backed encoded-check); remaining: the encoder task (fleet jobs → `Put` segments), serve-from-static (`SignedURL`), invalidation + admin controls.
+5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock. 🚧 plan + store-backed check + orchestration `Service` + real ffmpeg encoder (`internal/preencode`) + adapters + a daily cron (gated by `STATIC_ABR_ENABLED`) all landed. Remaining: **serve-from-static** (`SignedURL` on a `StoreChecker` hit), invalidation/cleanup, admin controls, optional fleet distribution.
 6. **Multi-site active/passive DR** — two TrueNAS sites, ZFS + Postgres streaming replication; the first step into [geo-distribution](#multi-site--geo-distribution). Then active/active reads.
 7. *(deferred)* multi-region (many regions / global); *(separate track, only if pursuing path B)* multi-tenancy + billing + DRM.
 
