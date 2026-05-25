@@ -3,7 +3,11 @@ package scanner
 import (
 	"bytes"
 	"context"
+	"image"
+	"image/jpeg"
 	"io"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +17,68 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/mediastore"
 )
+
+// stubConc satisfies ConcurrencyProvider for full-scan tests.
+type stubConc struct{}
+
+func (stubConc) ScanFileConcurrency() int    { return 2 }
+func (stubConc) ScanLibraryConcurrency() int { return 1 }
+
+// fakeRemoteStore is a non-local Store+Lister backed by an in-memory key→bytes
+// map, so a scan exercises the remote (store.Walk) discovery branch.
+type fakeRemoteStore struct{ files map[string][]byte }
+
+func (f *fakeRemoteStore) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
+	b, ok := f.files[key]
+	if !ok {
+		return nil, mediastore.ErrNotFound
+	}
+	return nopSeekCloser{bytes.NewReader(b)}, nil
+}
+func (f *fakeRemoteStore) Stat(_ context.Context, key string) (mediastore.FileInfo, error) {
+	b, ok := f.files[key]
+	if !ok {
+		return mediastore.FileInfo{}, mediastore.ErrNotFound
+	}
+	return mediastore.FileInfo{Size: int64(len(b)), ModTime: time.Now()}, nil
+}
+func (f *fakeRemoteStore) SignedURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+func (f *fakeRemoteStore) Walk(_ context.Context, prefix string, fn func(mediastore.ObjectInfo) error) error {
+	for k, b := range f.files {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if err := fn(mediastore.ObjectInfo{Key: k, Size: int64(len(b)), ModTime: time.Now()}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestScanLibrary_RemoteStoreDiscoversViaWalk(t *testing.T) {
+	// A non-local store routes discovery through store.Walk. The .mkv is found and
+	// a file row created; the .artwork poster is pruned (skipped dir + image in a
+	// non-photo library), proving the remote walk applies the same exclusions.
+	svc := newMockMediaService()
+	store := &fakeRemoteStore{files: map[string][]byte{
+		"/srv/media/Movies/Dune (2021)/Dune.mkv": []byte("fake-mkv-bytes"),
+		"/srv/media/Movies/.artwork/poster.jpg":  []byte("img"),
+	}}
+	s := New(svc, nil, stubConc{}, slog.Default()).WithMediaStore(store)
+
+	res, err := s.ScanLibrary(context.Background(), uuid.New(), "movie", []string{"/srv/media/Movies"})
+	if err != nil {
+		t.Fatalf("ScanLibrary: %v", err)
+	}
+	if len(svc.files) != 1 {
+		t.Errorf("created %d file rows, want 1 (.mkv only; .artwork excluded)", len(svc.files))
+	}
+	if res.Found != 1 {
+		t.Errorf("Found = %d, want 1", res.Found)
+	}
+}
 
 func TestPathHasSkippedDir(t *testing.T) {
 	cases := []struct {
@@ -91,6 +157,65 @@ func TestReadMusicTagsStore_ReadsThroughStore(t *testing.T) {
 	}
 	if tags.Artist != "Boards of Canada" || tags.Title != "Roygbiv" {
 		t.Errorf("tags not parsed: %+v", tags)
+	}
+}
+
+func TestProbeImageReader_Dimensions(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 12, 8))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	pr := ProbeImageReader(&buf, "photo.jpg")
+	if pr.ResolutionW == nil || *pr.ResolutionW != 12 || pr.ResolutionH == nil || *pr.ResolutionH != 8 {
+		t.Errorf("dims = %v x %v, want 12x8", pr.ResolutionW, pr.ResolutionH)
+	}
+	if pr.Container == nil || *pr.Container != "jpg" {
+		t.Errorf("container = %v, want jpg", pr.Container)
+	}
+}
+
+func TestProbeImageReader_BadDataReturnsEmpty(t *testing.T) {
+	pr := ProbeImageReader(bytes.NewReader([]byte("not an image")), "x.jpg")
+	if pr.ResolutionW != nil {
+		t.Error("expected empty result for undecodable data")
+	}
+}
+
+func TestExtractEXIFReader_NoEXIFReturnsNilNil(t *testing.T) {
+	// A plain JPEG has no EXIF block → (nil, nil) soft miss, not an error.
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	ex, err := ExtractEXIFReader(&buf)
+	if err != nil {
+		t.Fatalf("err = %v, want nil (soft miss)", err)
+	}
+	if ex != nil {
+		t.Errorf("ex = %+v, want nil (no EXIF block)", ex)
+	}
+}
+
+func TestHashFileStore_CacheHitSkipsSecondOpen(t *testing.T) {
+	store := &recordingStore{data: bytes.Repeat([]byte("z"), 2048), modTime: time.Now()}
+	const key = "/objstore/unique-cachehit.mkv"
+
+	h1, err := HashFileStore(context.Background(), store, key, int64(len(store.data)), store.modTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opensAfter := store.opens
+	h2, err := HashFileStore(context.Background(), store, key, int64(len(store.data)), store.modTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *h1 != *h2 {
+		t.Error("hash changed across identical calls")
+	}
+	if store.opens != opensAfter {
+		t.Errorf("cache hit re-opened the source: %d → %d", opensAfter, store.opens)
 	}
 }
 

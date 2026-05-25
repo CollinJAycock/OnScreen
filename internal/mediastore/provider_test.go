@@ -73,6 +73,38 @@ func TestProvider_Walk_ErrorsWhenBackendNotLister(t *testing.T) {
 	}
 }
 
+func TestProvider_OpenStat_DelegateToCurrent(t *testing.T) {
+	// Open/Stat must route to the active backend, not a stale one.
+	p := NewProvider(taggedStore{tag: "first"})
+	if _, err := p.Open(context.Background(), "k"); err == nil {
+		t.Error("Open should surface the backend's error")
+	}
+	p.Set(Local{})
+	// Local.Stat on a missing path returns ErrNotFound — proves delegation moved.
+	if _, err := p.Stat(context.Background(), filepath.Join(t.TempDir(), "nope")); err == nil {
+		t.Error("Stat should delegate to Local and report the missing file")
+	}
+}
+
+func TestIsLocal(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Store
+		want bool
+	}{
+		{"bare Local", Local{}, true},
+		{"Local with remap", Local{Remap: []PathMapping{{From: "/a", To: "/b"}}}, true},
+		{"provider wrapping Local", NewProvider(Local{}), true},
+		{"provider wrapping non-local", NewProvider(taggedStore{}), false},
+		{"bare non-local", taggedStore{}, false},
+	}
+	for _, tc := range cases {
+		if got := IsLocal(tc.s); got != tc.want {
+			t.Errorf("%s: IsLocal = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestProvider_ConcurrentReadsDuringSwap(t *testing.T) {
 	// The -race detector should stay quiet: concurrent reads while a swap runs.
 	p := NewProvider(taggedStore{tag: "a"})

@@ -2,10 +2,38 @@ package mediastore
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minio/minio-go/v7"
 )
+
+func TestMapS3Err(t *testing.T) {
+	if mapS3Err(nil) != nil {
+		t.Error("nil should map to nil")
+	}
+	// A genuine S3 not-found (by code or 404 status) → ErrNotFound.
+	for _, e := range []error{
+		minio.ErrorResponse{Code: "NoSuchKey"},
+		minio.ErrorResponse{Code: "NoSuchBucket"},
+		minio.ErrorResponse{StatusCode: http.StatusNotFound},
+	} {
+		if got := mapS3Err(e); !errors.Is(got, ErrNotFound) {
+			t.Errorf("mapS3Err(%v) = %v, want ErrNotFound", e, got)
+		}
+	}
+	// Any other error passes through unchanged (not masked as not-found).
+	other := errors.New("connection refused")
+	if got := mapS3Err(other); !errors.Is(got, other) {
+		t.Errorf("mapS3Err(%v) = %v, want passthrough", other, got)
+	}
+	if errors.Is(mapS3Err(minio.ErrorResponse{Code: "AccessDenied"}), ErrNotFound) {
+		t.Error("AccessDenied must not be mapped to ErrNotFound")
+	}
+}
 
 func TestS3_ObjectKey_MapsLocalPathToBucketKey(t *testing.T) {
 	cases := []struct {

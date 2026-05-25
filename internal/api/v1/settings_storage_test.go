@@ -91,6 +91,104 @@ func TestUpdateStorage_DisabledSwapsToLocal(t *testing.T) {
 	}
 }
 
+func TestBuildMediaStore(t *testing.T) {
+	t.Run("disabled → Local, no remap", func(t *testing.T) {
+		s, err := BuildMediaStore(settings.StorageConfig{Enabled: false})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, ok := s.(mediastore.Local)
+		if !ok {
+			t.Fatalf("got %T, want Local", s)
+		}
+		if len(l.Remap) != 0 {
+			t.Errorf("unexpected remap: %v", l.Remap)
+		}
+	})
+
+	t.Run("local backend + path mappings → Local with remap", func(t *testing.T) {
+		s, err := BuildMediaStore(settings.StorageConfig{
+			PathMappings: map[string]string{"/primary/media": "/standby/media"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, ok := s.(mediastore.Local)
+		if !ok {
+			t.Fatalf("got %T, want Local", s)
+		}
+		if len(l.Remap) != 1 || l.Remap[0].From != "/primary/media" || l.Remap[0].To != "/standby/media" {
+			t.Errorf("remap not applied: %+v", l.Remap)
+		}
+	})
+
+	t.Run("s3 backend → *S3", func(t *testing.T) {
+		s, err := BuildMediaStore(settings.StorageConfig{
+			Enabled: true, Backend: "s3", Endpoint: "s3.example.com", Bucket: "media",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := s.(*mediastore.S3); !ok {
+			t.Errorf("got %T, want *S3", s)
+		}
+	})
+
+	t.Run("s3 backend missing bucket → error", func(t *testing.T) {
+		if _, err := BuildMediaStore(settings.StorageConfig{Enabled: true, Backend: "s3", Endpoint: "s3.example.com"}); err == nil {
+			t.Error("expected error for s3 config without a bucket")
+		}
+	})
+}
+
+func TestPathMappingsToRemap(t *testing.T) {
+	if pathMappingsToRemap(nil) != nil {
+		t.Error("nil map should yield nil")
+	}
+	if pathMappingsToRemap(map[string]string{}) != nil {
+		t.Error("empty map should yield nil")
+	}
+	// Longest prefix first, so the most specific mapping wins at match time.
+	got := pathMappingsToRemap(map[string]string{"/a": "/x", "/a/b/c": "/y", "/a/b": "/z"})
+	if len(got) != 3 {
+		t.Fatalf("got %d mappings, want 3", len(got))
+	}
+	if got[0].From != "/a/b/c" || got[len(got)-1].From != "/a" {
+		t.Errorf("not longest-first: %+v", got)
+	}
+}
+
+func TestStorageDTO_RoundTrip(t *testing.T) {
+	cfg := settings.StorageConfig{
+		Enabled: true, Backend: "s3", Endpoint: "s3.example.com", Bucket: "b",
+		AccessKey: "ak", SecretKey: "real-secret", UseSSL: true,
+		MediaRoot: "/m", PathPrefix: "p/", CDNBaseURL: "https://cdn",
+		PathMappings: map[string]string{"/a": "/b"},
+	}
+	dto := toStorageDTO(cfg)
+	if dto.SecretKey != secretMask {
+		t.Errorf("secret not masked: %q", dto.SecretKey)
+	}
+
+	// Echoing the mask back preserves the stored secret; everything else applies.
+	back := storageFromDTO(dto, cfg)
+	if back.SecretKey != "real-secret" {
+		t.Errorf("mask did not preserve secret: %q", back.SecretKey)
+	}
+	if back.Bucket != "b" || back.MediaRoot != "/m" || back.CDNBaseURL != "https://cdn" {
+		t.Errorf("fields lost: %+v", back)
+	}
+	if back.PathMappings["/a"] != "/b" {
+		t.Errorf("path mappings lost: %+v", back.PathMappings)
+	}
+
+	// A real new secret replaces the stored one.
+	dto.SecretKey = "new-secret"
+	if got := storageFromDTO(dto, cfg).SecretKey; got != "new-secret" {
+		t.Errorf("new secret not applied: %q", got)
+	}
+}
+
 func TestTestStorage_LocalBackendReportsOK(t *testing.T) {
 	svc := &mockSettingsService{}
 	h := newStorageHandler(svc)
