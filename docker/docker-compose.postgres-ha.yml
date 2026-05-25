@@ -1,0 +1,89 @@
+name: onscreen-postgres-ha
+
+# PostgreSQL streaming replication: 1 primary + 1 async standby. This is the
+# replication SUBSTRATE for two things:
+#   - HA failover (with an orchestrator — see below), and
+#   - multi-site active/passive DR (run the standby on a second box / TrueNAS).
+#
+# Point OnScreen at both via a multi-host DSN so pgx connects to whichever is
+# read-write (and re-homes after a promotion):
+#   DATABASE_URL=postgres://onscreen:PASS@postgres-primary:5432,postgres-replica:5432/onscreen?target_session_attrs=read-write&sslmode=disable
+#   DATABASE_RO_URL=postgres://onscreen:PASS@postgres-replica:5432,postgres-primary:5432/onscreen?target_session_attrs=any&sslmode=disable
+#
+# AUTOMATIC promotion needs an orchestrator on top of this substrate:
+#   - managed Postgres (RDS/Cloud SQL Multi-AZ) — failover is the provider's job;
+#   - Patroni / repmgr — self-hosted leader election + auto-promote;
+#   - or operator-driven `pg_ctl promote` on the standby (active/passive DR).
+# The app side (multi-host failover DSN, prompt re-home) is ready regardless.
+
+x-pg: &pg
+  image: pgvector/pgvector:pg16
+  restart: unless-stopped
+
+services:
+  postgres-primary:
+    <<: *pg
+    environment:
+      POSTGRES_USER: onscreen
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS required}
+      POSTGRES_DB: onscreen
+    command:
+      - postgres
+      - -c
+      - listen_addresses=*
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - hot_standby=on
+    volumes:
+      - primary_data:/var/lib/postgresql/data
+      - ./postgres-ha/init-replication.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  postgres-replica:
+    <<: *pg
+    user: postgres
+    environment:
+      PGPASSWORD: ${DB_PASS:?DB_PASS required}
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    # Base-back up from the primary on first start (writes standby.signal +
+    # primary_conninfo via -R), then run as a streaming standby. On restart the
+    # data dir already exists, so it just resumes streaming.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        DATA=/var/lib/postgresql/data
+        if [ ! -s "$$DATA/PG_VERSION" ]; then
+          echo "standby: base-backup from primary"
+          rm -rf "$$DATA"/*
+          until pg_basebackup -h postgres-primary -U replicator -D "$$DATA" -Fp -Xs -P -R; do
+            echo "standby: primary not ready for basebackup, retrying"; sleep 2
+          done
+        fi
+        # The volume mount point is created 0755 by Docker, but Postgres refuses
+        # to start a data directory looser than 0750. pg_basebackup restores the
+        # *contents'* modes from the primary but not the top-level dir's, so tighten
+        # it here (idempotent — safe on both first backup and plain restarts).
+        chmod 0700 "$$DATA"
+        exec postgres -c hot_standby=on
+    volumes:
+      - replica_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  primary_data:
+  replica_data:

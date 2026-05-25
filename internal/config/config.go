@@ -24,6 +24,12 @@ import (
 // they differ from the running value after a reload.
 type Config struct {
 	// ── Required ─────────────────────────────────────────────────────────────
+	// DatabaseURL accepts a multi-host DSN for Postgres HA, e.g.
+	//   postgres://u:p@primary:5432,replica:5432/db?target_session_attrs=read-write
+	// pgx records the extra hosts as fallbacks and connects to whichever is
+	// read-write, re-homing to a promoted primary after a failover (ADR-033). The
+	// pool shortens its connection lifetime automatically when fallbacks are
+	// present so writes re-home within ~1 min of a graceful switchover.
 	DatabaseURL string `env:"DATABASE_URL,required"`
 	ValkeyURL   string `env:"VALKEY_URL,required"`
 

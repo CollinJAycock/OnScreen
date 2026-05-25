@@ -53,16 +53,30 @@ re-elects automatically when the holder's Valkey lease expires.
 
 Even `docker-compose.ha.yml` runs these as singletons.
 
-### 1. PostgreSQL primary
+### 1. PostgreSQL primary  ✅ app-side + substrate landed
 Reads scale via replicas, but a primary failure stops writes.
 
 **Close it:** streaming replication + automated failover. Options, easiest first:
 - Managed HA Postgres (RDS / Cloud SQL Multi-AZ, Crunchy Bridge) — failover is the provider's problem.
 - Self-managed: **Patroni** (or **CloudNativePG** on k8s) for leader election + automated promotion, with **pgBouncer/HAProxy** pointed at a floating primary endpoint.
 
-**App work:** minimal — the RW/RO split already exists. Mostly ops: a virtual
-primary endpoint pgBouncer can follow on promotion, and confirming the pool
-reconnects cleanly across a failover.
+**Done (app side):** `DATABASE_URL` accepts a multi-host failover DSN
+(`primary,replica/db?target_session_attrs=read-write`); pgx records the extra
+hosts as fallbacks, connects to whichever is read-write, and re-homes to a
+promoted primary. The pool shortens `MaxConnLifetime` to 60s when fallbacks are
+present (`buildPoolConfig`, [`internal/db/db.go`](../internal/db/db.go)) so writes
+re-home within ~1 min of a graceful switchover; a crash failover recovers at once.
+The RW/RO split (`DATABASE_RO_URL`) already exists.
+
+**Done (substrate):** a 1-primary + 1-streaming-standby stack is in
+[`docker/docker-compose.postgres-ha.yml`](../docker/docker-compose.postgres-ha.yml)
+(standby self-bootstraps via `pg_basebackup -R`). Validated locally: primary→replica
+propagation, replica rejects writes, and a `read-write` DSN listing the replica
+first still lands on the primary.
+
+**Still to do (ops):** the **automatic promotion** layer — managed Multi-AZ, or
+Patroni/repmgr/CloudNativePG — on top of this substrate, plus a floating primary
+endpoint. The app side needs nothing further.
 
 ### 2. Valkey  ✅ client support landed
 Holds sessions, the **leader lock**, transcode dispatch counters, rate limits,
@@ -227,7 +241,7 @@ reads** if both sites should be live. Active/active writes only if forced.
 ## Suggested sequencing
 
 1. **Valkey Sentinel** — ✅ client support + deployable stack landed; failover for the lock/session/cache tier makes the existing leader-election guarantee real.
-2. **Postgres automated failover** — Patroni / CloudNativePG / managed Multi-AZ behind a floating endpoint. *(next)*
+2. **Postgres failover** — ✅ app-side (multi-host failover DSN + lifetime tuning) + replication substrate (`docker-compose.postgres-ha.yml`) landed & validated. Remaining: the **automatic promotion** orchestrator (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint — pure ops.
 3. **`MediaStore` abstraction + object-storage backend** — unblocks everything downstream; non-breaking (local FS stays the default).
 4. **CDN + `SignedURL` offload** for artwork / direct-play / static assets.
 5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock.

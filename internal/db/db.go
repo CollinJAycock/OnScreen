@@ -13,9 +13,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewPool creates a pgxpool.Pool with production-ready defaults (ADR-021).
-// The pool is not yet connected — it connects lazily on first use.
+// NewPool creates a pgxpool.Pool with production-ready defaults (ADR-021) and
+// verifies connectivity with a ping. A multi-host DSN
+// (host1,host2:5432/db?target_session_attrs=read-write) enables Postgres
+// failover: pgx picks the read-write primary at connect time and re-homes to a
+// promoted primary after a failover (ADR-033).
 func NewPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
+	cfg, err := buildPoolConfig(connStr)
+	if err != nil {
+		return nil, err
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create pool: %w", err)
+	}
+
+	// Verify connectivity.
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := pool.Ping(pingCtx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("db ping: %w", err)
+	}
+
+	return pool, nil
+}
+
+// buildPoolConfig parses connStr and applies OnScreen's pool tuning. Split from
+// NewPool so the tuning — including the HA-DSN detection below — is unit-testable
+// without a live database.
+func buildPoolConfig(connStr string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse db config: %w", err)
@@ -35,9 +63,22 @@ func NewPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
 	}
 	cfg.MaxConns = maxConns
 	cfg.MinConns = min(int32(cpus), maxConns/2)
-	cfg.MaxConnLifetime = 15 * time.Minute
 	cfg.MaxConnIdleTime = 3 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
+
+	// Connection lifetime. A multi-host DSN is an HA topology (pgconn records the
+	// extra hosts as Fallbacks): pgx selects the read-write primary at connect
+	// time, but an existing connection to a *gracefully* demoted primary stays
+	// usable-yet-read-only until it's recycled. Shorten the lifetime in that case
+	// so writes re-home to the promoted primary within ~1 min after a switchover.
+	// A crash failover recovers at once (broken connections are evicted
+	// immediately); this only bounds the graceful-switchover window. Single-host
+	// deployments keep the long lifetime to minimise reconnect churn.
+	if len(cfg.ConnConfig.Fallbacks) > 0 {
+		cfg.MaxConnLifetime = 60 * time.Second
+	} else {
+		cfg.MaxConnLifetime = 15 * time.Minute
+	}
 
 	// OTel tracing on every query. When no tracer provider is registered, the
 	// global no-op provider is used, so this is free at runtime. Query
@@ -46,20 +87,7 @@ func NewPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
 		otelpgx.WithTrimSQLInSpanName(),
 	)
 
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("create pool: %w", err)
-	}
-
-	// Verify connectivity.
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("db ping: %w", err)
-	}
-
-	return pool, nil
+	return cfg, nil
 }
 
 // PingablePool wraps pgxpool.Pool to satisfy the observability.Pinger interface.
