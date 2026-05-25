@@ -68,6 +68,17 @@ var requiredSystemTasks = []systemTask{
 		cronExpr: "23 */2 * * *",
 		enabled:  true,
 	},
+	{
+		name:     "Refresh analytics (watch_plays)",
+		taskType: "refresh_watch_plays",
+		// Every 10 min: rebuilds the watch_plays materialized view that the
+		// analytics dashboard reads. The refresh recomputes a lead() window
+		// over all stop/scrobble history, so it's deliberately off-request and
+		// not too frequent; analytics tolerates a few minutes' lag (the
+		// endpoint also memoizes its response for 5 min on top of this).
+		cronExpr: "*/10 * * * *",
+		enabled:  true,
+	},
 }
 
 // seedSystemTasks inserts any missing required task rows. Idempotent —

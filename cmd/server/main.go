@@ -989,6 +989,11 @@ func run() error {
 	// goes hunting for an admin endpoint".
 	schedRegistry.Register("refresh_missing_art",
 		scheduler.NewRefreshMissingArtHandler(mediaSvc, metaAgent, logger))
+	// Rebuild the watch_plays materialized view off the request path so the
+	// analytics dashboard reads a cheap indexed copy instead of recomputing a
+	// full-history lead() window on every load (migration 00004).
+	schedRegistry.Register("refresh_watch_plays",
+		scheduler.NewRefreshWatchPlaysHandler(rwPool, logger))
 	// Seed the scheduled_tasks rows our handlers depend on. Idempotent:
 	// admin edits to existing rows are preserved (EnsureSystemTask uses
 	// WHERE NOT EXISTS on task_type), so this is safe on every boot.

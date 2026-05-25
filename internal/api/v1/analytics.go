@@ -4,12 +4,24 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
+
+// analyticsCacheTTL bounds how stale the dashboard can be. The eight aggregates
+// (five over the watch_plays window, which recomputes a lead() over all
+// stop/scrobble history) cost hundreds of ms each on a populated catalog, and
+// the page auto-refreshes every 30s — so without memoization that whole bundle
+// re-runs twice a minute per open tab. The response is server-global (not
+// per-user), so one cached value serves everyone; a short TTL keeps the numbers
+// fresh enough for a dashboard while amortizing the cost. Same posture as the
+// hub's trendingCache.
+const analyticsCacheTTL = 5 * time.Minute
 
 // analyticsQuerier is the DB subset needed by AnalyticsHandler.
 type analyticsQuerier interface {
@@ -27,11 +39,38 @@ type analyticsQuerier interface {
 type AnalyticsHandler struct {
 	db     analyticsQuerier
 	logger *slog.Logger
+	cache  *analyticsCache
 }
 
 // NewAnalyticsHandler creates an AnalyticsHandler.
 func NewAnalyticsHandler(db analyticsQuerier, logger *slog.Logger) *AnalyticsHandler {
-	return &AnalyticsHandler{db: db, logger: logger}
+	return &AnalyticsHandler{db: db, logger: logger, cache: &analyticsCache{ttl: analyticsCacheTTL}}
+}
+
+// analyticsCache memoizes the assembled (server-global) analytics response for
+// up to ttl. The dashboard's 30s auto-refresh would otherwise re-run all eight
+// aggregates twice a minute; this serves the cached bundle until it expires.
+type analyticsCache struct {
+	mu      sync.Mutex
+	resp    *analyticsResponse
+	fetched time.Time
+	ttl     time.Duration
+}
+
+func (c *analyticsCache) get() (*analyticsResponse, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.resp != nil && time.Since(c.fetched) < c.ttl {
+		return c.resp, true
+	}
+	return nil, false
+}
+
+func (c *analyticsCache) set(r *analyticsResponse) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resp = r
+	c.fetched = time.Now()
 }
 
 // ── JSON response types ───────────────────────────────────────────────────────
@@ -115,6 +154,14 @@ type analyticsResponse struct {
 // compounded into ~10s page loads.
 func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// Serve the memoized bundle unless the caller forces a recompute (?refresh=true).
+	if r.URL.Query().Get("refresh") != "true" {
+		if cached, ok := h.cache.get(); ok {
+			respond.Success(w, r, *cached)
+			return
+		}
+	}
 
 	var (
 		overview        gen.AnalyticsOverviewRow
@@ -241,7 +288,7 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respRecent[i] = play
 	}
 
-	respond.Success(w, r, analyticsResponse{
+	resp := analyticsResponse{
 		Overview: analyticsOverview{
 			TotalItems:       overview.TotalItems,
 			TotalFiles:       overview.TotalFiles,
@@ -256,5 +303,7 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		BandwidthByDay: respBandwidth,
 		TopPlayed:      respTop,
 		RecentPlays:    respRecent,
-	})
+	}
+	h.cache.set(&resp)
+	respond.Success(w, r, resp)
 }
