@@ -241,7 +241,7 @@ paths now exist:
 The remaining CDN win is **static segments**, which only become cacheable once
 they're pre-encoded — see Static ABR below.
 
-### Static ABR for popular titles — the highest-leverage scale change
+### Static ABR for popular titles — the highest-leverage scale change  🚧 foundation landed
 Live ABR transcode segments are **per-session** and don't cache. The fix is to
 **pre-encode the ABR ladder once** for popular titles, store the segments in
 object storage, and serve them from the CDN forever; only the long tail is
@@ -250,9 +250,24 @@ live-transcoded on the fleet.
 - Popularity signal already exists: top-played from `watch_plays` (the analytics
   matview) picks the pre-encode set.
 - The encode jobs reuse the existing fleet + dispatcher.
+- Segments are written via the new `Putter` and served via `SignedURL` (CDN).
 - Result: the expensive live-transcode tier only handles cold/rare content, and
   the hot path is static CDN bytes — the difference between "scales with GPUs"
   and "scales with cache."
+
+**Foundation landed:** [`internal/staticabr`](../internal/staticabr/staticabr.go) —
+the media-store **key scheme** (`MasterKey` / `RungPlaylistKey` / `SegmentKey` /
+`HashKey`, all under one `Prefix` so a `Walk` enumerates/prunes a ladder), the
+popularity-driven **`Plan`** (selects top-played titles whose ladder is missing or
+stale-by-source-hash, with min-plays + limit), and a store-backed **`StoreChecker`**
+(master playlist exists + source hash matches). Unit-tested.
+
+**Still to do:** (1) an **encoder** — a scheduled task that runs `Plan` against
+`getTopPlayed`, enqueues the `BuildLadder` rungs as fleet jobs that `Put` segments
++ the `source.hash` sidecar; (2) **serve-from-static** — the ABR handler checks
+`StoreChecker` and, on a hit, hands back `SignedURL`s to the static master/segments
+instead of starting a live session; (3) **invalidation/cleanup** on source change
++ admin controls (enable, cache budget).
 
 ### Multi-region (deferred)
 True global low-latency needs read-local replicas per region + CDN edge +
@@ -342,7 +357,7 @@ reads** if both sites should be live. Active/active writes only if forced.
 2. **Postgres failover** — ✅ app-side (multi-host failover DSN + lifetime tuning) + replication substrate (`docker-compose.postgres-ha.yml`) landed & validated. Remaining: the **automatic promotion** orchestrator (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint — pure ops.
 3. **`MediaStore` abstraction + object-storage backend** — ✅ landed: abstraction, `Local` + S3 backends, hot-swap provider, admin UI, and every read path routed (direct play, download, transcode source, artwork, scanner discovery + music/photo/faststart reads), plus per-site content addressing. Remaining: a writable `Putter` for cover/folder-art write-back + static-ABR segments; object-storage live ingest (watcher).
 4. **CDN + `SignedURL` offload** — ✅ object-storage bytes offload via signed/CDN URLs on every serve path; app-served artwork is CDN-cacheable via `PUBLIC_ASSET_CACHE`. Static *segments* wait on step 5.
-5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock.
+5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock. 🚧 foundation landed (`internal/staticabr`: key scheme + popularity plan + store-backed encoded-check); remaining: the encoder task (fleet jobs → `Put` segments), serve-from-static (`SignedURL`), invalidation + admin controls.
 6. **Multi-site active/passive DR** — two TrueNAS sites, ZFS + Postgres streaming replication; the first step into [geo-distribution](#multi-site--geo-distribution). Then active/active reads.
 7. *(deferred)* multi-region (many regions / global); *(separate track, only if pursuing path B)* multi-tenancy + billing + DRM.
 
