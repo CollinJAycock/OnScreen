@@ -170,10 +170,17 @@ per-type processing is pure filename parsing, no byte reads. For the default loc
 backend nothing changes (the store is `Local`, every call resolves to the same
 syscall).
 
+**Per-type embedded reads — extended.** Music tags, image dimensions, and photo
+EXIF now read through the store (`ReadMusicTagsStore`, `ProbeImageReader`,
+`ExtractEXIFReader`), so **music** and **photo** libraries enrich from object
+storage too — not just movies/shows/anime. The path-based `ReadMusicTags` /
+`ProbeImage` / `ExtractEXIF` remain as local wrappers.
+
 **Still to do (degrades gracefully for remote today):**
-- per-type **embedded reads** — music tags, audiobook/book covers, EXIF, MP4
-  faststart, image dimensions — still read the local path, so for a remote source
-  they fall back to online enrichment rather than embedded metadata;
+- the remaining per-type reads — audiobook/book embedded covers (ffmpeg/zip),
+  MP4 faststart (`IsFaststart`), and music **folder-art** discovery (a directory
+  read) — still use the local path; they need a presigned URL or `store.Walk`,
+  and fall back to online enrichment for a remote source meanwhile;
 - the fsnotify **watcher** stays local-only — object storage has no inotify; live
   ingest there needs bucket event notifications, a separate effort.
 

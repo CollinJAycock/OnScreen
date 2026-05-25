@@ -798,7 +798,12 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 
 	var probe *ProbeResult
 	if isImageFile(path) {
-		probe = ProbeImage(path)
+		if f, oerr := s.mediaStore().Open(ctx, path); oerr == nil {
+			probe = ProbeImageReader(f, path)
+			_ = f.Close()
+		} else {
+			probe = &ProbeResult{}
+		}
 	} else {
 		// ffprobe accepts an http(s) URL as -i just like a path, so when the
 		// source lives in object storage hand it a short-lived signed URL;
@@ -1036,7 +1041,13 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 // EXIF carries a DateTimeOriginal — that field already drives date sorting on
 // other media types, so photos slot in for free.
 func (s *Scanner) persistPhotoEXIF(ctx context.Context, item *media.Item, path string) {
-	ex, err := ExtractEXIF(path)
+	f, oerr := s.mediaStore().Open(ctx, path)
+	if oerr != nil {
+		s.logger.WarnContext(ctx, "exif open failed", "path", path, "err", oerr)
+		return
+	}
+	ex, err := ExtractEXIFReader(f)
+	_ = f.Close()
 	if err != nil {
 		s.logger.WarnContext(ctx, "exif extract failed", "path", path, "err", err)
 		return

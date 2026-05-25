@@ -117,7 +117,7 @@ func (s *Scanner) resolveArtistTitle(ctx context.Context, libraryID uuid.UUID, t
 // per-track on compilations and classical recordings, but AlbumArtist is
 // stable for the album. Picard-tagged libraries rely on this behaviour.
 func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID, path string, roots []string) (*media.Item, *MusicTags, error) {
-	tags, err := ReadMusicTags(path)
+	tags, err := ReadMusicTagsStore(ctx, s.mediaStore(), path)
 	if err != nil {
 		return nil, nil, err
 	}

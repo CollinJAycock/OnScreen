@@ -5,14 +5,16 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/mediastore"
 )
 
 // MusicTags holds the metadata extracted from an audio file.
@@ -74,11 +76,18 @@ func cleanTag(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// ReadMusicTags reads audio metadata from filePath.
-// It first tries to read embedded tags. If that fails or returns empty
-// artist/title, it falls back to parsing the folder structure.
+// ReadMusicTags reads audio metadata from a local file. Thin wrapper over
+// ReadMusicTagsStore using the local-filesystem backend.
 func ReadMusicTags(filePath string) (*MusicTags, error) {
-	tags, tagErr := readEmbeddedTags(filePath)
+	return ReadMusicTagsStore(context.Background(), mediastore.Local{}, filePath)
+}
+
+// ReadMusicTagsStore reads audio metadata from filePath through the media store,
+// so tracks stored in object storage are parsed too. It first tries embedded
+// tags; if that fails or returns empty artist/title, it falls back to parsing
+// the folder structure (path-only, no read).
+func ReadMusicTagsStore(ctx context.Context, store mediastore.Store, filePath string) (*MusicTags, error) {
+	tags, tagErr := readEmbeddedTags(ctx, store, filePath)
 	if tagErr != nil || tags.effectiveArtist() == "" || tags.Title == "" {
 		// Fall back to folder-based parsing. Merge with any partial tag data.
 		fb := parseMusicPath(filePath)
@@ -121,9 +130,10 @@ func (m *MusicTags) effectiveArtist() string {
 	return m.AlbumArtist
 }
 
-// readEmbeddedTags uses dhowden/tag to read metadata from the file.
-func readEmbeddedTags(filePath string) (*MusicTags, error) {
-	f, err := os.Open(filePath)
+// readEmbeddedTags uses dhowden/tag to read metadata from the file, reading its
+// bytes through the media store.
+func readEmbeddedTags(ctx context.Context, store mediastore.Store, filePath string) (*MusicTags, error) {
+	f, err := store.Open(ctx, filePath)
 	if err != nil {
 		return nil, err
 	}

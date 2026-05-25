@@ -3,6 +3,7 @@ package scanner
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -56,8 +57,14 @@ func ExtractEXIF(path string) (*PhotoEXIF, error) {
 		return nil, fmt.Errorf("open photo: %w", err)
 	}
 	defer f.Close()
+	return ExtractEXIFReader(f)
+}
 
-	x, err := exif.Decode(f)
+// ExtractEXIFReader reads EXIF tags from an already-open image, so the source can
+// be read through the media store. Same (nil, nil) "no EXIF block" contract as
+// ExtractEXIF.
+func ExtractEXIFReader(r io.Reader) (*PhotoEXIF, error) {
+	x, err := exif.Decode(r)
 	if err != nil {
 		// goexif returns a sentinel for "no EXIF block" — treat as a soft miss.
 		if exif.IsCriticalError(err) {

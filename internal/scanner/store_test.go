@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dhowden/tag"
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -69,6 +70,27 @@ func TestHashFileStore_ReadsThroughStore(t *testing.T) {
 	}
 	if store.opens == 0 {
 		t.Error("hash did not read bytes through the store")
+	}
+}
+
+func TestReadMusicTagsStore_ReadsThroughStore(t *testing.T) {
+	orig := readTagFrom
+	readTagFrom = func(r io.ReadSeeker) (tag.Metadata, error) {
+		_, _ = io.ReadAll(r) // prove the store-backed reader is real
+		return &stubTagMetadata{artist: "Boards of Canada", album: "MHTRTC", title: "Roygbiv", trackN: 4}, nil
+	}
+	defer func() { readTagFrom = orig }()
+
+	store := &recordingStore{data: []byte("fake-audio-bytes"), modTime: time.Now()}
+	tags, err := ReadMusicTagsStore(context.Background(), store, "/objstore/BoC/MHTRTC/04.flac")
+	if err != nil {
+		t.Fatalf("ReadMusicTagsStore: %v", err)
+	}
+	if store.opens == 0 {
+		t.Error("tags were not read through the store")
+	}
+	if tags.Artist != "Boards of Canada" || tags.Title != "Roygbiv" {
+		t.Errorf("tags not parsed: %+v", tags)
 	}
 }
 

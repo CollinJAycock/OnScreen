@@ -369,21 +369,28 @@ func IsFaststart(path string) bool {
 	return true // couldn't determine — assume ok
 }
 
-// ProbeImage extracts dimensions from an image file using Go's image package.
-// Returns a minimal ProbeResult with resolution only (no duration, codecs, etc.).
+// ProbeImage extracts dimensions from a local image file. Thin wrapper over
+// ProbeImageReader for callers that have a path.
 func ProbeImage(path string) *ProbeResult {
 	f, err := os.Open(path)
 	if err != nil {
 		return &ProbeResult{}
 	}
 	defer f.Close()
+	return ProbeImageReader(f, path)
+}
 
-	cfg, _, err := image.DecodeConfig(f)
+// ProbeImageReader extracts dimensions from an already-open image using Go's
+// image package, so the source can be read through the media store. ext (e.g.
+// the file path or name) supplies the container label. Returns a minimal
+// ProbeResult with resolution only (no duration, codecs, etc.).
+func ProbeImageReader(r io.Reader, name string) *ProbeResult {
+	cfg, _, err := image.DecodeConfig(r)
 	if err != nil {
 		return &ProbeResult{}
 	}
 	w, h := cfg.Width, cfg.Height
-	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
 	return &ProbeResult{
 		Container:   &container,
 		ResolutionW: &w,
