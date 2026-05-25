@@ -425,3 +425,28 @@ func TestService_GetUnsetReturnsZeroValues(t *testing.T) {
 		t.Errorf("Storage unset: got %+v, want zero (local default)", got)
 	}
 }
+
+// TestService_WorkerFleetDefaultsEmbeddedEnabled locks in the new-install
+// default: with no worker_fleet row, the embedded transcode worker must be
+// ENABLED so a fresh single-node install can transcode out of the box. (The
+// embedded worker being off is what made dev playback fail.)
+func TestService_WorkerFleetDefaultsEmbeddedEnabled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test (testcontainer)")
+	}
+	svc := newServiceForTest(t)
+	ctx := context.Background()
+
+	got := svc.WorkerFleet(ctx)
+	if !got.EmbeddedEnabled {
+		t.Fatalf("new install must default to embedded worker ENABLED; got %+v", got)
+	}
+
+	// An explicit admin disable must still be honoured (not overridden by the default).
+	if err := svc.SetWorkerFleet(ctx, WorkerFleetConfig{EmbeddedEnabled: false}); err != nil {
+		t.Fatalf("SetWorkerFleet: %v", err)
+	}
+	if svc.WorkerFleet(ctx).EmbeddedEnabled {
+		t.Error("explicit embedded_enabled=false must be respected, not reset to the default")
+	}
+}
