@@ -13,19 +13,20 @@
 2. [Core Design Principles](#core-design-principles)
 3. [Technology Stack](#technology-stack)
 4. [System Architecture](#system-architecture)
-5. [Repository Structure](#repository-structure)
-6. [Database Schema](#database-schema)
-7. [API Reference](#api-reference)
-8. [Data Flows](#data-flows)
-9. [Scan Pipeline](#scan-pipeline)
-10. [Transcode Pipeline](#transcode-pipeline)
-11. [Authentication Flow](#authentication-flow)
-12. [Configuration](#configuration)
-13. [Observability](#observability)
-14. [Security](#security)
-15. [Known Issues & Technical Debt](#known-issues--technical-debt)
-16. [Architectural Decisions](#architectural-decisions)
-17. [Development Phases](#development-phases)
+5. [High Availability & Scale](#high-availability--scale)
+6. [Repository Structure](#repository-structure)
+7. [Database Schema](#database-schema)
+8. [API Reference](#api-reference)
+9. [Data Flows](#data-flows)
+10. [Scan Pipeline](#scan-pipeline)
+11. [Transcode Pipeline](#transcode-pipeline)
+12. [Authentication Flow](#authentication-flow)
+13. [Configuration](#configuration)
+14. [Observability](#observability)
+15. [Security](#security)
+16. [Known Issues & Technical Debt](#known-issues--technical-debt)
+17. [Architectural Decisions](#architectural-decisions)
+18. [Development Phases](#development-phases)
 
 ---
 
@@ -134,6 +135,26 @@ OnScreen fixes all of this from scratch. It is **not** a Plex clone — it ships
 ### Single-Node (Default)
 
 In the default deployment, `cmd/server` embeds the transcode worker in-process. The standalone `cmd/worker` binary is available for multi-node setups where the transcode tier scales independently.
+
+---
+
+## High Availability & Scale
+
+The API tier is **stateless and horizontally scalable** — `docker/docker-compose.ha.yml` runs N instances behind pgBouncer (session mode, ADR-020). Singleton background work (hub/matview refresh, partition maintenance, scheduled scans) runs on a single elected leader and **fails over automatically**: a Valkey-lease lock (`internal/worker/master.go`, 15s TTL) is re-acquired by another instance when the holder disappears. Reads can fan out to replicas via the RW/RO pool split (ADR-021). The transcode tier already scales out as an independent fleet with cost- and capability-aware dispatch.
+
+What's **not** yet HA — the remaining single points of failure, even in the HA compose:
+
+| Tier | Today | To close |
+|---|---|---|
+| PostgreSQL | single primary (writes stop on failure) | streaming replication + automated failover (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint pgBouncer follows |
+| Valkey | single node (holds leader lock, sessions, dispatch counters, rate limits, caches) | Valkey Sentinel (failover) → Cluster (sharded) |
+| Storage | local/NFS path (`http.ServeFile(file.FilePath)`) — SPOF + scaling ceiling | a `MediaStore` abstraction with local / object-storage (S3/GCS) backends + `SignedURL` for CDN offload |
+
+Beyond HA, the byte-delivery path is the scaling lever: a CDN in front of cacheable assets (artwork, direct-play files, static segments — the asset token already produces CDN-shaped signed URLs), and **pre-encoded static ABR ladders for popular titles** (top-played from the `watch_plays` matview) so the live transcode fleet only handles the long tail.
+
+Explicitly **out of scope:** a licensed-studio catalog (requires certified DRM — Widevine L1 / PlayReady / FairPlay — which a self-hostable OSS server can't hold). OnScreen targets *content you own or have rights to*; the ambitious-but-coherent targets are a best-in-class self-hosted HA platform, or a multi-tenant streaming-platform *engine* others run for their own catalogs.
+
+Full plan, sequencing, and the `MediaStore` interface sketch: **[docs/ha-roadmap.md](docs/ha-roadmap.md)**.
 
 ---
 
@@ -517,6 +538,7 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | ADR-025 | Encoder auto-detect at startup | NVENC → VAAPI → software; overridable via `TRANSCODE_ENCODERS` |
 | ADR-027 | Hot-reload via SIGHUP | Runtime tuning without restart; no-op on Windows |
 | ADR-031 | Multiple files per media item | Supports multi-version libraries (1080p + 4K editions) |
+| ADR-032 | Valkey-lease leader election for singleton work | One elected instance runs hub/matview refresh, partition maintenance, and scheduled jobs; auto-fails-over on lease expiry so a multi-instance deployment has no singleton SPOF (`internal/worker/master.go`). See [HA roadmap](docs/ha-roadmap.md). |
 
 ---
 
