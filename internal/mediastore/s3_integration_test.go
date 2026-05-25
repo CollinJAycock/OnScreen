@@ -154,6 +154,31 @@ func TestS3_Integration_AgainstMinIO(t *testing.T) {
 		}
 	})
 
+	t.Run("Put_ThenReadBack", func(t *testing.T) {
+		// Extracted cover art / pre-encoded segments are written back via Put.
+		const pkey = "/srv/media/Movies/Dune (2021)/poster.jpg"
+		want := []byte("resized-poster-bytes")
+		if err := s.Put(ctx, pkey, want); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		fi, err := s.Stat(ctx, pkey)
+		if err != nil {
+			t.Fatalf("Stat after Put: %v", err)
+		}
+		if fi.Size != int64(len(want)) {
+			t.Errorf("size = %d, want %d", fi.Size, len(want))
+		}
+		f, err := s.Open(ctx, pkey)
+		if err != nil {
+			t.Fatalf("Open after Put: %v", err)
+		}
+		defer f.Close()
+		got, _ := io.ReadAll(f)
+		if string(got) != string(want) {
+			t.Errorf("read %q, want %q", got, want)
+		}
+	})
+
 	t.Run("Walk_ListsKeysRoundTrippedToFilePaths", func(t *testing.T) {
 		// Seed a couple more objects so Walk has a tree to enumerate.
 		for _, k := range []string{"TV/ShowA/s01e01.mkv", "TV/ShowA/s01e02.mkv"} {

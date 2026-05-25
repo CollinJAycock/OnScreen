@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,6 +151,43 @@ func TestLocal_Remap_NoMatchPassesThrough(t *testing.T) {
 	l := Local{Remap: []PathMapping{{From: "/primary", To: "/standby"}}}
 	if _, err := l.Stat(context.Background(), filepath.Join(t.TempDir(), "missing.mkv")); !errors.Is(err, ErrNotFound) {
 		t.Errorf("got %v, want ErrNotFound (no remap match → key as-is)", err)
+	}
+}
+
+func TestLocal_Put_WritesAndCreatesDirs(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "sub", "deeper", "poster.jpg") // parent dirs don't exist yet
+	if err := (Local{}).Put(context.Background(), key, []byte("art-bytes")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// Read it back through the store.
+	f, err := Local{}.Open(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Open after Put: %v", err)
+	}
+	defer f.Close()
+	got, _ := io.ReadAll(f)
+	if string(got) != "art-bytes" {
+		t.Errorf("read %q, want art-bytes", got)
+	}
+	// No leftover temp files in the directory.
+	entries, _ := os.ReadDir(filepath.Dir(key))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".mediastore-") {
+			t.Errorf("leftover temp file: %s", e.Name())
+		}
+	}
+}
+
+func TestLocal_Put_HonoursRemap(t *testing.T) {
+	dir := t.TempDir()
+	l := Local{Remap: []PathMapping{{From: "/primary/media", To: dir}}}
+	if err := l.Put(context.Background(), "/primary/media/x.jpg", []byte("z")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// Landed at the remapped location.
+	if _, err := os.Stat(filepath.Join(dir, "x.jpg")); err != nil {
+		t.Errorf("Put did not write to the remapped path: %v", err)
 	}
 }
 

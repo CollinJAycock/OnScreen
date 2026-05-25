@@ -86,6 +86,26 @@ func TestProvider_OpenStat_DelegateToCurrent(t *testing.T) {
 	}
 }
 
+func TestProvider_Put_DelegatesToPutter(t *testing.T) {
+	dir := t.TempDir()
+	p := NewProvider(Local{}) // Local is a Putter
+	key := filepath.Join(dir, "poster.jpg")
+	if err := p.Put(context.Background(), key, []byte("art")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if b, _ := os.ReadFile(key); string(b) != "art" {
+		t.Errorf("Put did not write through the provider: %q", b)
+	}
+}
+
+func TestProvider_Put_ErrorsWhenBackendNotPutter(t *testing.T) {
+	// taggedStore implements Store but not Putter → Put must error, not panic.
+	p := NewProvider(taggedStore{})
+	if err := p.Put(context.Background(), "k", []byte("x")); err == nil {
+		t.Error("expected an error when the backend can't write")
+	}
+}
+
 func TestIsLocal(t *testing.T) {
 	cases := []struct {
 		name string

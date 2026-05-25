@@ -26,6 +26,7 @@ type Provider struct {
 var (
 	_ Store  = (*Provider)(nil)
 	_ Lister = (*Provider)(nil)
+	_ Putter = (*Provider)(nil)
 )
 
 // NewProvider returns a Provider serving from s, or from Local when s is nil.
@@ -91,4 +92,15 @@ func (p *Provider) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) 
 		return fmt.Errorf("mediastore: backend %T does not support listing", cur)
 	}
 	return l.Walk(ctx, prefix, fn)
+}
+
+// Put implements Putter by delegating to the active backend when it supports
+// writes; a backend that isn't a Putter yields a clear error rather than a panic.
+func (p *Provider) Put(ctx context.Context, key string, data []byte) error {
+	cur := p.current()
+	pt, ok := cur.(Putter)
+	if !ok {
+		return fmt.Errorf("mediastore: backend %T does not support writes", cur)
+	}
+	return pt.Put(ctx, key, data)
 }

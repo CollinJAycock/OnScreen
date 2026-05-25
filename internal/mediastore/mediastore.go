@@ -79,6 +79,17 @@ type Lister interface {
 	Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error
 }
 
+// Putter is an optional Store capability: writing derived artifacts back to the
+// store — extracted cover art today, pre-encoded static-ABR segments later.
+// Separate from Store because the read paths (serve / transcode / scan source)
+// don't need it.
+type Putter interface {
+	// Put writes data at key, overwriting any existing object. For Local the key
+	// is a filesystem path (parent directories are created); for S3 it maps to the
+	// bucket object key.
+	Put(ctx context.Context, key string, data []byte) error
+}
+
 // PathMapping rewrites a key prefix. It's the content-addressing primitive for
 // multi-site active/passive DR: a standby site resolves the primary's absolute
 // FilePaths (carried verbatim in the replicated Postgres) against its own mount
@@ -159,6 +170,36 @@ func (l Local) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) erro
 		}
 		return fn(ObjectInfo{Key: path, Size: info.Size(), ModTime: info.ModTime()})
 	})
+}
+
+// Put implements Putter, writing atomically (temp file + rename) so a crash or
+// concurrent reader never sees a partial file. Parent directories are created.
+// Honours Remap so a multi-site standby writes to its own mount.
+func (l Local) Put(_ context.Context, key string, data []byte) error {
+	p := l.resolve(key)
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".mediastore-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // Serve writes the media identified by key to w, honouring HTTP Range,

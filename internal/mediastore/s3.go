@@ -1,6 +1,7 @@
 package mediastore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -47,10 +48,11 @@ type S3 struct {
 	cdnBase    string
 }
 
-// compile-time assertions that S3 satisfies Store and Lister.
+// compile-time assertions that S3 satisfies Store, Lister, and Putter.
 var (
 	_ Store  = (*S3)(nil)
 	_ Lister = (*S3)(nil)
+	_ Putter = (*S3)(nil)
 )
 
 // NewS3 builds an S3 backend. It does not perform any network I/O — call Ping to
@@ -149,6 +151,17 @@ func (s *S3) Stat(ctx context.Context, key string) (FileInfo, error) {
 		return FileInfo{}, mapS3Err(err)
 	}
 	return FileInfo{Size: info.Size, ModTime: info.LastModified}, nil
+}
+
+// Put implements Putter via S3 PutObject, mapping the key to the bucket object
+// key. Overwrites any existing object.
+func (s *S3) Put(ctx context.Context, key string, data []byte) error {
+	_, err := s.client.PutObject(ctx, s.bucket, s.objectKey(key),
+		bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("mediastore: put: %w", err)
+	}
+	return nil
 }
 
 // SignedURL implements Store. When a CDN base is configured the object is served
