@@ -105,6 +105,14 @@ the asset-token migration.
 
 ### Fixed — server
 
+- **Prometheus metrics were exported but never recorded** — 9 of the 10
+  `onscreen_*` metrics were defined and registered yet had zero instrumentation,
+  so `/metrics` only ever showed runtime/process stats. Wired them all up: HTTP
+  request count + latency (chi route-template labels to bound cardinality), DB
+  query duration (by SQL verb, via a pgx tracer that wraps the existing OTel
+  one), transcode active-sessions gauge + jobs-by-status, scanner files per
+  library, watch events by type, webhook delivery failures, and hub-cache
+  refresh duration.
 - **Settings ▸ System values weren't read back** — `GET /settings/system`
   returned its body un-enveloped while the web client unwraps `{"data": …}`, so
   saved values never repopulated the form. It now uses the standard envelope

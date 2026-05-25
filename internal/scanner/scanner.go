@@ -26,6 +26,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/mediastore"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 var tracer = otel.Tracer("onscreen/scanner")
@@ -155,11 +156,12 @@ type ConcurrencyProvider interface {
 const probeURLTTL = time.Hour
 
 type Scanner struct {
-	media  MediaService
-	agent  MetadataAgent
-	conc   ConcurrencyProvider
-	logger *slog.Logger
-	store  mediastore.Store // optional; nil → mediastore.Local (read media from disk)
+	media   MediaService
+	agent   MetadataAgent
+	conc    ConcurrencyProvider
+	logger  *slog.Logger
+	store   mediastore.Store // optional; nil → mediastore.Local (read media from disk)
+	metrics *observability.Metrics
 }
 
 // New creates a Scanner.
@@ -171,6 +173,13 @@ func New(mediaSvc MediaService, agent MetadataAgent, conc ConcurrencyProvider,
 		conc:   conc,
 		logger: logger,
 	}
+}
+
+// WithMetrics enables Prometheus instrumentation (files scanned per library).
+// nil is a no-op.
+func (s *Scanner) WithMetrics(m *observability.Metrics) *Scanner {
+	s.metrics = m
+	return s
 }
 
 // WithMediaStore sets the backend the scanner reads media through (discovery,
@@ -552,6 +561,9 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 		"new", result.New,
 		"duration_ms", result.Duration.Milliseconds(),
 	)
+	if s.metrics != nil && result.Found > 0 {
+		s.metrics.ScannerFilesTotal.WithLabelValues(libraryID.String()).Add(float64(result.Found))
+	}
 	return result, nil
 }
 

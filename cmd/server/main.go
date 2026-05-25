@@ -272,13 +272,19 @@ func run() error {
 		logger.Info("otel tracing enabled", "endpoint", otelCfg.Endpoint, "sample_ratio", otelCfg.SampleRatio)
 	}
 
-	rwPool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	// Time every query into onscreen_db_query_duration_seconds, labelled by SQL
+	// verb (bounded cardinality). Wraps the otelpgx tracer, doesn't replace it.
+	dbObserver := db.WithQueryObserver(func(verb string, seconds float64) {
+		metrics.DBQueryDuration.WithLabelValues(verb).Observe(seconds)
+	})
+
+	rwPool, err := db.NewPool(ctx, cfg.DatabaseURL, dbObserver)
 	if err != nil {
 		return fmt.Errorf("rw db pool: %w", err)
 	}
 	defer rwPool.Close()
 
-	roPool, err := db.NewPool(ctx, cfg.DatabaseROURL)
+	roPool, err := db.NewPool(ctx, cfg.DatabaseROURL, dbObserver)
 	if err != nil {
 		return fmt.Errorf("ro db pool: %w", err)
 	}
@@ -503,7 +509,7 @@ func run() error {
 	caaClient := coverartarchive.New()
 	metaAgent.SetAlbumCoverByMBIDFn(func() scanner.AlbumCoverByMBIDAgent { return caaClient })
 
-	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger)
+	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger).WithMetrics(metrics)
 	notifBrokerEarly := notification.NewBroker()
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
@@ -558,7 +564,7 @@ func run() error {
 	// Watch event service (Phase 2).
 	rwWQ := &watchEventAdapter{q: gen.New(rwPool)}
 	roWQ := &watchEventAdapter{q: gen.New(roPool)}
-	watchSvc := watchevent.NewService(rwWQ, roWQ, logger)
+	watchSvc := watchevent.NewService(rwWQ, roWQ, logger).WithMetrics(metrics)
 
 	// Watching-status mirror — Plan to Watch / Watching / Completed /
 	// On Hold / Dropped. Generic per-(user, item) feature shipped to
@@ -566,7 +572,7 @@ func run() error {
 	watchStatusSvc := watchstatus.New(&watchStatusAdapter{q: gen.New(rwPool)})
 
 	// ── Transcode session store + segment token (Phase 2) ─────────────────────
-	sessionStore := transcode.NewSessionStore(valkeyClient)
+	sessionStore := transcode.NewSessionStore(valkeyClient).WithMetrics(metrics)
 	segTokenMgr := transcode.NewSegmentTokenManager(valkeyClient)
 
 	// ── API handlers ──────────────────────────────────────────────────────────
@@ -663,7 +669,7 @@ func run() error {
 		encryptor,
 		worker.WebhookServerInfo{Title: "OnScreen", MachineID: machineID},
 		logger,
-	).WithPluginNotifier(pluginDispatcher)
+	).WithPluginNotifier(pluginDispatcher).WithMetrics(metrics)
 	libEnqueuer.webhookDispatcher = webhookDispatcher
 	matchAdapter := &matchSearchAdapter{enricher: metaAgent}
 	arrAdapter := &arrLibraryAdapter{libSvc: libSvc, scanner: libEnqueuer}
@@ -1244,7 +1250,7 @@ func run() error {
 
 	// ── Background workers ────────────────────────────────────────────────────
 	partitionWorker := worker.NewPartitionWorker(rwPool, cfg.RetainMonths, logger)
-	hubRefreshWorker := worker.NewHubRefreshWorker(rwPool, 5*time.Minute, logger)
+	hubRefreshWorker := worker.NewHubRefreshWorker(rwPool, 5*time.Minute, logger).WithMetrics(metrics)
 	periodicScanWorker := newPeriodicScanWorker(libSvc, libEnqueuer, logger)
 	// masterLock ensures only one instance runs singleton workers (hub refresh,
 	// partition maintenance, periodic scans). Any instance can take over if the

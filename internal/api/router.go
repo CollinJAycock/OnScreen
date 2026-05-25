@@ -141,6 +141,9 @@ func NewRouter(h *Handlers) http.Handler {
 	r.Use(middleware.CORS(h.CORSAllowedOrigins))
 	r.Use(middleware.Recover(h.Logger))
 	r.Use(middleware.Logger(h.Logger))
+	if h.Metrics != nil {
+		r.Use(middleware.Metrics(h.Metrics))
+	}
 
 	// ── Health endpoints ──────────────────────────────────────────────────────
 	// These are on the main port for simplicity; the metrics port serves /metrics.

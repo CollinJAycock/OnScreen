@@ -15,6 +15,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/plugin"
 	"github.com/onscreen/onscreen/internal/webhook"
 )
@@ -77,6 +78,14 @@ type WebhookDispatcher struct {
 	ctx       context.Context // cancelled on Close to interrupt retries
 	cancel    context.CancelFunc
 	plugins   PluginNotifier
+	metrics   *observability.Metrics
+}
+
+// WithMetrics enables Prometheus instrumentation (delivery failures by URL). nil
+// is a no-op.
+func (d *WebhookDispatcher) WithMetrics(m *observability.Metrics) *WebhookDispatcher {
+	d.metrics = m
+	return d
 }
 
 // NewWebhookDispatcher creates a WebhookDispatcher.
@@ -267,11 +276,15 @@ func (d *WebhookDispatcher) deliverWithRetry(ctx context.Context, ep gen.Webhook
 			"url", ep.Url, "attempt", attempt+1, "err", err)
 	}
 
-	// All attempts exhausted — record failure using context.Background on
-	// purpose: the caller's ctx may already be cancelled (shutdown), but we
-	// still want the failure audit row persisted so ops can see which webhooks
-	// dropped. A short detached context would be better if the DB is slow; if
-	// that becomes an issue, wrap with a 5s WithTimeout on context.Background.
+	// All attempts exhausted.
+	if d.metrics != nil {
+		d.metrics.WebhookFailuresTotal.WithLabelValues(ep.Url).Inc()
+	}
+	// Record failure using context.Background on purpose: the caller's ctx may
+	// already be cancelled (shutdown), but we still want the failure audit row
+	// persisted so ops can see which webhooks dropped. A short detached context
+	// would be better if the DB is slow; if that becomes an issue, wrap with a
+	// 5s WithTimeout on context.Background.
 	if _, err := d.db.CreateWebhookFailure(context.Background(), gen.CreateWebhookFailureParams{
 		EndpointID:   ep.ID,
 		Url:          ep.Url,

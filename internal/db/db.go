@@ -6,22 +6,31 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/exaring/otelpgx"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// PoolOption customises the pool config built by NewPool. Kept generic so the db
+// package stays decoupled from observability.
+type PoolOption func(*pgxpool.Config)
 
 // NewPool creates a pgxpool.Pool with production-ready defaults (ADR-021) and
 // verifies connectivity with a ping. A multi-host DSN
 // (host1,host2:5432/db?target_session_attrs=read-write) enables Postgres
 // failover: pgx picks the read-write primary at connect time and re-homes to a
 // promoted primary after a failover (ADR-033).
-func NewPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
+func NewPool(ctx context.Context, connStr string, opts ...PoolOption) (*pgxpool.Pool, error) {
 	cfg, err := buildPoolConfig(connStr)
 	if err != nil {
 		return nil, err
+	}
+	for _, opt := range opts {
+		opt(cfg)
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -88,6 +97,66 @@ func buildPoolConfig(connStr string) (*pgxpool.Config, error) {
 	)
 
 	return cfg, nil
+}
+
+// WithQueryObserver records each query's wall-clock duration via observe(verb,
+// seconds), where verb is the SQL command (SELECT / INSERT / …). It wraps the
+// otelpgx tracer set by buildPoolConfig rather than replacing it — pgx allows a
+// single tracer, and embedding the concrete *otelpgx.Tracer keeps its batch /
+// connect / prepare / copy tracing intact while we add query timing.
+func WithQueryObserver(observe func(verb string, seconds float64)) PoolOption {
+	return func(cfg *pgxpool.Config) {
+		if observe == nil {
+			return
+		}
+		base, ok := cfg.ConnConfig.Tracer.(*otelpgx.Tracer)
+		if !ok {
+			return
+		}
+		cfg.ConnConfig.Tracer = &queryObserverTracer{Tracer: base, observe: observe}
+	}
+}
+
+// queryObserverTracer embeds the otelpgx tracer (promoting its batch/connect/
+// prepare/copy tracing) and overrides the query hooks to also time each query.
+type queryObserverTracer struct {
+	*otelpgx.Tracer
+	observe func(verb string, seconds float64)
+}
+
+type queryStartKey struct{}
+
+type queryStart struct {
+	at   time.Time
+	verb string
+}
+
+func (t *queryObserverTracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	ctx = t.Tracer.TraceQueryStart(ctx, conn, data)
+	return context.WithValue(ctx, queryStartKey{}, queryStart{at: time.Now(), verb: sqlVerb(data.SQL)})
+}
+
+func (t *queryObserverTracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
+	t.Tracer.TraceQueryEnd(ctx, conn, data)
+	if s, ok := ctx.Value(queryStartKey{}).(queryStart); ok {
+		t.observe(s.verb, time.Since(s.at).Seconds())
+	}
+}
+
+// sqlVerb returns the leading SQL command, upper-cased, restricted to a known set
+// so the metric label can't explode in cardinality. Anything else is "other".
+func sqlVerb(sql string) string {
+	fields := strings.Fields(sql)
+	if len(fields) == 0 {
+		return "other"
+	}
+	switch verb := strings.ToUpper(fields[0]); verb {
+	case "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "CALL", "COPY",
+		"BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "CREATE", "DROP", "ALTER":
+		return verb
+	default:
+		return "other"
+	}
 }
 
 // PingablePool wraps pgxpool.Pool to satisfy the observability.Pinger interface.

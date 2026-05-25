@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // WatchState represents the derived playback state for a user+media pair.
@@ -72,14 +74,22 @@ type InsertWatchEventRow struct {
 
 // Service implements watch event business logic.
 type Service struct {
-	rw     Querier
-	ro     Querier
-	logger *slog.Logger
+	rw      Querier
+	ro      Querier
+	logger  *slog.Logger
+	metrics *observability.Metrics
 }
 
 // NewService constructs a watch event Service.
 func NewService(rw, ro Querier, logger *slog.Logger) *Service {
 	return &Service{rw: rw, ro: ro, logger: logger}
+}
+
+// WithMetrics enables Prometheus instrumentation (watch events by type). nil is
+// a no-op, so callers without a metrics registry are unaffected.
+func (s *Service) WithMetrics(m *observability.Metrics) *Service {
+	s.metrics = m
+	return s
 }
 
 // Record inserts a watch event. For stop and scrobble events it also
@@ -100,6 +110,9 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 	})
 	if err != nil {
 		return fmt.Errorf("insert watch event: %w", err)
+	}
+	if s.metrics != nil {
+		s.metrics.WatchEventsTotal.WithLabelValues(p.EventType).Inc()
 	}
 
 	// Refresh watch_state after terminal events so subsequent metadata

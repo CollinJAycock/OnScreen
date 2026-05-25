@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/valkey"
 )
 
@@ -114,12 +115,33 @@ type WorkerRegistration struct {
 
 // SessionStore manages transcode sessions in Valkey.
 type SessionStore struct {
-	v *valkey.Client
+	v       *valkey.Client
+	metrics *observability.Metrics
 }
 
 // NewSessionStore creates a SessionStore backed by the given Valkey client.
 func NewSessionStore(v *valkey.Client) *SessionStore {
 	return &SessionStore{v: v}
+}
+
+// WithMetrics enables the onscreen_transcode_sessions_active gauge, refreshed
+// from the live Valkey session index after each create/delete (accurate across
+// instances; nil is a no-op).
+func (s *SessionStore) WithMetrics(m *observability.Metrics) *SessionStore {
+	s.metrics = m
+	return s
+}
+
+// refreshActiveGauge sets the active-sessions gauge to the live index count.
+// Reading SCARD keeps it correct under multi-instance dispatch and TTL expiry,
+// rather than drifting like a local inc/dec would.
+func (s *SessionStore) refreshActiveGauge(ctx context.Context) {
+	if s.metrics == nil {
+		return
+	}
+	if n, err := s.v.Raw().SCard(ctx, sessionIndexKey).Result(); err == nil {
+		s.metrics.TranscodeActive.Set(float64(n))
+	}
 }
 
 // Create stores a new session. TTL is sessionTTL (4 hours).
@@ -133,6 +155,7 @@ func (s *SessionStore) Create(ctx context.Context, sess Session) error {
 	}
 	// Add to session index set for O(1) listing.
 	s.v.Raw().SAdd(ctx, sessionIndexKey, sess.ID)
+	s.refreshActiveGauge(ctx)
 	return nil
 }
 
@@ -152,7 +175,9 @@ func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
 // Delete removes a session.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	s.v.Raw().SRem(ctx, sessionIndexKey, id)
-	return s.v.Del(ctx, sessionKey(id))
+	err := s.v.Del(ctx, sessionKey(id))
+	s.refreshActiveGauge(ctx)
+	return err
 }
 
 // List returns all active sessions using the session index set (O(active_sessions)).
@@ -487,7 +512,9 @@ func (s *SessionStore) EnqueueJob(ctx context.Context, job TranscodeJob) error {
 func (s *SessionStore) DispatchJob(ctx context.Context, job TranscodeJob) (string, error) {
 	workers, err := s.ListWorkers(ctx)
 	if err != nil || len(workers) == 0 {
-		return "", s.EnqueueJob(ctx, job)
+		eqErr := s.EnqueueJob(ctx, job)
+		s.recordJob("queued", eqErr)
+		return "", eqErr
 	}
 
 	// Read each worker's in-flight dispatch counters (count + cost) and fold
@@ -506,6 +533,7 @@ func (s *SessionStore) DispatchJob(ctx context.Context, job TranscodeJob) (strin
 	job.CostCenti = JobCostCenti(job.Width, job.Height, job.Decision)
 	b, err := json.Marshal(job)
 	if err != nil {
+		s.recordJob("error", err)
 		return "", fmt.Errorf("marshal job: %w", err)
 	}
 	// Atomically bump both in-flight counters, then push job. The worker
@@ -514,7 +542,21 @@ func (s *SessionStore) DispatchJob(ctx context.Context, job TranscodeJob) (strin
 	s.v.Raw().Expire(ctx, dispatchCounterKey(best.Addr), workerTTL)
 	s.v.Raw().IncrBy(ctx, dispatchCostKey(best.Addr), int64(job.CostCenti))
 	s.v.Raw().Expire(ctx, dispatchCostKey(best.Addr), workerTTL)
-	return best.Addr, s.v.Raw().RPush(ctx, workerQueueKey(best.Addr), string(b)).Err()
+	pushErr := s.v.Raw().RPush(ctx, workerQueueKey(best.Addr), string(b)).Err()
+	s.recordJob("dispatched", pushErr)
+	return best.Addr, pushErr
+}
+
+// recordJob increments onscreen_transcode_jobs_total. A non-nil err overrides
+// the status with "error" so failures are visible regardless of the path.
+func (s *SessionStore) recordJob(status string, err error) {
+	if s.metrics == nil {
+		return
+	}
+	if err != nil {
+		status = "error"
+	}
+	s.metrics.TranscodeJobsTotal.WithLabelValues(status).Inc()
 }
 
 // AckDispatch decrements the in-flight dispatch counters when a worker starts
