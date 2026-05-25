@@ -156,6 +156,15 @@ type Config struct {
 	// tell which site, and whether it's writable, served a request. Empty for a
 	// single-site deployment.
 	SiteID string `env:"SITE_ID"`
+	// NodeID is this node's stable identity, used to key its row in the
+	// node_settings table (per-node config managed from the admin UI). Empty
+	// defaults to the host name at startup. This is irreducible bootstrap — a
+	// node must know who it is before it can read its own per-node config.
+	NodeID string `env:"NODE_ID"`
+	// IgnoreNodeDBConfig boots from env/defaults only, skipping the node_settings
+	// row entirely. Break-glass for recovering a node locked out by a bad UI
+	// value (e.g. an unreachable LISTEN_ADDR).
+	IgnoreNodeDBConfig bool `env:"IGNORE_NODE_DB_CONFIG" envDefault:"false"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`
@@ -195,6 +204,13 @@ func Load() (*Config, error) {
 func (c *Config) applyDefaults() error {
 	if c.DatabaseROURL == "" {
 		c.DatabaseROURL = c.DatabaseURL
+	}
+	if c.NodeID == "" {
+		if host, err := os.Hostname(); err == nil && host != "" {
+			c.NodeID = host
+		} else {
+			c.NodeID = "node"
+		}
 	}
 	if c.CachePath == "" {
 		if c.MediaPath != "" {

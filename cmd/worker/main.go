@@ -109,7 +109,14 @@ func run() error {
 	// overrides as the server. Node/site-specific config stays env. Done before
 	// the workers below read cfg. SystemConfig is plaintext (not a secret), so no
 	// encryptor is needed here.
-	applyWorkerSystemSettings(cfg, settings.New(rwPool, logger).System(ctx), logger)
+	bootSettings := settings.New(rwPool, logger)
+	applyWorkerSystemSettings(cfg, bootSettings.System(ctx), logger)
+	// Per-node config (Settings ▸ Nodes): this node's row wins over env, unless
+	// IGNORE_NODE_DB_CONFIG is set. Covers the fields the worker reads (worker
+	// health addr, QSV decode, site, media path, static-ABR root).
+	if !cfg.IgnoreNodeDBConfig {
+		applyWorkerNodeSettings(cfg, bootSettings.NodeSettingsGet(ctx, cfg.NodeID), logger)
+	}
 
 	// ── Valkey ────────────────────────────────────────────────────────────────
 	// Sentinel (HA) when VALKEY_SENTINEL_ADDRS is set, else a single node.
@@ -279,5 +286,35 @@ func applyWorkerSystemSettings(cfg *config.Config, sys settings.SystemConfig, lo
 	}
 	if changed > 0 {
 		logger.Info("applied System settings over env config", "overrides", changed)
+	}
+}
+
+// applyWorkerNodeSettings overrides node-specific config with this node's row in
+// node_settings, for the subset a transcode worker consumes. Mirrors the
+// server's applyNodeSettings. A nil field keeps the env value.
+func applyWorkerNodeSettings(cfg *config.Config, ns settings.NodeSettings, logger *slog.Logger) {
+	changed := 0
+	if ns.WorkerHealthAddr != nil && *ns.WorkerHealthAddr != "" {
+		cfg.WorkerHealthAddr = *ns.WorkerHealthAddr
+		changed++
+	}
+	if ns.MediaPath != nil && *ns.MediaPath != "" {
+		cfg.MediaPath = *ns.MediaPath
+		changed++
+	}
+	if ns.StaticABRRoot != nil {
+		cfg.StaticABRRoot = *ns.StaticABRRoot
+		changed++
+	}
+	if ns.SiteID != nil {
+		cfg.SiteID = *ns.SiteID
+		changed++
+	}
+	if ns.TranscodeQSVDecode != nil {
+		cfg.TranscodeQSVDecode = *ns.TranscodeQSVDecode
+		changed++
+	}
+	if changed > 0 {
+		logger.Info("applied per-node settings over env config", "node_id", cfg.NodeID, "overrides", changed)
 	}
 }

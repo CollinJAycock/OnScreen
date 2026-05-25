@@ -575,6 +575,11 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/settings/storage/test", h.Settings.TestStorage)
 					r.Get("/settings/system", h.Settings.GetSystem)
 					r.Put("/settings/system", h.Settings.UpdateSystem)
+					r.Get("/settings/tls", h.Settings.GetTLS)
+					r.Put("/settings/tls", h.Settings.UpdateTLS)
+					r.Get("/settings/nodes", h.Settings.GetNodes)
+					r.Get("/settings/node/{nodeID}", h.Settings.GetNode)
+					r.Put("/settings/node/{nodeID}", h.Settings.UpdateNode)
 				})
 			}
 

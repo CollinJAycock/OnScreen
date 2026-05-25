@@ -338,6 +338,14 @@ func run() error {
 	applySystemSettings(ctx, cfg, settingsSvc.System(ctx), logger)
 	// Same idea for the transcode output ceilings (Settings ▸ Transcode).
 	applyTranscodeConfig(cfg, settingsSvc.TranscodeConfigGet(ctx), logger)
+	// Per-node config (Settings ▸ Nodes): this node's row wins over env, unless
+	// IGNORE_NODE_DB_CONFIG is set (break-glass for a bad bind address).
+	if !cfg.IgnoreNodeDBConfig {
+		applyNodeSettings(cfg, settingsSvc.NodeSettingsGet(ctx, cfg.NodeID), logger)
+	}
+	// UI-managed HTTPS: serve TLS from an admin-uploaded cert when no env TLS
+	// file paths are set. nil → plain HTTP (or env-file TLS below).
+	dbTLSConfig := loadDBTLSConfig(ctx, settingsSvc, cfg, logger)
 
 	// ── Hot-reloadable config (ADR-027) ───────────────────────────────────────
 	// Built from the *merged* cfg so a UI-set scan concurrency is the startup
@@ -615,6 +623,10 @@ func run() error {
 	// Effective transcode output ceilings, so the Transcode page shows the
 	// running caps when the stored TranscodeConfig values are unset (0).
 	settingsHandler.SetTranscodeDefaults(transcodeEffective(cfg))
+	// Lets the TLS endpoint report the env-file source and block UI uploads.
+	settingsHandler.SetTLSEnvConfigured(cfg.TLSEnabled())
+	// Identifies the current node + its effective per-node config for Settings ▸ Nodes.
+	settingsHandler.SetNodeIdentity(cfg.NodeID, nodeEffective(cfg))
 	// Worker-node connection secrets, revealed via step-up reauth (authSvc).
 	settingsHandler.SetWorkerCredentials(authSvc, cfg.DatabaseURL, cfg.ValkeyURL, cfg.SecretKey)
 	auditHandler := v1.NewAuditHandler(gen.New(roPool), logger)
@@ -1247,6 +1259,9 @@ func run() error {
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
+	if dbTLSConfig != nil {
+		apiServer.TLSConfig = dbTLSConfig
+	}
 	metricsServer := &http.Server{
 		Addr:         cfg.MetricsAddr,
 		Handler:      metricsMux,
@@ -1258,16 +1273,25 @@ func run() error {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		if cfg.TLSEnabled() {
+		switch {
+		case cfg.TLSEnabled():
+			// Env file paths win (see loadDBTLSConfig).
 			logger.Info("api server listening", "addr", cfg.ListenAddr, "tls", true, "cert", cfg.TLSCertFile)
 			if err := apiServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return fmt.Errorf("api server (tls): %w", err)
 			}
-			return nil
-		}
-		logger.Info("api server listening", "addr", cfg.ListenAddr, "tls", false)
-		if err := apiServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("api server: %w", err)
+		case apiServer.TLSConfig != nil:
+			// UI-managed cert: empty strings make ListenAndServeTLS use the
+			// in-memory certificate already on apiServer.TLSConfig.
+			logger.Info("api server listening", "addr", cfg.ListenAddr, "tls", true, "cert", "admin-uploaded")
+			if err := apiServer.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("api server (tls): %w", err)
+			}
+		default:
+			logger.Info("api server listening", "addr", cfg.ListenAddr, "tls", false)
+			if err := apiServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("api server: %w", err)
+			}
 		}
 		return nil
 	})

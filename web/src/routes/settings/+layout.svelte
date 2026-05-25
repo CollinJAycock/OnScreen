@@ -31,11 +31,12 @@
     {
       label: 'General',
       href: '/settings',
-      matches: ['/settings', '/settings/security', '/settings/system'],
+      matches: ['/settings', '/settings/security', '/settings/system', '/settings/nodes'],
       children: [
         { href: '/settings', label: 'General' },
         { href: '/settings/security', label: 'Security' },
         { href: '/settings/system', label: 'System' },
+        { href: '/settings/nodes', label: 'Nodes' },
       ],
     },
     {
@@ -99,7 +100,7 @@
   // starts with /settings — so plain prefix matching would make General
   // match everything. Enumerate its exact pages instead.
   function groupActive(g: Group, current: string): boolean {
-    if (g.label === 'General') return current === '/settings' || current === '/settings/security' || current === '/settings/system';
+    if (g.label === 'General') return current === '/settings' || current === '/settings/security' || current === '/settings/system' || current === '/settings/nodes';
     return g.matches.some((m) => current === m || current.startsWith(m + '/'));
   }
 

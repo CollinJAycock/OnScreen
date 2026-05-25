@@ -117,6 +117,60 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("NodeSettings", func(t *testing.T) {
+		// Unknown node → zero value.
+		if got := svc.NodeSettingsGet(ctx, "missing"); got != (NodeSettings{}) {
+			t.Errorf("missing node: got %+v, want zero", got)
+		}
+		la := ":9090"
+		site := "site-x"
+		qsv := true
+		want := NodeSettings{ListenAddr: &la, SiteID: &site, TranscodeQSVDecode: &qsv}
+		if err := svc.SetNodeSettings(ctx, "node-1", want); err != nil {
+			t.Fatalf("SetNodeSettings: %v", err)
+		}
+		got := svc.NodeSettingsGet(ctx, "node-1")
+		if got.ListenAddr == nil || *got.ListenAddr != ":9090" || got.SiteID == nil || *got.SiteID != "site-x" || got.TranscodeQSVDecode == nil || !*got.TranscodeQSVDecode {
+			t.Errorf("round-trip mismatch: %+v", got)
+		}
+		// Upsert replaces.
+		mp := "/mnt/media"
+		if err := svc.SetNodeSettings(ctx, "node-1", NodeSettings{MediaPath: &mp}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		if got := svc.NodeSettingsGet(ctx, "node-1"); got.MediaPath == nil || *got.MediaPath != "/mnt/media" || got.ListenAddr != nil {
+			t.Errorf("upsert should replace whole config: %+v", got)
+		}
+		// ListNodes sees the row.
+		nodes, err := svc.ListNodes(ctx)
+		if err != nil {
+			t.Fatalf("ListNodes: %v", err)
+		}
+		if len(nodes) != 1 || nodes[0].NodeID != "node-1" {
+			t.Errorf("ListNodes = %+v", nodes)
+		}
+	})
+
+	t.Run("TLSConfig", func(t *testing.T) {
+		if got := svc.TLS(ctx); got != (TLSConfig{}) {
+			t.Errorf("initial: got %+v, want zero", got)
+		}
+		want := TLSConfig{CertPEM: "-----BEGIN CERTIFICATE-----\nx\n", KeyPEM: "-----BEGIN EC PRIVATE KEY-----\ny\n"}
+		if err := svc.SetTLS(ctx, want); err != nil {
+			t.Fatalf("SetTLS: %v", err)
+		}
+		if got := svc.TLS(ctx); got != want {
+			t.Errorf("round-trip: got %+v", got)
+		}
+		// Empty clears.
+		if err := svc.SetTLS(ctx, TLSConfig{}); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+		if got := svc.TLS(ctx); got != (TLSConfig{}) {
+			t.Errorf("clear: got %+v, want zero", got)
+		}
+	})
+
 	t.Run("IntroDetectionMode_DefaultsToOnScan", func(t *testing.T) {
 		// No row → default to OnScan (matches migration seed).
 		if got := svc.IntroDetectionMode(ctx); got != IntroDetectionOnScan {

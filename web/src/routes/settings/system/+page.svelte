@@ -1,12 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { settingsApi } from '$lib/api';
-  import type { SystemSettings } from '$lib/api';
+  import type { SystemSettings, TLSStatus } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
   let saving = false;
   let error = '';
+
+  // TLS / HTTPS state.
+  let tls: TLSStatus = { configured: false, source: 'none' };
+  let tlsCertPem = '';
+  let tlsKeyPem = '';
+  let tlsSaving = false;
 
   let sys: SystemSettings = {
     server_name: '',
@@ -20,17 +26,35 @@
     missing_file_grace_minutes: 15,
     scan_file_concurrency: 0,
     scan_library_concurrency: 2,
+    discovery_enabled: true,
+    discovery_port: 7368,
   };
 
   onMount(async () => {
     try {
       sys = { ...(await settingsApi.getSystem()) };
+      try { tls = await settingsApi.getTLS(); } catch { /* non-fatal */ }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load system settings';
     } finally {
       loading = false;
     }
   });
+
+  async function saveTLS() {
+    tlsSaving = true;
+    try {
+      await settingsApi.updateTLS({ cert_pem: tlsCertPem, key_pem: tlsKeyPem });
+      toast.success(tlsCertPem ? 'TLS certificate saved — restart to serve HTTPS' : 'TLS certificate cleared — restart to apply');
+      tlsCertPem = '';
+      tlsKeyPem = '';
+      tls = await settingsApi.getTLS();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      tlsSaving = false;
+    }
+  }
 
   async function save() {
     saving = true;
@@ -136,11 +160,74 @@
       </div>
     </section>
 
+    <section>
+      <header>
+        <h2>LAN discovery</h2>
+        <p class="hint">Whether the server advertises itself over UDP broadcast so first-party clients can auto-find it.</p>
+      </header>
+      <label class="check">
+        <input type="checkbox" bind:checked={sys.discovery_enabled} />
+        <span>Broadcast over LAN discovery</span>
+      </label>
+      {#if sys.discovery_enabled}
+        <div class="grid">
+          <label>
+            Discovery UDP port
+            <input type="number" min="1" max="65535" bind:value={sys.discovery_port} />
+          </label>
+        </div>
+      {/if}
+    </section>
+
     <div class="actions">
       <button class="btn btn-primary" disabled={saving} on:click={save}>
         {saving ? 'Saving…' : 'Save system settings'}
       </button>
     </div>
+
+    <section>
+      <header>
+        <h2>HTTPS / TLS certificate</h2>
+        <p class="hint">
+          Serve HTTPS directly without a reverse proxy. The key is stored encrypted.
+          Takes effect after a restart. For per-host certs in a cluster, use a
+          reverse proxy or the <code>TLS_CERT_FILE</code> env path instead.
+        </p>
+      </header>
+
+      {#if tls.source === 'env-file'}
+        <p class="notice">
+          TLS is configured via <code>TLS_CERT_FILE</code> / <code>TLS_KEY_FILE</code>.
+          Unset those env vars to manage the certificate here.
+        </p>
+      {:else}
+        <p class="tls-status">
+          {#if tls.configured}
+            ✅ Serving an uploaded certificate{#if tls.subject} for <strong>{tls.subject}</strong>{/if}{#if tls.not_after} — expires {new Date(tls.not_after).toLocaleDateString()}{/if}.
+          {:else}
+            No certificate uploaded — serving plain HTTP.
+          {/if}
+        </p>
+        <label class="full">
+          Certificate (PEM, full chain)
+          <textarea rows="5" bind:value={tlsCertPem} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+        </label>
+        <label class="full">
+          Private key (PEM)
+          <textarea rows="5" bind:value={tlsKeyPem} placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+        </label>
+        <div class="actions">
+          <button class="btn btn-primary" disabled={tlsSaving || !tlsCertPem || !tlsKeyPem} on:click={saveTLS}>
+            {tlsSaving ? 'Saving…' : 'Upload certificate'}
+          </button>
+          {#if tls.configured}
+            <button class="btn" disabled={tlsSaving} on:click={() => { tlsCertPem = ''; tlsKeyPem = ''; saveTLS(); }}>
+              Clear certificate
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </section>
   </div>
 {/if}
 
@@ -180,7 +267,7 @@
     font-size: 0.78rem;
     color: var(--text-secondary);
   }
-  input[type="text"], input[type="number"] {
+  input[type="text"], input[type="number"], textarea {
     padding: 0.45rem 0.6rem;
     border-radius: 4px;
     border: 1px solid rgba(255,255,255,0.1);
@@ -189,6 +276,15 @@
     font-family: inherit;
     font-size: 0.85rem;
   }
+  textarea {
+    font-family: ui-monospace, monospace;
+    font-size: 0.75rem;
+    resize: vertical;
+    width: 100%;
+    margin-top: 0.3rem;
+  }
+  .tls-status { font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 0.5rem; }
+  code { font-family: ui-monospace, monospace; font-size: 0.78rem; background: rgba(255,255,255,0.06); padding: 0.05rem 0.3rem; border-radius: 3px; }
   .check {
     flex-direction: row;
     align-items: flex-start;

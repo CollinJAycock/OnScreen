@@ -26,6 +26,8 @@ type systemSettingDTO struct {
 	MissingFileGraceMinutes   int    `json:"missing_file_grace_minutes"`
 	ScanFileConcurrency       int    `json:"scan_file_concurrency"`
 	ScanLibraryConcurrency    int    `json:"scan_library_concurrency"`
+	DiscoveryEnabled          bool   `json:"discovery_enabled"`
+	DiscoveryPort             int    `json:"discovery_port"`
 }
 
 // pick returns the stored override when set, else the env-effective default.
@@ -72,6 +74,8 @@ func (h *SettingsHandler) GetSystem(w http.ResponseWriter, r *http.Request) {
 		MissingFileGraceMinutes:   pickInt(s.MissingFileGraceMinutes, d.MissingFileGraceMinutes),
 		ScanFileConcurrency:       pickInt(s.ScanFileConcurrency, d.ScanFileConcurrency),
 		ScanLibraryConcurrency:    pickInt(s.ScanLibraryConcurrency, d.ScanLibraryConcurrency),
+		DiscoveryEnabled:          pickBool(s.DiscoveryEnabled, d.DiscoveryEnabled),
+		DiscoveryPort:             pickInt(s.DiscoveryPort, d.DiscoveryPort),
 	})
 }
 
@@ -96,6 +100,8 @@ func (h *SettingsHandler) UpdateSystem(w http.ResponseWriter, r *http.Request) {
 		MissingFileGraceMinutes:   &dto.MissingFileGraceMinutes,
 		ScanFileConcurrency:       &dto.ScanFileConcurrency,
 		ScanLibraryConcurrency:    &dto.ScanLibraryConcurrency,
+		DiscoveryEnabled:          &dto.DiscoveryEnabled,
+		DiscoveryPort:             &dto.DiscoveryPort,
 	}
 	if err := h.svc.SetSystem(ctx, cfg); err != nil {
 		h.logger.ErrorContext(ctx, "update system config", "err", err)

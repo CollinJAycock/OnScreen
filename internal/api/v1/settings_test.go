@@ -35,6 +35,9 @@ type mockSettingsService struct {
 	setFleetErr    error
 	setFleetCall   *settings.WorkerFleetConfig // captures last SetWorkerFleet call
 	transcodeCfg   settings.TranscodeConfig
+	tlsCfg         settings.TLSConfig
+	nodeCfg        map[string]settings.NodeSettings
+	nodes          []settings.NodeSummary
 	oidc           settings.OIDCConfig
 	ldap           settings.LDAPConfig
 	saml           settings.SAMLConfig
@@ -81,6 +84,24 @@ func (m *mockSettingsService) TranscodeEncoders(_ context.Context) string       
 func (m *mockSettingsService) SetTranscodeEncoders(_ context.Context, _ string) error { return nil }
 func (m *mockSettingsService) TranscodeConfigGet(_ context.Context) settings.TranscodeConfig {
 	return m.transcodeCfg
+}
+func (m *mockSettingsService) TLS(_ context.Context) settings.TLSConfig { return m.tlsCfg }
+func (m *mockSettingsService) SetTLS(_ context.Context, c settings.TLSConfig) error {
+	m.tlsCfg = c
+	return nil
+}
+func (m *mockSettingsService) NodeSettingsGet(_ context.Context, nodeID string) settings.NodeSettings {
+	return m.nodeCfg[nodeID]
+}
+func (m *mockSettingsService) SetNodeSettings(_ context.Context, nodeID string, ns settings.NodeSettings) error {
+	if m.nodeCfg == nil {
+		m.nodeCfg = map[string]settings.NodeSettings{}
+	}
+	m.nodeCfg[nodeID] = ns
+	return nil
+}
+func (m *mockSettingsService) ListNodes(_ context.Context) ([]settings.NodeSummary, error) {
+	return m.nodes, nil
 }
 func (m *mockSettingsService) SetTranscodeConfig(_ context.Context, _ settings.TranscodeConfig) error {
 	return nil

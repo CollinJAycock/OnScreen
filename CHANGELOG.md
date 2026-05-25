@@ -78,6 +78,18 @@ the asset-token migration.
 - **Settings ▸ Transcode — Output Limits** — the global transcode ceilings (max
   bitrate / width / height), previously env-only, are editable in the admin UI
   (restart-required; the env vars remain the initial default).
+- **LAN discovery in the UI** — `DISCOVERY_ENABLED` / `DISCOVERY_PORT` move to
+  Settings ▸ System (restart-required).
+- **UI-managed HTTPS** — upload a TLS certificate + key in Settings ▸ System and
+  the server serves HTTPS from it (stored encrypted, loaded in-memory, no cert
+  file on disk). `TLS_CERT_FILE` / `TLS_KEY_FILE` still take precedence when set.
+- **Settings ▸ Nodes — per-node configuration** — a new `node_settings` table,
+  keyed by node identity (`NODE_ID`, default hostname), lets node/site-specific
+  config that must NOT be shared fleet-wide be managed from the UI per node: bind
+  addresses, filesystem paths, `SITE_ID`, Intel QSV decode, and the embedded-
+  worker role. The per-node value wins over env; `IGNORE_NODE_DB_CONFIG=true` is
+  a break-glass to boot a locked-out node from env only. The bootstrap set
+  (`DATABASE_URL`, `SECRET_KEY`, `NODE_ID`) necessarily stays in the environment.
 
 ### Changed — server
 

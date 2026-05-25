@@ -929,6 +929,39 @@ export interface SystemSettings {
   missing_file_grace_minutes: number;
   scan_file_concurrency: number;
   scan_library_concurrency: number;
+  discovery_enabled: boolean;
+  discovery_port: number;
+}
+
+export interface TLSStatus {
+  configured: boolean;
+  source: 'env-file' | 'uploaded' | 'none';
+  subject?: string;
+  not_after?: string;
+}
+
+export interface NodeSettings {
+  node_id: string;
+  is_current: boolean;
+  listen_addr: string;
+  metrics_addr: string;
+  worker_health_addr: string;
+  media_path: string;
+  cache_path: string;
+  static_abr_root: string;
+  site_id: string;
+  transcode_qsv_decode: boolean;
+  disable_embedded_worker: boolean;
+}
+
+export interface NodeSummary {
+  node_id: string;
+  updated_at: string;
+}
+
+export interface NodeList {
+  current_node_id: string;
+  nodes: NodeSummary[];
 }
 
 export interface GeneralSettings {
@@ -1061,6 +1094,13 @@ export const settingsApi = {
   testStorage: (body: StorageSettings) => api.post<StorageTestResult>('/settings/storage/test', body),
   getSystem: () => api.get<SystemSettings>('/settings/system'),
   updateSystem: (body: SystemSettings) => api.put<void>('/settings/system', body),
+
+  getTLS: () => api.get<TLSStatus>('/settings/tls'),
+  updateTLS: (body: { cert_pem: string; key_pem: string }) => api.put<void>('/settings/tls', body),
+
+  getNodes: () => api.get<NodeList>('/settings/nodes'),
+  getNode: (nodeID: string) => api.get<NodeSettings>(`/settings/node/${encodeURIComponent(nodeID)}`),
+  updateNode: (nodeID: string, body: NodeSettings) => api.put<void>(`/settings/node/${encodeURIComponent(nodeID)}`, body),
 };
 
 // ── Filesystem browser ────────────────────────────────────────────────────────

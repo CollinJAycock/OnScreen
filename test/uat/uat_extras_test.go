@@ -277,6 +277,17 @@ func (s *stubSettingsService) System(_ context.Context) settings.SystemConfig {
 func (s *stubSettingsService) SetSystem(_ context.Context, _ settings.SystemConfig) error {
 	return nil
 }
+func (s *stubSettingsService) TLS(_ context.Context) settings.TLSConfig { return settings.TLSConfig{} }
+func (s *stubSettingsService) SetTLS(_ context.Context, _ settings.TLSConfig) error { return nil }
+func (s *stubSettingsService) NodeSettingsGet(_ context.Context, _ string) settings.NodeSettings {
+	return settings.NodeSettings{}
+}
+func (s *stubSettingsService) SetNodeSettings(_ context.Context, _ string, _ settings.NodeSettings) error {
+	return nil
+}
+func (s *stubSettingsService) ListNodes(_ context.Context) ([]settings.NodeSummary, error) {
+	return nil, nil
+}
 
 // stubInviteDB satisfies v1.InviteDB with the minimum the admin-gate test needs.
 type stubInviteDB struct{}

@@ -57,6 +57,11 @@ type SettingsServiceIface interface {
 	SetStorage(ctx context.Context, cfg settings.StorageConfig) error
 	System(ctx context.Context) settings.SystemConfig
 	SetSystem(ctx context.Context, cfg settings.SystemConfig) error
+	TLS(ctx context.Context) settings.TLSConfig
+	SetTLS(ctx context.Context, cfg settings.TLSConfig) error
+	NodeSettingsGet(ctx context.Context, nodeID string) settings.NodeSettings
+	SetNodeSettings(ctx context.Context, nodeID string, ns settings.NodeSettings) error
+	ListNodes(ctx context.Context) ([]settings.NodeSummary, error)
 }
 
 // WorkerLister lists registered transcode workers from the session store.
@@ -107,6 +112,13 @@ type SettingsHandler struct {
 	// transcodeDefaults is the effective transcode output ceiling, so
 	// GET /settings/transcode-config can fill unset (0) caps with running values.
 	transcodeDefaults settings.TranscodeConfig
+	// tlsEnvConfigured is true when TLS_CERT_FILE/TLS_KEY_FILE are set, so the
+	// TLS endpoint reports the env-file source and refuses UI uploads (env wins).
+	tlsEnvConfigured bool
+	// nodeID + nodeDefaults describe THIS node, so the Nodes endpoints can mark
+	// the current node and fill its unset fields with running (env) values.
+	nodeID       string
+	nodeDefaults settings.NodeSettings
 }
 
 // SetSystemDefaults records the env-effective System config so the System
@@ -121,6 +133,22 @@ func (h *SettingsHandler) SetSystemDefaults(d settings.SystemConfig) *SettingsHa
 // GetTranscodeConfig can show running values where no override is stored.
 func (h *SettingsHandler) SetTranscodeDefaults(d settings.TranscodeConfig) *SettingsHandler {
 	h.transcodeDefaults = d
+	return h
+}
+
+// SetTLSEnvConfigured records whether TLS is pinned via env file paths, so the
+// TLS endpoint reports the right source and blocks UI uploads when env wins.
+func (h *SettingsHandler) SetTLSEnvConfigured(env bool) *SettingsHandler {
+	h.tlsEnvConfigured = env
+	return h
+}
+
+// SetNodeIdentity records this node's id and its env-effective per-node config,
+// so the Nodes endpoints can identify the current node and show running values
+// as defaults where it has no stored override.
+func (h *SettingsHandler) SetNodeIdentity(nodeID string, defaults settings.NodeSettings) *SettingsHandler {
+	h.nodeID = nodeID
+	h.nodeDefaults = defaults
 	return h
 }
 

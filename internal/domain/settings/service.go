@@ -7,8 +7,10 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onscreen/onscreen/internal/auth"
@@ -36,6 +38,7 @@ const keyOTelConfig = "otel_config"
 const keyGeneralConfig = "general_config"
 const keyStorageConfig = "storage_config"
 const keySystemConfig = "system_config"
+const keyTLSConfig = "tls_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -94,6 +97,7 @@ var secretKeys = map[string]struct{}{
 	keyLDAPConfig:          {}, // contains bind password
 	keySMTPConfig:          {}, // contains password
 	keyStorageConfig:       {}, // contains object-storage secret key
+	keyTLSConfig:           {}, // contains the TLS private key PEM
 }
 
 func (s *Service) isSecretKey(key string) bool {
@@ -642,6 +646,11 @@ type SystemConfig struct {
 	MissingFileGraceMinutes *int `json:"missing_file_grace_minutes,omitempty"`
 	ScanFileConcurrency     *int `json:"scan_file_concurrency,omitempty"`
 	ScanLibraryConcurrency  *int `json:"scan_library_concurrency,omitempty"`
+	// LAN discovery (env DISCOVERY_ENABLED / DISCOVERY_PORT). Cluster-wide policy
+	// — whether the server advertises itself over UDP broadcast, and on which
+	// port. Restart-required (the listener binds at startup).
+	DiscoveryEnabled *bool `json:"discovery_enabled,omitempty"`
+	DiscoveryPort    *int  `json:"discovery_port,omitempty"`
 }
 
 // System returns the stored system config or the zero value (all nil → use env).
@@ -665,6 +674,133 @@ func (s *Service) SetSystem(ctx context.Context, cfg SystemConfig) error {
 		return err
 	}
 	return s.set(ctx, keySystemConfig, string(b))
+}
+
+// TLSConfig holds an admin-uploaded TLS certificate chain + private key (PEM).
+// Stored encrypted at rest (the row is in secretKeys). When both are present and
+// the env TLS_CERT_FILE/TLS_KEY_FILE are unset, the server serves HTTPS from
+// these instead of from files — UI-managed HTTPS without a reverse proxy.
+// Cluster-wide (server_settings): the common case is one wildcard/single-host
+// cert; per-host certs still need a reverse proxy or the env file path.
+type TLSConfig struct {
+	CertPEM string `json:"cert_pem,omitempty"` // full chain, PEM
+	KeyPEM  string `json:"key_pem,omitempty"`  // private key, PEM
+}
+
+// NodeSettings is per-node configuration (see migration 00005) — node/site-
+// specific values that must NOT be shared fleet-wide via the replicated
+// server_settings. Every field is a pointer: nil falls back to the env var /
+// built-in default, so a node with no row behaves exactly as before.
+type NodeSettings struct {
+	ListenAddr            *string `json:"listen_addr,omitempty"`
+	MetricsAddr           *string `json:"metrics_addr,omitempty"`
+	WorkerHealthAddr      *string `json:"worker_health_addr,omitempty"`
+	MediaPath             *string `json:"media_path,omitempty"`
+	CachePath             *string `json:"cache_path,omitempty"`
+	StaticABRRoot         *string `json:"static_abr_root,omitempty"`
+	SiteID                *string `json:"site_id,omitempty"`
+	TranscodeQSVDecode    *bool   `json:"transcode_qsv_decode,omitempty"`
+	DisableEmbeddedWorker *bool   `json:"disable_embedded_worker,omitempty"`
+}
+
+// NodeSummary lists which nodes have stored config (for the admin node picker).
+type NodeSummary struct {
+	NodeID    string    `json:"node_id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// NodeSettingsGet returns the stored per-node config for nodeID, or the zero
+// value. A missing row or a missing table (pre-migration) is the legitimate
+// "nothing configured" case and yields defaults rather than an error.
+func (s *Service) NodeSettingsGet(ctx context.Context, nodeID string) NodeSettings {
+	var raw string
+	err := s.db.QueryRow(ctx,
+		`SELECT config FROM node_settings WHERE node_id = $1`, nodeID,
+	).Scan(&raw)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) && !isUndefinedTable(err) {
+			s.logger.ErrorContext(ctx, "node settings get", "node_id", nodeID, "err", err)
+		}
+		return NodeSettings{}
+	}
+	if raw == "" {
+		return NodeSettings{}
+	}
+	var ns NodeSettings
+	if err := json.Unmarshal([]byte(raw), &ns); err != nil {
+		s.logger.ErrorContext(ctx, "parse node_settings", "node_id", nodeID, "err", err)
+		return NodeSettings{}
+	}
+	return ns
+}
+
+// SetNodeSettings upserts the per-node config for nodeID.
+func (s *Service) SetNodeSettings(ctx context.Context, nodeID string, ns NodeSettings) error {
+	b, err := json.Marshal(ns)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx,
+		`INSERT INTO node_settings (node_id, config, updated_at) VALUES ($1, $2, now())
+		 ON CONFLICT (node_id) DO UPDATE SET config = EXCLUDED.config, updated_at = now()`,
+		nodeID, string(b))
+	return err
+}
+
+// ListNodes returns every node_settings row, newest-configured first. A missing
+// table (pre-migration) returns an empty list, not an error.
+func (s *Service) ListNodes(ctx context.Context) ([]NodeSummary, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT node_id, updated_at FROM node_settings ORDER BY node_id`)
+	if err != nil {
+		if isUndefinedTable(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeSummary
+	for rows.Next() {
+		var n NodeSummary
+		if err := rows.Scan(&n.NodeID, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// isUndefinedTable reports whether err is Postgres 42P01 (relation does not
+// exist) — i.e. the migration hasn't been applied yet.
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
+
+// TLS returns the stored TLS config or the zero value (no UI-managed cert).
+func (s *Service) TLS(ctx context.Context) TLSConfig {
+	raw := s.get(ctx, keyTLSConfig)
+	if raw == "" {
+		return TLSConfig{}
+	}
+	var cfg TLSConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse tls_config", "err", err)
+		return TLSConfig{}
+	}
+	return cfg
+}
+
+// SetTLS persists the TLS config (encrypted at rest). An empty cfg clears it.
+func (s *Service) SetTLS(ctx context.Context, cfg TLSConfig) error {
+	if cfg.CertPEM == "" && cfg.KeyPEM == "" {
+		return s.set(ctx, keyTLSConfig, "")
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyTLSConfig, string(b))
 }
 
 // GeneralConfig groups the general server settings that used to live in

@@ -47,6 +47,8 @@ func TestGetSystem_FallsBackToEnvDefaults(t *testing.T) {
 		MissingFileGraceMinutes: sysIntPtr(30),
 		ScanFileConcurrency:     sysIntPtr(8),
 		ScanLibraryConcurrency:  sysIntPtr(3),
+		DiscoveryEnabled:        sysBoolPtr(true),
+		DiscoveryPort:           sysIntPtr(7368),
 	})
 	dto := getSystemDTO(t, h)
 	if dto.ServerName != "Env Name" || dto.RetainMonths != 12 || !dto.TranscodeABR || dto.TMDBRateLimit != 5 {
@@ -54,6 +56,9 @@ func TestGetSystem_FallsBackToEnvDefaults(t *testing.T) {
 	}
 	if dto.MissingFileGraceMinutes != 30 || dto.ScanFileConcurrency != 8 || dto.ScanLibraryConcurrency != 3 {
 		t.Errorf("scanner defaults not surfaced: %+v", dto)
+	}
+	if !dto.DiscoveryEnabled || dto.DiscoveryPort != 7368 {
+		t.Errorf("discovery defaults not surfaced: %+v", dto)
 	}
 }
 
@@ -116,7 +121,7 @@ func decodeTranscodeConfig(t *testing.T, rec *httptest.ResponseRecorder) setting
 func TestUpdateSystem_StoresAllFieldsAsOverrides(t *testing.T) {
 	svc := &mockSettingsService{}
 	h := sysHandler(svc, settings.SystemConfig{})
-	body := `{"server_name":"New","retain_months":36,"transcode_abr":true,"public_asset_cache":true,"static_abr_enabled":true,"missing_file_grace_minutes":45,"scan_file_concurrency":16,"scan_library_concurrency":4}`
+	body := `{"server_name":"New","retain_months":36,"transcode_abr":true,"public_asset_cache":true,"static_abr_enabled":true,"missing_file_grace_minutes":45,"scan_file_concurrency":16,"scan_library_concurrency":4,"discovery_enabled":false,"discovery_port":9999}`
 	rec := httptest.NewRecorder()
 	h.UpdateSystem(rec, httptest.NewRequest(http.MethodPut, "/settings/system", strings.NewReader(body)))
 
@@ -144,5 +149,11 @@ func TestUpdateSystem_StoresAllFieldsAsOverrides(t *testing.T) {
 	}
 	if got.ScanLibraryConcurrency == nil || *got.ScanLibraryConcurrency != 4 {
 		t.Errorf("ScanLibraryConcurrency not stored: %+v", got.ScanLibraryConcurrency)
+	}
+	if got.DiscoveryEnabled == nil || *got.DiscoveryEnabled {
+		t.Errorf("DiscoveryEnabled=false not stored: %+v", got.DiscoveryEnabled)
+	}
+	if got.DiscoveryPort == nil || *got.DiscoveryPort != 9999 {
+		t.Errorf("DiscoveryPort not stored: %+v", got.DiscoveryPort)
 	}
 }

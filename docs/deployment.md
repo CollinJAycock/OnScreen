@@ -38,13 +38,21 @@
 
 ### Server
 
+Most of these are now the *initial default* for a value editable in the admin UI.
+`LISTEN_ADDR`, `METRICS_ADDR`, and `TLS` are per-node (Settings ▸ Nodes); a saved
+per-node value wins over the env var. `RETAIN_MONTHS` is cluster-wide (Settings ▸
+System). `NODE_ID`, `IGNORE_NODE_DB_CONFIG`, and the connection strings stay
+env-only — they're needed before the settings tables are reachable.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LISTEN_ADDR` | `:7070` | Address the HTTP server binds to |
-| `METRICS_ADDR` | `:7071` | Address for the Prometheus metrics endpoint |
+| `NODE_ID` | host name | Stable identity used to key this node's row in `node_settings` (Settings ▸ Nodes). |
+| `IGNORE_NODE_DB_CONFIG` | `false` | Break-glass: boot from env/defaults only, ignoring the `node_settings` row. Recovers a node locked out by a bad bind address. |
+| `LISTEN_ADDR` | `:7070` | Address the HTTP server binds to (per-node UI override). |
+| `METRICS_ADDR` | `:7071` | Address for the Prometheus metrics endpoint (per-node UI override). |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `RETAIN_MONTHS` | `24` | How many months of watch history to retain |
-| `TLS_CERT_FILE` | (none) | PEM-encoded certificate chain. When set together with `TLS_KEY_FILE`, the server serves HTTPS directly. See [Built-in HTTPS](#built-in-https). |
+| `TLS_CERT_FILE` | (none) | PEM-encoded certificate chain. When set with `TLS_KEY_FILE`, serves HTTPS from files (these win over an uploaded cert). See [Built-in HTTPS](#built-in-https). |
 | `TLS_KEY_FILE` | (none) | PEM-encoded private key. Must be paired with `TLS_CERT_FILE`; setting only one is a startup error. |
 
 ### Worker
@@ -514,6 +522,8 @@ TLS_KEY_FILE=/etc/onscreen/tls/privkey.pem
 ```
 
 When both are set the server uses `ListenAndServeTLS` on `LISTEN_ADDR` (commonly retargeted to `:443`). Setting only one is a startup error so you don't accidentally deploy thinking HTTPS is on.
+
+**Or upload a cert in the UI.** If you'd rather not put cert files on disk, leave the env vars unset and paste the certificate + key under **Settings ▸ System ▸ HTTPS / TLS** instead. They're stored encrypted in the database and loaded into memory at startup (restart-required). The env file paths, when set, take precedence. This is cluster-wide — the common single-host / wildcard-cert case; for per-host certs across a cluster, use the env path on each node or a reverse proxy. The same renewal caveat applies: the server doesn't auto-renew, so re-upload and restart on renewal.
 
 Where the certs come from is your call:
 
