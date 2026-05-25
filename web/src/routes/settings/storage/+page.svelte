@@ -24,8 +24,26 @@
     media_root: '',
     path_prefix: '',
     cdn_base_url: '',
+    path_mappings: {},
   };
   let secretMasked = false;
+  // Multi-site path remap, edited as "from=to" lines and (de)serialised around
+  // the path_mappings map on load/save.
+  let pathMapText = '';
+
+  function mapToText(m: Record<string, string>): string {
+    return Object.entries(m ?? {}).map(([from, to]) => `${from}=${to}`).join('\n');
+  }
+  function textToMap(text: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const line of text.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      const i = t.indexOf('=');
+      if (i > 0) out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    }
+    return out;
+  }
 
   // The S3 fields only matter when object storage is the chosen backend.
   $: showS3 = storage.enabled && storage.backend === 's3';
@@ -35,6 +53,7 @@
       const s = await settingsApi.getStorage();
       storage = { ...s };
       secretMasked = storage.secret_key === '****';
+      pathMapText = mapToText(storage.path_mappings);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load storage settings';
     } finally {
@@ -48,11 +67,13 @@
     try {
       // secret_key is sent as-is: "****" preserves the stored secret server-side,
       // a typed value replaces it.
+      storage.path_mappings = textToMap(pathMapText);
       await settingsApi.updateStorage(storage);
       toast.success('Storage settings saved');
       const s = await settingsApi.getStorage();
       storage = { ...s };
       secretMasked = storage.secret_key === '****';
+      pathMapText = mapToText(storage.path_mappings);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
     } finally {
@@ -190,6 +211,35 @@
         </p>
       {/if}
     </section>
+
+    <section>
+      <header>
+        <h2>Multi-site path mappings <span class="opt">(advanced)</span></h2>
+        <p class="hint">
+          For active/passive disaster recovery: when this server is a standby whose
+          Postgres is replicated from another site, the database holds the primary's
+          absolute file paths. Map the primary's path prefix to this machine's mount
+          so playback resolves locally. One <code>from=to</code> per line; leave empty
+          on a primary/single-site server. Applies to the local-disk backend.
+        </p>
+      </header>
+      <div class="grid">
+        <label class="full">
+          Path prefix mappings
+          <textarea
+            bind:value={pathMapText}
+            rows="3"
+            placeholder={'/mnt/primary/media=/mnt/standby/media'}
+            spellcheck="false"
+          ></textarea>
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" disabled={saving} on:click={save}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </section>
   </div>
 {/if}
 
@@ -222,7 +272,7 @@
     font-size: 0.78rem;
     color: var(--text-secondary);
   }
-  input[type="text"], input[type="password"], select {
+  input[type="text"], input[type="password"], select, textarea {
     padding: 0.45rem 0.6rem;
     border-radius: 4px;
     border: 1px solid rgba(255,255,255,0.1);
@@ -231,6 +281,7 @@
     font-family: inherit;
     font-size: 0.85rem;
   }
+  textarea { resize: vertical; font-family: ui-monospace, monospace; }
 
   .check {
     flex-direction: row;

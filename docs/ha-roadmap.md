@@ -184,9 +184,14 @@ storage too — not just movies/shows/anime. The path-based `ReadMusicTags` /
 - the fsnotify **watcher** stays local-only — object storage has no inotify; live
   ingest there needs bucket event notifications, a separate effort.
 
-**Also still to do:** a stable content *key* (today the key is the absolute
-`FilePath`) for multi-site portability — see the "Content addressing" gap under
-Multi-Site.
+**Content addressing — resolved per site.** A store key is still the absolute
+`FilePath`, but it now resolves locally at each site: the **S3** backend strips a
+per-site `MediaRoot` (so the same content keys to the same object at any site),
+and the **`Local`** backend takes a `Remap` ([`PathMapping`](../internal/mediastore/mediastore.go))
+that rewrites the primary's path prefix onto a standby's mount — set via
+**Settings ▸ Storage ▸ Multi-site path mappings**. That's what makes a
+Postgres-replicated standby serve content despite different mount points, i.e. the
+active/passive DR model below.
 
 `SignedURL` is the hinge for CDN offload (§ below).
 
@@ -283,9 +288,11 @@ ascending difficulty:
 - **TrueNAS/ZFS** — content replication out of the box.
 
 ### Gaps to close (beyond the HA tiers)
-1. **Content addressing.** The scanner stores absolute `FilePath`s, which differ
-   per site. `MediaStore`'s stable *key* (resolved locally at each site) is the
-   fix — this is the linchpin that makes content portable across sites.
+1. **Content addressing.** ✅ The scanner stores absolute `FilePath`s, which differ
+   per site, but the `MediaStore` now resolves them locally at each site — S3 via a
+   per-site `MediaRoot`, `Local` via a `Remap` (the primary's prefix → the
+   standby's mount, set in Settings ▸ Storage). That's the linchpin that makes
+   content portable across sites.
 2. **Per-site Valkey.** Sessions/locks are per-site, so cross-site "play on this
    device" / live-supersede won't span sites without a federation layer. Minor —
    per-site is acceptable for almost everything.

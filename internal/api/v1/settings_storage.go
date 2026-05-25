@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
@@ -29,10 +30,11 @@ type storageSettingDTO struct {
 	Bucket     string `json:"bucket"`
 	AccessKey  string `json:"access_key"`
 	SecretKey  string `json:"secret_key"` // secretMask if set, "" if empty
-	UseSSL     bool   `json:"use_ssl"`
-	MediaRoot  string `json:"media_root"`
-	PathPrefix string `json:"path_prefix"`
-	CDNBaseURL string `json:"cdn_base_url"`
+	UseSSL       bool              `json:"use_ssl"`
+	MediaRoot    string            `json:"media_root"`
+	PathPrefix   string            `json:"path_prefix"`
+	CDNBaseURL   string            `json:"cdn_base_url"`
+	PathMappings map[string]string `json:"path_mappings"`
 }
 
 func toStorageDTO(cfg settings.StorageConfig) storageSettingDTO {
@@ -48,10 +50,11 @@ func toStorageDTO(cfg settings.StorageConfig) storageSettingDTO {
 		Bucket:     cfg.Bucket,
 		AccessKey:  cfg.AccessKey,
 		SecretKey:  sk,
-		UseSSL:     cfg.UseSSL,
-		MediaRoot:  cfg.MediaRoot,
-		PathPrefix: cfg.PathPrefix,
-		CDNBaseURL: cfg.CDNBaseURL,
+		UseSSL:       cfg.UseSSL,
+		MediaRoot:    cfg.MediaRoot,
+		PathPrefix:   cfg.PathPrefix,
+		CDNBaseURL:   cfg.CDNBaseURL,
+		PathMappings: cfg.PathMappings,
 	}
 }
 
@@ -66,10 +69,11 @@ func storageFromDTO(dto storageSettingDTO, cur settings.StorageConfig) settings.
 		Region:     dto.Region,
 		Bucket:     dto.Bucket,
 		AccessKey:  dto.AccessKey,
-		UseSSL:     dto.UseSSL,
-		MediaRoot:  dto.MediaRoot,
-		PathPrefix: dto.PathPrefix,
-		CDNBaseURL: dto.CDNBaseURL,
+		UseSSL:       dto.UseSSL,
+		MediaRoot:    dto.MediaRoot,
+		PathPrefix:   dto.PathPrefix,
+		CDNBaseURL:   dto.CDNBaseURL,
+		PathMappings: dto.PathMappings,
 	}
 	if dto.SecretKey == secretMask {
 		cfg.SecretKey = cur.SecretKey
@@ -85,7 +89,8 @@ func storageFromDTO(dto storageSettingDTO, cur settings.StorageConfig) settings.
 // both at startup and when storage settings change.
 func BuildMediaStore(cfg settings.StorageConfig) (mediastore.Store, error) {
 	if !cfg.Enabled || cfg.Backend != "s3" {
-		return mediastore.Local{}, nil
+		// Local backend, optionally with multi-site path remapping (DR secondary).
+		return mediastore.Local{Remap: pathMappingsToRemap(cfg.PathMappings)}, nil
 	}
 	return mediastore.NewS3(mediastore.S3Config{
 		Endpoint:   cfg.Endpoint,
@@ -98,6 +103,20 @@ func BuildMediaStore(cfg settings.StorageConfig) (mediastore.Store, error) {
 		PathPrefix: cfg.PathPrefix,
 		CDNBaseURL: cfg.CDNBaseURL,
 	})
+}
+
+// pathMappingsToRemap converts the from→to map to ordered PathMappings, longest
+// prefix first so the most specific mapping wins (a map has no inherent order).
+func pathMappingsToRemap(m map[string]string) []mediastore.PathMapping {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]mediastore.PathMapping, 0, len(m))
+	for from, to := range m {
+		out = append(out, mediastore.PathMapping{From: from, To: to})
+	}
+	sort.Slice(out, func(i, j int) bool { return len(out[i].From) > len(out[j].From) })
+	return out
 }
 
 // GetStorage handles GET /settings/storage.

@@ -313,7 +313,7 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 			t.Fatalf("Set: %v", err)
 		}
 		got := svc.Storage(ctx)
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
@@ -364,7 +364,7 @@ func TestService_GetUnsetReturnsZeroValues(t *testing.T) {
 	if got := svc.TranscodeConfigGet(ctx); got != (TranscodeConfig{}) {
 		t.Errorf("TranscodeConfig unset: got %+v", got)
 	}
-	if got := svc.Storage(ctx); got != (StorageConfig{}) {
+	if got := svc.Storage(ctx); !reflect.DeepEqual(got, StorageConfig{}) {
 		t.Errorf("Storage unset: got %+v, want zero (local default)", got)
 	}
 }

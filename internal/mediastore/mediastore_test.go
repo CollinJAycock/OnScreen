@@ -110,6 +110,49 @@ func TestLocal_Walk_StopsOnCallbackError(t *testing.T) {
 	}
 }
 
+func TestLocal_Remap_ResolvesToLocalMount(t *testing.T) {
+	// Multi-site DR: a replicated DB carries the primary's absolute path; the
+	// standby's Local remaps it onto its own mount.
+	dir := t.TempDir()
+	real := filepath.Join(dir, "Movies", "x.mkv")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	l := Local{Remap: []PathMapping{{From: "/primary/media", To: dir}}}
+	key := "/primary/media/Movies/x.mkv" // does not exist locally; only via remap
+
+	fi, err := l.Stat(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if fi.Size != 4 {
+		t.Errorf("size = %d, want 4", fi.Size)
+	}
+
+	f, err := l.Open(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer f.Close()
+	b, _ := io.ReadAll(f)
+	if string(b) != "body" {
+		t.Errorf("read %q, want body", b)
+	}
+}
+
+func TestLocal_Remap_NoMatchPassesThrough(t *testing.T) {
+	// A key with no matching prefix is used as-is — the default behaviour, so a
+	// remap configured for DR can't break unrelated paths.
+	l := Local{Remap: []PathMapping{{From: "/primary", To: "/standby"}}}
+	if _, err := l.Stat(context.Background(), filepath.Join(t.TempDir(), "missing.mkv")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("got %v, want ErrNotFound (no remap match → key as-is)", err)
+	}
+}
+
 func TestLocal_SignedURL_EmptyMeansNoOffload(t *testing.T) {
 	// The non-breaking hinge: Local can't offload, so Serve must stream through
 	// the app. An empty string with a nil error is the contract callers branch on.

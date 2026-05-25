@@ -908,6 +908,7 @@ export interface StorageSettings {
   media_root: string;        // local path prefix stripped to form the object key
   path_prefix: string;       // prefix inside the bucket
   cdn_base_url: string;      // optional CDN origin for signed URLs
+  path_mappings: Record<string, string>; // local backend: from→to prefix remap (multi-site DR)
 }
 
 export interface StorageTestResult {

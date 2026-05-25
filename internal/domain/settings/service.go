@@ -576,6 +576,11 @@ type StorageConfig struct {
 	MediaRoot  string `json:"media_root,omitempty"`
 	PathPrefix string `json:"path_prefix,omitempty"`
 	CDNBaseURL string `json:"cdn_base_url,omitempty"`
+	// PathMappings rewrites absolute path prefixes for the local backend (from →
+	// to). Used at a multi-site active/passive secondary so a replicated DB's
+	// primary-site FilePaths resolve against the standby's own mount. Ignored by
+	// the s3 backend (which keys off MediaRoot instead).
+	PathMappings map[string]string `json:"path_mappings,omitempty"`
 }
 
 // Storage returns the stored storage config or the zero value (local) if not

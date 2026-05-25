@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -78,13 +79,38 @@ type Lister interface {
 	Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error
 }
 
+// PathMapping rewrites a key prefix. It's the content-addressing primitive for
+// multi-site active/passive DR: a standby site resolves the primary's absolute
+// FilePaths (carried verbatim in the replicated Postgres) against its own mount
+// point. From is matched as a literal path prefix; To replaces it.
+type PathMapping struct {
+	From string
+	To   string
+}
+
 // Local serves bytes from the local filesystem; the key is an absolute path.
 // This is the default backend and preserves the pre-abstraction behaviour.
-type Local struct{}
+//
+// Remap is empty by default (identity — the local-disk default every install
+// uses). At a multi-site secondary, set it so a replicated DB's primary-site
+// paths resolve against the local mount; see PathMapping.
+type Local struct {
+	Remap []PathMapping
+}
+
+// resolve applies the first matching prefix remap, or returns key unchanged.
+func (l Local) resolve(key string) string {
+	for _, m := range l.Remap {
+		if m.From != "" && strings.HasPrefix(key, m.From) {
+			return m.To + strings.TrimPrefix(key, m.From)
+		}
+	}
+	return key
+}
 
 // Open implements Store.
-func (Local) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
-	f, err := os.Open(key)
+func (l Local) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
+	f, err := os.Open(l.resolve(key))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrNotFound
@@ -95,8 +121,8 @@ func (Local) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
 }
 
 // Stat implements Store.
-func (Local) Stat(_ context.Context, key string) (FileInfo, error) {
-	fi, err := os.Stat(key)
+func (l Local) Stat(_ context.Context, key string) (FileInfo, error) {
+	fi, err := os.Stat(l.resolve(key))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return FileInfo{}, ErrNotFound
@@ -108,14 +134,15 @@ func (Local) Stat(_ context.Context, key string) (FileInfo, error) {
 
 // SignedURL implements Store. Local FS can't offload to a CDN, so it returns ""
 // and the caller streams through the app.
-func (Local) SignedURL(context.Context, string, time.Duration) (string, error) {
+func (l Local) SignedURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
 }
 
 // Walk implements Lister by walking the local directory tree rooted at prefix.
 // Directories are descended but only files are yielded; the key is the file's
-// path (the same value Open/Stat accept).
-func (Local) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error {
+// path (the same value Open/Stat accept). Walk does not apply Remap — scanning
+// happens at the primary site, where paths are already local.
+func (l Local) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error {
 	return filepath.WalkDir(prefix, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
