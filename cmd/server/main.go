@@ -285,7 +285,14 @@ func run() error {
 	defer roPool.Close()
 
 	// ── Valkey ────────────────────────────────────────────────────────────────
-	valkeyClient, err := valkey.New(ctx, cfg.ValkeyURL)
+	// Sentinel (HA) when VALKEY_SENTINEL_ADDRS is set, else a single node.
+	var valkeyClient *valkey.Client
+	if len(cfg.ValkeySentinelAddrs) > 0 {
+		logger.Info("connecting to Valkey via Sentinel", "master", cfg.ValkeySentinelMaster, "sentinels", cfg.ValkeySentinelAddrs)
+		valkeyClient, err = valkey.NewFailover(ctx, cfg.ValkeySentinelMaster, cfg.ValkeySentinelAddrs, cfg.ValkeySentinelPassword, cfg.ValkeyURL)
+	} else {
+		valkeyClient, err = valkey.New(ctx, cfg.ValkeyURL)
+	}
 	if err != nil {
 		return fmt.Errorf("valkey: %w", err)
 	}

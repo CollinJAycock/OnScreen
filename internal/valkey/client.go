@@ -16,7 +16,7 @@ type Client struct {
 	rdb *redis.Client
 }
 
-// New connects to Valkey and verifies the connection with PING.
+// New connects to a single Valkey node and verifies the connection with PING.
 func New(ctx context.Context, url string) (*Client, error) {
 	opts, err := redis.ParseURL(url)
 	if err != nil {
@@ -29,6 +29,49 @@ func New(ctx context.Context, url string) (*Client, error) {
 	defer cancel()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
 		return nil, fmt.Errorf("valkey ping: %w", err)
+	}
+
+	return &Client{rdb: rdb}, nil
+}
+
+// NewFailover connects via Valkey/Redis Sentinel for automatic master failover
+// (HA). The Sentinels track the current master and the client transparently
+// reconnects to the promoted node after a failover — so the leader lock,
+// sessions, dispatch counters, and caches survive losing a Valkey node.
+//
+// redisURL supplies the data-node auth/db/TLS (its host is ignored — Sentinel
+// discovers the actual master), keeping one source for credentials whether a
+// deployment runs single-node or Sentinel. NewFailoverClient returns the same
+// *redis.Client type as the single-node path, so everything downstream (Raw(),
+// pipelines, Lua, the master lock) is unchanged.
+func NewFailover(ctx context.Context, masterName string, sentinelAddrs []string, sentinelPassword, redisURL string) (*Client, error) {
+	if masterName == "" {
+		return nil, fmt.Errorf("valkey sentinel: VALKEY_SENTINEL_MASTER required")
+	}
+	if len(sentinelAddrs) == 0 {
+		return nil, fmt.Errorf("valkey sentinel: VALKEY_SENTINEL_ADDRS required")
+	}
+	base, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse valkey URL (auth/db for sentinel): %w", err)
+	}
+
+	rdb := redis.NewFailoverClient(&redis.FailoverOptions{
+		MasterName:       masterName,
+		SentinelAddrs:    sentinelAddrs,
+		SentinelPassword: sentinelPassword,
+		Username:         base.Username,
+		Password:         base.Password,
+		DB:               base.DB,
+		TLSConfig:        base.TLSConfig,
+	})
+
+	// Slightly longer than the single-node ping: a fresh client first asks a
+	// Sentinel for the master address before it can PING the master.
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := rdb.Ping(pingCtx).Err(); err != nil {
+		return nil, fmt.Errorf("valkey sentinel ping: %w", err)
 	}
 
 	return &Client{rdb: rdb}, nil

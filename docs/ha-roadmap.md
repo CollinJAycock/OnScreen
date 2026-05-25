@@ -64,18 +64,24 @@ Reads scale via replicas, but a primary failure stops writes.
 primary endpoint pgBouncer can follow on promotion, and confirming the pool
 reconnects cleanly across a failover.
 
-### 2. Valkey
+### 2. Valkey  ✅ client support landed
 Holds sessions, the **leader lock**, transcode dispatch counters, rate limits,
 and caches. If it dies, the singleton tier loses its lock and sessions drop —
 so it must be HA *before* the leader-election guarantee actually means anything.
 
-**Close it:**
-- **Valkey Sentinel** — failover with minimal change (cheapest; recommended first step).
-- **Valkey Cluster** — sharded, for when one node can't hold the keyspace/throughput.
+**Done:** the client speaks **Sentinel** — set `VALKEY_SENTINEL_ADDRS` (+
+`VALKEY_SENTINEL_MASTER`) and the server/worker connect via `valkey.NewFailover`
+(go-redis `FailoverClient`, same `*redis.Client` downstream, so the master lock /
+rate-limiter / caches are unchanged). `VALKEY_URL` still supplies auth/db. A
+deployable stack is in [`docker/docker-compose.valkey-ha.yml`](../docker/docker-compose.valkey-ha.yml)
+(1 master + 2 replicas + 3 sentinels, quorum 2, ~10s failover < the 15s lock TTL).
 
-**App work:** the client must accept a Sentinel/cluster topology (connection
-string + failover-aware client). Confirm the master-lock + rate-limit paths
-tolerate a failover blip (they already TTL-expire and retry).
+**Validated:** topology + replication on Docker; full master-loss promotion must
+be exercised on a stable-clock Linux host (Docker Desktop's VM clock trips
+Sentinel's TILT guard and suppresses local failover).
+
+**Still to do:** **Valkey Cluster** (sharding) for when one node can't hold the
+keyspace/throughput — Sentinel covers failover but not horizontal data scale.
 
 ### 3. Storage
 Streaming is `http.ServeFile(file.FilePath)` — a local filesystem path. That's a
@@ -163,8 +169,8 @@ from catalog:
 
 ## Suggested sequencing
 
-1. **Valkey Sentinel** — failover for the lock/session/cache tier (cheap, makes the existing leader-election guarantee real).
-2. **Postgres automated failover** — Patroni / CloudNativePG / managed Multi-AZ behind a floating endpoint.
+1. **Valkey Sentinel** — ✅ client support + deployable stack landed; failover for the lock/session/cache tier makes the existing leader-election guarantee real.
+2. **Postgres automated failover** — Patroni / CloudNativePG / managed Multi-AZ behind a floating endpoint. *(next)*
 3. **`MediaStore` abstraction + object-storage backend** — unblocks everything downstream; non-breaking (local FS stays the default).
 4. **CDN + `SignedURL` offload** for artwork / direct-play / static assets.
 5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock.

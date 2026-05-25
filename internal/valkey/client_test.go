@@ -258,6 +258,32 @@ func TestClient_Scan_PatternFilterExclusive(t *testing.T) {
 	}
 }
 
+// ── Sentinel (HA) ────────────────────────────────────────────────────────────
+
+func TestNewFailover_RejectsInvalidConfig(t *testing.T) {
+	// These all fail validation/parse before any network connect, so the test
+	// needs no running Sentinel — it guards the config-error paths the server
+	// surfaces at startup.
+	ctx := context.Background()
+	cases := []struct {
+		name          string
+		master        string
+		sentinelAddrs []string
+		redisURL      string
+	}{
+		{"empty master", "", []string{"s:26379"}, "redis://x:6379"},
+		{"no sentinel addrs", "onscreen", nil, "redis://x:6379"},
+		{"unparseable redis url", "onscreen", []string{"s:26379"}, "://nope"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewFailover(ctx, tc.master, tc.sentinelAddrs, "", tc.redisURL); err == nil {
+				t.Errorf("expected error for %s, got nil", tc.name)
+			}
+		})
+	}
+}
+
 // intToString avoids strconv import for this one tiny helper.
 func intToString(n int) string {
 	if n == 0 {

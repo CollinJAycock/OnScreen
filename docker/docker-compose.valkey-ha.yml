@@ -1,0 +1,73 @@
+name: onscreen-valkey-ha
+
+# Valkey HA via Sentinel: 1 master + 2 replicas + 3 sentinels.
+#
+# Point OnScreen at it (replaces the single `valkey` service) with:
+#   VALKEY_SENTINEL_ADDRS=valkey-sentinel-1:26379,valkey-sentinel-2:26379,valkey-sentinel-3:26379
+#   VALKEY_SENTINEL_MASTER=onscreen
+#   VALKEY_URL=redis://valkey-master:6379      # host ignored in Sentinel mode; supplies auth/db only
+#
+# On a single TrueNAS box this survives a Valkey container/process crash and
+# enables zero-downtime maintenance; true hardware HA needs the replicas on
+# separate machines. Sentinel quorum is 2 of 3, down-after 5s, failover ~10s —
+# inside the master lock's 15s TTL (internal/worker/master.go) so leadership
+# rides through a Valkey failover.
+
+x-valkey: &valkey
+  image: valkey/valkey:8-alpine
+  restart: unless-stopped
+
+services:
+  valkey-master:
+    <<: *valkey
+    command: valkey-server --port 6379 --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey-replica-1: &replica
+    <<: *valkey
+    command: >
+      valkey-server --port 6379 --save "" --appendonly no
+      --replicaof valkey-master 6379
+      --replica-announce-ip valkey-replica-1
+    depends_on:
+      valkey-master:
+        condition: service_healthy
+
+  valkey-replica-2:
+    <<: *replica
+    command: >
+      valkey-server --port 6379 --save "" --appendonly no
+      --replicaof valkey-master 6379
+      --replica-announce-ip valkey-replica-2
+
+  # Three sentinels (quorum 2) so losing one doesn't stall failover. Each
+  # writes its config at start because valkey-sentinel rewrites the file as the
+  # topology changes (so it can't be a read-only mount).
+  valkey-sentinel-1: &sentinel
+    <<: *valkey
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        cat > /tmp/sentinel.conf <<'CONF'
+        port 26379
+        sentinel resolve-hostnames yes
+        sentinel announce-hostnames yes
+        sentinel monitor onscreen valkey-master 6379 2
+        sentinel down-after-milliseconds onscreen 5000
+        sentinel failover-timeout onscreen 10000
+        sentinel parallel-syncs onscreen 1
+        CONF
+        exec valkey-sentinel /tmp/sentinel.conf
+    depends_on:
+      valkey-master:
+        condition: service_healthy
+
+  valkey-sentinel-2:
+    <<: *sentinel
+
+  valkey-sentinel-3:
+    <<: *sentinel

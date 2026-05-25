@@ -26,8 +26,18 @@ type Config struct {
 	// ── Required ─────────────────────────────────────────────────────────────
 	DatabaseURL string `env:"DATABASE_URL,required"`
 	ValkeyURL   string `env:"VALKEY_URL,required"`
-	MediaPath   string `env:"MEDIA_PATH"`          // deprecated — artwork now stored next to media files
-	SecretKey   string `env:"SECRET_KEY,required"` // AES-256-GCM key (32 bytes, base64 or hex)
+
+	// ── Valkey HA (optional) ─────────────────────────────────────────────────
+	// When VALKEY_SENTINEL_ADDRS is set, the client connects via Valkey Sentinel
+	// for automatic master failover instead of the single VALKEY_URL host.
+	// VALKEY_URL still supplies auth/db/TLS (its host is ignored in Sentinel
+	// mode — Sentinel discovers the live master), so credentials have one source
+	// regardless of topology. Leave unset for a single-node deployment.
+	ValkeySentinelAddrs    []string `env:"VALKEY_SENTINEL_ADDRS"`
+	ValkeySentinelMaster   string   `env:"VALKEY_SENTINEL_MASTER"   envDefault:"onscreen"`
+	ValkeySentinelPassword string   `env:"VALKEY_SENTINEL_PASSWORD"`
+	MediaPath              string   `env:"MEDIA_PATH"`          // deprecated — artwork now stored next to media files
+	SecretKey              string   `env:"SECRET_KEY,required"` // AES-256-GCM key (32 bytes, base64 or hex)
 
 	// ── Database (optional) ───────────────────────────────────────────────────
 	// DatabaseROURL falls back to DatabaseURL if unset (single-node deployments).
