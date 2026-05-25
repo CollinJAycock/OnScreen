@@ -54,6 +54,18 @@ func (p *Provider) current() Store {
 	return p.cur
 }
 
+// IsLocal reports whether s reads from the local filesystem — either directly,
+// or as the active backend behind a Provider. The scanner uses it to keep its
+// optimised local directory walk (with subtree pruning) for local deployments
+// and switch to store.Walk only for a remote backend.
+func IsLocal(s Store) bool {
+	if p, ok := s.(*Provider); ok {
+		s = p.current()
+	}
+	_, ok := s.(Local)
+	return ok
+}
+
 // Open implements Store.
 func (p *Provider) Open(ctx context.Context, key string) (io.ReadSeekCloser, error) {
 	return p.current().Open(ctx, key)

@@ -154,15 +154,26 @@ object keys back to the FilePath namespace so a walked key feeds straight into
 `Open`/`Stat`; `Provider` delegates (clear error if the backend can't list). Unit-
 and MinIO-integration-tested. Also the enumerator static-ABR pre-encode will use.
 
-**Still to do — wire the scanner onto it.** The scanner is the last and most
-entangled byte consumer; with `Walk` in place the remaining work is mechanical but
-spread across ~12 files:
-- swap the discovery `filepath.WalkDir` (`internal/scanner/scanner.go`) for
-  `store.Walk`, applying the dir-skip rules per key segment;
-- probe over a **presigned URL** (`ffprobe -i <signed-url>`) instead of a local
-  path when the source isn't local;
-- route the hash (`hash.go`) and sidecar reads (NFO, `folder.jpg`, EXIF, embedded
-  covers) through `Open`/`Stat`;
+**Scanner — core path wired.** The scanner now reads through the store
+([`internal/scanner/scanner.go`](../internal/scanner/scanner.go),
+[`hash.go`](../internal/scanner/hash.go)):
+- **discovery** auto-branches — local roots keep the optimised `filepath.WalkDir`
+  with subtree pruning; a remote backend uses `store.Walk`, applying the
+  trash/`.artwork` exclusions per key segment (`pathHasSkippedDir`);
+- **stat + fast-skip** and the content **hash** (`HashFileStore`) read through the
+  store;
+- **ffprobe** runs against a short-lived presigned URL when the source isn't local
+  (`ffprobe -i <url>`), else the local path.
+
+Result: **movies / shows / anime** libraries scan fully from object storage — their
+per-type processing is pure filename parsing, no byte reads. For the default local
+backend nothing changes (the store is `Local`, every call resolves to the same
+syscall).
+
+**Still to do (degrades gracefully for remote today):**
+- per-type **embedded reads** — music tags, audiobook/book covers, EXIF, MP4
+  faststart, image dimensions — still read the local path, so for a remote source
+  they fall back to online enrichment rather than embedded metadata;
 - the fsnotify **watcher** stays local-only — object storage has no inotify; live
   ingest there needs bucket event notifications, a separate effort.
 

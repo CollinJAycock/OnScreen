@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/mediastore"
 )
 
 var tracer = otel.Tracer("onscreen/scanner")
@@ -147,11 +148,17 @@ type ConcurrencyProvider interface {
 }
 
 // Scanner performs recursive directory scans and maintains the media_files table.
+// probeURLTTL bounds the signed source URL handed to ffprobe when probing media
+// in object storage. ffprobe reads it immediately (capped further by its own 30s
+// timeout); an hour is ample headroom for a slow first byte.
+const probeURLTTL = time.Hour
+
 type Scanner struct {
 	media  MediaService
 	agent  MetadataAgent
 	conc   ConcurrencyProvider
 	logger *slog.Logger
+	store  mediastore.Store // optional; nil → mediastore.Local (read media from disk)
 }
 
 // New creates a Scanner.
@@ -163,6 +170,22 @@ func New(mediaSvc MediaService, agent MetadataAgent, conc ConcurrencyProvider,
 		conc:   conc,
 		logger: logger,
 	}
+}
+
+// WithMediaStore sets the backend the scanner reads media through (discovery,
+// stat, hash, and the ffprobe source). When unset, the scanner reads from the
+// local filesystem exactly as before. Returns the Scanner for chaining.
+func (s *Scanner) WithMediaStore(store mediastore.Store) *Scanner {
+	s.store = store
+	return s
+}
+
+// mediaStore returns the configured backend, defaulting to the local filesystem.
+func (s *Scanner) mediaStore() mediastore.Store {
+	if s.store == nil {
+		return mediastore.Local{}
+	}
+	return s.store
 }
 
 // ScanResult summarises a completed scan pass.
@@ -223,7 +246,47 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	// uses parsingRoots (passed via the closed-over `paths` alias) so a
 	// targeted watcher scan still produces the same shape as a full scan.
 	var filePaths []string
+	// collect applies the shared media-file filters and records keepers. Used by
+	// both walk modes so local and remote discovery yield the same set.
+	collect := func(path string) {
+		if !isMediaFile(path) {
+			return
+		}
+		// Image files are only valid in photo libraries; skip them elsewhere
+		// to avoid treating downloaded artwork (poster.jpg, fanart.jpg) as items.
+		if isImageFile(path) && libraryType != "photo" {
+			return
+		}
+		if !s.isAllowedPath(path, paths) {
+			s.logger.WarnContext(ctx, "path outside library root, skipping", "path", path)
+			return
+		}
+		filePaths = append(filePaths, path)
+	}
+
+	// Remote backends (object storage) have no walkable local tree, so enumerate
+	// via the media store; local deployments keep the optimised WalkDir with
+	// subtree pruning (SkipDir), which is both faster and the long-tested path.
+	remote := !mediastore.IsLocal(s.mediaStore())
 	for _, root := range walkPaths {
+		if remote {
+			lister, ok := s.mediaStore().(mediastore.Lister)
+			if !ok {
+				return nil, fmt.Errorf("scan walk %s: media store does not support listing", root)
+			}
+			if err := lister.Walk(ctx, root, func(o mediastore.ObjectInfo) error {
+				// No directory entries from a flat listing, so prune trash /
+				// .artwork dirs (see below) by inspecting the key's segments.
+				if pathHasSkippedDir(o.Key, root) {
+					return nil
+				}
+				collect(o.Key)
+				return nil
+			}); err != nil {
+				return nil, fmt.Errorf("scan walk %s: %w", root, err)
+			}
+			continue
+		}
 		if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				s.logger.WarnContext(ctx, "scan walk error", "path", path, "err", err)
@@ -240,19 +303,7 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 				}
 				return nil
 			}
-			if !isMediaFile(path) {
-				return nil
-			}
-			// Image files are only valid in photo libraries; skip them elsewhere
-			// to avoid treating downloaded artwork (poster.jpg, fanart.jpg) as items.
-			if isImageFile(path) && libraryType != "photo" {
-				return nil
-			}
-			if !s.isAllowedPath(path, paths) {
-				s.logger.WarnContext(ctx, "path outside library root, skipping", "path", path)
-				return nil
-			}
-			filePaths = append(filePaths, path)
+			collect(path)
 			return nil
 		}); err != nil {
 			return nil, fmt.Errorf("scan walk %s: %w", root, err)
@@ -640,7 +691,7 @@ func (s *Scanner) dedupeMusicLibrary(ctx context.Context, libraryID uuid.UUID) {
 // Enrichment is NOT run here — callers collect the returned item+file and
 // run enrichment after all file I/O is done (see ScanLibrary).
 func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryType string, path string, roots []string) (*media.Item, *media.File, bool, error) {
-	info, err := os.Stat(path)
+	info, err := s.mediaStore().Stat(ctx, path)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("stat %s: %w", path, err)
 	}
@@ -677,8 +728,8 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// always reflects the most recent successful processing of this row.
 	if haveExisting &&
 		existing.FileHash != nil &&
-		existing.FileSize == info.Size() &&
-		info.ModTime().Before(existing.ScannedAt) {
+		existing.FileSize == info.Size &&
+		info.ModTime.Before(existing.ScannedAt) {
 		if existing.Status != "active" {
 			if err := s.media.MarkFileActive(ctx, existing.ID); err != nil {
 				s.logger.WarnContext(ctx, "mark file active failed", "path", path, "err", err)
@@ -704,7 +755,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		return nil, nil, false, nil
 	}
 
-	hash, err := HashFile(ctx, path, info)
+	hash, err := HashFileStore(ctx, s.mediaStore(), path, info.Size, info.ModTime)
 	if err != nil {
 		s.logger.WarnContext(ctx, "hash failed, proceeding without", "path", path, "err", err)
 	}
@@ -749,8 +800,15 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	if isImageFile(path) {
 		probe = ProbeImage(path)
 	} else {
+		// ffprobe accepts an http(s) URL as -i just like a path, so when the
+		// source lives in object storage hand it a short-lived signed URL;
+		// otherwise probe the local path. Local FS returns "" → path is used.
+		probeSource := path
+		if u, uerr := s.mediaStore().SignedURL(ctx, path, probeURLTTL); uerr == nil && u != "" {
+			probeSource = u
+		}
 		var probeErr error
-		probe, probeErr = ProbeFile(ctx, path)
+		probe, probeErr = ProbeFile(ctx, probeSource)
 		if probeErr != nil {
 			s.logger.WarnContext(ctx, "ffprobe failed, storing minimal metadata",
 				"path", path, "err", probeErr)
@@ -810,7 +868,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// originally_available_at so the library page can sort by
 		// recording date (not scan date).
 		var hvErr error
-		item, hvErr = s.processHomeVideo(ctx, libraryID, path, roots, info.ModTime(), probe.DurationMs)
+		item, hvErr = s.processHomeVideo(ctx, libraryID, path, roots, info.ModTime, probe.DurationMs)
 		if hvErr != nil {
 			return nil, nil, false, fmt.Errorf("home video for %s: %w", path, hvErr)
 		}
@@ -899,7 +957,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	p := media.CreateFileParams{
 		MediaItemID:     item.ID,
 		FilePath:        path,
-		FileSize:        info.Size(),
+		FileSize:        info.Size,
 		Container:       probe.Container,
 		VideoCodec:      probe.VideoCodec,
 		AudioCodec:      probe.AudioCodec,
@@ -1355,6 +1413,21 @@ func shouldSkipDir(name string) bool {
 	}
 	// Freedesktop trash spec: `.Trash`, `.Trash-NNN`, `.Trash-NNN-N`.
 	return strings.HasPrefix(name, ".Trash")
+}
+
+// pathHasSkippedDir reports whether any ancestor directory of key (below root)
+// is a skipped dir. A flat object listing has no directory entries to prune via
+// SkipDir, so the remote walk applies the same trash/.artwork exclusions by
+// inspecting each path segment between root and the filename.
+func pathHasSkippedDir(key, root string) bool {
+	rel := strings.TrimPrefix(filepath.ToSlash(key), strings.TrimRight(filepath.ToSlash(root), "/")+"/")
+	segs := strings.Split(rel, "/")
+	for _, seg := range segs[:max(0, len(segs)-1)] { // exclude the filename
+		if seg != "" && shouldSkipDir(seg) {
+			return true
+		}
+	}
+	return false
 }
 
 // videoExtensions are the container formats routed through the video

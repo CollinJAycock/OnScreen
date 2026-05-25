@@ -10,6 +10,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/mediastore"
 )
 
 // sampleSize is the number of bytes read from the start, middle, and end of a
@@ -33,19 +35,27 @@ var (
 	hashCacheOld = map[string]fileInfo{} // previous generation (read-only, evicted next overflow)
 )
 
-// HashFile computes a fast partial hash of a file using samples from the
-// beginning, middle, and end (plus the file size). The result is cached
-// keyed by (path, mtime, size) so re-scanning an unchanged file is free.
+// HashFile computes a fast partial hash of a local file. It is a thin wrapper
+// over HashFileStore using the local-filesystem backend, kept for callers (and
+// tests) that already hold an os.FileInfo.
 func HashFile(ctx context.Context, path string, info os.FileInfo) (*string, error) {
+	return HashFileStore(ctx, mediastore.Local{}, path, info.Size(), info.ModTime())
+}
+
+// HashFileStore computes a fast partial hash of the file at path, reading its
+// bytes through the given media store (so the source may live in object storage).
+// Samples the beginning, middle, and end plus the size; the result is cached
+// keyed by (path, mtime, size) so re-scanning an unchanged file is free.
+func HashFileStore(ctx context.Context, store mediastore.Store, path string, size int64, modTime time.Time) (*string, error) {
 	hashCacheMu.Lock()
 	if cached, ok := hashCache[path]; ok {
-		if cached.mtime.Equal(info.ModTime()) && cached.size == info.Size() {
+		if cached.mtime.Equal(modTime) && cached.size == size {
 			hashCacheMu.Unlock()
 			s := cached.hash
 			return &s, nil
 		}
 	} else if cached, ok := hashCacheOld[path]; ok {
-		if cached.mtime.Equal(info.ModTime()) && cached.size == info.Size() {
+		if cached.mtime.Equal(modTime) && cached.size == size {
 			// Promote from old generation so it survives the next eviction.
 			hashCache[path] = cached
 			hashCacheMu.Unlock()
@@ -55,7 +65,7 @@ func HashFile(ctx context.Context, path string, info os.FileInfo) (*string, erro
 	}
 	hashCacheMu.Unlock()
 
-	hash, err := computeHash(ctx, path, info.Size())
+	hash, err := computeHash(ctx, store, path, size)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +77,8 @@ func HashFile(ctx context.Context, path string, info os.FileInfo) (*string, erro
 		hashCache = make(map[string]fileInfo, maxHashCacheEntries/2)
 	}
 	hashCache[path] = fileInfo{
-		mtime: info.ModTime(),
-		size:  info.Size(),
+		mtime: modTime,
+		size:  size,
 		hash:  hash,
 	}
 	hashCacheMu.Unlock()
@@ -79,12 +89,12 @@ func HashFile(ctx context.Context, path string, info os.FileInfo) (*string, erro
 // computeHash reads up to sampleSize bytes from three regions of the file
 // (start, middle, end) and hashes them together with the file size.
 // For files smaller than 3×sampleSize the entire file is hashed.
-func computeHash(ctx context.Context, path string, size int64) (string, error) {
+func computeHash(ctx context.Context, store mediastore.Store, path string, size int64) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("hash cancelled: %w", err)
 	}
 
-	f, err := os.Open(path)
+	f, err := store.Open(ctx, path)
 	if err != nil {
 		return "", fmt.Errorf("open for hash: %w", err)
 	}

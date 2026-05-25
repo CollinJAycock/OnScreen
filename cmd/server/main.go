@@ -649,6 +649,10 @@ func run() error {
 	settingsHandler.SetMediaStoreProvider(mediaStoreProvider)
 	// Read source artwork through the same backend (resize cache stays local).
 	artworkMgr.WithMediaStore(mediaStoreProvider)
+	// Scanner reads discovery + stat + hash + ffprobe source through the store too,
+	// so object-storage libraries scan (movies/shows/anime fully; types needing
+	// embedded-tag/cover reads degrade to online enrichment for remote sources).
+	libScanner.WithMediaStore(mediaStoreProvider)
 
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger).
 		WithLibraryAccess(libSvc).
