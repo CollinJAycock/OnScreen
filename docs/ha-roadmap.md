@@ -255,19 +255,24 @@ live-transcoded on the fleet.
   the hot path is static CDN bytes — the difference between "scales with GPUs"
   and "scales with cache."
 
-**Foundation landed:** [`internal/staticabr`](../internal/staticabr/staticabr.go) —
+**Foundation + orchestration landed:** [`internal/staticabr`](../internal/staticabr/staticabr.go) —
 the media-store **key scheme** (`MasterKey` / `RungPlaylistKey` / `SegmentKey` /
 `HashKey`, all under one `Prefix` so a `Walk` enumerates/prunes a ladder), the
 popularity-driven **`Plan`** (selects top-played titles whose ladder is missing or
-stale-by-source-hash, with min-plays + limit), and a store-backed **`StoreChecker`**
-(master playlist exists + source hash matches). Unit-tested.
+stale-by-source-hash, min-plays + limit), a store-backed **`StoreChecker`** (master
+exists + source hash matches), and the **`Service`** orchestration
+([`service.go`](../internal/staticabr/service.go)) — one `RunOnce` pass:
+`PopularitySource` → `SourceResolver` → `Plan` → `LadderEncoder.Encode`, with
+per-title failures logged and skipped. All injected interfaces, fully unit-tested.
 
-**Still to do:** (1) an **encoder** — a scheduled task that runs `Plan` against
-`getTopPlayed`, enqueues the `BuildLadder` rungs as fleet jobs that `Put` segments
-+ the `source.hash` sidecar; (2) **serve-from-static** — the ABR handler checks
-`StoreChecker` and, on a hit, hands back `SignedURL`s to the static master/segments
-instead of starting a live session; (3) **invalidation/cleanup** on source change
-+ admin controls (enable, cache budget).
+**Still to do:** (1) the real **`LadderEncoder`** — builds `BuildLadder`, runs
+ffmpeg per rung (reusing the fleet), and `Put`s segments + playlists + the
+`source.hash` sidecar — plus the adapters (`getTopPlayed`→`PopularitySource`,
+media-service→`SourceResolver`) and a scheduler cron calling `Service.RunOnce`;
+(2) **serve-from-static** — the ABR handler checks `StoreChecker` and, on a hit,
+hands back `SignedURL`s to the static master/segments instead of starting a live
+session; (3) **invalidation/cleanup** on source change + admin controls (enable,
+cache budget).
 
 ### Multi-region (deferred)
 True global low-latency needs read-local replicas per region + CDN edge +
