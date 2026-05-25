@@ -4,7 +4,7 @@ A modern, open-source media server. PostgreSQL-native. Single binary. Native cli
 
 ![OnScreen hub page](screenshots/hero.png)
 
-> **Status:** v2.2.0 tagged 2026-05-09 — server API now frozen under the [server-lock posture](docs/server-lock.md); v2.3+ ships additively. Beta runs at https://onscreen.wolverscreen.com. Headline v2.2 features: anime as a typed library (AniList primary, per-season franchise walk), watching-status mirror, library hygiene admin trays, HLS-only streaming. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md). Public API is stable; breaking changes are called out in [CHANGELOG.md](CHANGELOG.md).
+> **Status:** v2.4 in active development (v2.3.0 was the last tagged release; the [server-lock posture](docs/server-lock.md) was lifted after v2.3.0, so v2.4 can land coordinated breaking changes across the client fleet). A private beta is running. Headline v2.4 work: a **multi-node transcode fleet** with cost-weighted, capability-aware dispatch (storage-less workers pull the source over HTTP); an **on-demand adaptive-bitrate HLS ladder** (H.264 / HEVC / AV1 rungs); **GPU HDR→SDR tonemap via libplacebo/Vulkan**; **TOTP two-factor auth** and purpose-scoped asset tokens. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md). Breaking changes are called out in [CHANGELOG.md](CHANGELOG.md).
 
 ## Why another media server?
 
@@ -30,6 +30,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 | Hardware transcode | ✅ core | 💎 paid | ✅ core | 💎 paid |
 | Bit-perfect WASAPI | ✅ core | 💎 Plexamp | ❌ | ❌ |
 | All books (CBZ + CBR + EPUB) | ✅ core | ❌ | ⚠ partial | ⚠ partial |
+| Multi-node transcode fleet | ✅ core | ❌ | ❌ | ❌ |
 
 ## Features
 
@@ -46,7 +47,8 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 **Playback**
 - Native SvelteKit web player with direct play, remux, and full transcode fallback
 - HLS transcoding via FFmpeg with hardware encoder auto-detection (NVENC, QuickSync, AMF, VAAPI), AV1 encode on supported hardware
-- HDR → SDR tonemapping (CUDA, OpenCL, or software zscale fallback)
+- On-demand adaptive-bitrate HLS ladder (Jellyfin-style — one ffmpeg per rung, transcoded on demand) with H.264 / HEVC / AV1 rungs, capped at the client-requested height
+- HDR → SDR tonemapping on the GPU via libplacebo/Vulkan (vendor-agnostic), with OpenCL and software zscale fallbacks
 - HEVC direct play on Safari and other HEVC-capable browsers
 - JavaScript subtitle renderer with PTS offset detection and ±0.5s sync adjust
 - Subtitle OCR for image-based formats (PGS, VOBSUB, DVB) — ffmpeg + tesseract converts cues to WebVTT
@@ -70,7 +72,8 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 
 **Multi-user & policy**
 - OIDC, OAuth (Google / GitHub / Discord), SAML 2.0 SP-initiated SSO with JIT provisioning, LDAP with group sync — all core, no plugin install
-- PASETO v4 local tokens, refresh rotation, per-file streaming token (24h, file_id-bound, purpose-scoped) so native players don't drop streams at access-token expiry
+- TOTP two-factor auth for self-hosted local accounts (enrolment + QR provisioning, verify-on-login across web and every native client), no vendor-cloud account required
+- PASETO v4 local tokens, refresh rotation, a per-file streaming token (24h, file_id-bound) and a purpose-scoped asset token for cross-origin `?token=` URLs (artwork, SSE, players) — neither honoured as a general API Bearer, so native players don't drop streams at access-token expiry and a leaked asset URL can't become a general credential
 - Managed profiles (up to 6 per account) with per-profile watch state, favorites, language prefs
 - Library `is_private` flag with public/private union semantics; auto-grant template for new users; admin "view as" middleware
 - Parental content-rating ceiling per profile, enforced in hub queries, search, and items
@@ -79,11 +82,11 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 **Operations**
 - Theme toggle (light/dark) with system-preference detection and FOUC prevention
 - Image proxy / thumbnailer with `?w=` resize, responsive `srcset`, CDN-friendly cache headers
-- Transcode fleet management UI: worker status, encoder info, live session monitoring
-- Multi-worker Docker Compose deployment support
+- Multi-node transcode fleet: a separate `worker` binary joins the primary's queue, with **cost-weighted, capability-aware dispatch** — a 4K stream weighs ~4× a 1080p one (not "one session"), HDR jobs route to GPU-tonemap nodes and AV1 output to AV1-capable nodes, with per-node load % and an admin-settable max-sessions cap in the fleet UI
+- **Storage-less workers** pull the source from the primary over HTTP (per-file token) — no shared NFS/SMB mount required on every node; opt-in Intel QSV hardware HEVC decode offload per worker
 - Webhooks with HMAC-SHA256 signing and retry (compatible with Overseerr/Tautulli receivers)
 - TMDB discover + request workflow inline in search — no Overseerr / Ombi / Jellyseerr companion needed
-- `/health/ready` gated on schema-vs-code parity — container stays unhealthy until `goose up` has run
+- `/health/ready` gated on schema-vs-code parity — container stays unhealthy until `goose up` has run; optional `AUTO_MIGRATE=true` applies pending migrations on startup for single-container deploys with no separate migrate step
 - Backup/restore round-trip with schema-version gating (`409 DUMP_NEWER_THAN_SERVER` on a too-new dump; `pg_restore --clean --if-exists` + `goose up` on an older one)
 - Prometheus metrics on a separate port
 - OpenTelemetry tracing (OTLP/gRPC) — auto-instruments HTTP + Postgres; logs carry trace IDs
@@ -121,8 +124,11 @@ docker run -p 7070:7070 -p 7071:7071 \
   -v /your/media:/media:ro \
   onscreen
 
-# Migrations are bundled; run once per release with:
+# Migrations are bundled. Either run them once per release:
 docker exec <container> sh -c 'goose -dir /migrations postgres "$DATABASE_URL" up'
+# (equivalently: docker exec <container> /usr/local/bin/server migrate)
+# …or set AUTO_MIGRATE=true on the container to apply them on startup —
+# recommended for single-container deploys with no separate migrate step.
 ```
 
 For GPU transcoding, see [docker/Dockerfile.gpu](docker/Dockerfile.gpu) and the multi-worker example in [docs/deployment.md](docs/deployment.md).
@@ -158,6 +164,7 @@ Bootstrap-class settings — needed before the admin Settings UI exists — live
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | | Built-in HTTPS (operator-provided PEM) |
 | `TMDB_API_KEY` | | TMDB v3 key — seeded into Settings on first run |
 | `TVDB_API_KEY` | | TVDB v4 key — seeded into Settings on first run |
+| `AUTO_MIGRATE` | | Apply pending DB migrations on startup (default off; for single-container deploys) |
 
 Everything else — public URL, log level, CORS allow-list, OIDC / OAuth / SAML / LDAP, SMTP, OpenTelemetry endpoint, transcode tuning — is configured from the admin Settings UI, stored in `server_settings`, and bootstrap-read at startup. Restart required after changes; the UI surfaces this notice.
 
