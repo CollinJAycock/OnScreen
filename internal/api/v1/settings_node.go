@@ -36,13 +36,35 @@ type nodeListDTO struct {
 	Nodes         []settings.NodeSummary `json:"nodes"`
 }
 
-// GetNodes handles GET /settings/nodes — the node picker.
+// GetNodes handles GET /settings/nodes — the node picker. It returns nodes that
+// have a stored config row PLUS any node currently joined to the transcode fleet
+// (by the NODE_ID each worker advertises), so an admin can find and configure a
+// freshly-joined worker before it has a config row of its own.
 func (h *SettingsHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	nodes, err := h.svc.ListNodes(r.Context())
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list nodes", "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	// Merge in joined fleet workers that have no stored config yet. Dedupe by
+	// NODE_ID against the config rows + the current node (which the UI always
+	// shows). Workers on older builds report no NODE_ID and are skipped — they'd
+	// only be addressable by a key their per-node config isn't read by.
+	seen := map[string]bool{h.nodeID: true}
+	for _, n := range nodes {
+		seen[n.NodeID] = true
+	}
+	if h.workerLister != nil {
+		if workers, werr := h.workerLister.ListWorkers(r.Context()); werr == nil {
+			for _, wk := range workers {
+				if wk.NodeID == "" || seen[wk.NodeID] {
+					continue
+				}
+				seen[wk.NodeID] = true
+				nodes = append(nodes, settings.NodeSummary{NodeID: wk.NodeID})
+			}
+		}
 	}
 	// Marshal as [] not null when empty, so clients can map() over it safely.
 	if nodes == nil {

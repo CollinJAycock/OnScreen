@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/transcode"
 )
 
 func nodeHandler(svc *mockSettingsService, nodeID string, defaults settings.NodeSettings) *SettingsHandler {
@@ -88,6 +89,58 @@ func TestUpdateNode_StoresForTarget(t *testing.T) {
 	if got.DisableEmbeddedWorker == nil || !*got.DisableEmbeddedWorker {
 		t.Error("DisableEmbeddedWorker not stored")
 	}
+}
+
+func TestGetNodes_IncludesJoinedFleetWorkers(t *testing.T) {
+	// A worker that joined the fleet but has no stored config row must still show
+	// up in the picker, keyed by the NODE_ID it advertises — that's the whole
+	// "I don't see my joined node in the dropdown" fix.
+	h := nodeHandler(&mockSettingsService{}, "node-a", settings.NodeSettings{})
+	h.SetWorkerLister(&mockWorkerLister{workers: []transcode.WorkerRegistration{
+		{ID: "w1", Addr: "10.0.0.5:7073", NodeID: "gpu-box"},
+		{ID: "w2", Addr: "127.0.0.1:7073", NodeID: "node-a"}, // == current node → deduped
+		{ID: "w3", Addr: "10.0.0.6:7073", NodeID: ""},        // old build, no NODE_ID → skipped
+	}})
+
+	rec := httptest.NewRecorder()
+	h.GetNodes(rec, httptest.NewRequest(http.MethodGet, "/settings/nodes", nil))
+	var env struct {
+		Data nodeListDTO `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	ids := make([]string, 0, len(env.Data.Nodes))
+	for _, n := range env.Data.Nodes {
+		ids = append(ids, n.NodeID)
+	}
+	if !contains(ids, "gpu-box") {
+		t.Errorf("joined worker gpu-box should appear in the picker; got %v", ids)
+	}
+	if count(ids, "node-a") != 0 {
+		t.Errorf("current node must not be duplicated into the list; got %v", ids)
+	}
+	if contains(ids, "") {
+		t.Errorf("a worker with no NODE_ID must be skipped; got %v", ids)
+	}
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+func count(s []string, v string) int {
+	n := 0
+	for _, x := range s {
+		if x == v {
+			n++
+		}
+	}
+	return n
 }
 
 func TestGetNodes_EmptyMarshalsAsArrayNotNull(t *testing.T) {

@@ -42,6 +42,7 @@ type Worker struct {
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
+	nodeID           string            // NODE_ID (hostname default) — reported so the admin can find this node in Settings ▸ Nodes
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
 	activeCostCenti  atomic.Int64 // summed CostCenti of in-flight jobs; reported for weighted dispatch
@@ -64,6 +65,10 @@ func (w *Worker) SetMaxSessions(n int) {
 // (TRANSCODE_QSV_DECODE). Off by default; the worker falls back to software
 // decode if a QSV-decode ffmpeg fails before producing its first segment.
 func (w *Worker) SetQSVDecode(v bool) { w.qsvDecode = v }
+
+// SetNodeID records this worker's NODE_ID so its registration advertises the
+// node identity its per-node config (Settings ▸ Nodes) is keyed by.
+func (w *Worker) SetNodeID(id string) { w.nodeID = id }
 
 // NewWorker creates a transcode Worker.
 func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSessions int, encOpts EncoderOpts, logger *slog.Logger) *Worker {
@@ -149,6 +154,7 @@ func (w *Worker) register(ctx context.Context) error {
 	return w.store.RegisterWorker(ctx, WorkerRegistration{
 		ID:              w.id,
 		Addr:            w.addr,
+		NodeID:          w.nodeID,
 		Capabilities:    EncoderNames(w.encoders),
 		EncoderLabels:   w.encoderLabels,
 		MaxSessions:     int(w.maxSessions.Load()),

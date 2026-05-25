@@ -933,6 +933,7 @@ func run() error {
 			logger,
 		)
 
+		embeddedWorker.SetNodeID(cfg.NodeID)
 		// Wire embedded worker into transcode handler so Stop can kill FFmpeg immediately.
 		nativeTranscodeHandler.SetSessionKiller(embeddedWorker)
 		// Wire into settings so the fleet UI can retune its session cap live.

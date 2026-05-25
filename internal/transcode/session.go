@@ -93,7 +93,8 @@ type Session struct {
 // WorkerRegistration is the record a transcode worker writes to Valkey.
 type WorkerRegistration struct {
 	ID             string            `json:"id"`
-	Addr           string            `json:"addr"` // "host:port" of the worker HTTP server
+	Addr           string            `json:"addr"`              // "host:port" of the worker HTTP server
+	NodeID         string            `json:"node_id,omitempty"` // worker's NODE_ID (hostname default) — keys its per-node config row
 	Capabilities   []string          `json:"capabilities"`
 	EncoderLabels  map[string]string `json:"encoder_labels,omitempty"` // encoder → human label (e.g. "h264_nvenc" → "NVIDIA GeForce RTX 5080")
 	MaxSessions    int               `json:"max_sessions"`
