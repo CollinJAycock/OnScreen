@@ -314,12 +314,12 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 	// rips don't).
 	var artData []byte
 	if hasEmbedded {
-		if data, err := readEmbeddedArtwork(filePath); err == nil && len(data) > 0 {
+		if data, err := s.readEmbeddedArt(ctx, filePath); err == nil && len(data) > 0 {
 			artData = data
 		}
 	}
 	if len(artData) == 0 {
-		if data, ok := findArtOnDisk(absDir, albumArtFilenames); ok {
+		if data, ok := s.findArt(ctx, absDir, albumArtFilenames); ok {
 			artData = data
 		}
 	}
@@ -345,9 +345,8 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 		relPath = filepath.ToSlash(filepath.Join(filepath.Base(absDir), album.ID.String()+"-poster.jpg"))
 	}
 
-	// If the ID-qualified poster already exists on disk, just ensure
-	// the DB path is correct.
-	if _, err := os.Stat(posterFile); err == nil {
+	// If the ID-qualified poster already exists, just ensure the DB path is correct.
+	if s.posterExists(ctx, posterFile) {
 		if album.PosterPath == nil || *album.PosterPath != relPath {
 			s.updateAlbumPoster(ctx, album, relPath)
 		}
@@ -369,7 +368,7 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 		outData = artData
 	}
 
-	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+	if err := s.writePoster(ctx, posterFile, outData); err != nil {
 		s.logger.WarnContext(ctx, "failed to write album art",
 			"album_id", album.ID, "err", err)
 		return ""
@@ -448,7 +447,7 @@ func (s *Scanner) extractArtistArt(ctx context.Context, artist *media.Item, file
 		}
 	}
 
-	artData, ok := findArtOnDisk(artistDir, candidates)
+	artData, ok := s.findArt(ctx, artistDir, candidates)
 	if !ok {
 		return ""
 	}
@@ -466,9 +465,9 @@ func (s *Scanner) extractArtistArt(ctx context.Context, artist *media.Item, file
 		relPath = filepath.ToSlash(filepath.Join(filepath.Base(artistDir), artist.ID.String()+"-poster.jpg"))
 	}
 
-	// If an ID-qualified portrait already exists on disk (left over
-	// from a prior scan), just make sure the DB is pointing at it.
-	if _, err := os.Stat(posterFile); err == nil {
+	// If an ID-qualified portrait already exists (left over from a prior scan),
+	// just make sure the DB is pointing at it.
+	if s.posterExists(ctx, posterFile) {
 		if artist.PosterPath == nil || *artist.PosterPath != relPath {
 			s.updateArtistPoster(ctx, artist, relPath)
 		}
@@ -486,7 +485,7 @@ func (s *Scanner) extractArtistArt(ctx context.Context, artist *media.Item, file
 		outData = artData
 	}
 
-	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+	if err := s.writePoster(ctx, posterFile, outData); err != nil {
 		s.logger.WarnContext(ctx, "failed to write artist art",
 			"artist_id", artist.ID, "err", err)
 		return ""
@@ -630,24 +629,6 @@ func findArtOnDisk(dir string, candidates []string) ([]byte, bool) {
 
 // readEmbeddedArtwork extracts the raw bytes of the first embedded picture
 // from an audio file using dhowden/tag.
-func readEmbeddedArtwork(filePath string) ([]byte, error) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	m, err := readTagFrom(f)
-	if err != nil {
-		return nil, err
-	}
-
-	pic := m.Picture()
-	if pic == nil {
-		return nil, nil
-	}
-	return pic.Data, nil
-}
 
 // albumTitleOrFallback returns tagged when non-empty, otherwise derives
 // a title from the file path. The parent directory's basename works for

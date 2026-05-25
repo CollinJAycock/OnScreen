@@ -24,9 +24,12 @@ type stubConc struct{}
 func (stubConc) ScanFileConcurrency() int    { return 2 }
 func (stubConc) ScanLibraryConcurrency() int { return 1 }
 
-// fakeRemoteStore is a non-local Store+Lister backed by an in-memory key→bytes
-// map, so a scan exercises the remote (store.Walk) discovery branch.
-type fakeRemoteStore struct{ files map[string][]byte }
+// fakeRemoteStore is a non-local Store+Lister+Putter backed by in-memory maps,
+// so a scan exercises the remote discovery branch and records write-backs.
+type fakeRemoteStore struct {
+	files map[string][]byte
+	puts  map[string][]byte // recorded Put calls
+}
 
 func (f *fakeRemoteStore) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
 	b, ok := f.files[key]
@@ -45,6 +48,14 @@ func (f *fakeRemoteStore) Stat(_ context.Context, key string) (mediastore.FileIn
 func (f *fakeRemoteStore) SignedURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
 }
+func (f *fakeRemoteStore) Put(_ context.Context, key string, data []byte) error {
+	if f.puts == nil {
+		f.puts = map[string][]byte{}
+	}
+	f.puts[key] = data
+	f.files[key] = data // so a subsequent Stat/Open sees it
+	return nil
+}
 func (f *fakeRemoteStore) Walk(_ context.Context, prefix string, fn func(mediastore.ObjectInfo) error) error {
 	for k, b := range f.files {
 		if !strings.HasPrefix(k, prefix) {
@@ -55,6 +66,52 @@ func (f *fakeRemoteStore) Walk(_ context.Context, prefix string, fn func(mediast
 		}
 	}
 	return nil
+}
+
+func TestScanner_FindArt_RemoteViaStore(t *testing.T) {
+	var jbuf bytes.Buffer
+	if err := jpeg.Encode(&jbuf, image.NewRGBA(image.Rect(0, 0, 4, 4)), nil); err != nil {
+		t.Fatal(err)
+	}
+	art := jbuf.Bytes()
+	store := &fakeRemoteStore{files: map[string][]byte{
+		"/srv/media/Music/Artist/Album/folder.jpg":      art,
+		"/srv/media/Music/Artist/Album/disc1/cover.jpg": []byte("subdir-art"), // not an immediate child → ignored
+	}}
+	s := New(nil, nil, stubConc{}, slog.Default()).WithMediaStore(store)
+
+	data, ok := s.findArt(context.Background(), "/srv/media/Music/Artist/Album", albumArtFilenames)
+	if !ok {
+		t.Fatal("expected to find folder.jpg via the store")
+	}
+	if !bytes.Equal(data, art) {
+		t.Error("returned wrong art bytes (subdir art leaked, or wrong candidate?)")
+	}
+}
+
+func TestScanner_WritePoster_UsesPut(t *testing.T) {
+	store := &fakeRemoteStore{files: map[string][]byte{}}
+	s := New(nil, nil, stubConc{}, slog.Default()).WithMediaStore(store)
+	const key = "/srv/media/Music/Artist/Album/abc-poster.jpg"
+
+	if err := s.writePoster(context.Background(), key, []byte("poster-bytes")); err != nil {
+		t.Fatalf("writePoster: %v", err)
+	}
+	if string(store.puts[key]) != "poster-bytes" {
+		t.Errorf("Put not recorded for %s: %v", key, store.puts)
+	}
+	if !s.posterExists(context.Background(), key) {
+		t.Error("posterExists should report the just-written poster")
+	}
+}
+
+func TestScanner_WritePoster_ReadOnlyStoreErrors(t *testing.T) {
+	// recordingStore is a Store but not a Putter → writePoster must error so the
+	// caller logs+skips rather than silently dropping the art.
+	s := New(nil, nil, stubConc{}, slog.Default()).WithMediaStore(&recordingStore{})
+	if err := s.writePoster(context.Background(), "/k.jpg", []byte("x")); err == nil {
+		t.Error("expected an error writing to a read-only store")
+	}
 }
 
 func TestScanLibrary_RemoteStoreDiscoversViaWalk(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -186,6 +187,91 @@ func (s *Scanner) mediaStore() mediastore.Store {
 		return mediastore.Local{}
 	}
 	return s.store
+}
+
+// readEmbeddedArt reads embedded cover art from a media file through the store
+// (so audiobook/music covers extract from object storage too).
+func (s *Scanner) readEmbeddedArt(ctx context.Context, filePath string) ([]byte, error) {
+	f, err := s.mediaStore().Open(ctx, filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	m, err := readTagFrom(f)
+	if err != nil {
+		return nil, err
+	}
+	pic := m.Picture()
+	if pic == nil {
+		return nil, nil
+	}
+	return pic.Data, nil
+}
+
+// findArt locates folder/cover art among candidate filenames in dir, through the
+// store. A local backend uses the fast os.ReadDir scan; a remote backend lists
+// the dir's immediate children via store.Walk.
+func (s *Scanner) findArt(ctx context.Context, dir string, candidates []string) ([]byte, bool) {
+	if mediastore.IsLocal(s.mediaStore()) {
+		return findArtOnDisk(dir, candidates)
+	}
+	return findArtViaStore(ctx, s.mediaStore(), dir, candidates)
+}
+
+// posterExists reports whether a poster already exists in the store — the
+// idempotent-rescan short-circuit (was os.Stat).
+func (s *Scanner) posterExists(ctx context.Context, key string) bool {
+	_, err := s.mediaStore().Stat(ctx, key)
+	return err == nil
+}
+
+// writePoster writes extracted art back through the store. Returns an error when
+// the backend is read-only (no Putter), so the caller logs and skips rather than
+// silently dropping the art.
+func (s *Scanner) writePoster(ctx context.Context, key string, data []byte) error {
+	pt, ok := s.mediaStore().(mediastore.Putter)
+	if !ok {
+		return fmt.Errorf("media store is read-only; cannot write %s", key)
+	}
+	return pt.Put(ctx, key, data)
+}
+
+// findArtViaStore lists dir's immediate children via the store and returns the
+// bytes of the highest-priority candidate filename (case-insensitive), matching
+// findArtOnDisk's semantics for a remote backend.
+func findArtViaStore(ctx context.Context, store mediastore.Store, dir string, candidates []string) ([]byte, bool) {
+	lister, ok := store.(mediastore.Lister)
+	if !ok {
+		return nil, false
+	}
+	priority := make(map[string]int, len(candidates))
+	for i, c := range candidates {
+		priority[strings.ToLower(c)] = i
+	}
+	dirSlash := strings.TrimRight(filepath.ToSlash(dir), "/")
+	bestKey, bestPri := "", len(candidates)
+	_ = lister.Walk(ctx, dir, func(o mediastore.ObjectInfo) error {
+		if strings.TrimRight(filepath.ToSlash(filepath.Dir(o.Key)), "/") != dirSlash {
+			return nil // immediate children only — art in a subdir isn't this dir's
+		}
+		if p, ok := priority[strings.ToLower(filepath.Base(o.Key))]; ok && p < bestPri {
+			bestPri, bestKey = p, o.Key
+		}
+		return nil
+	})
+	if bestKey == "" {
+		return nil, false
+	}
+	f, err := store.Open(ctx, bestKey)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // ScanResult summarises a completed scan pass.

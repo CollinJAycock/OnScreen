@@ -177,19 +177,25 @@ via `ItemHandler.faststart`), so **music** and **photo** libraries enrich from
 object storage and direct-play of object-storage MP4s gets a correct faststart
 hint. Path-based wrappers remain for local callers.
 
-**Still to do — these are read *and write*, so they need a writable store.** The
-last per-type holdouts aren't pure reads: **audiobook/book embedded covers** and
-**music/artist folder-art** *extract* an image and write it back next to the media
-(`os.WriteFile(posterFile, …)`). The read side fits the store, but the write does
-not — `MediaStore` is read-only (`Open`/`Stat`/`SignedURL`/`Walk`). Closing them
-needs a **`Putter` capability** (`Put(ctx, key, bytes)` → `Local` `os.WriteFile`,
-`S3` `PutObject`), which is also the prerequisite for writing pre-encoded
-static-ABR segments (step 5). Until then they use the local path and a remote
-source falls back to online enrichment.
+**Cover/folder-art write-back — landed (via `Putter`).** The store now has a
+`Putter` capability (`Put(ctx, key, bytes)` → `Local` atomic write, `S3`
+`PutObject`), and the embedded-cover + folder-art extraction for **music
+(album + artist)** and **audiobooks** routes its discovery, idempotency check, and
+write-back through it (`Scanner.findArt` / `posterExists` / `writePoster`). So those
+covers extract and persist to object storage; a read-only backend errors loudly
+rather than silently dropping art. `Putter` is also the prerequisite for writing
+pre-encoded static-ABR segments (step 5).
 
-**Also still to do:** the fsnotify **watcher** stays local-only — object storage
-has no inotify; live ingest there needs bucket event notifications, a separate
-effort.
+**Still to do (small, documented):**
+- **Book** covers (CBZ/CBR/EPUB) — archive extraction needs random access; route
+  via whole-archive read through the store + `Put`.
+- **External-art downloads** (audiobook/book scanner pulls from Wikipedia /
+  OpenLibrary; movies/shows via `artwork.Manager`) still `os.WriteFile` next to
+  media — a separate, uniform write-back pass (ideally centralised in
+  `artwork.Manager`).
+- **`resolveArtworkPath`** (a scanner-internal resolver) and the fsnotify
+  **watcher** stay local-only — the watcher because object storage has no inotify;
+  live ingest there needs bucket event notifications, a separate effort.
 
 **Content addressing — resolved per site.** A store key is still the absolute
 `FilePath`, but it now resolves locally at each site: the **S3** backend strips a

@@ -193,10 +193,10 @@ func (s *Scanner) extractAudiobookArt(ctx context.Context, book *media.Item, aut
 	// Look in the book's own directory first; if nothing there and the
 	// layout is "single-file at <Author>/<file>", the cover may be in
 	// the author dir alongside other books. We don't walk further up.
-	artData, ok := findArtOnDisk(bookDir, audiobookArtFilenames)
+	artData, ok := s.findArt(ctx, bookDir, audiobookArtFilenames)
 	if !ok {
 		// Embedded picture tag from the audio file itself.
-		if data, err := readEmbeddedArtwork(filePath); err == nil && len(data) > 0 {
+		if data, err := s.readEmbeddedArt(ctx, filePath); err == nil && len(data) > 0 {
 			artData = data
 		}
 	}
@@ -219,7 +219,7 @@ func (s *Scanner) extractAudiobookArt(ctx context.Context, book *media.Item, aut
 
 	// Idempotent re-scan: if the ID-qualified poster already exists,
 	// only sync the DB pointers (book + author).
-	if _, err := os.Stat(posterFile); err == nil {
+	if s.posterExists(ctx, posterFile) {
 		s.syncAudiobookPosterPaths(ctx, book, author, relPath)
 		return relPath
 	}
@@ -238,7 +238,7 @@ func (s *Scanner) extractAudiobookArt(ctx context.Context, book *media.Item, aut
 		outData = artData
 	}
 
-	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+	if err := s.writePoster(ctx, posterFile, outData); err != nil {
 		s.logger.WarnContext(ctx, "failed to write audiobook art",
 			"book_id", book.ID, "err", err)
 		return ""
