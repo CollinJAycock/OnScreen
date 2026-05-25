@@ -106,29 +106,43 @@ for local FS, network FS, and **object storage (S3/GCS)**.
 
 **Done:** the abstraction is [`internal/mediastore`](../internal/mediastore/mediastore.go) —
 a `Store` interface (`Open` / `Stat` / `SignedURL`) plus a `Local` backend (wraps
-`os.Open`) and a `Serve` helper. The two direct-play sites (`StreamFile`,
-`Download` in [`internal/api/v1/items.go`](../internal/api/v1/items.go)) now route
-through `mediastore.Serve`, which streams with full Range support today, or — when
-a backend returns a non-empty `SignedURL` — 302-redirects the client to a CDN,
-taking the bytes off the app tier. `Local.SignedURL` returns `""`, so the local
-path is byte-for-byte the old `ServeFile` behaviour: a non-breaking refactor that
-*enables* object storage rather than requiring it. Wired opt-in via
-`ItemHandler.WithMediaStore`; nil defaults to `Local`.
+`os.Open`) and a `Serve` helper.
 
 ```go
 type Store interface {
     Open(ctx context.Context, key string) (io.ReadSeekCloser, error)
     Stat(ctx context.Context, key string) (FileInfo, error)
-    // "" (nil err) means "can't offload" → caller streams through the app.
+    // "" (nil err) means "can't offload" → caller streams/reads through the app.
     SignedURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 ```
 
-**Still to do:** an **object-storage backend** (S3/GCS `Open`/`Stat` range reads +
-real presigned `SignedURL`); routing the remaining byte paths through the store
-(transcode source input, scanner probe + mtime/size hash-skip, artwork); and a
-stable content *key* (today the key is the absolute `FilePath`) for multi-site
-portability — see the "Content addressing" gap under Multi-Site.
+Byte paths routed through it so far:
+- **Direct play / download** — `StreamFile`, `Download` in
+  [`internal/api/v1/items.go`](../internal/api/v1/items.go) call `mediastore.Serve`,
+  which streams with full Range support today, or — when a backend returns a
+  non-empty `SignedURL` — 302-redirects the client to a CDN.
+- **Transcode source** — `buildSourceURL` in
+  [`internal/api/v1/transcode.go`](../internal/api/v1/transcode.go) prefers the
+  store's `SignedURL`, so a worker reads source straight from object storage / a
+  CDN; otherwise it falls back to the existing LAN stream-token URL.
+
+Every site is opt-in via `WithMediaStore`, and `Local.SignedURL` returns `""`
+(can't offload), so single-node and shared-storage installs are byte-for-byte the
+pre-abstraction behaviour: a non-breaking refactor that *enables* object storage
+rather than requiring it.
+
+**Still to do:**
+- an **object-storage backend** (S3/GCS `Open`/`Stat` range reads + real presigned
+  `SignedURL`) — the piece that actually lights up every `SignedURL` site above;
+- the **artwork** read path;
+- the **scanner**, which is the awkward one: it *discovers* files by walking the
+  local FS tree, so it needs a `List`/`Walk` primitive the current interface
+  doesn't have (object-storage "scanning" is a bucket listing). Better done *with*
+  the backend than half-wired now — its `Open`/`Stat` byte ops fit, but discovery
+  doesn't, so routing only the hash/probe would be inconsistent;
+- a stable content *key* (today the key is the absolute `FilePath`) for multi-site
+  portability — see the "Content addressing" gap under Multi-Site.
 
 `SignedURL` is the hinge for CDN offload (§ below).
 

@@ -27,6 +27,7 @@ import (
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
@@ -69,6 +70,12 @@ type NativeTranscodeHandler struct {
 	// HTTP. Optional — when nil, jobs carry no SourceURL and workers must
 	// reach the file on a local/shared path.
 	tokens *auth.TokenMaker
+	// store is the media-byte backend. Optional — when nil, mediaStore()
+	// defaults to mediastore.Local, whose SignedURL returns "" (can't offload),
+	// so buildSourceURL falls through to the LAN stream-token URL exactly as
+	// before. An object-storage backend returns a presigned bucket/CDN URL the
+	// worker reads source from directly, off the app tier (HA roadmap §3).
+	store mediastore.Store
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.
@@ -114,6 +121,24 @@ func (h *NativeTranscodeHandler) WithStreamTokenMaker(m *auth.TokenMaker) *Nativ
 	return h
 }
 
+// WithMediaStore attaches the media-byte backend buildSourceURL consults to
+// offload source reads to object storage / a CDN. When nil, mediaStore() falls
+// back to mediastore.Local (returns "" from SignedURL), so single-node and
+// shared-storage deployments behave exactly as before — opt-in and non-breaking.
+func (h *NativeTranscodeHandler) WithMediaStore(s mediastore.Store) *NativeTranscodeHandler {
+	h.store = s
+	return h
+}
+
+// mediaStore returns the configured backend, defaulting to local-filesystem
+// serving when none is wired.
+func (h *NativeTranscodeHandler) mediaStore() mediastore.Store {
+	if h.store == nil {
+		return mediastore.Local{}
+	}
+	return h.store
+}
+
 // buildSourceURL returns an HTTP URL a worker can read the source from
 // when it can't reach the file on its own filesystem: this server's
 // /media/stream/{file_id} with a 24 h stream token bound to that file.
@@ -121,7 +146,18 @@ func (h *NativeTranscodeHandler) WithStreamTokenMaker(m *auth.TokenMaker) *Nativ
 // and every rung child reuses it (all rungs read the same source file).
 // Returns "" when no token maker is wired or no LAN IP is detectable, in
 // which case the worker falls back to the local FilePath.
-func (h *NativeTranscodeHandler) buildSourceURL(claims *auth.Claims, fileID uuid.UUID) string {
+//
+// srcKey is the media store key for the source (today the absolute FilePath).
+// When the store can offload (object storage / CDN), its presigned URL is
+// preferred over the LAN stream-token URL — the worker then reads source
+// straight from the bucket/CDN, off the app tier. The Local backend returns ""
+// (can't offload), so single-node and shared-storage deployments fall through to
+// the existing LAN-token path unchanged.
+func (h *NativeTranscodeHandler) buildSourceURL(ctx context.Context, claims *auth.Claims, fileID uuid.UUID, srcKey string) string {
+	if signed, err := h.mediaStore().SignedURL(ctx, srcKey, auth.StreamTokenTTL); err == nil && signed != "" {
+		return signed
+	}
+
 	if h.tokens == nil || claims == nil {
 		return ""
 	}
@@ -398,7 +434,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// buildSourceURL). Minted once and reused by both the ABR ladder (every
 	// rung child) and the single-rendition job below — one stream token per
 	// playback session regardless of ladder size.
-	sourceURL := h.buildSourceURL(claims, file.ID)
+	sourceURL := h.buildSourceURL(ctx, claims, file.ID, file.FilePath)
 
 	decision := "transcode"
 	if body.VideoCopy {
