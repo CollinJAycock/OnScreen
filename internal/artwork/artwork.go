@@ -203,7 +203,7 @@ func (m *Manager) ReplaceShowFanart(ctx context.Context, _ uuid.UUID, url string
 // is true, writes the fresh bytes atomically over any existing file.
 func (m *Manager) download(ctx context.Context, url, absPath string, force bool) (string, error) {
 	if !force {
-		if _, err := os.Stat(absPath); err == nil {
+		if _, err := m.Store().Stat(ctx, absPath); err == nil {
 			return strings.ReplaceAll(absPath, `\`, "/"), nil
 		}
 	}
@@ -227,31 +227,19 @@ func (m *Manager) download(ctx context.Context, url, absPath string, force bool)
 		return "", &DownloadHTTPError{URL: url, StatusCode: resp.StatusCode}
 	}
 
-	dir := filepath.Dir(absPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("artwork mkdir: %w", err)
-	}
-
-	// Write to a temp file in the same directory, then rename to the final path
-	// atomically. This prevents corrupt partial files from blocking future downloads.
-	tmp, err := os.CreateTemp(dir, ".artwork-*.tmp")
+	// Buffer the image (capped) and write it through the store, so artwork lands
+	// next to media on disk or in object storage. Local.Put still writes
+	// atomically (temp file + rename) and creates parent dirs.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024))
 	if err != nil {
-		return "", fmt.Errorf("artwork create temp: %w", err)
+		return "", fmt.Errorf("artwork read: %w", err)
 	}
-	tmpPath := tmp.Name()
-
-	if _, err := io.Copy(tmp, io.LimitReader(resp.Body, 50*1024*1024)); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("artwork write: %w", err)
+	putter, ok := m.Store().(mediastore.Putter)
+	if !ok {
+		return "", fmt.Errorf("artwork: media store is read-only, cannot write %s", absPath)
 	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("artwork close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, absPath); err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("artwork rename: %w", err)
+	if err := putter.Put(ctx, absPath, data); err != nil {
+		return "", fmt.Errorf("artwork put: %w", err)
 	}
 
 	// Normalize to forward slashes so paths work in URLs on all platforms.

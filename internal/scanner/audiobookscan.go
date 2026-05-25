@@ -406,7 +406,7 @@ func (s *Scanner) downloadAndStorePoster(ctx context.Context, itemID uuid.UUID, 
 	}
 
 	// Idempotent: if we already wrote this poster, skip the network hop.
-	if _, err := os.Stat(posterFile); err == nil {
+	if s.posterExists(ctx, posterFile) {
 		return relPath, true
 	}
 
@@ -454,7 +454,7 @@ func (s *Scanner) downloadAndStorePoster(ctx context.Context, itemID uuid.UUID, 
 	if outData == nil {
 		outData = raw
 	}
-	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+	if err := s.writePoster(ctx, posterFile, outData); err != nil {
 		s.logger.WarnContext(ctx, "external art write failed", "path", posterFile, "err", err)
 		return "", false
 	}

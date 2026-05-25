@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/mediastore"
 )
 
 // makeJPEG returns a tiny w×h JPEG (solid red) for use as test artwork.
@@ -43,6 +45,61 @@ func makePNG(t *testing.T, w, h int) []byte {
 		t.Fatalf("encode: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// putRecorderStore is a Putter that records writes + reports existence, so a test
+// can prove DownloadPoster routes its write through the media store.
+type putRecorderStore struct {
+	mediastore.Local // embed for Open/Stat/SignedURL/Walk we don't exercise here
+	puts             map[string][]byte
+	exists           map[string]bool
+}
+
+func (s *putRecorderStore) Stat(_ context.Context, key string) (mediastore.FileInfo, error) {
+	if s.exists[key] {
+		return mediastore.FileInfo{Size: 1}, nil
+	}
+	return mediastore.FileInfo{}, mediastore.ErrNotFound
+}
+func (s *putRecorderStore) Put(_ context.Context, key string, data []byte) error {
+	if s.puts == nil {
+		s.puts = map[string][]byte{}
+	}
+	s.puts[key] = data
+	return nil
+}
+
+func TestDownloadPoster_WritesThroughStore(t *testing.T) {
+	body := makeJPEG(t, 10, 10)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	store := &putRecorderStore{exists: map[string]bool{}}
+	m := New(t.TempDir()).WithHTTPClient(srv.Client()).WithMediaStore(store)
+
+	key := filepath.Join("/srv/media/Movie", "poster.jpg") // OS-native separators
+	if _, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, "/srv/media/Movie"); err != nil {
+		t.Fatalf("DownloadPoster: %v", err)
+	}
+	got, ok := store.puts[key]
+	if !ok {
+		t.Fatalf("poster not written through the store; puts=%v", store.puts)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("stored %d bytes, want %d", len(got), len(body))
+	}
+
+	// Idempotency: when the store says it exists, no re-download/write.
+	store.exists[key] = true
+	store.puts = nil
+	if _, err := m.DownloadPoster(context.Background(), uuid.New(), srv.URL, "/srv/media/Movie"); err != nil {
+		t.Fatalf("DownloadPoster (exists): %v", err)
+	}
+	if len(store.puts) != 0 {
+		t.Errorf("re-wrote an existing poster: %v", store.puts)
+	}
 }
 
 func TestDownloadPoster_WritesFileAndNormalizesPath(t *testing.T) {

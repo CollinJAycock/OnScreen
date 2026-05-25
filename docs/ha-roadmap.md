@@ -186,16 +186,23 @@ covers extract and persist to object storage; a read-only backend errors loudly
 rather than silently dropping art. `Putter` is also the prerequisite for writing
 pre-encoded static-ABR segments (step 5).
 
-**Still to do (small, documented):**
-- **Book** covers (CBZ/CBR/EPUB) — archive extraction needs random access; route
-  via whole-archive read through the store + `Put`.
-- **External-art downloads** (audiobook/book scanner pulls from Wikipedia /
-  OpenLibrary; movies/shows via `artwork.Manager`) still `os.WriteFile` next to
-  media — a separate, uniform write-back pass (ideally centralised in
-  `artwork.Manager`).
-- **`resolveArtworkPath`** (a scanner-internal resolver) and the fsnotify
-  **watcher** stay local-only — the watcher because object storage has no inotify;
-  live ingest there needs bucket event notifications, a separate effort.
+**All art write paths routed.** Beyond music/audiobook embedded + folder-art, the
+write/download paths now go through the store too:
+- **`artwork.Manager.download`** (movies / shows / music external posters, fanart,
+  thumbs) writes via `Putter` and checks existence via `Stat` — `Local.Put` keeps
+  the atomic temp+rename; object storage gets a `PutObject`.
+- **Book covers** (CBZ/CBR/EPUB) extract through `Scanner.readBookCover`: local
+  parses in place; a remote source is staged to a local temp file so the
+  random-access zip/rar parsers work unchanged, then the cover is written via the
+  store.
+- **Scanner external-art downloads** (audiobook/book from Wikipedia / OpenLibrary)
+  write via `writePoster`.
+
+**Still to do (minor):** home-video thumbnail extraction (ffmpeg writes directly
+to a path — needs a pipe-to-`Put`), the book **page-count** read (`countCBZPages`,
+still local; degrades to 0 for a remote source), `resolveArtworkPath` (a local
+resolver), and the fsnotify **watcher** (object storage has no inotify; live
+ingest needs bucket event notifications — a separate effort).
 
 **Content addressing — resolved per site.** A store key is still the absolute
 `FilePath`, but it now resolves locally at each site: the **S3** backend strips a

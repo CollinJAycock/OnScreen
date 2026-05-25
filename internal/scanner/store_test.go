@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"image"
@@ -102,6 +103,40 @@ func TestScanner_WritePoster_UsesPut(t *testing.T) {
 	}
 	if !s.posterExists(context.Background(), key) {
 		t.Error("posterExists should report the just-written poster")
+	}
+}
+
+func TestScanner_ReadBookCover_RemoteStagesAndExtracts(t *testing.T) {
+	// Build a CBZ (zip) with one page image.
+	var zbuf bytes.Buffer
+	zw := zip.NewWriter(&zbuf)
+	pw, err := zw.Create("page001.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pw.Write(jpg.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	const key = "/srv/media/Books/Comic.cbz"
+	store := &fakeRemoteStore{files: map[string][]byte{key: zbuf.Bytes()}}
+	s := New(nil, nil, stubConc{}, slog.Default()).WithMediaStore(store)
+
+	// A remote backend has no local archive; readBookCover must stage it to a
+	// temp file and extract the first page.
+	data, ok := s.readBookCover(context.Background(), key)
+	if !ok {
+		t.Fatal("expected to extract a cover from the remote CBZ")
+	}
+	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+		t.Errorf("extracted cover is not a valid image: %v", err)
 	}
 }
 

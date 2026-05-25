@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/mediastore"
 )
 
 // processBook creates a 'book' media_item for a CBZ / CBR / EPUB
@@ -113,12 +114,12 @@ func (s *Scanner) extractBookCover(ctx context.Context, book *media.Item, cbzPat
 	}
 
 	// Idempotent: if the cover is already on disk, just sync the DB pointer.
-	if _, err := os.Stat(posterFile); err == nil {
+	if s.posterExists(ctx, posterFile) {
 		s.syncBookCoverPath(ctx, book, relPath)
 		return
 	}
 
-	imgBytes, ok := readFirstBookCover(cbzPath)
+	imgBytes, ok := s.readBookCover(ctx, cbzPath)
 	if !ok {
 		return
 	}
@@ -134,12 +135,41 @@ func (s *Scanner) extractBookCover(ctx context.Context, book *media.Item, cbzPat
 		outData = imgBytes
 	}
 
-	if err := os.WriteFile(posterFile, outData, 0o644); err != nil {
+	if err := s.writePoster(ctx, posterFile, outData); err != nil {
 		s.logger.WarnContext(ctx, "failed to write book cover",
 			"book_id", book.ID, "err", err)
 		return
 	}
 	s.syncBookCoverPath(ctx, book, relPath)
+}
+
+// readBookCover extracts the first cover image from a comic/ebook archive. For a
+// local backend it parses in place (the existing random-access readers). For a
+// remote backend it stages the archive to a local temp file first — the zip/rar
+// parsers need random access — then extracts and deletes the temp copy.
+func (s *Scanner) readBookCover(ctx context.Context, path string) ([]byte, bool) {
+	if mediastore.IsLocal(s.mediaStore()) {
+		return readFirstBookCover(path)
+	}
+	f, err := s.mediaStore().Open(ctx, path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	tmp, err := os.CreateTemp("", "onscreen-book-*"+filepath.Ext(path))
+	if err != nil {
+		return nil, false
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := io.Copy(tmp, f); err != nil {
+		tmp.Close()
+		return nil, false
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, false
+	}
+	return readFirstBookCover(tmpName)
 }
 
 // syncBookCoverPath sets book.poster_path to relPath when it's missing
