@@ -1,6 +1,43 @@
 package scanner
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
+
+// atom builds an 8-byte ISOBMFF top-level atom header with no body (size = 8).
+func atom(typ string) []byte {
+	b := []byte{0, 0, 0, 8}
+	return append(b, []byte(typ)...)
+}
+
+func TestIsMP4Container(t *testing.T) {
+	for _, p := range []string{"a.mp4", "a.MOV", "a.m4v", "a.m4a"} {
+		if !IsMP4Container(p) {
+			t.Errorf("%s should be an MP4-family container", p)
+		}
+	}
+	for _, p := range []string{"a.mkv", "a.flac", "a.webm", "a"} {
+		if IsMP4Container(p) {
+			t.Errorf("%s should not be treated as MP4-family", p)
+		}
+	}
+}
+
+func TestIsFaststartReader(t *testing.T) {
+	// moov before mdat → faststart.
+	if !IsFaststartReader(bytes.NewReader(append(atom("ftyp"), atom("moov")...))) {
+		t.Error("moov-before-mdat should report faststart=true")
+	}
+	// mdat before moov → not faststart.
+	if IsFaststartReader(bytes.NewReader(append(atom("ftyp"), atom("mdat")...))) {
+		t.Error("mdat-before-moov should report faststart=false")
+	}
+	// Unreadable / not ISOBMFF → assume ok (true) rather than block playback.
+	if !IsFaststartReader(bytes.NewReader([]byte("garbage"))) {
+		t.Error("undecodable input should default to true (assume ok)")
+	}
+}
 
 func TestStreamBitDepth(t *testing.T) {
 	cases := []struct {

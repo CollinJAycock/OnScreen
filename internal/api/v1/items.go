@@ -299,6 +299,22 @@ func (h *ItemHandler) mediaStore() mediastore.Store {
 	return h.store
 }
 
+// faststart reports whether an MP4-family file is faststart, reading it through
+// the media store so the hint is correct for sources in object storage (a player
+// uses it to decide whether progressive playback will stall). Non-MP4 or
+// unreadable inputs return true ("assume ok"), matching scanner.IsFaststart.
+func (h *ItemHandler) faststart(ctx context.Context, path string) bool {
+	if !scanner.IsMP4Container(path) {
+		return true
+	}
+	f, err := h.mediaStore().Open(ctx, path)
+	if err != nil {
+		return true
+	}
+	defer f.Close()
+	return scanner.IsFaststartReader(f)
+}
+
 // checkLibraryAccess returns true if the caller is allowed to see items in the
 // given library. Returns false + writes NotFound when denied. Returns false +
 // writes InternalError on lookup failure. When the handler has no access
@@ -640,7 +656,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Bitrate:             f.Bitrate,
 			HDRType:             f.HDRType,
 			DurationMS:          f.DurationMS,
-			Faststart:           scanner.IsFaststart(f.FilePath),
+			Faststart:           h.faststart(r.Context(), f.FilePath),
 			BitDepth:            f.BitDepth,
 			SampleRate:          f.SampleRate,
 			ChannelLayout:       f.ChannelLayout,

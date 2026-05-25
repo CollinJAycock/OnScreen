@@ -324,13 +324,24 @@ func channelLayoutFromCount(n int) string {
 	return strconv.Itoa(n) + " channels"
 }
 
+// IsMP4Container reports whether faststart analysis applies to path's container
+// (the ISOBMFF family). Callers gate on this before opening so non-MP4 inputs
+// aren't read needlessly.
+func IsMP4Container(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4", ".mov", ".m4v", ".m4a":
+		return true
+	}
+	return false
+}
+
 // IsFaststart reports whether an MP4/MOV file has its moov atom before mdat
 // (i.e. is "faststart"). Non-faststart files require the browser to fetch the
 // end of the file before playback can begin, causing silence and buffering.
-// Returns true for any file format that isn't MP4/MOV (no concern there).
+// Returns true for any file format that isn't MP4/MOV (no concern there). Thin
+// wrapper over IsFaststartReader for callers that have a local path.
 func IsFaststart(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext != ".mp4" && ext != ".mov" && ext != ".m4v" && ext != ".m4a" {
+	if !IsMP4Container(path) {
 		return true // not an ISOBMFF container — not applicable
 	}
 	f, err := os.Open(path)
@@ -338,7 +349,14 @@ func IsFaststart(path string) bool {
 		return true // assume ok if we can't read
 	}
 	defer f.Close()
+	return IsFaststartReader(f)
+}
 
+// IsFaststartReader walks the top-level atoms of an already-open ISOBMFF file
+// (media-store readable), returning whether moov precedes mdat. Assumes the
+// caller has gated on IsMP4Container. Returns true (assume ok) on any read
+// trouble.
+func IsFaststartReader(f io.ReadSeeker) bool {
 	// Walk the top-level atoms looking for moov before mdat.
 	buf := make([]byte, 8)
 	for {

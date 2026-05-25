@@ -170,19 +170,26 @@ per-type processing is pure filename parsing, no byte reads. For the default loc
 backend nothing changes (the store is `Local`, every call resolves to the same
 syscall).
 
-**Per-type embedded reads — extended.** Music tags, image dimensions, and photo
-EXIF now read through the store (`ReadMusicTagsStore`, `ProbeImageReader`,
-`ExtractEXIFReader`), so **music** and **photo** libraries enrich from object
-storage too — not just movies/shows/anime. The path-based `ReadMusicTags` /
-`ProbeImage` / `ExtractEXIF` remain as local wrappers.
+**Per-type reads — extended.** Music tags, image dimensions, photo EXIF, and the
+serve-time **MP4 faststart** probe now read through the store
+(`ReadMusicTagsStore`, `ProbeImageReader`, `ExtractEXIFReader`, `IsFaststartReader`
+via `ItemHandler.faststart`), so **music** and **photo** libraries enrich from
+object storage and direct-play of object-storage MP4s gets a correct faststart
+hint. Path-based wrappers remain for local callers.
 
-**Still to do (degrades gracefully for remote today):**
-- the remaining per-type reads — audiobook/book embedded covers (ffmpeg/zip),
-  MP4 faststart (`IsFaststart`), and music **folder-art** discovery (a directory
-  read) — still use the local path; they need a presigned URL or `store.Walk`,
-  and fall back to online enrichment for a remote source meanwhile;
-- the fsnotify **watcher** stays local-only — object storage has no inotify; live
-  ingest there needs bucket event notifications, a separate effort.
+**Still to do — these are read *and write*, so they need a writable store.** The
+last per-type holdouts aren't pure reads: **audiobook/book embedded covers** and
+**music/artist folder-art** *extract* an image and write it back next to the media
+(`os.WriteFile(posterFile, …)`). The read side fits the store, but the write does
+not — `MediaStore` is read-only (`Open`/`Stat`/`SignedURL`/`Walk`). Closing them
+needs a **`Putter` capability** (`Put(ctx, key, bytes)` → `Local` `os.WriteFile`,
+`S3` `PutObject`), which is also the prerequisite for writing pre-encoded
+static-ABR segments (step 5). Until then they use the local path and a remote
+source falls back to online enrichment.
+
+**Also still to do:** the fsnotify **watcher** stays local-only — object storage
+has no inotify; live ingest there needs bucket event notifications, a separate
+effort.
 
 **Content addressing — resolved per site.** A store key is still the absolute
 `FilePath`, but it now resolves locally at each site: the **S3** backend strips a
@@ -320,7 +327,7 @@ reads** if both sites should be live. Active/active writes only if forced.
 
 1. **Valkey Sentinel** — ✅ client support + deployable stack landed; failover for the lock/session/cache tier makes the existing leader-election guarantee real.
 2. **Postgres failover** — ✅ app-side (multi-host failover DSN + lifetime tuning) + replication substrate (`docker-compose.postgres-ha.yml`) landed & validated. Remaining: the **automatic promotion** orchestrator (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint — pure ops.
-3. **`MediaStore` abstraction + object-storage backend** — ✅ abstraction + `Local` backend + direct-play integration landed (`internal/mediastore`), non-breaking (local FS stays the default). Remaining: the S3/GCS backend + routing transcode/scan/artwork byte paths through it. Unblocks everything downstream.
+3. **`MediaStore` abstraction + object-storage backend** — ✅ landed: abstraction, `Local` + S3 backends, hot-swap provider, admin UI, and every read path routed (direct play, download, transcode source, artwork, scanner discovery + music/photo/faststart reads), plus per-site content addressing. Remaining: a writable `Putter` for cover/folder-art write-back + static-ABR segments; object-storage live ingest (watcher).
 4. **CDN + `SignedURL` offload** — ✅ object-storage bytes offload via signed/CDN URLs on every serve path; app-served artwork is CDN-cacheable via `PUBLIC_ASSET_CACHE`. Static *segments* wait on step 5.
 5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock.
 6. **Multi-site active/passive DR** — two TrueNAS sites, ZFS + Postgres streaming replication; the first step into [geo-distribution](#multi-site--geo-distribution). Then active/active reads.
