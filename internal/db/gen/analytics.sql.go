@@ -184,14 +184,27 @@ func (q *Queries) GetPlaysPerDay(ctx context.Context) ([]DayCountRow, error) {
 	return items, rows.Err()
 }
 
+// Counts are aggregated per media_id first, then joined to media_items so the
+// poster fallback (below) can reference parent/grandparent without bloating the
+// GROUP BY. poster_path coalesces up the hierarchy — an episode has no poster of
+// its own, so it inherits the show's (episode→season→show); a track inherits the
+// album/artist's (track→album→artist); books/audiobook chapters inherit their
+// series/author's. Same precedence as the hub/collections queries.
 const getTopPlayed = `
-SELECT mi.id, mi.title, mi.year, mi.type, mi.poster_path, COUNT(wp.id) AS play_count
-FROM watch_plays wp
-JOIN media_items mi ON mi.id = wp.media_id
-WHERE wp.occurred_at > NOW() - INTERVAL '90 days'
-  AND mi.deleted_at IS NULL
-GROUP BY mi.id, mi.title, mi.year, mi.type, mi.poster_path
-ORDER BY play_count DESC
+SELECT mi.id, mi.title, mi.year, mi.type,
+       COALESCE(gp.poster_path, p.poster_path, mi.poster_path,
+                gp.thumb_path,  p.thumb_path,  mi.thumb_path) AS poster_path,
+       plays.play_count
+FROM (
+  SELECT media_id, COUNT(*) AS play_count
+  FROM watch_plays
+  WHERE occurred_at > NOW() - INTERVAL '90 days'
+  GROUP BY media_id
+) plays
+JOIN media_items mi ON mi.id = plays.media_id AND mi.deleted_at IS NULL
+LEFT JOIN media_items p  ON p.id  = mi.parent_id
+LEFT JOIN media_items gp ON gp.id = p.parent_id
+ORDER BY plays.play_count DESC
 LIMIT 10`
 
 type TopPlayedRow struct {
