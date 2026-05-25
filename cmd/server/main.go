@@ -647,6 +647,8 @@ func run() error {
 	}
 	mediaStoreProvider := mediastore.NewProvider(initialStore)
 	settingsHandler.SetMediaStoreProvider(mediaStoreProvider)
+	// Read source artwork through the same backend (resize cache stays local).
+	artworkMgr.WithMediaStore(mediaStoreProvider)
 
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger).
 		WithLibraryAccess(libSvc).

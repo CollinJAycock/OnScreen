@@ -126,6 +126,11 @@ Byte paths routed through it so far:
   [`internal/api/v1/transcode.go`](../internal/api/v1/transcode.go) prefers the
   store's `SignedURL`, so a worker reads source straight from object storage / a
   CDN; otherwise it falls back to the existing LAN stream-token URL.
+- **Artwork** — the `/artwork/*` route + `artwork.Manager.Resize`
+  ([`internal/artwork/artwork.go`](../internal/artwork/artwork.go)) read source
+  images (existence check, full-size serve, and resize decode) through the store,
+  so posters/fanart stored next to media (ADR-006) resolve from the bucket. The
+  resize cache stays local — it's a regenerable server-side cache, not media bytes.
 
 Every site is opt-in via `WithMediaStore`, and `Local.SignedURL` returns `""`
 (can't offload), so single-node and shared-storage installs are byte-for-byte the
@@ -143,7 +148,6 @@ Storage** ([`web/src/routes/settings/storage`](../web/src/routes/settings/storag
 via `GET`/`PUT`/`POST /settings/storage[/test]`. Default stays local FS.
 
 **Still to do:**
-- the **artwork** read path;
 - the **scanner**, which is the awkward one: it *discovers* files by walking the
   local FS tree, so it needs a `List`/`Walk` primitive the current interface
   doesn't have (object-storage "scanning" is a bucket listing). Better done *with*

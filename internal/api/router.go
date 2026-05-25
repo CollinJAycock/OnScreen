@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/artwork"
+	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/valkey"
@@ -216,10 +216,17 @@ func NewRouter(h *Handlers) http.Handler {
 				}
 
 				claims := middleware.ClaimsFromContext(req.Context())
+				// Read artwork through the same backend Resize uses so artwork
+				// stored next to media in object storage is served too; defaults
+				// to local FS when no store is wired.
+				artStore := mediastore.Store(mediastore.Local{})
+				if h.Artwork != nil {
+					artStore = h.Artwork.Store()
+				}
 				for _, root := range h.ArtworkRoots() {
 					for _, path := range root.Paths {
 						abs := filepath.Join(path, clean)
-						if _, err := os.Stat(abs); err != nil {
+						if _, err := artStore.Stat(req.Context(), abs); err != nil {
 							continue
 						}
 						// File exists; check whether the caller can see
@@ -260,7 +267,16 @@ func NewRouter(h *Handlers) http.Handler {
 						if rc := http.NewResponseController(w); rc != nil {
 							_ = rc.SetWriteDeadline(time.Time{})
 						}
-						http.ServeFile(w, req, abs)
+						// Serve through the media store (full Range support; 302 to
+						// a CDN when the backend offloads). 15 min bounds any signed
+						// URL — ample for an immediate client/CDN fetch.
+						if err := mediastore.Serve(w, req, artStore, abs, filepath.Base(abs), 15*time.Minute); err != nil {
+							if respond.IsClientGone(err) {
+								h.Logger.Debug("artwork serve: client gone", "path", abs, "error", err)
+							} else {
+								h.Logger.Error("artwork serve failed", "path", abs, "error", err)
+							}
+						}
 						return
 					}
 				}

@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
@@ -66,6 +67,13 @@ type Manager struct {
 	// frozen at the burst peak. Bounded concurrency keeps the burst
 	// peak proportional to GOMAXPROCS instead of client-driven.
 	resizeSem chan struct{}
+
+	// store reads source artwork bytes. Optional — nil defaults to
+	// mediastore.Local, so artwork is read straight from disk as before. When
+	// object storage is configured, artwork that lives next to media (ADR-006)
+	// is read from the bucket. The resize cache stays local regardless (it's a
+	// regenerable server-side cache, not media bytes).
+	store mediastore.Store
 }
 
 // New creates an artwork Manager. The default HTTP client uses
@@ -109,6 +117,24 @@ func New(cachePath string) *Manager {
 func (m *Manager) WithHTTPClient(c *http.Client) *Manager {
 	m.httpClient = c
 	return m
+}
+
+// WithMediaStore sets the backend used to read source artwork bytes. When unset,
+// reads come from the local filesystem (mediastore.Local) — unchanged behaviour.
+// Returns the Manager for chaining.
+func (m *Manager) WithMediaStore(s mediastore.Store) *Manager {
+	m.store = s
+	return m
+}
+
+// Store returns the configured source backend, defaulting to local-filesystem
+// when none is wired. Exposed so the artwork HTTP route can read the
+// existence-check + full-size serve through the same backend Resize uses.
+func (m *Manager) Store() mediastore.Store {
+	if m.store == nil {
+		return mediastore.Local{}
+	}
+	return m.store
 }
 
 // DownloadPoster downloads a poster image into absDir/poster.jpg.
@@ -242,11 +268,19 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 	cacheKey := cacheKeyFor(sourcePath, width, height)
 	cachePath := filepath.Join(m.cachePath, cacheKey+".jpg")
 
+	// Source mtime gates cache validity (ADR-006). Read it through the media
+	// store so artwork stored next to media in object storage is reachable; for
+	// the default local backend this is a plain stat.
+	srcInfo, err := m.Store().Stat(ctx, sourcePath)
+	if err != nil {
+		return fmt.Errorf("stat source image: %w", err)
+	}
+
 	// Check if cache is valid (source mtime hasn't changed). Cache hits
-	// are pure file IO (small JPEG → response writer); they bypass the
+	// are pure local file IO (small JPEG → response writer); they bypass the
 	// resize semaphore so a TV row of cached cards never waits on
 	// in-flight decodes.
-	if isCacheValid(sourcePath, cachePath) {
+	if cacheFreshSince(srcInfo.ModTime, cachePath) {
 		cf, err := os.Open(cachePath)
 		if err == nil {
 			defer cf.Close()
@@ -267,8 +301,8 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 		}
 	}
 
-	// Decode source image.
-	sf, err := os.Open(sourcePath)
+	// Decode source image (through the media store).
+	sf, err := m.Store().Open(ctx, sourcePath)
 	if err != nil {
 		return fmt.Errorf("open source image: %w", err)
 	}
@@ -339,15 +373,14 @@ func cacheKeyFor(path string, w, h int) string {
 	return hex.EncodeToString(h256[:16])
 }
 
-func isCacheValid(sourcePath, cachePath string) bool {
-	srcInfo, err := os.Stat(sourcePath)
-	if err != nil {
-		return false
-	}
+// cacheFreshSince reports whether the local cache file was written after the
+// source's last modification. The source mtime is supplied by the caller (read
+// via the media store) so the source need not be on the local filesystem; the
+// cache always is.
+func cacheFreshSince(srcModTime time.Time, cachePath string) bool {
 	cacheInfo, err := os.Stat(cachePath)
 	if err != nil {
 		return false
 	}
-	// Cache is valid if it was written after the source was last modified.
-	return cacheInfo.ModTime().After(srcInfo.ModTime())
+	return cacheInfo.ModTime().After(srcModTime)
 }
