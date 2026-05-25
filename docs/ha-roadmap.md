@@ -167,6 +167,63 @@ from catalog:
 
 ---
 
+## Multi-Site / Geo-Distribution
+
+The tier *above* single-cluster HA: two (or more) physical locations, each with
+an identical copy of the library, so a site can serve locally and survive the
+loss of the *other* site. This is where OnScreen's foundations create a moat the
+SQLite-based competitors structurally can't cross.
+
+"Identical libraries at two locations" splits into two problems of very
+different difficulty.
+
+### The easy half — identical content at both sites
+- **TrueNAS/ZFS snapshot replication** to a second box is a built-in, scheduled
+  feature; artwork rides along because it lives next to the media (ADR-006).
+- The **`MediaStore`** abstraction (HA step 3) is the cloud equivalent: content
+  keyed in object storage with cross-region replication.
+
+So the bytes being identical at both sites is essentially a storage-layer task.
+
+### The hard half — shared state across sites
+Postgres holds the metadata, users, auth, and watch state. Three models, by
+ascending difficulty:
+
+| Model | What it gives | Cost |
+|---|---|---|
+| **Active / passive (DR)** | One primary site; a warm standby with async Postgres streaming replication + ZFS-replicated content. Promote on site failure. | Low — it's "Postgres failover" (step 2) stretched across a WAN. **Do this first.** |
+| **Active / active *reads*** | Both sites serve playback + browse locally (content + a read replica are local); writes (progress, scans, account edits) go to one primary site. Cross-site write latency is invisible on a progress beacon. | Medium — rides directly on the existing RW/RO pool split (`DATABASE_RO_URL` → a local replica per site). |
+| **Active / active *writes*** | Either site accepts writes, no primary. | High — Postgres isn't multi-master. See the event-sourcing note below; the rest needs conflict handling or commercial multi-master (EDB BDR). Don't chase without a hard requirement. |
+
+### Why OnScreen is unusually suited to this
+- **PostgreSQL, not SQLite** — WAN streaming replication is first-class. Plex /
+  Emby / Jellyfin have no consistent multi-site story; this is structural, not a
+  feature gap they can patch.
+- **Event-sourced watch state** — `watch_events` is append-only, so it *merges*
+  across sites without conflict: each site appends its own events and they
+  reconcile. The state that's normally hardest to distribute is the easiest here
+  — the one piece that could even support active/active writes.
+- **Stateless API + PASETO + signed asset/stream tokens** — a token minted at
+  site A is valid at site B (shared `SECRET_KEY`); no sticky sessions.
+- **TrueNAS/ZFS** — content replication out of the box.
+
+### Gaps to close (beyond the HA tiers)
+1. **Content addressing.** The scanner stores absolute `FilePath`s, which differ
+   per site. `MediaStore`'s stable *key* (resolved locally at each site) is the
+   fix — this is the linchpin that makes content portable across sites.
+2. **Per-site Valkey.** Sessions/locks are per-site, so cross-site "play on this
+   device" / live-supersede won't span sites without a federation layer. Minor —
+   per-site is acceptable for almost everything.
+3. **Geo-routing.** DNS/anycast or per-site hostnames so users land on the
+   nearest site; session epoch (revocation) propagates with replication lag.
+
+### Sequence
+Finish within-site HA → **active/passive DR across two TrueNAS sites** (cheap,
+high value, leans on ZFS + Postgres streaming replication) → **active/active
+reads** if both sites should be live. Active/active writes only if forced.
+
+---
+
 ## Suggested sequencing
 
 1. **Valkey Sentinel** — ✅ client support + deployable stack landed; failover for the lock/session/cache tier makes the existing leader-election guarantee real.
@@ -174,7 +231,9 @@ from catalog:
 3. **`MediaStore` abstraction + object-storage backend** — unblocks everything downstream; non-breaking (local FS stays the default).
 4. **CDN + `SignedURL` offload** for artwork / direct-play / static assets.
 5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock.
-6. *(deferred)* multi-region; *(separate track, only if pursuing path B)* multi-tenancy + billing + DRM.
+6. **Multi-site active/passive DR** — two TrueNAS sites, ZFS + Postgres streaming replication; the first step into [geo-distribution](#multi-site--geo-distribution). Then active/active reads.
+7. *(deferred)* multi-region (many regions / global); *(separate track, only if pursuing path B)* multi-tenancy + billing + DRM.
 
 Park multi-region and DRM until a concrete customer needs them — both are large
-and shouldn't be built speculatively.
+and shouldn't be built speculatively. Multi-site DR (step 6), by contrast, is a
+natural payoff of the HA tiers + ZFS and worth doing once `MediaStore` lands.
