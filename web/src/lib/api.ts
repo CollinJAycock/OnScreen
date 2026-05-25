@@ -896,6 +896,25 @@ export interface OTelSettings {
   deployment_env: string;    // tagged on every span; e.g. "production"
 }
 
+export interface StorageSettings {
+  enabled: boolean;
+  backend: string;           // "local" | "s3"
+  endpoint: string;          // S3 host, no scheme (e.g. s3.us-west-2.amazonaws.com)
+  region: string;
+  bucket: string;
+  access_key: string;
+  secret_key: string;        // "****" if set, "" if empty
+  use_ssl: boolean;
+  media_root: string;        // local path prefix stripped to form the object key
+  path_prefix: string;       // prefix inside the bucket
+  cdn_base_url: string;      // optional CDN origin for signed URLs
+}
+
+export interface StorageTestResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface GeneralSettings {
   base_url: string;            // public URL — used for OAuth redirects, LAN discovery
   log_level: string;           // debug | info | warn | error
@@ -1018,6 +1037,9 @@ export const settingsApi = {
   getTranscodeConfig: () => api.get<TranscodeConfig>('/settings/transcode-config'),
   updateTranscodeConfig: (body: TranscodeConfig) => api.put<void>('/settings/transcode-config', body),
   testEmail: (to: string) => api.post<{ message: string }>('/email/test', { to }),
+  getStorage: () => api.get<StorageSettings>('/settings/storage'),
+  updateStorage: (body: StorageSettings) => api.put<void>('/settings/storage', body),
+  testStorage: (body: StorageSettings) => api.post<StorageTestResult>('/settings/storage/test', body),
 };
 
 // ── Filesystem browser ────────────────────────────────────────────────────────

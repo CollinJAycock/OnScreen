@@ -132,9 +132,17 @@ Every site is opt-in via `WithMediaStore`, and `Local.SignedURL` returns `""`
 pre-abstraction behaviour: a non-breaking refactor that *enables* object storage
 rather than requiring it.
 
+**Object-storage backend — landed.** [`internal/mediastore/s3.go`](../internal/mediastore/s3.go)
+is an S3-compatible `Store` (AWS S3 / MinIO / Backblaze B2 / Wasabi / Cloudflare
+R2) on minio-go: `Open`/`Stat` range-read the bucket, `SignedURL` returns a CDN
+URL when a CDN base is set else a presigned bucket URL, and `Ping` backs the
+admin "Test connection". A `mediastore.Provider` makes the active backend
+hot-swappable, so enabling object storage applies without a restart. Config lives
+in `server_settings` (encrypted) and is set from **Settings ▸ Integrations ▸
+Storage** ([`web/src/routes/settings/storage`](../web/src/routes/settings/storage/+page.svelte))
+via `GET`/`PUT`/`POST /settings/storage[/test]`. Default stays local FS.
+
 **Still to do:**
-- an **object-storage backend** (S3/GCS `Open`/`Stat` range reads + real presigned
-  `SignedURL`) — the piece that actually lights up every `SignedURL` site above;
 - the **artwork** read path;
 - the **scanner**, which is the awkward one: it *discovers* files by walking the
   local FS tree, so it needs a `List`/`Walk` primitive the current interface

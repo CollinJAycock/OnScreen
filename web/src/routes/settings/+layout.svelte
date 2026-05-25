@@ -67,11 +67,12 @@
     {
       label: 'Integrations',
       href: '/settings/webhooks',
-      matches: ['/settings/webhooks', '/settings/arr-services', '/settings/plugins'],
+      matches: ['/settings/webhooks', '/settings/arr-services', '/settings/plugins', '/settings/storage'],
       children: [
         { href: '/settings/webhooks', label: 'Webhooks' },
         { href: '/settings/arr-services', label: 'Arr Services' },
         { href: '/settings/plugins', label: 'Plugins' },
+        { href: '/settings/storage', label: 'Storage' },
       ],
     },
     {
