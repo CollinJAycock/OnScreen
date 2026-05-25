@@ -285,6 +285,7 @@ func (s *stubSettingsService) NodeSettingsGet(_ context.Context, _ string) setti
 func (s *stubSettingsService) SetNodeSettings(_ context.Context, _ string, _ settings.NodeSettings) error {
 	return nil
 }
+func (s *stubSettingsService) DeleteNodeSettings(_ context.Context, _ string) error { return nil }
 func (s *stubSettingsService) ListNodes(_ context.Context) ([]settings.NodeSummary, error) {
 	return nil, nil
 }

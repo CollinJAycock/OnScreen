@@ -100,6 +100,10 @@ func (m *mockSettingsService) SetNodeSettings(_ context.Context, nodeID string, 
 	m.nodeCfg[nodeID] = ns
 	return nil
 }
+func (m *mockSettingsService) DeleteNodeSettings(_ context.Context, nodeID string) error {
+	delete(m.nodeCfg, nodeID)
+	return nil
+}
 func (m *mockSettingsService) ListNodes(_ context.Context) ([]settings.NodeSummary, error) {
 	return m.nodes, nil
 }

@@ -1100,6 +1100,7 @@ export const settingsApi = {
   getNodes: () => api.get<NodeList>('/settings/nodes'),
   getNode: (nodeID: string) => api.get<NodeSettings>(`/settings/node/${encodeURIComponent(nodeID)}`),
   updateNode: (nodeID: string, body: NodeSettings) => api.put<void>(`/settings/node/${encodeURIComponent(nodeID)}`, body),
+  deleteNode: (nodeID: string) => api.delete(`/settings/node/${encodeURIComponent(nodeID)}`),
 };
 
 // ── Filesystem browser ────────────────────────────────────────────────────────

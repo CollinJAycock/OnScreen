@@ -143,6 +143,23 @@ func count(s []string, v string) int {
 	return n
 }
 
+func TestDeleteNode_RemovesStoredConfig(t *testing.T) {
+	svc := &mockSettingsService{nodeCfg: map[string]settings.NodeSettings{
+		"stale-node": {SiteID: strPtr("old-site")},
+	}}
+	h := nodeHandler(svc, "node-a", settings.NodeSettings{})
+
+	req := withChiParams(httptest.NewRequest(http.MethodDelete, "/settings/node/stale-node", nil), "nodeID", "stale-node")
+	rec := httptest.NewRecorder()
+	h.DeleteNode(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+	if _, ok := svc.nodeCfg["stale-node"]; ok {
+		t.Error("stale-node config row should have been deleted")
+	}
+}
+
 func TestGetNodes_EmptyMarshalsAsArrayNotNull(t *testing.T) {
 	// No stored rows → "nodes":[] so the web client can map() over it safely.
 	h := nodeHandler(&mockSettingsService{}, "node-a", settings.NodeSettings{})

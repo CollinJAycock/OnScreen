@@ -138,3 +138,28 @@ func (h *SettingsHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	respond.NoContent(w)
 }
+
+// DeleteNode handles DELETE /settings/node/{nodeID} — removes a node's stored
+// config so it reverts to env defaults, and (if it's offline) drops it from the
+// picker. A still-joined node reappears in the list from the live fleet.
+func (h *SettingsHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
+	nodeID := chi.URLParam(r, "nodeID")
+	if nodeID == "" {
+		respond.BadRequest(w, r, "node id required")
+		return
+	}
+	ctx := r.Context()
+	if err := h.svc.DeleteNodeSettings(ctx, nodeID); err != nil {
+		h.logger.ErrorContext(ctx, "delete node settings", "node_id", nodeID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		if claims := middleware.ClaimsFromContext(ctx); claims != nil {
+			h.audit.Log(ctx, &claims.UserID, audit.ActionSettingsUpdate, "", map[string]any{
+				"node_settings_deleted": nodeID,
+			}, audit.ClientIP(r))
+		}
+	}
+	respond.NoContent(w)
+}

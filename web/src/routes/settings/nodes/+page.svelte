@@ -43,6 +43,12 @@
     }
   }
 
+  async function refreshNodeList() {
+    const list = await settingsApi.getNodes();
+    const ids = new Set<string>([currentNodeId, ...(list.nodes ?? []).map((n) => n.node_id)]);
+    nodeIds = [...ids].filter(Boolean).sort();
+  }
+
   async function save() {
     if (!node) return;
     saving = true;
@@ -50,12 +56,27 @@
       await settingsApi.updateNode(selected, node);
       toast.success(`Saved ${selected} — restart that node to apply`);
       // Refresh the node list so a newly-configured node appears in the picker.
-      const list = await settingsApi.getNodes();
-      const ids = new Set<string>([currentNodeId, ...(list.nodes ?? []).map((n) => n.node_id)]);
-      nodeIds = [...ids].filter(Boolean).sort();
+      await refreshNodeList();
       await loadNode();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function removeNode() {
+    if (!selected || selected === currentNodeId) return;
+    if (!confirm(`Remove saved config for "${selected}"? It reverts to env defaults; an online node stays in the list.`)) return;
+    saving = true;
+    try {
+      await settingsApi.deleteNode(selected);
+      toast.success(`Removed ${selected}`);
+      await refreshNodeList();
+      selected = currentNodeId;
+      await loadNode();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Remove failed');
     } finally {
       saving = false;
     }
@@ -150,6 +171,12 @@
         <button class="btn btn-primary" disabled={saving} on:click={save}>
           {saving ? 'Saving…' : `Save ${selected}`}
         </button>
+        {#if selected !== currentNodeId}
+          <button class="btn btn-danger" disabled={saving} on:click={removeNode}
+            title="Delete this node's saved config (e.g. a decommissioned node). It reverts to env defaults; an online node stays in the list.">
+            Remove saved config
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -227,6 +254,8 @@
   .btn:disabled { opacity: 0.55; cursor: not-allowed; }
   .btn-primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
   .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-danger { color: var(--error); border-color: rgba(255,90,90,0.4); }
+  .btn-danger:hover:not(:disabled) { background: rgba(255,90,90,0.12); }
 
   @media (max-width: 720px) {
     .grid { grid-template-columns: 1fr; }

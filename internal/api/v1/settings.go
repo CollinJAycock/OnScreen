@@ -61,6 +61,7 @@ type SettingsServiceIface interface {
 	SetTLS(ctx context.Context, cfg settings.TLSConfig) error
 	NodeSettingsGet(ctx context.Context, nodeID string) settings.NodeSettings
 	SetNodeSettings(ctx context.Context, nodeID string, ns settings.NodeSettings) error
+	DeleteNodeSettings(ctx context.Context, nodeID string) error
 	ListNodes(ctx context.Context) ([]settings.NodeSummary, error)
 }
 

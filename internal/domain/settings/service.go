@@ -746,6 +746,16 @@ func (s *Service) SetNodeSettings(ctx context.Context, nodeID string, ns NodeSet
 	return err
 }
 
+// DeleteNodeSettings removes a node's stored config row. The node reverts to its
+// env/built-in defaults on its next restart. No-op if the row doesn't exist.
+func (s *Service) DeleteNodeSettings(ctx context.Context, nodeID string) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM node_settings WHERE node_id = $1`, nodeID)
+	if err != nil && isUndefinedTable(err) {
+		return nil
+	}
+	return err
+}
+
 // ListNodes returns every node_settings row, newest-configured first. A missing
 // table (pre-migration) returns an empty list, not an error.
 func (s *Service) ListNodes(ctx context.Context) ([]NodeSummary, error) {

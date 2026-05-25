@@ -583,6 +583,7 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/settings/nodes", h.Settings.GetNodes)
 					r.Get("/settings/node/{nodeID}", h.Settings.GetNode)
 					r.Put("/settings/node/{nodeID}", h.Settings.UpdateNode)
+					r.Delete("/settings/node/{nodeID}", h.Settings.DeleteNode)
 				})
 			}
 
