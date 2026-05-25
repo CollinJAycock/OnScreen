@@ -261,8 +261,15 @@
     goto('/login');
   }
 
-  function handleWindowClick() {
-    if (notifOpen) notifOpen = false;
+  // Click-outside to close the notification panel. Must ignore clicks inside
+  // the bell/panel itself — otherwise the same click that opens the bell bubbles
+  // to the window and closes it in the same event, so the panel never appears.
+  function handleWindowClick(e: MouseEvent) {
+    if (!notifOpen) return;
+    const target = e.target as Node | null;
+    const wrap = document.querySelector('.notif-wrapper');
+    if (wrap && target && wrap.contains(target)) return;
+    notifOpen = false;
   }
 
   async function saveServerUrl() {
