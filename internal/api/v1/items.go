@@ -28,6 +28,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/intromarker"
+	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/scanner"
@@ -156,6 +157,7 @@ type ItemHandler struct {
 	deleter   ItemSubtreeDeleter // optional; when set, DELETE /items/{id} is admin-served
 	credits   ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
 	dlGate    DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
+	store     mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
 	logger    *slog.Logger
 }
 
@@ -277,6 +279,24 @@ func (h *ItemHandler) WithEpisodePoster(db EpisodePosterDB) *ItemHandler {
 func (h *ItemHandler) WithStreamTokenMaker(m *auth.TokenMaker) *ItemHandler {
 	h.tokens = m
 	return h
+}
+
+// WithMediaStore attaches the media-byte backend used by StreamFile and Download
+// (HA roadmap §3). When nil, mediaStore() falls back to mediastore.Local, which
+// serves from the on-disk FilePath exactly as before — so wiring this is opt-in
+// and non-breaking. An object-storage backend can offload to a CDN via SignedURL.
+func (h *ItemHandler) WithMediaStore(s mediastore.Store) *ItemHandler {
+	h.store = s
+	return h
+}
+
+// mediaStore returns the configured backend, defaulting to local-filesystem
+// serving when none is wired.
+func (h *ItemHandler) mediaStore() mediastore.Store {
+	if h.store == nil {
+		return mediastore.Local{}
+	}
+	return h.store
 }
 
 // checkLibraryAccess returns true if the caller is allowed to see items in the
@@ -1732,7 +1752,18 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		_ = rc.SetWriteDeadline(time.Time{})
 	}
 
-	http.ServeFile(w, r, file.FilePath)
+	// Content-Type is already set to octet-stream above, so ServeContent keeps it
+	// (the basename is only a content-type hint and is ignored here). The store
+	// streams from disk today; an object-storage backend would 302 to a CDN.
+	if err := mediastore.Serve(w, r, h.mediaStore(), file.FilePath, filepath.Base(file.FilePath), auth.StreamTokenTTL); err != nil {
+		if errors.Is(err, mediastore.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "serve download", "file_id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
 }
 
 // downloadFilename builds an attachment filename. Prefers the item
@@ -1849,7 +1880,19 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		_ = rc.SetWriteDeadline(time.Time{})
 	}
 
-	http.ServeFile(w, r, file.FilePath)
+	// Serve via the media store: the local backend streams from FilePath with
+	// full Range support (as the previous http.ServeFile did); an object-storage
+	// backend would hand back a signed URL and 302 the client to a CDN, taking
+	// the bytes off the app tier (HA roadmap §3).
+	if err := mediastore.Serve(w, r, h.mediaStore(), file.FilePath, filepath.Base(file.FilePath), auth.StreamTokenTTL); err != nil {
+		if errors.Is(err, mediastore.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "serve stream", "file_id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
 }
 
 func itemStateToEventType(state string) string {

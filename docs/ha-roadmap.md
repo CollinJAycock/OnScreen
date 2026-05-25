@@ -97,37 +97,40 @@ Sentinel's TILT guard and suppresses local failover).
 **Still to do:** **Valkey Cluster** (sharding) for when one node can't hold the
 keyspace/throughput — Sentinel covers failover but not horizontal data scale.
 
-### 3. Storage
-Streaming is `http.ServeFile(file.FilePath)` — a local filesystem path. That's a
+### 3. Storage  ✅ abstraction landed (local backend); object-storage + offload next
+Streaming was `http.ServeFile(file.FilePath)` — a local filesystem path. That's a
 SPOF *and* the scaling ceiling, and it's the largest net-new piece of work.
 
 **Close it:** a storage abstraction behind the current `FilePath`, with backends
 for local FS, network FS, and **object storage (S3/GCS)**.
 
+**Done:** the abstraction is [`internal/mediastore`](../internal/mediastore/mediastore.go) —
+a `Store` interface (`Open` / `Stat` / `SignedURL`) plus a `Local` backend (wraps
+`os.Open`) and a `Serve` helper. The two direct-play sites (`StreamFile`,
+`Download` in [`internal/api/v1/items.go`](../internal/api/v1/items.go)) now route
+through `mediastore.Serve`, which streams with full Range support today, or — when
+a backend returns a non-empty `SignedURL` — 302-redirects the client to a CDN,
+taking the bytes off the app tier. `Local.SignedURL` returns `""`, so the local
+path is byte-for-byte the old `ServeFile` behaviour: a non-breaking refactor that
+*enables* object storage rather than requiring it. Wired opt-in via
+`ItemHandler.WithMediaStore`; nil defaults to `Local`.
+
 ```go
-// MediaStore abstracts where media bytes live so the streaming + scan tiers
-// stop assuming a local filesystem path. Local wraps os.Open; S3/GCS issues
-// range reads — or, better, hands back a presigned URL the client/CDN fetches
-// directly, taking the bytes off the app tier entirely.
-type MediaStore interface {
-    // Open returns a range-seekable reader for playback input (direct play,
-    // remux/transcode source, scan probe). Backs HTTP Range via Seek.
+type Store interface {
     Open(ctx context.Context, key string) (io.ReadSeekCloser, error)
-
-    // Stat returns size + modtime for Content-Length, caching, and the
-    // mtime+size hash-skip in the scanner (ADR-011).
     Stat(ctx context.Context, key string) (FileInfo, error)
-
-    // SignedURL returns a short-lived URL a CDN or client can fetch directly,
-    // bypassing the app tier. Returns "" when the backend can't offload (local
-    // FS), so the caller falls back to streaming through the app.
+    // "" (nil err) means "can't offload" → caller streams through the app.
     SignedURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 ```
 
-`SignedURL` is the hinge for CDN offload (§ below). Local FS returns `""` → the
-app serves via `ServeFile` exactly as today, so this is a non-breaking refactor
-that *enables* object storage rather than requiring it.
+**Still to do:** an **object-storage backend** (S3/GCS `Open`/`Stat` range reads +
+real presigned `SignedURL`); routing the remaining byte paths through the store
+(transcode source input, scanner probe + mtime/size hash-skip, artwork); and a
+stable content *key* (today the key is the absolute `FilePath`) for multi-site
+portability — see the "Content addressing" gap under Multi-Site.
+
+`SignedURL` is the hinge for CDN offload (§ below).
 
 Closing all three = genuine HA: no SPOF, rolling deploys, survive any single node.
 
@@ -242,7 +245,7 @@ reads** if both sites should be live. Active/active writes only if forced.
 
 1. **Valkey Sentinel** — ✅ client support + deployable stack landed; failover for the lock/session/cache tier makes the existing leader-election guarantee real.
 2. **Postgres failover** — ✅ app-side (multi-host failover DSN + lifetime tuning) + replication substrate (`docker-compose.postgres-ha.yml`) landed & validated. Remaining: the **automatic promotion** orchestrator (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint — pure ops.
-3. **`MediaStore` abstraction + object-storage backend** — unblocks everything downstream; non-breaking (local FS stays the default).
+3. **`MediaStore` abstraction + object-storage backend** — ✅ abstraction + `Local` backend + direct-play integration landed (`internal/mediastore`), non-breaking (local FS stays the default). Remaining: the S3/GCS backend + routing transcode/scan/artwork byte paths through it. Unblocks everything downstream.
 4. **CDN + `SignedURL` offload** for artwork / direct-play / static assets.
 5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock.
 6. **Multi-site active/passive DR** — two TrueNAS sites, ZFS + Postgres streaming replication; the first step into [geo-distribution](#multi-site--geo-distribution). Then active/active reads.
