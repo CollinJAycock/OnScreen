@@ -92,7 +92,11 @@ type Handlers struct {
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []ArtworkRoot             // per-library scan_paths for ACL-aware artwork serving
 	LibraryAccess   v1.LibraryAccessChecker          // ACL for artwork; nil = bypass (dev setups)
-	Logger          *slog.Logger
+	// PublicAssetCache emits `Cache-Control: public` on immutable resized artwork
+	// so a CDN/shared cache in front can store it (HA roadmap §4). From
+	// cfg.PublicAssetCache; default false keeps the private posture.
+	PublicAssetCache bool
+	Logger           *slog.Logger
 	Metrics         *observability.Metrics
 	Auth_mw         *middleware.Authenticator
 	// Impersonate is the lookup the view-as middleware uses to swap an
@@ -243,7 +247,13 @@ func NewRouter(h *Handlers) http.Handler {
 						// Serve resized variant if dimensions requested.
 						if (wParam > 0 || hParam > 0) && h.Artwork != nil {
 							w.Header().Set("Content-Type", "image/jpeg")
-							w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
+							// Resized variants are immutable and identical for every
+							// user, so a CDN/shared cache can hold them when enabled.
+							resizedCC := "private, max-age=604800, immutable"
+							if h.PublicAssetCache {
+								resizedCC = "public, max-age=604800, immutable"
+							}
+							w.Header().Set("Cache-Control", resizedCC)
 							if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
 								// Client navigating off mid-resize is
 								// normal traffic on a TV remote (scroll
@@ -259,7 +269,11 @@ func NewRouter(h *Handlers) http.Handler {
 							}
 							return
 						}
-						w.Header().Set("Cache-Control", "private, max-age=86400, must-revalidate")
+						fullCC := "private, max-age=86400, must-revalidate"
+						if h.PublicAssetCache {
+							fullCC = "public, max-age=86400, must-revalidate"
+						}
+						w.Header().Set("Cache-Control", fullCC)
 						// Clear WriteTimeout — the 60 s server default
 						// kills mid-track for native clients that read
 						// at decode rate. Browsers dodge it by buffering

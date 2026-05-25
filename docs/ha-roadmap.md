@@ -204,12 +204,22 @@ Closing all three = genuine HA: no SPOF, rolling deploys, survive any single nod
 At high concurrency the bottleneck isn't the database — it's **moving bytes**.
 Today every byte flows through the app/fleet tier.
 
-### CDN in front of cacheable assets
-Artwork, direct-play files, and *static* segments are cacheable. The
-purpose-scoped asset token (`?token=` signed URLs) is already CDN-shaped, and
-`MediaStore.SignedURL` lets the app hand the client/CDN a direct fetch. Put
-CloudFront / Cloudflare / Fastly in front of those and the app tier stops being a
-byte pipe for the cacheable majority.
+### CDN in front of cacheable assets  ✅ offload paths landed
+Artwork, direct-play files, and *static* segments are cacheable. Two offload
+paths now exist:
+
+- **Object storage** → `MediaStore.SignedURL`. With a CDN base configured, the S3
+  backend returns CDN URLs and every serve path (direct play, download, artwork
+  full-size, transcode source) 302-redirects the client/worker there — the bytes
+  never touch the app tier. Done.
+- **App-served assets** (local-disk deployments) → set `PUBLIC_ASSET_CACHE=true`
+  and the immutable, user-independent resized artwork emits `Cache-Control:
+  public`, so CloudFront / Cloudflare / Fastly fronting the app caches the
+  cacheable majority (configure the CDN to key `/artwork` on the URL, ignoring the
+  `?token=` param). Off by default — the safe private posture.
+
+The remaining CDN win is **static segments**, which only become cacheable once
+they're pre-encoded — see Static ABR below.
 
 ### Static ABR for popular titles — the highest-leverage scale change
 Live ABR transcode segments are **per-session** and don't cache. The fix is to
@@ -311,7 +321,7 @@ reads** if both sites should be live. Active/active writes only if forced.
 1. **Valkey Sentinel** — ✅ client support + deployable stack landed; failover for the lock/session/cache tier makes the existing leader-election guarantee real.
 2. **Postgres failover** — ✅ app-side (multi-host failover DSN + lifetime tuning) + replication substrate (`docker-compose.postgres-ha.yml`) landed & validated. Remaining: the **automatic promotion** orchestrator (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint — pure ops.
 3. **`MediaStore` abstraction + object-storage backend** — ✅ abstraction + `Local` backend + direct-play integration landed (`internal/mediastore`), non-breaking (local FS stays the default). Remaining: the S3/GCS backend + routing transcode/scan/artwork byte paths through it. Unblocks everything downstream.
-4. **CDN + `SignedURL` offload** for artwork / direct-play / static assets.
+4. **CDN + `SignedURL` offload** — ✅ object-storage bytes offload via signed/CDN URLs on every serve path; app-served artwork is CDN-cacheable via `PUBLIC_ASSET_CACHE`. Static *segments* wait on step 5.
 5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock.
 6. **Multi-site active/passive DR** — two TrueNAS sites, ZFS + Postgres streaming replication; the first step into [geo-distribution](#multi-site--geo-distribution). Then active/active reads.
 7. *(deferred)* multi-region (many regions / global); *(separate track, only if pursuing path B)* multi-tenancy + billing + DRM.

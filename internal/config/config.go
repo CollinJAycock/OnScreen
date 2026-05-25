@@ -132,6 +132,15 @@ type Config struct {
 	// serving against a stale schema (which surfaces as login 401s — the auth
 	// query selects columns the migration adds).
 	AutoMigrate bool `env:"AUTO_MIGRATE" envDefault:"false"`
+	// PublicAssetCache makes immutable, user-independent assets (resized artwork)
+	// emit `Cache-Control: public` instead of `private`, so a shared CDN / cache
+	// fronting the server can store them and take the cacheable-majority off the
+	// app tier (HA roadmap §4). Off by default — the safe posture is to let only
+	// the browser cache auth'd responses. Set true only when a CDN is deployed in
+	// front (configure it to key /artwork on the URL, ignoring the ?token= param,
+	// since the resized bytes are identical for every user). Object-storage
+	// deployments don't need this — those bytes already offload via signed URLs.
+	PublicAssetCache bool `env:"PUBLIC_ASSET_CACHE" envDefault:"false"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`

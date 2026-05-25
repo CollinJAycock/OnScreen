@@ -1103,6 +1103,7 @@ func run() error {
 		Artwork:            artworkMgr,
 		ArtworkRoots:       artworkRootsFn,
 		LibraryAccess:      libSvc,
+		PublicAssetCache:   cfg.PublicAssetCache,
 		Logger:             logger,
 		Metrics:            metrics,
 		Auth_mw:            authMiddleware,
