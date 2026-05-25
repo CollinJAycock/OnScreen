@@ -60,6 +60,56 @@ func TestLocal_MissingKeyMapsToErrNotFound(t *testing.T) {
 	}
 }
 
+func TestLocal_Walk_YieldsFilesNotDirs(t *testing.T) {
+	root := t.TempDir()
+	// root/a.mkv, root/sub/b.mkv
+	if err := os.WriteFile(filepath.Join(root, "a.mkv"), []byte("aa"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "b.mkv"), []byte("bbbb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]int64{}
+	err := Local{}.Walk(context.Background(), root, func(o ObjectInfo) error {
+		got[filepath.Base(o.Key)] = o.Size
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("yielded %d files, want 2 (dirs must not be yielded): %v", len(got), got)
+	}
+	if got["a.mkv"] != 2 || got["b.mkv"] != 4 {
+		t.Errorf("sizes wrong: %v", got)
+	}
+}
+
+func TestLocal_Walk_StopsOnCallbackError(t *testing.T) {
+	root := t.TempDir()
+	for _, n := range []string{"1", "2", "3"} {
+		if err := os.WriteFile(filepath.Join(root, n+".mkv"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stop := errors.New("stop")
+	calls := 0
+	err := Local{}.Walk(context.Background(), root, func(ObjectInfo) error {
+		calls++
+		return stop
+	})
+	if !errors.Is(err, stop) {
+		t.Errorf("got %v, want the callback's error propagated", err)
+	}
+	if calls != 1 {
+		t.Errorf("callback ran %d times, want 1 (walk should stop on error)", calls)
+	}
+}
+
 func TestLocal_SignedURL_EmptyMeansNoOffload(t *testing.T) {
 	// The non-breaking hinge: Local can't offload, so Serve must stream through
 	// the app. An empty string with a nil error is the contract callers branch on.

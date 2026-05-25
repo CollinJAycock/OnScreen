@@ -57,6 +57,28 @@ func TestS3_ObjectKey_MapsLocalPathToBucketKey(t *testing.T) {
 	}
 }
 
+func TestS3_FilePathInvertsObjectKey(t *testing.T) {
+	// Walk yields keys via filePath; they must round-trip back through objectKey
+	// so a yielded key can be passed straight to Open/Stat.
+	cases := []struct {
+		mediaRoot, pathPrefix, filePath string
+	}{
+		{"/mnt/c/media", "library/", "/mnt/c/media/Movies/Dune.mkv"},
+		{"/mnt/c/media", "", "/mnt/c/media/TV/Show/ep.mkv"},
+		{"", "lib/", "/Movies/x.mkv"},
+		{"", "", "/a/b/c.mkv"},
+	}
+	for _, tc := range cases {
+		s := &S3{mediaRoot: tc.mediaRoot, pathPrefix: tc.pathPrefix}
+		key := s.objectKey(tc.filePath)
+		back := s.filePath(key)
+		if regot := s.objectKey(back); regot != key {
+			t.Errorf("round-trip broken: objectKey(%q)=%q → filePath=%q → objectKey=%q",
+				tc.filePath, key, back, regot)
+		}
+	}
+}
+
 func TestNewS3_RequiresEndpointAndBucket(t *testing.T) {
 	if _, err := NewS3(S3Config{Bucket: "b"}); err == nil {
 		t.Error("missing endpoint: expected error")

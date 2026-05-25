@@ -147,14 +147,28 @@ in `server_settings` (encrypted) and is set from **Settings ▸ Integrations ▸
 Storage** ([`web/src/routes/settings/storage`](../web/src/routes/settings/storage/+page.svelte))
 via `GET`/`PUT`/`POST /settings/storage[/test]`. Default stays local FS.
 
-**Still to do:**
-- the **scanner**, which is the awkward one: it *discovers* files by walking the
-  local FS tree, so it needs a `List`/`Walk` primitive the current interface
-  doesn't have (object-storage "scanning" is a bucket listing). Better done *with*
-  the backend than half-wired now — its `Open`/`Stat` byte ops fit, but discovery
-  doesn't, so routing only the hash/probe would be inconsistent;
-- a stable content *key* (today the key is the absolute `FilePath`) for multi-site
-  portability — see the "Content addressing" gap under Multi-Site.
+**Listing primitive — landed.** The discovery gap the scanner needs is now an
+optional `Lister` capability on the store: `Walk(ctx, prefix, fn)` enumerates
+objects under a prefix. `Local` walks the FS tree; `S3` lists the bucket and maps
+object keys back to the FilePath namespace so a walked key feeds straight into
+`Open`/`Stat`; `Provider` delegates (clear error if the backend can't list). Unit-
+and MinIO-integration-tested. Also the enumerator static-ABR pre-encode will use.
+
+**Still to do — wire the scanner onto it.** The scanner is the last and most
+entangled byte consumer; with `Walk` in place the remaining work is mechanical but
+spread across ~12 files:
+- swap the discovery `filepath.WalkDir` (`internal/scanner/scanner.go`) for
+  `store.Walk`, applying the dir-skip rules per key segment;
+- probe over a **presigned URL** (`ffprobe -i <signed-url>`) instead of a local
+  path when the source isn't local;
+- route the hash (`hash.go`) and sidecar reads (NFO, `folder.jpg`, EXIF, embedded
+  covers) through `Open`/`Stat`;
+- the fsnotify **watcher** stays local-only — object storage has no inotify; live
+  ingest there needs bucket event notifications, a separate effort.
+
+**Also still to do:** a stable content *key* (today the key is the absolute
+`FilePath`) for multi-site portability — see the "Content addressing" gap under
+Multi-Site.
 
 `SignedURL` is the hinge for CDN offload (§ below).
 

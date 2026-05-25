@@ -154,6 +154,36 @@ func TestS3_Integration_AgainstMinIO(t *testing.T) {
 		}
 	})
 
+	t.Run("Walk_ListsKeysRoundTrippedToFilePaths", func(t *testing.T) {
+		// Seed a couple more objects so Walk has a tree to enumerate.
+		for _, k := range []string{"TV/ShowA/s01e01.mkv", "TV/ShowA/s01e02.mkv"} {
+			if _, err := admin.PutObject(ctx, bucket, k,
+				bytes.NewReader([]byte("x")), 1, minio.PutObjectOptions{}); err != nil {
+				t.Fatalf("seed %s: %v", k, err)
+			}
+		}
+
+		seen := map[string]int64{}
+		err := s.Walk(ctx, "/srv/media/TV", func(o ObjectInfo) error {
+			seen[o.Key] = o.Size
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Walk: %v", err)
+		}
+		// Keys must come back FilePath-shaped (MediaRoot prepended), so they can
+		// be passed straight to Stat/Open.
+		for _, want := range []string{"/srv/media/TV/ShowA/s01e01.mkv", "/srv/media/TV/ShowA/s01e02.mkv"} {
+			if _, ok := seen[want]; !ok {
+				t.Errorf("Walk missing key %q; got %v", want, seen)
+			}
+		}
+		// And a yielded key really is usable by Stat.
+		if _, err := s.Stat(ctx, "/srv/media/TV/ShowA/s01e01.mkv"); err != nil {
+			t.Errorf("Stat on a walked key failed: %v", err)
+		}
+	})
+
 	t.Run("Stat_MissingIsErrNotFound", func(t *testing.T) {
 		if _, err := s.Stat(ctx, "/srv/media/nope/missing.mkv"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("missing Stat: got %v, want ErrNotFound", err)

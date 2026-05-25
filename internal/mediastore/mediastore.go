@@ -22,6 +22,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -53,6 +54,28 @@ type Store interface {
 	// offload — e.g. local FS — so the caller falls back to streaming through
 	// the app via Serve.
 	SignedURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+}
+
+// ObjectInfo identifies one stored object during a Walk: a Store key plus its
+// size and modtime, so a caller (the scanner) can apply its mtime+size fast-skip
+// without a second Stat.
+type ObjectInfo struct {
+	Key     string
+	Size    int64
+	ModTime time.Time
+}
+
+// Lister is an optional Store capability: enumerating stored objects under a
+// prefix. The scanner (file discovery) and static-ABR pre-encode (enumerating
+// popular titles) use it. It's separate from Store because the serving /
+// transcode / artwork read paths don't need it, and a backend that genuinely
+// can't list shouldn't be forced to fake it.
+type Lister interface {
+	// Walk calls fn for every object under prefix, recursively, in unspecified
+	// order. A non-nil error from fn (or context cancellation) stops the walk and
+	// is returned. Keys yielded are in the same namespace Open/Stat accept, so a
+	// yielded ObjectInfo.Key can be passed straight back to Open.
+	Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error
 }
 
 // Local serves bytes from the local filesystem; the key is an absolute path.
@@ -87,6 +110,28 @@ func (Local) Stat(_ context.Context, key string) (FileInfo, error) {
 // and the caller streams through the app.
 func (Local) SignedURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+// Walk implements Lister by walking the local directory tree rooted at prefix.
+// Directories are descended but only files are yielded; the key is the file's
+// path (the same value Open/Stat accept).
+func (Local) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error {
+	return filepath.WalkDir(prefix, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		return fn(ObjectInfo{Key: path, Size: info.Size(), ModTime: info.ModTime()})
+	})
 }
 
 // Serve writes the media identified by key to w, honouring HTTP Range,

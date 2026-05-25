@@ -47,8 +47,11 @@ type S3 struct {
 	cdnBase    string
 }
 
-// compile-time assertion that S3 satisfies Store.
-var _ Store = (*S3)(nil)
+// compile-time assertions that S3 satisfies Store and Lister.
+var (
+	_ Store  = (*S3)(nil)
+	_ Lister = (*S3)(nil)
+)
 
 // NewS3 builds an S3 backend. It does not perform any network I/O — call Ping to
 // verify connectivity / credentials (the admin "Test connection" path).
@@ -87,6 +90,45 @@ func (s *S3) objectKey(filePath string) string {
 		p = path.Join(strings.Trim(s.pathPrefix, "/"), p)
 	}
 	return p
+}
+
+// filePath is the inverse of objectKey: it reconstructs a caller-facing key
+// (FilePath-shaped) from a bucket object key, so Walk yields keys Open/Stat
+// accept. objectKey(filePath(k)) == k for keys produced by objectKey.
+func (s *S3) filePath(objKey string) string {
+	p := objKey
+	if s.pathPrefix != "" {
+		p = strings.TrimPrefix(p, strings.Trim(s.pathPrefix, "/")+"/")
+	}
+	if s.mediaRoot != "" {
+		return strings.TrimRight(filepath.ToSlash(s.mediaRoot), "/") + "/" + p
+	}
+	return "/" + p
+}
+
+// Walk implements Lister via S3 ListObjects under the mapped prefix. Yielded keys
+// are mapped back to the FilePath namespace so they can be passed to Open/Stat.
+func (s *S3) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error {
+	objPrefix := s.objectKey(prefix)
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    objPrefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return fmt.Errorf("mediastore: list: %w", obj.Err)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := fn(ObjectInfo{
+			Key:     s.filePath(obj.Key),
+			Size:    obj.Size,
+			ModTime: obj.LastModified,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Open implements Store. The returned *minio.Object is range-seekable; not-found

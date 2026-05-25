@@ -2,6 +2,7 @@ package mediastore
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -22,7 +23,10 @@ type Provider struct {
 	cur Store
 }
 
-var _ Store = (*Provider)(nil)
+var (
+	_ Store  = (*Provider)(nil)
+	_ Lister = (*Provider)(nil)
+)
 
 // NewProvider returns a Provider serving from s, or from Local when s is nil.
 func NewProvider(s Store) *Provider {
@@ -63,4 +67,16 @@ func (p *Provider) Stat(ctx context.Context, key string) (FileInfo, error) {
 // SignedURL implements Store.
 func (p *Provider) SignedURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	return p.current().SignedURL(ctx, key, ttl)
+}
+
+// Walk implements Lister by delegating to the active backend when it supports
+// listing. A backend that isn't a Lister yields a clear error rather than a
+// panic, so a caller can fall back (e.g. the scanner keeps its local walk).
+func (p *Provider) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error {
+	cur := p.current()
+	l, ok := cur.(Lister)
+	if !ok {
+		return fmt.Errorf("mediastore: backend %T does not support listing", cur)
+	}
+	return l.Walk(ctx, prefix, fn)
 }
