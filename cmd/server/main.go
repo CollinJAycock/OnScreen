@@ -1040,6 +1040,8 @@ func run() error {
 			3 /*min plays*/, 10 /*titles per run*/, logger,
 		)
 		schedRegistry.Register("static_abr_preencode", scheduler.NewStaticABRPreencodeHandler(staticSvc))
+		// Serve pre-encoded ladders from the store on the playback path.
+		nativeTranscodeHandler.WithStaticABR(cfg.StaticABRRoot)
 		if next, err := scheduler.NextRun("17 4 * * *", time.Now().UTC()); err == nil {
 			if err := gen.New(rwPool).EnsureSystemTask(ctx, gen.EnsureSystemTaskParams{
 				Name:      "Static-ABR pre-encode",

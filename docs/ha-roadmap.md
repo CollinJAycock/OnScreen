@@ -276,13 +276,20 @@ scheduler cron (`static_abr_preencode`) are wired in `main.go`, gated behind
 `STATIC_ABR_ENABLED` (off by default — a pass spawns ffmpeg encodes and is really
 worthwhile only with object storage + a CDN).
 
-**Still to do:** (1) **serve-from-static** — the ABR handler checks `StoreChecker`
-and, on a hit, hands back `SignedURL`s to the static master/segments instead of
-starting a live session (this is where the offload win is realised); (2)
-**invalidation/cleanup** of stale ladders (`Walk(Prefix)` + delete) on source
-change or cache pressure; (3) **admin controls** (enable, min-plays, per-run
-limit, cache budget) surfaced in the UI; (4) optionally distribute the encode
-jobs across the **fleet** rather than encoding in-process.
+**Serve-from-static landed.** `Transcode.Start` checks the ladder is present +
+fresh (`StoreChecker`) and, when ABR is enabled, returns the static master URL
+instead of starting a live session — no ffmpeg, no session. The static endpoints
+([`transcode_static.go`](../internal/api/v1/transcode_static.go)) serve the
+master + rung playlists from the store (tiny text) and rewrite each segment URI to
+a **signed object-storage/CDN URL** when the backend can offload, else to a local
+segment endpoint. So a hot title's heavy bytes go straight from the CDN; the app
+tier only hands out playlists. This is where the concurrency win is realised.
+
+**Still to do (smaller):** (1) **invalidation/cleanup** of stale ladders
+(`Walk(Prefix)` + delete) on source change or cache pressure; (2) **admin
+controls** (min-plays, per-run limit, cache budget) in the UI — today it's the
+`STATIC_ABR_ENABLED` env gate + sensible defaults; (3) optionally distribute the
+encode jobs across the **fleet** rather than encoding in-process.
 
 ### Multi-region (deferred)
 True global low-latency needs read-local replicas per region + CDN edge +
@@ -372,7 +379,7 @@ reads** if both sites should be live. Active/active writes only if forced.
 2. **Postgres failover** — ✅ app-side (multi-host failover DSN + lifetime tuning) + replication substrate (`docker-compose.postgres-ha.yml`) landed & validated. Remaining: the **automatic promotion** orchestrator (Patroni / CloudNativePG / managed Multi-AZ) behind a floating endpoint — pure ops.
 3. **`MediaStore` abstraction + object-storage backend** — ✅ landed: abstraction, `Local` + S3 backends, hot-swap provider, admin UI, and every read path routed (direct play, download, transcode source, artwork, scanner discovery + music/photo/faststart reads), plus per-site content addressing. Remaining: a writable `Putter` for cover/folder-art write-back + static-ABR segments; object-storage live ingest (watcher).
 4. **CDN + `SignedURL` offload** — ✅ object-storage bytes offload via signed/CDN URLs on every serve path; app-served artwork is CDN-cacheable via `PUBLIC_ASSET_CACHE`. Static *segments* wait on step 5.
-5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock. 🚧 plan + store-backed check + orchestration `Service` + real ffmpeg encoder (`internal/preencode`) + adapters + a daily cron (gated by `STATIC_ABR_ENABLED`) all landed. Remaining: **serve-from-static** (`SignedURL` on a `StoreChecker` hit), invalidation/cleanup, admin controls, optional fleet distribution.
+5. **Static-ABR pre-encode for popular titles** — the real concurrency unlock. ✅ end-to-end (gated by `STATIC_ABR_ENABLED`): plan + store-backed check + orchestration `Service` + real ffmpeg encoder (`internal/preencode`) + adapters + daily cron, **and serve-from-static** (`Start` returns the static master; segments rewritten to signed CDN URLs). Remaining polish: invalidation/cleanup, admin UI controls, optional fleet distribution of encodes.
 6. **Multi-site active/passive DR** — two TrueNAS sites, ZFS + Postgres streaming replication; the first step into [geo-distribution](#multi-site--geo-distribution). Then active/active reads.
 7. *(deferred)* multi-region (many regions / global); *(separate track, only if pursuing path B)* multi-tenancy + billing + DRM.
 

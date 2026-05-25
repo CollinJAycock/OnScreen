@@ -187,6 +187,12 @@ func NewRouter(h *Handlers) http.Handler {
 		// serves the master when the session is ABR.
 		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", h.NativeTranscode.ABRVariantPlaylist)
 		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", h.NativeTranscode.ABRVariantSegment)
+		// Static (pre-encoded) ABR: a file's ladder served from the media store /
+		// CDN instead of a live session (HA roadmap §5). Segments point at signed
+		// object-storage URLs when offloadable, else the seg endpoint below.
+		r.Get("/api/v1/transcode/static/{fileID}/master.m3u8", h.NativeTranscode.StaticMaster)
+		r.Get("/api/v1/transcode/static/{fileID}/{rung}/index.m3u8", h.NativeTranscode.StaticRung)
+		r.Get("/api/v1/transcode/static/{fileID}/{rung}/seg/{name}", h.NativeTranscode.StaticSegment)
 	}
 
 	// ── Artwork file server ──────────────────────────────────────────────────

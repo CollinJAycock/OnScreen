@@ -76,19 +76,24 @@ type EncodedChecker interface {
 // encoded only when its master playlist exists AND the recorded source hash
 // matches. A master without a hash sidecar is treated as stale (re-encode), so a
 // half-written ladder self-heals.
+//
+// Prefix is prepended to every static key — "" for bucket-relative object storage,
+// or a directory for a local static root. It must match the encoder's keyPrefix
+// and the server's static root (all from STATIC_ABR_ROOT).
 type StoreChecker struct {
-	Store mediastore.Store
+	Store  mediastore.Store
+	Prefix string
 }
 
 // IsEncoded implements EncodedChecker.
 func (c StoreChecker) IsEncoded(ctx context.Context, fileID uuid.UUID, sourceHash string) (bool, error) {
-	if _, err := c.Store.Stat(ctx, MasterKey(fileID)); err != nil {
+	if _, err := c.Store.Stat(ctx, path.Join(c.Prefix, MasterKey(fileID))); err != nil {
 		if errors.Is(err, mediastore.ErrNotFound) {
 			return false, nil
 		}
 		return false, err
 	}
-	f, err := c.Store.Open(ctx, HashKey(fileID))
+	f, err := c.Store.Open(ctx, path.Join(c.Prefix, HashKey(fileID)))
 	if err != nil {
 		if errors.Is(err, mediastore.ErrNotFound) {
 			return false, nil

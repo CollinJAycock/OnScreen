@@ -76,6 +76,13 @@ type NativeTranscodeHandler struct {
 	// before. An object-storage backend returns a presigned bucket/CDN URL the
 	// worker reads source from directly, off the app tier (HA roadmap §3).
 	store mediastore.Store
+
+	// staticEnabled + staticRoot serve pre-encoded ("static") ABR ladders from
+	// the media store when one exists, instead of starting a live session
+	// (HA roadmap §5). staticRoot is the key prefix (STATIC_ABR_ROOT) and must
+	// match the encoder's. Off unless WithStaticABR is called.
+	staticEnabled bool
+	staticRoot    string
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.
@@ -137,6 +144,15 @@ func (h *NativeTranscodeHandler) mediaStore() mediastore.Store {
 		return mediastore.Local{}
 	}
 	return h.store
+}
+
+// WithStaticABR enables serving pre-encoded ABR ladders from the media store.
+// root is the static key prefix (STATIC_ABR_ROOT), matching the encoder's. When
+// unset, the handler always serves live ABR. Returns the handler for chaining.
+func (h *NativeTranscodeHandler) WithStaticABR(root string) *NativeTranscodeHandler {
+	h.staticEnabled = true
+	h.staticRoot = root
+	return h
 }
 
 // buildSourceURL returns an HTTP URL a worker can read the source from
@@ -368,6 +384,26 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(ctx, "transcode: lazy re-probe failed",
 				"file_id", file.ID, "path", file.FilePath, "err", perr)
 		}
+	}
+
+	// Serve a pre-encoded ("static") ABR ladder when one exists for this file —
+	// the player gets a master playlist whose segments come from object storage /
+	// CDN, so no live session or ffmpeg is spent (HA roadmap §5). Only when ABR is
+	// enabled (the static ladder is adaptive) and not a video-copy/remux request.
+	if h.staticEnabled && h.cfg.TranscodeABR && !body.VideoCopy &&
+		file.FileHash != nil && h.staticAvailable(ctx, file.ID, *file.FileHash) {
+		token := ""
+		if h.tokens != nil {
+			if t, terr := h.tokens.IssueStreamToken(*claims, file.ID); terr == nil {
+				token = t
+			}
+		}
+		h.logger.InfoContext(ctx, "transcode: serving static ABR ladder", "file_id", file.ID)
+		respond.JSON(w, r, http.StatusOK, transcodeStartResponse{
+			PlaylistURL: fmt.Sprintf("/api/v1/transcode/static/%s/master.m3u8%s", file.ID, tokenQuery(token)),
+			Token:       token,
+		})
+		return
 	}
 
 	// Video-copy mode: remux video (no re-encode), only transcode audio.
