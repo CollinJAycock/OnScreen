@@ -1181,6 +1181,9 @@ func run() error {
 	mainMux.Handle("/", router)
 	mainMux.HandleFunc("/health/live", liveH)
 	mainMux.HandleFunc("/health/ready", readyH)
+	// Multi-site DR surface: this node's site, Postgres role (primary/standby),
+	// and replication lag (HA roadmap §6). Read by operators / geo-routing.
+	mainMux.HandleFunc("/health/cluster", observability.ClusterStatusHandler(cfg.SiteID, rwPool, logger))
 
 	// ── Metrics server (separate port, ADR) ──────────────────────────────────
 	metricsMux := http.NewServeMux()

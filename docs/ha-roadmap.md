@@ -366,10 +366,26 @@ ascending difficulty:
 3. **Geo-routing.** DNS/anycast or per-site hostnames so users land on the
    nearest site; session epoch (revocation) propagates with replication lag.
 
+**Operability landed.** Each node exposes its identity + role for routing and
+promotion decisions: `SITE_ID` config + [`internal/cluster`](../internal/cluster/cluster.go)
+(`DetectRole` via `pg_is_in_recovery()`, `ReplicationLag`) surfaced at
+**`/health/cluster`** as `{site_id, role: primary|standby, replication_lag_seconds}`.
+A standby answers reads but a stray write hits SQLSTATE 25006; `respond.IsReadOnlyError`
++ `respond.ServiceUnavailable` map that to a 503 (retry the primary) so write
+handlers can degrade gracefully during a failover rather than 500.
+
 ### Sequence
 Finish within-site HA → **active/passive DR across two TrueNAS sites** (cheap,
 high value, leans on ZFS + Postgres streaming replication) → **active/active
 reads** if both sites should be live. Active/active writes only if forced.
+
+The app side is now substantially ready: content addressing (per-site path
+resolution), the streaming-replication substrate + multi-host failover DSN, the
+RW/RO split (active/active reads ride directly on it), stateless cross-site
+tokens, and the role/lag operability surface above. **What remains is ops**: the
+second-site deployment (cross-WAN Postgres standby + ZFS content replication),
+promotion (managed Multi-AZ / Patroni / operator `pg_ctl promote`), and
+geo-routing — plus optionally adopting `IsReadOnlyError` in write handlers.
 
 ---
 

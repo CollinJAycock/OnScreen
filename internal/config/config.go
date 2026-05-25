@@ -150,6 +150,12 @@ type Config struct {
 	// (bucket-relative), or set a directory for a local static root.
 	StaticABREnabled bool   `env:"STATIC_ABR_ENABLED" envDefault:"false"`
 	StaticABRRoot    string `env:"STATIC_ABR_ROOT"`
+	// SiteID names this deployment's site for multi-site DR / geo-distribution
+	// (HA roadmap §6). Surfaced on /health/cluster alongside the Postgres role
+	// (primary vs standby) and replication lag so operators and geo-routing can
+	// tell which site, and whether it's writable, served a request. Empty for a
+	// single-site deployment.
+	SiteID string `env:"SITE_ID"`
 	// Per-encoder tuning (hot-reloadable via SIGHUP). These let operators tune
 	// for specific GPU models and upload bandwidth without rebuilding.
 	TranscodeNVENCPreset  string  `env:"TRANSCODE_NVENC_PRESET"     envDefault:"p4"`
