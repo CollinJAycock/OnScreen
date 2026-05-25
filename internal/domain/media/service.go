@@ -75,7 +75,7 @@ type Item struct {
 	ParentID *uuid.UUID
 	Index    *int
 
-	// Artwork (relative paths from MEDIA_PATH)
+	// Artwork (paths relative to the media file)
 	PosterPath *string
 	FanartPath *string
 	ThumbPath  *string

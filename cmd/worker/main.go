@@ -298,10 +298,6 @@ func applyWorkerNodeSettings(cfg *config.Config, ns settings.NodeSettings, logge
 		cfg.WorkerHealthAddr = *ns.WorkerHealthAddr
 		changed++
 	}
-	if ns.MediaPath != nil && *ns.MediaPath != "" {
-		cfg.MediaPath = *ns.MediaPath
-		changed++
-	}
 	if ns.StaticABRRoot != nil {
 		cfg.StaticABRRoot = *ns.StaticABRRoot
 		changed++

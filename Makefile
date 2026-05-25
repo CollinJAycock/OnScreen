@@ -103,16 +103,13 @@ lint:
 	golangci-lint run ./cmd/... ./internal/...
 
 ## dev: start Vite dev server + Go server in dev mode side-by-side
-## Override any var on the command line: make dev MEDIA_PATH=/your/media
+## Override any var on the command line: make dev DATABASE_URL=...
 DATABASE_URL     ?= postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable
 VALKEY_URL       ?= redis://localhost:6379
-MEDIA_PATH       ?= /tmp/onscreen-media
 SECRET_KEY       ?= dev-secret-key-change-in-production-32b
 dev:
-	mkdir -p $(MEDIA_PATH)
 	DATABASE_URL=$(DATABASE_URL) \
 	VALKEY_URL=$(VALKEY_URL) \
-	MEDIA_PATH=$(MEDIA_PATH) \
 	SECRET_KEY=$(SECRET_KEY) \
 	DEV_FRONTEND_URL=http://localhost:5173 \
 	$(GO) run -tags dev $(CMD_SERVER) & GO_PID=$$!; \

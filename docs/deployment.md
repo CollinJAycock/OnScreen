@@ -21,7 +21,6 @@
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | `postgres://onscreen:secret@localhost:5432/onscreen?sslmode=disable` |
 | `VALKEY_URL` | Valkey/Redis connection string | `redis://localhost:6379` |
-| `MEDIA_PATH` | Absolute path to your media library root | `/media` |
 | `SECRET_KEY` | AES-256-GCM encryption key (32 bytes). Accepts hex (64 chars), base64 (~44 chars), or a raw string (32+ chars) | `openssl rand -hex 32` |
 
 ### Database
@@ -34,7 +33,7 @@
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CACHE_PATH` | `$MEDIA_PATH/.cache/artwork` | Directory for resized artwork cache. Override to put the cache on a faster disk. |
+| `CACHE_PATH` | `~/.onscreen/cache/artwork` | Directory for resized artwork cache. Override to put the cache on a faster disk. |
 
 ### Server
 
@@ -210,7 +209,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -237,7 +235,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -370,7 +367,6 @@ CGO_ENABLED=0 go build -o bin/worker ./cmd/worker
 ```bash
 export DATABASE_URL="postgres://onscreen:secret@localhost:5432/onscreen?sslmode=disable"
 export VALKEY_URL="redis://localhost:6379"
-export MEDIA_PATH="/srv/media"
 export SECRET_KEY="$(openssl rand -hex 32)"
 export TMDB_API_KEY="your-key"
 ```
@@ -665,8 +661,8 @@ For automated backups, use a cron job or a tool like [pgBackRest](https://pgback
 
 ### Media path considerations
 
-- The `MEDIA_PATH` directory must be readable by the onscreen process (and writable if transcoding writes to the same volume).
-- In Docker, bind-mount your host media directory. Use `:ro` if you do not need transcoding to write alongside source files.
+- Each library's directory must be readable by the onscreen process (and writable if transcoding writes alongside source files). Library paths are configured per-library in the admin UI, not via a global env var.
+- In Docker, bind-mount your host media directory and point libraries at the container path. Use `:ro` if you do not need transcoding to write alongside source files.
 - File changes are detected during library scans. After adding or removing media, trigger a scan from the web UI or wait for the next scheduled scan.
 - The artwork cache (`CACHE_PATH`) can be safely deleted; it will be regenerated on demand.
 
@@ -682,7 +678,7 @@ Hot-reloadable values: `LOG_LEVEL`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_NVENC_P
 
 Scan concurrency and the transcode output ceilings moved into the admin UI (Settings ▸ System / Settings ▸ Transcode) and are now **restart-required** — SIGHUP no longer touches them, so a UI-set value isn't silently reverted by a reload.
 
-Changes to `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, `LISTEN_ADDR`, or `MEDIA_PATH` require a full restart.
+Changes to `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, or `LISTEN_ADDR` require a full restart.
 
 ### Watch history retention
 
@@ -704,7 +700,7 @@ This produces a 64-character hex string encoding 32 bytes.
 
 ### Server won't start: "DATABASE_URL is required"
 
-All four required environment variables must be set: `DATABASE_URL`, `VALKEY_URL`, `MEDIA_PATH`, `SECRET_KEY`. Double-check your `.env` file or systemd `EnvironmentFile`.
+All three required environment variables must be set: `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`. Double-check your `.env` file or systemd `EnvironmentFile`.
 
 ### Database connection refused
 
@@ -725,7 +721,7 @@ All four required environment variables must be set: `DATABASE_URL`, `VALKEY_URL
 
 ### Media files not appearing after scan
 
-- Verify `MEDIA_PATH` points to the correct directory and the onscreen process can read it.
+- Verify each library's path points to the correct directory and the onscreen process can read it.
 - In Docker, confirm the volume mount is correct (`docker compose exec server ls /media`).
 - Check logs for scan errors: `docker compose logs server | grep -i scan`
 

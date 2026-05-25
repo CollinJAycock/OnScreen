@@ -134,11 +134,11 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 			t.Errorf("round-trip mismatch: %+v", got)
 		}
 		// Upsert replaces.
-		mp := "/mnt/media"
-		if err := svc.SetNodeSettings(ctx, "node-1", NodeSettings{MediaPath: &mp}); err != nil {
+		cp := "/var/cache/artwork"
+		if err := svc.SetNodeSettings(ctx, "node-1", NodeSettings{CachePath: &cp}); err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
-		if got := svc.NodeSettingsGet(ctx, "node-1"); got.MediaPath == nil || *got.MediaPath != "/mnt/media" || got.ListenAddr != nil {
+		if got := svc.NodeSettingsGet(ctx, "node-1"); got.CachePath == nil || *got.CachePath != "/var/cache/artwork" || got.ListenAddr != nil {
 			t.Errorf("upsert should replace whole config: %+v", got)
 		}
 		// ListNodes sees the row.

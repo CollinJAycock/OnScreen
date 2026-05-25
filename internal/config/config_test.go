@@ -113,13 +113,12 @@ func TestApplyDefaults_DatabaseROFallback(t *testing.T) {
 
 func TestApplyDefaults_CachePathDefault(t *testing.T) {
 	cfg := validConfig()
-	cfg.MediaPath = "/media"
 	cfg.CachePath = ""
 	if err := cfg.applyDefaults(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.CachePath == "" {
-		t.Error("CachePath should be set")
+		t.Error("CachePath should default to ~/.onscreen/cache/artwork")
 	}
 }
 

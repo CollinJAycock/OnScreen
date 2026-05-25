@@ -93,6 +93,12 @@ the asset-token migration.
 
 ### Changed — server
 
+- **Removed `MEDIA_PATH`** — it was a vestige of the old artwork-storage scheme
+  (artwork now lives next to the media file) and only fed the `CACHE_PATH`
+  default. Library paths are configured per-library in the admin UI, not via a
+  global root. `CACHE_PATH` now defaults to `~/.onscreen/cache/artwork`. The env
+  var is simply ignored if still set — the required set is now `DATABASE_URL`,
+  `VALKEY_URL`, `SECRET_KEY`.
 - **Scale before tonemap on the software HDR path** — the zscale HDR→SDR chain
   now runs at output resolution instead of source resolution, dramatically
   cutting CPU on 4K→1080p HDR transcodes.

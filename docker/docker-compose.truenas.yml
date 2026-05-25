@@ -67,7 +67,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
     ports:
@@ -94,7 +93,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       WORKER_ADDR: "worker:7073"
       # TRANSCODE_ENCODERS: "nvenc"         # uncomment for GPU

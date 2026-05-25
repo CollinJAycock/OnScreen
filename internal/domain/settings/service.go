@@ -695,7 +695,6 @@ type NodeSettings struct {
 	ListenAddr            *string `json:"listen_addr,omitempty"`
 	MetricsAddr           *string `json:"metrics_addr,omitempty"`
 	WorkerHealthAddr      *string `json:"worker_health_addr,omitempty"`
-	MediaPath             *string `json:"media_path,omitempty"`
 	CachePath             *string `json:"cache_path,omitempty"`
 	StaticABRRoot         *string `json:"static_abr_root,omitempty"`
 	SiteID                *string `json:"site_id,omitempty"`

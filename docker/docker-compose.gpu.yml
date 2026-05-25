@@ -44,7 +44,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       WORKER_ADDR: "worker-remote:7073"
     restart: unless-stopped

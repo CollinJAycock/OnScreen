@@ -122,7 +122,6 @@ docker run -p 7070:7070 -p 7071:7071 \
   -e DATABASE_URL="postgres://onscreen:onscreen@postgres:5432/onscreen?sslmode=disable" \
   -e VALKEY_URL="redis://valkey:6379" \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
-  -e MEDIA_PATH="/media" \
   -v /your/media:/media:ro \
   onscreen
 
@@ -145,7 +144,7 @@ docker compose -f docker/docker-compose.yml up -d postgres valkey
 make migrate DATABASE_URL="postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable"
 
 # 3. Run in dev mode (Go API on :7070, Vite on :5173)
-make dev MEDIA_PATH=/path/to/your/media
+make dev
 ```
 
 Navigate to `http://localhost:5173`, create your admin account, add a library, and scan.
@@ -159,7 +158,6 @@ Bootstrap-class settings — needed before the admin Settings UI exists — live
 | `DATABASE_URL` | ✓ | PostgreSQL DSN. Accepts a multi-host failover DSN (`…@primary,standby/db?target_session_attrs=read-write`) for HA |
 | `VALKEY_URL` | ✓ | Valkey/Redis connection string |
 | `SECRET_KEY` | ✓ | 32+ byte secret for token encryption |
-| `MEDIA_PATH` | ✓ | Root path to media files |
 | `DATABASE_RO_URL` | | Read replica DSN (falls back to `DATABASE_URL`) |
 | `LISTEN_ADDR` | | API server bind address (default `:7070`) |
 | `METRICS_ADDR` | | Prometheus metrics bind (default `:7071`) |

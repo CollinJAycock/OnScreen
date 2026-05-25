@@ -58,7 +58,7 @@ tar -xzf onscreen-linux-amd64-<VERSION>.tar.gz
 cd onscreen-linux-amd64-<VERSION>
 chmod +x *.sh server worker devtoken goose    # Unix exec bits aren't carried from Windows-built archives
 cp .env.example .env
-${EDITOR:-nano} .env       # SECRET_KEY at minimum; MEDIA_PATH if not /srv/media
+${EDITOR:-nano} .env       # SECRET_KEY at minimum
 ```
 
 If `./start.sh` reports something like `bash: ./start.sh: bad

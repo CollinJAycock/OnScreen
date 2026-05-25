@@ -76,7 +76,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS}@pgbouncer:5432/onscreen?sslmode=${DB_SSLMODE:-require}&default_query_exec_mode=exec
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
     volumes:
       - media_data:/media:ro
@@ -101,7 +100,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS}@pgbouncer:5432/onscreen?sslmode=${DB_SSLMODE:-require}&default_query_exec_mode=exec
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
     volumes:
       - media_data:/media

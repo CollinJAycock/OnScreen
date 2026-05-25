@@ -299,7 +299,7 @@ All endpoints under `/api/v1/` require `Authorization: Bearer <access_token>` ex
 |---|---|---|
 | `GET` | `/media/stream/{file_uuid}` | Direct file serve (byte-range) |
 | `GET` | `/media/files/*` | Legacy direct-play path |
-| `GET` | `/artwork/*` | Serve artwork images from MEDIA_PATH |
+| `GET` | `/artwork/*` | Serve resized artwork images |
 
 ### HLS Transcode (segment auth via query token)
 
@@ -454,10 +454,9 @@ Two layers: **bootstrap env vars** (required to bind sockets and reach the datab
 |---|---|---|---|
 | `DATABASE_URL` | ✓ | — | PostgreSQL DSN. Accepts a **multi-host failover DSN** for HA: `postgres://u:p@primary:5432,standby:5432/db?target_session_attrs=read-write` — pgx re-homes to the read-write node (ADR-033) |
 | `VALKEY_URL` | ✓ | — | Valkey/Redis URL (`redis://host:6379`). In Sentinel mode the host is ignored; this still supplies auth/db |
-| `MEDIA_PATH` | ✓ | — | Root directory where media files live |
 | `SECRET_KEY` | ✓ | — | 32-byte key for Paseto tokens + secret encryption (hex, base64, or raw) |
 | `DATABASE_RO_URL` | | `DATABASE_URL` | Read replica DSN (active/active reads: point at the local replica per site) |
-| `CACHE_PATH` | | `$MEDIA_PATH/.cache/artwork` | Artwork resize cache |
+| `CACHE_PATH` | | `~/.onscreen/cache/artwork` | Artwork resize cache |
 | `LISTEN_ADDR` | | `:7070` | API server bind address |
 | `METRICS_ADDR` | | `:7071` | Prometheus metrics bind |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | | — | Built-in HTTPS (operator-provided PEM) |

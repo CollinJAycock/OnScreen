@@ -23,7 +23,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       DISABLE_EMBEDDED_WORKER: "true"
@@ -48,7 +47,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       WORKER_ADDR: "worker-gpu:7073"
       TRANSCODE_ENCODERS: "nvenc"
@@ -83,7 +81,6 @@ services:
     environment:
       DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      MEDIA_PATH: /media
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       WORKER_ADDR: "worker-cpu:7073"
       TRANSCODE_ENCODERS: "software"

@@ -22,7 +22,6 @@ type nodeSettingDTO struct {
 	ListenAddr            string `json:"listen_addr"`
 	MetricsAddr           string `json:"metrics_addr"`
 	WorkerHealthAddr      string `json:"worker_health_addr"`
-	MediaPath             string `json:"media_path"`
 	CachePath             string `json:"cache_path"`
 	StaticABRRoot         string `json:"static_abr_root"`
 	SiteID                string `json:"site_id"`
@@ -44,6 +43,10 @@ func (h *SettingsHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "list nodes", "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	// Marshal as [] not null when empty, so clients can map() over it safely.
+	if nodes == nil {
+		nodes = []settings.NodeSummary{}
 	}
 	respond.Success(w, r, nodeListDTO{CurrentNodeID: h.nodeID, Nodes: nodes})
 }
@@ -68,7 +71,6 @@ func (h *SettingsHandler) GetNode(w http.ResponseWriter, r *http.Request) {
 		ListenAddr:            pickStr(stored.ListenAddr, d.ListenAddr),
 		MetricsAddr:           pickStr(stored.MetricsAddr, d.MetricsAddr),
 		WorkerHealthAddr:      pickStr(stored.WorkerHealthAddr, d.WorkerHealthAddr),
-		MediaPath:             pickStr(stored.MediaPath, d.MediaPath),
 		CachePath:             pickStr(stored.CachePath, d.CachePath),
 		StaticABRRoot:         pickStr(stored.StaticABRRoot, d.StaticABRRoot),
 		SiteID:                pickStr(stored.SiteID, d.SiteID),
@@ -94,7 +96,6 @@ func (h *SettingsHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 		ListenAddr:            &dto.ListenAddr,
 		MetricsAddr:           &dto.MetricsAddr,
 		WorkerHealthAddr:      &dto.WorkerHealthAddr,
-		MediaPath:             &dto.MediaPath,
 		CachePath:             &dto.CachePath,
 		StaticABRRoot:         &dto.StaticABRRoot,
 		SiteID:                &dto.SiteID,

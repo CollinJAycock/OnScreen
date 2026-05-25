@@ -41,7 +41,7 @@ service start, so don't extract to `%TEMP%`.
 ```powershell
 cd C:\OnScreen
 copy .env.example .env
-notepad .env       # fill in SECRET_KEY at minimum; MEDIA_PATH if not C:\media
+notepad .env       # fill in SECRET_KEY at minimum
 ```
 
 ### 3. Bring up Postgres + Valkey

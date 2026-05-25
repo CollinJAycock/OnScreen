@@ -18,7 +18,7 @@
       const list = await settingsApi.getNodes();
       currentNodeId = list.current_node_id;
       // The current node may have no stored row yet — always include it.
-      const ids = new Set<string>([currentNodeId, ...list.nodes.map((n) => n.node_id)]);
+      const ids = new Set<string>([currentNodeId, ...(list.nodes ?? []).map((n) => n.node_id)]);
       nodeIds = [...ids].filter(Boolean).sort();
       selected = currentNodeId;
       await loadNode();
@@ -51,7 +51,7 @@
       toast.success(`Saved ${selected} — restart that node to apply`);
       // Refresh the node list so a newly-configured node appears in the picker.
       const list = await settingsApi.getNodes();
-      const ids = new Set<string>([currentNodeId, ...list.nodes.map((n) => n.node_id)]);
+      const ids = new Set<string>([currentNodeId, ...(list.nodes ?? []).map((n) => n.node_id)]);
       nodeIds = [...ids].filter(Boolean).sort();
       await loadNode();
     } catch (e: unknown) {
@@ -117,10 +117,6 @@
       <section>
         <header><h2>Paths</h2></header>
         <div class="grid">
-          <label class="full">
-            Media path <span class="hint">(deprecated — artwork now stored next to media)</span>
-            <input type="text" bind:value={node.media_path} />
-          </label>
           <label class="full">
             Artwork cache path
             <input type="text" bind:value={node.cache_path} />

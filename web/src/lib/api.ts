@@ -946,7 +946,6 @@ export interface NodeSettings {
   listen_addr: string;
   metrics_addr: string;
   worker_health_addr: string;
-  media_path: string;
   cache_path: string;
   static_abr_root: string;
   site_id: string;

@@ -90,6 +90,19 @@ func TestUpdateNode_StoresForTarget(t *testing.T) {
 	}
 }
 
+func TestGetNodes_EmptyMarshalsAsArrayNotNull(t *testing.T) {
+	// No stored rows → "nodes":[] so the web client can map() over it safely.
+	h := nodeHandler(&mockSettingsService{}, "node-a", settings.NodeSettings{})
+	rec := httptest.NewRecorder()
+	h.GetNodes(rec, httptest.NewRequest(http.MethodGet, "/settings/nodes", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"nodes":[]`) {
+		t.Errorf("empty nodes should marshal as [], got: %s", body)
+	}
+}
+
 func TestGetNodes_ListsCurrentAndStored(t *testing.T) {
 	svc := &mockSettingsService{nodes: []settings.NodeSummary{{NodeID: "node-b"}}}
 	h := nodeHandler(svc, "node-a", settings.NodeSettings{})

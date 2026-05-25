@@ -26,7 +26,7 @@ cd onscreen
 
 # 2. Copy environment config
 cp .env.example .env.dev
-# Edit .env.dev with your local values (DATABASE_URL, MEDIA_PATH, etc.)
+# Edit .env.dev with your local values (DATABASE_URL, SECRET_KEY, etc.)
 
 # 3. Start Postgres and Valkey
 docker compose -f docker/docker-compose.yml up -d postgres valkey
@@ -35,7 +35,7 @@ docker compose -f docker/docker-compose.yml up -d postgres valkey
 make migrate DATABASE_URL="postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable"
 
 # 5. Start dev servers (Go API on :7070, Vite on :5173)
-make dev MEDIA_PATH=/path/to/your/media
+make dev
 ```
 
 Open `http://localhost:5173`, create your admin account, add a library, and scan.

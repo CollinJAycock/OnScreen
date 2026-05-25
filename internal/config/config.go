@@ -42,7 +42,6 @@ type Config struct {
 	ValkeySentinelAddrs    []string `env:"VALKEY_SENTINEL_ADDRS"`
 	ValkeySentinelMaster   string   `env:"VALKEY_SENTINEL_MASTER"   envDefault:"onscreen"`
 	ValkeySentinelPassword string   `env:"VALKEY_SENTINEL_PASSWORD"`
-	MediaPath              string   `env:"MEDIA_PATH"`          // deprecated — artwork now stored next to media files
 	SecretKey              string   `env:"SECRET_KEY,required"` // AES-256-GCM key (32 bytes, base64 or hex)
 
 	// ── Database (optional) ───────────────────────────────────────────────────
@@ -50,7 +49,7 @@ type Config struct {
 	DatabaseROURL string `env:"DATABASE_RO_URL"`
 
 	// ── Cache ────────────────────────────────────────────────────────────────
-	// Artwork resize cache. Defaults to $MEDIA_PATH/.cache/artwork at runtime.
+	// Artwork resize cache. Defaults to ~/.onscreen/cache/artwork at runtime.
 	CachePath string `env:"CACHE_PATH"`
 
 	// ── Server ───────────────────────────────────────────────────────────────
@@ -213,12 +212,8 @@ func (c *Config) applyDefaults() error {
 		}
 	}
 	if c.CachePath == "" {
-		if c.MediaPath != "" {
-			c.CachePath = filepath.Join(c.MediaPath, ".cache", "artwork")
-		} else {
-			home, _ := os.UserHomeDir()
-			c.CachePath = filepath.Join(home, ".onscreen", "cache", "artwork")
-		}
+		home, _ := os.UserHomeDir()
+		c.CachePath = filepath.Join(home, ".onscreen", "cache", "artwork")
 	}
 	if c.ScanFileConcurrency == 0 {
 		c.ScanFileConcurrency = runtime.NumCPU() * 2
@@ -380,7 +375,6 @@ func (h *HotReloadable) Reload(logger *slog.Logger, current *Config) {
 	warnIfChanged(logger, "VALKEY_URL", current.ValkeyURL, next.ValkeyURL)
 	warnIfChanged(logger, "LISTEN_ADDR", current.ListenAddr, next.ListenAddr)
 	warnIfChanged(logger, "SECRET_KEY", current.SecretKey, next.SecretKey)
-	warnIfChanged(logger, "MEDIA_PATH", current.MediaPath, next.MediaPath)
 
 	// Apply reloadable changes.
 	//

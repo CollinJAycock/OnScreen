@@ -96,10 +96,6 @@ func applyNodeSettings(cfg *config.Config, ns settings.NodeSettings, logger *slo
 		cfg.WorkerHealthAddr = *ns.WorkerHealthAddr
 		changed++
 	}
-	if ns.MediaPath != nil && *ns.MediaPath != "" {
-		cfg.MediaPath = *ns.MediaPath
-		changed++
-	}
 	if ns.CachePath != nil && *ns.CachePath != "" {
 		cfg.CachePath = *ns.CachePath
 		changed++
@@ -132,7 +128,6 @@ func nodeEffective(cfg *config.Config) settings.NodeSettings {
 		ListenAddr:            strPtr(cfg.ListenAddr),
 		MetricsAddr:           strPtr(cfg.MetricsAddr),
 		WorkerHealthAddr:      strPtr(cfg.WorkerHealthAddr),
-		MediaPath:             strPtr(cfg.MediaPath),
 		CachePath:             strPtr(cfg.CachePath),
 		StaticABRRoot:         strPtr(cfg.StaticABRRoot),
 		SiteID:                strPtr(cfg.SiteID),
