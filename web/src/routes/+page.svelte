@@ -259,8 +259,13 @@
                   <span>{item.title[0]?.toUpperCase()}</span>
                 </div>
               {/if}
-              <div class="hub-label">{item.title}</div>
-              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
+              {#if item.show_title}
+                <div class="hub-label">{item.show_title}</div>
+                <div class="hub-sublabel">{item.title}</div>
+              {:else}
+                <div class="hub-label">{item.title}</div>
+                {#if item.year}<div class="hub-year">{item.year}</div>{/if}
+              {/if}
             </a>
           {/each}
         </div>
@@ -452,6 +457,15 @@
     padding: 0 0.5rem 0.4rem;
     font-size: 0.65rem;
     color: var(--text-muted);
+  }
+  /* Episode title under the show name on recently-added TV tiles. */
+  .hub-sublabel {
+    padding: 0 0.5rem 0.4rem;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .hub-card.skeleton {

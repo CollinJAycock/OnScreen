@@ -122,8 +122,12 @@ type HubLibraryRow struct {
 
 // HubItem is a compact item for hub display.
 type HubItem struct {
-	ID           string  `json:"id"`
-	Title        string  `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// ShowTitle is the parent show's name, set only for episode rows in the
+	// recently-added strips so the tile can render the show on top and the
+	// episode below. Empty/omitted for everything else.
+	ShowTitle    *string `json:"show_title,omitempty"`
 	Type         string  `json:"type"`
 	Year         *int    `json:"year,omitempty"`
 	PosterPath   *string `json:"poster_path,omitempty"`
@@ -281,7 +285,7 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 			if poster == nil && row.FallbackPoster != nil {
 				poster = row.FallbackPoster
 			}
-			out.RecentlyAdded = append(out.RecentlyAdded, HubItem{
+			item := HubItem{
 				ID:         row.ID.String(),
 				Title:      row.Title,
 				Type:       row.Type,
@@ -290,7 +294,12 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 				FanartPath: row.FanartPath,
 				DurationMS: row.DurationMs,
 				UpdatedAt:  timestamptzToMilli(row.UpdatedAt),
-			})
+			}
+			if row.ShowTitle != "" {
+				st := row.ShowTitle
+				item.ShowTitle = &st
+			}
+			out.RecentlyAdded = append(out.RecentlyAdded, item)
 			if len(out.RecentlyAdded) >= 20 {
 				break
 			}
@@ -488,7 +497,7 @@ func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed fun
 			if poster == nil && row.FallbackPoster != nil {
 				poster = row.FallbackPoster
 			}
-			items = append(items, HubItem{
+			item := HubItem{
 				ID:         row.ID.String(),
 				Title:      row.Title,
 				Type:       row.Type,
@@ -497,7 +506,12 @@ func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed fun
 				FanartPath: row.FanartPath,
 				DurationMS: row.DurationMs,
 				UpdatedAt:  timestamptzToMilli(row.UpdatedAt),
-			})
+			}
+			if row.ShowTitle != "" {
+				st := row.ShowTitle
+				item.ShowTitle = &st
+			}
+			items = append(items, item)
 			if int32(len(items)) >= perLib {
 				break
 			}

@@ -1891,6 +1891,8 @@ export const sessionsApi = {
 export interface HubItem {
   id: string;
   title: string;
+  /** Parent show name — set only for episode tiles in recently-added strips. */
+  show_title?: string;
   type: string;
   year?: number;
   poster_path?: string;

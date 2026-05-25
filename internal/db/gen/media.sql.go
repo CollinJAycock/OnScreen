@@ -3857,6 +3857,7 @@ WITH recent_episodes AS (
            e.originally_available_at, e.created_at, e.updated_at, e.deleted_at,
            COALESCE(grandparent.poster_path, parent.poster_path, e.poster_path,
                     grandparent.thumb_path, parent.thumb_path, e.thumb_path) AS fallback_poster,
+           grandparent.title AS show_title,
            ROW_NUMBER() OVER (PARTITION BY grandparent.id ORDER BY e.created_at DESC) AS rn
     FROM recent_episodes e
     JOIN media_items parent ON parent.id = e.parent_id AND parent.deleted_at IS NULL
@@ -3871,14 +3872,14 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at,
-       fallback_poster
+       fallback_poster, show_title
 FROM (
     SELECT id, library_id, type, title, sort_title, original_title, year,
            summary, tagline, rating, audience_rating, content_rating, duration_ms,
            genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
            parent_id, index, poster_path, fanart_path, thumb_path,
            originally_available_at, created_at, updated_at, deleted_at,
-           fallback_poster
+           fallback_poster, show_title
     FROM episodes
     WHERE rn = 1
 
@@ -3889,7 +3890,7 @@ FROM (
            genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
            parent_id, index, poster_path, fanart_path, thumb_path,
            originally_available_at, created_at, updated_at, deleted_at,
-           poster_path AS fallback_poster
+           poster_path AS fallback_poster, ''::text AS show_title
     FROM media_items
     WHERE deleted_at IS NULL
       -- Top-level "thing was added" event types per library:
@@ -3951,6 +3952,7 @@ type ListRecentlyAddedRow struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 	FallbackPoster        *string            `json:"fallback_poster"`
+	ShowTitle             string             `json:"show_title"`
 }
 
 // "Recently Added" hub row, one row per logical content event:
@@ -4014,6 +4016,7 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.FallbackPoster,
+			&i.ShowTitle,
 		); err != nil {
 			return nil, err
 		}
