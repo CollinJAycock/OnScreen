@@ -118,6 +118,30 @@ func toRunResponse(r gen.TaskRun) runResponse {
 	return out
 }
 
+// Get handles GET /api/v1/admin/tasks/{id} — returns one task. Without
+// this route chi answers 405 for the URL (Patch + Delete are registered,
+// Get isn't), which is conformant but unhelpful and trips operators
+// trying to verify a previous Create/Update/Delete. Same 404-on-missing
+// shape as RunNow so the two endpoints behave consistently.
+func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid id")
+		return
+	}
+	row, err := h.q.GetScheduledTask(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "tasks: get failed", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, toTaskResponse(row))
+}
+
 // List handles GET /api/v1/admin/tasks.
 func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.q.ListScheduledTasks(r.Context())

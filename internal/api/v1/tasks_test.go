@@ -144,6 +144,85 @@ func TestTasksList(t *testing.T) {
 	}
 }
 
+func TestTasksGetSuccess(t *testing.T) {
+	// A live task → 200 + the same wire shape List returns for a single row.
+	// We only assert on the fields toTaskResponse maps from gen.ScheduledTask;
+	// nullable timestamp pointers are exercised by their own tests.
+	id := uuid.New()
+	db := &fakeTasksDB{
+		getOut: gen.ScheduledTask{
+			ID:       id,
+			Name:     "nightly",
+			TaskType: "backup_database",
+			CronExpr: "0 3 * * *",
+			Enabled:  true,
+			Config:   []byte(`{"output_dir":"/tmp"}`),
+		},
+	}
+	h := newTasksTestHandler(db)
+
+	rec := httptest.NewRecorder()
+	h.Get(rec, reqWithID(http.MethodGet, "/api/v1/admin/tasks/"+id.String(), id.String(), nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var got taskResponse
+	decode(t, rec, &got)
+	if got.ID != id || got.Name != "nightly" || got.TaskType != "backup_database" {
+		t.Errorf("got %+v", got)
+	}
+	if len(db.getCalls) != 1 || db.getCalls[0] != id {
+		t.Errorf("expected GetScheduledTask called once with %s, got %v", id, db.getCalls)
+	}
+}
+
+func TestTasksGetInvalidID(t *testing.T) {
+	// A garbage id never reaches the DB — the handler short-circuits at 400.
+	db := &fakeTasksDB{}
+	h := newTasksTestHandler(db)
+
+	rec := httptest.NewRecorder()
+	h.Get(rec, reqWithID(http.MethodGet, "/api/v1/admin/tasks/garbage", "not-a-uuid", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(db.getCalls) != 0 {
+		t.Errorf("DB shouldn't have been hit for a bad id; got calls=%v", db.getCalls)
+	}
+}
+
+func TestTasksGetNotFound(t *testing.T) {
+	// pgx.ErrNoRows from the querier must map to 404 (matches RunNow's
+	// behaviour for the same condition; admins use the same status code
+	// to "verify deleted" across the two endpoints).
+	id := uuid.New()
+	db := &fakeTasksDB{getErr: pgx.ErrNoRows}
+	h := newTasksTestHandler(db)
+
+	rec := httptest.NewRecorder()
+	h.Get(rec, reqWithID(http.MethodGet, "/api/v1/admin/tasks/"+id.String(), id.String(), nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status: %d body=%s (want 404)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTasksGetDBError(t *testing.T) {
+	// A non-ErrNoRows querier error → 500, logged but no DB internals leak.
+	db := &fakeTasksDB{getErr: errors.New("connection refused")}
+	h := newTasksTestHandler(db)
+
+	id := uuid.New()
+	rec := httptest.NewRecorder()
+	h.Get(rec, reqWithID(http.MethodGet, "/api/v1/admin/tasks/"+id.String(), id.String(), nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: %d body=%s (want 500)", rec.Code, rec.Body.String())
+	}
+}
+
 func TestTasksListTypes(t *testing.T) {
 	h := newTasksTestHandler(&fakeTasksDB{}, "backup_database", "scan_library")
 	rec := httptest.NewRecorder()
