@@ -775,11 +775,17 @@ func maskAPIKey(key string) string {
 	return "****"
 }
 
-// generateAPIKey creates a random 32-character hex API key.
-func generateAPIKey() string {
+// generateAPIKey creates a random 32-character hex API key. Returns the
+// rand.Read error so callers can refuse to serve a key on entropy
+// failure — swallowing it would silently mint the all-zero hex key
+// (a deterministic, attacker-knowable token) on the rare boxes where
+// crypto/rand fails (broken /dev/urandom, sandboxes without entropy).
+func generateAPIKey() (string, error) {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("api-key entropy: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // Get handles GET /api/v1/settings.
@@ -787,11 +793,19 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	arrKey := h.svc.ArrAPIKey(ctx)
 
-	// Auto-generate an arr API key if none exists.
+	// Auto-generate an arr API key if none exists. Refuse the response on
+	// entropy failure rather than risk persisting an all-zero key — see
+	// generateAPIKey's comment.
 	if arrKey == "" {
-		arrKey = generateAPIKey()
-		if err := h.svc.SetArrAPIKey(ctx, arrKey); err != nil {
+		k, err := generateAPIKey()
+		if err != nil {
 			h.logger.ErrorContext(ctx, "auto-generate arr api key", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		arrKey = k
+		if err := h.svc.SetArrAPIKey(ctx, arrKey); err != nil {
+			h.logger.ErrorContext(ctx, "persist arr api key", "err", err)
 		}
 	}
 

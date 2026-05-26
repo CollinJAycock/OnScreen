@@ -17,6 +17,15 @@ import (
 	"github.com/onscreen/onscreen/internal/mediastore"
 )
 
+// maxBookEntryBytes caps per-archive-entry decompression so a
+// zip-bomb-style book file (small compressed size, huge decompressed)
+// can't balloon scanner memory. 100 MB is well above any legitimate
+// page or asset (most scanned pages are <5 MB; high-res art rarely
+// crosses 20 MB) while still blocking pathological expansion. Applies
+// to CBZ / CBR / EPUB readers in this package; the matching cap in
+// internal/api/v1/books.go uses the same value with the same comment.
+const maxBookEntryBytes = 100 << 20
+
 // processBook creates a 'book' media_item for a CBZ / CBR / EPUB
 // file. CBZ + CBR share the comic-archive shape (sequence of image
 // pages); EPUB is reflowable HTML rendered client-side via epub.js
@@ -223,7 +232,8 @@ func readFirstCBZPage(cbzPath string) ([]byte, bool) {
 		return nil, false
 	}
 	defer rc.Close()
-	data, err := io.ReadAll(rc)
+	// Cap per-entry decompression — see maxBookEntryBytes.
+	data, err := io.ReadAll(io.LimitReader(rc, maxBookEntryBytes))
 	if err != nil || len(data) == 0 {
 		return nil, false
 	}

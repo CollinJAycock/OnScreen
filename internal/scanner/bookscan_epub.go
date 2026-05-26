@@ -131,7 +131,8 @@ func readFirstEpubCover(epubPath string) ([]byte, bool) {
 				return nil, false
 			}
 			defer rc.Close()
-			data, err := io.ReadAll(rc)
+			// Cap per-entry decompression — see maxBookEntryBytes.
+			data, err := io.ReadAll(io.LimitReader(rc, maxBookEntryBytes))
 			if err != nil {
 				return nil, false
 			}
