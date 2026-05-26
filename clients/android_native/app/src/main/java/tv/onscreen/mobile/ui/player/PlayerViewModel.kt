@@ -139,7 +139,14 @@ class PlayerViewModel @Inject constructor(
     private fun loadTrickplayCues(itemId: String) {
         viewModelScope.launch {
             currentTrickplayItemId = itemId
-            spriteCache.clear()
+            // Recycle old sheets explicitly — Bitmap.clear-the-map only
+            // releases the Java references, the native pixel memory
+            // sticks around until GC runs. For a 90-min film with five
+            // 10x10 sprite sheets that's a couple of MB held against
+            // the heap pressure budget. Cropped previews already
+            // carry their own pixel copy, so it's safe to recycle the
+            // source sheet without invalidating the live preview.
+            recycleSpriteCache()
             val status = trickplayRepo.status(itemId)
             if (status.status != "done") return@launch
             val cues = trickplayRepo.fetchCues(itemId) ?: return@launch
@@ -782,6 +789,17 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         sseJob?.cancel()
+        recycleSpriteCache()
         stopActiveTranscode()
+    }
+
+    /** Releases the native pixel memory backing each cached sprite
+     *  sheet and empties the map. Called when the active item changes
+     *  (loadTrickplayCues) and when the VM is destroyed (onCleared). */
+    private fun recycleSpriteCache() {
+        spriteCache.values.forEach { bm ->
+            if (!bm.isRecycled) bm.recycle()
+        }
+        spriteCache.clear()
     }
 }

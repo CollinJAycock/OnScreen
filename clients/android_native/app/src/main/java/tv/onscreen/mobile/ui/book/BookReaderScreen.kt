@@ -344,11 +344,17 @@ private fun EpubReader(ui: BookReaderUi) {
         modifier = Modifier.fillMaxSize().background(Color.White),
         factory = { ctx ->
             // Enables `chrome://inspect` connections from a desktop
-            // Chrome when the phone is USB-attached; harmless in
-            // release because WebView ignores it without a debug
-            // bridge. Cheaper than re-deploying with println scattered
-            // through viewer.js.
-            WebView.setWebContentsDebuggingEnabled(true)
+            // Chrome when the phone is USB-attached. Cheaper than
+            // re-deploying with println scattered through viewer.js.
+            // Gated on BuildConfig.DEBUG: `setWebContentsDebuggingEnabled(true)`
+            // is process-global, so leaving it on in release lets any
+            // attacker with USB debugging access (or a malicious USB
+            // host) inspect the WebView's DOM + cookies on a victim's
+            // device — including the per-session epub blob URLs. Off
+            // in release builds.
+            if (tv.onscreen.mobile.BuildConfig.DEBUG) {
+                WebView.setWebContentsDebuggingEnabled(true)
+            }
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
