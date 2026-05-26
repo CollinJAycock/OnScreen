@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // ArrSettingsReader reads the arr API key and path mappings from settings.
@@ -154,7 +155,12 @@ func (h *ArrHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// imports are caught by the scan-completion hook in the adapter, since
 	// the scan triggered above runs asynchronously.
 	if h.reconciler != nil && payload.EventType == "Download" {
-		go h.reconciler.ReconcileFulfillments(context.WithoutCancel(r.Context()))
+		// SafeGo — a panic inside the reconciler shouldn't take the API
+		// process down just because an arr webhook arrived.
+		bgCtx := context.WithoutCancel(r.Context())
+		observability.SafeGo(h.logger, "arr-webhook:reconcile-fulfillments", func() {
+			h.reconciler.ReconcileFulfillments(bgCtx)
+		})
 	}
 
 	h.logger.InfoContext(r.Context(), "arr webhook: scan triggered",

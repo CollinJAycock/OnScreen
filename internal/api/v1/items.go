@@ -31,6 +31,7 @@ import (
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/notification"
+	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 )
@@ -1376,11 +1377,11 @@ func (h *ItemHandler) Enrich(w http.ResponseWriter, r *http.Request) {
 	// Use WithoutCancel so the work continues after the HTTP request ends
 	// but still inherits tracing/observability from the original context.
 	bgCtx := context.WithoutCancel(r.Context())
-	go func() {
+	observability.SafeGo(h.logger, "items:on-demand-enrich", func() {
 		if err := h.enricher.EnrichItem(bgCtx, id); err != nil {
 			h.logger.WarnContext(bgCtx, "on-demand enrich failed", "id", id, "err", err)
 		}
-	}()
+	})
 	respond.NoContent(w)
 }
 
@@ -1487,7 +1488,7 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 	// previous match's people are now stale and the user expects
 	// the detail page to reflect the new title's cast.
 	bgCtx := context.WithoutCancel(r.Context())
-	go func() {
+	observability.SafeGo(h.logger, "items:apply-match", func() {
 		if err := h.enricher.MatchItem(bgCtx, id, body.TMDBID); err != nil {
 			h.logger.WarnContext(bgCtx, "apply match failed", "id", id, "tmdb_id", body.TMDBID, "err", err)
 			return
@@ -1504,7 +1505,7 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 					"id", id, "tmdb_id", body.TMDBID, "err", err)
 			}
 		}
-	}()
+	})
 	respond.NoContent(w)
 }
 

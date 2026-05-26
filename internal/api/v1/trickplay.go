@@ -16,6 +16,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/trickplay"
 )
 
@@ -152,7 +153,11 @@ func (h *TrickplayHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	// Bounded by genSlots — a buffered channel acts as an N-permit
 	// semaphore so an admin POST loop can't pin every CPU core with
 	// concurrent ffmpeg sprite jobs.
-	go func(itemID uuid.UUID) {
+	// SafeGo — Generate shells out to ffmpeg over user-owned media; a panic
+	// in the codec layer shouldn't take the server down. The in-flight-
+	// map cleanup and the semaphore release both run via defer regardless.
+	itemID := id
+	observability.SafeGo(h.logger, "trickplay:generate", func() {
 		defer func() {
 			h.genInFlightMu.Lock()
 			delete(h.genInFlight, itemID)
@@ -164,7 +169,7 @@ func (h *TrickplayHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		if err := h.svc.Generate(bg, itemID); err != nil {
 			h.logger.Error("trickplay generate", "id", itemID, "err", err)
 		}
-	}(id)
+	})
 
 	respond.JSON(w, r, http.StatusAccepted, TrickplayStatusJSON{Status: "pending"})
 }

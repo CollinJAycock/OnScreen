@@ -208,7 +208,12 @@ func servePageFromCBR(w http.ResponseWriter, cbrPath string, pageNum int) error 
 		if !isCBZPageEntryAPI(header.Name) {
 			continue
 		}
-		data, rerr := io.ReadAll(rr)
+		// 100 MB per archive entry — generous for any legitimate page
+		// scan (most are well under 5 MB) while keeping a zip-bomb
+		// entry (small compressed size, huge decompressed) from
+		// ballooning server memory while we materialize every page
+		// just to serve one.
+		data, rerr := io.ReadAll(io.LimitReader(rr, 100<<20))
 		if rerr != nil {
 			continue
 		}

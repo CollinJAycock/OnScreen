@@ -21,6 +21,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // LibraryResponse is the JSON shape for a library in the v1 API.
@@ -521,12 +522,12 @@ func (h *LibraryHandler) DetectIntros(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detectCtx := context.WithoutCancel(r.Context())
-	go func() {
+	observability.SafeGo(h.logger, "libraries:detect-intros", func() {
 		if err := h.detector.DetectLibrary(detectCtx, id); err != nil {
 			h.logger.Warn("admin detect-intros",
 				"library_id", id, "err", err)
 		}
-	}()
+	})
 	respond.JSON(w, r, http.StatusAccepted, map[string]any{
 		"data": map[string]string{"status": "detection_started"},
 	})

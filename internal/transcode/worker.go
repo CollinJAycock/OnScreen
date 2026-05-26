@@ -19,6 +19,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 var tracer = otel.Tracer("onscreen/transcode")
@@ -218,14 +220,19 @@ func (w *Worker) jobLoop(ctx context.Context) error {
 		w.activeSessions.Add(1)
 		w.activeCostCenti.Add(int64(job.CostCenti))
 		w.store.AckDispatch(ctx, w.addr, job.CostCenti)
-		go func(j TranscodeJob) {
+		// SafeGo so a panic inside runJob (bad source, malformed
+		// ffmpeg output, surprise nil-map) decrements the counters
+		// and is logged with a stack — without it the entire worker
+		// process tears down on one bad job.
+		j := *job
+		observability.SafeGo(w.logger, "transcode-worker:run-job", func() {
 			defer w.activeSessions.Add(-1)
 			defer w.activeCostCenti.Add(-int64(j.CostCenti))
 			if err := w.runJob(ctx, j); err != nil {
 				w.logger.Error("transcode job failed",
 					"session_id", j.SessionID, "err", err)
 			}
-		}(*job)
+		})
 	}
 }
 

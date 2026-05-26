@@ -138,7 +138,12 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 	// flight, applying backpressure where it belongs.
 	d.dispatchSem <- struct{}{}
 	d.wg.Add(1)
-	go func() {
+	// SafeGo at both levels — a JSON-marshal or DB-call panic in the
+	// dispatcher fan-out, or a panic mid-delivery (per-endpoint HTTP /
+	// HMAC / retry), shouldn't take the worker down. The deferred
+	// WaitGroup decrements + semaphore releases still run via defer
+	// even when recover catches a panic.
+	observability.SafeGo(d.logger, "webhook-dispatcher:fan-out", func() {
 		defer d.wg.Done()
 		defer func() { <-d.dispatchSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -166,13 +171,13 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 			// Acquire semaphore slot — blocks if maxConcurrentDeliveries are in-flight.
 			d.wg.Add(1)
 			d.sem <- struct{}{}
-			go func() {
+			observability.SafeGo(d.logger, "webhook-dispatcher:deliver", func() {
 				defer d.wg.Done()
 				defer func() { <-d.sem }()
 				d.deliverWithRetry(d.ctx, ep, body)
-			}()
+			})
 		}
-	}()
+	})
 }
 
 // Close cancels in-flight retry sleeps and blocks until all deliveries finish.

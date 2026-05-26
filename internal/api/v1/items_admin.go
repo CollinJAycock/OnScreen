@@ -14,6 +14,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/scanner"
 )
 
@@ -357,7 +358,7 @@ func (h *ItemBulkAdminHandler) ReEnrichUnmatched(w http.ResponseWriter, r *http.
 		// per-item; one failure doesn't abort the rest.
 		bgCtx := context.WithoutCancel(ctx)
 		ids := append([]uuid.UUID(nil), enrichIDs...)
-		go func() {
+		observability.SafeGo(h.logger, "items-admin:bulk-reenrich", func() {
 			for _, id := range ids {
 				if err := h.enricher.EnrichItem(bgCtx, id); err != nil {
 					h.logger.WarnContext(bgCtx, "bulk re-enrich item failed",
@@ -366,7 +367,7 @@ func (h *ItemBulkAdminHandler) ReEnrichUnmatched(w http.ResponseWriter, r *http.
 			}
 			h.logger.InfoContext(bgCtx, "bulk re-enrich finished",
 				"count", len(ids))
-		}()
+		})
 	}
 
 	respond.Success(w, r, resp)

@@ -98,7 +98,8 @@ func readCBRPages(cbrPath string, readBytes bool) ([]cbrPage, bool) {
 		}
 		entry := cbrPage{name: header.Name}
 		if readBytes {
-			data, rerr := io.ReadAll(r)
+			// Cap per-entry decompression — see comment in api/v1/books.go.
+			data, rerr := io.ReadAll(io.LimitReader(r, maxBookEntryBytes))
 			if rerr != nil {
 				continue
 			}

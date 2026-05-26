@@ -821,7 +821,11 @@ func (c *Client) query(ctx context.Context, q string, variables map[string]inter
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Cap the response — AniList's normal GraphQL responses are well under
+	// 1 MB even for season-page queries with cours-wide includes; 5 MB
+	// matches the sibling metadata clients (Wikipedia, OpenLibrary, …) and
+	// keeps a buggy / hostile response from ballooning server memory.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return fmt.Errorf("read body: %w", err)
 	}
