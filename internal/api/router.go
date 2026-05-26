@@ -670,6 +670,7 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/admin/tasks", h.Tasks.List)
 					r.Post("/admin/tasks", h.Tasks.Create)
 					r.Get("/admin/tasks/types", h.Tasks.ListTypes)
+					r.Get("/admin/tasks/{id}", h.Tasks.Get)
 					r.Patch("/admin/tasks/{id}", h.Tasks.Update)
 					r.Delete("/admin/tasks/{id}", h.Tasks.Delete)
 					r.Post("/admin/tasks/{id}/run", h.Tasks.RunNow)
