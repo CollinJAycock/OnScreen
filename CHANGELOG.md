@@ -135,6 +135,17 @@ the asset-token migration.
   upgrade; opens the API/UI port to the LAN; and resolves the bundled ffmpeg
   even when a binary is run outside its service.
 
+### Fixed — Windows installer
+
+- **Worker-only mode no longer registers a Windows service** — it now installs
+  as an onlogon interactive scheduled task (`OnScreenWorker`). A service runs
+  in session 0 with no GPU access, so the worker would crash immediately during
+  NVENC/QSV probing (Event 7023 on `OnScreenWorker`); the only reliable run was
+  a manual `worker.exe` from a cmd prompt. The task runs in the install user's
+  interactive session (same GPU path as the manual run), auto-restarts on
+  failure, and the post-install also tears down the legacy WinSW worker service
+  on upgrade.
+
 ## [v2.3.0] — 2026-05-22
 
 Additive release under the server lock — no breaking API changes. A

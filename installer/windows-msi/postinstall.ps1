@@ -1,4 +1,4 @@
-# Post-install. Two modes:
+﻿# Post-install. Two modes:
 #   full   (default) — initialise local Postgres + Redis, create DB, migrate,
 #                      register Postgres/Redis/OnScreen services. Single-box
 #                      all-in-one server.
@@ -96,6 +96,63 @@ function Register-WinswService {
     if ($LASTEXITCODE -ne 0) { throw "$XmlName start failed (exit $LASTEXITCODE)" }
 }
 
+# Register the worker as an onlogon INTERACTIVE scheduled task — NOT a Windows
+# service. A service runs in session 0 with no access to the GPU, so NVENC/QSV
+# probing fails and the worker crashes immediately (the historical "Event 7023"
+# on the OnScreenWorker service). Running in the install user's interactive
+# session keeps the same GPU path the manual `worker.exe` cmd run uses, which
+# is the only thing that ever actually worked on Windows.
+function Register-WorkerTask {
+    $launcher = "$InstallDir\run-worker.ps1"
+    # Launcher: load .env into the process env (values stay in-process — never
+    # echoed to a command line or a service config), then exec worker.exe with
+    # output appended to the same console log the old WinSW setup wrote to.
+    # Single-quoted here-string keeps the script literal; placeholders substituted below.
+    $launcherTpl = @'
+Set-Location '__INSTALLDIR__'
+foreach ($line in Get-Content '__ENVFILE__') {
+  $t = $line.Trim()
+  if (-not $t -or $t.StartsWith('#')) { continue }
+  if ($t.StartsWith('export ')) { $t = $t.Substring(7).Trim() }
+  $i = $t.IndexOf('='); if ($i -lt 1) { continue }
+  [Environment]::SetEnvironmentVariable($t.Substring(0,$i).Trim(), $t.Substring($i+1).Trim().Trim('"'), 'Process')
+}
+& '__INSTALLDIR__\worker.exe' *>> '__INSTALLDIR__\worker-console.log'
+'@
+    ($launcherTpl -replace '__INSTALLDIR__', $InstallDir -replace '__ENVFILE__', $envFile) |
+        Set-Content -Encoding utf8 $launcher
+
+    # If an earlier (broken) install left a WinSW worker service, tear it down so
+    # it doesn't fight the new task for the same WORKER_ADDR port on next boot.
+    $svcExe = "$InstallDir\service-worker.exe"
+    if (Test-Path $svcExe) {
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $svcExe stop      2>&1 | ForEach-Object { Write-Log "  legacy-svc: $_" }
+        & $svcExe uninstall 2>&1 | ForEach-Object { Write-Log "  legacy-svc: $_" }
+        $ErrorActionPreference = $prevEAP
+    }
+
+    $user     = "$env:USERDOMAIN\$env:USERNAME"
+    $taskName = 'OnScreenWorker'
+    # Replace any prior task so reinstalls re-apply cleanly.
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+    # Avoid backtick line-continuations (a trailing space silently breaks them).
+    # The Argument is the powershell launcher invocation with the quoted -File path.
+    $arg       = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $launcher + '"'
+    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+    $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $user
+    # Interactive + Highest: runs in the user's logged-on session (GPU access)
+    # with admin elevation (binds the segment port, writes to Program Files).
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+    # Auto-restart so a transient primary outage doesn't strand the worker until
+    # the next logon. ExecutionTimeLimit 0 = no kill on long uptime (it's a daemon).
+    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+    Write-Log "Worker registered as scheduled task '$taskName' (onlogon, interactive, as $user) and started."
+}
+
 # ─────────────────────────────── WORKER MODE ───────────────────────────────
 if ($Mode -eq "worker") {
     Write-Log "Worker-only install."
@@ -138,8 +195,7 @@ LOG_LEVEL="info"
         Write-Log "firewall: opened inbound tcp/$workerPort (LocalSubnet) for segment fetches"
     }
 
-    Set-ServiceEnv "service-worker.xml"
-    Register-WinswService "service-worker.xml"
+    Register-WorkerTask
     Write-Log "Worker registered + started. It joins the primary's fleet once it connects; check Settings -> Transcode on the primary."
     return
 }

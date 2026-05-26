@@ -1,4 +1,4 @@
-# Pre-uninstall: stop and unregister the three OnScreen Windows
+﻿# Pre-uninstall: stop and unregister the three OnScreen Windows
 # Services. Called from Inno Setup before files are deleted — if we
 # leave services running, the uninstaller can't delete locked binaries.
 #
@@ -28,11 +28,18 @@ function Stop-And-Unregister {
 }
 
 # Tear down in reverse-dependency order: OnScreen first (depends on
-# the others), then Redis + Postgres.
+# the others), then Redis + Postgres. The worker isn't a Windows service
+# anymore (it's an onlogon scheduled task — see Register-WorkerTask in the
+# post-install for why), but we still call Stop-And-Unregister on the worker
+# XML so an upgrade from an older installer cleans up the legacy WinSW service.
 Stop-And-Unregister "service-onscreen.xml"
 Stop-And-Unregister "service-worker.xml"
 Stop-And-Unregister "service-redis.xml"
 Stop-And-Unregister "service-postgres.xml"
+
+# Worker scheduled task — what newer installs register instead of the WinSW
+# service above. No-op if absent (full-mode installs don't register one).
+Unregister-ScheduledTask -TaskName 'OnScreenWorker' -Confirm:$false -ErrorAction SilentlyContinue
 
 # Remove the firewall rules our installer added (no-op if absent):
 #   'OnScreen Worker (segments)' — worker-only installs (the WORKER_ADDR port)
