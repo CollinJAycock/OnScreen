@@ -2,8 +2,10 @@ package tv.onscreen.android.ui
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import androidx.fragment.app.FragmentActivity
+import java.util.UUID
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -176,8 +178,20 @@ class MainActivity : FragmentActivity() {
     private fun handleWatchNextDeepLink(intent: Intent?): Boolean {
         val data = intent?.data ?: return false
         if (data.scheme != "onscreen" || data.host != "watch") return false
-        val itemId = data.lastPathSegment ?: return false
-        val position = data.getQueryParameter("position")?.toLongOrNull() ?: 0L
+        val raw = data.lastPathSegment ?: return false
+        // UUID-validate before navigating. The deep link is callable by
+        // any installed app via a crafted Intent; the server rejects
+        // non-UUID ids with 400, but client-side validation stops a
+        // garbage id from polluting our nav stack / firing a wasted
+        // round-trip / leaving us on a broken playback screen the user
+        // has to back out of.
+        val itemId = try {
+            UUID.fromString(raw).toString()
+        } catch (_: IllegalArgumentException) {
+            Log.w("MainActivity", "ignoring watch deep link with non-UUID id")
+            return false
+        }
+        val position = data.getQueryParameter("position")?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
         supportFragmentManager.popBackStack(
             null,
             androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
@@ -199,7 +213,16 @@ class MainActivity : FragmentActivity() {
      * events flow through normally. Fragments that don't implement
      * the interface (the default — most fragments rely on focus +
      * OnKeyListener) see no behavioural change.
+     *
+     * `@SuppressLint("RestrictedApi")`: lint flags this because
+     * `ComponentActivity.dispatchKeyEvent` carries
+     * `@RestrictTo(LIBRARY_GROUP_PREFIX)` — but we're overriding the
+     * public `Activity.dispatchKeyEvent` method (which has been part of
+     * the platform Activity API since API 1). The `LIBRARY_GROUP_PREFIX`
+     * restriction is about calls FROM non-androidx artifacts, not about
+     * OVERRIDES from app code. Documented Android pattern; safe.
      */
+    @android.annotation.SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             val current = supportFragmentManager.findFragmentById(R.id.main_container)

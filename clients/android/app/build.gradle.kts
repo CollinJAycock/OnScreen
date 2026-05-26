@@ -28,7 +28,15 @@ android {
 
     defaultConfig {
         applicationId = "tv.onscreen.android"
-        minSdk = 21
+        // minSdk 23 — the codebase already uses API-23+ APIs (Context.getColor,
+        // Resources.getColor(int, Theme), View.setForeground) directly, without
+        // Build.VERSION.SDK_INT guards, so an install on API 21–22 would crash
+        // the moment a card presenter painted. Android TV API 21–22 (Lollipop)
+        // is effectively dead as a target — the active boxes are Chromecast w/
+        // Google TV, Fire TV, Shield, all on API 23+. Bumping the floor matches
+        // what the code already requires and silences the 31 NewApi lint errors
+        // those calls trigger.
+        minSdk = 23
         targetSdk = 35
         versionCode = 6
         versionName = "1.0.5"

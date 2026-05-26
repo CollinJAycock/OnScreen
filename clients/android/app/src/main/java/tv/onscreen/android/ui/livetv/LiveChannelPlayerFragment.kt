@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.livetv
 
+import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -26,7 +27,15 @@ import javax.inject.Inject
  *  PlaybackFragment expects a media item id, which a live channel
  *  doesn't have, so we plug straight into ExoPlayer with the
  *  channel's HLS URL. */
-@OptIn(UnstableApi::class)
+// `@SuppressLint("UnsafeOptInUsageError")`: media3's PlayerView setter
+// chain + HlsMediaSource.Factory + DefaultHttpDataSource are tagged
+// `@UnstableApi` library-wide, but the official Android TV samples
+// (developer.android.com/training/tv/playback/exoplayer) consistently
+// use them. Suppressing the lint here keeps the opt-in confined to
+// this class — Kotlin's `@OptIn` style would propagate to every
+// fragment that just *references* us, which cascades up to
+// MainActivity for no real reason.
+@SuppressLint("UnsafeOptInUsageError")
 @AndroidEntryPoint
 class LiveChannelPlayerFragment : Fragment() {
 

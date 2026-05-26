@@ -1,5 +1,6 @@
 package tv.onscreen.android.playback
 
+import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -36,6 +37,17 @@ import javax.inject.Singleton
  * resume position passed as extras; MainActivity reads them on launch
  * and routes straight into PlaybackFragment.
  */
+/**
+ * `@SuppressLint("RestrictedApi")`: every WatchNextProgram.Builder.setX
+ * call is marked `@RestrictTo` in the androidx.tvprovider artifact —
+ * but the Android TV "Continue Watching" docs + official samples
+ * (developer.android.com/training/tv/playback/watchnext) consistently
+ * call them directly from app code. The restriction is over-broad on
+ * the library side, not a real "don't call this" signal. Scoped to
+ * this class so a future builder-method outside this file would still
+ * be linted normally.
+ */
+@SuppressLint("RestrictedApi")
 @Singleton
 class WatchNextManager @Inject constructor(
     @ApplicationContext private val context: Context,

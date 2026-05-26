@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto-backup rules for Android 6 (API 23) through Android 11. Honored
+  only when AndroidManifest's `android:allowBackup` is true; we set it
+  to false so this file is currently a no-op. Kept anyway as
+  defense-in-depth: if a future change flips allowBackup back on, these
+  exclude rules prevent auth-bearing prefs from leaving the device via
+  Google's Backup API or ADB.
+
+  The auth tokens (access / refresh / asset) live in the DataStore
+  Preferences file under `files/datastore/server.preferences_pb`.
+  Excluding that one file would be enough; we exclude the entire
+  datastore directory + SharedPreferences root for breadth, since any
+  future pref store would inherit the same backup posture by default.
+
+  See: https://developer.android.com/identity/data/autobackup
+-->
+<full-backup-content>
+    <exclude domain="file" path="datastore/" />
+    <exclude domain="sharedpref" path="." />
+</full-backup-content>
