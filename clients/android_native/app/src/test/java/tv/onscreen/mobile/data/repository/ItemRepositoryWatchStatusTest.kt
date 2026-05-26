@@ -6,11 +6,7 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Test
-import retrofit2.HttpException
-import retrofit2.Response
 import tv.onscreen.mobile.data.api.ApiResponse
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.WatchStatus
@@ -21,22 +17,16 @@ import tv.onscreen.mobile.data.model.WatchStatusResponse
  * Tests for the watching-status path through [ItemRepository]. Three
  * behaviours under test:
  *   - getWatchStatus maps the wire string to the enum
- *   - getWatchStatus turns server 404 (no row) into null instead of
- *     throwing — caller relies on null for "no status set"
+ *   - getWatchStatus turns the server's "no row yet" sentinel
+ *     (status="") into null — caller relies on null for "no status set"
  *   - setWatchStatus serialises the enum's `.wire` into the request body
+ *
+ * The server (post-PR #27) always returns 200 with `data.status = ""`
+ * for the no-row case; we previously caught a 404 there, which is now
+ * dead code on both sides. The contract this test pins is the new one.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ItemRepositoryWatchStatusTest {
-
-    private fun http404(): HttpException {
-        // Manufacture a Response with status 404 + empty body so we
-        // can construct the HttpException Retrofit raises on a 4xx.
-        val resp = Response.error<Any>(
-            404,
-            "".toResponseBody("application/json".toMediaType()),
-        )
-        return HttpException(resp)
-    }
 
     @Test
     fun `getWatchStatus parses the wire string into the enum`() = runTest {
@@ -53,9 +43,19 @@ class ItemRepositoryWatchStatusTest {
     }
 
     @Test
-    fun `getWatchStatus turns 404 into null (no row state)`() = runTest {
+    fun `getWatchStatus turns the server's empty-status sentinel into null`() = runTest {
+        // Post-PR-#27 the no-row case is 200 with status="" (server-side
+        // fix for a browser-console-noise issue on /watch). The
+        // repository collapses that to null so callers see the same
+        // shape they did before, without pattern-matching on HTTP code.
         val api = mockk<OnScreenApi>()
-        coEvery { api.getWatchStatus("item-2") } throws http404()
+        coEvery { api.getWatchStatus("item-2") } returns ApiResponse(
+            WatchStatusResponse(
+                status = "",
+                created_at = "0001-01-01T00:00:00Z",
+                updated_at = "0001-01-01T00:00:00Z",
+            ),
+        )
         val repo = ItemRepository(api)
         assertThat(repo.getWatchStatus("item-2")).isNull()
     }

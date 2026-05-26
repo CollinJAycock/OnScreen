@@ -100,11 +100,13 @@ interface OnScreenApi {
     // across every type, not anime-only. Distinct from playback progress;
     // this is the user's explicit classification.
 
-    /** Returns the current watch status for an item, or null when never set
-     *  (server emits `data: null` in the envelope). Retrofit returns the
-     *  null cleanly through the ApiResponse wrapper. */
+    /** Returns the current watch status for an item. Server (post-PR #27)
+     *  always emits 200 with the struct; when nothing is set yet,
+     *  `data.status` is the empty string. Consumers can treat `""` as
+     *  the "no row yet" sentinel — same UX as null, no need for
+     *  HTTP-code pattern matching. */
     @GET("api/v1/items/{id}/watch-status")
-    suspend fun getWatchStatus(@Path("id") id: String): ApiResponse<WatchStatus?>
+    suspend fun getWatchStatus(@Path("id") id: String): ApiResponse<WatchStatus>
 
     @PUT("api/v1/items/{id}/watch-status")
     suspend fun setWatchStatus(
