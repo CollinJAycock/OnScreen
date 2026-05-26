@@ -22,5 +22,10 @@
   <depend>OnScreenRedis</depend>
   <!-- Inject the .env contents at install time. The installer rewrites
        these <env/> tags before registering the service. -->
-  <env name="PATH" value="{app}\ffmpeg;%PATH%"/>
+  <!-- {app}\pgsql\bin puts the bundled pg_dump / pg_restore / psql / pg_isready
+       on PATH for backup, restore, and migration helpers shelled out from
+       the server. dbtools.Find also resolves them via the install layout
+       directly, but having them on PATH keeps psql etc. usable for ad-hoc
+       maintenance. -->
+  <env name="PATH" value="{app}\ffmpeg;{app}\pgsql\bin;%PATH%"/>
 </service>

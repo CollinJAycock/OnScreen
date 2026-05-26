@@ -23,6 +23,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/dbtools"
 )
 
 // BackupHandler exposes admin-only DB backup/restore operations.
@@ -90,8 +91,9 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if _, err := exec.LookPath("pg_dump"); err != nil {
-		h.logger.Error("backup: pg_dump not on PATH", "err", err)
+	pgDump, err := dbtools.Find("pg_dump")
+	if err != nil {
+		h.logger.Error("backup: pg_dump not found (looked in <exeDir>/pgsql/bin then PATH)", "err", err)
 		respond.Error(w, r, http.StatusServiceUnavailable, "PG_DUMP_UNAVAILABLE",
 			"pg_dump is not installed on the server. Install the Postgres client tools (postgresql-client) and restart.")
 		return
@@ -109,7 +111,7 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
-	cmd := exec.CommandContext(r.Context(), "pg_dump",
+	cmd := exec.CommandContext(r.Context(), pgDump,
 		"--format=custom",
 		"--no-owner",
 		"--no-acl",
@@ -192,8 +194,9 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if _, err := exec.LookPath("pg_restore"); err != nil {
-		h.logger.Error("restore: pg_restore not on PATH", "err", err)
+	pgRestore, err := dbtools.Find("pg_restore")
+	if err != nil {
+		h.logger.Error("restore: pg_restore not found (looked in <exeDir>/pgsql/bin then PATH)", "err", err)
 		respond.Error(w, r, http.StatusServiceUnavailable, "PG_RESTORE_UNAVAILABLE",
 			"pg_restore is not installed on the server. Install the Postgres client tools (postgresql-client) and restart.")
 		return
@@ -234,7 +237,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dumpVersion, vErr := extractDumpVersion(r.Context(), tmpPath)
+	dumpVersion, vErr := extractDumpVersion(r.Context(), pgRestore, tmpPath)
 	if vErr != nil {
 		// An unreadable goose_db_version isn't itself a fatal error —
 		// dumps from very old installs may predate the table or have
@@ -252,7 +255,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.CommandContext(r.Context(), "pg_restore",
+	cmd := exec.CommandContext(r.Context(), pgRestore,
 		"--clean",
 		"--if-exists",
 		"--no-owner",
@@ -416,9 +419,11 @@ func (h *BackupHandler) scrubDSN(s string) string {
 // extractDumpVersion runs pg_restore in data-only mode against the archive
 // to dump just the goose_db_version table as SQL, then parses out the
 // highest applied version_id. Returns 0 with an error if the table is
-// missing or no rows are present.
-func extractDumpVersion(ctx context.Context, archivePath string) (int64, error) {
-	cmd := exec.CommandContext(ctx, "pg_restore",
+// missing or no rows are present. pgRestore is the absolute path to the
+// binary (resolved via dbtools.Find) so this works on Windows installs
+// where the bundled tools aren't on PATH.
+func extractDumpVersion(ctx context.Context, pgRestore, archivePath string) (int64, error) {
+	cmd := exec.CommandContext(ctx, pgRestore,
 		"--data-only",
 		"--table=goose_db_version",
 		"--file=-",

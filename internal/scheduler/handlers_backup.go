@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/dbtools"
 )
 
 // BackupConfig is the JSON payload for the backup_database task.
@@ -51,8 +53,9 @@ func (h *BackupHandler) Run(ctx context.Context, rawCfg json.RawMessage) (string
 	if cfg.OutputDir == "" {
 		return "", fmt.Errorf("output_dir is required")
 	}
-	if _, err := exec.LookPath("pg_dump"); err != nil {
-		return "", fmt.Errorf("pg_dump not on PATH: %w", err)
+	pgDump, err := dbtools.Find("pg_dump")
+	if err != nil {
+		return "", fmt.Errorf("pg_dump not found (looked in <exeDir>/pgsql/bin then PATH): %w", err)
 	}
 	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
 		return "", fmt.Errorf("create output dir: %w", err)
@@ -61,7 +64,7 @@ func (h *BackupHandler) Run(ctx context.Context, rawCfg json.RawMessage) (string
 	filename := "onscreen-backup-" + time.Now().UTC().Format("20060102-150405") + ".dump"
 	dst := filepath.Join(cfg.OutputDir, filename)
 
-	cmd := exec.CommandContext(ctx, "pg_dump",
+	cmd := exec.CommandContext(ctx, pgDump,
 		"--format=custom",
 		"--no-owner",
 		"--no-acl",
