@@ -67,9 +67,15 @@ func TestMissingFiles_ReReadsGraceEachTick(t *testing.T) {
 	w := NewMissingFilesWorker(svc, gp, 20*time.Millisecond, newSilentLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go w.Run(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); w.Run(ctx) }()
 	time.Sleep(80 * time.Millisecond)
 	cancel()
+	// Wait for the worker goroutine to actually exit before reading
+	// gracesSeen — cancel() only signals it. Without this wait the
+	// race detector flags the test's read against the worker's
+	// in-flight append on the next tick.
+	<-done
 
 	if len(svc.gracesSeen) < 2 {
 		t.Fatalf("not enough ticks observed: %d", len(svc.gracesSeen))
@@ -84,9 +90,11 @@ func TestMissingFiles_ContinuesAfterError(t *testing.T) {
 	w := NewMissingFilesWorker(svc, fixedGrace(time.Hour), 15*time.Millisecond, newSilentLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go w.Run(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); w.Run(ctx) }()
 	time.Sleep(80 * time.Millisecond)
 	cancel()
+	<-done
 
 	if svc.calls.Load() < 2 {
 		t.Errorf("worker died on error: %d calls", svc.calls.Load())
