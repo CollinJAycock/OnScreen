@@ -30,18 +30,6 @@ func applySystemSettings(_ context.Context, cfg *config.Config, sys settings.Sys
 		cfg.TMDBRateLimit = *sys.TMDBRateLimit
 		changed++
 	}
-	if sys.TranscodeABR != nil {
-		cfg.TranscodeABR = *sys.TranscodeABR
-		changed++
-	}
-	if sys.TranscodeABRMaxHeight != nil {
-		cfg.TranscodeABRMaxHeight = *sys.TranscodeABRMaxHeight
-		changed++
-	}
-	if sys.TranscodeABRAutoMaxHeight != nil {
-		cfg.TranscodeABRAutoMaxHeight = *sys.TranscodeABRAutoMaxHeight
-		changed++
-	}
 	if sys.PublicAssetCache != nil {
 		cfg.PublicAssetCache = *sys.PublicAssetCache
 		changed++
@@ -136,11 +124,12 @@ func nodeEffective(cfg *config.Config) settings.NodeSettings {
 	}
 }
 
-// applyTranscodeConfig overrides the env-derived transcode output ceilings with
-// any values set in Settings ▸ Transcode (stored in TranscodeConfig). 0 means
-// "unset — keep the env/built-in default". The server reads cfg.TranscodeMax*
-// directly when starting a session, so merging here (before any session) is all
-// that's required. NVENC/maxrate tuning is consumed elsewhere and left untouched.
+// applyTranscodeConfig overrides the env-derived transcoder knobs with any
+// values set in Settings ▸ Transcode (stored in TranscodeConfig): output
+// ceilings (0 = "unset, keep env default") and the ABR ladder (pointer fields,
+// nil = "unset"). The server reads cfg.TranscodeMax* / TranscodeABR* directly
+// when starting a session, so merging here (before any session) is all that's
+// required. NVENC/maxrate tuning is consumed elsewhere and left untouched.
 func applyTranscodeConfig(cfg *config.Config, tc settings.TranscodeConfig, logger *slog.Logger) {
 	changed := 0
 	if tc.MaxBitrateKbps > 0 {
@@ -155,6 +144,18 @@ func applyTranscodeConfig(cfg *config.Config, tc settings.TranscodeConfig, logge
 		cfg.TranscodeMaxHeight = tc.MaxHeight
 		changed++
 	}
+	if tc.ABR != nil {
+		cfg.TranscodeABR = *tc.ABR
+		changed++
+	}
+	if tc.ABRMaxHeight != nil {
+		cfg.TranscodeABRMaxHeight = *tc.ABRMaxHeight
+		changed++
+	}
+	if tc.ABRAutoMaxHeight != nil {
+		cfg.TranscodeABRAutoMaxHeight = *tc.ABRAutoMaxHeight
+		changed++
+	}
 	if changed > 0 {
 		logger.Info("applied Transcode settings over env config", "overrides", changed)
 	}
@@ -164,30 +165,30 @@ func applyTranscodeConfig(cfg *config.Config, tc settings.TranscodeConfig, logge
 // merged) config, so the settings API can show the running values as defaults.
 func systemEffective(cfg *config.Config) settings.SystemConfig {
 	return settings.SystemConfig{
-		ServerName:                strPtr(cfg.ServerName),
-		RetainMonths:              intPtr(cfg.RetainMonths),
-		TMDBRateLimit:             intPtr(cfg.TMDBRateLimit),
-		TranscodeABR:              boolPtr(cfg.TranscodeABR),
-		TranscodeABRMaxHeight:     intPtr(cfg.TranscodeABRMaxHeight),
-		TranscodeABRAutoMaxHeight: intPtr(cfg.TranscodeABRAutoMaxHeight),
-		PublicAssetCache:          boolPtr(cfg.PublicAssetCache),
-		StaticABREnabled:          boolPtr(cfg.StaticABREnabled),
-		MissingFileGraceMinutes:   intPtr(int(cfg.MissingFileGracePeriod / time.Minute)),
-		ScanFileConcurrency:       intPtr(cfg.ScanFileConcurrency),
-		ScanLibraryConcurrency:    intPtr(cfg.ScanLibraryConcurrency),
-		DiscoveryEnabled:          boolPtr(cfg.DiscoveryEnabled),
-		DiscoveryPort:             intPtr(cfg.DiscoveryPort),
+		ServerName:              strPtr(cfg.ServerName),
+		RetainMonths:            intPtr(cfg.RetainMonths),
+		TMDBRateLimit:           intPtr(cfg.TMDBRateLimit),
+		PublicAssetCache:        boolPtr(cfg.PublicAssetCache),
+		StaticABREnabled:        boolPtr(cfg.StaticABREnabled),
+		MissingFileGraceMinutes: intPtr(int(cfg.MissingFileGracePeriod / time.Minute)),
+		ScanFileConcurrency:     intPtr(cfg.ScanFileConcurrency),
+		ScanLibraryConcurrency:  intPtr(cfg.ScanLibraryConcurrency),
+		DiscoveryEnabled:        boolPtr(cfg.DiscoveryEnabled),
+		DiscoveryPort:           intPtr(cfg.DiscoveryPort),
 	}
 }
 
-// transcodeEffective snapshots the transcode output ceilings from the merged
-// config so the settings API can show running values as defaults when the
-// TranscodeConfig fields are unset (0).
+// transcodeEffective snapshots the transcoder knobs the UI fills as defaults
+// (output ceilings + ABR ladder) from the merged config, so a blank stored row
+// shows the running values rather than zeros / false.
 func transcodeEffective(cfg *config.Config) settings.TranscodeConfig {
 	return settings.TranscodeConfig{
-		MaxBitrateKbps: cfg.TranscodeMaxBitrate,
-		MaxWidth:       cfg.TranscodeMaxWidth,
-		MaxHeight:      cfg.TranscodeMaxHeight,
+		MaxBitrateKbps:   cfg.TranscodeMaxBitrate,
+		MaxWidth:         cfg.TranscodeMaxWidth,
+		MaxHeight:        cfg.TranscodeMaxHeight,
+		ABR:              boolPtr(cfg.TranscodeABR),
+		ABRMaxHeight:     intPtr(cfg.TranscodeABRMaxHeight),
+		ABRAutoMaxHeight: intPtr(cfg.TranscodeABRAutoMaxHeight),
 	}
 }
 

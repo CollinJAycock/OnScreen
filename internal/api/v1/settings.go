@@ -1238,6 +1238,18 @@ func (h *SettingsHandler) GetTranscodeConfig(w http.ResponseWriter, r *http.Requ
 	if tc.MaxHeight == 0 {
 		tc.MaxHeight = h.transcodeDefaults.MaxHeight
 	}
+	// ABR fields are pointer-typed (nil = "unset, use env default"); fill from
+	// the env-effective defaults so the page never shows a false-y blank when
+	// the env actually has it enabled.
+	if tc.ABR == nil {
+		tc.ABR = h.transcodeDefaults.ABR
+	}
+	if tc.ABRMaxHeight == nil {
+		tc.ABRMaxHeight = h.transcodeDefaults.ABRMaxHeight
+	}
+	if tc.ABRAutoMaxHeight == nil {
+		tc.ABRAutoMaxHeight = h.transcodeDefaults.ABRAutoMaxHeight
+	}
 	respond.Success(w, r, tc)
 }
 

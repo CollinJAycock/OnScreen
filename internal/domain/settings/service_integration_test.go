@@ -100,19 +100,22 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 	})
 
 	t.Run("TranscodeConfig", func(t *testing.T) {
-		// Zero value when unset.
-		if got := svc.TranscodeConfigGet(ctx); got != (TranscodeConfig{}) {
+		// Zero value when unset (all pointer fields nil, all value fields zero).
+		if got := svc.TranscodeConfigGet(ctx); !reflect.DeepEqual(got, TranscodeConfig{}) {
 			t.Errorf("initial: got %+v, want zero value", got)
 		}
+		abrOn := true
+		abrCap, abrAutoCap := 1080, 720
 		want := TranscodeConfig{
 			NVENCPreset: "p7", NVENCTune: "hq", NVENCRC: "vbr", MaxrateRatio: 2.0,
 			MaxBitrateKbps: 25000, MaxWidth: 1920, MaxHeight: 1080,
+			ABR: &abrOn, ABRMaxHeight: &abrCap, ABRAutoMaxHeight: &abrAutoCap,
 		}
 		if err := svc.SetTranscodeConfig(ctx, want); err != nil {
 			t.Fatalf("Set: %v", err)
 		}
 		got := svc.TranscodeConfigGet(ctx)
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
@@ -418,7 +421,7 @@ func TestService_GetUnsetReturnsZeroValues(t *testing.T) {
 	if got := svc.General(ctx); !reflect.DeepEqual(got, GeneralConfig{}) {
 		t.Errorf("General unset: got %+v", got)
 	}
-	if got := svc.TranscodeConfigGet(ctx); got != (TranscodeConfig{}) {
+	if got := svc.TranscodeConfigGet(ctx); !reflect.DeepEqual(got, TranscodeConfig{}) {
 		t.Errorf("TranscodeConfig unset: got %+v", got)
 	}
 	if got := svc.Storage(ctx); !reflect.DeepEqual(got, StorageConfig{}) {

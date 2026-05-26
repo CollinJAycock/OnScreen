@@ -917,13 +917,11 @@ export interface StorageTestResult {
 }
 
 // Cluster-wide server toggles that used to be env-only. Restart-required.
+// ABR fields live in TranscodeConfig (Settings ▸ Transcode), not here.
 export interface SystemSettings {
   server_name: string;
   retain_months: number;
   tmdb_rate_limit: number;
-  transcode_abr: boolean;
-  transcode_abr_max_height: number;
-  transcode_abr_auto_max_height: number;
   public_asset_cache: boolean;
   static_abr_enabled: boolean;
   missing_file_grace_minutes: number;
@@ -1068,6 +1066,11 @@ export interface TranscodeConfig {
   max_bitrate_kbps: number;
   max_width: number;
   max_height: number;
+  // Adaptive-bitrate HLS ladder. Server backfills nil ptr fields with the
+  // env-effective default before responding, so these are always present on GET.
+  abr: boolean;
+  abr_max_height: number;        // 0 = no hard ceiling
+  abr_auto_max_height: number;   // soft ceiling for AUTO playback
 }
 
 export interface WorkerCredentials {

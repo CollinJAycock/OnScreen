@@ -141,6 +141,10 @@
   let maxBitrateKbps = 40000;
   let maxWidth = 3840;
   let maxHeight = 2160;
+  // Adaptive-bitrate HLS ladder. Restart-required (read once at startup).
+  let abrEnabled = false;
+  let abrMaxHeight = 0;
+  let abrAutoMaxHeight = 1080;
   let tuningSaving = false;
   let tuningLoaded = false;
 
@@ -185,6 +189,11 @@
       maxBitrateKbps = tc.max_bitrate_kbps || 40000;
       maxWidth = tc.max_width || 3840;
       maxHeight = tc.max_height || 2160;
+      // Server always backfills these (env default if no stored override),
+      // so straight assignment is correct — don't || the bool away.
+      abrEnabled = tc.abr;
+      abrMaxHeight = tc.abr_max_height;
+      abrAutoMaxHeight = tc.abr_auto_max_height || 1080;
       tuningLoaded = true;
     } catch { tuningLoaded = true; }
   });
@@ -254,8 +263,11 @@
         max_bitrate_kbps: maxBitrateKbps,
         max_width: maxWidth,
         max_height: maxHeight,
+        abr: abrEnabled,
+        abr_max_height: abrMaxHeight,
+        abr_auto_max_height: abrAutoMaxHeight,
       });
-      toast.success('Encoder tuning saved — output limit changes need a restart');
+      toast.success('Encoder tuning saved — output limit and ABR changes need a restart');
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to save encoder tuning');
     } finally {
@@ -353,6 +365,32 @@
         <div class="hint">Default 2160 (4K).</div>
       </div>
     </div>
+
+    <div class="sec-label" style="margin-top: 1.25rem;">Adaptive Bitrate (ABR)</div>
+    <div class="hint" style="margin-top: -0.5rem;">
+      Multi-rendition HLS — the player switches rungs on real-time bandwidth.
+      Applied at startup, so <strong>changes take effect after a server restart</strong>.
+    </div>
+
+    <label class="toggle-label" style="margin-top: 0.5rem;">
+      <input type="checkbox" bind:checked={abrEnabled} />
+      Enable adaptive-bitrate ladder
+    </label>
+
+    {#if abrEnabled}
+    <div class="field-row">
+      <div class="field" style="flex:1;">
+        <label for="abr-max-height">Hard max rung height (px)</label>
+        <input id="abr-max-height" type="number" min="0" max="4320" bind:value={abrMaxHeight} />
+        <div class="hint">0 = source. An explicit quality pick can never exceed this.</div>
+      </div>
+      <div class="field" style="flex:1;">
+        <label for="abr-auto-max-height">Auto max rung height (px)</label>
+        <input id="abr-auto-max-height" type="number" min="0" max="4320" bind:value={abrAutoMaxHeight} />
+        <div class="hint">Soft cap for AUTO playback. Default 1080.</div>
+      </div>
+    </div>
+    {/if}
 
     <div class="section-foot">
       <button class="btn-save" disabled={tuningSaving} on:click={saveTuning}>

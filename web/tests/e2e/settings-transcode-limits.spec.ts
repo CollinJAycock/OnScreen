@@ -1,10 +1,12 @@
-// E2E for Settings ▸ Transcode ▸ Output Limits — the global transcode ceilings
-// (max bitrate / width / height) that moved out of env vars this cycle, living
-// alongside the existing NVENC tuning in TranscodeConfig.
+// E2E for Settings ▸ Transcode ▸ Output Limits + ABR — the global transcode
+// ceilings (max bitrate / width / height) AND the adaptive-bitrate ladder
+// (formerly in Settings ▸ System) that moved out of env vars this cycle and
+// now live alongside the existing NVENC tuning in TranscodeConfig.
 //
-// Verifies the GET fills unset caps with the effective running defaults (so the
-// form is never blank), the caps + NVENC round-trip together, and the endpoint
-// is enveloped. Restart-time enforcement of the caps is in the manual plan.
+// Verifies the GET fills unset caps + ABR fields with the effective running
+// defaults (so the form is never blank), the caps + NVENC + ABR round-trip
+// together, and the endpoint is enveloped. Restart-time enforcement is in the
+// manual plan.
 //
 // Required env: E2E_PASSWORD (admin). Restores the original config afterwards.
 
@@ -27,9 +29,15 @@ test.describe('Settings ▸ Transcode output limits — API', () => {
     expect(tc.max_bitrate_kbps, 'max_bitrate_kbps backfilled').toBeGreaterThan(0);
     expect(tc.max_width, 'max_width backfilled').toBeGreaterThan(0);
     expect(tc.max_height, 'max_height backfilled').toBeGreaterThan(0);
+    // ABR fields are always present after backfill (booleans + soft auto cap
+    // default to env values, not nil) so the form never shows a missing toggle.
+    expect(tc, 'abr backfilled').toHaveProperty('abr');
+    expect(typeof tc.abr).toBe('boolean');
+    expect(tc, 'abr_max_height backfilled').toHaveProperty('abr_max_height');
+    expect(tc.abr_auto_max_height, 'abr_auto_max_height backfilled').toBeGreaterThan(0);
   });
 
-  test('caps + NVENC tuning round-trip together', async ({ request }) => {
+  test('caps + NVENC + ABR round-trip together', async ({ request }) => {
     const token = await adminToken(request);
     const orig = (await (await request.get('/api/v1/settings/transcode-config', auth(token))).json()).data;
 
@@ -42,6 +50,9 @@ test.describe('Settings ▸ Transcode output limits — API', () => {
       max_bitrate_kbps: 25000,
       max_width: 1920,
       max_height: 1080,
+      abr: !orig.abr,
+      abr_max_height: 1440,
+      abr_auto_max_height: 900,
     };
 
     try {
@@ -55,6 +66,10 @@ test.describe('Settings ▸ Transcode output limits — API', () => {
       // The NVENC tuning that was already in this struct must survive a caps save.
       expect(got.nvenc_preset).toBe('p6');
       expect(got.maxrate_ratio).toBe(2.0);
+      // ABR fields must persist through PUT → DB → GET unmodified.
+      expect(got.abr).toBe(desired.abr);
+      expect(got.abr_max_height).toBe(1440);
+      expect(got.abr_auto_max_height).toBe(900);
     } finally {
       await request.put('/api/v1/settings/transcode-config', { ...auth(token), data: orig });
     }
@@ -76,5 +91,18 @@ test.describe('Settings ▸ Transcode output limits — UI', () => {
     await expect(page.getByLabel(/Max Bitrate/i)).toBeVisible();
     await expect(page.getByLabel(/Max Width/i)).toBeVisible();
     await expect(page.getByLabel(/Max Height/i)).toBeVisible();
+  });
+
+  test('Adaptive Bitrate section lives here, not on the System page', async ({ page }) => {
+    await loginUI(page);
+
+    // ABR section + the enable toggle render on Settings ▸ Transcode.
+    await page.goto('/settings/transcode');
+    await expect(page.getByText(/Adaptive Bitrate \(ABR\)/i)).toBeVisible();
+    await expect(page.getByLabel(/Enable adaptive-bitrate ladder/i)).toBeVisible();
+
+    // And not on Settings ▸ System (it moved out this cycle).
+    await page.goto('/settings/system');
+    await expect(page.getByText(/Adaptive bitrate \(ABR\)/i)).toHaveCount(0);
   });
 });

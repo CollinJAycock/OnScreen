@@ -9,11 +9,12 @@ failures. For the *why* and the design, see [ha-roadmap.md](ha-roadmap.md) and
 > **Single-node deployments need none of this.** Every HA/multi-site feature is
 > opt-in and off by default — a standard install behaves exactly as before.
 >
-> **Env vs UI:** cluster-wide toggles (ABR, public asset cache, static-ABR
-> enable, server name, retention, TMDB rate limit, scanner concurrency,
-> missing-file grace, LAN discovery) are editable in **Settings ▸ System**, and
-> the global transcode output ceilings under **Settings ▸ Transcode** — the env
-> vars below are the initial default, and a saved override wins. Node- and
+> **Env vs UI:** cluster-wide toggles (public asset cache, static-ABR enable,
+> server name, retention, TMDB rate limit, scanner concurrency, missing-file
+> grace, LAN discovery) are editable in **Settings ▸ System**, and the global
+> transcode output ceilings + adaptive-bitrate ladder under
+> **Settings ▸ Transcode** — the env vars below are the initial default, and a
+> saved override wins. Node- and
 > site-specific config (bind addresses, paths, `SITE_ID`, per-worker
 > `TRANSCODE_QSV_DECODE`, `DISABLE_EMBEDDED_WORKER`) is now editable **per node**
 > in **Settings ▸ Nodes** — it lives in a separate `node_settings` table keyed

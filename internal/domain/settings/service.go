@@ -223,6 +223,13 @@ type TranscodeConfig struct {
 	MaxBitrateKbps int `json:"max_bitrate_kbps,omitempty"`
 	MaxWidth       int `json:"max_width,omitempty"`
 	MaxHeight      int `json:"max_height,omitempty"`
+	// Adaptive-bitrate ladder (env TRANSCODE_ABR / TRANSCODE_ABR_MAX_HEIGHT /
+	// TRANSCODE_ABR_AUTO_MAX_HEIGHT). Pointer-typed so unset means "use env";
+	// a stored value wins. Lives here (not SystemConfig) so the UI lives on
+	// Settings ▸ Transcode where the rest of the transcoder tuning is.
+	ABR              *bool `json:"abr,omitempty"`
+	ABRMaxHeight     *int  `json:"abr_max_height,omitempty"`
+	ABRAutoMaxHeight *int  `json:"abr_auto_max_height,omitempty"`
 }
 
 // TranscodeConfigGet returns the transcode encoder tuning config.
@@ -631,14 +638,11 @@ func (s *Service) SetStorage(ctx context.Context, cfg StorageConfig) error {
 // SIGHUP path no longer mutates it (config.Reload), so the two don't fight.
 // Transcode output caps + NVENC tuning live in TranscodeConfig (Settings ▸ Transcode).
 type SystemConfig struct {
-	ServerName                *string `json:"server_name,omitempty"`
-	RetainMonths              *int    `json:"retain_months,omitempty"`
-	TMDBRateLimit             *int    `json:"tmdb_rate_limit,omitempty"`
-	TranscodeABR              *bool   `json:"transcode_abr,omitempty"`
-	TranscodeABRMaxHeight     *int    `json:"transcode_abr_max_height,omitempty"`
-	TranscodeABRAutoMaxHeight *int    `json:"transcode_abr_auto_max_height,omitempty"`
-	PublicAssetCache          *bool   `json:"public_asset_cache,omitempty"`
-	StaticABREnabled          *bool   `json:"static_abr_enabled,omitempty"`
+	ServerName       *string `json:"server_name,omitempty"`
+	RetainMonths     *int    `json:"retain_months,omitempty"`
+	TMDBRateLimit    *int    `json:"tmdb_rate_limit,omitempty"`
+	PublicAssetCache *bool   `json:"public_asset_cache,omitempty"`
+	StaticABREnabled *bool   `json:"static_abr_enabled,omitempty"`
 	// Scanner policy, formerly env-only. MissingFileGraceMinutes is how long a
 	// vanished file waits before being marked gone (env MISSING_FILE_GRACE_PERIOD,
 	// expressed here in whole minutes for the UI). The two concurrency knobs
