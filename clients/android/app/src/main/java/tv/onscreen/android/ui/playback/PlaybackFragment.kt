@@ -61,6 +61,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private lateinit var viewModel: PlaybackViewModel
     private var player: ExoPlayer? = null
+    /** Reference to the anonymous `Player.Listener` we attach in
+     *  initPlayer, so we can explicitly remove it before handing the
+     *  player off to the MediaSessionService. The listener captures
+     *  `this` (the fragment); if we leave it attached on the parked
+     *  player, the service's player events fire fragment callbacks
+     *  (`parentFragmentManager.popBackStack()`, `showErrorDialog`, …)
+     *  against a destroyed fragment — IllegalStateException + leaked
+     *  view hierarchy for as long as the player lives in the service. */
+    private var playerListener: Player.Listener? = null
     private var progressTracker: ProgressTracker? = null
     private var glue: PlaybackTransportControlGlue<LeanbackPlayerAdapter>? = null
 
@@ -605,7 +614,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             isSeekEnabled = true
         }
 
-        exo.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 // Screen-on flag tracks active playback so the Fire TV
                 // / Android TV screensaver doesn't kick in mid-show.
@@ -663,7 +672,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
                 showErrorDialog(msg)
             }
-        })
+        }
+        exo.addListener(listener)
+        playerListener = listener
     }
 
     private fun playSource(source: PlaybackSource) {
@@ -1201,6 +1212,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         if (!isAudio) {
             player?.run { stop(); release() }
             player = null
+            // release() invalidates the listener list, but null the
+            // field too so we don't keep the captured callback alive
+            // until onDestroyView runs.
+            playerListener = null
             viewModel.stopActiveTranscode()
         }
     }
@@ -1235,6 +1250,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             player?.release()
         }
         player = null
+        // The handoff path clears playerListener before parking; the
+        // release path doesn't need to (release() invalidates the
+        // listener list) but null it for GC hygiene either way.
+        playerListener = null
         viewModel.stopActiveTranscode()
     }
 
@@ -1267,6 +1286,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 index = item?.index,
                 hlsOffsetMs = viewModel.hlsOffsetMs,
             )
+            // Detach the fragment-owned listener BEFORE parking. Once the
+            // service owns the player, our `onPlaybackStateChanged` /
+            // `onPlayerError` callbacks would fire against a destroyed
+            // fragment (parentFragmentManager.popBackStack(), dialog
+            // dismissals, …). The service installs its own auto-advance
+            // listener on attach() — that's the right handler for the
+            // service-owned phase of playback.
+            playerListener?.let { exo.removeListener(it) }
+            playerListener = null
             tv.onscreen.android.playback.AudioHandoff.park(exo, meta)
             // Started service so it survives the activity going away.
             // The service reads from AudioHandoff on its next attach()
