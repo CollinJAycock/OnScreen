@@ -10,6 +10,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // MaintenanceMediaService is the slice of media.Service that maintenance
@@ -262,7 +263,7 @@ func (h *MaintenanceHandler) PurgeDeletedLibrary(w http.ResponseWriter, r *http.
 	// Detach the context so an HTTP-level cancellation (Cloudflare
 	// 524 timeout) doesn't roll back the transaction halfway through.
 	bgCtx := context.WithoutCancel(r.Context())
-	go func() {
+	observability.SafeGo(h.logger, "maintenance:purge-deleted", func() {
 		n, err := h.library.PurgeDeleted(bgCtx, libID)
 		if err != nil {
 			h.logger.ErrorContext(bgCtx, "purge deleted library",
@@ -271,7 +272,7 @@ func (h *MaintenanceHandler) PurgeDeletedLibrary(w http.ResponseWriter, r *http.
 		}
 		h.logger.InfoContext(bgCtx, "purge deleted library complete",
 			"library_id", libID, "purged_items", n)
-	}()
+	})
 
 	h.logger.InfoContext(r.Context(), "purge deleted library enqueued",
 		"library_id", libID)

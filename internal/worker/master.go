@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/valkey"
 )
 
@@ -117,10 +118,15 @@ func (m *MasterLock) RunIfMaster(ctx context.Context, fn func(context.Context)) 
 				fnCtx, cancel = context.WithCancel(ctx)
 				done = make(chan struct{})
 				running = true
-				go func() {
+				// SafeGo so a panic in the singleton work (hub refresh,
+				// partition maintenance, periodic scan) doesn't take
+				// down the master process — `done` still closes so the
+				// outer loop's failover path runs normally on the next
+				// tick.
+				observability.SafeGo(m.logger, "master:singleton-fn", func() {
 					defer close(done)
 					fn(fnCtx)
-				}()
+				})
 			case !isMaster && running:
 				cancel()
 				cancel = func() {}

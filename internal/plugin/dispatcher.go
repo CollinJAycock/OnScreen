@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // Audit action constants for plugin dispatch outcomes. Kept inside this
@@ -182,10 +183,14 @@ func (d *NotificationDispatcher) workerFor(p Plugin) (*pluginWorker, error) {
 		audit:  d.audit,
 	}
 	d.wg.Add(1)
-	go func() {
+	// SafeGo so a panic inside w.run (a bad plugin payload, a connection
+	// surprise, anything Go can't statically prove won't panic) still
+	// decrements the WaitGroup via the deferred Done and is logged
+	// instead of tearing down the whole dispatcher process.
+	observability.SafeGo(d.logger, "plugin-dispatcher:worker", func() {
 		defer d.wg.Done()
 		w.run(d.ctx)
-	}()
+	})
 	d.workers[p.ID] = w
 	return w, nil
 }

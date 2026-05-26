@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/subtitles"
 	"github.com/onscreen/onscreen/internal/subtitles/opensubtitles"
 )
@@ -402,7 +403,11 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 	// don't kill the tesseract subprocess. The job store is the
 	// single source of truth; the client polls it on its own clock.
 	uid := claims.UserID
-	go func() {
+	// SafeGo — runOCRJob shells out to ffmpeg + tesseract over user-
+	// uploaded subtitle streams; a panic from a bad stream shouldn't
+	// take the server down with it. The in-flight counter defer still
+	// runs (recover unwinds the defer chain normally).
+	observability.SafeGo(h.logger, "subtitles:ocr-job", func() {
 		defer func() {
 			h.ocrInFlightMu.Lock()
 			h.ocrInFlight[uid]--
@@ -420,7 +425,7 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 			Forced:         body.Forced,
 			SDH:            body.SDH,
 		})
-	}()
+	})
 
 	respond.Accepted(w, r, toOCRJobJSON(*job))
 }
