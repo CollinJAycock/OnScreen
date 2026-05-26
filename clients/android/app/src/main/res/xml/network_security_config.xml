@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <!-- Trust system CAs everywhere (default) -->
-    <base-config cleartextTrafficPermitted="true">
+<!--
+  OnScreen is designed to talk to a SELF-HOSTED media server, which the
+  operator typically runs on a LAN address — `http://192.168.1.50:7070`,
+  `http://media.lan:7070`, `http://onscreen-server.local:7070`. Plain HTTP
+  on the LAN is the expected deployment shape; Android refuses to dial
+  cleartext URLs unless explicitly allowed here. Internet-side hops
+  (TMDB, OpenSubtitles, etc.) still go over HTTPS — those URLs come from
+  the server, which itself uses a `safehttp`-policy-restricted client.
+
+  We accept the `InsecureBaseConfiguration` lint warning consciously:
+  flipping cleartext off would break the dominant deployment model for
+  a marginal threat (an attacker already on the user's LAN). Server-
+  side TLS support is in Settings ▸ Security; operators who serve over
+  HTTPS get certificate validation on the client automatically.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true"
+        tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
             <!-- Also trust user-installed CAs (disabled by default since Android 7) -->

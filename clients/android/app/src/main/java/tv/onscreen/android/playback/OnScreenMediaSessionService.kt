@@ -286,9 +286,26 @@ class OnScreenMediaSessionService : MediaSessionService() {
 
     override fun onDestroy() {
         scope.cancel()
-        session?.run {
-            player.release()
-            release()
+        val sess = session
+        if (sess != null) {
+            val sessPlayer = sess.player
+            // If the parked slot no longer references our player, the
+            // fragment took ownership back via AudioHandoff.take() and
+            // then called stopService() — which lands us here. Releasing
+            // sessPlayer in that case would tear down the player the
+            // fragment is now actively driving. Drop just the session
+            // wrapper + our auto-advance listener and leave the player
+            // alone. If the slot still points at our player, the
+            // service genuinely owns it (track ended, user dismissed
+            // notification, etc.) and we release as before.
+            if (AudioHandoff.peek() !== sessPlayer) {
+                autoAdvanceListener?.let { sessPlayer.removeListener(it) }
+                autoAdvanceListener = null
+                sess.release()
+            } else {
+                sessPlayer.release()
+                sess.release()
+            }
         }
         session = null
         AudioHandoff.clear()

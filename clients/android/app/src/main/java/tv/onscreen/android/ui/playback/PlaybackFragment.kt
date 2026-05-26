@@ -61,6 +61,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private lateinit var viewModel: PlaybackViewModel
     private var player: ExoPlayer? = null
+    /** Reference to the anonymous `Player.Listener` we attach in
+     *  initPlayer, so we can explicitly remove it before handing the
+     *  player off to the MediaSessionService. The listener captures
+     *  `this` (the fragment); if we leave it attached on the parked
+     *  player, the service's player events fire fragment callbacks
+     *  (`parentFragmentManager.popBackStack()`, `showErrorDialog`, …)
+     *  against a destroyed fragment — IllegalStateException + leaked
+     *  view hierarchy for as long as the player lives in the service. */
+    private var playerListener: Player.Listener? = null
     private var progressTracker: ProgressTracker? = null
     private var glue: PlaybackTransportControlGlue<LeanbackPlayerAdapter>? = null
 
@@ -605,7 +614,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             isSeekEnabled = true
         }
 
-        exo.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 // Screen-on flag tracks active playback so the Fire TV
                 // / Android TV screensaver doesn't kick in mid-show.
@@ -663,7 +672,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
                 showErrorDialog(msg)
             }
-        })
+        }
+        exo.addListener(listener)
+        playerListener = listener
     }
 
     private fun playSource(source: PlaybackSource) {
@@ -722,7 +733,32 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun refreshSecondaryActions() {
-        // Hide audio/subtitle/chapter buttons if no choices to make.
+        // Gate each secondary button on whether the data behind it is
+        // meaningful. Permissive on Audio + Subtitle to match Plex /
+        // Jellyfin / Emby UX:
+        //
+        // - Audio: any track (>= 1). Showing "1 of 1" lets the viewer
+        //   confirm what they're listening to without leaving playback.
+        //   (Previous `> 1` gate hid the button on files with a single
+        //   audio track, which is most modern movies — surprising for
+        //   users who came from another player.)
+        // - Subtitles: always shown. Even when the file has zero
+        //   embedded streams, the picker still offers "Off" and
+        //   "Find more online…" (OpenSubtitles search) — both of
+        //   those are useful surfaces a user expects to reach from
+        //   playback regardless of what the file ships with.
+        // - Chapters: ≥ 2 (single chapter == the whole movie, useless).
+        // - Speed: audiobooks only (a 2× movie is rarely what users
+        //   want, and music must stay at 1× to preserve pitch).
+        //
+        // After mutating the adapter, ask the host to re-bind the
+        // controls row — Leanback's ControlBarPresenter is usually
+        // observe-the-adapter-and-update, but mid-lifecycle adapter
+        // mutations (we clear+re-add on each state emit) have been
+        // observed to not always refresh the rendered buttons. The
+        // notifyPlaybackRowChanged() call costs ~nothing and turns
+        // a flaky "buttons missing after a state re-emit" into a
+        // deterministic redraw.
         val sa = subtitleAction ?: return
         val aa = audioAction ?: return
         val ca = chaptersAction ?: return
@@ -730,17 +766,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val secondary = (glue?.controlsRow as? PlaybackControlsRow)?.secondaryActionsAdapter as? ArrayObjectAdapter
             ?: return
         secondary.clear()
-        if (audioStreams.size > 1) secondary.add(aa)
-        if (subtitleStreams.isNotEmpty()) secondary.add(sa)
-        // Single-chapter is degenerate (the whole movie). Only surface
-        // the picker when there are at least 2 chapters worth jumping
-        // between.
+        if (audioStreams.isNotEmpty()) secondary.add(aa)
+        secondary.add(sa) // always — picker has "Off" + "Find more online…" entries
         if (chapters.size >= 2) secondary.add(ca)
-        // Audiobooks get a speed picker — the canonical
-        // audiobook-listener feature. Movies/episodes don't (a
-        // 2x movie is rarely what the user wants); music keeps
-        // playback at 1x to preserve pitch.
         if (currentItemType == "audiobook") secondary.add(sp)
+
+        // Force a row re-bind so a stale ControlBarPresenter view
+        // doesn't keep showing the pre-refresh button set.
+        glue?.host?.notifyPlaybackRowChanged()
     }
 
     /** Seek by [deltaMs] from the current position, clamped to the
@@ -1179,6 +1212,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         if (!isAudio) {
             player?.run { stop(); release() }
             player = null
+            // release() invalidates the listener list, but null the
+            // field too so we don't keep the captured callback alive
+            // until onDestroyView runs.
+            playerListener = null
             viewModel.stopActiveTranscode()
         }
     }
@@ -1213,6 +1250,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             player?.release()
         }
         player = null
+        // The handoff path clears playerListener before parking; the
+        // release path doesn't need to (release() invalidates the
+        // listener list) but null it for GC hygiene either way.
+        playerListener = null
         viewModel.stopActiveTranscode()
     }
 
@@ -1245,6 +1286,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 index = item?.index,
                 hlsOffsetMs = viewModel.hlsOffsetMs,
             )
+            // Detach the fragment-owned listener BEFORE parking. Once the
+            // service owns the player, our `onPlaybackStateChanged` /
+            // `onPlayerError` callbacks would fire against a destroyed
+            // fragment (parentFragmentManager.popBackStack(), dialog
+            // dismissals, …). The service installs its own auto-advance
+            // listener on attach() — that's the right handler for the
+            // service-owned phase of playback.
+            playerListener?.let { exo.removeListener(it) }
+            playerListener = null
             tv.onscreen.android.playback.AudioHandoff.park(exo, meta)
             // Started service so it survives the activity going away.
             // The service reads from AudioHandoff on its next attach()

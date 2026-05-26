@@ -59,20 +59,23 @@ open class ItemRepository @Inject constructor(
     }
 
     /**
-     * Read the per-user watching-status row for an item. Server returns
-     * 404 when the user has never set a status; we map that to null so
-     * callers can treat "no status" as a first-class state without
-     * pattern-matching on HttpException.
+     * Read the per-user watching-status row for an item. Server always
+     * returns 200; when the user has no recorded status, `data.status`
+     * is the empty string. `WatchStatus.fromWire("")` yields null, so
+     * callers get a single null sentinel for "no status set" without
+     * having to pattern-match on HTTP codes.
      *
-     * Any other error bubbles — the screen surfaces it like every other
-     * fetch failure.
+     * (Pre-server-PR-#27 this endpoint returned 404 for the no-row
+     * case, which made the browser surface a "Failed to load
+     * resource" console error on every visit — fixed server-side by
+     * collapsing both paths to 200. The Android client never saw the
+     * console error, but the contract change still simplifies us.)
+     *
+     * Any non-200 (network blip, server 5xx, auth expiry) bubbles —
+     * the screen surfaces it like every other fetch failure.
      */
     open suspend fun getWatchStatus(itemId: String): WatchStatus? {
-        return try {
-            WatchStatus.fromWire(api.getWatchStatus(itemId).data.status)
-        } catch (e: HttpException) {
-            if (e.code() == 404) null else throw e
-        }
+        return WatchStatus.fromWire(api.getWatchStatus(itemId).data.status)
     }
 
     /** PUT a new status. Returns the post-write value so the UI can
