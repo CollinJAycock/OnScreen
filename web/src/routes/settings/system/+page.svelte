@@ -12,9 +12,6 @@
     server_name: '',
     retain_months: 24,
     tmdb_rate_limit: 5,
-    transcode_abr: false,
-    transcode_abr_max_height: 0,
-    transcode_abr_auto_max_height: 1080,
     public_asset_cache: false,
     static_abr_enabled: false,
     missing_file_grace_minutes: 15,
@@ -77,29 +74,6 @@
           <input type="number" min="1" max="50" bind:value={sys.tmdb_rate_limit} />
         </label>
       </div>
-    </section>
-
-    <section>
-      <header>
-        <h2>Adaptive bitrate (ABR)</h2>
-        <p class="hint">Multi-rendition HLS — the player switches rungs on real-time bandwidth.</p>
-      </header>
-      <label class="check">
-        <input type="checkbox" bind:checked={sys.transcode_abr} />
-        <span>Enable adaptive-bitrate ladder</span>
-      </label>
-      {#if sys.transcode_abr}
-        <div class="grid">
-          <label>
-            Hard max rung height <span class="hint">(0 = source)</span>
-            <input type="number" min="0" max="4320" bind:value={sys.transcode_abr_max_height} />
-          </label>
-          <label>
-            Auto max rung height <span class="hint">(0 = source)</span>
-            <input type="number" min="0" max="4320" bind:value={sys.transcode_abr_auto_max_height} />
-          </label>
-        </div>
-      {/if}
     </section>
 
     <section>

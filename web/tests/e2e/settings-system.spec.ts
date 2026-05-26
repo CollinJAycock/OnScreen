@@ -1,6 +1,7 @@
 // E2E for Settings ▸ System — the cluster-wide knobs that moved out of env vars
-// into the admin UI this cycle (server name, retention, TMDB rate, ABR, asset
-// cache, static-ABR, scanner concurrency, missing-file grace, LAN discovery).
+// into the admin UI this cycle (server name, retention, TMDB rate, asset cache,
+// static-ABR pre-encode, scanner concurrency, missing-file grace, LAN discovery).
+// The ABR ladder itself lives in Settings ▸ Transcode (see transcode-limits spec).
 //
 // These are read once at startup, so this spec verifies the PERSISTENCE contract
 // (PUT then GET round-trips through the DB) and the response shape — not the
@@ -18,9 +19,6 @@ const SYSTEM_FIELDS = [
   'server_name',
   'retain_months',
   'tmdb_rate_limit',
-  'transcode_abr',
-  'transcode_abr_max_height',
-  'transcode_abr_auto_max_height',
   'public_asset_cache',
   'static_abr_enabled',
   'missing_file_grace_minutes',
@@ -61,9 +59,6 @@ test.describe('Settings ▸ System — API', () => {
       server_name: 'E2E Round Trip',
       retain_months: 18,
       tmdb_rate_limit: 7,
-      transcode_abr: !orig.transcode_abr,
-      transcode_abr_max_height: 1440,
-      transcode_abr_auto_max_height: 900,
       public_asset_cache: !orig.public_asset_cache,
       static_abr_enabled: !orig.static_abr_enabled,
       missing_file_grace_minutes: 42,

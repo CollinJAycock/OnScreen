@@ -74,9 +74,11 @@ under **Settings ▸ System** (restart-required, a saved value wins over the env
 ### Transcoding
 
 `TRANSCODE_MAX_SESSIONS` and the NVENC tuning are hot-reloadable via SIGHUP. The
-output ceilings (`TRANSCODE_MAX_BITRATE_KBPS` / `_WIDTH` / `_HEIGHT`) are the
-initial defaults — edit the effective values in the admin UI under
-**Settings ▸ Transcode ▸ Output Limits** (restart-required; a saved value wins).
+output ceilings (`TRANSCODE_MAX_BITRATE_KBPS` / `_WIDTH` / `_HEIGHT`) and the
+adaptive-bitrate ladder (`TRANSCODE_ABR`, `TRANSCODE_ABR_MAX_HEIGHT`,
+`TRANSCODE_ABR_AUTO_MAX_HEIGHT`) are the initial defaults — edit the effective
+values in the admin UI under **Settings ▸ Transcode** ▸ *Output Limits* /
+*Adaptive Bitrate* (restart-required; a saved value wins).
 
 | Variable | Default | Description |
 |----------|---------|-------------|

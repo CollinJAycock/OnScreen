@@ -42,8 +42,8 @@ func TestGetSystem_FallsBackToEnvDefaults(t *testing.T) {
 	h := sysHandler(&mockSettingsService{}, settings.SystemConfig{
 		ServerName:              strPtr("Env Name"),
 		RetainMonths:            sysIntPtr(12),
-		TranscodeABR:            sysBoolPtr(true),
 		TMDBRateLimit:           sysIntPtr(5),
+		PublicAssetCache:        sysBoolPtr(true),
 		MissingFileGraceMinutes: sysIntPtr(30),
 		ScanFileConcurrency:     sysIntPtr(8),
 		ScanLibraryConcurrency:  sysIntPtr(3),
@@ -51,7 +51,7 @@ func TestGetSystem_FallsBackToEnvDefaults(t *testing.T) {
 		DiscoveryPort:           sysIntPtr(7368),
 	})
 	dto := getSystemDTO(t, h)
-	if dto.ServerName != "Env Name" || dto.RetainMonths != 12 || !dto.TranscodeABR || dto.TMDBRateLimit != 5 {
+	if dto.ServerName != "Env Name" || dto.RetainMonths != 12 || !dto.PublicAssetCache || dto.TMDBRateLimit != 5 {
 		t.Errorf("defaults not surfaced: %+v", dto)
 	}
 	if dto.MissingFileGraceMinutes != 30 || dto.ScanFileConcurrency != 8 || dto.ScanLibraryConcurrency != 3 {
@@ -64,24 +64,31 @@ func TestGetSystem_FallsBackToEnvDefaults(t *testing.T) {
 
 func TestGetSystem_StoredOverridesDefault(t *testing.T) {
 	h := sysHandler(
-		&mockSettingsService{system: settings.SystemConfig{ServerName: strPtr("DB Name"), TranscodeABR: sysBoolPtr(false)}},
-		settings.SystemConfig{ServerName: strPtr("Env Name"), TranscodeABR: sysBoolPtr(true)},
+		&mockSettingsService{system: settings.SystemConfig{ServerName: strPtr("DB Name"), PublicAssetCache: sysBoolPtr(false)}},
+		settings.SystemConfig{ServerName: strPtr("Env Name"), PublicAssetCache: sysBoolPtr(true)},
 	)
 	dto := getSystemDTO(t, h)
 	if dto.ServerName != "DB Name" {
 		t.Errorf("stored ServerName should win: %q", dto.ServerName)
 	}
-	if dto.TranscodeABR {
-		t.Error("stored TranscodeABR=false should win over env true")
+	if dto.PublicAssetCache {
+		t.Error("stored PublicAssetCache=false should win over env true")
 	}
 }
 
 func TestGetTranscodeConfig_FillsUnsetCapsFromDefaults(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	// Nothing stored (all caps 0) → the effective running ceilings are returned.
+	// Nothing stored (all caps 0, ABR ptrs nil) → effective running values are returned.
 	h := NewSettingsHandler(&mockSettingsService{}, logger).
-		SetTranscodeDefaults(settings.TranscodeConfig{MaxBitrateKbps: 40000, MaxWidth: 3840, MaxHeight: 2160})
+		SetTranscodeDefaults(settings.TranscodeConfig{
+			MaxBitrateKbps:   40000,
+			MaxWidth:         3840,
+			MaxHeight:        2160,
+			ABR:              sysBoolPtr(true),
+			ABRMaxHeight:     sysIntPtr(1080),
+			ABRAutoMaxHeight: sysIntPtr(720),
+		})
 	rec := httptest.NewRecorder()
 	h.GetTranscodeConfig(rec, httptest.NewRequest(http.MethodGet, "/settings/transcode-config", nil))
 	if rec.Code != http.StatusOK {
@@ -91,10 +98,30 @@ func TestGetTranscodeConfig_FillsUnsetCapsFromDefaults(t *testing.T) {
 	if got.MaxBitrateKbps != 40000 || got.MaxWidth != 3840 || got.MaxHeight != 2160 {
 		t.Errorf("unset caps not filled from defaults: %+v", got)
 	}
+	if got.ABR == nil || !*got.ABR {
+		t.Errorf("unset ABR not filled from defaults: %+v", got.ABR)
+	}
+	if got.ABRMaxHeight == nil || *got.ABRMaxHeight != 1080 {
+		t.Errorf("unset ABRMaxHeight not filled from defaults: %+v", got.ABRMaxHeight)
+	}
+	if got.ABRAutoMaxHeight == nil || *got.ABRAutoMaxHeight != 720 {
+		t.Errorf("unset ABRAutoMaxHeight not filled from defaults: %+v", got.ABRAutoMaxHeight)
+	}
 
-	// A stored cap wins over the default.
-	h2 := NewSettingsHandler(&mockSettingsService{transcodeCfg: settings.TranscodeConfig{MaxHeight: 1080}}, logger).
-		SetTranscodeDefaults(settings.TranscodeConfig{MaxBitrateKbps: 40000, MaxWidth: 3840, MaxHeight: 2160})
+	// A stored cap / ABR field wins over the default.
+	h2 := NewSettingsHandler(&mockSettingsService{transcodeCfg: settings.TranscodeConfig{
+		MaxHeight:    1080,
+		ABR:          sysBoolPtr(false),
+		ABRMaxHeight: sysIntPtr(540),
+	}}, logger).
+		SetTranscodeDefaults(settings.TranscodeConfig{
+			MaxBitrateKbps:   40000,
+			MaxWidth:         3840,
+			MaxHeight:        2160,
+			ABR:              sysBoolPtr(true),
+			ABRMaxHeight:     sysIntPtr(1080),
+			ABRAutoMaxHeight: sysIntPtr(720),
+		})
 	rec2 := httptest.NewRecorder()
 	h2.GetTranscodeConfig(rec2, httptest.NewRequest(http.MethodGet, "/settings/transcode-config", nil))
 	got2 := decodeTranscodeConfig(t, rec2)
@@ -103,6 +130,15 @@ func TestGetTranscodeConfig_FillsUnsetCapsFromDefaults(t *testing.T) {
 	}
 	if got2.MaxWidth != 3840 { // still filled from default
 		t.Errorf("unset MaxWidth should fall back to default: got %d", got2.MaxWidth)
+	}
+	if got2.ABR == nil || *got2.ABR {
+		t.Error("stored ABR=false should win over env true")
+	}
+	if got2.ABRMaxHeight == nil || *got2.ABRMaxHeight != 540 {
+		t.Errorf("stored ABRMaxHeight should win: got %+v", got2.ABRMaxHeight)
+	}
+	if got2.ABRAutoMaxHeight == nil || *got2.ABRAutoMaxHeight != 720 { // still filled from default
+		t.Errorf("unset ABRAutoMaxHeight should fall back to default: got %+v", got2.ABRAutoMaxHeight)
 	}
 }
 
@@ -121,7 +157,7 @@ func decodeTranscodeConfig(t *testing.T, rec *httptest.ResponseRecorder) setting
 func TestUpdateSystem_StoresAllFieldsAsOverrides(t *testing.T) {
 	svc := &mockSettingsService{}
 	h := sysHandler(svc, settings.SystemConfig{})
-	body := `{"server_name":"New","retain_months":36,"transcode_abr":true,"public_asset_cache":true,"static_abr_enabled":true,"missing_file_grace_minutes":45,"scan_file_concurrency":16,"scan_library_concurrency":4,"discovery_enabled":false,"discovery_port":9999}`
+	body := `{"server_name":"New","retain_months":36,"public_asset_cache":true,"static_abr_enabled":true,"missing_file_grace_minutes":45,"scan_file_concurrency":16,"scan_library_concurrency":4,"discovery_enabled":false,"discovery_port":9999}`
 	rec := httptest.NewRecorder()
 	h.UpdateSystem(rec, httptest.NewRequest(http.MethodPut, "/settings/system", strings.NewReader(body)))
 
@@ -134,9 +170,6 @@ func TestUpdateSystem_StoresAllFieldsAsOverrides(t *testing.T) {
 	}
 	if got.RetainMonths == nil || *got.RetainMonths != 36 {
 		t.Errorf("RetainMonths not stored: %+v", got.RetainMonths)
-	}
-	if got.TranscodeABR == nil || !*got.TranscodeABR {
-		t.Error("TranscodeABR not stored")
 	}
 	if got.StaticABREnabled == nil || !*got.StaticABREnabled {
 		t.Error("StaticABREnabled not stored")
