@@ -47,9 +47,16 @@ type WatchStatusResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Get returns the per-user status for an item. 404 when nothing has
-// been set — distinct from 200 with an empty status, since "no row"
-// means "neither queued nor classified" which is a meaningful state.
+// Get returns the per-user status for an item. The "no row yet" case
+// returns 200 with status="" rather than 404: the resource here is the
+// user's relationship to the item, which has a meaningful default state
+// (no classification) — that's semantically a successful read, not a
+// missing resource. Returning 404 made the browser's resource-loading
+// layer emit a "Failed to load resource: 404" console message on every
+// /watch page visit (no JS catch can suppress that, it's pre-JS), which
+// surfaced in Playwright as a spurious test failure. Status="" is the
+// same value the frontend's 404-catch path was assigning anyway, so the
+// UI is unchanged.
 func (h *WatchStatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -64,7 +71,7 @@ func (h *WatchStatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 	st, err := h.svc.Get(r.Context(), claims.UserID, itemID)
 	if err != nil {
 		if errors.Is(err, watchstatus.ErrNotFound) {
-			respond.NotFound(w, r)
+			respond.JSON(w, r, http.StatusOK, WatchStatusResponse{})
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "get watch status", "user_id", claims.UserID, "item_id", itemID, "err", err)

@@ -302,6 +302,12 @@ type MediaRequest struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
+type NodeSetting struct {
+	NodeID    string             `json:"node_id"`
+	Config    []byte             `json:"config"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Notification struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
