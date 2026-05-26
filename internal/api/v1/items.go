@@ -152,10 +152,10 @@ type ItemHandler struct {
 	tracker   *streaming.Tracker
 	sync      *notification.Broker
 	audit     *audit.Logger
-	tokens    *auth.TokenMaker // optional; when set, Get embeds a 24h stream token per file
-	epDB      EpisodePosterDB  // optional; when set, episode rows get the show's poster substituted (per user pref)
-	posters   ItemPosterPicker // optional; when set, /posters and /poster routes are admin-served
-	deleter   ItemSubtreeDeleter // optional; when set, DELETE /items/{id} is admin-served
+	tokens    *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file
+	epDB      EpisodePosterDB      // optional; when set, episode rows get the show's poster substituted (per user pref)
+	posters   ItemPosterPicker     // optional; when set, /posters and /poster routes are admin-served
+	deleter   ItemSubtreeDeleter   // optional; when set, DELETE /items/{id} is admin-served
 	credits   ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
 	dlGate    DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
 	store     mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
@@ -416,51 +416,51 @@ type MarkerJSON struct {
 
 // ItemDetailResponse is the full JSON response for a media item.
 type ItemDetailResponse struct {
-	ID            string             `json:"id"`
-	LibraryID     string             `json:"library_id"`
-	Title         string             `json:"title"`
-	Type          string             `json:"type"`
+	ID        string `json:"id"`
+	LibraryID string `json:"library_id"`
+	Title     string `json:"title"`
+	Type      string `json:"type"`
 	// OriginalTitle: foreign-language title for movies, author name
 	// for audiobooks (re-purposed by the audiobook scanner). The detail
 	// page uses it as a byline fallback when the parent author lookup
 	// fails — same field surfaced on the grid response in libraries.go.
-	OriginalTitle *string            `json:"original_title,omitempty"`
-	Year          *int               `json:"year,omitempty"`
-	Summary       *string            `json:"summary,omitempty"`
-	Rating        *float64           `json:"rating,omitempty"`
-	DurationMS    *int64             `json:"duration_ms,omitempty"`
-	PosterPath    *string            `json:"poster_path,omitempty"`
-	FanartPath    *string            `json:"fanart_path,omitempty"`
-	ContentRating *string            `json:"content_rating,omitempty"`
-	Genres        []string           `json:"genres"`
-	ParentID      *string            `json:"parent_id,omitempty"`
-	Index         *int               `json:"index,omitempty"`
-	ViewOffsetMS  int64              `json:"view_offset_ms"`
+	OriginalTitle *string  `json:"original_title,omitempty"`
+	Year          *int     `json:"year,omitempty"`
+	Summary       *string  `json:"summary,omitempty"`
+	Rating        *float64 `json:"rating,omitempty"`
+	DurationMS    *int64   `json:"duration_ms,omitempty"`
+	PosterPath    *string  `json:"poster_path,omitempty"`
+	FanartPath    *string  `json:"fanart_path,omitempty"`
+	ContentRating *string  `json:"content_rating,omitempty"`
+	Genres        []string `json:"genres"`
+	ParentID      *string  `json:"parent_id,omitempty"`
+	Index         *int     `json:"index,omitempty"`
+	ViewOffsetMS  int64    `json:"view_offset_ms"`
 	// LastClientName carries the name of the device that last emitted a
 	// scrobble/stop for this (user, media). Lets clients render "Resume
 	// from Living Room TV" UX instead of a bare position. Nil = never
 	// watched or client didn't identify itself.
 	LastClientName *string `json:"last_client_name,omitempty"`
-	IsFavorite    bool               `json:"is_favorite"`
-	UpdatedAt     int64              `json:"updated_at"`
+	IsFavorite     bool    `json:"is_favorite"`
+	UpdatedAt      int64   `json:"updated_at"`
 	// TakenAt mirrors media_items.originally_available_at — for photos
 	// it's EXIF DateTimeOriginal, for home videos it's file mtime, for
 	// movies/episodes it's the TMDB release date. Surfaced so the
 	// metadata editor can pre-populate the date field without a second
 	// round-trip.
-	TakenAt       *time.Time         `json:"taken_at,omitempty"`
-	Files         []ItemFileResponse `json:"files"`
-	Markers       []MarkerJSON       `json:"markers,omitempty"`
+	TakenAt *time.Time         `json:"taken_at,omitempty"`
+	Files   []ItemFileResponse `json:"files"`
+	Markers []MarkerJSON       `json:"markers,omitempty"`
 
 	// External IDs surfaced for the manual poster-picker UI: when
 	// tmdb_id is set, the picker can skip the "search TMDB for the
 	// right show/movie" step and drop straight into the poster
 	// variants list. Omitempty keeps payloads small for items that
 	// haven't been enriched yet.
-	TMDBID    *int    `json:"tmdb_id,omitempty"`
-	TVDBID    *int    `json:"tvdb_id,omitempty"`
-	AniListID *int    `json:"anilist_id,omitempty"`
-	MalID     *int    `json:"mal_id,omitempty"`
+	TMDBID    *int `json:"tmdb_id,omitempty"`
+	TVDBID    *int `json:"tvdb_id,omitempty"`
+	AniListID *int `json:"anilist_id,omitempty"`
+	MalID     *int `json:"mal_id,omitempty"`
 	// Kind is the per-row subtype within `episode` — `episode` (default,
 	// nil), `ova`, `ona`, `special`, or `movie`. Anime libraries surface
 	// non-default kinds as a badge on the episode list.
@@ -485,16 +485,16 @@ type ItemDetailResponse struct {
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
 type ChildItemResponse struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	Type         string    `json:"type"`
-	Year         *int      `json:"year,omitempty"`
-	Summary      *string   `json:"summary,omitempty"`
-	Rating       *float64  `json:"rating,omitempty"`
-	DurationMS   *int64    `json:"duration_ms,omitempty"`
-	PosterPath   *string   `json:"poster_path,omitempty"`
-	ThumbPath    *string   `json:"thumb_path,omitempty"`
-	Index        *int      `json:"index,omitempty"`
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Type       string   `json:"type"`
+	Year       *int     `json:"year,omitempty"`
+	Summary    *string  `json:"summary,omitempty"`
+	Rating     *float64 `json:"rating,omitempty"`
+	DurationMS *int64   `json:"duration_ms,omitempty"`
+	PosterPath *string  `json:"poster_path,omitempty"`
+	ThumbPath  *string  `json:"thumb_path,omitempty"`
+	Index      *int     `json:"index,omitempty"`
 	// Kind surfaces episode subtype (`ova`, `ona`, `special`, `movie`)
 	// so the UI can show an OVA / Special badge on the episode list.
 	// Nil for ordinary episodes; the web client treats absent + "episode"
@@ -570,20 +570,20 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := ItemDetailResponse{
-		ID:            item.ID.String(),
-		LibraryID:     item.LibraryID.String(),
-		Title:         item.Title,
-		Type:          item.Type,
-		OriginalTitle: item.OriginalTitle,
-		Year:          item.Year,
-		Summary:       item.Summary,
-		Rating:        item.Rating,
-		DurationMS:    item.DurationMS,
-		PosterPath:    item.PosterPath,
-		FanartPath:    item.FanartPath,
-		ContentRating: item.ContentRating,
-		Genres:        genres,
-		Index:         item.Index,
+		ID:             item.ID.String(),
+		LibraryID:      item.LibraryID.String(),
+		Title:          item.Title,
+		Type:           item.Type,
+		OriginalTitle:  item.OriginalTitle,
+		Year:           item.Year,
+		Summary:        item.Summary,
+		Rating:         item.Rating,
+		DurationMS:     item.DurationMS,
+		PosterPath:     item.PosterPath,
+		FanartPath:     item.FanartPath,
+		ContentRating:  item.ContentRating,
+		Genres:         genres,
+		Index:          item.Index,
 		ViewOffsetMS:   viewOffsetMS,
 		LastClientName: lastClientName,
 		IsFavorite:     isFavorite,
@@ -1792,7 +1792,7 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 //   - Strip CR / LF (header injection)
 //   - Strip backslash and quote (would terminate the quoted-string)
 //   - Collapse to printable ASCII for the `filename=` fallback; the
-//     `filename*=UTF-8''<percent-encoded>` form carries the original.
+//     `filename*=UTF-8”<percent-encoded>` form carries the original.
 //   - Cap length at 200 chars so we don't emit pathological headers.
 func downloadFilename(title, sourcePath string) string {
 	ext := filepath.Ext(sourcePath)

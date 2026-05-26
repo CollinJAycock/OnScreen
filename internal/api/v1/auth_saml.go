@@ -190,12 +190,10 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 		// the PrivateErr (and the raw response when available) server-
 		// side so an admin can actually diagnose mismatch IdPs without
 		// flying blind.
-		var detail any = err
 		var ire *saml.InvalidResponseError
 		if errors.As(err, &ire) {
-			detail = ire.PrivateErr
 			h.logger.WarnContext(r.Context(), "saml acs: parse response",
-				"err", detail,
+				"err", ire.PrivateErr,
 				"response_xml", ire.Response,
 				"now", ire.Now,
 			)

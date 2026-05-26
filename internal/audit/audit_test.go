@@ -21,10 +21,10 @@ import (
 // assert on the marshalled shape. Goroutine-safe because audit.Log spawns
 // a goroutine and the test must wait for completion via the done channel.
 type fakeAuditDB struct {
-	mu     sync.Mutex
-	calls  []gen.InsertAuditLogParams
+	mu       sync.Mutex
+	calls    []gen.InsertAuditLogParams
 	failWith error
-	done   chan struct{}
+	done     chan struct{}
 }
 
 func newFakeAuditDB() *fakeAuditDB {

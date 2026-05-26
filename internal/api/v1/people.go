@@ -119,7 +119,7 @@ func (h *PeopleHandler) Credits(w http.ResponseWriter, r *http.Request) {
 			Order:     c.Order,
 		}
 	}
-	respond.Success(w, r,out)
+	respond.Success(w, r, out)
 }
 
 // GetPerson handles GET /api/v1/people/{id}.
@@ -139,7 +139,7 @@ func (h *PeopleHandler) GetPerson(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.Success(w, r,personResponse{
+	respond.Success(w, r, personResponse{
 		ID:           p.ID,
 		TMDBID:       p.TMDBID,
 		Name:         p.Name,
@@ -179,7 +179,7 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 			Job:        e.Job,
 		}
 	}
-	respond.Success(w, r,out)
+	respond.Success(w, r, out)
 }
 
 // Search handles GET /api/v1/people?q=foo.
@@ -200,6 +200,5 @@ func (h *PeopleHandler) Search(w http.ResponseWriter, r *http.Request) {
 			ProfilePath: p.ProfilePath,
 		}
 	}
-	respond.Success(w, r,out)
+	respond.Success(w, r, out)
 }
-

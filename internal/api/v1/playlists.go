@@ -48,12 +48,12 @@ type PlaylistDB interface {
 // treated as "no constraint" — a rule with only Type set returns
 // every item of that type the user can see.
 type SmartPlaylistRules struct {
-	Types     []string `json:"types,omitempty"`      // e.g. ["movie","episode"]
-	Genres    []string `json:"genres,omitempty"`     // OR within (any match)
+	Types     []string `json:"types,omitempty"`  // e.g. ["movie","episode"]
+	Genres    []string `json:"genres,omitempty"` // OR within (any match)
 	YearMin   *int     `json:"year_min,omitempty"`
 	YearMax   *int     `json:"year_max,omitempty"`
 	RatingMin *float64 `json:"rating_min,omitempty"`
-	Limit     *int     `json:"limit,omitempty"`      // default 50, max 500
+	Limit     *int     `json:"limit,omitempty"` // default 50, max 500
 }
 
 // PlaylistHandler serves /api/v1/playlists. Playlists live in the collections
@@ -77,17 +77,17 @@ func (h *PlaylistHandler) WithLibraryAccess(a LibraryAccessChecker) *PlaylistHan
 }
 
 type playlistResponse struct {
-	ID          string              `json:"id"`
-	Name        string              `json:"name"`
-	Description *string             `json:"description,omitempty"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
 	// Type distinguishes static playlists (collection_items) from
 	// smart playlists (rules-evaluated). Frontend branches on this
 	// to surface a "Smart" badge and gate the manual add/remove
 	// buttons.
-	Type        string              `json:"type"`
-	Rules       *SmartPlaylistRules `json:"rules,omitempty"`
-	CreatedAt   string              `json:"created_at"`
-	UpdatedAt   string              `json:"updated_at"`
+	Type      string              `json:"type"`
+	Rules     *SmartPlaylistRules `json:"rules,omitempty"`
+	CreatedAt string              `json:"created_at"`
+	UpdatedAt string              `json:"updated_at"`
 }
 
 func toPlaylistResponse(c gen.Collection) playlistResponse {

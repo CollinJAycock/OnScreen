@@ -24,22 +24,22 @@ const (
 // Schedule is a user-defined recording rule. See CreateScheduleParams
 // docstring for per-type semantics.
 type Schedule struct {
-	ID              uuid.UUID
-	UserID          uuid.UUID
-	Type            ScheduleType
-	ProgramID       *uuid.UUID // only set for type='once'
-	ChannelID       *uuid.UUID // 'series' and 'channel_block' require it; 'once' optional
-	TitleMatch      *string    // 'series' only
-	NewOnly         bool       // 'series' flag: skip reruns
-	TimeStart       *string    // 'channel_block': "HH:MM" local time
-	TimeEnd         *string    // 'channel_block': "HH:MM" local time
-	PaddingPreSec   int32
-	PaddingPostSec  int32
-	Priority        int32 // higher wins in tuner-conflict resolution
-	RetentionDays   *int32
-	Enabled         bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	Type           ScheduleType
+	ProgramID      *uuid.UUID // only set for type='once'
+	ChannelID      *uuid.UUID // 'series' and 'channel_block' require it; 'once' optional
+	TitleMatch     *string    // 'series' only
+	NewOnly        bool       // 'series' flag: skip reruns
+	TimeStart      *string    // 'channel_block': "HH:MM" local time
+	TimeEnd        *string    // 'channel_block': "HH:MM" local time
+	PaddingPreSec  int32
+	PaddingPostSec int32
+	Priority       int32 // higher wins in tuner-conflict resolution
+	RetentionDays  *int32
+	Enabled        bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // CreateScheduleParams builds a Schedule. Validation lives in the service
@@ -74,23 +74,23 @@ const (
 
 // Recording is one scheduled, in-flight, or completed capture.
 type Recording struct {
-	ID          uuid.UUID
-	ScheduleID  *uuid.UUID
-	UserID      uuid.UUID
-	ChannelID   uuid.UUID
-	ProgramID   *uuid.UUID
-	Title       string
-	Subtitle    *string
-	SeasonNum   *int32
-	EpisodeNum  *int32
-	Status      RecordingStatus
-	StartsAt    time.Time
-	EndsAt      time.Time
-	FilePath    *string
-	ItemID      *uuid.UUID
-	Error       *string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID         uuid.UUID
+	ScheduleID *uuid.UUID
+	UserID     uuid.UUID
+	ChannelID  uuid.UUID
+	ProgramID  *uuid.UUID
+	Title      string
+	Subtitle   *string
+	SeasonNum  *int32
+	EpisodeNum *int32
+	Status     RecordingStatus
+	StartsAt   time.Time
+	EndsAt     time.Time
+	FilePath   *string
+	ItemID     *uuid.UUID
+	Error      *string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // RecordingWithChannel adds denormalized channel info for list UIs

@@ -148,8 +148,8 @@ func TestLDAPLogin_UpstreamError(t *testing.T) {
 // ── ldapAuthService with fake dialer/conn ───────────────────────────────────
 
 type fakeLDAPConn struct {
-	bindErrs   map[string]error  // by DN — first call uses BindDN, second uses entry DN
-	bindCalls  []string          // DNs we bound as
+	bindErrs   map[string]error // by DN — first call uses BindDN, second uses entry DN
+	bindCalls  []string         // DNs we bound as
 	searchOut  *ldap.SearchResult
 	searchErr  error
 	searchReqs []*ldap.SearchRequest
@@ -169,7 +169,7 @@ func (f *fakeLDAPConn) Search(req *ldap.SearchRequest) (*ldap.SearchResult, erro
 func (f *fakeLDAPConn) Close() error { return nil }
 
 type fakeLDAPDialer struct {
-	conn   LDAPConn
+	conn    LDAPConn
 	dialErr error
 }
 

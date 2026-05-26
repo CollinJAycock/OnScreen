@@ -234,8 +234,8 @@ func TestStore_Upsert_RejectsInvalidKind(t *testing.T) {
 func TestStore_Upsert_RejectsInvalidRange(t *testing.T) {
 	s := NewStore(nil)
 	cases := []struct {
-		name           string
-		start, end     int64
+		name       string
+		start, end int64
 	}{
 		{"negative start", -1, 1000},
 		{"end equals start", 500, 500},

@@ -159,7 +159,7 @@ func (s *stubPeopleItems) ResolveTMDBID(_ context.Context, _ uuid.UUID) (*int, e
 // stubFavoritesDB satisfies v1.FavoritesDB.
 type stubFavoritesDB struct{}
 
-func (s *stubFavoritesDB) AddFavorite(_ context.Context, _ gen.AddFavoriteParams) error    { return nil }
+func (s *stubFavoritesDB) AddFavorite(_ context.Context, _ gen.AddFavoriteParams) error { return nil }
 func (s *stubFavoritesDB) RemoveFavorite(_ context.Context, _ gen.RemoveFavoriteParams) error {
 	return nil
 }
@@ -218,11 +218,11 @@ func (s *stubTrickplayMedia) GetItem(_ context.Context, _ uuid.UUID) (*media.Ite
 type stubSettingsService struct{}
 
 func (s *stubSettingsService) TMDBAPIKey(_ context.Context) string                 { return "" }
-func (s *stubSettingsService) SetTMDBAPIKey(_ context.Context, _ string) error    { return nil }
+func (s *stubSettingsService) SetTMDBAPIKey(_ context.Context, _ string) error     { return nil }
 func (s *stubSettingsService) TVDBAPIKey(_ context.Context) string                 { return "" }
-func (s *stubSettingsService) SetTVDBAPIKey(_ context.Context, _ string) error    { return nil }
+func (s *stubSettingsService) SetTVDBAPIKey(_ context.Context, _ string) error     { return nil }
 func (s *stubSettingsService) ArrAPIKey(_ context.Context) string                  { return "" }
-func (s *stubSettingsService) SetArrAPIKey(_ context.Context, _ string) error     { return nil }
+func (s *stubSettingsService) SetArrAPIKey(_ context.Context, _ string) error      { return nil }
 func (s *stubSettingsService) ArrPathMappings(_ context.Context) map[string]string { return nil }
 func (s *stubSettingsService) SetArrPathMappings(_ context.Context, _ map[string]string) error {
 	return nil
@@ -247,15 +247,25 @@ func (s *stubSettingsService) OpenSubtitles(_ context.Context) settings.OpenSubt
 func (s *stubSettingsService) SetOpenSubtitles(_ context.Context, _ settings.OpenSubtitlesConfig) error {
 	return nil
 }
-func (s *stubSettingsService) OIDC(_ context.Context) settings.OIDCConfig         { return settings.OIDCConfig{} }
+func (s *stubSettingsService) OIDC(_ context.Context) settings.OIDCConfig {
+	return settings.OIDCConfig{}
+}
 func (s *stubSettingsService) SetOIDC(_ context.Context, _ settings.OIDCConfig) error { return nil }
-func (s *stubSettingsService) LDAP(_ context.Context) settings.LDAPConfig         { return settings.LDAPConfig{} }
+func (s *stubSettingsService) LDAP(_ context.Context) settings.LDAPConfig {
+	return settings.LDAPConfig{}
+}
 func (s *stubSettingsService) SetLDAP(_ context.Context, _ settings.LDAPConfig) error { return nil }
-func (s *stubSettingsService) SAML(_ context.Context) settings.SAMLConfig         { return settings.SAMLConfig{} }
+func (s *stubSettingsService) SAML(_ context.Context) settings.SAMLConfig {
+	return settings.SAMLConfig{}
+}
 func (s *stubSettingsService) SetSAML(_ context.Context, _ settings.SAMLConfig) error { return nil }
-func (s *stubSettingsService) SMTP(_ context.Context) settings.SMTPConfig         { return settings.SMTPConfig{} }
+func (s *stubSettingsService) SMTP(_ context.Context) settings.SMTPConfig {
+	return settings.SMTPConfig{}
+}
 func (s *stubSettingsService) SetSMTP(_ context.Context, _ settings.SMTPConfig) error { return nil }
-func (s *stubSettingsService) OTel(_ context.Context) settings.OTelConfig         { return settings.OTelConfig{} }
+func (s *stubSettingsService) OTel(_ context.Context) settings.OTelConfig {
+	return settings.OTelConfig{}
+}
 func (s *stubSettingsService) SetOTel(_ context.Context, _ settings.OTelConfig) error { return nil }
 func (s *stubSettingsService) General(_ context.Context) settings.GeneralConfig {
 	return settings.GeneralConfig{}
@@ -263,7 +273,7 @@ func (s *stubSettingsService) General(_ context.Context) settings.GeneralConfig 
 func (s *stubSettingsService) SetGeneral(_ context.Context, _ settings.GeneralConfig) error {
 	return nil
 }
-func (s *stubSettingsService) WebDownloadsEnabled(_ context.Context) bool      { return false }
+func (s *stubSettingsService) WebDownloadsEnabled(_ context.Context) bool             { return false }
 func (s *stubSettingsService) SetWebDownloadsEnabled(_ context.Context, _ bool) error { return nil }
 func (s *stubSettingsService) Storage(_ context.Context) settings.StorageConfig {
 	return settings.StorageConfig{}
@@ -277,7 +287,7 @@ func (s *stubSettingsService) System(_ context.Context) settings.SystemConfig {
 func (s *stubSettingsService) SetSystem(_ context.Context, _ settings.SystemConfig) error {
 	return nil
 }
-func (s *stubSettingsService) TLS(_ context.Context) settings.TLSConfig { return settings.TLSConfig{} }
+func (s *stubSettingsService) TLS(_ context.Context) settings.TLSConfig             { return settings.TLSConfig{} }
 func (s *stubSettingsService) SetTLS(_ context.Context, _ settings.TLSConfig) error { return nil }
 func (s *stubSettingsService) NodeSettingsGet(_ context.Context, _ string) settings.NodeSettings {
 	return settings.NodeSettings{}

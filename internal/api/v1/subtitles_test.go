@@ -793,7 +793,7 @@ func TestSubtitles_Delete_Success(t *testing.T) {
 
 func TestSubtitles_Delete_RejectsSubFromDifferentItem(t *testing.T) {
 	itemID := uuid.New()
-	fileID := uuid.New() // attached to itemID
+	fileID := uuid.New()      // attached to itemID
 	otherFileID := uuid.New() // subtitle points at a different file
 	libID := uuid.New()
 	subID := uuid.New()

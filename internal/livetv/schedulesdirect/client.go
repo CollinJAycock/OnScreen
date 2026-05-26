@@ -119,9 +119,9 @@ type LineupMap struct {
 	Map      []ChannelStation `json:"map"`
 	Stations []Station        `json:"stations"`
 	Metadata struct {
-		Lineup     string `json:"lineup"`
-		Modified   string `json:"modified"`
-		Transport  string `json:"transport"`
+		Lineup    string `json:"lineup"`
+		Modified  string `json:"modified"`
+		Transport string `json:"transport"`
 	} `json:"metadata"`
 }
 
@@ -134,12 +134,12 @@ type ChannelStation struct {
 
 // Station carries the station's display metadata.
 type Station struct {
-	StationID  string   `json:"stationID"`
-	Name       string   `json:"name"`
-	Callsign   string   `json:"callsign"`
-	Affiliate  string   `json:"affiliate,omitempty"`
+	StationID         string   `json:"stationID"`
+	Name              string   `json:"name"`
+	Callsign          string   `json:"callsign"`
+	Affiliate         string   `json:"affiliate,omitempty"`
 	BroadcastLanguage []string `json:"broadcastLanguage,omitempty"`
-	Logo       *struct {
+	Logo              *struct {
 		URL    string `json:"URL"`
 		Height int    `json:"height"`
 		Width  int    `json:"width"`
@@ -167,24 +167,24 @@ type ScheduleRequest struct {
 // airings keyed by the station's program ID. Program details (titles,
 // descriptions, art) come from the separate /programs endpoint.
 type StationSchedule struct {
-	StationID string    `json:"stationID"`
-	Programs  []Airing  `json:"programs"`
+	StationID string   `json:"stationID"`
+	Programs  []Airing `json:"programs"`
 	Metadata  struct {
-		Modified string `json:"modified"`
-		MD5      string `json:"md5"`
+		Modified  string `json:"modified"`
+		MD5       string `json:"md5"`
 		StartDate string `json:"startDate"`
 	} `json:"metadata"`
 }
 
 // Airing is one occurrence of a program on a station.
 type Airing struct {
-	ProgramID  string    `json:"programID"`     // e.g. "EP012345670001"
-	AirDateTime time.Time `json:"airDateTime"`  // start, RFC3339
-	Duration   int       `json:"duration"`      // seconds
-	MD5        string    `json:"md5,omitempty"`
-	IsNew      bool      `json:"new,omitempty"`
-	LiveTapeDelay string `json:"liveTapeDelay,omitempty"`
-	Ratings    []struct {
+	ProgramID     string    `json:"programID"`   // e.g. "EP012345670001"
+	AirDateTime   time.Time `json:"airDateTime"` // start, RFC3339
+	Duration      int       `json:"duration"`    // seconds
+	MD5           string    `json:"md5,omitempty"`
+	IsNew         bool      `json:"new,omitempty"`
+	LiveTapeDelay string    `json:"liveTapeDelay,omitempty"`
+	Ratings       []struct {
 		Body string `json:"body"`
 		Code string `json:"code"`
 	} `json:"ratings,omitempty"`
@@ -205,8 +205,8 @@ type ProgramRequest []string
 
 // Program is the rich metadata for one program ID.
 type Program struct {
-	ProgramID    string `json:"programID"`
-	Titles       []struct {
+	ProgramID string `json:"programID"`
+	Titles    []struct {
 		Title120 string `json:"title120"`
 	} `json:"titles"`
 	EpisodeTitle150 string `json:"episodeTitle150,omitempty"`

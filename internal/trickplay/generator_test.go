@@ -14,13 +14,13 @@ import (
 
 // fakeStore records calls so tests can assert the state machine without a DB.
 type fakeStore struct {
-	pending  int
-	done     int
-	failed   int
-	lastErr  string
-	sprites  int
-	spec     Spec
-	fileID   uuid.UUID
+	pending int
+	done    int
+	failed  int
+	lastErr string
+	sprites int
+	spec    Spec
+	fileID  uuid.UUID
 }
 
 func (f *fakeStore) UpsertPending(_ context.Context, _, fileID uuid.UUID, spec Spec) error {

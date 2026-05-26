@@ -170,9 +170,9 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// answer "which integration was wired up".
 		h.audit.Log(r.Context(), h.auditActor(r), audit.ActionWebhookCreate, ep.ID.String(),
 			map[string]any{
-				"host":        urlHost(ep.URL),
-				"events":      ep.Events,
-				"has_secret":  body.Secret != "",
+				"host":       urlHost(ep.URL),
+				"events":     ep.Events,
+				"has_secret": body.Secret != "",
 			}, audit.ClientIP(r))
 	}
 	respond.Created(w, r, ep)

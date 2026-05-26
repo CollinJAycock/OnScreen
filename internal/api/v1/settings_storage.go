@@ -23,13 +23,13 @@ const secretMask = "****"
 // read. Backend selects the implementation: "" / "local" → local filesystem,
 // "s3" → S3-compatible object storage.
 type storageSettingDTO struct {
-	Enabled    bool   `json:"enabled"`
-	Backend    string `json:"backend"`
-	Endpoint   string `json:"endpoint"`
-	Region     string `json:"region"`
-	Bucket     string `json:"bucket"`
-	AccessKey  string `json:"access_key"`
-	SecretKey  string `json:"secret_key"` // secretMask if set, "" if empty
+	Enabled      bool              `json:"enabled"`
+	Backend      string            `json:"backend"`
+	Endpoint     string            `json:"endpoint"`
+	Region       string            `json:"region"`
+	Bucket       string            `json:"bucket"`
+	AccessKey    string            `json:"access_key"`
+	SecretKey    string            `json:"secret_key"` // secretMask if set, "" if empty
 	UseSSL       bool              `json:"use_ssl"`
 	MediaRoot    string            `json:"media_root"`
 	PathPrefix   string            `json:"path_prefix"`
@@ -43,13 +43,13 @@ func toStorageDTO(cfg settings.StorageConfig) storageSettingDTO {
 		sk = secretMask
 	}
 	return storageSettingDTO{
-		Enabled:    cfg.Enabled,
-		Backend:    cfg.Backend,
-		Endpoint:   cfg.Endpoint,
-		Region:     cfg.Region,
-		Bucket:     cfg.Bucket,
-		AccessKey:  cfg.AccessKey,
-		SecretKey:  sk,
+		Enabled:      cfg.Enabled,
+		Backend:      cfg.Backend,
+		Endpoint:     cfg.Endpoint,
+		Region:       cfg.Region,
+		Bucket:       cfg.Bucket,
+		AccessKey:    cfg.AccessKey,
+		SecretKey:    sk,
 		UseSSL:       cfg.UseSSL,
 		MediaRoot:    cfg.MediaRoot,
 		PathPrefix:   cfg.PathPrefix,
@@ -63,12 +63,12 @@ func toStorageDTO(cfg settings.StorageConfig) storageSettingDTO {
 // the form).
 func storageFromDTO(dto storageSettingDTO, cur settings.StorageConfig) settings.StorageConfig {
 	cfg := settings.StorageConfig{
-		Enabled:    dto.Enabled,
-		Backend:    dto.Backend,
-		Endpoint:   dto.Endpoint,
-		Region:     dto.Region,
-		Bucket:     dto.Bucket,
-		AccessKey:  dto.AccessKey,
+		Enabled:      dto.Enabled,
+		Backend:      dto.Backend,
+		Endpoint:     dto.Endpoint,
+		Region:       dto.Region,
+		Bucket:       dto.Bucket,
+		AccessKey:    dto.AccessKey,
 		UseSSL:       dto.UseSSL,
 		MediaRoot:    dto.MediaRoot,
 		PathPrefix:   dto.PathPrefix,

@@ -152,11 +152,11 @@ func TestRank_AnimeRatings(t *testing.T) {
 		rating string
 		want   int
 	}{
-		{"R-15", 2},   // Japanese 15+ ≈ TV-14 / PG-13
-		{"R-17+", 3},  // MAL "R" tier ≈ R / TV-MA
-		{"R+", 3},     // MAL "Mild Nudity" ≈ NC-17 / TV-MA
-		{"R-18+", 3},  // Japanese 18+ ≈ NC-17 / TV-MA
-		{"Rx", 4},     // MAL "Hentai" — most restrictive bucket
+		{"R-15", 2},  // Japanese 15+ ≈ TV-14 / PG-13
+		{"R-17+", 3}, // MAL "R" tier ≈ R / TV-MA
+		{"R+", 3},    // MAL "Mild Nudity" ≈ NC-17 / TV-MA
+		{"R-18+", 3}, // Japanese 18+ ≈ NC-17 / TV-MA
+		{"Rx", 4},    // MAL "Hentai" — most restrictive bucket
 	}
 	for _, tt := range tests {
 		if got := Rank(tt.rating); got != tt.want {

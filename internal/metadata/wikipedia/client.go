@@ -127,7 +127,7 @@ func (c *Client) GetThumbnailURL(ctx context.Context, name string) (string, erro
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Wikipedia GET: %w", err)
+		return "", fmt.Errorf("wikipedia GET: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -136,7 +136,7 @@ func (c *Client) GetThumbnailURL(ctx context.Context, name string) (string, erro
 		return "", nil // article doesn't exist; caller falls through
 	case http.StatusOK:
 	default:
-		return "", fmt.Errorf("Wikipedia status %d", resp.StatusCode)
+		return "", fmt.Errorf("wikipedia status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))

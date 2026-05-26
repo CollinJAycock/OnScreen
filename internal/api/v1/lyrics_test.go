@@ -41,13 +41,13 @@ func (f *fakeLyricsStore) SetLyrics(_ context.Context, _ uuid.UUID, plain, synce
 }
 
 type fakeLyricsItems struct {
-	item       *media.Item
-	itemErr    error
-	artist     string
-	album      string
-	metaErr    error
-	files      []media.File
-	filesErr   error
+	item     *media.Item
+	itemErr  error
+	artist   string
+	album    string
+	metaErr  error
+	files    []media.File
+	filesErr error
 }
 
 func (f *fakeLyricsItems) GetItem(_ context.Context, _ uuid.UUID) (*media.Item, error) {

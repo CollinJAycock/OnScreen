@@ -58,9 +58,9 @@ type scanInFlight struct {
 // can land here without breaking clients, but every field that's here
 // has a concrete UI use already in mind.
 type jobsResponse struct {
-	Scans       []scanInFlight `json:"scans"`
-	MissingArt  int            `json:"missing_art_count"`
-	Unmatched   int            `json:"unmatched_count"`
+	Scans      []scanInFlight `json:"scans"`
+	MissingArt int            `json:"missing_art_count"`
+	Unmatched  int            `json:"unmatched_count"`
 }
 
 // Get handles GET /api/v1/jobs. Snapshot semantics — a scan that

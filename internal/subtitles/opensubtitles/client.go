@@ -112,28 +112,28 @@ func (c *Client) Configured() bool {
 // ISO-639-1 codes (e.g. "en,es"). For TV episodes, set Season + Episode and
 // pass the *show* title in Query.
 type SearchOpts struct {
-	Query    string // movie or show title
-	Year     int
-	Season   int
-	Episode  int
-	IMDBID   string // numeric IMDB id without the "tt" prefix; preferred when known
-	TMDBID   int
+	Query     string // movie or show title
+	Year      int
+	Season    int
+	Episode   int
+	IMDBID    string // numeric IMDB id without the "tt" prefix; preferred when known
+	TMDBID    int
 	Languages string
 }
 
 // SearchResult is one subtitle file returned by /subtitles search.
 // FileID is the value to pass to Download() — *not* the subtitles row id.
 type SearchResult struct {
-	FileID        int     `json:"file_id"`
-	FileName      string  `json:"file_name"`
-	Language      string  `json:"language"`
-	Release       string  `json:"release"`
-	HearingImpaired bool   `json:"hearing_impaired"`
-	HD            bool    `json:"hd"`
-	FromTrusted   bool    `json:"from_trusted"`
-	Rating        float32 `json:"rating"`
-	DownloadCount int32   `json:"download_count"`
-	UploaderName  string  `json:"uploader_name"`
+	FileID          int     `json:"file_id"`
+	FileName        string  `json:"file_name"`
+	Language        string  `json:"language"`
+	Release         string  `json:"release"`
+	HearingImpaired bool    `json:"hearing_impaired"`
+	HD              bool    `json:"hd"`
+	FromTrusted     bool    `json:"from_trusted"`
+	Rating          float32 `json:"rating"`
+	DownloadCount   int32   `json:"download_count"`
+	UploaderName    string  `json:"uploader_name"`
 }
 
 // Search queries the /subtitles endpoint. Caller is responsible for narrowing

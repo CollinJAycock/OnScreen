@@ -14,9 +14,10 @@
 // not parse failures.
 //
 // Supported types:
-//   movie.nfo           → Movie
-//   tvshow.nfo          → Show
-//   <episode-file>.nfo  → Episode  (same basename as the media file)
+//
+//	movie.nfo           → Movie
+//	tvshow.nfo          → Show
+//	<episode-file>.nfo  → Episode  (same basename as the media file)
 //
 // Music NFO (album.nfo / artist.nfo) is intentionally skipped for
 // now — real-world curation of music libraries favors embedded tags
@@ -246,6 +247,7 @@ func ParseEpisode(r io.Reader) (*Episode, error) {
 // file. Kodi looks in this priority order:
 //  1. <basename>.nfo   (e.g., "The Matrix (1999).nfo" next to .mkv)
 //  2. movie.nfo        (in the same directory)
+//
 // Returns ErrNoSidecar when neither exists.
 func FindMovieNFO(moviePath string) (string, error) {
 	dir := filepath.Dir(moviePath)

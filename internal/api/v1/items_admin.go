@@ -199,21 +199,21 @@ type reEnrichUnmatchedRequest struct {
 }
 
 type reEnrichUnmatchedItem struct {
-	ID            string `json:"id"`
-	LibraryID     string `json:"library_id"`
-	Type          string `json:"type"`
-	OldTitle      string `json:"old_title"`
-	NewTitle      string `json:"new_title,omitempty"`      // present when title was rewritten
-	TitleCleaned  bool   `json:"title_cleaned"`            // true when StripReleaseGroupPrefix changed the title
-	EnrichQueued  bool   `json:"enrich_queued"`            // true when EnrichItem was scheduled
+	ID           string `json:"id"`
+	LibraryID    string `json:"library_id"`
+	Type         string `json:"type"`
+	OldTitle     string `json:"old_title"`
+	NewTitle     string `json:"new_title,omitempty"` // present when title was rewritten
+	TitleCleaned bool   `json:"title_cleaned"`       // true when StripReleaseGroupPrefix changed the title
+	EnrichQueued bool   `json:"enrich_queued"`       // true when EnrichItem was scheduled
 }
 
 type reEnrichUnmatchedResponse struct {
-	Found            int                       `json:"found"`             // total candidates returned by the query
-	TitlesCleaned    int                       `json:"titles_cleaned"`    // how many had their title rewritten
-	EnrichmentQueued int                       `json:"enrichment_queued"` // how many were queued for re-enrichment
-	DryRun           bool                      `json:"dry_run"`
-	Items            []reEnrichUnmatchedItem   `json:"items"`
+	Found            int                     `json:"found"`             // total candidates returned by the query
+	TitlesCleaned    int                     `json:"titles_cleaned"`    // how many had their title rewritten
+	EnrichmentQueued int                     `json:"enrichment_queued"` // how many were queued for re-enrichment
+	DryRun           bool                    `json:"dry_run"`
+	Items            []reEnrichUnmatchedItem `json:"items"`
 }
 
 // ReEnrichUnmatched handles POST /api/v1/admin/items/re-enrich-unmatched.

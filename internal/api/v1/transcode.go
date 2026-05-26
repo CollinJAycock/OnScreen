@@ -1063,4 +1063,3 @@ func rewritePlaylist(data []byte, sessionID, token string) []byte {
 	}
 	return buf.Bytes()
 }
-

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -81,10 +80,14 @@ func NewS3(cfg S3Config) (*S3, error) {
 // objectKey maps a local FilePath to a bucket object key: strip MediaRoot,
 // normalise to forward slashes, prepend PathPrefix. Exported behaviour is
 // covered by tests so the mapping can't drift silently.
+//
+// `filepath.ToSlash` only converts the host-OS separator, so backslashes that
+// appear in input from a Windows-shaped FilePath survive unchanged on a Linux
+// host. S3 object keys must always use forward slashes — translate explicitly.
 func (s *S3) objectKey(filePath string) string {
-	p := filepath.ToSlash(filePath)
+	p := strings.ReplaceAll(filePath, `\`, "/")
 	if s.mediaRoot != "" {
-		root := strings.TrimRight(filepath.ToSlash(s.mediaRoot), "/") + "/"
+		root := strings.TrimRight(strings.ReplaceAll(s.mediaRoot, `\`, "/"), "/") + "/"
 		p = strings.TrimPrefix(p, root)
 	}
 	p = strings.TrimLeft(p, "/")
@@ -103,7 +106,7 @@ func (s *S3) filePath(objKey string) string {
 		p = strings.TrimPrefix(p, strings.Trim(s.pathPrefix, "/")+"/")
 	}
 	if s.mediaRoot != "" {
-		return strings.TrimRight(filepath.ToSlash(s.mediaRoot), "/") + "/" + p
+		return strings.TrimRight(strings.ReplaceAll(s.mediaRoot, `\`, "/"), "/") + "/" + p
 	}
 	return "/" + p
 }

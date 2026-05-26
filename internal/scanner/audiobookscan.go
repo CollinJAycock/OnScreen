@@ -256,10 +256,10 @@ func (s *Scanner) extractAudiobookArt(ctx context.Context, book *media.Item, aut
 func (s *Scanner) syncAudiobookPosterPaths(ctx context.Context, book *media.Item, author *media.Item, relPath string) {
 	if book.PosterPath == nil || *book.PosterPath != relPath {
 		if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-			ID:        book.ID,
-			Title:     book.Title,
-			SortTitle: book.SortTitle,
-			Year:      book.Year,
+			ID:         book.ID,
+			Title:      book.Title,
+			SortTitle:  book.SortTitle,
+			Year:       book.Year,
 			PosterPath: &relPath,
 		}); err != nil {
 			s.logger.WarnContext(ctx, "failed to update audiobook poster_path",
@@ -270,9 +270,9 @@ func (s *Scanner) syncAudiobookPosterPaths(ctx context.Context, book *media.Item
 	}
 	if author != nil && (author.PosterPath == nil || *author.PosterPath == "") {
 		if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-			ID:        author.ID,
-			Title:     author.Title,
-			SortTitle: author.SortTitle,
+			ID:         author.ID,
+			Title:      author.Title,
+			SortTitle:  author.SortTitle,
 			PosterPath: &relPath,
 		}); err != nil {
 			s.logger.WarnContext(ctx, "failed to update author poster_path",
@@ -344,16 +344,13 @@ func (s *Scanner) fetchExternalAudiobookArt(ctx context.Context, book, author *m
 		// store the portrait there so the /artwork/* route can resolve
 		// {author.id}-poster.jpg the same way book covers resolve
 		// {book.id}-poster.jpg next to the book.
+		// bookDir's parent is the author dir for the standard layouts. For
+		// the series-layout (and deeper-than-supported folder layouts) it's
+		// a near-miss — worst case we write a portrait that's adjacent to
+		// the wrong folder; the relPath is still valid for /artwork/*
+		// serving. Either way, no separate "too deep" branch is needed:
+		// the fallback path matches the default path.
 		authorDir := filepath.Dir(bookDir)
-		if !isLibraryRoot(authorDir, roots) && !isLibraryRoot(filepath.Dir(authorDir), roots) {
-			// Path is too deep to safely guess the author dir
-			// (series-layout grandchild, deeper-than-supported folder
-			// layout). Fall back to bookDir's parent which is
-			// authorDir for the standard layouts and a near-miss for
-			// the rest — worst case we write a portrait that's
-			// adjacent to the wrong folder; the relPath is still
-			// valid for /artwork/* serving.
-		}
 		wikiClient := wikipedia.NewWithClient(externalArtHTTPClient)
 		portraitURL, err := wikiClient.GetThumbnailURL(ctx, author.Title)
 		if err != nil {
@@ -534,9 +531,9 @@ func isMultiFileBookPath(path string, roots []string) bool {
 // branch is one level deeper than the multi-file branch and is
 // disjoint from it (different ancestor depth, never both true).
 func isSeriesBookPath(path string, roots []string) bool {
-	dir := filepath.Dir(path)              // <Book>
-	grand := filepath.Dir(dir)             // <Series>
-	greatGrand := filepath.Dir(grand)      // <Author>
+	dir := filepath.Dir(path)                   // <Book>
+	grand := filepath.Dir(dir)                  // <Series>
+	greatGrand := filepath.Dir(grand)           // <Author>
 	greatGreatGrand := filepath.Dir(greatGrand) // <library root>?
 	return isLibraryRoot(greatGreatGrand, roots)
 }

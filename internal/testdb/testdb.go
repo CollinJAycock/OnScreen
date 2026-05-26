@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package testdb spins up a real PostgreSQL testcontainer, runs all goose
 // migrations, and returns a pgxpool.Pool for integration tests.
 //
@@ -11,6 +13,11 @@
 //
 // Each call creates a fresh database — tests are fully isolated. The container
 // is torn down by t.Cleanup when the test finishes.
+//
+// Build-tagged `integration` because the only callers are *_integration_test.go
+// files that share the same tag, and tagging here keeps the transitive
+// testcontainers → docker dependency off the production build graph (and out
+// of govulncheck's reach for non-test scans).
 package testdb
 
 import (
@@ -26,6 +33,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // goose needs the stdlib driver
+
 	"github.com/onscreen/onscreen/internal/db/migrations"
 )
 

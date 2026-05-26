@@ -284,16 +284,16 @@ func TestStripLeadingFansubGroups(t *testing.T) {
 // treatment if we ever want to fold them.
 func TestCleanShowTitle_SeasonMarkersStripped(t *testing.T) {
 	cases := map[string]string{
-		"One Punch Man S2":              "One Punch Man",
-		"One Punch Man S 2":             "One Punch Man",
-		"Spy x Family S2":               "Spy x Family",
-		"Fire Force Season 2":           "Fire Force",
-		"Demon Slayer 2nd Season":       "Demon Slayer",
-		"Demon Slayer 3rd Season":       "Demon Slayer",
-		"Some Show Cour 2":              "Some Show",
-		"Show Name":                     "Show Name",            // no marker — passthrough
+		"One Punch Man S2":                     "One Punch Man",
+		"One Punch Man S 2":                    "One Punch Man",
+		"Spy x Family S2":                      "Spy x Family",
+		"Fire Force Season 2":                  "Fire Force",
+		"Demon Slayer 2nd Season":              "Demon Slayer",
+		"Demon Slayer 3rd Season":              "Demon Slayer",
+		"Some Show Cour 2":                     "Some Show",
+		"Show Name":                            "Show Name",                            // no marker — passthrough
 		"Code Geass: Lelouch of the Rebellion": "Code Geass: Lelouch of the Rebellion", // colon subtitle preserved
-		"Final Fantasy VII":             "Final Fantasy VII",    // roman numeral inside title preserved
+		"Final Fantasy VII":                    "Final Fantasy VII",                    // roman numeral inside title preserved
 	}
 	for in, want := range cases {
 		if got := cleanShowTitle(in); got != want {
@@ -312,11 +312,11 @@ func TestCleanShowTitle_SeasonMarkersStripped(t *testing.T) {
 // the fix.
 func TestCleanShowTitle_FansubGroupStripped(t *testing.T) {
 	cases := map[string]string{
-		"[jaaj] Solo Leveling":                "Solo Leveling",
-		"[SubsPlease] Cowboy Bebop":           "Cowboy Bebop",
-		"[Erai-raws][Trix] Attack on Titan":   "Attack on Titan",
-		"Solo Leveling":                       "Solo Leveling",
-		"jaaj.Solo.Leveling":                  "jaaj Solo Leveling", // no leading bracket — stays as-is
+		"[jaaj] Solo Leveling":              "Solo Leveling",
+		"[SubsPlease] Cowboy Bebop":         "Cowboy Bebop",
+		"[Erai-raws][Trix] Attack on Titan": "Attack on Titan",
+		"Solo Leveling":                     "Solo Leveling",
+		"jaaj.Solo.Leveling":                "jaaj Solo Leveling", // no leading bracket — stays as-is
 	}
 	for in, want := range cases {
 		if got := cleanShowTitle(in); got != want {
@@ -409,8 +409,8 @@ func TestParseAnimeAbsoluteFilename(t *testing.T) {
 			wantOK:      false,
 		},
 		{
-			name:        "quality marker should not match as episode",
-			path:        "/anime/Show - 1080p.mkv",
+			name: "quality marker should not match as episode",
+			path: "/anime/Show - 1080p.mkv",
 			// "Show - 1080" matches up to the digit run; lookahead
 			// requires non-letter so 1080p (digit-letter) blocks
 			// the match at 1080. Reject.

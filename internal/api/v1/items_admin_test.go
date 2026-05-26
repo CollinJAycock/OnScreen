@@ -54,8 +54,8 @@ func (m *mockBulkAdminDB) ListMediaItemsMissingArt(_ context.Context, limit int3
 }
 
 type mockBulkEnricher struct {
-	mu       sync.Mutex
-	enriched []uuid.UUID
+	mu        sync.Mutex
+	enriched  []uuid.UUID
 	enrichErr error
 }
 

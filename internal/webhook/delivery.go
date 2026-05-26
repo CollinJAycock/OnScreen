@@ -69,12 +69,12 @@ func SafeClient(timeout time.Duration) *http.Client {
 //	X-OnScreen-Signature: sha256=<hex(HMAC(secret, "{ts}.{body}"))>
 //
 // Receivers MUST:
-//   1. Reject timestamps outside a small window (e.g. ±5 minutes) to
-//      defeat replay of captured-and-cached requests.
-//   2. Recompute the HMAC over `{header_ts}.{request_body}` and compare
-//      with constant-time equality. The timestamp is part of the
-//      signed input, so an attacker can't change `X-OnScreen-Timestamp`
-//      without invalidating the MAC.
+//  1. Reject timestamps outside a small window (e.g. ±5 minutes) to
+//     defeat replay of captured-and-cached requests.
+//  2. Recompute the HMAC over `{header_ts}.{request_body}` and compare
+//     with constant-time equality. The timestamp is part of the
+//     signed input, so an attacker can't change `X-OnScreen-Timestamp`
+//     without invalidating the MAC.
 //
 // The earlier sha256(secret || body) form was replayable indefinitely
 // — anyone who captured a valid (sig, body) pair could replay it

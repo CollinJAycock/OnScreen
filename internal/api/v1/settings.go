@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -495,7 +496,13 @@ func loadPercent(activeCostCenti, maxSessions int) int {
 // local IP is the address other machines on the network reach this server
 // on. Falls back to scanning up, non-loopback interfaces.
 func detectLANIP() string {
-	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
+	// 2-second bound is generous; the UDP "dial" is purely local kernel work
+	// (no packets sent), but a misconfigured routing table could otherwise
+	// block this on a sync DNS lookup.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var d net.Dialer
+	if conn, err := d.DialContext(ctx, "udp", "8.8.8.8:80"); err == nil {
 		defer conn.Close()
 		if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok && ua.IP != nil {
 			if v4 := ua.IP.To4(); v4 != nil && !v4.IsLoopback() {

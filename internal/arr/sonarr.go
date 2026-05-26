@@ -11,17 +11,17 @@ import (
 // to round-trip into an AddSeriesRequest. Sonarr is TVDB-native; we accept
 // either a TVDB id (best) or a TMDB id (Sonarr v4+) for lookup.
 type SeriesLookup struct {
-	Title          string        `json:"title"`
-	SortTitle      string        `json:"sortTitle,omitempty"`
-	TVDBID         int           `json:"tvdbId"`
-	TMDBID         int           `json:"tmdbId,omitempty"`
-	Year           int           `json:"year"`
-	TitleSlug      string        `json:"titleSlug"`
-	Overview       string        `json:"overview,omitempty"`
-	SeriesType     string        `json:"seriesType,omitempty"`
-	Images         []MovieImage  `json:"images,omitempty"`
-	Seasons        []SeriesSeason `json:"seasons,omitempty"`
-	Status         string        `json:"status,omitempty"`
+	Title      string         `json:"title"`
+	SortTitle  string         `json:"sortTitle,omitempty"`
+	TVDBID     int            `json:"tvdbId"`
+	TMDBID     int            `json:"tmdbId,omitempty"`
+	Year       int            `json:"year"`
+	TitleSlug  string         `json:"titleSlug"`
+	Overview   string         `json:"overview,omitempty"`
+	SeriesType string         `json:"seriesType,omitempty"`
+	Images     []MovieImage   `json:"images,omitempty"`
+	Seasons    []SeriesSeason `json:"seasons,omitempty"`
+	Status     string         `json:"status,omitempty"`
 }
 
 // SeriesSeason mirrors Sonarr's per-season block. We forward this back on add

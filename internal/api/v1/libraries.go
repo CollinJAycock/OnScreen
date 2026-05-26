@@ -98,15 +98,15 @@ type MediaItemLister interface {
 
 // MediaItemResponse is the JSON shape for a media item in the v1 API.
 type MediaItemResponse struct {
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	Type          string    `json:"type"`
-	Year          *int      `json:"year,omitempty"`
-	Summary       *string   `json:"summary,omitempty"`
-	Rating        *float64  `json:"rating,omitempty"`
-	DurationMS    *int64    `json:"duration_ms,omitempty"`
-	Genres        []string  `json:"genres,omitempty"`
-	PosterPath    *string   `json:"poster_path,omitempty"`
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Type       string   `json:"type"`
+	Year       *int     `json:"year,omitempty"`
+	Summary    *string  `json:"summary,omitempty"`
+	Rating     *float64 `json:"rating,omitempty"`
+	DurationMS *int64   `json:"duration_ms,omitempty"`
+	Genres     []string `json:"genres,omitempty"`
+	PosterPath *string  `json:"poster_path,omitempty"`
 	// OriginalTitle: foreign-language title for movies, author for
 	// audiobooks (the scanner stashes the parsed author here in v2.0
 	// to avoid a migration just for one column — see audiobookscan.go).

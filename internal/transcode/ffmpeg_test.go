@@ -504,7 +504,7 @@ func TestBuildHLS_ReadRate_PacingFlags(t *testing.T) {
 		Encoder:              EncoderNVENC,
 		Width:                1920,
 		Height:               1080,
-		BitrateKbps:           8000,
+		BitrateKbps:          8000,
 		AudioCodec:           "aac",
 		ReadRate:             1.0,
 		ReadRateInitialBurst: 30,
@@ -933,8 +933,8 @@ func TestBuildHLS_NVENC_HDRSourceUsesZscale(t *testing.T) {
 		Height:           1080,
 		BitrateKbps:      8000,
 		NeedsToneMap:     true,
-		HasTonemapCuda:   true,  // even if reported, we no longer use it
-		HasTonemapOpenCL: true,  // same
+		HasTonemapCuda:   true, // even if reported, we no longer use it
+		HasTonemapOpenCL: true, // same
 		HasZscale:        true,
 		AudioCodec:       "aac",
 		SessionDir:       "/tmp/sessions/x",
@@ -1194,8 +1194,8 @@ func TestBuildHLS_HEVC_NVENC_HDRSourceUsesZscale(t *testing.T) {
 		Height:           2160,
 		BitrateKbps:      24000,
 		NeedsToneMap:     true,
-		HasTonemapCuda:   true,  // even if reported, we no longer use it
-		HasTonemapOpenCL: true,  // same
+		HasTonemapCuda:   true, // even if reported, we no longer use it
+		HasTonemapOpenCL: true, // same
 		HasZscale:        true,
 		AudioCodec:       "aac",
 		SessionDir:       "/tmp/sessions/x",

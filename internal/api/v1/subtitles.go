@@ -268,14 +268,14 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 // doesn't carry a null subtitle field; status drives the client's
 // decision to render success vs error vs spinner.
 type ocrJobJSON struct {
-	JobID       string                `json:"job_id"`
+	JobID       string                 `json:"job_id"`
 	Status      subtitles.OCRJobStatus `json:"status"`
-	FileID      string                `json:"file_id"`
-	StreamIndex int                   `json:"stream_index"`
-	StartedAt   string                `json:"started_at"`
-	CompletedAt string                `json:"completed_at,omitempty"`
-	Error       string                `json:"error,omitempty"`
-	Subtitle    *ExternalSubtitleJSON `json:"subtitle,omitempty"`
+	FileID      string                 `json:"file_id"`
+	StreamIndex int                    `json:"stream_index"`
+	StartedAt   string                 `json:"started_at"`
+	CompletedAt string                 `json:"completed_at,omitempty"`
+	Error       string                 `json:"error,omitempty"`
+	Subtitle    *ExternalSubtitleJSON  `json:"subtitle,omitempty"`
 }
 
 func toOCRJobJSON(job subtitles.OCRJob) ocrJobJSON {

@@ -20,10 +20,10 @@ var tvCrossRE = regexp.MustCompile(`(?i)[.\s_-]+(\d{1,2})x(\d{1,3})`)
 // number is an absolute episode index rather than a season/episode
 // pair. Captures:
 //
-//   1. Title (greedy minimum so the trailing " - NN" part doesn't get
-//      eaten into the title).
-//   2. Episode number (1-4 digits — covers everything from a 12-ep
-//      season to long-runners like One Piece in the 1000s).
+//  1. Title (greedy minimum so the trailing " - NN" part doesn't get
+//     eaten into the title).
+//  2. Episode number (1-4 digits — covers everything from a 12-ep
+//     season to long-runners like One Piece in the 1000s).
 //
 // Optional non-capturing `[Group]` prefix strips fansub release-group
 // tags ([SubsPlease], [Erai-raws], etc.). Trailing lookahead requires
@@ -324,6 +324,7 @@ func cleanShowTitle(raw string) string {
 //   - "Season 2", "Season  3"          (Plex/Jellyfin style)
 //   - "2nd Season", "3rd Season"       (anime-style ordinal)
 //   - "Cour 2"                          (rare but seen)
+//
 // Anchored to end-of-string so a legit "Season 2 Specials" subtitle
 // is preserved.
 var seasonMarkerRE = regexp.MustCompile(`(?i)\s+(?:s\s*\d+|season\s+\d+|\d+(?:st|nd|rd|th)\s+season|cour\s+\d+)\s*$`)

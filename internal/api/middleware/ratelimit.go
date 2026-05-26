@@ -23,8 +23,8 @@ type RateLimitConfig struct {
 // transcode caps during a full Playwright run, so both are overridable via
 // env vars for local dev / CI:
 //
-//   OS_AUTH_RATE_LIMIT_PER_MIN            overrides AuthLimit
-//   OS_TRANSCODE_START_RATE_LIMIT_PER_MIN overrides TranscodeStartLimit
+//	OS_AUTH_RATE_LIMIT_PER_MIN            overrides AuthLimit
+//	OS_TRANSCODE_START_RATE_LIMIT_PER_MIN overrides TranscodeStartLimit
 //
 // Defaults stay tight so production is unaffected.
 const (

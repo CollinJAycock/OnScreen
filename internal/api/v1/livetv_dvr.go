@@ -281,7 +281,7 @@ func scheduleToResponse(s livetv.Schedule) ScheduleResponse {
 		TimeStart: s.TimeStart, TimeEnd: s.TimeEnd,
 		PaddingPreSec: s.PaddingPreSec, PaddingPostSec: s.PaddingPostSec,
 		Priority: s.Priority, RetentionDays: s.RetentionDays,
-		Enabled: s.Enabled,
+		Enabled:   s.Enabled,
 		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
 	}
 }
@@ -293,7 +293,7 @@ func recordingToResponse(r livetv.RecordingWithChannel) RecordingResponse {
 		ChannelName: r.ChannelName, ChannelLogo: r.ChannelLogo,
 		ProgramID: r.ProgramID, Title: r.Title, Subtitle: r.Subtitle,
 		SeasonNum: r.SeasonNum, EpisodeNum: r.EpisodeNum,
-		Status: string(r.Status),
+		Status:   string(r.Status),
 		StartsAt: r.StartsAt, EndsAt: r.EndsAt,
 		ItemID: r.ItemID, Error: r.Error,
 	}

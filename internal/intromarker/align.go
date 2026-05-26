@@ -88,9 +88,9 @@ func alignPair(a, b []uint32) alignment {
 // across all its pairings. The goal is to be robust to one-off mismatches
 // (e.g. an episode with a cold open that shifts the intro by 60 seconds).
 type episodeIntro struct {
-	startFrame int
+	startFrame   int
 	lengthFrames int
-	score      float64
+	score        float64
 }
 
 func detectSeasonIntros(fps [][]uint32) []episodeIntro {

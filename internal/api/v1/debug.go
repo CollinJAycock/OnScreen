@@ -293,14 +293,14 @@ type RuntimeSnapshot struct {
 	// right now" number; sys is the OS-allocated total (only ever
 	// grows). alloc + total_alloc together let an operator infer GC
 	// pressure (rate of allocs between samples).
-	HeapAlloc      uint64 `json:"heap_alloc"`
-	HeapInuse      uint64 `json:"heap_inuse"`
-	HeapSys        uint64 `json:"heap_sys"`
-	StackInuse     uint64 `json:"stack_inuse"`
-	Sys            uint64 `json:"sys"`
-	TotalAllocSum  uint64 `json:"total_alloc"`
-	NumGC          uint32 `json:"num_gc"`
-	GCPauseLastNs  uint64 `json:"gc_pause_last_ns"`
+	HeapAlloc     uint64 `json:"heap_alloc"`
+	HeapInuse     uint64 `json:"heap_inuse"`
+	HeapSys       uint64 `json:"heap_sys"`
+	StackInuse    uint64 `json:"stack_inuse"`
+	Sys           uint64 `json:"sys"`
+	TotalAllocSum uint64 `json:"total_alloc"`
+	NumGC         uint32 `json:"num_gc"`
+	GCPauseLastNs uint64 `json:"gc_pause_last_ns"`
 }
 
 func (h *DebugHandler) Runtime(w http.ResponseWriter, r *http.Request) {
@@ -326,9 +326,9 @@ func (h *DebugHandler) Runtime(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, r, http.StatusOK, snap)
 }
 
-// pprofHandler returns the right pprof handler for a given debug-name.
-// The standard set + the named profiles (heap, goroutine, allocs, …)
-// — chi-routed under /admin/debug/pprof/{name}.
+// Pprof returns the right pprof handler for a given debug-name —
+// chi-routed under /admin/debug/pprof/{name} for the standard set +
+// the named profiles (heap, goroutine, allocs, …).
 //
 // httppprof.Index dispatches profiles by stripping the literal prefix
 // "/debug/pprof/" from r.URL.Path. Our route is mounted at

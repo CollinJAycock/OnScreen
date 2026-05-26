@@ -43,9 +43,9 @@ const (
 	// Webhook CRUD audit actions. Webhooks carry an encrypted secret
 	// and an outbound URL — both privileged config — so create/update/
 	// delete are recorded the same way library and arr-service CRUD are.
-	ActionWebhookCreate = "webhook.create"
-	ActionWebhookUpdate = "webhook.update"
-	ActionWebhookDelete = "webhook.delete"
+	ActionWebhookCreate  = "webhook.create"
+	ActionWebhookUpdate  = "webhook.update"
+	ActionWebhookDelete  = "webhook.delete"
 	ActionTranscodeStart = "transcode.start"
 	ActionTranscodeStop  = "transcode.stop"
 	ActionBackupDownload = "backup.download"

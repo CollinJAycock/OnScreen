@@ -98,7 +98,7 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			// requests will 5xx, so the flag should agree with the
 			// runtime probe even though "no ffmpeg = barely-functional
 			// server" is itself an unusual deploy.
-			Transcode:         p.hasFFmpeg,
+			Transcode: p.hasFFmpeg,
 			// ABR needs ffmpeg AND the operator opt-in (multi-rendition
 			// fan-out costs more encode capacity than single-rendition).
 			ABRLadder:         p.hasFFmpeg && p.cfg.TranscodeABR,

@@ -766,4 +766,3 @@ func channelToResponse(c livetv.ChannelWithTuner) ChannelResponse {
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
-

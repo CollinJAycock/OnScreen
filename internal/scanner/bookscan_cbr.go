@@ -40,25 +40,6 @@ func countCBRPages(path string) int {
 	return len(pages)
 }
 
-// servePageFromCBR streams the pageNum-th image (1-indexed,
-// alphabetically sorted) from a CBR to w. Returns errBookPageNotFound
-// when pageNum is out of range so the API handler can map it to 404
-// without leaking why. content-type setup is the caller's job — this
-// function only writes the bytes.
-func servePageFromCBR(cbrPath string, pageNum int, w io.Writer) (entryName string, err error) {
-	pages, ok := readCBRPages(cbrPath, true)
-	if !ok {
-		return "", errBookOpenFailed
-	}
-	if pageNum < 1 || pageNum > len(pages) {
-		return "", errBookPageNotFoundCBR
-	}
-	if _, err := w.Write(pages[pageNum-1].data); err != nil {
-		return "", err
-	}
-	return pages[pageNum-1].name, nil
-}
-
 type cbrPage struct {
 	name string
 	data []byte
@@ -110,23 +91,6 @@ func readCBRPages(cbrPath string, readBytes bool) ([]cbrPage, bool) {
 	sort.Slice(pages, func(i, j int) bool { return pages[i].name < pages[j].name })
 	return pages, true
 }
-
-// errBookOpenFailed surfaces a "we couldn't open the archive at all"
-// case to the API handler distinct from "page not found." The handler
-// converts the former to 500 (real problem) and the latter to 404
-// (user asked for a page beyond the end).
-var errBookOpenFailed = errAbstract("book: archive open failed")
-
-// errBookPageNotFoundCBR is the CBR-side equivalent of
-// errBookPageNotFound (declared in books.go) — kept in this package
-// to avoid an import cycle. The API handler maps either to 404.
-var errBookPageNotFoundCBR = errAbstract("book: page not found")
-
-// errAbstract is a tiny error type kept inline so this file doesn't
-// need to import the errors package for two sentinel values.
-type errAbstract string
-
-func (e errAbstract) Error() string { return string(e) }
 
 // cbrCoverExtension reports whether a path looks like a CBR file.
 // Used by the scanner dispatch in extractBookCover / processBook.

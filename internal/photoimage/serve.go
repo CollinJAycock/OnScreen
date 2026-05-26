@@ -21,9 +21,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"image"
+	_ "image/gif" // register GIF decoder
 	"image/jpeg"
-	_ "image/gif"  // register GIF decoder
-	_ "image/png"  // register PNG decoder
+	_ "image/png" // register PNG decoder
 	"io"
 	"os"
 	"os/exec"
@@ -61,10 +61,10 @@ const (
 
 // Options configures a single Serve call.
 type Options struct {
-	Width   int  // 0 = unconstrained
-	Height  int  // 0 = unconstrained
-	Fit     Fit  // default FitContain
-	Quality int  // JPEG quality 1-100, default 85
+	Width   int // 0 = unconstrained
+	Height  int // 0 = unconstrained
+	Fit     Fit // default FitContain
+	Quality int // JPEG quality 1-100, default 85
 }
 
 // Serve writes a JPEG derivative of sourcePath to w, going through the
@@ -104,10 +104,8 @@ func (s *Server) Serve(ctx context.Context, w io.Writer, sourcePath string, opts
 	}
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err == nil {
 		// Best-effort cache write — a failure here just costs us a cache miss
-		// next time, not a wrong response.
-		if err := atomicWrite(cachePath, buf.Bytes()); err != nil {
-			// silently degrade — the response still succeeds
-		}
+		// next time, not a wrong response, so we explicitly ignore the error.
+		_ = atomicWrite(cachePath, buf.Bytes())
 	}
 	_, err = w.Write(buf.Bytes())
 	return err

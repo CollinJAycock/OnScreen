@@ -639,9 +639,6 @@ func (r *franchiseRouter) handler() http.HandlerFunc {
 // franchiseNode builds a Media response body. relations is a list of
 // (relationType, id, format, year, title) tuples — the full edge shape.
 func franchiseNode(id, year int, title, format string, relations [][5]string) string {
-	type edge struct {
-		typ, nodeID, fmtVal, nodeYear, nodeTitle string
-	}
 	edges := make([]string, 0, len(relations))
 	for _, r := range relations {
 		edges = append(edges, `{
@@ -874,12 +871,12 @@ func TestStripHTML_HandlesCommonEntities(t *testing.T) {
 	// that contains literal "&lt;script&gt;" text. See stripHTML doc
 	// comment for the full rationale.
 	cases := map[string]string{
-		"<p>Hello</p>":                            "Hello",
-		"Foo<br>Bar":                              "FooBar",
-		"a&nbsp;b":                                "a b",
-		"&amp; &lt;tag&gt;":                       "&amp; &lt;tag&gt;",
-		"<i>It&#39;s an &quot;example&quot;</i>":  `It&#39;s an &quot;example&quot;`,
-		"  leading + trailing  ":                  "leading + trailing",
+		"<p>Hello</p>":                           "Hello",
+		"Foo<br>Bar":                             "FooBar",
+		"a&nbsp;b":                               "a b",
+		"&amp; &lt;tag&gt;":                      "&amp; &lt;tag&gt;",
+		"<i>It&#39;s an &quot;example&quot;</i>": `It&#39;s an &quot;example&quot;`,
+		"  leading + trailing  ":                 "leading + trailing",
 	}
 	for in, want := range cases {
 		if got := stripHTML(in); got != want {

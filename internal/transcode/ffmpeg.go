@@ -74,7 +74,7 @@ type BuildArgs struct {
 	// filter — the preferred path: vendor-agnostic, GPU-resident, and far
 	// faster than software zscale on 4K HDR (it also does the downscale). When
 	// set, the tonemap runs on the GPU and the zscale chain is skipped.
-	HasLibplacebo    bool
+	HasLibplacebo bool
 	// OpenCL platform.device index for `-init_hw_device opencl=ocl:N.M`.
 	// Empty falls back to `0.0`. Probed once per worker startup so we
 	// pick the platform that matches the active encoder's vendor —
@@ -82,18 +82,18 @@ type BuildArgs struct {
 	// OpenCL platform before the dGPU (Intel + NVIDIA on a Windows
 	// laptop, AMD APP + Intel iGPU on a Ryzen workstation, etc.).
 	OpenCLDevice string
-	IsVAAPI          bool // VAAPI needs hwupload filter
-	IsHEVC           bool // source is HEVC (informational, NVDEC auto-selects decoder)
+	IsVAAPI      bool // VAAPI needs hwupload filter
+	IsHEVC       bool // source is HEVC (informational, NVDEC auto-selects decoder)
 	// QSVDecode opts into Intel QSV hardware HEVC decode (-hwaccel qsv -c:v
 	// hevc_qsv) on the input, offloading the 4K HEVC decode from the CPU.
 	// Only honored for HEVC sources on a re-encode; the worker sets it from
 	// TRANSCODE_QSV_DECODE and falls back to software decode on failure.
-	QSVDecode        bool
+	QSVDecode bool
 	// IsAV1 marks an AV1 source. Required so video_copy remux switches
 	// the HLS container to fMP4 + av01 tag — mpegts has no AV1 stream
 	// type, so an `-c:v copy` into mpegts segments crashes the muxer
 	// (Could not find tag for codec av1 in stream #0).
-	IsAV1            bool
+	IsAV1 bool
 
 	// Audio (ADR-018)
 	AudioCodec       string // "copy" | "aac"
@@ -126,8 +126,8 @@ type BuildArgs struct {
 	// leave this zero so a multi-output `-t 8` test (HLS + WebVTT
 	// extraction) doesn't wait real-time for the WebVTT context to
 	// drain a 2.5 h subtitle stream.
-	ReadRate              float64
-	ReadRateInitialBurst  int // seconds of input read at full speed before pacing kicks in
+	ReadRate             float64
+	ReadRateInitialBurst int // seconds of input read at full speed before pacing kicks in
 
 	// Output
 	SessionDir    string // abs path, e.g. /tmp/onscreen/sessions/{id}
@@ -795,8 +795,9 @@ func IsNVENCEncoder(enc Encoder) bool {
 	switch enc {
 	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // IsHEVCEncoder returns true if the encoder produces HEVC (H.265) output.
@@ -805,8 +806,9 @@ func IsHEVCEncoder(enc Encoder) bool {
 	case EncoderHEVCNVENC, EncoderHEVCQSV, EncoderHEVCVAAPI,
 		EncoderHEVCAMF, EncoderHEVCSoftware:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // IsAV1Encoder returns true if the encoder produces AV1 output.
@@ -817,8 +819,9 @@ func IsAV1Encoder(enc Encoder) bool {
 	case EncoderAV1Software, EncoderAV1NVENC, EncoderAV1QSV,
 		EncoderAV1VAAPI, EncoderAV1AMF:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // HEVCVariant returns the HEVC counterpart for a given H.264 encoder.

@@ -371,24 +371,24 @@ func (c *Client) SearchMangaCandidates(ctx context.Context, query string) ([]met
 // status uses a different vocabulary (RELEASING vs FINISHED instead
 // of anime's airing terms).
 type anilistMangaMedia struct {
-	ID              int               `json:"id"`
-	IDMal           int               `json:"idMal"`
-	Title           anilistTitleNode  `json:"title"`
-	Format          string            `json:"format"`
-	Status          string            `json:"status"`
-	Volumes         int               `json:"volumes"`
-	Chapters        int               `json:"chapters"`
-	Description     string            `json:"description"`
-	AverageScore    int               `json:"averageScore"`
-	StartDate       struct {
+	ID           int              `json:"id"`
+	IDMal        int              `json:"idMal"`
+	Title        anilistTitleNode `json:"title"`
+	Format       string           `json:"format"`
+	Status       string           `json:"status"`
+	Volumes      int              `json:"volumes"`
+	Chapters     int              `json:"chapters"`
+	Description  string           `json:"description"`
+	AverageScore int              `json:"averageScore"`
+	StartDate    struct {
 		Year int `json:"year"`
 	} `json:"startDate"`
-	Genres          []string          `json:"genres"`
-	Tags            []struct {
+	Genres []string `json:"genres"`
+	Tags   []struct {
 		Name string `json:"name"`
 	} `json:"tags"`
-	CountryOfOrigin string            `json:"countryOfOrigin"`
-	IsAdult         bool              `json:"isAdult"`
+	CountryOfOrigin string `json:"countryOfOrigin"`
+	IsAdult         bool   `json:"isAdult"`
 	CoverImage      struct {
 		ExtraLarge string `json:"extraLarge"`
 	} `json:"coverImage"`
@@ -408,17 +408,17 @@ type anilistMangaMedia struct {
 // mediaToMangaResult flattens the GraphQL response into the
 // metadata-package result type, handling AniList's quirks:
 //
-//  - title prefers English → romaji → native (same chain as anime)
-//  - volumes / chapters return -1 for ongoing series (status RELEASING)
-//    so the UI can render "ongoing" instead of fake-final counts
-//  - staff is filtered for "Story" + "Art" / "Story & Art" roles
-//    only, since AniList includes editors / translators / etc.
-//  - readingDirection derives from countryOfOrigin: JP → rtl, KR / CN → ttb
-//    (manhwa / manhua are vertical-strip webtoons by convention),
-//    everything else → ltr
-//  - isAdult flips ContentRating to TV-MA (same as anime — see
-//    contentrating.Rank for the granular Japanese / MAL codes that
-//    a manual edit can layer on top)
+//   - title prefers English → romaji → native (same chain as anime)
+//   - volumes / chapters return -1 for ongoing series (status RELEASING)
+//     so the UI can render "ongoing" instead of fake-final counts
+//   - staff is filtered for "Story" + "Art" / "Story & Art" roles
+//     only, since AniList includes editors / translators / etc.
+//   - readingDirection derives from countryOfOrigin: JP → rtl, KR / CN → ttb
+//     (manhwa / manhua are vertical-strip webtoons by convention),
+//     everything else → ltr
+//   - isAdult flips ContentRating to TV-MA (same as anime — see
+//     contentrating.Rank for the granular Japanese / MAL codes that
+//     a manual edit can layer on top)
 func mediaToMangaResult(m anilistMangaMedia) *metadata.MangaResult {
 	r := &metadata.MangaResult{
 		AniListID:           m.ID,
@@ -544,9 +544,9 @@ func (c *Client) GetAnimeFranchise(ctx context.Context, anilistID int) ([]AniLis
 		var resp struct {
 			Data struct {
 				Media *struct {
-					ID        int    `json:"id"`
-					IDMal     int    `json:"idMal"`
-					Format    string `json:"format"`
+					ID        int              `json:"id"`
+					IDMal     int              `json:"idMal"`
+					Format    string           `json:"format"`
 					Title     anilistTitleNode `json:"title"`
 					StartDate struct {
 						Year int `json:"year"`
@@ -555,9 +555,9 @@ func (c *Client) GetAnimeFranchise(ctx context.Context, anilistID int) ([]AniLis
 						Edges []struct {
 							RelationType string `json:"relationType"`
 							Node         struct {
-								ID        int    `json:"id"`
-								IDMal     int    `json:"idMal"`
-								Format    string `json:"format"`
+								ID        int              `json:"id"`
+								IDMal     int              `json:"idMal"`
+								Format    string           `json:"format"`
 								Title     anilistTitleNode `json:"title"`
 								StartDate struct {
 									Year int `json:"year"`

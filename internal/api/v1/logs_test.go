@@ -15,7 +15,7 @@ import (
 // stdout, they only inspect what the LogRingBuffer captured.
 type noopInner struct{ enabled slog.Level }
 
-func (n *noopInner) Enabled(_ context.Context, l slog.Level) bool { return l >= n.enabled }
+func (n *noopInner) Enabled(_ context.Context, l slog.Level) bool  { return l >= n.enabled }
 func (n *noopInner) Handle(_ context.Context, _ slog.Record) error { return nil }
 func (n *noopInner) WithAttrs(_ []slog.Attr) slog.Handler          { return n }
 func (n *noopInner) WithGroup(_ string) slog.Handler               { return n }

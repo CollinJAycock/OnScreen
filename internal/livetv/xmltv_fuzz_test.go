@@ -28,13 +28,13 @@ func FuzzParseXMLTV(f *testing.F) {
     <episode-num system="onscreen">1.5</episode-num>
   </programme>
 </tv>`))
-	f.Add([]byte(``))                                                    // empty
-	f.Add([]byte(`<tv></tv>`))                                          // empty document
-	f.Add([]byte(`<tv><programme start="bogus" channel="x"/></tv>`))    // malformed timestamp
+	f.Add([]byte(``))                                                                // empty
+	f.Add([]byte(`<tv></tv>`))                                                       // empty document
+	f.Add([]byte(`<tv><programme start="bogus" channel="x"/></tv>`))                 // malformed timestamp
 	f.Add([]byte(`<tv><channel id=""><display-name></display-name></channel></tv>`)) // empty fields
-	f.Add([]byte(`<tv><programme start="20260426120000" channel="x"/></tv>`)) // no TZ offset
-	f.Add([]byte(strings.Repeat(`<tv>`, 1000)))                         // deep nesting
-	f.Add([]byte(`<tv><programme start="20260426120000 +9999" channel="x"/></tv>`)) // bogus offset
+	f.Add([]byte(`<tv><programme start="20260426120000" channel="x"/></tv>`))        // no TZ offset
+	f.Add([]byte(strings.Repeat(`<tv>`, 1000)))                                      // deep nesting
+	f.Add([]byte(`<tv><programme start="20260426120000 +9999" channel="x"/></tv>`))  // bogus offset
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Don't care about the parsed shape — only that the parser

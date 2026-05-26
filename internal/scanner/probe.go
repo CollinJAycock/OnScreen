@@ -50,23 +50,23 @@ type ffprobeOutput struct {
 }
 
 type ffprobeStream struct {
-	Index             int               `json:"index"`
-	CodecName         string            `json:"codec_name"`
-	CodecType         string            `json:"codec_type"`
-	Width             int               `json:"width"`
-	Height            int               `json:"height"`
-	RFrameRate        string            `json:"r_frame_rate"`
-	BitRate           string            `json:"bit_rate"`
-	Channels          int               `json:"channels"`
-	ChannelLayout     string            `json:"channel_layout"`
-	SampleRate        string            `json:"sample_rate"`
-	BitsPerRawSample  string            `json:"bits_per_raw_sample"`
-	BitsPerSample     int               `json:"bits_per_sample"`
-	Tags              map[string]string `json:"tags"`
-	Disposition       map[string]int    `json:"disposition"`
-	ColorTransfer     string            `json:"color_transfer"`
-	ColorPrimaries    string            `json:"color_primaries"`
-	SideDataList      []ffprobeSideData `json:"side_data_list"`
+	Index            int               `json:"index"`
+	CodecName        string            `json:"codec_name"`
+	CodecType        string            `json:"codec_type"`
+	Width            int               `json:"width"`
+	Height           int               `json:"height"`
+	RFrameRate       string            `json:"r_frame_rate"`
+	BitRate          string            `json:"bit_rate"`
+	Channels         int               `json:"channels"`
+	ChannelLayout    string            `json:"channel_layout"`
+	SampleRate       string            `json:"sample_rate"`
+	BitsPerRawSample string            `json:"bits_per_raw_sample"`
+	BitsPerSample    int               `json:"bits_per_sample"`
+	Tags             map[string]string `json:"tags"`
+	Disposition      map[string]int    `json:"disposition"`
+	ColorTransfer    string            `json:"color_transfer"`
+	ColorPrimaries   string            `json:"color_primaries"`
+	SideDataList     []ffprobeSideData `json:"side_data_list"`
 }
 
 type ffprobeSideData struct {

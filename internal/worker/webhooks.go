@@ -66,19 +66,19 @@ const maxConcurrentDispatches = 50
 // the two paths are independent (a webhook delivery failure does not affect
 // plugin delivery, and vice versa).
 type WebhookDispatcher struct {
-	db        webhookDeliveryDB
-	media     webhookMediaDB
-	enc       *auth.Encryptor
-	server    WebhookServerInfo
-	client    *http.Client
-	logger    *slog.Logger
-	sem       chan struct{} // concurrency limiter for delivery goroutines
+	db          webhookDeliveryDB
+	media       webhookMediaDB
+	enc         *auth.Encryptor
+	server      WebhookServerInfo
+	client      *http.Client
+	logger      *slog.Logger
+	sem         chan struct{} // concurrency limiter for delivery goroutines
 	dispatchSem chan struct{} // concurrency limiter for outer Dispatch fan-outs
-	wg        sync.WaitGroup
-	ctx       context.Context // cancelled on Close to interrupt retries
-	cancel    context.CancelFunc
-	plugins   PluginNotifier
-	metrics   *observability.Metrics
+	wg          sync.WaitGroup
+	ctx         context.Context // cancelled on Close to interrupt retries
+	cancel      context.CancelFunc
+	plugins     PluginNotifier
+	metrics     *observability.Metrics
 }
 
 // WithMetrics enables Prometheus instrumentation (delivery failures by URL). nil
@@ -109,8 +109,8 @@ func NewWebhookDispatcher(
 		logger:      logger,
 		sem:         make(chan struct{}, maxConcurrentDeliveries),
 		dispatchSem: make(chan struct{}, maxConcurrentDispatches),
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 

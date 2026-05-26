@@ -463,6 +463,9 @@ func PickOpenCLDevice(devices []OpenCLDevice, enc Encoder) string {
 		vendor = "amd"
 	case EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV, EncoderVAAPI, EncoderHEVCVAAPI:
 		vendor = "intel"
+	default:
+		// Software / AV1-VAAPI / AV1-AMF: no OpenCL-vendor pinning needed;
+		// fall through to the first-device path below.
 	}
 	if vendor == "" {
 		return devices[0].Index

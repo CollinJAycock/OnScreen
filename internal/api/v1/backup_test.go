@@ -107,7 +107,7 @@ func TestParseGooseVersion_TableEmpty(t *testing.T) {
 
 func TestClassifyRestoreOutcome_NilErrIsPassthrough(t *testing.T) {
 	// A clean run shouldn't be touched.
-	got, gotStderr, suppressed := classifyRestoreOutcome(nil, "")
+	gotStderr, suppressed, got := classifyRestoreOutcome(nil, "")
 	if got != nil || gotStderr != "" || suppressed != 0 {
 		t.Errorf("got (%v,%q,%d), want (nil,\"\",0)", got, gotStderr, suppressed)
 	}
@@ -123,7 +123,7 @@ func TestClassifyRestoreOutcome_BenignOnlyClearsError(t *testing.T) {
 		6) +
 		"pg_restore: warning: errors ignored on restore: 6\n"
 
-	got, gotStderr, suppressed := classifyRestoreOutcome(errors.New("exit status 1"), stderr)
+	gotStderr, suppressed, got := classifyRestoreOutcome(errors.New("exit status 1"), stderr)
 	if got != nil {
 		t.Errorf("benign-only run should clear runErr; got %v", got)
 	}
@@ -146,7 +146,7 @@ func TestClassifyRestoreOutcome_MixedKeepsRealError(t *testing.T) {
 		"pg_restore: warning: errors ignored on restore: 2\n"
 
 	runErr := errors.New("exit status 1")
-	got, gotStderr, suppressed := classifyRestoreOutcome(runErr, stderr)
+	gotStderr, suppressed, got := classifyRestoreOutcome(runErr, stderr)
 	if got == nil {
 		t.Error("mixed errors must keep runErr; got nil")
 	}
@@ -166,7 +166,7 @@ func TestClassifyRestoreOutcome_NoSummaryIsRealFailure(t *testing.T) {
 		"pg_restore: error: could not connect to database\n"
 
 	runErr := errors.New("exit status 1")
-	got, gotStderr, suppressed := classifyRestoreOutcome(runErr, stderr)
+	gotStderr, suppressed, got := classifyRestoreOutcome(runErr, stderr)
 	if got == nil {
 		t.Error("no summary line → must keep runErr")
 	}
@@ -186,7 +186,7 @@ func TestClassifyRestoreOutcome_NonBenignOnly(t *testing.T) {
 		"pg_restore: warning: errors ignored on restore: 1\n"
 
 	runErr := errors.New("exit status 1")
-	got, gotStderr, suppressed := classifyRestoreOutcome(runErr, stderr)
+	gotStderr, suppressed, got := classifyRestoreOutcome(runErr, stderr)
 	if got == nil || gotStderr == "" || suppressed != 0 {
 		t.Errorf("non-benign errors must pass through: got (%v,%q,%d)", got, gotStderr, suppressed)
 	}

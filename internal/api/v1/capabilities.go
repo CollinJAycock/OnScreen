@@ -30,7 +30,7 @@ type CapabilitiesServer struct {
 // All bools so clients can do `if (caps.features.trickplay)` without having
 // to interpret strings.
 type CapabilitiesFeatures struct {
-	Transcode         bool `json:"transcode"`
+	Transcode bool `json:"transcode"`
 	// ABRLadder advertises the adaptive-bitrate HLS ladder (multi-
 	// rendition master playlist). Clients can rely on the player's own
 	// ABR switching when true; when false the server emits a single
@@ -59,12 +59,12 @@ type CapabilitiesFeatures struct {
 	// the Settings → Security "Enable 2FA" flow and handle the
 	// totp_required login step. Always true — it's built-in, no external
 	// tool to probe (federated accounts still 2FA at their IdP).
-	TOTP              bool `json:"totp"`
+	TOTP bool `json:"totp"`
 	// WebDownloads gates the browser "Download" button on the watch
 	// page. Defaults off — admin toggle in /settings flips it. Public
 	// here so the web client can hide the button without a separate
 	// admin-only fetch.
-	WebDownloads      bool `json:"web_downloads"`
+	WebDownloads bool `json:"web_downloads"`
 }
 
 // CapabilitiesCodecs advertises which codecs this server can transcode
@@ -72,11 +72,11 @@ type CapabilitiesFeatures struct {
 // explicitly rather than assumed so we can drop codecs at runtime based
 // on detected encoders.
 type CapabilitiesCodecs struct {
-	Video         []string `json:"video"` // e.g. ["h264", "hevc"]
-	Audio         []string `json:"audio"` // e.g. ["aac", "ac3", "mp3"]
-	Containers    []string `json:"containers"`
-	Hardware      []string `json:"hardware"` // active encoder names: h264_nvenc, h264_amf, ...
-	HDRToneMap    bool     `json:"hdr_tonemap"`
+	Video      []string `json:"video"` // e.g. ["h264", "hevc"]
+	Audio      []string `json:"audio"` // e.g. ["aac", "ac3", "mp3"]
+	Containers []string `json:"containers"`
+	Hardware   []string `json:"hardware"` // active encoder names: h264_nvenc, h264_amf, ...
+	HDRToneMap bool     `json:"hdr_tonemap"`
 }
 
 // CapabilitiesLimits documents server-side caps so a client can pre-validate

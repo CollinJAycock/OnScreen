@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"time"
 )
 
 // TunerType identifies the backend that implements a tuner. Stored in the
@@ -112,8 +111,3 @@ func (r *Registry) Build(t TunerType, name string, config []byte) (Driver, error
 	}
 	return f(name, config)
 }
-
-// healthCheckInterval is how often the background loop pings each enabled
-// tuner. Aggressive enough to notice an unplugged HDHomeRun within a guide
-// refresh, slack enough to not flood the LAN.
-const healthCheckInterval = 2 * time.Minute

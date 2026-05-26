@@ -33,15 +33,15 @@ const (
 // so an aborted client killed the subprocess and produced zero output
 // even when the upstream proxy timeout was the only culprit.
 type OCRJob struct {
-	ID            string             `json:"job_id"`
-	Status        OCRJobStatus       `json:"status"`
-	FileID        uuid.UUID          `json:"file_id"`
-	StreamIndex   int                `json:"stream_index"`
-	StartedAt     time.Time          `json:"started_at"`
-	CompletedAt   *time.Time         `json:"completed_at,omitempty"`
-	Error         string             `json:"error,omitempty"`
-	Result        *gen.ExternalSubtitle `json:"-"` // surfaced by the handler when status=completed
-	expiresAt     time.Time
+	ID          string                `json:"job_id"`
+	Status      OCRJobStatus          `json:"status"`
+	FileID      uuid.UUID             `json:"file_id"`
+	StreamIndex int                   `json:"stream_index"`
+	StartedAt   time.Time             `json:"started_at"`
+	CompletedAt *time.Time            `json:"completed_at,omitempty"`
+	Error       string                `json:"error,omitempty"`
+	Result      *gen.ExternalSubtitle `json:"-"` // surfaced by the handler when status=completed
+	expiresAt   time.Time
 }
 
 // OCRJobStore tracks OCR jobs in memory with a TTL. Single-instance only

@@ -56,11 +56,11 @@ type TokenPair struct {
 	// it (same-origin asset requests carry the httpOnly cookie). Empty
 	// only on builds that predate the asset-token work; clients fall
 	// back to omitting the param (same-origin) in that case.
-	AssetToken   string    `json:"asset_token,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	UserID       uuid.UUID `json:"user_id"`
-	Username     string    `json:"username"`
-	IsAdmin      bool      `json:"is_admin"`
+	AssetToken string    `json:"asset_token,omitempty"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	UserID     uuid.UUID `json:"user_id"`
+	Username   string    `json:"username"`
+	IsAdmin    bool      `json:"is_admin"`
 	// TOTPRequired is set when a TOTP-enabled local account clears the
 	// password check but still owes a second factor. AccessToken /
 	// RefreshToken / AssetToken are empty in that case; the client posts

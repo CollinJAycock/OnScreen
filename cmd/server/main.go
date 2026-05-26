@@ -423,8 +423,9 @@ func run() error {
 	scanPathsFn = func() []string { return nil }
 	// artworkRootsFn returns the same paths grouped by library so the artwork
 	// handler can ACL-check against the owning library before serving a file.
+	// Reassigned below once libSvc exists. Unlike scanPathsFn it isn't passed
+	// into any closure before the reassignment, so no placeholder is needed.
 	var artworkRootsFn func() []api.ArtworkRoot
-	artworkRootsFn = func() []api.ArtworkRoot { return nil }
 	metaAgent := scanner.NewEnricher(agentFn, artworkMgr, mediaSvc, func() []string { return scanPathsFn() }, logger)
 
 	// Wire TVDB fallback — reads key from DB setting, falls back to env var.
