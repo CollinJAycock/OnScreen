@@ -1,19 +1,26 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup + device-transfer rules (Android 12+). On 12+ this file
+  replaces fullBackupContent for the cloud-backup case AND covers
+  the "transfer to new device" path that didn't exist pre-12.
+
+  Same posture as backup_rules.xml: exclude sharedpref + datastore
+  so auth tokens and the per-host token map never leave the device,
+  even if a future build re-enables backup. See the comment on
+  backup_rules.xml for the full rationale.
+
+  device-transfer is included so the "set up new phone from old"
+  flow also strips these directories — without it Android 12+
+  would gladly copy datastore/* to the new device during the
+  "looks like your old phone" wizard.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="datastore/" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="datastore/" />
     </device-transfer>
-    -->
 </data-extraction-rules>

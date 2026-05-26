@@ -1,5 +1,6 @@
 package tv.onscreen.mobile.playback
 
+import android.graphics.Rect
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -19,6 +20,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * composition. Audio-only playback leaves the flag false — backing
  * out of an audio item just ends playback, so no PiP and no
  * background-service bridge are needed.
+ *
+ * It also carries the PlayerView's bounds in window coordinates so
+ * MainActivity can pass them to PictureInPictureParams.setSourceRectHint:
+ * without that, the OS uses a default (centred zoom) animation for
+ * the auto-enter transition, which looks janky compared to first-party
+ * apps. With the rect set, the PiP window morphs out of the player
+ * surface directly. PlayerScreen updates this from
+ * Modifier.onGloballyPositioned on its AndroidView.
  */
 object ActiveVideoTracker {
     private val flag = AtomicBoolean(false)
@@ -27,6 +36,12 @@ object ActiveVideoTracker {
      *  setAutoEnterEnabled mirroring this flag, so the system can
      *  honour the gesture without an onUserLeaveHint() bridge. */
     @Volatile private var listener: ((Boolean) -> Unit)? = null
+
+    /** Bounds of the player surface in window coordinates, or null if
+     *  no player is currently composed. Read by MainActivity in
+     *  updatePipParams to feed PictureInPictureParams.setSourceRectHint
+     *  for smooth zoom-from-player auto-enter animation on Android 12+. */
+    @Volatile private var sourceRect: Rect? = null
 
     fun set(playing: Boolean) {
         val prev = flag.getAndSet(playing)
@@ -38,4 +53,10 @@ object ActiveVideoTracker {
     fun setListener(fn: ((Boolean) -> Unit)?) {
         listener = fn
     }
+
+    fun setSourceRect(rect: Rect?) {
+        sourceRect = rect
+    }
+
+    fun getSourceRect(): Rect? = sourceRect
 }
