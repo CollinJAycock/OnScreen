@@ -505,7 +505,7 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | Signal | Implementation |
 |---|---|
 | **Structured logs** | `log/slog` JSON to stdout; request ID on every log line; `trace_id`/`span_id` auto-added when a span is active |
-| **Metrics** | Prometheus; exposed at `METRICS_ADDR/metrics`. Go runtime + process collectors plus the `onscreen_*` families: HTTP request count/latency (chi route-template labels — per-ID URLs collapse to one series), DB query duration by SQL verb (pgx tracer wraps the existing OTel one), transcode sessions active (gauge from the live Valkey index) + jobs total by status, scanner files scanned per library, watch events by type, webhook delivery failures by URL, hub-cache refresh duration, and the rate-limiter fail-open counter. |
+| **Metrics** | Prometheus; exposed at `METRICS_ADDR/metrics`. Go runtime + process collectors plus the `onscreen_*` families: HTTP request count/latency (chi route-template labels — per-ID URLs collapse to one series), DB query duration labeled `query` by SQL verb (pgx tracer wraps the existing OTel one; `SELECT`/`INSERT`/`BEGIN`/`COMMIT`/… plus an `other` catch-all, never raw SQL text), transcode sessions active (gauge from the live Valkey index) + jobs total by status, scanner files scanned per library, watch events by type, webhook delivery failures by URL, hub-cache refresh duration, and the rate-limiter fail-open counter. |
 | **Tracing** | OpenTelemetry (OTLP/gRPC); configured in Settings → Observability and read once at startup (restart required). Auto-instruments HTTP (otelchi) + pgx (otelpgx). Custom spans on `scanner.library` and `transcode.run_job`. |
 | **Health** | `GET /health/live` (always 200); `GET /health/ready` (checks PG + Valkey) |
 
