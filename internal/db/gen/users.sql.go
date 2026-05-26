@@ -165,39 +165,32 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 }
 
 const createFirstAdmin = `-- name: CreateFirstAdmin :one
-WITH bootstrap_lock AS (
-    SELECT pg_advisory_xact_lock(hashtext('onscreen:first_admin'))
-)
-INSERT INTO users (username, email, password_hash, is_admin)
-SELECT $1, $2, $3, true
-FROM bootstrap_lock
-WHERE NOT EXISTS (SELECT 1 FROM users)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled FROM create_first_admin_atomic($1, $2, $3)
 `
 
 type CreateFirstAdminParams struct {
-	Username     string  `json:"username"`
-	Email        *string `json:"email"`
-	PasswordHash *string `json:"password_hash"`
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
 }
 
 // Atomic "first user is admin" gate — creates the row only if the
 // users table is empty. Returns (zero, pgx.ErrNoRows) when a user
 // already exists, letting the caller fall back to the normal admin-
-// only CreateUser path. Closes the race where two concurrent POST
-// /auth/register requests could each see count=0 and both become
-// admin.
+// only CreateUser path.
 //
-// The bare `WHERE NOT EXISTS (SELECT 1 FROM users)` is not atomic
-// under Postgres's default Read Committed isolation: both concurrent
-// transactions can read the snapshot-before-other's-commit, both see
-// the table empty, and both INSERTs succeed (each with a different
-// random username, so the username UNIQUE doesn't catch it). The
-// `pg_advisory_xact_lock` in the CTE serialises the entire INSERT
-// path on a single bootstrap-only lock key, held until the txn
-// commits — so the second caller waits, then re-runs WHERE NOT
-// EXISTS against the post-commit snapshot and sees the first admin,
-// causing the INSERT to skip and return zero rows.
+// Implementation lives in PL/pgSQL (migration 00006) because the
+// previous single-statement CTE form couldn't serialize under Read
+// Committed: an advisory lock acquired inside a CTE doesn't move the
+// snapshot, so the WHERE NOT EXISTS subquery still sees stale state
+// after waiting on a winning transaction. PL/pgSQL gives each internal
+// statement its own snapshot, so the SELECT count(*) inside the function
+// runs against post-lock state and sees the winner's committed row.
+//
+// The function returns SETOF users: one row on win, zero rows on race
+// loss. sqlc's :one surfaces a zero-row result as pgx.ErrNoRows, which
+// the existing caller already handles as the "someone got there first"
+// signal — no Go-side changes required.
 func (q *Queries) CreateFirstAdmin(ctx context.Context, arg CreateFirstAdminParams) (User, error) {
 	row := q.db.QueryRow(ctx, createFirstAdmin, arg.Username, arg.Email, arg.PasswordHash)
 	var i User

@@ -92,7 +92,19 @@ test-e2e:
 ## http://localhost:7070) plus E2E_USERNAME / E2E_PASSWORD for the auth
 ## paths and E2E_GAPLESS_ALBUM for the gapless rollover spec. First
 ## run only: `make test-browser-install` to download browser engines.
+##
+## Auto-rebuilds the embedded webui first if any file under web/src has
+## changed since the last sync — a stale internal/webui/dist used to
+## cause Playwright failures that looked like Svelte regressions but
+## were really just "Go server still serving yesterday's bundle". The
+## `find -newer` probe is cheap when nothing has changed.
 test-browser:
+	@if [ ! -f internal/webui/dist/_app/version.json ] || \
+	    [ -n "$$(find web/src -type f -newer internal/webui/dist/_app/version.json -print -quit)" ]; then \
+	  echo "==> embedded webui is stale relative to web/src; rebuilding"; \
+	  cd web && npm run build && cd ..; \
+	  rm -rf internal/webui/dist && cp -r web/dist internal/webui/dist; \
+	fi
 	cd web && npx playwright test
 
 test-browser-install:

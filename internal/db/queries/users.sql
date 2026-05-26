@@ -269,28 +269,21 @@ SELECT session_epoch FROM users WHERE id = $1;
 -- Atomic "first user is admin" gate — creates the row only if the
 -- users table is empty. Returns (zero, pgx.ErrNoRows) when a user
 -- already exists, letting the caller fall back to the normal admin-
--- only CreateUser path. Closes the race where two concurrent POST
--- /auth/register requests could each see count=0 and both become
--- admin.
+-- only CreateUser path.
 --
--- The bare `WHERE NOT EXISTS (SELECT 1 FROM users)` is not atomic
--- under Postgres's default Read Committed isolation: both concurrent
--- transactions can read the snapshot-before-other's-commit, both see
--- the table empty, and both INSERTs succeed (each with a different
--- random username, so the username UNIQUE doesn't catch it). The
--- `pg_advisory_xact_lock` in the CTE serialises the entire INSERT
--- path on a single bootstrap-only lock key, held until the txn
--- commits — so the second caller waits, then re-runs WHERE NOT
--- EXISTS against the post-commit snapshot and sees the first admin,
--- causing the INSERT to skip and return zero rows.
-WITH bootstrap_lock AS (
-    SELECT pg_advisory_xact_lock(hashtext('onscreen:first_admin'))
-)
-INSERT INTO users (username, email, password_hash, is_admin)
-SELECT $1, $2, $3, true
-FROM bootstrap_lock
-WHERE NOT EXISTS (SELECT 1 FROM users)
-RETURNING *;
+-- Implementation lives in PL/pgSQL (migration 00006) because the
+-- previous single-statement CTE form couldn't serialize under Read
+-- Committed: an advisory lock acquired inside a CTE doesn't move the
+-- snapshot, so the WHERE NOT EXISTS subquery still sees stale state
+-- after waiting on a winning transaction. PL/pgSQL gives each internal
+-- statement its own snapshot, so the SELECT count(*) inside the function
+-- runs against post-lock state and sees the winner's committed row.
+--
+-- The function returns SETOF users: one row on win, zero rows on race
+-- loss. sqlc's :one surfaces a zero-row result as pgx.ErrNoRows, which
+-- the existing caller already handles as the "someone got there first"
+-- signal — no Go-side changes required.
+SELECT * FROM create_first_admin_atomic($1, $2, $3);
 
 -- ── TOTP / 2FA ──────────────────────────────────────────────────────────────
 

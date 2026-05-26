@@ -130,7 +130,7 @@ func TestCreateFirstAdmin_Integration_AtomicUnderConcurrency(t *testing.T) {
 			username := "admin-" + uuid.New().String()[:12]
 			_, err := q.CreateFirstAdmin(ctx, gen.CreateFirstAdminParams{
 				Username:     username,
-				PasswordHash: &hash,
+				PasswordHash: hash,
 			})
 			if err == nil {
 				atomic.AddInt64(&success, 1)
@@ -178,7 +178,7 @@ func TestCreateFirstAdmin_Integration_NoOpWhenUsersExist(t *testing.T) {
 	hash := "placeholder-bcrypt-hash"
 	_, err := q.CreateFirstAdmin(ctx, gen.CreateFirstAdminParams{
 		Username:     "should-not-land",
-		PasswordHash: &hash,
+		PasswordHash: hash,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("expected pgx.ErrNoRows, got %v", err)

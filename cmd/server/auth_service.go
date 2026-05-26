@@ -101,15 +101,13 @@ func (s *authService) CreateFirstAdmin(ctx context.Context, username, email, pas
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
-	hashStr := string(hash)
-	var emailPtr *string
-	if email != "" {
-		emailPtr = &email
-	}
+	// The PL/pgSQL function NULLIFs an empty email so the partial unique
+	// index on email-when-not-null doesn't collide across blank-email
+	// users — Go side stays straightforward.
 	user, err := s.db.CreateFirstAdmin(ctx, gen.CreateFirstAdminParams{
 		Username:     username,
-		Email:        emailPtr,
-		PasswordHash: &hashStr,
+		Email:        email,
+		PasswordHash: string(hash),
 	})
 	if err != nil {
 		// pgx returns ErrNoRows when the WHERE NOT EXISTS clause filters
