@@ -18,5 +18,8 @@
   <!-- No <depend/> on local Postgres/Redis — a worker node uses the
        primary's, reached over the network. The installer rewrites the
        <env/> tags below from the worker .env before registering. -->
-  <env name="PATH" value="{app}\ffmpeg;%PATH%"/>
+  <!-- Match the server's PATH layout so the bundled pg client tools are
+       reachable in the unlikely case a worker grows a code path that needs
+       them. Harmless if it never does — they're already on disk. -->
+  <env name="PATH" value="{app}\ffmpeg;{app}\pgsql\bin;%PATH%"/>
 </service>

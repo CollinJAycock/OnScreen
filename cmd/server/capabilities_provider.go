@@ -6,6 +6,7 @@ import (
 
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/config"
+	"github.com/onscreen/onscreen/internal/dbtools"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 )
 
@@ -61,7 +62,10 @@ func (p *capabilitiesProvider) setRuntimeDetected(
 	p.hasFFmpeg = lookPathOK("ffmpeg")
 	p.hasTesseract = lookPathOK("tesseract")
 	p.hasFPCalc = lookPathOK("fpcalc")
-	p.hasPGDump = lookPathOK("pg_dump")
+	// pg_dump may be bundled next to the server binary (Windows installer
+	// stages it under pgsql/bin); dbtools.Available checks that path before
+	// falling back to PATH, matching what the backup handler actually uses.
+	p.hasPGDump = dbtools.Available("pg_dump")
 }
 
 // lookPathOK is a thin LookPath wrapper that swallows the *exec.Error

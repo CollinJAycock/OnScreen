@@ -23,6 +23,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/dbtools"
 )
 
 // BackupHandler exposes admin-only DB backup/restore operations.
@@ -90,8 +91,9 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if _, err := exec.LookPath("pg_dump"); err != nil {
-		h.logger.Error("backup: pg_dump not on PATH", "err", err)
+	pgDump, err := dbtools.Find("pg_dump")
+	if err != nil {
+		h.logger.Error("backup: pg_dump not found (looked in <exeDir>/pgsql/bin then PATH)", "err", err)
 		respond.Error(w, r, http.StatusServiceUnavailable, "PG_DUMP_UNAVAILABLE",
 			"pg_dump is not installed on the server. Install the Postgres client tools (postgresql-client) and restart.")
 		return
@@ -109,7 +111,7 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
-	cmd := exec.CommandContext(r.Context(), "pg_dump",
+	cmd := exec.CommandContext(r.Context(), pgDump,
 		"--format=custom",
 		"--no-owner",
 		"--no-acl",
@@ -192,8 +194,9 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if _, err := exec.LookPath("pg_restore"); err != nil {
-		h.logger.Error("restore: pg_restore not on PATH", "err", err)
+	pgRestore, err := dbtools.Find("pg_restore")
+	if err != nil {
+		h.logger.Error("restore: pg_restore not found (looked in <exeDir>/pgsql/bin then PATH)", "err", err)
 		respond.Error(w, r, http.StatusServiceUnavailable, "PG_RESTORE_UNAVAILABLE",
 			"pg_restore is not installed on the server. Install the Postgres client tools (postgresql-client) and restart.")
 		return
@@ -234,7 +237,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dumpVersion, vErr := extractDumpVersion(r.Context(), tmpPath)
+	dumpVersion, vErr := extractDumpVersion(r.Context(), pgRestore, tmpPath)
 	if vErr != nil {
 		// An unreadable goose_db_version isn't itself a fatal error —
 		// dumps from very old installs may predate the table or have
@@ -252,7 +255,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.CommandContext(r.Context(), "pg_restore",
+	cmd := exec.CommandContext(r.Context(), pgRestore,
 		"--clean",
 		"--if-exists",
 		"--no-owner",
@@ -263,6 +266,14 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
+	// pg_restore --clean --if-exists emits one "cannot drop inherited
+	// constraint" error per child of every partitioned table (the per-child
+	// DROP CONSTRAINT is rejected by Postgres because the inherited PK can
+	// only be dropped from the parent). The data restore lands fine and
+	// pg_restore continues, but it exits 1 and the stderr blob ends up in
+	// the admin's response — looking like a real failure. Classify those
+	// out so a clean restore reports clean. Other errors stay intact.
+	runErr, cleanedStderr, suppressed := classifyRestoreOutcome(runErr, stderr.String())
 
 	// If the dump was older than what this binary expects, bring the schema
 	// forward so the running server doesn't immediately 500 on missing
@@ -286,7 +297,8 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		"filename", hdr.Filename,
 		"size", hdr.Size,
 		"exit_err", runErr,
-		"stderr_bytes", stderr.Len(),
+		"stderr_bytes", len(cleanedStderr),
+		"suppressed_partition_warnings", suppressed,
 		"dump_version", dumpVersion,
 		"server_version", h.expectedVersion,
 		"migrated", migrated,
@@ -309,16 +321,79 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.Success(w, r, map[string]any{
-		"filename":       hdr.Filename,
-		"size":           hdr.Size,
-		"exit_error":     h.scrubDSN(errString(runErr)),
-		"stderr":         h.scrubDSN(stderr.String()),
-		"dump_version":   dumpVersion,
-		"server_version": h.expectedVersion,
-		"migrated":       migrated,
-		"migrate_error":  h.scrubDSN(errString(migrateErr)),
-		"forced":         force,
+		"filename":                      hdr.Filename,
+		"size":                          hdr.Size,
+		"exit_error":                    h.scrubDSN(errString(runErr)),
+		"stderr":                        h.scrubDSN(cleanedStderr),
+		"dump_version":                  dumpVersion,
+		"server_version":                h.expectedVersion,
+		"migrated":                      migrated,
+		"migrate_error":                 h.scrubDSN(errString(migrateErr)),
+		"forced":                        force,
+		"suppressed_partition_warnings": suppressed,
 	})
+}
+
+// classifyRestoreOutcome detects the benign-only pg_restore failure mode and
+// scrubs it from the response. The benign signature is:
+//
+//	pg_restore: error: could not execute query: ERROR:  cannot drop inherited constraint "..."
+//	Command was: ALTER TABLE IF EXISTS ONLY ... DROP CONSTRAINT IF EXISTS ...;
+//
+// emitted once per child of every partitioned table by `pg_restore --clean
+// --if-exists` (Postgres only lets you drop an inherited constraint from
+// the parent, so the per-child DROP is rejected; pg_restore continues, the
+// data lands, and the process still exits 1).
+//
+// When every counted error matches that signature, returns (nil, "",
+// suppressed_count) so the response envelope reports success and only
+// surfaces the suppressed count for visibility. Any other error type leaves
+// runErr and the (benign-filtered) stderr intact so real failures aren't
+// silently hidden.
+func classifyRestoreOutcome(runErr error, stderrOut string) (error, string, int) {
+	if runErr == nil {
+		return nil, stderrOut, 0
+	}
+	const benignSig = "cannot drop inherited constraint"
+
+	// `pg_restore: warning: errors ignored on restore: N` is the
+	// authoritative count of non-fatal errors pg_restore tallied. If it's
+	// absent the run failed before reaching summary (real failure).
+	totalErrors, ok := parseIgnoredErrorCount(stderrOut)
+	if !ok {
+		return runErr, stderrOut, 0
+	}
+	benignCount := strings.Count(stderrOut, benignSig)
+	if benignCount == 0 || benignCount != totalErrors {
+		// Mixed or non-benign — surface everything, don't mask real errors.
+		return runErr, stderrOut, 0
+	}
+
+	// All N errors were the partition-inheritance noise. The data restored
+	// fine; clear runErr and drop the stderr blob.
+	return nil, "", benignCount
+}
+
+// parseIgnoredErrorCount pulls N out of pg_restore's
+// "warning: errors ignored on restore: N" summary line. Returns ok=false
+// when the line is absent (means pg_restore didn't reach summary, i.e. a
+// real failure rather than the per-statement non-fatal kind).
+func parseIgnoredErrorCount(stderrOut string) (int, bool) {
+	const marker = "errors ignored on restore: "
+	idx := strings.Index(stderrOut, marker)
+	if idx < 0 {
+		return 0, false
+	}
+	tail := stderrOut[idx+len(marker):]
+	end := strings.IndexAny(tail, "\r\n")
+	if end < 0 {
+		end = len(tail)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(tail[:end]))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func errString(err error) string {
@@ -344,9 +419,11 @@ func (h *BackupHandler) scrubDSN(s string) string {
 // extractDumpVersion runs pg_restore in data-only mode against the archive
 // to dump just the goose_db_version table as SQL, then parses out the
 // highest applied version_id. Returns 0 with an error if the table is
-// missing or no rows are present.
-func extractDumpVersion(ctx context.Context, archivePath string) (int64, error) {
-	cmd := exec.CommandContext(ctx, "pg_restore",
+// missing or no rows are present. pgRestore is the absolute path to the
+// binary (resolved via dbtools.Find) so this works on Windows installs
+// where the bundled tools aren't on PATH.
+func extractDumpVersion(ctx context.Context, pgRestore, archivePath string) (int64, error) {
+	cmd := exec.CommandContext(ctx, pgRestore,
 		"--data-only",
 		"--table=goose_db_version",
 		"--file=-",

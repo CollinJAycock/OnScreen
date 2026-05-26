@@ -49,7 +49,11 @@ function Set-ServiceEnv {
     param([string]$XmlName)
     $xmlPath = "$InstallDir\$XmlName"
     $xml = Get-Content $xmlPath -Raw
-    $envLines = @('  <env name="PATH" value="{app}\ffmpeg;%PATH%"/>'.Replace('{app}', $InstallDir))
+    # PATH includes the bundled ffmpeg AND pgsql\bin. The latter is what
+    # makes the backup / restore endpoints work out-of-box on Windows —
+    # dbtools.Find also resolves them via the install layout, but having
+    # them on PATH keeps psql / pg_isready usable for ad-hoc maintenance.
+    $envLines = @('  <env name="PATH" value="{app}\ffmpeg;{app}\pgsql\bin;%PATH%"/>'.Replace('{app}', $InstallDir))
     Get-Content $envFile | ForEach-Object {
         if ($_ -match '^\s*(?:export\s+)?(\w+)\s*=\s*["'']?(.*?)["'']?\s*$') {
             $key = $Matches[1]; $val = $Matches[2]
