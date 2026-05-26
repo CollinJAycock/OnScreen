@@ -519,7 +519,7 @@ TLS_KEY_FILE=/etc/onscreen/tls/privkey.pem
 
 When both are set the server uses `ListenAndServeTLS` on `LISTEN_ADDR` (commonly retargeted to `:443`). Setting only one is a startup error so you don't accidentally deploy thinking HTTPS is on.
 
-**Or upload a cert in the UI.** If you'd rather not put cert files on disk, leave the env vars unset and paste the certificate + key under **Settings ▸ System ▸ HTTPS / TLS** instead. They're stored encrypted in the database and loaded into memory at startup (restart-required). The env file paths, when set, take precedence. This is cluster-wide — the common single-host / wildcard-cert case; for per-host certs across a cluster, use the env path on each node or a reverse proxy. The same renewal caveat applies: the server doesn't auto-renew, so re-upload and restart on renewal.
+**Or upload a cert in the UI.** If you'd rather not put cert files on disk, leave the env vars unset and paste the certificate + key under **Settings ▸ Security ▸ HTTPS / TLS** instead. They're stored encrypted in the database and loaded into memory at startup (restart-required). The env file paths, when set, take precedence. This is cluster-wide — the common single-host / wildcard-cert case; for per-host certs across a cluster, use the env path on each node or a reverse proxy. The same renewal caveat applies: the server doesn't auto-renew, so re-upload and restart on renewal.
 
 Where the certs come from is your call:
 

@@ -106,10 +106,14 @@ test.describe('Settings ▸ System — UI', () => {
     await loginUI(page);
 
     await page.goto('/settings/system');
-    // Restart-required notice + the new sections render.
+    // Restart-required notice + the new sections render. (HTTPS/TLS moved to
+    // Settings ▸ Security; covered separately by the TLS spec.)
     await expect(page.getByText(/restart the server to apply/i)).toBeVisible();
     await expect(page.getByRole('heading', { name: /Scanner/i })).toBeVisible();
     await expect(page.getByRole('heading', { name: /LAN discovery/i })).toBeVisible();
+
+    // Drive the Security page in the same login session and assert TLS lives there now.
+    await page.goto('/settings/security');
     await expect(page.getByRole('heading', { name: /HTTPS \/ TLS/i })).toBeVisible();
 
     const real = errors.filter((e) => !/cloudflareinsights/i.test(e));

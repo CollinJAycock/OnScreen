@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { authApi } from '$lib/api';
+  import { authApi, settingsApi } from '$lib/api';
+  import type { TLSStatus } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   type View = 'loading' | 'disabled' | 'enrolling' | 'recovery' | 'enabled';
@@ -20,7 +21,33 @@
   // Disable state.
   let disableCode = '';
 
-  onMount(loadStatus);
+  // HTTPS / TLS state. Admin-uploaded certificate served from an in-memory
+  // tls.Config (no file on disk); env TLS_CERT_FILE / TLS_KEY_FILE still win
+  // and lock the form when set.
+  let tls: TLSStatus = { configured: false, source: 'none' };
+  let tlsCertPem = '';
+  let tlsKeyPem = '';
+  let tlsSaving = false;
+
+  onMount(async () => {
+    await loadStatus();
+    try { tls = await settingsApi.getTLS(); } catch { /* non-fatal */ }
+  });
+
+  async function saveTLS() {
+    tlsSaving = true;
+    try {
+      await settingsApi.updateTLS({ cert_pem: tlsCertPem, key_pem: tlsKeyPem });
+      toast.success(tlsCertPem ? 'TLS certificate saved — restart to serve HTTPS' : 'TLS certificate cleared — restart to apply');
+      tlsCertPem = '';
+      tlsKeyPem = '';
+      tls = await settingsApi.getTLS();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      tlsSaving = false;
+    }
+  }
 
   async function loadStatus() {
     error = '';
@@ -214,6 +241,56 @@
       <p class="hint">Enter a current authenticator code or a recovery code to turn 2FA off.</p>
     {/if}
   </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>HTTPS / TLS certificate</h2>
+        <p class="sub">
+          Serve HTTPS directly without a reverse proxy. The key is stored
+          encrypted and loaded into memory at startup — no cert file on disk.
+          Restart-required. For per-host certs in a cluster, use a reverse proxy
+          or the <code>TLS_CERT_FILE</code> env path instead.
+        </p>
+      </div>
+      {#if tls.configured}
+        <span class="badge on">{tls.source === 'env-file' ? 'env file' : 'uploaded'}</span>
+      {:else}
+        <span class="badge off">plain HTTP</span>
+      {/if}
+    </div>
+
+    {#if tls.source === 'env-file'}
+      <p class="muted">
+        TLS is configured via <code>TLS_CERT_FILE</code> / <code>TLS_KEY_FILE</code>.
+        Unset those env vars to manage the certificate here.
+      </p>
+    {:else}
+      {#if tls.configured}
+        <p class="muted">
+          Serving an uploaded certificate{#if tls.subject} for <strong>{tls.subject}</strong>{/if}{#if tls.not_after} — expires {new Date(tls.not_after).toLocaleDateString()}{/if}.
+        </p>
+      {/if}
+      <label class="tls-field">
+        <span>Certificate (PEM, full chain)</span>
+        <textarea rows="5" bind:value={tlsCertPem} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+      </label>
+      <label class="tls-field">
+        <span>Private key (PEM)</span>
+        <textarea rows="5" bind:value={tlsKeyPem} placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+      </label>
+      <div class="tls-actions">
+        <button class="btn-primary" disabled={tlsSaving || !tlsCertPem || !tlsKeyPem} on:click={saveTLS}>
+          {tlsSaving ? 'Saving…' : 'Upload certificate'}
+        </button>
+        {#if tls.configured}
+          <button class="btn-secondary" disabled={tlsSaving} on:click={() => { tlsCertPem = ''; tlsKeyPem = ''; saveTLS(); }}>
+            Clear certificate
+          </button>
+        {/if}
+      </div>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -264,4 +341,25 @@
   .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
   .link { background: none; border: none; color: var(--text-muted); font-size: 0.78rem; cursor: pointer; margin-top: 0.75rem; padding: 0; }
   .link:hover { color: var(--text-primary); }
+
+  /* Spacing between sibling cards (added when TLS card landed alongside 2FA). */
+  section.card + section.card { margin-top: 1rem; }
+
+  /* TLS / HTTPS section. */
+  .tls-field { display: block; margin-top: 0.7rem; }
+  .tls-field > span { display: block; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.3rem; }
+  .tls-field textarea {
+    width: 100%;
+    font-family: ui-monospace, monospace;
+    font-size: 0.75rem;
+    padding: 0.45rem 0.6rem;
+    background: #111120;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .tls-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
+  code { font-family: ui-monospace, monospace; font-size: 0.78rem; background: var(--bg-hover); padding: 0.05rem 0.3rem; border-radius: 3px; }
 </style>
