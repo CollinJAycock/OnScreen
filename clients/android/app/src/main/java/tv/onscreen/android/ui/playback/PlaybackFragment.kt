@@ -722,7 +722,32 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun refreshSecondaryActions() {
-        // Hide audio/subtitle/chapter buttons if no choices to make.
+        // Gate each secondary button on whether the data behind it is
+        // meaningful. Permissive on Audio + Subtitle to match Plex /
+        // Jellyfin / Emby UX:
+        //
+        // - Audio: any track (>= 1). Showing "1 of 1" lets the viewer
+        //   confirm what they're listening to without leaving playback.
+        //   (Previous `> 1` gate hid the button on files with a single
+        //   audio track, which is most modern movies — surprising for
+        //   users who came from another player.)
+        // - Subtitles: always shown. Even when the file has zero
+        //   embedded streams, the picker still offers "Off" and
+        //   "Find more online…" (OpenSubtitles search) — both of
+        //   those are useful surfaces a user expects to reach from
+        //   playback regardless of what the file ships with.
+        // - Chapters: ≥ 2 (single chapter == the whole movie, useless).
+        // - Speed: audiobooks only (a 2× movie is rarely what users
+        //   want, and music must stay at 1× to preserve pitch).
+        //
+        // After mutating the adapter, ask the host to re-bind the
+        // controls row — Leanback's ControlBarPresenter is usually
+        // observe-the-adapter-and-update, but mid-lifecycle adapter
+        // mutations (we clear+re-add on each state emit) have been
+        // observed to not always refresh the rendered buttons. The
+        // notifyPlaybackRowChanged() call costs ~nothing and turns
+        // a flaky "buttons missing after a state re-emit" into a
+        // deterministic redraw.
         val sa = subtitleAction ?: return
         val aa = audioAction ?: return
         val ca = chaptersAction ?: return
@@ -730,17 +755,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val secondary = (glue?.controlsRow as? PlaybackControlsRow)?.secondaryActionsAdapter as? ArrayObjectAdapter
             ?: return
         secondary.clear()
-        if (audioStreams.size > 1) secondary.add(aa)
-        if (subtitleStreams.isNotEmpty()) secondary.add(sa)
-        // Single-chapter is degenerate (the whole movie). Only surface
-        // the picker when there are at least 2 chapters worth jumping
-        // between.
+        if (audioStreams.isNotEmpty()) secondary.add(aa)
+        secondary.add(sa) // always — picker has "Off" + "Find more online…" entries
         if (chapters.size >= 2) secondary.add(ca)
-        // Audiobooks get a speed picker — the canonical
-        // audiobook-listener feature. Movies/episodes don't (a
-        // 2x movie is rarely what the user wants); music keeps
-        // playback at 1x to preserve pitch.
         if (currentItemType == "audiobook") secondary.add(sp)
+
+        // Force a row re-bind so a stale ControlBarPresenter view
+        // doesn't keep showing the pre-refresh button set.
+        glue?.host?.notifyPlaybackRowChanged()
     }
 
     /** Seek by [deltaMs] from the current position, clamped to the
