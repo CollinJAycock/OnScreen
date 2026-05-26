@@ -57,6 +57,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -274,7 +276,14 @@ private fun PlayerHost(
     // user navigates home.
     DisposableEffect(isAudioOnly) {
         ActiveVideoTracker.set(!isAudioOnly)
-        onDispose { ActiveVideoTracker.set(false) }
+        onDispose {
+            ActiveVideoTracker.set(false)
+            // Drop the source-rect hint along with the playing flag —
+            // a stale rect would still be applied to setSourceRectHint
+            // even when no video is on screen, which can confuse the
+            // PiP animation on the next player session.
+            ActiveVideoTracker.setSourceRect(null)
+        }
     }
 
     // PiP mode (set by MainActivity.onPictureInPictureModeChanged
@@ -428,7 +437,22 @@ private fun PlayerHost(
     }
 
     AndroidView(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // Feed the surface bounds to ActiveVideoTracker so
+            // MainActivity can hand them to setSourceRectHint on the
+            // PiP params. Without this the auto-enter animation
+            // doesn't morph out of the player view — see the comment
+            // on ActiveVideoTracker.setSourceRect.
+            .onGloballyPositioned { coords ->
+                val r = coords.boundsInWindow()
+                ActiveVideoTracker.setSourceRect(
+                    android.graphics.Rect(
+                        r.left.toInt(), r.top.toInt(),
+                        r.right.toInt(), r.bottom.toInt(),
+                    ),
+                )
+            },
         factory = { ctx ->
             PlayerView(ctx).apply {
                 this.player = player

@@ -79,6 +79,11 @@ android {
 
     buildFeatures {
         compose = true
+        // Generates tv.onscreen.mobile.BuildConfig (BuildConfig.DEBUG,
+        // BuildConfig.VERSION_NAME, …) so release-build gating (e.g.
+        // WebView remote-debugging in the EPUB reader, future logging
+        // verbosity) can live in code rather than gradle conditionals.
+        buildConfig = true
     }
 
     compileOptions {

@@ -1,13 +1,26 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto-backup rules (Android 6.0 – 11). Paired with allowBackup="false"
+  on the application tag, so these rules are belt-and-suspenders: the
+  manifest flag already suppresses auto-backup entirely on every API
+  level, but if a future build flips that to true (e.g. to ship a
+  user-settable "include preferences in cloud backup" toggle), the
+  excludes below keep auth secrets out of Google Drive automatically.
+
+  What we exclude:
+   - sharedpref / encrypted_prefs: holds the PASETO refresh + asset
+     tokens and the per-host token map (BaseUrlInterceptor). Restoring
+     these onto a different account / device would hand the new device
+     a token that the issuing server has no reason to honour, but the
+     refresh path would still flap on every cold start.
+   - datastore: ServerPrefs server URL + display preferences. Server
+     URL is benign in isolation, but it's persisted via the same
+     datastore that BaseUrlInterceptor reads — letting the whole tree
+     restore as one carries the auth state with it.
+
+  Everything else (no rule == included by default) is fine to roam.
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="datastore/" />
 </full-backup-content>

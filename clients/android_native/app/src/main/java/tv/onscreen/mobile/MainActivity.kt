@@ -69,17 +69,22 @@ class MainActivity : ComponentActivity() {
      *  while a video is playing (otherwise the system would PiP an
      *  empty surface during routine navigation). Audio-only items
      *  intentionally aren't backgrounded — closing the player ends
-     *  playback for tracks, audiobooks, and podcasts. */
+     *  playback for tracks, audiobooks, and podcasts.
+     *
+     *  setSourceRectHint is supplied when the PlayerScreen has
+     *  reported its surface bounds via ActiveVideoTracker — without
+     *  it the OS falls back to a centred-zoom animation that doesn't
+     *  morph out of the player view, so the auto-enter looks janky
+     *  next to first-party apps. */
     private fun updatePipParams() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         val playing = ActiveVideoTracker.isPlaying()
         try {
-            setPictureInPictureParams(
-                PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .setAutoEnterEnabled(playing)
-                    .build(),
-            )
+            val builder = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .setAutoEnterEnabled(playing)
+            ActiveVideoTracker.getSourceRect()?.let { builder.setSourceRectHint(it) }
+            setPictureInPictureParams(builder.build())
         } catch (_: Exception) {
             // Some skins reject PiP outright — swallow.
         }

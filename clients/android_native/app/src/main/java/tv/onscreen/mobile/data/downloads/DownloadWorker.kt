@@ -127,12 +127,14 @@ class DownloadWorker @AssistedInject constructor(
                 val totalSize = if (contentLength > 0) resumeFrom + contentLength else 0L
 
                 outFile.parentFile?.mkdirs()
-                outFile.outputStream().use { out ->
-                    if (resumeFrom > 0) {
-                        // Append mode — re-open for write at current EOF.
-                        out.close()
-                    }
-                }
+                // Open the sink in append mode when resuming so the previously
+                // downloaded 0..resumeFrom bytes survive. A previous version of
+                // this block opened outFile.outputStream() (which defaults to
+                // truncate=true) before the append-mode handle, so resume
+                // silently wiped the partial file and the new bytes landed at
+                // position 0 — the resulting file was missing its head bytes
+                // and the cached size_bytes lied. Open the append/truncate
+                // sink directly, exactly once.
                 val sink = if (resumeFrom > 0) {
                     java.io.FileOutputStream(outFile, /*append*/ true)
                 } else {
