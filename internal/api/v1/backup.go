@@ -273,7 +273,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	// pg_restore continues, but it exits 1 and the stderr blob ends up in
 	// the admin's response — looking like a real failure. Classify those
 	// out so a clean restore reports clean. Other errors stay intact.
-	runErr, cleanedStderr, suppressed := classifyRestoreOutcome(runErr, stderr.String())
+	cleanedStderr, suppressed, runErr := classifyRestoreOutcome(runErr, stderr.String())
 
 	// If the dump was older than what this binary expects, bring the schema
 	// forward so the running server doesn't immediately 500 on missing
@@ -350,9 +350,9 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 // surfaces the suppressed count for visibility. Any other error type leaves
 // runErr and the (benign-filtered) stderr intact so real failures aren't
 // silently hidden.
-func classifyRestoreOutcome(runErr error, stderrOut string) (error, string, int) {
+func classifyRestoreOutcome(runErr error, stderrOut string) (string, int, error) {
 	if runErr == nil {
-		return nil, stderrOut, 0
+		return stderrOut, 0, nil
 	}
 	const benignSig = "cannot drop inherited constraint"
 
@@ -361,17 +361,17 @@ func classifyRestoreOutcome(runErr error, stderrOut string) (error, string, int)
 	// absent the run failed before reaching summary (real failure).
 	totalErrors, ok := parseIgnoredErrorCount(stderrOut)
 	if !ok {
-		return runErr, stderrOut, 0
+		return stderrOut, 0, runErr
 	}
 	benignCount := strings.Count(stderrOut, benignSig)
 	if benignCount == 0 || benignCount != totalErrors {
 		// Mixed or non-benign — surface everything, don't mask real errors.
-		return runErr, stderrOut, 0
+		return stderrOut, 0, runErr
 	}
 
 	// All N errors were the partition-inheritance noise. The data restored
 	// fine; clear runErr and drop the stderr blob.
-	return nil, "", benignCount
+	return "", benignCount, nil
 }
 
 // parseIgnoredErrorCount pulls N out of pg_restore's

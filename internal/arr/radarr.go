@@ -12,13 +12,13 @@ import (
 // (Radarr requires the lookup payload echoed back unchanged for fields like
 // `images` and `year` rather than just the tmdbId).
 type MovieLookup struct {
-	Title       string        `json:"title"`
-	OriginalTitle string      `json:"originalTitle,omitempty"`
-	TMDBID      int           `json:"tmdbId"`
-	Year        int           `json:"year"`
-	TitleSlug   string        `json:"titleSlug"`
-	Overview    string        `json:"overview,omitempty"`
-	Images      []MovieImage  `json:"images,omitempty"`
+	Title         string       `json:"title"`
+	OriginalTitle string       `json:"originalTitle,omitempty"`
+	TMDBID        int          `json:"tmdbId"`
+	Year          int          `json:"year"`
+	TitleSlug     string       `json:"titleSlug"`
+	Overview      string       `json:"overview,omitempty"`
+	Images        []MovieImage `json:"images,omitempty"`
 }
 
 // MovieImage is Radarr's image descriptor (poster, fanart, etc.).
@@ -51,7 +51,7 @@ func (c *Client) LookupMovieByTMDB(ctx context.Context, tmdbID int) (*MovieLooku
 // flag almost every caller wants since the whole point of the request is
 // "go fetch this now."
 type AddMovieOptions struct {
-	SearchForMovie         bool `json:"searchForMovie"`
+	SearchForMovie          bool `json:"searchForMovie"`
 	IgnoreEpisodesWithFiles bool `json:"ignoreEpisodesWithFiles,omitempty"`
 }
 

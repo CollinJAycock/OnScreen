@@ -826,18 +826,18 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 // commit a destructive reparent + delete.
 //
 // Accepts two safe shapes:
-//   1. The loser title equals the survivor's canonical title after
-//      year-suffix-strip + alphanumeric normalization. Catches the
-//      year-suffix duplicates the scanner produces today
-//      ("1923 2022" → "1923", "Battlestar Galactica 1978" →
-//      "Battlestar Galactica", "All Creatures Great Small 2020"
-//      → "All Creatures Great & Small").
-//   2. The loser title equals the survivor's original_title (or the
-//      TMDB result's original_title) under the same normalization.
-//      Catches cross-language aliases ("La casa de papel" →
-//      "Money Heist", "El Descubrimiento de las Brujas" →
-//      "A Discovery of Witches") which the title comparison would
-//      reject but which TMDB knows are the same show.
+//  1. The loser title equals the survivor's canonical title after
+//     year-suffix-strip + alphanumeric normalization. Catches the
+//     year-suffix duplicates the scanner produces today
+//     ("1923 2022" → "1923", "Battlestar Galactica 1978" →
+//     "Battlestar Galactica", "All Creatures Great Small 2020"
+//     → "All Creatures Great & Small").
+//  2. The loser title equals the survivor's original_title (or the
+//     TMDB result's original_title) under the same normalization.
+//     Catches cross-language aliases ("La casa de papel" →
+//     "Money Heist", "El Descubrimiento de las Brujas" →
+//     "A Discovery of Witches") which the title comparison would
+//     reject but which TMDB knows are the same show.
 //
 // Anything else (vague TMDB matches, spinoffs, regional variants
 // like "Ghosts UK") returns false. The caller should log + leave the
@@ -1500,8 +1500,8 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 	// as a primary source when TMDB ID is absent, instead of being
 	// gated behind a failed TMDB call.
 	var (
-		result    *metadata.EpisodeResult
-		usedTVDB  bool
+		result   *metadata.EpisodeResult
+		usedTVDB bool
 	)
 
 	var tvdbClient TVDBFallback

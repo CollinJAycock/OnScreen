@@ -98,9 +98,9 @@ func TestSearch_Integration_ForeignTitle(t *testing.T) {
 
 	libID := mustCreateLibrary(ctx, t, q)
 	ids := seedSearchCorpus(ctx, t, q, libID, map[string]string{
-		"Amélie":           "Le Fabuleux Destin d'Amélie Poulain",
-		"Pan's Labyrinth":  "El Laberinto del Fauno",
-		"Crouching Tiger":  "臥虎藏龍",
+		"Amélie":          "Le Fabuleux Destin d'Amélie Poulain",
+		"Pan's Labyrinth": "El Laberinto del Fauno",
+		"Crouching Tiger": "臥虎藏龍",
 	})
 
 	rows, err := q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
@@ -128,9 +128,9 @@ func TestSearch_Integration_WebsearchSyntax(t *testing.T) {
 
 	libID := mustCreateLibrary(ctx, t, q)
 	ids := seedSearchCorpus(ctx, t, q, libID, map[string]string{
-		"The Dark Knight":         "",
-		"Knight and Day":          "",
-		"A Knight's Tale":         "",
+		"The Dark Knight": "",
+		"Knight and Day":  "",
+		"A Knight's Tale": "",
 	})
 
 	rows, err := q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{

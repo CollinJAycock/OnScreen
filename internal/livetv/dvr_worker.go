@@ -53,12 +53,12 @@ type DVRMediaItemParams struct {
 // each, and on completion creates a media_items row so the recording
 // appears in the user's library.
 type DVRWorker struct {
-	cfg      DVRWorkerConfig
-	q        DVRQuerier
-	live     *Service
-	lib      DVRLibraryResolver
-	media    DVRMediaCreator
-	logger   structuredLogger
+	cfg    DVRWorkerConfig
+	q      DVRQuerier
+	live   *Service
+	lib    DVRLibraryResolver
+	media  DVRMediaCreator
+	logger structuredLogger
 
 	mu     sync.Mutex
 	active map[uuid.UUID]*captureSession

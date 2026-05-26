@@ -394,8 +394,8 @@ func TestShouldSkipDir(t *testing.T) {
 		// with leading dots or with `recycle` / `trash` as substrings.
 		{"Movies", false},
 		{".hidden_user_folder", false},
-		{"TrashTheRoom (2024)", false},     // title contains "Trash"
-		{"Recycle (1990)", false},          // title is "Recycle"
+		{"TrashTheRoom (2024)", false}, // title contains "Trash"
+		{"Recycle (1990)", false},      // title is "Recycle"
 		{".something_else", false},
 		{"$NOTRECYCLE", false},
 	}

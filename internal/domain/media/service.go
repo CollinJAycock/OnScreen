@@ -418,23 +418,23 @@ type PhotoMetadataParams struct {
 
 // CreateItemParams holds the input for creating a media item.
 type CreateItemParams struct {
-	LibraryID                 uuid.UUID
-	Type                      string
-	Title                     string
-	SortTitle                 string
-	OriginalTitle             *string
-	Year                      *int
-	Summary                   *string
-	Tagline                   *string
-	Rating                    *float64
-	AudienceRating            *float64
-	ContentRating             *string
-	DurationMS                *int64
-	Genres                    []string
-	Tags                      []string
-	TMDBID                    *int
-	TVDBID                    *int
-	IMDBID                    *string
+	LibraryID      uuid.UUID
+	Type           string
+	Title          string
+	SortTitle      string
+	OriginalTitle  *string
+	Year           *int
+	Summary        *string
+	Tagline        *string
+	Rating         *float64
+	AudienceRating *float64
+	ContentRating  *string
+	DurationMS     *int64
+	Genres         []string
+	Tags           []string
+	TMDBID         *int
+	TVDBID         *int
+	IMDBID         *string
 	// AniListID lets the scanner pre-set the canonical AniList row
 	// when the user has embedded `[anilist-NNN]` in the folder name —
 	// the same operator escape hatch Plex+Hama and Jellyfin+Shoko

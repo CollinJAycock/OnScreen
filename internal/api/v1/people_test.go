@@ -52,9 +52,9 @@ type fakePeopleItems struct {
 	tmdbID   *int
 	itemErr  error
 
-	resolveTMDB    *int
-	resolveErr     error
-	resolveCalled  bool
+	resolveTMDB   *int
+	resolveErr    error
+	resolveCalled bool
 }
 
 func (f *fakePeopleItems) GetItemTypeAndTMDB(_ context.Context, _ uuid.UUID) (string, *int, error) {

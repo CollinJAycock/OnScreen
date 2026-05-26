@@ -87,8 +87,6 @@ func Forbidden(w http.ResponseWriter, r *http.Request) {
 	Error(w, r, http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
 }
 
-// InternalError writes a 500 error response. The internal error is not exposed
-// to the client; it should be logged by the caller.
 // ServiceUnavailable writes a 503 — the node can't serve the request right now
 // (e.g. a write reached a read-only standby during a failover; a dependency is
 // down). Distinct from a 500 so clients/proxies know to retry, possibly against

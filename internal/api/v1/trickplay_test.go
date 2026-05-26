@@ -93,7 +93,9 @@ func tpItem() *media.Item {
 	return &media.Item{ID: uuid.New(), LibraryID: uuid.New()}
 }
 
-func silentLogger() *slog.Logger { return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})) }
+func silentLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
+}
 
 // ── Status ───────────────────────────────────────────────────────────────────
 
@@ -355,10 +357,10 @@ func TestTrickplay_ServeFile_RejectsBadFilenames(t *testing.T) {
 	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
 	bad := []string{
 		"../etc/passwd",
-		"sprite_1.jpg",         // need 3-digit zero-padded
-		"sprite_0001.jpg",      // 4 digits, not 3
+		"sprite_1.jpg",    // need 3-digit zero-padded
+		"sprite_0001.jpg", // 4 digits, not 3
 		"index.vtt.bak",
-		"INDEX.VTT",            // case-sensitive whitelist
+		"INDEX.VTT", // case-sensitive whitelist
 		"sprite_abc.jpg",
 		"random.txt",
 		"",

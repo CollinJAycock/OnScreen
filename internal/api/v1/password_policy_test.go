@@ -10,7 +10,7 @@ func TestValidatePassword_RejectsTooShort(t *testing.T) {
 		"",
 		"a",
 		"shortpw",
-		"elevenchar1",  // 11 chars — one below floor
+		"elevenchar1", // 11 chars — one below floor
 	}
 	for _, pw := range cases {
 		err := ValidatePassword(pw)
@@ -22,10 +22,10 @@ func TestValidatePassword_RejectsTooShort(t *testing.T) {
 
 func TestValidatePassword_AcceptsAtAndAboveFloor(t *testing.T) {
 	cases := []string{
-		"twelvecharsX",                                                   // exactly the floor
-		"thirteenchars1",                                                 // one above
+		"twelvecharsX",   // exactly the floor
+		"thirteenchars1", // one above
 		"a-very-long-and-secure-passphrase-with-many-characters-indeed", // long
-		"\x00\x01\x02unicodeさようなら",                                       // arbitrary bytes
+		"\x00\x01\x02unicodeさようなら",                                      // arbitrary bytes
 	}
 	for _, pw := range cases {
 		if err := ValidatePassword(pw); err != nil {

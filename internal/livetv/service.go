@@ -23,15 +23,15 @@ var ErrNotFound = errors.New("livetv: not found")
 // are looked up by ID through the DriverManager — the row itself just
 // carries the persisted config + descriptive fields.
 type TunerDevice struct {
-	ID          uuid.UUID
-	Type        TunerType
-	Name        string
-	Config      json.RawMessage
-	TuneCount   int
-	Enabled     bool
-	LastSeenAt  *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID         uuid.UUID
+	Type       TunerType
+	Name       string
+	Config     json.RawMessage
+	TuneCount  int
+	Enabled    bool
+	LastSeenAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Channel mirrors a `channels` row. Joined-in tuner metadata appears on
@@ -54,16 +54,16 @@ type Channel struct {
 // shape depends on Type: XMLTV uses {"url": "..."}; Schedules Direct
 // uses {"username":"...","password_hash":"...","lineup":"..."}.
 type EPGSource struct {
-	ID                  uuid.UUID
-	Type                EPGSourceType
-	Name                string
-	Config              json.RawMessage
-	RefreshIntervalMin  int32
-	Enabled             bool
-	LastPullAt          *time.Time
-	LastError           *string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                 uuid.UUID
+	Type               EPGSourceType
+	Name               string
+	Config             json.RawMessage
+	RefreshIntervalMin int32
+	Enabled            bool
+	LastPullAt         *time.Time
+	LastError          *string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // EPGSourceType identifies an EPG backend.
@@ -243,14 +243,9 @@ type UpsertChannelParams struct {
 	LogoURL  *string
 }
 
-// Service ties together the Querier (persistence), the Registry (per-row
-// Driver factories), and an in-memory cache of live Drivers. A Driver
-// instance is constructed once per tuner_devices row and reused so that
-// tuner state (e.g. cached tune count from /discover.json) doesn't get
-// thrown away on every API call.
-// SchedulesDirectClient is the slice of schedulesdirect.Client the
-// EPG refresh path uses — kept narrow so tests can fake it without
-// touching the network.
+// SchedulesDirectClient is the slice of schedulesdirect.Client the EPG
+// refresh path uses — kept narrow so tests can fake it without touching
+// the network.
 type SchedulesDirectClient interface {
 	ListLineups(ctx context.Context) ([]schedulesdirect.Lineup, error)
 	GetLineup(ctx context.Context, lineupID string) (*schedulesdirect.LineupMap, error)
@@ -263,6 +258,11 @@ type SchedulesDirectClient interface {
 // Replaceable in tests via SetSchedulesDirectClientFn.
 type SchedulesDirectClientFn func(username, passwordSHA1 string) SchedulesDirectClient
 
+// Service ties together the Querier (persistence), the Registry (per-row
+// Driver factories), and an in-memory cache of live Drivers. A Driver
+// instance is constructed once per tuner_devices row and reused so that
+// tuner state (e.g. cached tune count from /discover.json) doesn't get
+// thrown away on every API call.
 type Service struct {
 	q          Querier
 	registry   *Registry

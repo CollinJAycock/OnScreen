@@ -20,10 +20,10 @@ http://stream.url/path
 `))
 	f.Add([]byte("")) // empty
 	f.Add([]byte("#EXTM3U\n"))
-	f.Add([]byte("#EXTINF:\n")) // EXTINF with no body
-	f.Add([]byte("http://orphan.url\n")) // stream without EXTINF
+	f.Add([]byte("#EXTINF:\n"))                                            // EXTINF with no body
+	f.Add([]byte("http://orphan.url\n"))                                   // stream without EXTINF
 	f.Add([]byte("#EXTINF:-1,Channel\nhttp://x\n#EXTINF:-1,\nhttp://y\n")) // empty name
-	f.Add([]byte("#EXTINF:-1 tvg-id=\"\\\"\\\"\\\"\" ,\nhttp://x\n"))     // mangled quotes
+	f.Add([]byte("#EXTINF:-1 tvg-id=\"\\\"\\\"\\\"\" ,\nhttp://x\n"))      // mangled quotes
 	f.Add(bytes.Repeat([]byte("X"), 200_000))                              // a single huge line
 
 	f.Fuzz(func(t *testing.T, data []byte) {

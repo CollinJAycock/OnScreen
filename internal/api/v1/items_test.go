@@ -823,7 +823,7 @@ func TestDownloadFilename(t *testing.T) {
 			sourcePath: "/data/.hidden",
 			// filepath.Ext(".hidden") = ".hidden" (whole basename), so
 			// trimming the extension yields "" → "download" fallback.
-			want:       "download.hidden",
+			want: "download.hidden",
 		},
 	}
 	for _, tc := range cases {

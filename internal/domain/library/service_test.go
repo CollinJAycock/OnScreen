@@ -180,10 +180,10 @@ func (m *mockQuerier) PurgeDeletedLibraryBatch(_ context.Context, lib uuid.UUID,
 	}
 	return n, err
 }
-func (m *mockQuerier) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error      { return nil }
-func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                    { return nil }
-func (m *mockQuerier) MarkLibraryScanCompleted(_ context.Context, _ uuid.UUID) error      { return nil }
-func (m *mockQuerier) MarkLibraryMetadataRefreshed(_ context.Context, _ uuid.UUID) error  { return nil }
+func (m *mockQuerier) GrantAutoLibrariesToUser(_ context.Context, _ uuid.UUID) error     { return nil }
+func (m *mockQuerier) RefreshHubRecentlyAdded(_ context.Context) error                   { return nil }
+func (m *mockQuerier) MarkLibraryScanCompleted(_ context.Context, _ uuid.UUID) error     { return nil }
+func (m *mockQuerier) MarkLibraryMetadataRefreshed(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockQuerier) ListLibrariesDueForScan(_ context.Context) ([]Library, error) {
 	return m.due, nil
 }

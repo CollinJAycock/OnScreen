@@ -23,6 +23,7 @@ import (
 //     have no cookie jar), so the worst-case echo of `*` for credentialed
 //     auth isn't reachable from this path,
 //   - are the *expected* origin for every TV-client install.
+//
 // Auto-allowing them removes a major footgun: an operator who doesn't
 // set CORS to `*` would otherwise see TVs silently fail with a
 // confusing "Failed to fetch" the first time the app tries to call any

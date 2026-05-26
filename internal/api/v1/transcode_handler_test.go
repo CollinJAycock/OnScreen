@@ -346,4 +346,3 @@ func TestStop_Unauthorized(t *testing.T) {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
-

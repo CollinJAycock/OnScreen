@@ -13,7 +13,7 @@ import (
 // what the ring captures, not what stdout sees.
 type noopHandler struct{ enabled slog.Level }
 
-func (n *noopHandler) Enabled(_ context.Context, l slog.Level) bool { return l >= n.enabled }
+func (n *noopHandler) Enabled(_ context.Context, l slog.Level) bool  { return l >= n.enabled }
 func (n *noopHandler) Handle(_ context.Context, _ slog.Record) error { return nil }
 func (n *noopHandler) WithAttrs(_ []slog.Attr) slog.Handler          { return n }
 func (n *noopHandler) WithGroup(_ string) slog.Handler               { return n }

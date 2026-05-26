@@ -110,13 +110,13 @@ type mockUpdater struct {
 	// Pre-flight merge support for matchShow / matchMovie. Tests register
 	// "tmdb-id already attached" survivors here; the mock returns ErrNotFound
 	// otherwise.
-	itemByTMDB    map[int]*media.Item
+	itemByTMDB map[int]*media.Item
 	// titleYearMatch is the second pre-flight: when non-nil it's
 	// returned for FindTopLevelItemByTitleYear regardless of args.
 	// Tests exercising the title+year sibling-merge path set this.
 	titleYearMatch *media.Item
-	mergeCalls    []mergeCall
-	mergeErr      error
+	mergeCalls     []mergeCall
+	mergeErr       error
 }
 
 type mergeCall struct {
@@ -860,7 +860,7 @@ func TestEnrichEpisode_AniListFallback(t *testing.T) {
 	episodeID := uuid.New()
 	posterPath := "anime/show/poster.jpg"
 
-	agent := &mockAgent{} // TMDB returns nothing
+	agent := &mockAgent{}   // TMDB returns nothing
 	tvdbStub := &mockTVDB{} // TVDB returns nothing too
 	anilistStub := &stubAniListAgent{
 		episodes: []metadata.EpisodeResult{
@@ -2201,12 +2201,12 @@ func TestAnilistShowFallback_NoOfflineDBLeavesLiveSearchBehaviour(t *testing.T) 
 // year-suffix and cross-language duplicates the gate must let through.
 func TestMergeIsSafe(t *testing.T) {
 	tests := []struct {
-		name           string
-		loser          string
-		survivor       string
-		survivorOrig   string
-		canonicalOrig  string
-		want           bool
+		name          string
+		loser         string
+		survivor      string
+		survivorOrig  string
+		canonicalOrig string
+		want          bool
 	}{
 		// --- year-suffix duplicates (MUST merge) ---
 		{"year-suffix bare", "1923 2022", "1923", "", "", true},

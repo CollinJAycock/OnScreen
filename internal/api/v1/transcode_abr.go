@@ -58,12 +58,12 @@ func (h *NativeTranscodeHandler) startABR(
 ) {
 	ctx := r.Context()
 	sess := transcode.Session{
-		ID:               sessionID,
-		UserID:           userID,
-		MediaItemID:      itemID,
-		FileID:           file.ID,
-		Decision:         "transcode",
-		FilePath:         file.FilePath,
+		ID:          sessionID,
+		UserID:      userID,
+		MediaItemID: itemID,
+		FileID:      file.ID,
+		Decision:    "transcode",
+		FilePath:    file.FilePath,
 		// One HTTP source URL for the whole ladder — every rung child reuses
 		// it (all rungs read the same source file). See buildSourceURL.
 		SourceURL:        sourceURL,
@@ -519,9 +519,9 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		// best H.264 → .ts. One codec for the whole ladder, set in startABR.
 		// PreferAV1 wins at the worker when both are set, but startABR only
 		// ever sets one.
-		Encoder:          "",
-		PreferHEVC:       parent.HEVCOutput,
-		PreferAV1:        parent.AV1Output,
+		Encoder:    "",
+		PreferHEVC: parent.HEVCOutput,
+		PreferAV1:  parent.AV1Output,
 		// Source codec — drives hardware decode on the worker (AV1 NVDEC,
 		// opt-in QSV HEVC). Distinct from Prefer* (the output codec).
 		IsHEVC:           parent.SourceIsHEVC,

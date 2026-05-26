@@ -154,18 +154,6 @@ func (c *pluginClient) close() {
 	c.closed = true
 }
 
-// hasTool reports whether the cached capability set advertises name. Returns
-// false if the client hasn't connected yet.
-func (c *pluginClient) hasTool(name string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.ready {
-		return false
-	}
-	_, ok := c.tools[name]
-	return ok
-}
-
 // shouldReconnect classifies which transport errors warrant a single reconnect
 // attempt. We err toward retrying — the cost of a wasted reconnect is small;
 // the cost of a swallowed transient is a missed notification.

@@ -64,10 +64,10 @@ const keyframeIntervalFrames = 60
 // usually AC-3 (Dolby Digital) which Safari handles but Chrome/Firefox
 // don't. Defaults to "aac" which every browser plays.
 type HLSConfig struct {
-	Dir           string
-	FFmpegBin     string
-	VideoEncoder  string
-	AudioEncoder  string
+	Dir          string
+	FFmpegBin    string
+	VideoEncoder string
+	AudioEncoder string
 }
 
 // HLSSession represents one active per-channel session. The first viewer

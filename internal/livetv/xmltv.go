@@ -54,16 +54,16 @@ func (p XMLTVProgram) SourceProgramID() string {
 // XMLTVDocument is the top-level XML structure we decode into. Only the
 // fields we care about are mapped; the encoder ignores the rest.
 type XMLTVDocument struct {
-	XMLName    xml.Name        `xml:"tv"`
-	Channels   []xmltvChannel  `xml:"channel"`
+	XMLName    xml.Name         `xml:"tv"`
+	Channels   []xmltvChannel   `xml:"channel"`
 	Programmes []xmltvProgramme `xml:"programme"`
 }
 
 type xmltvChannel struct {
-	ID           string             `xml:"id,attr"`
-	DisplayNames []string           `xml:"display-name"`
-	Icons        []xmltvIcon        `xml:"icon"`
-	LCN          string             `xml:"lcn"`
+	ID           string      `xml:"id,attr"`
+	DisplayNames []string    `xml:"display-name"`
+	Icons        []xmltvIcon `xml:"icon"`
+	LCN          string      `xml:"lcn"`
 }
 
 type xmltvIcon struct {
@@ -71,16 +71,16 @@ type xmltvIcon struct {
 }
 
 type xmltvProgramme struct {
-	Start    string             `xml:"start,attr"`
-	Stop     string             `xml:"stop,attr"`
-	Channel  string             `xml:"channel,attr"`
-	Titles   []string           `xml:"title"`
-	Subs     []string           `xml:"sub-title"`
-	Descs    []string           `xml:"desc"`
-	Cats     []string           `xml:"category"`
-	Date     string             `xml:"date"` // original air date as YYYYMMDD
-	Episodes []xmltvEpisodeNum  `xml:"episode-num"`
-	Ratings  []xmltvRating      `xml:"rating"`
+	Start    string            `xml:"start,attr"`
+	Stop     string            `xml:"stop,attr"`
+	Channel  string            `xml:"channel,attr"`
+	Titles   []string          `xml:"title"`
+	Subs     []string          `xml:"sub-title"`
+	Descs    []string          `xml:"desc"`
+	Cats     []string          `xml:"category"`
+	Date     string            `xml:"date"` // original air date as YYYYMMDD
+	Episodes []xmltvEpisodeNum `xml:"episode-num"`
+	Ratings  []xmltvRating     `xml:"rating"`
 }
 
 type xmltvEpisodeNum struct {
@@ -334,9 +334,10 @@ func parseEpisodeNum(eps []xmltvEpisodeNum) (*int32, *int32) {
 }
 
 // parseXMLTVNs parses "S.E.P/T" → (S+1, E+1). Examples:
-//   "0.0.0/1"  → S1 E1
-//   "4.11."    → S5 E12
-//   ". . . "   → nil (no info)
+//
+//	"0.0.0/1"  → S1 E1
+//	"4.11."    → S5 E12
+//	". . . "   → nil (no info)
 func parseXMLTVNs(v string) (*int32, *int32, bool) {
 	parts := strings.Split(v, ".")
 	if len(parts) < 2 {

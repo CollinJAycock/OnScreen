@@ -18,14 +18,14 @@ import (
 type mockTOTPService struct {
 	setupURL, setupSecret string
 	setupErr              error
-	activateCodes        []string
-	activateErr          error
-	disableErr           error
-	verifyResult         *TokenPair
-	verifyErr            error
-	statusEnabled        bool
-	statusRemaining      int
-	statusErr            error
+	activateCodes         []string
+	activateErr           error
+	disableErr            error
+	verifyResult          *TokenPair
+	verifyErr             error
+	statusEnabled         bool
+	statusRemaining       int
+	statusErr             error
 }
 
 func (m *mockTOTPService) SetupTOTP(_ context.Context, _ uuid.UUID, _ string) (string, string, error) {

@@ -25,11 +25,6 @@ const introFingerprintSeconds = 600
 // fooled by mid-show fades.
 const creditsTailSeconds = 360
 
-// minCreditsGapSeconds — if black-frames appear within this many seconds of
-// the file's end, we assume this is the credits roll and mark from there.
-// A black frame further from the end is likely a mid-episode fade.
-const minCreditsGapSeconds = 30
-
 // Detector runs intro/credits detection on seasons and episodes. It is safe
 // to call concurrently; each DetectSeason / DetectCredits call shells out to
 // external binaries independently and only writes to the markers table.
@@ -226,4 +221,3 @@ func (d *Detector) firstFilePath(ctx context.Context, itemID uuid.UUID) (string,
 	}
 	return path, true
 }
-

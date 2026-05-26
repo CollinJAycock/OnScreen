@@ -11,10 +11,10 @@ import (
 
 // MovieResult holds movie metadata returned by an agent.
 type MovieResult struct {
-	TMDBID    int
-	IMDBID    string
-	AniListID int // AniList Media ID (0 if unknown — anime films only)
-	MALID     int // MyAnimeList ID (0 if unknown — anime films only)
+	TMDBID        int
+	IMDBID        string
+	AniListID     int // AniList Media ID (0 if unknown — anime films only)
+	MALID         int // MyAnimeList ID (0 if unknown — anime films only)
 	Title         string
 	OriginalTitle string
 	Year          int
@@ -31,11 +31,11 @@ type MovieResult struct {
 
 // TVShowResult holds TV show metadata returned by an agent.
 type TVShowResult struct {
-	TMDBID    int
-	TVDBID    int    // TheTVDB series ID (0 if unknown)
-	IMDBID    string
-	AniListID int // AniList Media ID (0 if unknown — anime only)
-	MALID     int // MyAnimeList ID (0 if unknown — anime only)
+	TMDBID        int
+	TVDBID        int // TheTVDB series ID (0 if unknown)
+	IMDBID        string
+	AniListID     int // AniList Media ID (0 if unknown — anime only)
+	MALID         int // MyAnimeList ID (0 if unknown — anime only)
 	Title         string
 	OriginalTitle string
 	FirstAirYear  int
@@ -86,8 +86,8 @@ type EpisodeResult struct {
 // Jump etc.) ride on Tags + Source — exposed as tags rather than
 // dedicated columns to avoid a schema explosion.
 type MangaResult struct {
-	AniListID  int
-	MALID      int
+	AniListID     int
+	MALID         int
 	Title         string
 	OriginalTitle string // native (Japanese / Korean / Chinese) title
 	StartYear     int

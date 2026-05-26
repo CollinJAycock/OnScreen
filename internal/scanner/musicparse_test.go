@@ -430,9 +430,9 @@ func TestSplitGenres(t *testing.T) {
 func TestRawLookup_CaseFallback(t *testing.T) {
 	t.Run("exact key match wins", func(t *testing.T) {
 		raw := map[string]interface{}{
-			"MUSICBRAINZ_TRACKID":    "exact",
-			"MusicBrainz Track Id":   "mixed",
-			"musicbrainz_trackid":    "lower",
+			"MUSICBRAINZ_TRACKID":  "exact",
+			"MusicBrainz Track Id": "mixed",
+			"musicbrainz_trackid":  "lower",
 		}
 		got := rawLookup(raw, "MUSICBRAINZ_TRACKID")
 		if got != "exact" {
@@ -490,18 +490,18 @@ func TestEnrichFromRaw_VorbisStyle(t *testing.T) {
 	mbAlbumArtist := "55555555-5555-5555-5555-555555555555"
 
 	raw := map[string]interface{}{
-		"MUSICBRAINZ_TRACKID":         mbRecording,
-		"MUSICBRAINZ_ALBUMID":         mbRelease,
-		"MUSICBRAINZ_RELEASEGROUPID":  mbReleaseGroup,
-		"MUSICBRAINZ_ARTISTID":        mbArtist,
-		"MUSICBRAINZ_ALBUMARTISTID":   mbAlbumArtist,
-		"REPLAYGAIN_TRACK_GAIN":       "-7.89 dB",
-		"REPLAYGAIN_TRACK_PEAK":       "0.988734",
-		"REPLAYGAIN_ALBUM_GAIN":       "-8.12 dB",
-		"REPLAYGAIN_ALBUM_PEAK":       "1.0247",
-		"COMPILATION":                 "1",
-		"RELEASETYPE":                 "Album",
-		"ORIGINALDATE":                "1973-03-01",
+		"MUSICBRAINZ_TRACKID":        mbRecording,
+		"MUSICBRAINZ_ALBUMID":        mbRelease,
+		"MUSICBRAINZ_RELEASEGROUPID": mbReleaseGroup,
+		"MUSICBRAINZ_ARTISTID":       mbArtist,
+		"MUSICBRAINZ_ALBUMARTISTID":  mbAlbumArtist,
+		"REPLAYGAIN_TRACK_GAIN":      "-7.89 dB",
+		"REPLAYGAIN_TRACK_PEAK":      "0.988734",
+		"REPLAYGAIN_ALBUM_GAIN":      "-8.12 dB",
+		"REPLAYGAIN_ALBUM_PEAK":      "1.0247",
+		"COMPILATION":                "1",
+		"RELEASETYPE":                "Album",
+		"ORIGINALDATE":               "1973-03-01",
 	}
 	m := &MusicTags{}
 	m.enrichFromRaw(raw)
@@ -574,8 +574,8 @@ func TestEnrichFromRaw_MP4FreeformStyle(t *testing.T) {
 	// MP4 freeform tags use the ----:com.apple.iTunes:Xxx prefix.
 	mbRecording := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 	raw := map[string]interface{}{
-		"----:com.apple.iTunes:MusicBrainz Track Id":  mbRecording,
-		"----:com.apple.iTunes:replaygain_track_gain": "-2.0 dB",
+		"----:com.apple.iTunes:MusicBrainz Track Id":   mbRecording,
+		"----:com.apple.iTunes:replaygain_track_gain":  "-2.0 dB",
 		"----:com.apple.iTunes:MusicBrainz Album Type": "EP",
 		"cpil": 1,
 	}
@@ -717,9 +717,9 @@ func TestAlbumTitleOrFallback(t *testing.T) {
 
 func TestPrimaryAndSecondaryArtistName(t *testing.T) {
 	cases := []struct {
-		input            string
-		wantPrimary      string
-		wantSecondary    string
+		input         string
+		wantPrimary   string
+		wantSecondary string
 	}{
 		// Two-name collabs across each separator type
 		{"Elton John & Bonnie Raitt", "Elton John", "Bonnie Raitt"},

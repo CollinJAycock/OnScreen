@@ -12,10 +12,10 @@ func TestSpecSpriteCount(t *testing.T) {
 		want        int
 	}{
 		{0, 0},
-		{9, 1},     // one partial thumb still needs a sheet
-		{1000, 1},  // exactly fills one sheet (thumbs at 0..990 = 100 thumbs)
-		{1001, 2},  // one extra thumb pushes to second sheet
-		{5400, 6},  // 90 min → 540 thumbs → 6 sheets (ceil)
+		{9, 1},    // one partial thumb still needs a sheet
+		{1000, 1}, // exactly fills one sheet (thumbs at 0..990 = 100 thumbs)
+		{1001, 2}, // one extra thumb pushes to second sheet
+		{5400, 6}, // 90 min → 540 thumbs → 6 sheets (ceil)
 	}
 	for _, tt := range tests {
 		if got := s.SpriteCount(tt.durationSec); got != tt.want {
@@ -99,4 +99,3 @@ func TestWriteVTTRejectsInvalidSpec(t *testing.T) {
 		t.Fatal("zero interval should error")
 	}
 }
-

@@ -95,8 +95,8 @@ func validConfig() *Config {
 		// in validateSecretKey. Real keys should be generated via
 		// `openssl rand -hex 32` — this is just a deterministic test
 		// value that clears the entropy floor.
-		SecretKey:   "abcdefghijklmnopqrstuvwxyz012345",
-		ListenAddr:  ":7070",
+		SecretKey:  "abcdefghijklmnopqrstuvwxyz012345",
+		ListenAddr: ":7070",
 	}
 }
 

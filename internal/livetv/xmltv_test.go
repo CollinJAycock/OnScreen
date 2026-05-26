@@ -168,10 +168,10 @@ func TestSourceProgramID_Stable(t *testing.T) {
 
 func TestParseXMLTVNs_Variants(t *testing.T) {
 	cases := []struct {
-		in     string
-		wantS  int32
-		wantE  int32
-		hasSE  bool
+		in    string
+		wantS int32
+		wantE int32
+		hasSE bool
 	}{
 		{"0.0.0/1", 1, 1, true},
 		{"4.11.", 5, 12, true},
@@ -198,11 +198,15 @@ func TestParseXMLTVNs_Variants(t *testing.T) {
 }
 
 func TestParseSEFormat_Variants(t *testing.T) {
-	cases := []struct{ in string; s, e int32; ok bool }{
+	cases := []struct {
+		in   string
+		s, e int32
+		ok   bool
+	}{
 		{"S05E12", 5, 12, true},
 		{"s22e08", 22, 8, true},
 		{"5x12", 5, 12, true},
-		{"E12", 0, 0, false},     // missing S
+		{"E12", 0, 0, false}, // missing S
 		{"abc", 0, 0, false},
 	}
 	for _, c := range cases {

@@ -231,9 +231,9 @@ func (s *Service) CanAccessLibrary(ctx context.Context, userID, libraryID uuid.U
 	return ok, nil
 }
 
-// ListAccessForUser returns every library paired with whether the user has
-// been granted access — the shape the Users-tab toggle UI needs. Admins are
-// reported as having access to everything.
+// LibraryAccess pairs a library with whether a specific user has been granted
+// access to it — the shape the Users-tab toggle UI needs. Admins are reported
+// as having access to everything; see [Service.ListAccessForUser].
 type LibraryAccess struct {
 	Library Library
 	Enabled bool
@@ -323,24 +323,24 @@ func (s *Service) Update(ctx context.Context, p UpdateLibraryParams) (*Library, 
 //
 // Synchronous steps run before return so the operator sees the
 // library disappear instantly:
-//   1. Soft-delete the libraries row (preserves audit timeline).
-//   2. Soft-delete every media_items row in the library (hides them
-//      from the user's listings).
-//   3. HARD-delete every media_files row in the library — bounded
-//      work (5 SET-NULL/CASCADE child tables, all indexed) that
-//      releases the file_path slot immediately so a recreated
-//      library at the same scan_paths can claim it without going
-//      through the dead-tombstone dance the old soft-delete design
-//      forced. This is the "delete = hard delete" rule applied at
-//      the file layer.
+//  1. Soft-delete the libraries row (preserves audit timeline).
+//  2. Soft-delete every media_items row in the library (hides them
+//     from the user's listings).
+//  3. HARD-delete every media_files row in the library — bounded
+//     work (5 SET-NULL/CASCADE child tables, all indexed) that
+//     releases the file_path slot immediately so a recreated
+//     library at the same scan_paths can claim it without going
+//     through the dead-tombstone dance the old soft-delete design
+//     forced. This is the "delete = hard delete" rule applied at
+//     the file layer.
 //
 // Async (detached goroutine, context.WithoutCancel):
-//   4. Hard-delete media_items via the batched purge loop. Detached
-//      because for a thousands-of-items library the cascade through
-//      ~10 child tables + the recursive parent_id CASCADE reliably
-//      exceeds Cloudflare's 100s edge timeout (synchronous surfaces
-//      ERR 524 and rolls back mid-transaction — that exact bug took
-//      down QA before the goroutine landed).
+//  4. Hard-delete media_items via the batched purge loop. Detached
+//     because for a thousands-of-items library the cascade through
+//     ~10 child tables + the recursive parent_id CASCADE reliably
+//     exceeds Cloudflare's 100s edge timeout (synchronous surfaces
+//     ERR 524 and rolls back mid-transaction — that exact bug took
+//     down QA before the goroutine landed).
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.rw.SoftDeleteLibrary(ctx, id); err != nil {
 		return fmt.Errorf("delete library %s: %w", id, mapNotFound(err))

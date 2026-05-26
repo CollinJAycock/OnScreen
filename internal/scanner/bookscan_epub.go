@@ -28,7 +28,7 @@ import (
 // archive/zip + encoding/xml — no new dependency needed.
 
 type epubContainer struct {
-	XMLName  xml.Name `xml:"container"`
+	XMLName   xml.Name `xml:"container"`
 	Rootfiles []struct {
 		FullPath string `xml:"full-path,attr"`
 	} `xml:"rootfiles>rootfile"`
@@ -65,12 +65,12 @@ func countEpubPages(path string) int {
 }
 
 // readFirstEpubCover finds the cover image inside an EPUB. Tries:
-//   1. Manifest item with properties="cover-image" (EPUB 3 standard)
-//   2. Manifest item with id="cover" or id="cover-image" that's an
-//      image type (EPUB 2 convention; many EPUB 3 readers also write
-//      this for back-compat)
-//   3. The first manifest item with media-type starting "image/"
-//      (last-resort heuristic — better than no cover at all)
+//  1. Manifest item with properties="cover-image" (EPUB 3 standard)
+//  2. Manifest item with id="cover" or id="cover-image" that's an
+//     image type (EPUB 2 convention; many EPUB 3 readers also write
+//     this for back-compat)
+//  3. The first manifest item with media-type starting "image/"
+//     (last-resort heuristic — better than no cover at all)
 //
 // Returns the raw image bytes when found; the caller re-encodes
 // through stdlib JPEG just like the CBZ path so all book covers land

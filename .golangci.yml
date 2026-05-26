@@ -30,6 +30,11 @@ linters:
         - -ST1003
         - -SA1019
   exclusions:
+    # Vendored third-party Go files inside web/node_modules (e.g. the
+    # `flatted` package ships a Go reference impl) trip govet/staticcheck
+    # whenever we lint at the repo root. They're not part of our build.
+    paths:
+      - web/node_modules/.*
     rules:
       - path: internal/db/gen/
         linters:
@@ -42,9 +47,6 @@ linters:
           - sqlclosecheck
           - rowserrcheck
           - noctx
-      - path: web/node_modules/
-        linters:
-          - exhaustive
       - path: _test\.go
         linters:
           - bodyclose

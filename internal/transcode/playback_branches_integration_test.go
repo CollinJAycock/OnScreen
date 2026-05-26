@@ -24,10 +24,6 @@ const (
 	// 2 AC3 commentaries), 5+ subrip subtitle streams. Covers audio-stream
 	// selection, WebVTT extraction, and any-source software-fallback runs.
 	forrestGumpPath = `C:\movies\Forrest Gump (1994)\Forrest.Gump.1994.REPACK.1080p.UHD.BluRay.DD.7.1.x264-LoRD-WhiteRevtmp.mkv`
-
-	// Goodfellas (4K UHD remux) — HEVC HDR10 + DTS + multiple PGS subtitle
-	// streams. Used for burn-in (PGS bitmap → drawn over video).
-	goodfellasPath = `C:\movies\GoodFellas (1990)\Goodfellas.1990.UHD.BluRay.2160p.DTS-HD.MA.5.1.HEVC.REMUX-FraMeSToR.mkv`
 )
 
 // runHLSAny runs FFmpeg with the given BuildArgs (limited to 8s of output)

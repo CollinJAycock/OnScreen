@@ -468,4 +468,3 @@ func parseMusicPath(filePath string) *MusicTags {
 
 	return mt
 }
-

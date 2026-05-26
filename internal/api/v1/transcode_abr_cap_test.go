@@ -4,7 +4,7 @@ import "testing"
 
 func TestABRLadderCap(t *testing.T) {
 	cases := []struct {
-		name                            string
+		name                              string
 		requested, autoMax, hardCap, want int
 	}{
 		// Auto (no pick) uses the soft default so it won't build a 4K rung.

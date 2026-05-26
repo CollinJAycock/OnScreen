@@ -18,9 +18,9 @@ import (
 // private key is secret, and the cert is summarised (subject + expiry) so the
 // admin can confirm what's installed without re-downloading it.
 type tlsStatusDTO struct {
-	Configured bool   `json:"configured"`         // serving HTTPS
-	Source     string `json:"source"`             // "env-file" | "uploaded" | "none"
-	Subject    string `json:"subject,omitempty"`  // leaf cert CN (uploaded only)
+	Configured bool   `json:"configured"`          // serving HTTPS
+	Source     string `json:"source"`              // "env-file" | "uploaded" | "none"
+	Subject    string `json:"subject,omitempty"`   // leaf cert CN (uploaded only)
 	NotAfter   string `json:"not_after,omitempty"` // leaf cert expiry, RFC3339 (uploaded only)
 }
 

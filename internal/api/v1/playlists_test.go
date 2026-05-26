@@ -565,14 +565,14 @@ func TestPlaylists_DBErrorBecomes500(t *testing.T) {
 	uid := uuid.New()
 	col := ownedPlaylist(uid)
 	db := &mockPlaylistDB{
-		getResult:     col,
-		createErr:     errors.New("boom"),
-		updateErr:     errors.New("boom"),
-		addItemErr:    errors.New("boom"),
-		reorderErr:    errors.New("boom"),
-		listItemsErr:  errors.New("boom"),
-		listMineErr:   errors.New("boom"),
-		deleteErr:     errors.New("boom"),
+		getResult:    col,
+		createErr:    errors.New("boom"),
+		updateErr:    errors.New("boom"),
+		addItemErr:   errors.New("boom"),
+		reorderErr:   errors.New("boom"),
+		listItemsErr: errors.New("boom"),
+		listMineErr:  errors.New("boom"),
+		deleteErr:    errors.New("boom"),
 	}
 	h := newPlaylistHandler(db)
 

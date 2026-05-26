@@ -46,10 +46,10 @@ type M3UConfig struct {
 
 // m3uEntry is a parsed playlist row — one channel + its stream URL.
 type m3uEntry struct {
-	Number   string // tvg-chno or sequence number
-	Callsign string // tvg-id
-	Name     string // EXTINF display name
-	LogoURL  string // tvg-logo
+	Number    string // tvg-chno or sequence number
+	Callsign  string // tvg-id
+	Name      string // EXTINF display name
+	LogoURL   string // tvg-logo
 	StreamURL string
 }
 

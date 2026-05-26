@@ -306,7 +306,6 @@ func pgUUIDToPtr(v pgtype.UUID) *uuid.UUID {
 	return &u
 }
 
-
 func scheduleFromGen(r gen.Schedule) livetv.Schedule {
 	s := livetv.Schedule{
 		ID:             r.ID,

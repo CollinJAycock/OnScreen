@@ -10,11 +10,11 @@ import (
 )
 
 type stubQuerier struct {
-	getResult Status
-	getErr    error
+	getResult    Status
+	getErr       error
 	upsertResult Status
-	upsertErr error
-	deleteErr error
+	upsertErr    error
+	deleteErr    error
 
 	upsertCalls []struct {
 		userID, mediaID uuid.UUID

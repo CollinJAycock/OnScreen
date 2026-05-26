@@ -31,7 +31,8 @@ func DiscoverHDHomeRuns(ctx context.Context, timeout time.Duration) ([]Discovere
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
-	conn, err := net.ListenPacket("udp4", ":0")
+	var lc net.ListenConfig
+	conn, err := lc.ListenPacket(ctx, "udp4", ":0")
 	if err != nil {
 		return nil, fmt.Errorf("discover listen: %w", err)
 	}

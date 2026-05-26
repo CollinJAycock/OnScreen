@@ -58,7 +58,7 @@ func New(apiKey string, rateLimit int, language string) *Client {
 		language = "en-US"
 	}
 	return &Client{
-		apiKey:     apiKey,
+		apiKey: apiKey,
 		// safehttp wraps the dialer in a Control hook that rejects
 		// post-resolution loopback / RFC1918 / link-local / metadata
 		// addresses — closes the DNS-rebinding TOCTOU window. Defense
@@ -167,14 +167,14 @@ func (c *Client) SearchTV(ctx context.Context, title string, year int) (*metadat
 // Person rows from /search/multi are filtered out — Discover surfaces
 // titles, not actors.
 type DiscoverResult struct {
-	MediaType   string  // "movie" | "tv"
-	TMDBID      int
-	Title       string
-	Overview    string
-	Year        int     // 0 if unknown
-	Rating      float64
-	PosterURL   string
-	FanartURL   string
+	MediaType string // "movie" | "tv"
+	TMDBID    int
+	Title     string
+	Overview  string
+	Year      int // 0 if unknown
+	Rating    float64
+	PosterURL string
+	FanartURL string
 }
 
 // SearchMulti hits /search/multi to return movies + TV shows in one shot.
@@ -194,11 +194,11 @@ func (c *Client) SearchMulti(ctx context.Context, query string, maxResults int) 
 		Results []struct {
 			MediaType    string  `json:"media_type"`
 			ID           int     `json:"id"`
-			Title        string  `json:"title"`         // movie
-			Name         string  `json:"name"`          // tv / person
+			Title        string  `json:"title"` // movie
+			Name         string  `json:"name"`  // tv / person
 			Overview     string  `json:"overview"`
-			ReleaseDate  string  `json:"release_date"`  // movie
-			FirstAirDate string  `json:"first_air_date"`// tv
+			ReleaseDate  string  `json:"release_date"`   // movie
+			FirstAirDate string  `json:"first_air_date"` // tv
 			VoteAverage  float64 `json:"vote_average"`
 			PosterPath   string  `json:"poster_path"`
 			BackdropPath string  `json:"backdrop_path"`
@@ -684,11 +684,11 @@ type tmdbTV struct {
 }
 
 type tmdbSeason struct {
-	SeasonNumber int           `json:"season_number"`
-	Name         string        `json:"name"`
-	Overview     string        `json:"overview"`
-	AirDate      string        `json:"air_date"`
-	PosterPath   string        `json:"poster_path"`
+	SeasonNumber int    `json:"season_number"`
+	Name         string `json:"name"`
+	Overview     string `json:"overview"`
+	AirDate      string `json:"air_date"`
+	PosterPath   string `json:"poster_path"`
 	// /tv/{id}/season/{n} embeds the full episode list — pull it
 	// in one shot instead of N+1 calls per episode.
 	Episodes []tmdbEpisode `json:"episodes"`

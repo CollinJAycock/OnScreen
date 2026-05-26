@@ -90,15 +90,15 @@ type Handlers struct {
 	Discover        *v1.DiscoverHandler    // TMDB-backed search for the request UI
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
-	ArtworkRoots    func() []ArtworkRoot             // per-library scan_paths for ACL-aware artwork serving
-	LibraryAccess   v1.LibraryAccessChecker          // ACL for artwork; nil = bypass (dev setups)
+	ArtworkRoots    func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
+	LibraryAccess   v1.LibraryAccessChecker // ACL for artwork; nil = bypass (dev setups)
 	// PublicAssetCache emits `Cache-Control: public` on immutable resized artwork
 	// so a CDN/shared cache in front can store it (HA roadmap §4). From
 	// cfg.PublicAssetCache; default false keeps the private posture.
 	PublicAssetCache bool
 	Logger           *slog.Logger
-	Metrics         *observability.Metrics
-	Auth_mw         *middleware.Authenticator
+	Metrics          *observability.Metrics
+	Auth_mw          *middleware.Authenticator
 	// Impersonate is the lookup the view-as middleware uses to swap an
 	// admin's claims for a target user's on read-only requests. Nil
 	// disables the feature (the middleware degrades to a pass-through

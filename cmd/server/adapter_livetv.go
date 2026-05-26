@@ -119,10 +119,10 @@ func (a *livetvAdapter) ListChannels(ctx context.Context, enabled *bool) ([]live
 			TunerType: livetv.TunerType(r.TunerType),
 		}
 		if r.CreatedAt.Valid {
-			out[i].Channel.CreatedAt = r.CreatedAt.Time
+			out[i].CreatedAt = r.CreatedAt.Time
 		}
 		if r.UpdatedAt.Valid {
-			out[i].Channel.UpdatedAt = r.UpdatedAt.Time
+			out[i].UpdatedAt = r.UpdatedAt.Time
 		}
 	}
 	return out, nil

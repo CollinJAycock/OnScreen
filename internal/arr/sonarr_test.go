@@ -131,8 +131,8 @@ func TestAddSeries_PostsRequest(t *testing.T) {
 
 	req := AddSeriesRequest{
 		Title: "Severance", TVDBID: 371980, Year: 2022, TitleSlug: "severance",
-		Seasons:           []SeriesSeason{{SeasonNumber: 1, Monitored: true}},
-		QualityProfileID:  1, LanguageProfileID: 1, RootFolderPath: "/tv",
+		Seasons:          []SeriesSeason{{SeasonNumber: 1, Monitored: true}},
+		QualityProfileID: 1, LanguageProfileID: 1, RootFolderPath: "/tv",
 		Monitored: true, SeasonFolder: true,
 		AddOptions: AddSeriesOptions{Monitor: "all", SearchForMissingEpisodes: true},
 	}
