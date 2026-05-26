@@ -975,10 +975,18 @@ paths:
         generic feature, not anime-only. Distinct from playback
         progress; this records the user's explicit classification
         ("I want to watch this later", "I gave up").
+
+        Always returns 200. When the user has no recorded status for
+        the item, `data.status` is the empty string `""`. (Previously
+        the no-row case was a 404, which the browser's resource-
+        loading layer surfaced as a "Failed to load resource" console
+        error on every /watch page visit — no client-side `.catch()`
+        could suppress it; an empty string keeps the same "blank
+        dropdown" UX without the noise.)
       tags: [Items]
       responses:
         '200':
-          description: Current status (or null when never set).
+          description: Current status (or empty string when never set).
           content:
             application/json:
               schema:
@@ -986,9 +994,12 @@ paths:
                 properties:
                   data:
                     type: object
-                    nullable: true
                     properties:
-                      status: { type: string, enum: [plan_to_watch, watching, completed, on_hold, dropped] }
+                      status:
+                        type: string
+                        enum: ['', plan_to_watch, watching, completed, on_hold, dropped]
+                        description: Empty string = no status set yet.
+                      created_at: { type: string, format: date-time }
                       updated_at: { type: string, format: date-time }
     put:
       summary: Set watch status
@@ -2327,6 +2338,10 @@ paths:
   /api/v1/settings/transcode-config:
     get:
       summary: Get transcode tuning config (admin)
+      description: >
+        GET fills unset fields with the env-effective running values so the
+        admin form is never blank — `0` caps and nil ABR pointers in the
+        stored row both get back-filled before the response.
       tags: [Settings]
       responses:
         '200':
@@ -2336,15 +2351,52 @@ paths:
               schema:
                 type: object
                 properties:
-                  data: { type: object, additionalProperties: true }
+                  data: { $ref: '#/components/schemas/TranscodeConfig' }
     put:
       summary: Replace transcode tuning config (admin)
+      description: >
+        Restart-required: the server reads these at startup. A saved value
+        wins over the env default; nil/zero in the payload reverts to env.
       tags: [Settings]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema: { $ref: '#/components/schemas/TranscodeConfig' }
+      responses:
+        '204': { description: Saved. }
+
+  /api/v1/settings/system:
+    get:
+      summary: Get cluster-wide System settings (admin)
+      description: >
+        Cluster-wide startup toggles that used to be env-only. Restart-required;
+        GET fills unset fields with the env-effective running values. The
+        adaptive-bitrate ladder (`abr`, `abr_max_height`, `abr_auto_max_height`)
+        is **not** here — it moved to `transcode-config` alongside the rest of
+        the encoder knobs.
+      tags: [Settings]
+      responses:
+        '200':
+          description: Config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SystemSettings' }
+    put:
+      summary: Replace System settings (admin)
+      description: >
+        Restart-required. Stores all fields as explicit overrides; the server
+        reads these once at startup and merges them over the env-derived
+        defaults.
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SystemSettings' }
       responses:
         '204': { description: Saved. }
 
@@ -2795,6 +2847,27 @@ paths:
 
   /api/v1/admin/tasks/{id}:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Get a scheduled task by ID (admin)
+      description: >
+        Returns the same wire shape as a single row from `List`. The endpoint
+        exists so the verify-after-mutate (`POST` / `PATCH` → `GET {id}`) and
+        verify-after-delete (`DELETE {id}` → `GET {id}` expecting 404) patterns
+        both round-trip cleanly. Without this route chi returned `405 Method Not
+        Allowed` on a `GET` to this path (Patch + Delete were registered but
+        Get wasn't) — conformant but uninformative.
+      tags: [Tasks]
+      responses:
+        '200':
+          description: The task row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ScheduledTask' }
+        '400': { description: Invalid id. }
+        '404': { description: No such task. }
     patch:
       summary: Update a scheduled task (admin)
       tags: [Tasks]
@@ -4162,6 +4235,48 @@ components:
         endpoint: { type: string, format: uri }
         api_key:  { type: string }
         enabled:  { type: boolean }
+    # ── Settings ▸ System (cluster-wide startup toggles) ─────────────────
+    SystemSettings:
+      type: object
+      description: >
+        Cluster-wide knobs that used to be env-only. Restart-required.
+        GET fills unset fields with the env-effective running value.
+        Adaptive bitrate fields live on `TranscodeConfig`, not here.
+      properties:
+        server_name:                { type: string,  description: 'Advertised over LAN discovery + capabilities.' }
+        retain_months:              { type: integer, description: 'Watch-history retention in months.' }
+        tmdb_rate_limit:            { type: integer, description: 'TMDB API requests per second.' }
+        public_asset_cache:         { type: boolean, description: '`Cache-Control: public` on immutable artwork so a CDN can cache it.' }
+        static_abr_enabled:         { type: boolean, description: 'Pre-encode popular titles'' ABR ladders to object storage.' }
+        missing_file_grace_minutes: { type: integer, description: 'Minutes a missing file waits before being marked unavailable.' }
+        scan_file_concurrency:      { type: integer, description: 'Concurrent file-scan goroutines (0 = NumCPU * 2).' }
+        scan_library_concurrency:   { type: integer, description: 'Concurrent library scans.' }
+        discovery_enabled:          { type: boolean, description: 'Whether the server broadcasts itself over UDP LAN discovery.' }
+        discovery_port:             { type: integer, description: 'UDP port for LAN discovery announcements.' }
+
+    # ── Settings ▸ Transcode (encoder tuning + output caps + ABR ladder) ─
+    TranscodeConfig:
+      type: object
+      description: >
+        Encoder tuning (NVENC preset / tune / rate-control), global output
+        ceilings, AND the adaptive-bitrate HLS ladder. ABR fields moved here
+        from `SystemSettings` so all the encoder knobs are managed from one
+        UI surface (Settings ▸ Transcode). Restart-required.
+      properties:
+        # NVENC tuning (hot-reloadable via SIGHUP)
+        nvenc_preset:  { type: string,  enum: [p1, p2, p3, p4, p5, p6, p7], description: 'Speed vs quality. p4 = balanced default.' }
+        nvenc_tune:    { type: string,  enum: [hq, ll, ull], description: 'High quality / low latency / ultra-low latency.' }
+        nvenc_rc:      { type: string,  enum: [vbr, cbr, constqp], description: 'Rate-control mode.' }
+        maxrate_ratio: { type: number,  description: 'Peak-to-target bitrate multiplier; maxrate = bitrate * ratio.' }
+        # Global output ceilings (restart-required)
+        max_bitrate_kbps: { type: integer, description: 'Upper bound on transcode target bitrate (kbps).' }
+        max_width:        { type: integer, description: 'Max transcode output width.' }
+        max_height:       { type: integer, description: 'Max transcode output height.' }
+        # Adaptive-bitrate ladder (moved from SystemSettings; restart-required)
+        abr:                 { type: boolean, description: 'Enable multi-rendition HLS ladder (the player picks rungs on real-time bandwidth).' }
+        abr_max_height:      { type: integer, description: 'Hard cap on rung height (0 = source).' }
+        abr_auto_max_height: { type: integer, description: 'Soft cap on rung height for AUTO playback (0 = source). An explicit quality pick can still exceed this up to abr_max_height.' }
+
     ScheduledTask:
       type: object
       properties:
