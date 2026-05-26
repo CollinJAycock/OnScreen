@@ -7,19 +7,33 @@
 ;   - PostgreSQL 17 portable binaries
 ;   - Redis-for-Windows (tporadowski) — Memurai-equivalent, no eval timer
 ;
-; Install flow:
-;   1. Wizard prompts for install location (default C:\Program Files\OnScreen)
-;   2. Files extracted to install dir
-;   3. postinstall.ps1 runs:
-;      - initdb new Postgres cluster in %ProgramData%\OnScreen\pgdata
-;      - generates random Postgres password + SECRET_KEY
-;      - creates `onscreen` database
-;      - writes .env with DATABASE_URL / VALKEY_URL / SECRET_KEY
-;      - registers + starts 3 Windows Services (Postgres, Redis, OnScreen)
-;   4. Browser opens http://localhost:7070 for admin-account setup
+; Two install modes (selected on the wizard's mode page; postinstall.ps1 -Mode):
+;
+;   FULL (default, all-in-one box):
+;     1. Wizard prompts for install location (default C:\Program Files\OnScreen)
+;     2. Files extracted to install dir
+;     3. postinstall.ps1 -Mode full runs:
+;        - initdb new Postgres cluster in %ProgramData%\OnScreen\pgdata
+;        - generates random Postgres password + SECRET_KEY
+;        - creates `onscreen` database
+;        - writes .env with DATABASE_URL / VALKEY_URL / SECRET_KEY
+;        - registers + starts 3 Windows Services (Postgres, Redis, OnScreen)
+;     4. Browser opens http://localhost:7070 for admin-account setup
+;
+;   WORKER (join an existing primary's fleet, no local DB):
+;     1. Wizard takes the primary's DATABASE_URL / VALKEY_URL / SECRET_KEY +
+;        this node's WORKER_ADDR
+;     2. postinstall.ps1 -Mode worker writes .env and opens the segment port
+;     3. The worker is registered as an onlogon INTERACTIVE scheduled task
+;        (OnScreenWorker) — NOT a Windows service. A service runs in session 0
+;        with no GPU access, which makes NVENC/QSV probing fail at startup
+;        (the historical Event 7023 on the OnScreenWorker service). The task
+;        runs in the install user's logged-on session so the worker can reach
+;        the GPU, and auto-restarts on failure
 ;
 ; Uninstall flow:
-;   1. preuninstall.ps1 stops + unregisters the 3 services (reverse dep order)
+;   1. preuninstall.ps1 stops + unregisters the 3 Windows services and the
+;      OnScreenWorker scheduled task (reverse-dependency order)
 ;   2. Inno Setup deletes program files
 ;   3. User is asked whether to delete the Postgres data dir + logs
 

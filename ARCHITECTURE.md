@@ -466,7 +466,9 @@ Two layers: **bootstrap env vars** (required to bind sockets and reach the datab
 | `VALKEY_SENTINEL_ADDRS` | | — | Comma-separated Sentinel addrs → HA Valkey failover (`VALKEY_SENTINEL_MASTER`, default `onscreen`; `VALKEY_SENTINEL_PASSWORD`) |
 | `PUBLIC_ASSET_CACHE` | | `false` | Emit `Cache-Control: public` on immutable artwork so a CDN fronting the app caches it. *Initial default for* Settings ▸ System |
 | `STATIC_ABR_ENABLED` | | `false` | Pre-encode popular titles' ABR ladders to the store. *Initial default for* Settings ▸ System (`STATIC_ABR_ROOT` = key prefix, stays env) |
-| `SITE_ID` | | — | Names this site for multi-site DR; surfaced at `/health/cluster` |
+| `SITE_ID` | | — | Names this site for multi-site DR; surfaced at `/health/cluster`. *Per-node override available in* Settings ▸ Nodes |
+| `NODE_ID` | | hostname | Stable identity used to key this node's row in `node_settings` (Settings ▸ Nodes). Irreducible: a node must know who it is before it can read its own per-node config |
+| `IGNORE_NODE_DB_CONFIG` | | `false` | Break-glass: boot from env/defaults only, ignoring the node_settings row. Recovers a node locked out by a bad bind address |
 | `OS_AUTH_RATE_LIMIT_PER_MIN` | | `10` | Auth-route rate-limit override (test/dev) |
 | `OS_TRANSCODE_START_RATE_LIMIT_PER_MIN` | | `10` | Transcode-start rate-limit override |
 
@@ -485,7 +487,12 @@ These were env vars in v1.x and earlier; they're now table-stored under typed ke
 - Scan concurrency (per-file, per-library), missing-file grace period, retention months
 - TMDB / TVDB rate limits
 - Object storage backend + CDN base (`storage_config`) — Settings ▸ Integrations ▸ Storage
-- **System (`system_config`)** — cluster-wide startup toggles surfaced under Settings ▸ System: server name, retention months, TMDB rate limit, adaptive-bitrate (on/off + max heights), public asset cache, static-ABR enable. The matching env vars remain as the **initial default / fallback** (a stored override wins), so env-configured installs are unaffected. *Node- and site-specific* config stays env-only on purpose — `server_settings` replicates across sites in multi-site DR, so connection strings, `SECRET_KEY`, bind addresses, file paths, `SITE_ID`, and per-worker hardware toggles (`TRANSCODE_QSV_DECODE`) must not be shared.
+- **System (`system_config`)** — cluster-wide startup toggles surfaced under Settings ▸ System: server name, watch-history retention, TMDB rate limit, adaptive-bitrate (on/off + max heights), public asset cache, static-ABR enable, **scanner concurrency + missing-file grace period**, **LAN discovery on/off + UDP port**. The matching env vars remain as the **initial default / fallback** (a stored override wins), so env-configured installs are unaffected.
+- **Transcode output limits (`transcode_config`)** — global ceilings (`max_bitrate_kbps`, `max_width`, `max_height`) editable under Settings ▸ Transcode ▸ Output Limits, alongside the existing NVENC/maxrate tuning. Restart-required; the env vars are the initial default.
+- **TLS / HTTPS (`tls_config`, encrypted)** — admin-uploaded certificate + private key, served from an in-memory `tls.Config` so no cert file on disk is required (Settings ▸ System ▸ HTTPS / TLS). `TLS_CERT_FILE` / `TLS_KEY_FILE` still win when set; UI uploads are blocked in that case so the env path stays authoritative.
+- **Per-node (`node_settings`, separate table, keyed by `NODE_ID`)** — Settings ▸ Nodes. Holds the node/site-specific config that *must not* be shared fleet-wide via the replicated `server_settings`: bind addresses (`LISTEN_ADDR`, `METRICS_ADDR`, `WORKER_HEALTH_ADDR`), filesystem paths (`CACHE_PATH`, `STATIC_ABR_ROOT`), `SITE_ID`, `TRANSCODE_QSV_DECODE`, and `DISABLE_EMBEDDED_WORKER`. Each node reads only its own row, so the table replicates physically but is logically per-node. Joined fleet workers are merged into the picker by the `NODE_ID` they advertise in their registration. `IGNORE_NODE_DB_CONFIG=true` boots from env only as a break-glass for a locked-out node.
+
+The irreducible env set is now just `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, `AUTO_MIGRATE`, and `NODE_ID` — everything needed before the settings tables are reachable. Anything else has an admin-UI surface.
 
 A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger, OTel tracer provider, and HTTP handlers can be built with the right config before the main pool opens. Restart required after changes; the UI surfaces this notice on each settings tab.
 
@@ -498,7 +505,7 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | Signal | Implementation |
 |---|---|
 | **Structured logs** | `log/slog` JSON to stdout; request ID on every log line; `trace_id`/`span_id` auto-added when a span is active |
-| **Metrics** | Prometheus; exposed at `METRICS_ADDR/metrics` |
+| **Metrics** | Prometheus; exposed at `METRICS_ADDR/metrics`. Go runtime + process collectors plus the `onscreen_*` families: HTTP request count/latency (chi route-template labels — per-ID URLs collapse to one series), DB query duration by SQL verb (pgx tracer wraps the existing OTel one), transcode sessions active (gauge from the live Valkey index) + jobs total by status, scanner files scanned per library, watch events by type, webhook delivery failures by URL, hub-cache refresh duration, and the rate-limiter fail-open counter. |
 | **Tracing** | OpenTelemetry (OTLP/gRPC); configured in Settings → Observability and read once at startup (restart required). Auto-instruments HTTP (otelchi) + pgx (otelpgx). Custom spans on `scanner.library` and `transcode.run_job`. |
 | **Health** | `GET /health/live` (always 200); `GET /health/ready` (checks PG + Valkey) |
 

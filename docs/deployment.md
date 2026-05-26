@@ -758,7 +758,32 @@ Lower `SCAN_FILE_CONCURRENCY` (hot-reloadable via SIGHUP). The default is `NumCP
 
 The server exposes `GET /health/live` on the main listen address. A `200` response means the server is running. Use this for load balancer health checks. `GET /health/ready` additionally verifies DB + Valkey reachability and that no migrations are pending.
 
-The metrics endpoint at `METRICS_ADDR` (default `:7071`) exposes Prometheus-compatible metrics. Keep this port firewalled from public access.
+### Metrics endpoint
+
+The metrics endpoint at `METRICS_ADDR` (default `:7071`) exposes Prometheus
+exposition format (`text/plain; version=0.0.4`). It's a dedicated mux — only
+`/metrics` is served, no app routes leak onto it. **Keep this port firewalled
+from public access.**
+
+Beyond the standard `go_*` runtime and `process_*` collectors, the server
+exports an `onscreen_*` set:
+
+| Metric | Labels | What it tracks |
+|---|---|---|
+| `onscreen_http_requests_total` | `method`, `path`, `status` | Per-request count. `path` is the chi **route template** (e.g. `/api/v1/items/{id}`), so per-ID URLs collapse to one series — no cardinality blow-up |
+| `onscreen_http_request_duration_seconds` | `method`, `path` | Request-duration histogram, same path-template label |
+| `onscreen_db_query_duration_seconds` | `query` | Query duration histogram, `query` = SQL verb (`SELECT`, `INSERT`, …, or `other`). pgx tracer wraps the existing OTel one |
+| `onscreen_transcode_sessions_active` | — | Gauge of active transcode sessions, set from the live Valkey session index (multi-instance / TTL-correct, not a drifting local inc/dec) |
+| `onscreen_transcode_jobs_total` | `status` | Job dispatch counter; `status` is `dispatched`, `queued`, or `error` |
+| `onscreen_scanner_files_scanned_total` | `library_id` | Files scanned per library, incremented at scan completion |
+| `onscreen_watch_events_total` | `event_type` | Watch events ingested (`play` / `pause` / `stop` / `scrobble` / …) |
+| `onscreen_webhook_failures_total` | `url` | Webhook delivery failures after all retries are exhausted |
+| `onscreen_hub_cache_refresh_duration_seconds` | `hub` | Hub materialized-view refresh duration |
+| `onscreen_ratelimit_failopen_total` | — | Counter of requests allowed through because the Valkey rate-limiter was unavailable |
+
+Label-bearing counters/histograms only emit a series once they've been observed
+at least once — a freshly-restarted server may show only the runtime + gauge
+metrics until traffic / a scan / a transcode session / a watch event fires.
 
 ---
 

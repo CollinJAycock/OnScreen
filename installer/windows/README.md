@@ -13,7 +13,7 @@ behavior on real hardware (Intel QSV, AMD AMF, NVIDIA NVENC).
 | File | Purpose |
 | ---- | ------- |
 | `server.exe` | Main HTTP API + embedded web UI |
-| `worker.exe` | Transcode worker (runs in same process as server by default; this binary is for the multi-host fan-out path) |
+| `worker.exe` | Transcode worker (runs in-process as the server's embedded worker by default). To deploy this binary as a **remote** worker on a separate machine, use the MSI installer's [worker-only mode](../windows-msi/) instead of this portable zip — it registers an onlogon interactive scheduled task (`OnScreenWorker`) so NVENC/QSV can reach the GPU (a Windows service runs in session 0 and can't). |
 | `devtoken.exe` | Issues a dev JWT for smoke-testing |
 | `WinSW.exe` + `onscreen.xml` | Windows Service wrapper for `server.exe` |
 | `ffmpeg/ffmpeg.exe` + `ffprobe.exe` | Gyan.dev full build — has NVENC, **QSV**, AMF, AV1, libdav1d |

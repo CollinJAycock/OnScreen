@@ -10,12 +10,20 @@ failures. For the *why* and the design, see [ha-roadmap.md](ha-roadmap.md) and
 > opt-in and off by default — a standard install behaves exactly as before.
 >
 > **Env vs UI:** cluster-wide toggles (ABR, public asset cache, static-ABR
-> enable, server name, retention, TMDB rate limit) are editable in **Settings ▸
-> System** — the env vars below are the initial default, and a saved override
-> wins. Node/site-specific config (connection strings, `SECRET_KEY`, bind
-> addresses, paths, `SITE_ID`, per-worker `TRANSCODE_QSV_DECODE`,
-> `STATIC_ABR_ROOT`) stays env-only because `server_settings` replicates across
-> sites.
+> enable, server name, retention, TMDB rate limit, scanner concurrency,
+> missing-file grace, LAN discovery) are editable in **Settings ▸ System**, and
+> the global transcode output ceilings under **Settings ▸ Transcode** — the env
+> vars below are the initial default, and a saved override wins. Node- and
+> site-specific config (bind addresses, paths, `SITE_ID`, per-worker
+> `TRANSCODE_QSV_DECODE`, `DISABLE_EMBEDDED_WORKER`) is now editable **per node**
+> in **Settings ▸ Nodes** — it lives in a separate `node_settings` table keyed
+> by `NODE_ID` (each node reads only its own row, so it's logically per-node
+> even though the table replicates physically). The irreducible env set —
+> connection strings, `SECRET_KEY`, `AUTO_MIGRATE`, and `NODE_ID` itself — stays
+> in the environment because it's needed before either settings table is
+> reachable. `IGNORE_NODE_DB_CONFIG=true` is a per-node break-glass that boots
+> from env-only (recovers a node locked out by a bad bind address it set in the
+> UI).
 
 ## Contents
 - [Topology at a glance](#topology-at-a-glance)
