@@ -92,10 +92,13 @@ type Handlers struct {
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
 	LibraryAccess   v1.LibraryAccessChecker // ACL for artwork; nil = bypass (dev setups)
-	// PublicAssetCache emits `Cache-Control: public` on immutable resized artwork
-	// so a CDN/shared cache in front can store it (HA roadmap §4). From
-	// cfg.PublicAssetCache; default false keeps the private posture.
-	PublicAssetCache bool
+	// PublicAssetCache reports whether to emit `Cache-Control: public` on
+	// immutable resized artwork so a CDN/shared cache in front can store it
+	// (HA roadmap §4). Default returns false (private posture). Implemented
+	// as a closure rather than a static bool so the value is read live from
+	// the System settings — a toggle in the admin UI takes effect on the
+	// next artwork request without needing a server restart.
+	PublicAssetCache func() bool
 	Logger           *slog.Logger
 	Metrics          *observability.Metrics
 	Auth_mw          *middleware.Authenticator
@@ -264,7 +267,7 @@ func NewRouter(h *Handlers) http.Handler {
 							// Resized variants are immutable and identical for every
 							// user, so a CDN/shared cache can hold them when enabled.
 							resizedCC := "private, max-age=604800, immutable"
-							if h.PublicAssetCache {
+							if h.PublicAssetCache != nil && h.PublicAssetCache() {
 								resizedCC = "public, max-age=604800, immutable"
 							}
 							w.Header().Set("Cache-Control", resizedCC)
@@ -284,7 +287,7 @@ func NewRouter(h *Handlers) http.Handler {
 							return
 						}
 						fullCC := "private, max-age=86400, must-revalidate"
-						if h.PublicAssetCache {
+						if h.PublicAssetCache != nil && h.PublicAssetCache() {
 							fullCC = "public, max-age=86400, must-revalidate"
 						}
 						w.Header().Set("Cache-Control", fullCC)

@@ -1174,7 +1174,11 @@ func run() error {
 		Artwork:            artworkMgr,
 		ArtworkRoots:       artworkRootsFn,
 		LibraryAccess:      libSvc,
-		PublicAssetCache:   cfg.PublicAssetCache,
+		// Closure (not a static bool copy) so the artwork handler picks
+		// up admin-UI toggles of public_asset_cache without a restart —
+		// system_settings.applyToConfig mutates cfg.PublicAssetCache on
+		// every settings save, and this captures cfg by pointer.
+		PublicAssetCache: func() bool { return cfg.PublicAssetCache },
 		Logger:             logger,
 		Metrics:            metrics,
 		Auth_mw:            authMiddleware,
