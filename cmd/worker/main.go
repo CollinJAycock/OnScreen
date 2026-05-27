@@ -139,7 +139,7 @@ func run() error {
 	sessionSvc := &sessionCleanupAdapter{q: queries}
 
 	// ── Workers ───────────────────────────────────────────────────────────────
-	partitionWorker := worker.NewPartitionWorker(rwPool, cfg.RetainMonths, logger)
+	partitionWorker := worker.NewPartitionWorker(rwPool, &hotRetainMonths{cfg: cfg}, logger)
 
 	gracePeriodProvider := &hotGracePeriod{cfg: cfg}
 
@@ -268,6 +268,17 @@ type hotGracePeriod struct {
 
 func (h *hotGracePeriod) MissingFileGracePeriod() time.Duration {
 	return h.cfg.MissingFileGracePeriod
+}
+
+// hotRetainMonths adapts config to the RetainMonthsProvider interface so the
+// partition worker reads the live System ▸ Watch History Retention value on
+// each monthly tick instead of the boot-time snapshot.
+type hotRetainMonths struct {
+	cfg *config.Config
+}
+
+func (h *hotRetainMonths) RetainMonths() int {
+	return h.cfg.RetainMonths
 }
 
 // applyWorkerSystemSettings overrides env-derived config with the cluster-wide

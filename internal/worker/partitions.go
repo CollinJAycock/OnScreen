@@ -15,18 +15,28 @@ import (
 // validPartitionName matches partition table names like watch_events_2026_03.
 var validPartitionName = regexp.MustCompile(`^watch_events_\d{4}_\d{2}$`)
 
-// PartitionWorker ensures watch_events has partitions for the current and next
-// 2 months, and detaches partitions older than retainMonths (ADR-002).
-// No pg_partman extension required — keeps deployment dependencies minimal.
-type PartitionWorker struct {
-	pool         *pgxpool.Pool
-	retainMonths int
-	logger       *slog.Logger
+// RetainMonthsProvider returns the current watch-events retention horizon.
+// Read every tick rather than captured at construction so an admin-UI toggle
+// of System ▸ Watch History Retention (months) takes effect on the next
+// monthly run without a server restart. Matches the GracePeriodProvider
+// pattern in missing_files.go.
+type RetainMonthsProvider interface {
+	RetainMonths() int
 }
 
-// NewPartitionWorker creates a PartitionWorker.
-func NewPartitionWorker(pool *pgxpool.Pool, retainMonths int, logger *slog.Logger) *PartitionWorker {
-	return &PartitionWorker{pool: pool, retainMonths: retainMonths, logger: logger}
+// PartitionWorker ensures watch_events has partitions for the current and next
+// 2 months, and detaches partitions older than the retention horizon (ADR-002).
+// No pg_partman extension required — keeps deployment dependencies minimal.
+type PartitionWorker struct {
+	pool   *pgxpool.Pool
+	retain RetainMonthsProvider
+	logger *slog.Logger
+}
+
+// NewPartitionWorker creates a PartitionWorker that reads the retention horizon
+// live from the provider on every run.
+func NewPartitionWorker(pool *pgxpool.Pool, retain RetainMonthsProvider, logger *slog.Logger) *PartitionWorker {
+	return &PartitionWorker{pool: pool, retain: retain, logger: logger}
 }
 
 // Run calls EnsurePartitions on startup, then re-runs on the 1st of each month.
@@ -54,9 +64,12 @@ func (w *PartitionWorker) Run(ctx context.Context) {
 }
 
 // EnsurePartitions creates partitions for the current month + 2 future months
-// and detaches partitions older than retainMonths. This function is idempotent.
+// and detaches partitions older than the retention horizon. This function is
+// idempotent. RetainMonths() is read fresh on each call so an admin-UI bump
+// of System ▸ Watch History Retention takes effect on the next monthly run.
 func (w *PartitionWorker) EnsurePartitions(ctx context.Context) error {
 	now := time.Now().UTC()
+	retainMonths := w.retain.RetainMonths()
 
 	// Create current + 2 future months.
 	for i := range 3 {
@@ -66,14 +79,14 @@ func (w *PartitionWorker) EnsurePartitions(ctx context.Context) error {
 		}
 	}
 
-	// Detach old partitions beyond retainMonths.
-	cutoff := now.AddDate(0, -w.retainMonths, 0)
+	// Detach old partitions beyond the retention horizon.
+	cutoff := now.AddDate(0, -retainMonths, 0)
 	if err := w.detachOldPartitions(ctx, cutoff); err != nil {
 		return fmt.Errorf("detach old partitions: %w", err)
 	}
 
 	w.logger.InfoContext(ctx, "partition worker: partitions ensured",
-		"retain_months", w.retainMonths)
+		"retain_months", retainMonths)
 	return nil
 }
 

@@ -431,7 +431,11 @@ func run() error {
 		}
 		if key != agentKey {
 			agentKey = key
-			agentCache = tmdb.New(key, cfg.TMDBRateLimit, "")
+			// The rate provider is read live by the client on every
+			// request, so admin-UI changes to System ▸ TMDB Rate Limit
+			// take effect without a key rotation or server restart.
+			agentCache = tmdb.New(key, cfg.TMDBRateLimit, "").
+				WithRateProvider(func() int { return cfg.TMDBRateLimit })
 		}
 		return agentCache
 	}
@@ -1274,7 +1278,11 @@ func run() error {
 	metricsMux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
 
 	// ── Background workers ────────────────────────────────────────────────────
-	partitionWorker := worker.NewPartitionWorker(rwPool, cfg.RetainMonths, logger)
+	// Provider so the partition worker reads the live System ▸ Watch
+	// History Retention setting on each monthly tick — admin-UI changes
+	// take effect without a server restart. See
+	// worker.RetainMonthsProvider for the contract.
+	partitionWorker := worker.NewPartitionWorker(rwPool, &hotRetainMonths{cfg: cfg}, logger)
 	hubRefreshWorker := worker.NewHubRefreshWorker(rwPool, 5*time.Minute, logger).WithMetrics(metrics)
 	periodicScanWorker := newPeriodicScanWorker(libSvc, libEnqueuer, logger)
 	// masterLock ensures only one instance runs singleton workers (hub refresh,
@@ -1425,6 +1433,18 @@ func run() error {
 // 5a8ac716-…"). NameOf returns ("", false) when the library can't be
 // resolved — JobsHandler treats that as "fall through to the UUID",
 // so a transient lookup failure doesn't black out the response.
+// hotRetainMonths adapts *config.Config to worker.RetainMonthsProvider so the
+// partition worker reads the live System ▸ Watch History Retention value on
+// each monthly tick. Mirrors cmd/worker's adapter of the same name — each
+// `main` package is separate so the type can't be shared without lifting it
+// to a public package, which isn't worth a new internal package for two
+// three-line types.
+type hotRetainMonths struct {
+	cfg *config.Config
+}
+
+func (h *hotRetainMonths) RetainMonths() int { return h.cfg.RetainMonths }
+
 type jobsLibNamer struct {
 	libSvc *library.Service
 }

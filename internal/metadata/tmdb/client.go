@@ -45,6 +45,15 @@ type Client struct {
 
 	mu          sync.Mutex
 	circuitOpen time.Time // zero = closed; otherwise the time the breaker opened
+
+	// rateSrc, when set, returns the current desired requests-per-second
+	// on every call. The pre-request hook reads it and calls SetLimit on
+	// the underlying *rate.Limiter when the value drifts from the
+	// previously-applied rate, so admin-UI changes to System ▸ TMDB Rate
+	// Limit take effect without a server restart. Nil means the limiter
+	// stays at its construction-time value (the historical posture).
+	rateSrc        func() int
+	appliedRateRPS int
 }
 
 // New creates a TMDB client.
@@ -65,10 +74,38 @@ func New(apiKey string, rateLimit int, language string) *Client {
 		// in depth even though api.themoviedb.org resolves to a public
 		// CDN today; cheap to keep on by default for every outbound
 		// fetch the server makes.
-		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
-		limiter:    rate.NewLimiter(rate.Limit(rateLimit), rateLimit),
-		language:   language,
+		httpClient:     safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
+		limiter:        rate.NewLimiter(rate.Limit(rateLimit), rateLimit),
+		appliedRateRPS: rateLimit,
+		language:       language,
 	}
+}
+
+// WithRateProvider supplies a getter for the current rate limit (req/s),
+// read on every request. When the value drifts from the previously-applied
+// rate, the limiter's SetLimit/SetBurst are updated. Used by the server so
+// an admin-UI change to System ▸ TMDB Rate Limit takes effect without a
+// restart. Returns the client for chaining.
+func (c *Client) WithRateProvider(fn func() int) *Client {
+	c.rateSrc = fn
+	return c
+}
+
+// refreshRate is called from get() before c.limiter.Wait. Cheap on the
+// steady-state path (one func call + one compare); only allocates when the
+// admin actually changes the rate. Non-positive values are ignored so a
+// transient zero (settings reload mid-read) doesn't stall every request.
+func (c *Client) refreshRate() {
+	if c.rateSrc == nil {
+		return
+	}
+	want := c.rateSrc()
+	if want <= 0 || want == c.appliedRateRPS {
+		return
+	}
+	c.limiter.SetLimit(rate.Limit(want))
+	c.limiter.SetBurst(want)
+	c.appliedRateRPS = want
 }
 
 // circuitAllows returns true if the breaker is closed or its cooldown has
@@ -507,6 +544,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 	if !c.circuitAllows() {
 		return ErrCircuitOpen
 	}
+	c.refreshRate()
 	if err := c.limiter.Wait(ctx); err != nil {
 		return fmt.Errorf("rate limiter: %w", err)
 	}
