@@ -361,6 +361,13 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 		// jobs here in preference to software-only nodes.
 		GPUTonemap   bool     `json:"gpu_tonemap"`
 		Capabilities []string `json:"capabilities"`
+		// EncoderLabels maps each capability (e.g. "h264_nvenc") to the worker-
+		// reported human label ("NVIDIA GeForce RTX 4080 Laptop GPU"). The UI
+		// needs this per-worker so the Device dropdown shows only the encoders
+		// THIS worker actually has — previously every worker row rendered the
+		// host's merged encoder list (RTX 5080 + AMD Radeon + libx264) which
+		// was misleading on a laptop with QSV + a different NVIDIA GPU.
+		EncoderLabels map[string]string `json:"encoder_labels,omitempty"`
 	}
 
 	// Check embedded worker status.
@@ -393,6 +400,7 @@ func (h *SettingsHandler) GetFleet(w http.ResponseWriter, r *http.Request) {
 			MaxSessions:    live.MaxSessions,
 			GPUTonemap:     live.HasGPUTonemap,
 			Capabilities:   live.Capabilities,
+			EncoderLabels:  live.EncoderLabels,
 		}
 		if override, ok := overrides[live.Addr]; ok {
 			ws.Name = override.Name

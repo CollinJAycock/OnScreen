@@ -1039,6 +1039,10 @@ export interface FleetWorkerStatus {
   /** Node has a GPU HDR→SDR tonemap path; the dispatcher routes HDR jobs here first. */
   gpu_tonemap: boolean;
   capabilities: string[];
+  /** Per-worker encoder→label map (e.g. "h264_nvenc"→"NVIDIA GeForce RTX 4080 Laptop GPU").
+   *  The Device dropdown for each worker row reads this rather than the host's merged
+   *  encoder list so options match what THIS worker actually has. */
+  encoder_labels?: Record<string, string>;
 }
 
 export interface FleetStatus {

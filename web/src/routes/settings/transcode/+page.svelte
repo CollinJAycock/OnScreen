@@ -16,6 +16,13 @@
     load_percent: number;
     gpu_tonemap: boolean;
     capabilities: string[];
+    /** Per-worker encoder→label map. Used to render each worker row's
+     *  Device dropdown so it only lists the encoders THIS worker has,
+     *  with the worker's own GPU label — historically the dropdown
+     *  re-used the host's merged encoder list, which on a laptop joined
+     *  to a desktop primary showed the desktop's RTX 5080 as a choice
+     *  for the laptop. */
+    encoder_labels?: Record<string, string>;
     isNew?: boolean;
   }
 
@@ -39,7 +46,7 @@
     return 'H.264';
   }
 
-  /** Group detected (encoder, label) entries by physical device.
+  /** Group (encoder, label) entries by physical device.
    *  Modern GPUs (NVIDIA RTX, Intel Arc, AMD RDNA3) hardware-encode
    *  multiple codecs — h264_nvenc and hevc_nvenc on a 5080 are the
    *  same physical card, just different output formats. The detect
@@ -49,25 +56,49 @@
    *  and the worker can transcode H.264 *or* HEVC depending on what
    *  the session needs (h264 for 1080p, hevc for 4K bitrate savings).
    *  The wire format stays a comma-separated string for backwards
-   *  compatibility with the existing `embedded_encoder` field. */
+   *  compatibility with the existing `embedded_encoder` field.
+   *
+   *  Takes the encoder capabilities array + a label map (encoder →
+   *  human label). For the embedded section, callers pass the host's
+   *  filtered detected encoders. For each remote worker, callers pass
+   *  that worker's capabilities + its own encoder_labels — otherwise
+   *  the dropdown would show the primary's labels for the worker's
+   *  identically-coded encoders (e.g. a laptop's "h264_nvenc" rendered
+   *  as the desktop's "RTX 5080" instead of the laptop's "RTX 4080
+   *  Laptop GPU"). */
   type DeviceGroup = { label: string; value: string; codecs: string[] };
-  function groupedDevices(): DeviceGroup[] {
-    if (!encoderInfo) return [];
+  function groupedDevices(caps: string[], labels: Record<string, string>): DeviceGroup[] {
+    if (!caps || caps.length === 0) return [];
     const groups = new Map<string, { label: string; encs: string[] }>();
-    for (const entry of encoderInfo.detected) {
-      const key = entry.label;
-      let group = groups.get(key);
+    for (const enc of caps) {
+      const label = labels[enc] || enc;
+      let group = groups.get(label);
       if (!group) {
-        group = { label: entry.label, encs: [] };
-        groups.set(key, group);
+        group = { label, encs: [] };
+        groups.set(label, group);
       }
-      if (!group.encs.includes(entry.encoder)) group.encs.push(entry.encoder);
+      if (!group.encs.includes(enc)) group.encs.push(enc);
     }
     return Array.from(groups.values()).map((g) => ({
       label: g.label,
       value: g.encs.join(','),
       codecs: g.encs.map(codecForEncoder).filter((c, i, a) => a.indexOf(c) === i),
     }));
+  }
+
+  /** Labels-by-encoder map sourced from the host-side `encoderInfo.detected`
+   *  list. `encoderInfo.detected` is merged with remote workers' encoders
+   *  on the server side (so an admin can see the fleet's total capability
+   *  surface in one place); per-worker dropdowns now use the per-worker
+   *  encoder_labels map instead, but the embedded section reads from this
+   *  filtered to whatever the embedded worker actually advertises. */
+  function embeddedLabelMap(): Record<string, string> {
+    if (!encoderInfo) return {};
+    const out: Record<string, string> = {};
+    for (const entry of encoderInfo.detected) {
+      out[entry.encoder] = entry.label;
+    }
+    return out;
   }
   let fleetEmbeddedOnline = false;
   let fleetEmbeddedActiveSessions = 0;
@@ -429,7 +460,7 @@
         <label for="embedded-encoder">Device</label>
         <select id="embedded-encoder" bind:value={fleetEmbeddedEncoder}>
           <option value="">Auto-detect</option>
-          {#each groupedDevices() as g}
+          {#each groupedDevices(fleetEmbeddedCapabilities, embeddedLabelMap()) as g}
             <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
           {/each}
         </select>
@@ -479,7 +510,7 @@
               <label for="worker-encoder-{row.id}">Encoder</label>
               <select id="worker-encoder-{row.id}" bind:value={row.encoder}>
                 <option value="">Auto-detect</option>
-                {#each groupedDevices() as g}
+                {#each groupedDevices(row.capabilities || [], row.encoder_labels || {}) as g}
                   <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
                 {/each}
               </select>
