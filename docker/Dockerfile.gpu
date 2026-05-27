@@ -53,9 +53,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # ── Stage 3: runtime (pre-built FFmpeg + Go binaries) ────────────────────────
 FROM onscreen-ffmpeg:latest
 
-# Non-root user
-RUN groupadd -r onscreen && useradd -r -g onscreen onscreen
+# Non-root user. CACHE_PATH pinned to /var/cache/onscreen rather than the
+# user's home — see the matching block in docker/Dockerfile for the
+# rationale (alpine's adduser-S home behaviour drifted between releases
+# and broke the artwork resize cache silently). The GPU image is debian-
+# based via the nvidia/cuda upstream, but the same pin keeps the runtime
+# state location consistent across both flavours.
+RUN groupadd -r onscreen && useradd -r -g onscreen onscreen \
+ && mkdir -p /var/cache/onscreen \
+ && chown -R onscreen:onscreen /var/cache/onscreen
 USER onscreen
+ENV CACHE_PATH=/var/cache/onscreen
 
 COPY --from=builder /bin/server  /usr/local/bin/server
 COPY --from=builder /bin/worker  /usr/local/bin/worker
@@ -67,6 +75,7 @@ COPY --chown=onscreen:onscreen internal/db/migrations /migrations
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
+VOLUME /var/cache/onscreen
 EXPOSE 7070 7071
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \

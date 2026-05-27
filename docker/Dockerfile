@@ -47,9 +47,20 @@ RUN apk add --no-cache ffmpeg ca-certificates tzdata chromaprint postgresql17-cl
       tesseract-ocr-data-chi_tra tesseract-ocr-data-kor tesseract-ocr-data-rus \
       tesseract-ocr-data-ara
 
-# Non-root user
-RUN addgroup -S onscreen && adduser -S onscreen -G onscreen
+# Non-root user. Pin CACHE_PATH to /var/cache/onscreen rather than relying on
+# the user's home directory: alpine's `adduser -S` historically created
+# /home/<user> and made it writable for the user, but the behaviour drifted
+# between alpine releases (the 3.21 → 3.23 bump in PR #13 broke it in QA)
+# and the failure mode was a silent one — the resize handler swallowed the
+# EACCES from MkdirAll, every artwork request re-decoded from scratch, hub
+# pages loaded slowly with no log breadcrumb. /var/cache/onscreen sidesteps
+# that whole class of failure: we own the directory at image-build time and
+# the env var pins the application path regardless of $HOME.
+RUN addgroup -S onscreen && adduser -S onscreen -G onscreen \
+ && mkdir -p /var/cache/onscreen \
+ && chown -R onscreen:onscreen /var/cache/onscreen
 USER onscreen
+ENV CACHE_PATH=/var/cache/onscreen
 
 COPY --from=builder /bin/server  /usr/local/bin/server
 COPY --from=builder /bin/worker  /usr/local/bin/worker
@@ -57,6 +68,11 @@ COPY --from=builder /bin/goose   /usr/local/bin/goose
 
 # Migrations are bundled; goose is run as a pipeline step, not on startup.
 COPY --chown=onscreen:onscreen internal/db/migrations /migrations
+
+# Resize cache + animedb cache + other regenerable per-runtime state. The
+# server's startup writability probe (cmd/server/main.go) checks this at boot
+# and logs a loud error if it ever drifts back to non-writable.
+VOLUME /var/cache/onscreen
 
 EXPOSE 7070 7071
 
