@@ -694,6 +694,36 @@ func TestSecurityHeaders_CSPAllowsCloudflareInsights(t *testing.T) {
 	}
 }
 
+func TestSecurityHeaders_CSPAllowsGoogleCastSDK(t *testing.T) {
+	// Regression guard: the watch screen injects cast_sender.js from
+	// www.gstatic.com when the user opens it, and the Cast picker renders
+	// inside an iframe served from the same host. Blocking either showed
+	// up on QA as a CSP violation on the player and a dead Cast button.
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	parts := splitCSP(csp)
+	var scriptDirective, frameDirective string
+	for _, p := range parts {
+		if strings.HasPrefix(p, "script-src ") {
+			scriptDirective = p
+		}
+		if strings.HasPrefix(p, "frame-src ") {
+			frameDirective = p
+		}
+	}
+	if !strings.Contains(scriptDirective, "https://www.gstatic.com") {
+		t.Errorf("script-src should allow https://www.gstatic.com (Cast sender SDK) — got %q", scriptDirective)
+	}
+	if !strings.Contains(frameDirective, "https://www.gstatic.com") {
+		t.Errorf("frame-src should allow https://www.gstatic.com (Cast picker iframe) — got %q", frameDirective)
+	}
+}
+
 // splitCSP splits a CSP header on "; " boundaries.
 func splitCSP(csp string) []string {
 	var parts []string
