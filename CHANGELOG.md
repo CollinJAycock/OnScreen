@@ -105,6 +105,25 @@ the asset-token migration.
 
 ### Fixed — server
 
+- **Transcode "spinner forever" on corrupt source files** — a 5 s pre-flight
+  ffprobe (`scanner.VerifySource`) gates the transcode-start handler before a
+  worker is dispatched. A missing path returns `422 SOURCE_MISSING`; a corrupt
+  container returns `422 SOURCE_UNREADABLE` with a friendly message ("This file
+  appears to be corrupt — the server couldn't read its container. Re-encode or
+  replace the file."), surfacing in the player's error overlay instead of the
+  historical 60 s spinner while ffmpeg hung trying to demux the bad input.
+  Healthy files clear in ~200–500 ms.
+- **Playlist endpoint's 60 s deadline could be defeated by a hung worker** —
+  each `workerReady` HEAD inside the wait loop now uses a 3 s sub-context, so
+  the deadline check fires on the next 100 ms tick after expiry instead of
+  being pushed out to 60+30 s. The client gets a clean `503 playlist not
+  ready` if seg 0 never lands.
+- **CSP blocked the Google Cast sender SDK** — `cast_sender.js` (loaded
+  dynamically by the watch screen) is now allowed on `script-src`, and the
+  Cast picker iframe on `frame-src`. The Cast button + Chromecast device
+  discovery work again on the web client. `frame-src` is set explicitly
+  because `frame-ancestors 'none'` only governs inbound framing, not what we
+  embed; without it `default-src 'self'` would block the picker.
 - **Prometheus metrics were exported but never recorded** — 9 of the 10
   `onscreen_*` metrics were defined and registered yet had zero instrumentation,
   so `/metrics` only ever showed runtime/process stats. Wired them all up: HTTP

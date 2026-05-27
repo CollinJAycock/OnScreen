@@ -47,9 +47,15 @@ releases.
 
 ## Transcode
 
-Transcode errors surface today as generic `INTERNAL` / `NOT_FOUND` / `FORBIDDEN`.
-When adding new transcode-specific failure modes (codec rejection, session
-supersede, encoder unavailable), introduce a new stable code rather than
+| Code | HTTP | Meaning |
+|---|---|---|
+| `SOURCE_MISSING` | 422 | The source file's path doesn't resolve on disk. Typical causes: media drive unmounted, file deleted/moved since the last scan, network share offline. Re-scan the library to clear stale rows. |
+| `SOURCE_UNREADABLE` | 422 | ffprobe pre-flight failed within the 5 s budget — the container is corrupt, the file is zero-length, or the header references streams the demuxer can't parse. Re-encode or replace the file. Surfaces a friendly error in the player instead of the historical 60 s "spinner forever" while ffmpeg hung on the bad input. |
+| `TOO_MANY_SESSIONS` | 429 | Per-user concurrent session cap reached (default 5). Stop one of the user's existing sessions before starting another. |
+
+Generic codes (`INTERNAL` / `NOT_FOUND` / `FORBIDDEN`) still cover the rest of
+the transcode surface; when adding new specific failure modes (codec rejection,
+encoder unavailable, supersede chain), introduce a new stable code rather than
 reusing a generic one.
 
 ## Contract guarantees

@@ -1375,8 +1375,44 @@ paths:
                   data: { $ref: '#/components/schemas/TranscodeStartResponse' }
         '404':
           description: 'Item not found, or item type is not transcodable (e.g. audiobook / book / photo).'
+        '422':
+          description: |
+            Pre-flight source verification rejected the file before a worker
+            was dispatched. `code` is one of:
+
+            * `SOURCE_MISSING` — the file path doesn't resolve on disk
+              (drive unmounted, file moved/deleted since scan, share offline).
+            * `SOURCE_UNREADABLE` — ffprobe couldn't demux the file within
+              the 5 s pre-flight budget (corrupt container, zero-byte file,
+              unsupported codec at the header level).
+
+            Both replace the historical "spinner forever" failure mode where
+            ffmpeg hung on the bad input and the client polled the playlist
+            endpoint until the 60 s deadline. See ERROR_CODES.md ▸ Transcode.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code: { type: string, enum: [SOURCE_MISSING, SOURCE_UNREADABLE] }
+                      message: { type: string }
+                      request_id: { type: string }
         '429':
-          description: 'TranscodeStartLimit exceeded for this session.'
+          description: |
+            Either the per-session `TranscodeStartLimit` (default 10/min) or
+            the per-user concurrent-session cap (default 5) was hit. Body
+            carries `code: TOO_MANY_SESSIONS` for the latter.
+        '503':
+          description: |
+            Returned by the playlist sub-endpoint
+            (`/api/v1/transcode/sessions/{sid}/playlist.m3u8`) when seg 0
+            doesn't land within the handler's 60 s deadline. The deadline is
+            now bounded by per-call worker-HEAD timeouts so a hung worker
+            can't slip past it — the client gets the 503 promptly instead of
+            polling indefinitely.
 
   /api/v1/transcode/sessions/{sid}:
     parameters: [{ in: path, name: sid, required: true, schema: { type: string } }]
