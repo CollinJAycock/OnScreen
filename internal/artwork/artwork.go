@@ -8,9 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"image"
-	"image/jpeg"
-	_ "image/png" // register PNG decoder
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,8 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/image/draw"
 
 	"github.com/google/uuid"
 
@@ -312,20 +307,21 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 		}
 	}
 
-	// Decode source image (through the media store).
+	// Decode + resize + encode through the build-tagged backend. Default
+	// build uses pure-Go image/jpeg + golang.org/x/image/draw.BiLinear.
+	// `go build -tags vips` swaps in libvips via govips, which is roughly
+	// 10–20× faster on cold-cache hits and uses a tiny fraction of the
+	// per-decode memory (no full RGBA materialisation). See
+	// resize_stdlib.go / resize_vips.go for the two implementations.
 	sf, err := m.Store().Open(ctx, sourcePath)
 	if err != nil {
 		return fmt.Errorf("open source image: %w", err)
 	}
 	defer sf.Close()
-
-	src, _, err := image.Decode(sf)
+	resized, err := decodeResizeEncodeJPEG(sf, width, height, jpegQuality)
 	if err != nil {
-		return fmt.Errorf("decode image: %w", err)
+		return fmt.Errorf("resize: %w", err)
 	}
-
-	// Calculate target dimensions preserving aspect ratio.
-	dst := resize(src, width, height)
 
 	// Write the cache entry via a temp file + atomic rename so concurrent
 	// requests for the same poster can't observe a half-written JPEG (each
@@ -342,12 +338,12 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 			"cache_path", m.cachePath, "err", err)
 	} else {
 		tmpPath := cf.Name()
-		encErr := jpeg.Encode(cf, dst, &jpeg.Options{Quality: 90})
+		_, writeErr := cf.Write(resized)
 		closeErr := cf.Close()
 		switch {
-		case encErr != nil:
-			m.warn("artwork cache: jpeg encode failed (resize result not cached)",
-				"source", sourcePath, "tmp", tmpPath, "err", encErr)
+		case writeErr != nil:
+			m.warn("artwork cache: write to temp file failed (resize result not cached)",
+				"source", sourcePath, "tmp", tmpPath, "err", writeErr)
 			_ = os.Remove(tmpPath)
 		case closeErr != nil:
 			m.warn("artwork cache: temp-file close failed (resize result not cached)",
@@ -375,48 +371,8 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 		}
 	}
 
-	return jpeg.Encode(w, dst, &jpeg.Options{Quality: 90})
-}
-
-func resize(src image.Image, maxW, maxH int) image.Image {
-	bounds := src.Bounds()
-	srcW := bounds.Dx()
-	srcH := bounds.Dy()
-
-	if maxW == 0 && maxH == 0 {
-		return src
-	}
-
-	var dstW, dstH int
-	if maxW == 0 {
-		// Constrain height only.
-		dstH = maxH
-		dstW = srcW * maxH / srcH
-	} else if maxH == 0 {
-		// Constrain width only.
-		dstW = maxW
-		dstH = srcH * maxW / srcW
-	} else {
-		// Fit within both constraints, preserve aspect ratio.
-		if srcW*maxH > srcH*maxW {
-			dstW = maxW
-			dstH = srcH * maxW / srcW
-		} else {
-			dstH = maxH
-			dstW = srcW * maxH / srcH
-		}
-	}
-
-	if dstW <= 0 {
-		dstW = 1
-	}
-	if dstH <= 0 {
-		dstH = 1
-	}
-
-	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
-	draw.BiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
-	return dst
+	_, err = w.Write(resized)
+	return err
 }
 
 func cacheKeyFor(path string, w, h int) string {

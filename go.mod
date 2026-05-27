@@ -9,6 +9,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/crewjam/saml v0.5.1
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
+	github.com/disintegration/imaging v1.6.2
 	github.com/exaring/otelpgx v0.11.1
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-chi/chi/v5 v5.3.0
