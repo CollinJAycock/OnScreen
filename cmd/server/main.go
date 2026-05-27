@@ -370,6 +370,25 @@ func run() error {
 	}
 
 	// ── Artwork ───────────────────────────────────────────────────────────────
+	// Pre-flight the cache directory at boot — when it's not writable (the
+	// most common cause is a container running as a non-root user that can't
+	// create `~/.onscreen/cache/artwork` because `~` is read-only or
+	// non-existent), every artwork request silently re-resizes from scratch
+	// (animedb hits the same path and complains too). Log a loud error
+	// once at startup with the actionable fix so the operator doesn't have
+	// to diagnose it via slow-page symptoms.
+	if err := os.MkdirAll(cfg.CachePath, 0o755); err != nil {
+		logger.Error("artwork cache path is not writable — resize results will NOT be cached, "+
+			"every artwork request will re-decode the source. Set CACHE_PATH to a writable directory "+
+			"(e.g. /var/lib/onscreen/cache) and restart.",
+			"cache_path", cfg.CachePath, "err", err)
+	} else if probe, err := os.CreateTemp(cfg.CachePath, "writable-probe-*.tmp"); err != nil {
+		logger.Error("artwork cache path exists but rejects writes — same impact as above (no caching).",
+			"cache_path", cfg.CachePath, "err", err)
+	} else {
+		_ = probe.Close()
+		_ = os.Remove(probe.Name())
+	}
 	artworkMgr := artwork.New(cfg.CachePath).WithLogger(logger)
 
 	// ── Photo image server ────────────────────────────────────────────────────
