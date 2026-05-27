@@ -370,7 +370,7 @@ func run() error {
 	}
 
 	// ── Artwork ───────────────────────────────────────────────────────────────
-	artworkMgr := artwork.New(cfg.CachePath)
+	artworkMgr := artwork.New(cfg.CachePath).WithLogger(logger)
 
 	// ── Photo image server ────────────────────────────────────────────────────
 	// Shares the cache root with artwork but uses a different subdirectory so

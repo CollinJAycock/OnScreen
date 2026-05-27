@@ -74,6 +74,12 @@ type Manager struct {
 	// is read from the bucket. The resize cache stays local regardless (it's a
 	// regenerable server-side cache, not media bytes).
 	store mediastore.Store
+
+	// logger surfaces cache-write failures (disk full, perm denied, missing
+	// cache dir) so operators can diagnose "every artwork miss" symptoms
+	// instead of guessing. Nil-safe: when unset, failures are silent (the
+	// historical behaviour). Wired via WithLogger from the server.
+	logger *slog.Logger
 }
 
 // New creates an artwork Manager. The default HTTP client uses
@@ -125,6 +131,23 @@ func (m *Manager) WithHTTPClient(c *http.Client) *Manager {
 func (m *Manager) WithMediaStore(s mediastore.Store) *Manager {
 	m.store = s
 	return m
+}
+
+// WithLogger wires a slog.Logger so resize-cache-write failures and unusual
+// source-mtime states surface in admin/logs. Without a logger, those signals
+// are silent — historically that masked "every artwork hit triggers a fresh
+// resize" symptoms (full cache disk, EACCES, future-dated source mtime) until
+// someone shell'd into the box and ran df / stat manually.
+func (m *Manager) WithLogger(l *slog.Logger) *Manager {
+	m.logger = l
+	return m
+}
+
+// warn logs a warning if a logger is configured; no-op otherwise.
+func (m *Manager) warn(msg string, args ...any) {
+	if m.logger != nil {
+		m.logger.Warn(msg, args...)
+	}
 }
 
 // Store returns the configured source backend, defaulting to local-filesystem
@@ -304,11 +327,51 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 	// Calculate target dimensions preserving aspect ratio.
 	dst := resize(src, width, height)
 
-	// Write to cache.
-	if err := os.MkdirAll(m.cachePath, 0o755); err == nil {
-		if cf, err := os.Create(cachePath); err == nil {
-			_ = jpeg.Encode(cf, dst, &jpeg.Options{Quality: 90})
-			cf.Close()
+	// Write the cache entry via a temp file + atomic rename so concurrent
+	// requests for the same poster can't observe a half-written JPEG (each
+	// writer creates its own .tmp.<rand>, and the last Rename wins).
+	// Failures used to be silent — operators with a full cache disk or a
+	// EACCES on the cache dir would see "every hit re-resizes" and have no
+	// breadcrumb in the logs. The warn() calls fix that.
+	cacheWritten := false
+	if err := os.MkdirAll(m.cachePath, 0o755); err != nil {
+		m.warn("artwork cache: mkdir failed (resize result not cached)",
+			"cache_path", m.cachePath, "err", err)
+	} else if cf, err := os.CreateTemp(m.cachePath, "resize-*.tmp"); err != nil {
+		m.warn("artwork cache: temp-file create failed (resize result not cached)",
+			"cache_path", m.cachePath, "err", err)
+	} else {
+		tmpPath := cf.Name()
+		encErr := jpeg.Encode(cf, dst, &jpeg.Options{Quality: 90})
+		closeErr := cf.Close()
+		switch {
+		case encErr != nil:
+			m.warn("artwork cache: jpeg encode failed (resize result not cached)",
+				"source", sourcePath, "tmp", tmpPath, "err", encErr)
+			_ = os.Remove(tmpPath)
+		case closeErr != nil:
+			m.warn("artwork cache: temp-file close failed (resize result not cached)",
+				"tmp", tmpPath, "err", closeErr)
+			_ = os.Remove(tmpPath)
+		default:
+			if rerr := os.Rename(tmpPath, cachePath); rerr != nil {
+				m.warn("artwork cache: rename failed (resize result not cached)",
+					"tmp", tmpPath, "target", cachePath, "err", rerr)
+				_ = os.Remove(tmpPath)
+			} else {
+				cacheWritten = true
+			}
+		}
+	}
+	if !cacheWritten {
+		// Flag a single warn for the source-mtime-is-future case — that
+		// silently invalidates the cache on every request. mtimes from a
+		// recent metadata refresh that downloaded a fresh poster are
+		// expected; an mtime materially in the future (clock skew, file
+		// touched by a sync utility) is not.
+		if skew := time.Until(srcInfo.ModTime); skew > 5*time.Minute {
+			m.warn("artwork cache: source mtime is in the future — cache will never be considered fresh until clock catches up",
+				"source", sourcePath, "src_mtime", srcInfo.ModTime, "skew", skew.String())
 		}
 	}
 
