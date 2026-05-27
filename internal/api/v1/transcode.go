@@ -77,6 +77,12 @@ type NativeTranscodeHandler struct {
 	// worker reads source from directly, off the app tier (HA roadmap §3).
 	store mediastore.Store
 
+	// verifySource is the pre-flight source-readability check called from
+	// Start before the session is dispatched. Defaults to
+	// scanner.VerifySource; tests inject a no-op so they can exercise the
+	// session/dispatch path without a real on-disk file.
+	verifySource func(ctx context.Context, path string) (scanner.SourceStatus, error)
+
 	// staticEnabled + staticRoot serve pre-encoded ("static") ABR ladders from
 	// the media store when one exists, instead of starting a live session
 	// (HA roadmap §5). staticRoot is the key prefix (STATIC_ABR_ROOT) and must
@@ -152,6 +158,15 @@ func (h *NativeTranscodeHandler) mediaStore() mediastore.Store {
 func (h *NativeTranscodeHandler) WithStaticABR(root string) *NativeTranscodeHandler {
 	h.staticEnabled = true
 	h.staticRoot = root
+	return h
+}
+
+// WithVerifySource overrides the pre-flight source-readability check called
+// from Start. Tests use this to skip the real ffprobe (their file paths
+// don't exist on disk); production wiring leaves it nil and the handler
+// uses scanner.VerifySource.
+func (h *NativeTranscodeHandler) WithVerifySource(fn func(ctx context.Context, path string) (scanner.SourceStatus, error)) *NativeTranscodeHandler {
+	h.verifySource = fn
 	return h
 }
 
@@ -318,6 +333,36 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		file = &files[0] // already sorted best quality first
+	}
+
+	// Pre-flight source verification — bounds the "spinner forever" case
+	// where ffmpeg would otherwise hang trying to demux a corrupt or
+	// missing file. Catches the bad input in ~1 s with a structured error
+	// code the player surfaces as "This file can't be played" instead of
+	// the playlist endpoint's 60 s deadline → infinite-retry spinner.
+	// Cheap on healthy files (~200-500 ms; see scanner.VerifySource).
+	verify := h.verifySource
+	if verify == nil {
+		verify = scanner.VerifySource
+	}
+	if status, verr := verify(ctx, file.FilePath); status != scanner.SourceOK {
+		switch status {
+		case scanner.SourceMissing:
+			h.logger.WarnContext(ctx, "transcode: source file missing",
+				"file_id", file.ID, "path", file.FilePath, "err", verr)
+			respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_MISSING",
+				"The file for this title is missing on disk. Re-scan the library to refresh.")
+			return
+		case scanner.SourceUnreadable:
+			h.logger.WarnContext(ctx, "transcode: source file unreadable",
+				"file_id", file.ID, "path", file.FilePath, "err", verr)
+			respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_UNREADABLE",
+				"This file appears to be corrupt — the server couldn't read its container. Re-encode or replace the file.")
+			return
+		case scanner.SourceOK:
+			// Caught by the outer `!= SourceOK` guard already; the case
+			// label keeps exhaustive lint happy.
+		}
 	}
 
 	// Last-writer-wins: if this user already has sessions running for this
@@ -957,8 +1002,19 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 
 // workerReady returns true if the named file is available — either via a HEAD
 // request to the worker's segment server or by stat-ing the local path.
+//
+// Each call is bounded by a 3 s sub-context so a hung worker can't defeat
+// the playlist endpoint's overall 60 s deadline. Without this cap, a
+// single workerReady call could block on `workerClient.Timeout=30s` and
+// push the handler's return to 60+30 = 90 s — long enough that the
+// browser keeps the spinner up and the user perceives "hangs forever"
+// rather than "errored quickly." Returning false on a per-call timeout
+// is correct because the next iteration of the polling loop will retry,
+// up to the outer deadline.
 func workerReady(ctx context.Context, workerAddr, sessID, name, localPath string) bool {
 	if workerAddr != "" {
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
 		url := fmt.Sprintf("http://%s/segments/%s/%s", workerAddr, sessID, name)
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 		if err != nil {

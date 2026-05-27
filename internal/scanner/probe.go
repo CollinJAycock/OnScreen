@@ -87,8 +87,71 @@ type ffprobeChapter struct {
 	Tags      map[string]string `json:"tags"`
 }
 
-// ProbeFile runs ffprobe on the given path and returns extracted metadata.
-// Returns an empty ProbeResult (not an error) if ffprobe is not installed.
+// SourceStatus categorises a VerifySource outcome: empty on success, or
+// a reason token (e.g. "missing", "unreadable") callers map to a
+// structured error code instead of a generic "playback failed."
+type SourceStatus string
+
+const (
+	// SourceOK — file exists on disk and ffprobe could parse its header.
+	SourceOK SourceStatus = ""
+	// SourceMissing — file path doesn't resolve on disk. Typical causes:
+	// drive unmounted, file moved/deleted since scan, network share down.
+	SourceMissing SourceStatus = "missing"
+	// SourceUnreadable — file exists but ffprobe couldn't demux it within
+	// the time budget (corrupt container, zero-byte file, unsupported codec
+	// at the header level). This is the fast path that replaces "spinner
+	// forever" when ffmpeg would otherwise hang on a bad input.
+	SourceUnreadable SourceStatus = "unreadable"
+)
+
+// VerifySource runs a fast ffprobe against path with a 5 s budget and
+// returns whether the source is playable. Used as a pre-flight gate by
+// the transcode-start handler so a missing or corrupt source rejects in
+// ~1 s with a structured error code, instead of stalling the encoder for
+// the playlist endpoint's 60 s deadline and surfacing as an indefinite
+// spinner in the player.
+//
+// The probe is intentionally light — `-probesize 5M -analyzeduration 1s`
+// keeps healthy files at ~200-500 ms while a corrupt header bails almost
+// instantly. Heavier metadata extraction stays in ProbeFile (called at
+// scan time or when missing fields trigger a lazy re-probe).
+func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
+	if _, statErr := os.Stat(path); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return SourceMissing, statErr
+		}
+		// Other stat errors (permission, EIO) — treat as missing for the
+		// purpose of surfacing an error to the user; the message carries
+		// the real reason for an admin reading server logs.
+		return SourceMissing, statErr
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	args := []string{
+		"-v", "error",
+		"-probesize", "5000000", // 5 MB cap — enough for any sane container header
+		"-analyzeduration", "1000000", // 1 s of stream data
+		"-show_entries", "stream=index",
+		"-of", "csv=p=0",
+		path,
+	}
+	out, err := exec.CommandContext(ctx, "ffprobe", args...).Output()
+	if err != nil {
+		// Context-deadline-exceeded surfaces here as an exec error.
+		return SourceUnreadable, fmt.Errorf("ffprobe verify: %w", err)
+	}
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return SourceUnreadable, fmt.Errorf("ffprobe verify: no streams detected")
+	}
+	return SourceOK, nil
+}
+
+// ProbeFile runs a full ffprobe pass against path and returns the parsed
+// stream / format / chapters metadata. Used by the scanner at index time
+// and by the transcode-start handler's lazy re-probe for files that were
+// scanned with incomplete metadata.
+//
 // probesize and analyzeduration cap how much data ffprobe reads — without
 // them, ffprobe on MPEG-TS files can scan the entire file to detect streams.
 func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {

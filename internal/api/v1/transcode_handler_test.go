@@ -17,9 +17,18 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/testvalkey"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
+
+// fakeSourceOK is the verifySource stub used by every Start-handler test —
+// the mock file paths never resolve on disk, so the real scanner.VerifySource
+// would short-circuit with SOURCE_MISSING and skip the code paths the tests
+// are actually exercising (supersede, dispatch, quota, …).
+func fakeSourceOK(context.Context, string) (scanner.SourceStatus, error) {
+	return scanner.SourceOK, nil
+}
 
 // ── mocks ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +83,7 @@ func newTestHandler(t *testing.T) (*NativeTranscodeHandler, *transcode.SessionSt
 			VideoCodec: strPtr("h264"),
 			AudioCodec: strPtr("aac"),
 		}},
-	}, cfg, slog.Default())
+	}, cfg, slog.Default()).WithVerifySource(fakeSourceOK)
 
 	return h, store
 }
@@ -90,6 +99,58 @@ func withClaims(r *http.Request) *http.Request {
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	return r.WithContext(middleware.WithClaims(r.Context(), claims))
+}
+
+// ── Start: pre-flight source verification ──────────────────────────────────
+
+func TestStart_SourceMissingReturns422(t *testing.T) {
+	// File is absent on disk → handler must bail with SOURCE_MISSING
+	// (HTTP 422) instead of dispatching to a worker that will hang on
+	// the missing source for the full 60 s playlist deadline.
+	h, _ := newTestHandler(t)
+	h.verifySource = func(context.Context, string) (scanner.SourceStatus, error) {
+		return scanner.SourceMissing, nil
+	}
+	body, _ := json.Marshal(transcodeStartRequest{Height: 1080})
+
+	req := httptest.NewRequest("POST", "/api/v1/items/"+uuid.New().String()+"/transcode", bytes.NewReader(body))
+	req = withChiParam(req, "id", uuid.New().String())
+	req = withClaims(req)
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"SOURCE_MISSING"`)) {
+		t.Errorf("response should carry code=SOURCE_MISSING; got %s", rec.Body.String())
+	}
+}
+
+func TestStart_SourceUnreadableReturns422(t *testing.T) {
+	// File exists but ffprobe can't demux it (corrupt container) →
+	// handler must surface SOURCE_UNREADABLE so the player shows a
+	// real error rather than the playlist-endpoint spinner.
+	h, _ := newTestHandler(t)
+	h.verifySource = func(context.Context, string) (scanner.SourceStatus, error) {
+		return scanner.SourceUnreadable, nil
+	}
+	body, _ := json.Marshal(transcodeStartRequest{Height: 1080})
+
+	req := httptest.NewRequest("POST", "/api/v1/items/"+uuid.New().String()+"/transcode", bytes.NewReader(body))
+	req = withChiParam(req, "id", uuid.New().String())
+	req = withClaims(req)
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"SOURCE_UNREADABLE"`)) {
+		t.Errorf("response should carry code=SOURCE_UNREADABLE; got %s", rec.Body.String())
+	}
 }
 
 // ── Start: height validation ─────────────────────────────────────────────────
@@ -280,7 +341,7 @@ func TestStart_SupersedesPriorSessionForSameUserAndItem(t *testing.T) {
 			AudioCodec: strPtr("aac"),
 		}},
 	}
-	h := NewNativeTranscodeHandler(store, segToken, mediaSvc, cfg, slog.Default())
+	h := NewNativeTranscodeHandler(store, segToken, mediaSvc, cfg, slog.Default()).WithVerifySource(fakeSourceOK)
 	killer := &mockSessionKiller{}
 	h.SetSessionKiller(killer)
 
