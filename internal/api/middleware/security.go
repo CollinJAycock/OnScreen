@@ -56,16 +56,22 @@ func newNonce() string {
 //     (loaded as an external <script src>, so the nonce switch doesn't
 //     affect it; Rocket Loader, which inlines scripts, is an opt-in
 //     incompatibility an operator would have to relax CSP for).
+//   - www.gstatic.com is allow-listed on script-src + frame-src for the
+//     Google Cast sender SDK (cast_sender.js + the Cast picker iframe).
+//     The watch screen injects the script dynamically when a user opens
+//     it, so without the allowance the SDK silently no-ops and the Cast
+//     button is dead.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nonce := newNonce()
 		csp := "default-src 'self'; " +
-			"script-src 'self' 'nonce-" + nonce + "' https://static.cloudflareinsights.com; " +
+			"script-src 'self' 'nonce-" + nonce + "' https://static.cloudflareinsights.com https://www.gstatic.com; " +
 			"style-src 'self' 'unsafe-inline' blob:; " +
 			"img-src 'self' data: https: blob:; " +
 			"font-src 'self' data: blob:; " +
 			"media-src 'self' blob:; " +
 			"connect-src 'self' https://cloudflareinsights.com; " +
+			"frame-src 'self' https://www.gstatic.com; " +
 			"frame-ancestors 'none'"
 
 		w.Header().Set("X-Content-Type-Options", "nosniff")
