@@ -434,6 +434,11 @@ type ItemDetailResponse struct {
 	ContentRating *string  `json:"content_rating,omitempty"`
 	Genres        []string `json:"genres"`
 	ParentID      *string  `json:"parent_id,omitempty"`
+	// GrandparentID is the parent of the parent — for an episode it's the
+	// show id (episode → season → show), letting the back button on the
+	// player jump straight to the show page instead of replaying browser
+	// history (which would land on the previously-played episode).
+	GrandparentID *string `json:"grandparent_id,omitempty"`
 	Index         *int     `json:"index,omitempty"`
 	ViewOffsetMS  int64    `json:"view_offset_ms"`
 	// LastClientName carries the name of the device that last emitted a
@@ -594,6 +599,13 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if item.ParentID != nil {
 		s := item.ParentID.String()
 		out.ParentID = &s
+		// Resolve grandparent (parent's parent) — for episodes this is the
+		// show id. Best-effort: a missing parent or DB error just leaves
+		// the field unset, the client falls back to history.back().
+		if parent, perr := h.media.GetItem(r.Context(), *item.ParentID); perr == nil && parent.ParentID != nil {
+			gp := parent.ParentID.String()
+			out.GrandparentID = &gp
+		}
 	}
 	out.TMDBID = item.TMDBID
 	out.TVDBID = item.TVDBID

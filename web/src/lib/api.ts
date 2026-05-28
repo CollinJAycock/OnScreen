@@ -1347,6 +1347,7 @@ export interface ItemDetail {
   content_rating?: string;
   genres: string[];
   parent_id?: string;
+  grandparent_id?: string;
   index?: number;
   view_offset_ms: number;
   updated_at: number;

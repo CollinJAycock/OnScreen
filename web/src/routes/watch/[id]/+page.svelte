@@ -2290,6 +2290,13 @@
 
   function goBack() {
     saveProgress('stopped');
+    // For an episode the show id lives at grandparent_id (episode → season
+    // → show). Jump straight to the show page so the back arrow doesn't
+    // bounce to the previously-played episode via history.back().
+    if (item?.type === 'episode' && item.grandparent_id) {
+      goto(`/watch/${item.grandparent_id}`);
+      return;
+    }
     history.back();
   }
 
