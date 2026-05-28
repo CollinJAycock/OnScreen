@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,6 +31,7 @@ type mockUserService struct {
 
 	verifyPINResult *PINSwitchResult
 	verifyPINErr    error
+	verifyPINCalled bool
 }
 
 func (m *mockUserService) SetPIN(_ context.Context, _ uuid.UUID, _, _ string) error {
@@ -45,11 +47,25 @@ func (m *mockUserService) ListSwitchable(_ context.Context) ([]SwitchableUser, e
 	return m.switchableUsers, nil
 }
 func (m *mockUserService) VerifyPIN(_ context.Context, _ uuid.UUID, _ string) (*PINSwitchResult, error) {
+	m.verifyPINCalled = true
 	if m.verifyPINErr != nil {
 		return nil, m.verifyPINErr
 	}
 	return m.verifyPINResult, nil
 }
+
+// fakeThrottle is a FailureThrottle stand-in for PIN-switch lockout tests.
+type fakeThrottle struct {
+	allowed    bool
+	incrCalls  int
+	resetCalls int
+}
+
+func (f *fakeThrottle) CheckFailures(_ context.Context, _ string, _ int) (bool, error) {
+	return f.allowed, nil
+}
+func (f *fakeThrottle) IncrFailure(_ context.Context, _ string, _ time.Duration) { f.incrCalls++ }
+func (f *fakeThrottle) ResetFailures(_ context.Context, _ string)                { f.resetCalls++ }
 
 // ── mock user DB ────────────────────────────────────────────────────────────
 
@@ -574,6 +590,55 @@ func TestUser_PINSwitch_InvalidBody(t *testing.T) {
 	// No token maker — returns 500 before body parsing.
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// Once a target is locked out, PINSwitch must short-circuit with 429 and never
+// run the (expensive, oracle-prone) PIN verification.
+func TestUser_PINSwitch_ThrottledLockout(t *testing.T) {
+	tm, err := auth.NewTokenMaker(make([]byte, 32))
+	if err != nil {
+		t.Fatalf("token maker: %v", err)
+	}
+	svc := &mockUserService{verifyPINErr: ErrInvalidCredentials}
+	thr := &fakeThrottle{allowed: false}
+	h := NewUserHandler(svc).WithDB(&mockUserDB{}).
+		WithTokenMaker(tm, slog.Default()).WithPINThrottle(thr)
+
+	rec := httptest.NewRecorder()
+	body := `{"user_id":"` + uuid.New().String() + `","pin":"9999"}`
+	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	h.PINSwitch(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("status: got %d, want 429", rec.Code)
+	}
+	if svc.verifyPINCalled {
+		t.Error("VerifyPIN must not run once the target is locked out")
+	}
+}
+
+// A confirmed bad PIN records a failure so repeated guesses trip the lockout.
+func TestUser_PINSwitch_BadPINRecordsFailure(t *testing.T) {
+	tm, err := auth.NewTokenMaker(make([]byte, 32))
+	if err != nil {
+		t.Fatalf("token maker: %v", err)
+	}
+	svc := &mockUserService{verifyPINErr: ErrInvalidCredentials}
+	thr := &fakeThrottle{allowed: true}
+	h := NewUserHandler(svc).WithDB(&mockUserDB{}).
+		WithTokenMaker(tm, slog.Default()).WithPINThrottle(thr)
+
+	rec := httptest.NewRecorder()
+	body := `{"user_id":"` + uuid.New().String() + `","pin":"9999"}`
+	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	h.PINSwitch(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", rec.Code)
+	}
+	if thr.incrCalls != 1 {
+		t.Errorf("IncrFailure calls: got %d, want 1", thr.incrCalls)
 	}
 }
 

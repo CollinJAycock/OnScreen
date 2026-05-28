@@ -34,7 +34,7 @@ var ErrBlockedAddress = errors.New("safehttp: address blocked by allowlist polic
 // AllowPrivate=true on the dialer you hand to the HDHomeRun driver
 // (local tuners are always RFC1918/link-local by definition).
 type DialPolicy struct {
-	AllowPrivate   bool // RFC1918, RFC4193 (fc00::/7)
+	AllowPrivate   bool // RFC1918, RFC4193 (fc00::/7), RFC6598 CGNAT (100.64.0.0/10)
 	AllowLoopback  bool // 127.0.0.0/8, ::1/128
 	AllowLinkLocal bool // 169.254.0.0/16 (includes AWS 169.254.169.254 metadata)
 }
@@ -99,6 +99,16 @@ func checkAddress(p DialPolicy, address string) error {
 			return nil
 		}
 		return fmt.Errorf("%w: private address %s", ErrBlockedAddress, ip)
+	case isCGNAT(ip):
+		// RFC 6598 shared address space (100.64.0.0/10): carrier-grade NAT
+		// and overlay networks (Tailscale) live here. Go's IsPrivate()
+		// doesn't cover it, so without this case it falls through to
+		// "allowed". Treat it like RFC1918 — permitted only when the policy
+		// opts into private ranges.
+		if p.AllowPrivate {
+			return nil
+		}
+		return fmt.Errorf("%w: shared/CGNAT address %s", ErrBlockedAddress, ip)
 	case ip.IsUnspecified():
 		// 0.0.0.0 / ::
 		return fmt.Errorf("%w: unspecified address %s", ErrBlockedAddress, ip)
@@ -106,6 +116,20 @@ func checkAddress(p DialPolicy, address string) error {
 		return fmt.Errorf("%w: multicast address %s", ErrBlockedAddress, ip)
 	}
 	return nil
+}
+
+// cgnatNet is RFC 6598 shared address space (100.64.0.0/10) — carrier-grade
+// NAT and overlay networks (Tailscale). Go's net.IP.IsPrivate doesn't include
+// it, so checkAddress tests it explicitly.
+var cgnatNet = func() *net.IPNet {
+	_, n, _ := net.ParseCIDR("100.64.0.0/10")
+	return n
+}()
+
+// isCGNAT reports whether ip falls in the RFC 6598 shared range.
+func isCGNAT(ip net.IP) bool {
+	v4 := ip.To4()
+	return v4 != nil && cgnatNet.Contains(v4)
 }
 
 // Default returns a client+policy appropriate for public outbound

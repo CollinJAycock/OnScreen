@@ -13,6 +13,8 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // S3Config configures an S3-compatible backend (AWS S3, MinIO, Backblaze B2,
@@ -60,10 +62,25 @@ func NewS3(cfg S3Config) (*S3, error) {
 	if cfg.Endpoint == "" || cfg.Bucket == "" {
 		return nil, errors.New("mediastore: s3 endpoint and bucket are required")
 	}
+	// Route dials through the shared SSRF guard so a misconfigured or
+	// attacker-supplied endpoint can't be turned into an internal-network
+	// probe or made to reach the cloud metadata endpoint. Private + loopback
+	// are allowed (self-hosted MinIO commonly lives on the LAN or localhost);
+	// link-local (169.254/16), CGNAT, multicast, and unspecified are refused.
+	// Public S3 (AWS/R2/B2/Wasabi) resolves to public IPs and is unaffected.
+	transport, err := minio.DefaultTransport(cfg.UseSSL)
+	if err != nil {
+		return nil, fmt.Errorf("mediastore: s3 transport: %w", err)
+	}
+	transport.DialContext = safehttp.NewDialer(safehttp.DialPolicy{
+		AllowPrivate:  true,
+		AllowLoopback: true,
+	}).DialContext
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
-		Region: cfg.Region,
+		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure:    cfg.UseSSL,
+		Region:    cfg.Region,
+		Transport: transport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mediastore: new s3 client: %w", err)

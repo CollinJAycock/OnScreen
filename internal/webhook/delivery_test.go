@@ -154,6 +154,39 @@ func TestDeliver_NoSignatureWhenNoSecret(t *testing.T) {
 	}
 }
 
+// When a secret is configured but can't be decrypted (e.g. SECRET_KEY rotated
+// without re-encrypting stored secrets), delivery must fail rather than send
+// an unsigned — forgeable — payload.
+func TestDeliver_RefusesUnsignedOnDecryptFailure(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	enc := testEncryptor(t)
+	// Encrypt the secret under a DIFFERENT key so enc.Decrypt fails the
+	// AES-GCM auth check.
+	otherKey := sha256.Sum256([]byte("a-totally-different-key"))
+	other, err := auth.NewEncryptor(otherKey[:])
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	encrypted, err := other.Encrypt("my-webhook-secret")
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	ep := gen.WebhookEndpoint{Url: srv.URL, Enabled: true, Secret: &encrypted}
+
+	if err := Deliver(context.Background(), srv.Client(), enc, ep, []byte(`{}`)); err == nil {
+		t.Fatal("expected error when a configured secret can't be decrypted")
+	}
+	if hit {
+		t.Error("must NOT deliver (even unsigned) when a configured secret won't decrypt")
+	}
+}
+
 func TestDeliver_ContextCancelled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Second) // never responds in time

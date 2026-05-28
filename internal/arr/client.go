@@ -45,19 +45,19 @@ type Client struct {
 // New constructs a Client with a sensible default timeout. baseURL is trimmed
 // of trailing slashes so callers can pass either form.
 //
-// The HTTP client uses the safehttp LocalDevice policy: it allows RFC1918,
-// loopback, and link-local addresses because Radarr/Sonarr typically run on
-// the operator's LAN or in a sibling Docker container. Multicast / unspecified
-// addresses are still refused — those aren't valid arr targets and would
-// otherwise be free SSRF surface for an admin-level config bug.
+// The HTTP client uses a safehttp policy that allows RFC1918 + loopback —
+// Radarr/Sonarr typically run on the operator's LAN or in a sibling Docker
+// container — but refuses link-local, multicast, and unspecified addresses.
+// Blocking link-local (169.254.0.0/16) keeps a misconfigured or attacker-
+// supplied base URL from reaching the cloud metadata endpoint
+// (169.254.169.254); an arr instance is never legitimately there.
 func New(baseURL, apiKey string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		APIKey:  apiKey,
 		HTTPClient: safehttp.NewClient(safehttp.DialPolicy{
-			AllowPrivate:   true,
-			AllowLoopback:  true,
-			AllowLinkLocal: true,
+			AllowPrivate:  true,
+			AllowLoopback: true,
 		}, 15*time.Second),
 	}
 }

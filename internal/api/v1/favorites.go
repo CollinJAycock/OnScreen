@@ -22,6 +22,7 @@ type FavoritesDB interface {
 	IsFavorite(ctx context.Context, arg gen.IsFavoriteParams) (bool, error)
 	ListFavorites(ctx context.Context, arg gen.ListFavoritesParams) ([]gen.ListFavoritesRow, error)
 	CountFavorites(ctx context.Context, userID uuid.UUID) (int64, error)
+	GetMediaItem(ctx context.Context, id uuid.UUID) (gen.GetMediaItemRow, error)
 }
 
 // FavoritesHandler serves favorites endpoints.
@@ -142,6 +143,39 @@ func (h *FavoritesHandler) Add(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid item id")
 		return
 	}
+
+	// Enforce the same gate List applies on reads: a user must not be able to
+	// favorite an item in a library they can't see or one rated above their
+	// content-rating ceiling. Fail closed (404) on any miss so this can't be
+	// used as an existence oracle for restricted content.
+	item, err := h.db.GetMediaItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "favorite: get item", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.access != nil {
+		ok, aerr := h.access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
+		if aerr != nil {
+			h.logger.ErrorContext(r.Context(), "favorite: library access", "id", id, "err", aerr)
+			respond.InternalError(w, r)
+			return
+		}
+		if !ok {
+			respond.NotFound(w, r)
+			return
+		}
+	}
+	if claims.MaxContentRating != "" && item.ContentRating != nil && *item.ContentRating != "" &&
+		contentrating.Rank(*item.ContentRating) > contentrating.Rank(claims.MaxContentRating) {
+		respond.NotFound(w, r)
+		return
+	}
+
 	if err := h.db.AddFavorite(r.Context(), gen.AddFavoriteParams{
 		UserID:  claims.UserID,
 		MediaID: id,

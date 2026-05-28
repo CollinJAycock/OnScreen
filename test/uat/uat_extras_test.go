@@ -172,6 +172,9 @@ func (s *stubFavoritesDB) ListFavorites(_ context.Context, _ gen.ListFavoritesPa
 func (s *stubFavoritesDB) CountFavorites(_ context.Context, _ uuid.UUID) (int64, error) {
 	return 0, nil
 }
+func (s *stubFavoritesDB) GetMediaItem(_ context.Context, _ uuid.UUID) (gen.GetMediaItemRow, error) {
+	return gen.GetMediaItemRow{}, nil
+}
 
 // stubNotificationDB satisfies v1.NotificationDB.
 type stubNotificationDB struct{}

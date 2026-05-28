@@ -110,7 +110,28 @@ type UserHandler struct {
 	logger    *slog.Logger
 	audit     *audit.Logger
 	libAccess UserLibraryAccessService
+	throttle  FailureThrottle
 }
+
+// FailureThrottle is the brute-force counter the PIN-switch path uses to lock
+// out repeated bad PINs against a target user. Satisfied by *valkey.RateLimiter;
+// nil in tests that don't exercise throttling (the handler no-ops the gate).
+type FailureThrottle interface {
+	CheckFailures(ctx context.Context, key string, limit int) (bool, error)
+	IncrFailure(ctx context.Context, key string, window time.Duration)
+	ResetFailures(ctx context.Context, key string)
+}
+
+const (
+	// pinSwitchMaxFailures / pinSwitchFailWindow bound PIN-switch guessing.
+	// A 4-digit PIN has only 10⁴ values and mints a token carrying the
+	// TARGET's privileges (including admin), so without a lockout it's
+	// brute-forceable in minutes. 5 failures per 15 min per target makes
+	// exhausting the space take days while leaving genuine "wrong PIN"
+	// retries unaffected.
+	pinSwitchMaxFailures = 5
+	pinSwitchFailWindow  = 15 * time.Minute
+)
 
 // WithAudit attaches an audit logger. Returns the handler for chaining.
 func (h *UserHandler) WithAudit(a *audit.Logger) *UserHandler {
@@ -147,6 +168,12 @@ func (h *UserHandler) WithLibraryAccess(svc UserLibraryAccessService) *UserHandl
 // changes and admin demotes also wipe in-flight playback credentials.
 func (h *UserHandler) WithSegmentTokenRevoker(r SegmentTokenRevoker) *UserHandler {
 	h.segTokens = r
+	return h
+}
+
+// WithPINThrottle attaches the brute-force throttle used by PINSwitch.
+func (h *UserHandler) WithPINThrottle(t FailureThrottle) *UserHandler {
+	h.throttle = t
 	return h
 }
 
@@ -482,9 +509,30 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Brute-force lockout, keyed by the TARGET user. The 4-digit PIN mints a
+	// token carrying the target's privileges, so an unthrottled guesser could
+	// escalate to admin in minutes; this caps failures per target. CheckFailures
+	// only reads — IncrFailure runs on a confirmed bad PIN, ResetFailures clears
+	// the counter on success. Mirrors the per-username login throttle.
+	failKey := "ratelimit:pinswitch:" + targetID.String()
+	if h.throttle != nil {
+		allowed, _ := h.throttle.CheckFailures(r.Context(), failKey, pinSwitchMaxFailures)
+		if !allowed {
+			if h.logger != nil {
+				h.logger.WarnContext(r.Context(), "pin-switch throttle hit", "target_id", targetID)
+			}
+			respond.Error(w, r, http.StatusTooManyRequests, "RATE_LIMITED",
+				"too many failed attempts; try again later")
+			return
+		}
+	}
+
 	result, err := h.users.VerifyPIN(r.Context(), targetID, body.PIN)
 	if err != nil {
 		if errors.Is(err, ErrBadPIN) || errors.Is(err, ErrInvalidCredentials) {
+			if h.throttle != nil {
+				h.throttle.IncrFailure(r.Context(), failKey, pinSwitchFailWindow)
+			}
 			respond.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid PIN")
 			return
 		}
@@ -493,6 +541,9 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		}
 		respond.InternalError(w, r)
 		return
+	}
+	if h.throttle != nil {
+		h.throttle.ResetFailures(r.Context(), failKey)
 	}
 
 	// Issue a new access token for the target user.

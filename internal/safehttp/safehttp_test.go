@@ -50,10 +50,30 @@ func TestCheckAddress_BlocksUnspecifiedAndMulticast(t *testing.T) {
 }
 
 func TestCheckAddress_AllowsPublic(t *testing.T) {
-	for _, a := range []string{"1.1.1.1:443", "8.8.8.8:53", "[2606:4700::1111]:443"} {
+	// 100.128.0.1 is just outside RFC 6598 (100.64.0.0/10 ends at
+	// 100.127.255.255), so it must remain a normal public address.
+	for _, a := range []string{"1.1.1.1:443", "8.8.8.8:53", "[2606:4700::1111]:443", "100.128.0.1:80"} {
 		if err := checkAddress(DialPolicy{}, a); err != nil {
 			t.Errorf("%s: expected allowed, got %v", a, err)
 		}
+	}
+}
+
+func TestCheckAddress_BlocksCGNAT(t *testing.T) {
+	// RFC 6598 shared space (100.64.0.0/10) isn't covered by IsPrivate; it
+	// must be blocked under the public-only policy so it can't be used to
+	// reach a CGNAT/Tailscale-internal host.
+	for _, a := range []string{"100.64.0.1:80", "100.127.255.254:443"} {
+		if err := checkAddress(DialPolicy{}, a); !errors.Is(err, ErrBlockedAddress) {
+			t.Errorf("%s: expected ErrBlockedAddress, got %v", a, err)
+		}
+	}
+}
+
+func TestCheckAddress_AllowsCGNATWhenPrivateAllowed(t *testing.T) {
+	// AllowPrivate opts into shared/CGNAT space too (Tailscale / CGNAT LANs).
+	if err := checkAddress(DialPolicy{AllowPrivate: true}, "100.64.0.1:80"); err != nil {
+		t.Errorf("AllowPrivate should permit CGNAT; got %v", err)
 	}
 }
 

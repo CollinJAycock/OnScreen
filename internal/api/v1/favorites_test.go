@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
@@ -36,6 +37,9 @@ type mockFavoritesDB struct {
 
 	count    int64
 	countErr error
+
+	item    gen.GetMediaItemRow
+	itemErr error
 }
 
 func (m *mockFavoritesDB) AddFavorite(_ context.Context, arg gen.AddFavoriteParams) error {
@@ -57,6 +61,9 @@ func (m *mockFavoritesDB) ListFavorites(_ context.Context, arg gen.ListFavorites
 }
 func (m *mockFavoritesDB) CountFavorites(_ context.Context, _ uuid.UUID) (int64, error) {
 	return m.count, m.countErr
+}
+func (m *mockFavoritesDB) GetMediaItem(_ context.Context, _ uuid.UUID) (gen.GetMediaItemRow, error) {
+	return m.item, m.itemErr
 }
 
 func favReqWithClaims(method, url string, uid uuid.UUID) *http.Request {
@@ -210,5 +217,67 @@ func TestFavorites_Remove_DBError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want 500", rec.Code)
+	}
+}
+
+// Add must fail closed when the target item doesn't exist, so it can't be
+// used as an existence oracle.
+func TestFavorites_Add_ItemNotFound(t *testing.T) {
+	db := &mockFavoritesDB{itemErr: pgx.ErrNoRows}
+	h := NewFavoritesHandler(db, slog.Default())
+
+	req := favReqWithItem(http.MethodPost, uuid.New(), uuid.New())
+	rec := httptest.NewRecorder()
+	h.Add(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404", rec.Code)
+	}
+	if db.addCalled {
+		t.Error("AddFavorite must not be called for a missing item")
+	}
+}
+
+// Add must refuse to favorite an item in a library the caller can't access
+// (write-side parity with the read-side filter in List).
+func TestFavorites_Add_DeniedLibrary(t *testing.T) {
+	db := &mockFavoritesDB{item: gen.GetMediaItemRow{LibraryID: uuid.New()}}
+	// Empty allow-set → a non-admin can't access any library.
+	h := NewFavoritesHandler(db, slog.Default()).
+		WithLibraryAccess(&stubLibraryAccessChecker{allowed: map[uuid.UUID]struct{}{}})
+
+	req := favReqWithItem(http.MethodPost, uuid.New(), uuid.New())
+	rec := httptest.NewRecorder()
+	h.Add(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404", rec.Code)
+	}
+	if db.addCalled {
+		t.Error("AddFavorite must not be called for an inaccessible library")
+	}
+}
+
+// Add must refuse to favorite an item rated above the caller's ceiling.
+func TestFavorites_Add_AboveRatingCeiling(t *testing.T) {
+	rating := "R"
+	db := &mockFavoritesDB{item: gen.GetMediaItemRow{LibraryID: uuid.New(), ContentRating: &rating}}
+	h := NewFavoritesHandler(db, slog.Default())
+
+	itemID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/items/"+itemID.String()+"/favorite", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(),
+		&auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", itemID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	h.Add(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404", rec.Code)
+	}
+	if db.addCalled {
+		t.Error("AddFavorite must not be called for content above the rating ceiling")
 	}
 }

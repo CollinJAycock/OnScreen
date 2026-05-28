@@ -520,13 +520,19 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Put("/users/me/quality-profile", h.User.SetQualityProfile)
 				r.Get("/users/switchable", h.User.ListSwitchable)
-				r.Post("/auth/pin-switch", h.User.PINSwitch)
+				// Tight per-session cap on top of the handler's per-target
+				// lockout — bounds how fast one caller can sweep PINs across
+				// many targets.
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pinswitch"))).
+					Post("/auth/pin-switch", h.User.PINSwitch)
 			}
 
 			// Native client device pairing — claim binds a PIN to the
 			// browser-authenticated user, authorising the waiting device.
 			if h.Pair != nil {
-				r.Post("/auth/pair/claim", h.Pair.Claim)
+				// Rate-limit PIN-claim guessing (6-digit code) per session.
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pairclaim"))).
+					Post("/auth/pair/claim", h.Pair.Claim)
 			}
 
 			// Notifications.

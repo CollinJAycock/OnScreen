@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -179,6 +180,7 @@ func normalizeToVTT(raw []byte, filename string) []byte {
 	text := string(raw)
 	// Strip BOM that some providers prepend.
 	text = strings.TrimPrefix(text, "\ufeff")
+	text = sanitizeActiveContent(text)
 
 	if strings.HasPrefix(text, "WEBVTT") {
 		return []byte(text)
@@ -207,6 +209,35 @@ func srtToVTT(srt string) string {
 		out.WriteByte('\n')
 	}
 	return out.String()
+}
+
+// Active-content patterns stripped from subtitle text before it is cached and
+// served. These constructs are never valid in a subtitle but are live XSS
+// vectors if a client renders cue text as raw HTML.
+var (
+	// Paired <script>…</script> (dotall, non-greedy) and any stray script tag.
+	cueScriptBlock = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script\s*>`)
+	cueScriptTag   = regexp.MustCompile(`(?i)</?script\b[^>]*>`)
+	// Any tag carrying an on*= event handler (e.g. <img onerror=…>) or a
+	// javascript: URI (e.g. <a href="javascript:…">). The [^>]* stays inside
+	// a single tag, so plain angle-bracket text ("5 < 10", "<MUSIC>") and the
+	// legal formatting tags (<i>/<b>/<font color>/…) are left untouched.
+	cueEventAttrTag = regexp.MustCompile(`(?i)<[^>]*\son\w+\s*=[^>]*>`)
+	cueJSURITag     = regexp.MustCompile(`(?i)<[^>]*javascript:[^>]*>`)
+)
+
+// sanitizeActiveContent removes script tags, inline event handlers, and
+// javascript: URIs from subtitle text. It is deliberately conservative — it
+// targets only constructs that execute code, not the WebVTT/SRT formatting
+// tags — so it adds defense-in-depth (the bundled web player already escapes
+// cue text) for any future client that renders cue text as HTML without
+// corrupting legitimate subtitles.
+func sanitizeActiveContent(text string) string {
+	text = cueScriptBlock.ReplaceAllString(text, "")
+	text = cueScriptTag.ReplaceAllString(text, "")
+	text = cueEventAttrTag.ReplaceAllString(text, "")
+	text = cueJSURITag.ReplaceAllString(text, "")
+	return text
 }
 
 func nilIfEmpty(s string) *string {

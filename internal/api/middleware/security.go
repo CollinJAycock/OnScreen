@@ -61,10 +61,17 @@ func newNonce() string {
 //     The watch screen injects the script dynamically when a user opens
 //     it, so without the allowance the SDK silently no-ops and the Cast
 //     button is dead.
+//   - base-uri 'self' and object-src 'none' are set explicitly. base-uri
+//     does NOT fall back to default-src, so without it an injected <base>
+//     could re-root every relative script URL to an attacker origin and
+//     sidestep the script-src nonce. object-src 'none' kills legacy
+//     <object>/<embed> plugin vectors unconditionally.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nonce := newNonce()
 		csp := "default-src 'self'; " +
+			"base-uri 'self'; " +
+			"object-src 'none'; " +
 			"script-src 'self' 'nonce-" + nonce + "' https://static.cloudflareinsights.com https://www.gstatic.com; " +
 			"style-src 'self' 'unsafe-inline' blob:; " +
 			"img-src 'self' data: https: blob:; " +

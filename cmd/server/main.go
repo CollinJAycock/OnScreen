@@ -643,7 +643,8 @@ func run() error {
 		WithTokenMaker(tokenMaker, logger).
 		WithAudit(auditLogger).
 		WithLibraryAccess(&userLibraryAccessAdapter{lib: libSvc, q: gen.New(roPool)}).
-		WithSegmentTokenRevoker(segTokenMgr)
+		WithSegmentTokenRevoker(segTokenMgr).
+		WithPINThrottle(rateLimiter)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)

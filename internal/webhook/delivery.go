@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -61,7 +60,9 @@ func SafeClient(timeout time.Duration) *http.Client {
 
 // Deliver POSTs body to ep.Url with optional HMAC-SHA256 signing.
 // If the endpoint has an encrypted secret, it is decrypted and used to sign
-// the payload. On decrypt failure the request is delivered unsigned.
+// the payload. If a secret is configured but can't be decrypted, delivery is
+// refused (returns an error) rather than sent unsigned — a key-rotation
+// misconfig must not silently downgrade webhook authentication.
 //
 // Signature scheme (Stripe-shaped, replay-safe):
 //
@@ -87,21 +88,25 @@ func Deliver(ctx context.Context, client *http.Client, enc *auth.Encryptor, ep g
 	req.Header.Set("Content-Type", "application/json")
 
 	if ep.Secret != nil && *ep.Secret != "" {
-		if rawSecret, decErr := enc.Decrypt(*ep.Secret); decErr == nil {
-			ts := strconv.FormatInt(time.Now().Unix(), 10)
-			mac := hmac.New(sha256.New, []byte(rawSecret))
-			// Stripe pattern: sign "{ts}.{body}" so the timestamp is
-			// part of the authenticated input — receiver detects
-			// tampering by recomputing the MAC, not by trusting the
-			// header in isolation.
-			mac.Write([]byte(ts))
-			mac.Write([]byte("."))
-			mac.Write(body)
-			req.Header.Set("X-OnScreen-Timestamp", ts)
-			req.Header.Set("X-OnScreen-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-		} else {
-			slog.WarnContext(ctx, "webhook decrypt failed, delivering unsigned", "url", ep.Url, "err", decErr)
+		rawSecret, decErr := enc.Decrypt(*ep.Secret)
+		if decErr != nil {
+			// A secret IS configured but won't decrypt (e.g. SECRET_KEY was
+			// rotated without re-encrypting stored webhook secrets). Sending
+			// the event unsigned would let a fail-open receiver accept a
+			// forgeable payload — refuse instead so the misconfiguration
+			// surfaces via the normal retry/failure path.
+			return fmt.Errorf("decrypt webhook secret: %w", decErr)
 		}
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		mac := hmac.New(sha256.New, []byte(rawSecret))
+		// Stripe pattern: sign "{ts}.{body}" so the timestamp is part of
+		// the authenticated input — receiver detects tampering by
+		// recomputing the MAC, not by trusting the header in isolation.
+		mac.Write([]byte(ts))
+		mac.Write([]byte("."))
+		mac.Write(body)
+		req.Header.Set("X-OnScreen-Timestamp", ts)
+		req.Header.Set("X-OnScreen-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 
 	resp, err := client.Do(req)

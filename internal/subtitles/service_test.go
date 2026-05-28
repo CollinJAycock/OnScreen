@@ -133,6 +133,59 @@ func TestNormalizeToVTTStripsBOM(t *testing.T) {
 	}
 }
 
+func TestNormalizeToVTTStripsActiveContent(t *testing.T) {
+	cases := []struct {
+		name   string
+		in     string
+		absent []string // must be gone after sanitization
+		want   []string // must survive
+	}{
+		{
+			name:   "script block removed",
+			in:     "WEBVTT\n\n00:00.000 --> 00:01.000\nHi<script>alert(1)</script>\n",
+			absent: []string{"<script", "</script", "alert(1)"},
+			want:   []string{"Hi"},
+		},
+		{
+			name:   "event handler tag removed",
+			in:     "WEBVTT\n\n00:00.000 --> 00:01.000\n<img src=x onerror=alert(1)>caption\n",
+			absent: []string{"<img", "onerror"},
+			want:   []string{"caption"},
+		},
+		{
+			name:   "javascript uri tag removed",
+			in:     "WEBVTT\n\n00:00.000 --> 00:01.000\n<a href=\"javascript:alert(1)\">x\n",
+			absent: []string{"javascript:", "href"},
+			want:   []string{"x"},
+		},
+		{
+			name: "legit formatting preserved",
+			in:   "WEBVTT\n\n00:00.000 --> 00:01.000\n<i>italic</i> <b>bold</b> <font color=\"red\">red</font>\n",
+			want: []string{"<i>italic</i>", "<b>bold</b>", "<font color=\"red\">red</font>"},
+		},
+		{
+			name: "bare angle-bracket text preserved",
+			in:   "WEBVTT\n\n00:00.000 --> 00:01.000\n<MUSIC> 5 < 10 and 10 > 5\n",
+			want: []string{"<MUSIC>", "5 < 10 and 10 > 5"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(normalizeToVTT([]byte(tc.in), "subs.vtt"))
+			for _, a := range tc.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("expected %q to be stripped, got:\n%s", a, got)
+				}
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("expected %q to survive, got:\n%s", w, got)
+				}
+			}
+		})
+	}
+}
+
 func TestDownloadReturnsErrNoProviderWhenUnconfigured(t *testing.T) {
 	svc := New(nil, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_, err := svc.Download(context.Background(), DownloadOpts{

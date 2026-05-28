@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/testvalkey"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -69,7 +71,9 @@ func TestSessions_List_ABRRenditionAndChildFiltering(t *testing.T) {
 
 	h := NewNativeSessionsHandler(store, nil, &stubSessionItems{}, slog.Default())
 	rec := httptest.NewRecorder()
-	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
+	h.List(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", rec.Code)
@@ -98,5 +102,68 @@ func TestSessions_List_ABRRenditionAndChildFiltering(t *testing.T) {
 	// Parent runs no encode; bitrate must come from the selected rung.
 	if got.BitrateKbps == nil || *got.BitrateKbps != 2534 {
 		t.Errorf("bitrate_kbps: got %v, want 2534 (the 720p rung)", got.BitrateKbps)
+	}
+}
+
+// The endpoint is authenticated — no claims means 401, never a session list.
+func TestSessions_List_RequiresAuth(t *testing.T) {
+	v := testvalkey.New(t)
+	store := transcode.NewSessionStore(v)
+	h := NewNativeSessionsHandler(store, nil, &stubSessionItems{}, slog.Default())
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", rec.Code)
+	}
+}
+
+// A non-admin must see only their own sessions, never other users' activity.
+func TestSessions_List_NonAdminSeesOnlyOwn(t *testing.T) {
+	v := testvalkey.New(t)
+	store := transcode.NewSessionStore(v)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	me := uuid.New()
+	other := uuid.New()
+	mine := transcode.Session{
+		ID: transcode.NewSessionID(), UserID: me, MediaItemID: uuid.New(), FileID: uuid.New(),
+		Decision: "transcode", FilePath: "/media/mine.mkv", CreatedAt: now, LastActivityAt: now,
+	}
+	theirs := transcode.Session{
+		ID: transcode.NewSessionID(), UserID: other, MediaItemID: uuid.New(), FileID: uuid.New(),
+		Decision: "transcode", FilePath: "/media/theirs.mkv", CreatedAt: now, LastActivityAt: now,
+	}
+	if err := store.Create(ctx, mine); err != nil {
+		t.Fatalf("create mine: %v", err)
+	}
+	if err := store.Create(ctx, theirs); err != nil {
+		t.Fatalf("create theirs: %v", err)
+	}
+
+	h := NewNativeSessionsHandler(store, nil, &stubSessionItems{}, slog.Default())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: me, IsAdmin: false}))
+	h.List(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(body.Data) != 1 {
+		t.Fatalf("non-admin should see only their own session, got %d: %s", len(body.Data), rec.Body.String())
+	}
+	if body.Data[0].ID != mine.ID {
+		t.Errorf("listed %s, want own session %s", body.Data[0].ID, mine.ID)
 	}
 }

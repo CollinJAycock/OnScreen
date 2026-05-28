@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/streaming"
@@ -63,6 +64,11 @@ type activeSession struct {
 // List handles GET /api/v1/sessions.
 func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	claims := middleware.ClaimsFromContext(ctx)
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
 	resp := make([]activeSession, 0)
 
 	// ── Transcode/direct-play sessions from Valkey ────────────────────────────
@@ -96,6 +102,12 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 			// Rung children of an ABR parent are internal — an ABR stream shows
 			// as the single parent card, not one per rung.
 			if s.ParentID != "" {
+				continue
+			}
+			// Non-admins see only their own sessions; admins get the full
+			// now-playing dashboard. The direct-play tracker entries below
+			// carry no user id, so they're shown to admins only.
+			if !claims.IsAdmin && s.UserID != claims.UserID {
 				continue
 			}
 
@@ -156,7 +168,7 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	// ── Direct HTTP streams from file-server tracker ──────────────────────────
 	// Skip tracker entries whose file path is already covered by a Valkey session
 	// (avoids duplicate cards when a client follows the direct-play redirect).
-	if h.tracker != nil {
+	if h.tracker != nil && claims.IsAdmin {
 		coveredPaths := make(map[string]bool, len(valkeySessions))
 		for _, s := range valkeySessions {
 			coveredPaths[s.FilePath] = true
