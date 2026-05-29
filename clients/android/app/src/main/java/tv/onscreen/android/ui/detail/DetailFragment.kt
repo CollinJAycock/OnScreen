@@ -47,10 +47,26 @@ class DetailFragment : Fragment() {
     private var detailBound = false
     private var errorOverlay: ErrorOverlay? = null
 
+    /** Last playback position handed back by the player via a fragment
+     *  result. When set, it takes precedence over the loaded item's
+     *  view_offset_ms when rendering the Resume button — load()'s server
+     *  refetch on return can race the just-sent progress write, so this
+     *  override guarantees the label reflects what the user just watched. */
+    private var resumeOverrideMs: Long? = null
+
     companion object {
         private const val ARG_ITEM_ID = "item_id"
         private const val ARG_SIBLING_IDS = "sibling_ids"
         private const val ARG_CURRENT_INDEX = "current_index"
+
+        /** Fragment-result channel the player uses to hand the exact
+         *  final position back when it exits, so the Resume label
+         *  refreshes immediately on return. Without it the detail
+         *  screen's server refetch races the just-sent progress write
+         *  and re-renders the pre-playback offset (stale "Resume from"). */
+        const val RESULT_PLAYBACK_PROGRESS = "detail_playback_progress"
+        const val RESULT_KEY_ITEM_ID = "item_id"
+        const val RESULT_KEY_POSITION_MS = "position_ms"
 
         fun newInstance(itemId: String): DetailFragment {
             return DetailFragment().apply {
@@ -83,6 +99,30 @@ class DetailFragment : Fragment() {
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
         val siblingIds = arguments?.getStringArrayList(ARG_SIBLING_IDS)
         val currentIndex = arguments?.getInt(ARG_CURRENT_INDEX, -1) ?: -1
+
+        // The player hands its final position back here on exit. Apply
+        // it as an override and, if the detail is already on-screen,
+        // refresh the play buttons immediately; otherwise bindDetail
+        // picks the override up when the item finishes loading.
+        parentFragmentManager.setFragmentResultListener(
+            RESULT_PLAYBACK_PROGRESS, viewLifecycleOwner,
+        ) { _, bundle ->
+            if (bundle.getString(RESULT_KEY_ITEM_ID) != itemId) return@setFragmentResultListener
+            val pos = bundle.getLong(RESULT_KEY_POSITION_MS, -1L)
+            if (pos < 0L) return@setFragmentResultListener
+            resumeOverrideMs = pos
+            // `view` here is the onViewCreated root, captured by this
+            // listener; viewLifecycleOwner keeps the listener alive only
+            // while that view exists, so it's safe to use directly.
+            val boundItem = viewModel.uiState.value.item
+            if (boundItem != null) {
+                configurePlayButtons(
+                    boundItem,
+                    view.findViewById(R.id.btn_play),
+                    view.findViewById(R.id.btn_play_from_start),
+                )
+            }
+        }
 
         view.findViewById<ImageView>(R.id.btn_left).apply {
             if (siblingIds != null && currentIndex > 0) {
@@ -221,7 +261,10 @@ class DetailFragment : Fragment() {
             else -> {
                 // Leaf items (movie, episode, track, single-file
                 // audiobook, photo with files attached). Plays itself.
-                val resumeMs = item.view_offset_ms
+                // resumeOverrideMs (the position the player just handed
+                // back) wins over the server-loaded offset so the label
+                // is accurate the instant we return from the player.
+                val resumeMs = resumeOverrideMs ?: item.view_offset_ms
                 if (resumeMs > 0) {
                     btnPlay.text = getString(R.string.resume, fmtTimecode(resumeMs))
                     btnPlay.setOnClickListener { playItem(item.id, resumeMs) }

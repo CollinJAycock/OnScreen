@@ -142,7 +142,18 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 .build(),
             /* handleAudioFocus = */ true,
         )
-        session = MediaSession.Builder(this, player).build()
+        val newSession = MediaSession.Builder(this, player).build()
+        session = newSession
+        // Register the session with the service. onGetSession only fires
+        // when a *controller* connects, but the park/handoff model never
+        // connects one — so without an explicit addSession the service's
+        // MediaNotificationManager never tracks the session, never posts
+        // the media notification, and never calls startForeground. The OS
+        // then kills backgrounded playback within ~a minute (verified: a
+        // track parked here on HOME stopped after ~80 s). addSession with
+        // an already-playing player triggers the notification + foreground
+        // promotion immediately, which is what keeps music alive on HOME.
+        addSession(newSession)
 
         // Pull the metadata snapshot the fragment captured at park
         // time. Without this the service can publish progress but
@@ -190,6 +201,9 @@ class OnScreenMediaSessionService : MediaSessionService() {
             session?.player?.removeListener(listener)
         }
         autoAdvanceListener = null
+        // Unregister from the service (paired with addSession in attach)
+        // so the notification is torn down before the session is released.
+        session?.let { removeSession(it) }
         session?.release()
         session = null
         activeItemId = null
@@ -305,6 +319,9 @@ class OnScreenMediaSessionService : MediaSessionService() {
         val sess = session
         if (sess != null) {
             val sessPlayer = sess.player
+            // Unregister from the service (paired with addSession) before
+            // releasing — drops the media notification + foreground state.
+            removeSession(sess)
             // If the parked slot no longer references our player, the
             // fragment took ownership back via AudioHandoff.take() and
             // then called stopService() — which lands us here. Releasing

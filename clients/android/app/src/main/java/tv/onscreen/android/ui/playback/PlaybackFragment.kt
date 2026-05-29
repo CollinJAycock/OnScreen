@@ -45,6 +45,7 @@ import android.widget.Toast
 import tv.onscreen.android.data.repository.OnlineSubtitleRepository
 import tv.onscreen.android.data.repository.TrickplayRepository
 import tv.onscreen.android.ui.KeyEventHandler
+import tv.onscreen.android.ui.detail.DetailFragment
 import javax.inject.Inject
 import kotlin.math.abs
 
@@ -113,6 +114,19 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  re-take, so we don't restart playback when the user comes
      *  back to a track that's already playing in the service. */
     private var playerWasReused: Boolean = false
+
+    /** True once we've parked the audio player in the MediaSessionService
+     *  from onStop (app backgrounded / HOME). onStart reclaims it;
+     *  onDestroyView leaves the service owning it. Distinguishes the
+     *  "handed off, may come back" state from a fresh foreground player. */
+    private var parkedToService: Boolean = false
+
+    /** Set when the player reaches STATE_ENDED so we don't publish a
+     *  near-duration position back to the detail screen as a resume
+     *  point (a finished item should offer Play, not Resume) and so the
+     *  onStop handoff skips the just-ended player (the EOS chain path
+     *  owns that transition). */
+    private var playbackEnded: Boolean = false
 
     /** Skip-intro / skip-credits overlay button. Inflated lazily on
      *  first marker hit, then shown/hidden as the player crosses
@@ -229,17 +243,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 }
                 applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang)
 
-                val tracker = ProgressTracker(viewLifecycleOwner.lifecycleScope, itemRepo)
-                tracker.positionProvider = { player?.currentPosition ?: 0L }
-                tracker.durationProvider = {
-                    val dur = player?.duration ?: 0L
-                    if (dur <= 0 || dur == Long.MAX_VALUE) {
-                        state.item?.duration_ms ?: state.item?.files?.firstOrNull()?.duration_ms ?: 0L
-                    } else dur
-                }
-                tracker.updateOffset(viewModel.hlsOffsetMs)
-                tracker.start(itemId, viewModel.hlsOffsetMs)
-                progressTracker = tracker
+                installProgressTracker(itemId)
 
                 glue?.title = state.item?.title ?: ""
                 glue?.subtitle = state.item?.year?.toString() ?: ""
@@ -614,67 +618,77 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             isSeekEnabled = true
         }
 
-        val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                // Screen-on flag tracks active playback so the Fire TV
-                // / Android TV screensaver doesn't kick in mid-show.
-                // Toggling on isPlaying (rather than ACTION_DOWN /
-                // user activity) means we release the flag the moment
-                // the user pauses, so paused-and-walked-away doesn't
-                // hold the screen forever.
-                val window = activity?.window
-                if (isPlaying) {
-                    window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    progressTracker?.start(arguments?.getString(ARG_ITEM_ID) ?: return, viewModel.hlsOffsetMs)
-                } else {
-                    window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    progressTracker?.onPause()
-                }
-            }
-
-            override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) {
-                    progressTracker?.onStop()
-                    // Pull the row out of the system Continue Watching
-                    // list — the user finished this title and shouldn't
-                    // keep seeing it offered as resumable. The next
-                    // episode (if any) will publish its own row when
-                    // playback starts on it.
-                    currentItem?.let { watchNext.remove(it.id) }
-                    watchNextJob?.cancel()
-                    val next = nextEpisode
-                    when {
-                        next == null -> parentFragmentManager.popBackStack()
-                        // Music: chain to next track silently. The Up
-                        // Next overlay (with title + countdown) makes
-                        // sense between episodes — between tracks
-                        // it's just chrome the user doesn't want.
-                        currentItemType == "track" -> goToNextEpisode(next)
-                        else -> showUpNextOverlay(immediate = true)
-                    }
-                }
-            }
-
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                // Surface ExoPlayer's actual error to the user instead
-                // of the silent failure that produced the "audio file
-                // not playable" report. Code + message together pin
-                // down whether it's a network/auth issue, a decoder
-                // miss, or a malformed source. See
-                // https://developer.android.com/reference/androidx/media3/common/PlaybackException
-                // for the error code constants. For HTTP/HLS sources
-                // include the failing URL so the user (or a tunnel
-                // log) can identify which request died.
-                val cause = error.cause
-                val urlPart = if (cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException) {
-                    "\n${cause.dataSpec.uri}"
-                } else ""
-                val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
-                showErrorDialog(msg)
-            }
-        }
+        val listener = createPlayerListener()
         exo.addListener(listener)
         playerListener = listener
+    }
+
+    /** Build the player listener that drives the screen-on flag,
+     *  end-of-stream handling (pop / Up Next / silent track chain), and
+     *  error surfacing. Extracted from initPlayer so it can be
+     *  re-installed verbatim when the fragment reclaims a player back
+     *  from the MediaSessionService on return-to-foreground — the
+     *  listener is removed at park time, so reclaim has to add a fresh
+     *  one. */
+    private fun createPlayerListener(): Player.Listener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            // Screen-on flag tracks active playback so the Fire TV
+            // / Android TV screensaver doesn't kick in mid-show.
+            // Toggling on isPlaying (rather than ACTION_DOWN /
+            // user activity) means we release the flag the moment
+            // the user pauses, so paused-and-walked-away doesn't
+            // hold the screen forever.
+            val window = activity?.window
+            if (isPlaying) {
+                window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                progressTracker?.start(arguments?.getString(ARG_ITEM_ID) ?: return, viewModel.hlsOffsetMs)
+            } else {
+                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                progressTracker?.onPause()
+            }
+        }
+
+        override fun onPlaybackStateChanged(state: Int) {
+            if (state == Player.STATE_ENDED) {
+                playbackEnded = true
+                progressTracker?.onStop()
+                // Pull the row out of the system Continue Watching
+                // list — the user finished this title and shouldn't
+                // keep seeing it offered as resumable. The next
+                // episode (if any) will publish its own row when
+                // playback starts on it.
+                currentItem?.let { watchNext.remove(it.id) }
+                watchNextJob?.cancel()
+                val next = nextEpisode
+                when {
+                    next == null -> parentFragmentManager.popBackStack()
+                    // Music: chain to next track silently. The Up
+                    // Next overlay (with title + countdown) makes
+                    // sense between episodes — between tracks
+                    // it's just chrome the user doesn't want.
+                    currentItemType == "track" -> goToNextEpisode(next)
+                    else -> showUpNextOverlay(immediate = true)
+                }
+            }
+        }
+
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Surface ExoPlayer's actual error to the user instead
+            // of the silent failure that produced the "audio file
+            // not playable" report. Code + message together pin
+            // down whether it's a network/auth issue, a decoder
+            // miss, or a malformed source. See
+            // https://developer.android.com/reference/androidx/media3/common/PlaybackException
+            // for the error code constants. For HTTP/HLS sources
+            // include the failing URL so the user (or a tunnel
+            // log) can identify which request died.
+            val cause = error.cause
+            val urlPart = if (cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException) {
+                "\n${cause.dataSpec.uri}"
+            } else ""
+            val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
+            showErrorDialog(msg)
+        }
     }
 
     private fun playSource(source: PlaybackSource) {
@@ -1191,25 +1205,49 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             .show()
     }
 
+    /** True for audio content (music tracks + audiobooks) — the items
+     *  that keep playing across backgrounding via the
+     *  MediaSessionService handoff. Video is released on stop instead. */
+    private fun isAudioItem(): Boolean =
+        currentItemType == "track" || currentItemType == "audiobook"
+
+    override fun onStart() {
+        super.onStart()
+        // Returning to the foreground after the app was backgrounded
+        // (HOME) while audio kept playing in the service. Take the
+        // player back so the transport controls drive the same instance
+        // again and the service drops its foreground notification.
+        if (parkedToService) {
+            reclaimAudioPlayerFromService()
+        }
+    }
+
     override fun onPause() {
         super.onPause()
-        player?.pause()
-        progressTracker?.onPause()
+        // Audio keeps playing when the activity is backgrounded (HOME)
+        // or partially obscured — onStop hands the player to the
+        // foreground MediaSessionService so music doesn't cut out. Only
+        // video pauses here (and is fully torn down in onStop).
+        if (!isAudioItem()) {
+            player?.pause()
+            progressTracker?.onPause()
+        }
     }
 
     override fun onStop() {
         super.onStop()
-        progressTracker?.onStop()
-        // Tear down video playback as soon as the activity stops so
-        // backing out of an episode kills the audio decoder
-        // immediately. On some Google TV builds onDestroyView fires
-        // late enough that the user is already on the previous
-        // screen with audio still playing. Music intentionally
-        // survives onStop — the handoff to the MediaSessionService
-        // runs in onDestroyView so a track keeps playing across
-        // in-app navigation.
-        val isAudio = currentItemType == "track" || currentItemType == "audiobook"
-        if (!isAudio) {
+        // Hand the latest position to the detail screen so its Resume
+        // label refreshes the instant we pop back. Captured before any
+        // release below; no-op for finished items.
+        publishProgressResult()
+
+        if (!isAudioItem()) {
+            // Tear down video playback as soon as the activity stops so
+            // backing out of an episode kills the decoder immediately.
+            // On some Google TV builds onDestroyView fires late enough
+            // that the user is already on the previous screen with the
+            // decoder still running.
+            progressTracker?.onStop()
             player?.run { stop(); release() }
             player = null
             // release() invalidates the listener list, but null the
@@ -1217,6 +1255,22 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // until onDestroyView runs.
             playerListener = null
             viewModel.stopActiveTranscode()
+            return
+        }
+
+        // Audio: hand the player to the foreground MediaSessionService
+        // so it keeps playing while the app is backgrounded (HOME) or
+        // the user navigates elsewhere in-app. onStart reclaims it on
+        // return; onDestroyView leaves the service owning it when the
+        // fragment is genuinely torn down. Skipped when the track just
+        // ended — createPlayerListener's EOS chain owns that transition
+        // and onDestroyView's existing path handles the parked player.
+        if (!parkedToService && !playbackEnded && handOffAudioPlayerToService()) {
+            parkedToService = true
+            // The service drives progress reporting from here; stop the
+            // fragment-side ticker without emitting a spurious "stopped"
+            // (the track is still playing).
+            progressTracker?.stop()
         }
     }
 
@@ -1239,6 +1293,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         progressTracker?.stop()
         progressTracker = null
 
+        if (parkedToService) {
+            // Already handed to the service in onStop (in-app nav after
+            // backgrounding, or teardown while parked) — the service
+            // owns the player now. Don't release it; just drop our refs.
+            player = null
+            playerListener = null
+            viewModel.stopActiveTranscode()
+            return
+        }
+
         // Music: hand the player to the MediaSessionService instead
         // of releasing it, so audio continues under the system media
         // controls when the user navigates away. Video has already
@@ -1255,6 +1319,74 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // listener list) but null it for GC hygiene either way.
         playerListener = null
         viewModel.stopActiveTranscode()
+    }
+
+    /** Set up the 10 s progress reporter for [itemId]. Shared by the
+     *  initial source-load path and the reclaim-from-service path on
+     *  return-to-foreground. Reads currentItem for the duration
+     *  fallback, which is populated by the time the reporter fires. */
+    private fun installProgressTracker(itemId: String) {
+        val tracker = ProgressTracker(viewLifecycleOwner.lifecycleScope, itemRepo)
+        tracker.positionProvider = { player?.currentPosition ?: 0L }
+        tracker.durationProvider = {
+            val dur = player?.duration ?: 0L
+            if (dur <= 0 || dur == Long.MAX_VALUE) {
+                currentItem?.duration_ms ?: currentItem?.files?.firstOrNull()?.duration_ms ?: 0L
+            } else dur
+        }
+        tracker.updateOffset(viewModel.hlsOffsetMs)
+        tracker.start(itemId, viewModel.hlsOffsetMs)
+        progressTracker = tracker
+    }
+
+    /** Hand the current content position back to the detail screen via
+     *  a fragment result so its Resume label updates immediately on
+     *  return — the detail's own server refetch can race the final
+     *  progress write and re-render the pre-playback offset. Skipped for
+     *  finished items (a completed title should offer Play, not Resume).
+     *  Reads the live player, so call before any release. */
+    private fun publishProgressResult() {
+        if (playbackEnded) return
+        val id = arguments?.getString(ARG_ITEM_ID) ?: return
+        val exo = player ?: return
+        val pos = exo.currentPosition + viewModel.hlsOffsetMs
+        if (pos <= 0L) return
+        parentFragmentManager.setFragmentResult(
+            DetailFragment.RESULT_PLAYBACK_PROGRESS,
+            Bundle().apply {
+                putString(DetailFragment.RESULT_KEY_ITEM_ID, id)
+                putLong(DetailFragment.RESULT_KEY_POSITION_MS, pos)
+            },
+        )
+    }
+
+    /** Take the audio player back from the MediaSessionService when the
+     *  app returns to the foreground (onStart after HOME). Stops the
+     *  now-redundant service, re-installs the player listener (removed
+     *  at park time) and the progress reporter. The Leanback glue still
+     *  wraps the same ExoPlayer instance, so no re-bind is needed. */
+    private fun reclaimAudioPlayerFromService() {
+        parkedToService = false
+        val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
+        val reclaimed = tv.onscreen.android.playback.AudioHandoff.take(itemId) ?: run {
+            // The service auto-advanced to a different track while
+            // backgrounded (parked item no longer matches) or already
+            // released the player. Leave it running; nothing to rebind.
+            return
+        }
+        try {
+            activity?.applicationContext?.stopService(
+                android.content.Intent(
+                    requireContext(),
+                    tv.onscreen.android.playback.OnScreenMediaSessionService::class.java,
+                ),
+            )
+        } catch (_: Exception) { }
+        player = reclaimed
+        val listener = createPlayerListener()
+        reclaimed.addListener(listener)
+        playerListener = listener
+        installProgressTracker(itemId)
     }
 
     /** When the user backs out of the player while music is still
