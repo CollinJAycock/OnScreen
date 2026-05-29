@@ -152,7 +152,8 @@ The watch-status mirror (Plan to Watch / Watching / Completed / On Hold / Droppe
 | Web + desktop file download (server-wide admin toggle, default off) | ✅ | ⚠   |  ⚠   |    ⚠    |
 | Mobile offline downloads                           |    ⚠    |  💎  |  💎  |    ✅    |
 | Sync watch / watch parties                         |    ❌    |  ❌  |  ❌  |    ✅    |
-| Last.fm / ListenBrainz scrobbling                  |    ❌    |  ⚠   |  🧩  |    🧩    |
+| ListenBrainz scrobbling (one-way, per-user, opt-in)|    ✅    |  ⚠   |  🧩  |    🧩    |
+| Last.fm scrobbling                                 |    ❌    |  ⚠   |  🧩  |    🧩    |
 | Chapter markers + skip targets                     |    ✅    |  ✅  |  ✅  |    ✅    |
 
 Skip Intro / Skip Credits is wired in the web player: a button slides in over the bottom-right corner whenever the playback head is inside an intro / credits region (server-detected, see section 5), `S` is the keyboard shortcut, and a per-browser "Always skip intros" toggle sits right under the button so users discover it the first time it appears. Auto-skip is intro-only — auto-skipping credits would yank the user out of the episode prematurely; that path is handled by the existing auto-next-episode flow with the sleep-timer "end of episode" gate. AirPlay is the remaining real trail here (the ABR ladder landed on `feat/v2.4` — see section 2). Cast / DLNA / SyncPlay show ❌ in the matrix but are not chasing tasks — see "Deferred" near the bottom for why (Android apps + cross-device transfer cover Cast's main use case; DLNA and SyncPlay are permanently scoped out).
@@ -359,7 +360,7 @@ Specific competitor named per row. "Nobody has it" doesn't count as a trail.
 - **AV1 AMF (Windows) hardware validation** *(vs Plex / Emby paid tiers; Jellyfin partial)*. Planner enum + probe + filter routing all wired for `av1_amf` (commit 2026-05-21); probe correctly excludes the encoder where it isn't available (a Ryzen 9900X RDNA2 iGPU returned `AMF error 30 — CreateComponent(AMFVideoEncoderHW_AV1) failed` on the 1 s probe and the encoder wasn't added). AMF is Windows-only, so the RDNA4 hardware now on hand validates `av1_vaapi` (Linux/radeonsi) but not `av1_amf` — closing this cell needs an RDNA3+ AMD GPU in a Windows host. The Linux/radeonsi AV1 path it would otherwise cover is already ✅.
 - **AirPlay out** *(vs Plex / Emby; partial on Jellyfin)*. No path from web or desktop into the Apple TV / HomePod ecosystem. Cast and DLNA are tracked separately under "Deferred" below — see that section for why those two don't sit here.
 - **iOS offline downloads** *(vs Plex Pass / Emby Premiere / Jellyfin)*. The Android phone client (`android_native`) ships a WorkManager-backed download flow with on-device manifest + queueing; iOS is the only portable surface still uncovered (TV / set-top platforms aren't candidates — they sit on the network and never go offline). Web + desktop now ship a "save the original file" download (admin-toggleable, default off), so the laptop-on-a-flight use case is already covered through the browser path.
-- **Last.fm / ListenBrainz scrobbling** *(vs community plugins on the others)*. Listen events live in `watch_events`; a one-way scrobble exporter would close this without much work.
+- **Last.fm scrobbling** *(vs community plugins on the others)*. ListenBrainz one-way scrobbling now ships in core (opt-in, per-user token, fires off the completed-play `scrobble` event). Last.fm is the remaining piece — it needs the operator API-key + secret and a per-user web-auth handshake, vs ListenBrainz's single user token.
 
 ---
 

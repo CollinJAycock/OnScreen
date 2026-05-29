@@ -55,8 +55,10 @@ import (
 	"github.com/onscreen/onscreen/internal/plugin"
 	"github.com/onscreen/onscreen/internal/preencode"
 	"github.com/onscreen/onscreen/internal/requests"
+	"github.com/onscreen/onscreen/internal/safehttp"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/scheduler"
+	"github.com/onscreen/onscreen/internal/scrobble"
 	"github.com/onscreen/onscreen/internal/staticabr"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/subtitles"
@@ -585,10 +587,19 @@ func run() error {
 		logger.Warn("could not load libraries for fs watching", "err", err)
 	}
 
+	// External scrobbling (ListenBrainz) — per-user, opt-in. The dispatcher is
+	// fed completed-play events by the watch-event service below and submits
+	// listens through the SSRF-guarded public client.
+	scrobbleStore := scrobble.NewStore(rwPool, encryptor)
+	scrobbleSvc := scrobble.NewService(scrobbleStore, scrobbleStore, safehttp.Default(), logger)
+	scrobbleHandler := v1.NewScrobbleHandler(scrobbleStore)
+
 	// Watch event service (Phase 2).
 	rwWQ := &watchEventAdapter{q: gen.New(rwPool)}
 	roWQ := &watchEventAdapter{q: gen.New(roPool)}
-	watchSvc := watchevent.NewService(rwWQ, roWQ, logger).WithMetrics(metrics)
+	watchSvc := watchevent.NewService(rwWQ, roWQ, logger).
+		WithMetrics(metrics).
+		WithScrobbleHook(scrobbleSvc.OnScrobble)
 
 	// Watching-status mirror — Plan to Watch / Watching / Completed /
 	// On Hold / Dropped. Generic per-(user, item) feature shipped to
@@ -1180,6 +1191,7 @@ func run() error {
 		Invite:          inviteHandler,
 		Notifications:   notifHandler,
 		Playback:        playbackHandler,
+		Scrobble:        scrobbleHandler,
 		Maintenance:     maintenanceHandler,
 		Backup:          backupHandler,
 		Tasks:           tasksHandler,

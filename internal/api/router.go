@@ -75,6 +75,7 @@ type Handlers struct {
 	Notifications   *v1.NotificationHandler
 	Playback        *v1.PlaybackHandler
 	Favorites       *v1.FavoritesHandler
+	Scrobble        *v1.ScrobbleHandler // per-user ListenBrainz link
 	Maintenance     *v1.MaintenanceHandler
 	Backup          *v1.BackupHandler
 	Tasks           *v1.TasksHandler
@@ -526,6 +527,12 @@ func NewRouter(h *Handlers) http.Handler {
 				// many targets.
 				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pinswitch"))).
 					Post("/auth/pin-switch", h.User.PINSwitch)
+			}
+
+			// External scrobbling — per-user ListenBrainz account link.
+			if h.Scrobble != nil {
+				r.Get("/users/me/scrobble", h.Scrobble.GetStatus)
+				r.Put("/users/me/scrobble/listenbrainz", h.Scrobble.SetListenBrainz)
 			}
 
 			// Native client device pairing — claim binds a PIN to the

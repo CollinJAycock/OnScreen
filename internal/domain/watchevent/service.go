@@ -72,12 +72,19 @@ type InsertWatchEventRow struct {
 	OccurredAt time.Time
 }
 
+// ScrobbleHook is invoked asynchronously after a 'scrobble' (played-enough)
+// event is recorded, so an external scrobbler (ListenBrainz / Last.fm) can
+// export the completed listen. nil disables it. It must not block — Record
+// fires it in its own goroutine and ignores the result.
+type ScrobbleHook func(ctx context.Context, userID, mediaID uuid.UUID, occurredAt time.Time)
+
 // Service implements watch event business logic.
 type Service struct {
-	rw      Querier
-	ro      Querier
-	logger  *slog.Logger
-	metrics *observability.Metrics
+	rw       Querier
+	ro       Querier
+	logger   *slog.Logger
+	metrics  *observability.Metrics
+	scrobble ScrobbleHook
 }
 
 // NewService constructs a watch event Service.
@@ -89,6 +96,13 @@ func NewService(rw, ro Querier, logger *slog.Logger) *Service {
 // a no-op, so callers without a metrics registry are unaffected.
 func (s *Service) WithMetrics(m *observability.Metrics) *Service {
 	s.metrics = m
+	return s
+}
+
+// WithScrobbleHook attaches the external-scrobble dispatcher, called async on
+// completed-play ('scrobble') events. nil is a no-op.
+func (s *Service) WithScrobbleHook(fn ScrobbleHook) *Service {
+	s.scrobble = fn
 	return s
 }
 
@@ -113,6 +127,17 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 	}
 	if s.metrics != nil {
 		s.metrics.WatchEventsTotal.WithLabelValues(p.EventType).Inc()
+	}
+
+	// Fire-and-forget external scrobble on the completed-play event. The
+	// dispatcher decides whether the user has a linked service and whether
+	// this is a music track, so handing it every 'scrobble' event is fine.
+	if p.EventType == "scrobble" && s.scrobble != nil {
+		at := p.OccurredAt
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		go s.scrobble(context.Background(), p.UserID, p.MediaID, at)
 	}
 
 	// Refresh watch_state after terminal events so subsequent metadata
