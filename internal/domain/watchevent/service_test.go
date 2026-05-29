@@ -161,6 +161,113 @@ func TestRecord_PlayNoRefresh(t *testing.T) {
 	}
 }
 
+// scrobbleCall captures one invocation of the async scrobble hook.
+type scrobbleCall struct {
+	userID, mediaID uuid.UUID
+	positionMS      int64
+	durationMS      *int64
+	at              time.Time
+}
+
+// A terminal 'stop' is the trigger the external scrobbler rides — first-party
+// clients never emit a distinct 'scrobble' event, so Record must fan a 'stop'
+// out to the hook with the final position + duration intact.
+func TestRecord_StopFiresScrobbleHook(t *testing.T) {
+	svc, _ := newTestService(t)
+	calls := make(chan scrobbleCall, 1)
+	svc.WithScrobbleHook(func(_ context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, at time.Time) {
+		calls <- scrobbleCall{userID, mediaID, positionMS, durationMS, at}
+	})
+
+	userID, mediaID := uuid.New(), uuid.New()
+	durMS := int64(300_000)
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	if err := svc.Record(context.Background(), RecordParams{
+		UserID: userID, MediaID: mediaID, EventType: "stop",
+		PositionMS: 200_000, DurationMS: &durMS, OccurredAt: at,
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	select {
+	case c := <-calls:
+		if c.userID != userID || c.mediaID != mediaID {
+			t.Errorf("ids: got user=%s media=%s, want user=%s media=%s", c.userID, c.mediaID, userID, mediaID)
+		}
+		if c.positionMS != 200_000 {
+			t.Errorf("positionMS: got %d, want 200000", c.positionMS)
+		}
+		if c.durationMS == nil || *c.durationMS != durMS {
+			t.Errorf("durationMS: got %v, want %d", c.durationMS, durMS)
+		}
+		if !c.at.Equal(at) {
+			t.Errorf("at: got %s, want %s", c.at, at)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("scrobble hook was not called for stop event")
+	}
+}
+
+// Only 'stop' triggers the hook. In particular the legacy 'scrobble' event
+// still refreshes the matview (see TestRecord_ScrobbleTriggersRefresh) but must
+// NOT double-dispatch a listen now that the trigger moved to 'stop'.
+func TestRecord_NonStopDoesNotFireScrobbleHook(t *testing.T) {
+	for _, et := range []string{"play", "pause", "resume", "seek", "scrobble"} {
+		t.Run(et, func(t *testing.T) {
+			svc, _ := newTestService(t)
+			fired := make(chan struct{}, 1)
+			svc.WithScrobbleHook(func(context.Context, uuid.UUID, uuid.UUID, int64, *int64, time.Time) {
+				fired <- struct{}{}
+			})
+
+			if err := svc.Record(context.Background(), RecordParams{
+				UserID: uuid.New(), MediaID: uuid.New(), EventType: et,
+				PositionMS: 200_000, OccurredAt: time.Now(),
+			}); err != nil {
+				t.Fatalf("Record: %v", err)
+			}
+
+			select {
+			case <-fired:
+				t.Errorf("scrobble hook must not fire for %q event", et)
+			case <-time.After(50 * time.Millisecond):
+				// expected: no dispatch
+			}
+		})
+	}
+}
+
+// Record fills a zero OccurredAt with the current time before handing it to the
+// hook, so a listen always carries a usable listened_at timestamp.
+func TestRecord_StopHookDefaultsTimestamp(t *testing.T) {
+	svc, _ := newTestService(t)
+	calls := make(chan scrobbleCall, 1)
+	svc.WithScrobbleHook(func(_ context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, at time.Time) {
+		calls <- scrobbleCall{userID, mediaID, positionMS, durationMS, at}
+	})
+
+	before := time.Now().UTC()
+	if err := svc.Record(context.Background(), RecordParams{
+		UserID: uuid.New(), MediaID: uuid.New(), EventType: "stop",
+		PositionMS: 200_000, // OccurredAt left zero
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	select {
+	case c := <-calls:
+		if c.at.IsZero() {
+			t.Fatal("expected a defaulted timestamp, got zero")
+		}
+		if c.at.Before(before) {
+			t.Errorf("defaulted at %s precedes call start %s", c.at, before)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("scrobble hook was not called")
+	}
+}
+
 func TestGetState_NotFound_ReturnsUnwatched(t *testing.T) {
 	svc, _ := newTestService(t)
 

@@ -102,11 +102,12 @@ the asset-token migration.
   to a new one, so rotating the key is no longer destructive. Dry-run by
   default. See [docs/key-rotation.md](docs/key-rotation.md).
 - **ListenBrainz scrobbling (opt-in, per-user)** — link a ListenBrainz token
-  (`PUT /api/v1/users/me/scrobble/listenbrainz`; stored AES-256-GCM-encrypted)
-  and OnScreen submits a listen when you finish a music track. One-way and
-  best-effort — it rides the completed-play (`scrobble`) watch-event and never
-  blocks playback — routed through the SSRF-guarded outbound client. Last.fm is
-  the planned follow-up.
+  from **Settings → Scrobbling** (`PUT /api/v1/users/me/scrobble/listenbrainz`;
+  stored AES-256-GCM-encrypted) and OnScreen submits a listen when you finish a
+  music track. One-way and best-effort — it fires on the `stop` watch-event once
+  the play crosses the listen threshold (≥50% of the track, or ≥4 minutes) and
+  never blocks playback — routed through the SSRF-guarded outbound client.
+  Last.fm is the planned follow-up.
 
 ### Changed — server
 

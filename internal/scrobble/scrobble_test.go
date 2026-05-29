@@ -55,6 +55,8 @@ type capture struct {
 	body       map[string]any
 }
 
+func dur(ms int64) *int64 { return &ms }
+
 func TestOnScrobble_SubmitsListen(t *testing.T) {
 	store := fakeStore{settings: Settings{ListenBrainzToken: "tok123", ListenBrainzEnabled: true}}
 	tracks := fakeTracks{ok: true, track: Track{
@@ -64,7 +66,8 @@ func TestOnScrobble_SubmitsListen(t *testing.T) {
 	svc, cap := newSvc(t, store, tracks)
 
 	at := time.Unix(1_700_000_000, 0)
-	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), at)
+	// Played 200s of a 300s track — well past the 50% threshold.
+	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), 200_000, dur(300_000), at)
 
 	if cap.hits != 1 {
 		t.Fatalf("expected 1 submit, got %d", cap.hits)
@@ -92,12 +95,25 @@ func TestOnScrobble_SubmitsListen(t *testing.T) {
 	}
 }
 
+// A skip / brief preview (well under both 50% and 4 minutes) emits a 'stop'
+// but must NOT scrobble.
+func TestOnScrobble_SkipsBelowThreshold(t *testing.T) {
+	store := fakeStore{settings: Settings{ListenBrainzToken: "tok", ListenBrainzEnabled: true}}
+	tracks := fakeTracks{ok: true, track: Track{TrackName: "x", ArtistName: "y"}}
+	svc, cap := newSvc(t, store, tracks)
+
+	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), 10_000, dur(300_000), time.Now())
+	if cap.hits != 0 {
+		t.Errorf("below-threshold play must not submit, got %d hits", cap.hits)
+	}
+}
+
 func TestOnScrobble_SkipsWhenDisabled(t *testing.T) {
 	store := fakeStore{settings: Settings{ListenBrainzToken: "tok", ListenBrainzEnabled: false}}
 	tracks := fakeTracks{ok: true, track: Track{TrackName: "x", ArtistName: "y"}}
 	svc, cap := newSvc(t, store, tracks)
 
-	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), time.Now())
+	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), 200_000, dur(300_000), time.Now())
 	if cap.hits != 0 {
 		t.Errorf("disabled user must not submit, got %d hits", cap.hits)
 	}
@@ -108,7 +124,7 @@ func TestOnScrobble_SkipsNonMusic(t *testing.T) {
 	tracks := fakeTracks{ok: false} // not a music track
 	svc, cap := newSvc(t, store, tracks)
 
-	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), time.Now())
+	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), 200_000, dur(300_000), time.Now())
 	if cap.hits != 0 {
 		t.Errorf("non-music play must not submit, got %d hits", cap.hits)
 	}
@@ -120,8 +136,39 @@ func TestOnScrobble_SkipsMissingRequiredFields(t *testing.T) {
 	tracks := fakeTracks{ok: true, track: Track{TrackName: "Untitled", ArtistName: ""}}
 	svc, cap := newSvc(t, store, tracks)
 
-	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), time.Now())
+	svc.OnScrobble(context.Background(), uuid.New(), uuid.New(), 200_000, dur(300_000), time.Now())
 	if cap.hits != 0 {
 		t.Errorf("missing artist must not submit, got %d hits", cap.hits)
+	}
+}
+
+// listenedEnough is the listen-threshold gate: ≥50% of a known duration, or
+// ≥4 minutes regardless. An unknown/zero duration falls back to the 4-minute
+// rule alone.
+func TestListenedEnough(t *testing.T) {
+	tests := []struct {
+		name       string
+		positionMS int64
+		durationMS *int64
+		want       bool
+	}{
+		{"exactly half of a known track", 150_000, dur(300_000), true},
+		{"just past half", 150_001, dur(300_000), true},
+		{"just under half, under 4min", 149_999, dur(300_000), false},
+		{"early skip", 10_000, dur(300_000), false},
+		{"four-minute rule fires below 50%", 240_000, dur(600_000), true},
+		{"one ms under four minutes, below 50%", 239_999, dur(600_000), false},
+		{"unknown duration past 4min", 250_000, nil, true},
+		{"unknown duration under 4min", 60_000, nil, false},
+		{"zero duration under 4min", 60_000, dur(0), false},
+		{"zero duration past 4min", 300_000, dur(0), true},
+		{"negative duration ignored, under 4min", 60_000, dur(-5), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := listenedEnough(tt.positionMS, tt.durationMS); got != tt.want {
+				t.Errorf("listenedEnough(%d, %v) = %v, want %v", tt.positionMS, tt.durationMS, got, tt.want)
+			}
+		})
 	}
 }

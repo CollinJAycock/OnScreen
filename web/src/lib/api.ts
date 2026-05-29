@@ -717,6 +717,20 @@ export const userApi = {
     api.put<void>(`/users/${userId}/libraries`, { library_ids: libraryIds })
 };
 
+/** Per-user external-scrobble status. The token itself is never returned by
+ *  the server — only whether one is linked and whether export is on. */
+export interface ScrobbleStatus {
+  listenbrainz_linked: boolean;
+  listenbrainz_enabled: boolean;
+}
+
+export const scrobbleApi = {
+  status: () => api.get<ScrobbleStatus>('/users/me/scrobble'),
+  /** Link or update the ListenBrainz token. An empty token unlinks. */
+  setListenBrainz: (token: string, enabled: boolean) =>
+    api.put<void>('/users/me/scrobble/listenbrainz', { token, enabled })
+};
+
 export interface UserLibraryAccess {
   library_id: string;
   name: string;

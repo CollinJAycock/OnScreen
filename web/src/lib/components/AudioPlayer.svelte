@@ -120,13 +120,25 @@
     }
   });
   let prevTrack: AudioTrack | null = null;
+  // Set by the EOS paths (onEnded / native decoder EOS) right before they
+  // advance the queue: they've already reported the finished track stopped at
+  // full duration, so the track-change handler below must NOT report it a
+  // second time. Without this guard every naturally-completed track emits two
+  // 'stop' watch-events — a duplicate scrobble and a redundant matview write.
+  let endedTrackID: string | null = null;
   const unsubT = currentTrack.subscribe((t) => {
     // When the active track changes, mark the previous one stopped so it leaves
-    // any "Now Playing" surfaces immediately.
+    // any "Now Playing" surfaces immediately. Skip it when EOS already reported
+    // this track (natural completion) — only a manual skip mid-track needs the
+    // stop emitted here, at the actual cut-off position.
     if (prevTrack && (!t || prevTrack.id !== t.id)) {
-      void itemApi
-        .progress(prevTrack.id, positionMS, durationMS || (prevTrack.durationMS ?? 0), 'stopped')
-        .catch(() => {});
+      if (prevTrack.id === endedTrackID) {
+        endedTrackID = null;
+      } else {
+        void itemApi
+          .progress(prevTrack.id, positionMS, durationMS || (prevTrack.durationMS ?? 0), 'stopped')
+          .catch(() => {});
+      }
     }
     // OS notification on track change — only when actually moving to
     // a *different* track (skipping initial track-load on launch
@@ -282,6 +294,7 @@
           // new source, ended is back to false.
           if (track) {
             const d = durationMS || (track.durationMS ?? 0);
+            endedTrackID = track.id;
             void itemApi.progress(track.id, d, d, 'stopped').catch(() => {});
           }
           stopNativePolling();
@@ -548,9 +561,11 @@
 
   function onEnded() {
     // Mark the finished track as stopped at full duration so it doesn't linger
-    // as "in progress" — then advance.
+    // as "in progress" — then advance. endedTrackID suppresses the duplicate
+    // stop the track-change subscriber would otherwise emit on advance.
     if (track) {
       const d = durationMS || (track.durationMS ?? 0);
+      endedTrackID = track.id;
       void itemApi.progress(track.id, d, d, 'stopped').catch(() => {});
     }
     audio.next();

@@ -74,11 +74,18 @@ func NewService(store SettingsStore, tracks TrackLookup, client *http.Client, lo
 }
 
 // OnScrobble submits a completed listen to the user's linked services. It is
-// designed to be called asynchronously from the watch-event path: it returns
-// nothing and swallows all errors (logged), so a flaky scrobble service can
-// never affect playback recording. No-op when the user has nothing enabled or
-// the item isn't a music track.
-func (s *Service) OnScrobble(ctx context.Context, userID, mediaID uuid.UUID, listenedAt time.Time) {
+// designed to be called asynchronously from the watch-event 'stop' path: it
+// returns nothing and swallows all errors (logged), so a flaky scrobble
+// service can never affect playback recording. No-op when the play didn't
+// cross the listen threshold, the user has nothing enabled, or the item isn't
+// a music track.
+func (s *Service) OnScrobble(ctx context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, listenedAt time.Time) {
+	// Listen threshold (Last.fm / ListenBrainz convention): a play counts once
+	// it's reached at least half the track length, or 4 minutes, whichever
+	// comes first. Filters skips / brief previews that still emit a 'stop'.
+	if !listenedEnough(positionMS, durationMS) {
+		return
+	}
 	st, err := s.store.Get(ctx, userID)
 	if err != nil {
 		s.warn(ctx, "scrobble: load settings", "user_id", userID, "err", err)
@@ -160,4 +167,19 @@ func (s *Service) warn(ctx context.Context, msg string, args ...any) {
 	if s.logger != nil {
 		s.logger.WarnContext(ctx, msg, args...)
 	}
+}
+
+// listenedEnough reports whether a play crossed the scrobble threshold: at
+// least half the track's duration, or at least 4 minutes. With an unknown
+// duration it falls back to the 4-minute rule alone — a short play of an
+// unknown-length track can't be confirmed as a real listen, so it's skipped.
+func listenedEnough(positionMS int64, durationMS *int64) bool {
+	const fourMinutesMS = 4 * 60 * 1000
+	if positionMS >= fourMinutesMS {
+		return true
+	}
+	if durationMS != nil && *durationMS > 0 {
+		return float64(positionMS)/float64(*durationMS) >= 0.5
+	}
+	return false
 }

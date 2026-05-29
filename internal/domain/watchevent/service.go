@@ -72,11 +72,12 @@ type InsertWatchEventRow struct {
 	OccurredAt time.Time
 }
 
-// ScrobbleHook is invoked asynchronously after a 'scrobble' (played-enough)
-// event is recorded, so an external scrobbler (ListenBrainz / Last.fm) can
-// export the completed listen. nil disables it. It must not block — Record
-// fires it in its own goroutine and ignores the result.
-type ScrobbleHook func(ctx context.Context, userID, mediaID uuid.UUID, occurredAt time.Time)
+// ScrobbleHook is invoked asynchronously after a terminal 'stop' event, so an
+// external scrobbler (ListenBrainz / Last.fm) can export the listen. It gets
+// the final position + duration so the dispatcher can apply the "played
+// enough" listen threshold; it must not block — Record fires it in its own
+// goroutine and ignores the result. nil disables it.
+type ScrobbleHook func(ctx context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, occurredAt time.Time)
 
 // Service implements watch event business logic.
 type Service struct {
@@ -129,15 +130,17 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 		s.metrics.WatchEventsTotal.WithLabelValues(p.EventType).Inc()
 	}
 
-	// Fire-and-forget external scrobble on the completed-play event. The
-	// dispatcher decides whether the user has a linked service and whether
-	// this is a music track, so handing it every 'scrobble' event is fine.
-	if p.EventType == "scrobble" && s.scrobble != nil {
+	// Fire-and-forget external scrobble on the terminal 'stop' event — the
+	// universal completion signal every first-party client emits (the web/
+	// native players don't produce a distinct 'scrobble' event). The
+	// dispatcher applies the listen threshold (played enough) and gates on a
+	// linked account + music track, so handing it every 'stop' is fine.
+	if p.EventType == "stop" && s.scrobble != nil {
 		at := p.OccurredAt
 		if at.IsZero() {
 			at = time.Now().UTC()
 		}
-		go s.scrobble(context.Background(), p.UserID, p.MediaID, at)
+		go s.scrobble(context.Background(), p.UserID, p.MediaID, p.PositionMS, p.DurationMS, at)
 	}
 
 	// Refresh watch_state after terminal events so subsequent metadata
