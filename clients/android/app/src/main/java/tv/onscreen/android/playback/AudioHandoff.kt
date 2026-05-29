@@ -57,6 +57,16 @@ object AudioHandoff {
         return p
     }
 
+    /** Refresh the metadata for the already-parked player. The service
+     *  calls this when it auto-advances to a new track in the
+     *  background, so a fragment reclaiming the player afterward binds
+     *  to the track that's actually playing rather than the one
+     *  originally parked. No-op when nothing is parked. */
+    @Synchronized
+    fun updateMetadata(meta: Metadata) {
+        if (parked != null) parkedMeta = meta
+    }
+
     /** Inspection without removal — used by the service to decide
      *  whether to bind a session on first start. */
     @Synchronized

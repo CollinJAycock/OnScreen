@@ -309,6 +309,20 @@ class OnScreenMediaSessionService : MediaSessionService() {
         activeIndex = item.index
         activeHlsOffsetMs = 0L
 
+        // Keep the handoff slot's metadata current so a fragment that
+        // reclaims this player after the background advance binds to the
+        // track now playing (not the one originally parked) — otherwise
+        // it shows a stale title and reports progress under the wrong id.
+        AudioHandoff.updateMetadata(
+            AudioHandoff.Metadata(
+                itemId = itemId,
+                itemType = item.type,
+                parentId = item.parent_id,
+                index = item.index,
+                hlsOffsetMs = 0L,
+            ),
+        )
+
         player.setMediaItem(MediaItem.fromUri(Uri.parse(url)))
         player.prepare()
         player.playWhenReady = true

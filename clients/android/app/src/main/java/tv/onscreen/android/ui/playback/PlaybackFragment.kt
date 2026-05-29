@@ -1364,14 +1364,43 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  app returns to the foreground (onStart after HOME). Stops the
      *  now-redundant service, re-installs the player listener (removed
      *  at park time) and the progress reporter. The Leanback glue still
-     *  wraps the same ExoPlayer instance, so no re-bind is needed. */
+     *  wraps the same ExoPlayer instance, so no re-bind is needed.
+     *
+     *  If the service auto-advanced to a different track while we were
+     *  backgrounded, this fragment is bound to the old track — we swap
+     *  in a fresh PlaybackFragment for the current track instead (see
+     *  below) so the title + progress reporting follow what's playing. */
     private fun reclaimAudioPlayerFromService() {
         parkedToService = false
-        val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
-        val reclaimed = tv.onscreen.android.playback.AudioHandoff.take(itemId) ?: run {
-            // The service auto-advanced to a different track while
-            // backgrounded (parked item no longer matches) or already
-            // released the player. Leave it running; nothing to rebind.
+        val launchId = arguments?.getString(ARG_ITEM_ID) ?: return
+        val parkedId = tv.onscreen.android.playback.AudioHandoff.peekMetadata()?.itemId
+
+        // Background auto-advance: the parked track no longer matches the
+        // one this fragment launched with. Rebinding the mismatched
+        // player here would leave a stale title and mis-attribute
+        // progress to the old id. Instead swap in a fresh PlaybackFragment
+        // for the track that's actually playing — its initPlayer take()
+        // picks up the same parked player (playerWasReused suppresses a
+        // restart), so playback stays seamless and all metadata is
+        // correct. Deferred via post() to avoid a re-entrant transaction
+        // inside onStart.
+        if (parkedId != null && parkedId != launchId) {
+            playerListener = null
+            player = null
+            view?.post {
+                if (isAdded && !parentFragmentManager.isStateSaved) {
+                    parentFragmentManager.beginTransaction()
+                        .replace(R.id.main_container, newInstance(parkedId))
+                        .commit()
+                }
+            }
+            return
+        }
+
+        val reclaimed = tv.onscreen.android.playback.AudioHandoff.take(launchId) ?: run {
+            // Nothing parked for this track — the service released the
+            // player (queue ended / notification dismissed). Nothing to
+            // rebind.
             return
         }
         try {
@@ -1386,7 +1415,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val listener = createPlayerListener()
         reclaimed.addListener(listener)
         playerListener = listener
-        installProgressTracker(itemId)
+        installProgressTracker(launchId)
     }
 
     /** When the user backs out of the player while music is still
