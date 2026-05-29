@@ -236,11 +236,27 @@ class OnScreenMediaSessionService : MediaSessionService() {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state != Player.STATE_ENDED) return
                 if (activeItemType != "track" && activeItemType != "audiobook") return
-                val resolver = NextSiblingResolver(itemRepo)
                 val itemId = activeItemId ?: return
                 val type = activeItemType ?: return
                 val parentId = activeParentId
                 val index = activeIndex
+                // Report the finished track 'stopped' at full duration so a
+                // track completed in the background still scrobbles — even
+                // when it's the last in the queue or the next-sibling lookup
+                // fails. The fragment-side ProgressTracker only reports on
+                // its own onStop, which never fires for this service-owned
+                // auto-advance.
+                val dur = player.duration
+                if (dur > 0 && dur != Long.MAX_VALUE) {
+                    scope.launch {
+                        try {
+                            itemRepo.updateProgress(itemId, dur, dur, "stopped")
+                        } catch (_: Exception) {
+                            // Best-effort; never blocks the chain.
+                        }
+                    }
+                }
+                val resolver = NextSiblingResolver(itemRepo)
                 scope.launch {
                     val next = resolver.resolve(itemId, type, parentId, index) ?: return@launch
                     chainTo(next.id)

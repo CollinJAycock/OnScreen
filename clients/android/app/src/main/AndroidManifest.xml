@@ -6,6 +6,14 @@
          (setWakeMode(WAKE_MODE_LOCAL) in PlaybackFragment). The
          screen-on flag is window-level and doesn't need a permission. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Background music plays through OnScreenMediaSessionService, a
+         mediaPlayback foreground service. FOREGROUND_SERVICE is required
+         since API 28; FOREGROUND_SERVICE_MEDIA_PLAYBACK is required on
+         API 34+ (media3 1.3.1 doesn't declare it for us). Without these,
+         Media3 promoting the service to foreground throws SecurityException
+         on Android 14+ TVs. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Lets WatchNextManager publish + remove rows in the system's
          WatchNextPrograms content provider so resumable items show
          up in Google TV's "Continue Watching" row across launchers
@@ -74,7 +82,7 @@
              via MediaController; the service owns the player. -->
         <service
             android:name=".playback.OnScreenMediaSessionService"
-            android:exported="true"
+            android:exported="false"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
