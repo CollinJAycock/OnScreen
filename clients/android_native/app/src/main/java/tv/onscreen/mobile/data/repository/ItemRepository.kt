@@ -1,5 +1,9 @@
 package tv.onscreen.mobile.data.repository
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.ChildItem
@@ -16,6 +20,15 @@ import javax.inject.Singleton
 open class ItemRepository @Inject constructor(
     private val api: OnScreenApi,
 ) {
+    /** App-lifetime scope for fire-and-forget writes that must outlive
+     *  the caller. The terminal 'stopped' progress event is the
+     *  scrobble trigger server-side, and an auto-advancing music track
+     *  pops the player off the back stack — cancelling its
+     *  viewModelScope — the instant the finished track would report
+     *  'stopped'. Riding that scope drops the PUT mid-flight, so the
+     *  listen never scrobbles; this scope is never cancelled. */
+    private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     open suspend fun getItem(id: String): ItemDetail = api.getItem(id).data
 
     open suspend fun getChildren(id: String): List<ChildItem> =
@@ -28,6 +41,25 @@ open class ItemRepository @Inject constructor(
         state: String,
     ) {
         api.updateProgress(itemId, ProgressRequest(offsetMs, durationMs, state))
+    }
+
+    /** Fire-and-forget progress publish on the app-lifetime
+     *  [detachedScope]. Use for the terminal 'stopped' event, which
+     *  must reach the server even as the player screen + ViewModel are
+     *  being torn down by an auto-advance (a viewModelScope.launch
+     *  would be cancelled before the PUT lands). Best-effort — server
+     *  unreachability is swallowed. */
+    open fun reportProgressDetached(
+        itemId: String,
+        offsetMs: Long,
+        durationMs: Long,
+        state: String,
+    ) {
+        detachedScope.launch {
+            try {
+                updateProgress(itemId, offsetMs, durationMs, state)
+            } catch (_: Exception) { }
+        }
     }
 
     /** Intro / credits markers for an episode. Movies and containers

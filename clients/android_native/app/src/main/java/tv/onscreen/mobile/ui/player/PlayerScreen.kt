@@ -356,7 +356,11 @@ private fun PlayerHost(
     // Progress reporting — fires every 10s while playing, plus a
     // final "stopped" event when the screen leaves the back stack.
     // Same cadence the TV client uses; keeps the resume marker fresh
-    // for cross-device handoff.
+    // for cross-device handoff. The terminal "stopped" goes through
+    // reportProgressFinal (app-lifetime scope): a track that
+    // auto-advances pops this screen — cancelling the VM scope — at
+    // the same instant we report, and that's the event the server
+    // scrobbles on, so it must outlive the teardown.
     DisposableEffect(itemId, source) {
         val job = scope.launch {
             while (isActive) {
@@ -371,7 +375,7 @@ private fun PlayerHost(
             job.cancel()
             if (player.duration > 0) {
                 val pos = player.currentPosition + vm.hlsOffsetMs
-                vm.reportProgress(itemId, pos, player.duration, "stopped")
+                vm.reportProgressFinal(itemId, pos, player.duration)
             }
         }
     }

@@ -671,7 +671,10 @@ class PlayerViewModel @Inject constructor(
 
     /** Fire-and-forget progress publish. Best-effort: server
      *  unreachability shouldn't crash playback, and the next tick
-     *  will pick up where this one left off. */
+     *  will pick up where this one left off. Runs on viewModelScope —
+     *  fine for the periodic 'playing' heartbeat, which should stop
+     *  when playback does. Terminal 'stopped' must use
+     *  [reportProgressFinal] instead (see its note). */
     fun reportProgress(itemId: String, positionMs: Long, durationMs: Long, state: String) {
         if (durationMs <= 0) return
         localProgressMs = positionMs
@@ -680,6 +683,18 @@ class PlayerViewModel @Inject constructor(
                 itemRepo.updateProgress(itemId, positionMs, durationMs, state)
             } catch (_: Exception) { }
         }
+    }
+
+    /** Terminal 'stopped' publish, routed through the repository's
+     *  app-lifetime scope rather than viewModelScope. The player VM is
+     *  cleared the moment an auto-advancing track pops the screen off
+     *  the back stack, so a viewModelScope.launch here would be
+     *  cancelled before the PUT lands — dropping the 'stop' watch-event
+     *  the server scrobbles on, so a completed music track would never
+     *  reach ListenBrainz. */
+    fun reportProgressFinal(itemId: String, positionMs: Long, durationMs: Long) {
+        if (durationMs <= 0) return
+        itemRepo.reportProgressDetached(itemId, positionMs, durationMs, "stopped")
     }
 
     /** Cleared by the screen after it consumes the seek signal so the

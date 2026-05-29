@@ -5,6 +5,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -588,6 +589,37 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) { itemRepo.updateProgress("movie-1", 5_000L, 90_000L, "playing") }
+    }
+
+    @Test
+    fun `reportProgressFinal publishes a detached stopped event`() = runTest(dispatcher) {
+        // The terminal stop must ride the repository's app-lifetime
+        // scope, not viewModelScope — an auto-advancing track clears
+        // this VM the instant we report, and a viewModelScope publish
+        // would be cancelled before the PUT lands, so the completed
+        // track would never scrobble.
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        every { itemRepo.reportProgressDetached(any(), any(), any(), any()) } returns Unit
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay())
+
+        vm.reportProgressFinal("track-7", 180_000L, 180_000L)
+        advanceUntilIdle()
+
+        verify(exactly = 1) { itemRepo.reportProgressDetached("track-7", 180_000L, 180_000L, "stopped") }
+        coVerify(exactly = 0) { itemRepo.updateProgress(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `reportProgressFinal no-ops when duration is zero`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay())
+
+        vm.reportProgressFinal("track-7", 1_000L, 0L)
+        advanceUntilIdle()
+
+        verify(exactly = 0) { itemRepo.reportProgressDetached(any(), any(), any(), any()) }
     }
 
     @Test
