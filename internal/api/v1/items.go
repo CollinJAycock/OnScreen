@@ -149,28 +149,28 @@ type ItemWatchLimit interface {
 
 // ItemHandler handles /api/v1/items.
 type ItemHandler struct {
-	media     ItemMediaService
-	watch     ItemWatchService
-	sessions  ItemSessionCleaner
-	enricher  ItemEnricher
-	matcher   ItemMatchSearcher
-	webhooks  ItemWebhookDispatcher
-	favorites ItemFavoriteChecker
-	markers   ItemMarkerService
+	media      ItemMediaService
+	watch      ItemWatchService
+	sessions   ItemSessionCleaner
+	enricher   ItemEnricher
+	matcher    ItemMatchSearcher
+	webhooks   ItemWebhookDispatcher
+	favorites  ItemFavoriteChecker
+	markers    ItemMarkerService
 	access     LibraryAccessChecker
 	watchLimit ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
 	subs       ExternalSubLister
 	tracker    *streaming.Tracker
-	sync      *notification.Broker
-	audit     *audit.Logger
-	tokens    *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file
-	epDB      EpisodePosterDB      // optional; when set, episode rows get the show's poster substituted (per user pref)
-	posters   ItemPosterPicker     // optional; when set, /posters and /poster routes are admin-served
-	deleter   ItemSubtreeDeleter   // optional; when set, DELETE /items/{id} is admin-served
-	credits   ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
-	dlGate    DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
-	store     mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
-	logger    *slog.Logger
+	sync       *notification.Broker
+	audit      *audit.Logger
+	tokens     *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file
+	epDB       EpisodePosterDB      // optional; when set, episode rows get the show's poster substituted (per user pref)
+	posters    ItemPosterPicker     // optional; when set, /posters and /poster routes are admin-served
+	deleter    ItemSubtreeDeleter   // optional; when set, DELETE /items/{id} is admin-served
+	credits    ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
+	dlGate     DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
+	store      mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
+	logger     *slog.Logger
 }
 
 // DownloadGate decides whether the /media/download/{id} endpoint is open

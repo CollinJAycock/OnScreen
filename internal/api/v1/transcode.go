@@ -58,15 +58,15 @@ type SessionKiller interface {
 
 // NativeTranscodeHandler handles HLS transcoding for the native web player.
 type NativeTranscodeHandler struct {
-	sessions *transcode.SessionStore
-	segToken *transcode.SegmentTokenManager
+	sessions   *transcode.SessionStore
+	segToken   *transcode.SegmentTokenManager
 	media      NativeTranscodeMediaService
 	access     LibraryAccessChecker
 	watchLimit ItemWatchLimit // optional; when set, Start blocks playback that's outside allowed hours / past the daily cap
 	audit      *audit.Logger
-	cfg      *config.Config
-	logger   *slog.Logger
-	killer   SessionKiller // optional — set for embedded worker deployments
+	cfg        *config.Config
+	logger     *slog.Logger
+	killer     SessionKiller // optional — set for embedded worker deployments
 	// tokens mints the per-file stream token embedded in a job's SourceURL
 	// so a remote worker without shared storage can pull the source over
 	// HTTP. Optional — when nil, jobs carry no SourceURL and workers must
