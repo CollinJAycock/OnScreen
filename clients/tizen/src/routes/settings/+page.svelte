@@ -53,6 +53,14 @@
   let prefsLoaded = $state(false);
   let prefsSaving = $state(false);
 
+  // ListenBrainz scrobble link status — surfaced as a row that opens
+  // the dedicated /settings/scrobble link flow.
+  let scrobbleLinked = $state(false);
+  let scrobbleEnabled = $state(false);
+  const scrobbleLabel = $derived(
+    scrobbleLinked ? (scrobbleEnabled ? 'Linked' : 'Paused') : 'Off'
+  );
+
   onMount(() => {
     (async () => {
       try {
@@ -64,6 +72,16 @@
         // Best-effort — leave defaults blank. UI still usable.
       } finally {
         prefsLoaded = true;
+      }
+    })();
+
+    (async () => {
+      try {
+        const s = await endpoints.scrobble.status();
+        scrobbleLinked = s.listenbrainz_linked;
+        scrobbleEnabled = s.listenbrainz_enabled;
+      } catch {
+        // Best-effort — the row falls back to "Off" if status can't load.
       }
     })();
 
@@ -226,6 +244,18 @@
   </section>
 
   <section>
+    <div class="section-title">Scrobbling</div>
+    <button use:focusable class="action-row" onclick={() => goto('#/settings/scrobble')}>
+      <div class="action-title">
+        ListenBrainz <span class="badge {scrobbleLinked ? 'on' : 'off'}">{scrobbleLabel}</span>
+      </div>
+      <div class="action-desc">
+        Submit a listen to ListenBrainz when you finish a music track.
+      </div>
+    </button>
+  </section>
+
+  <section>
     <div class="section-title">About</div>
     <div class="info-row">
       <div class="info-label">Version</div>
@@ -343,6 +373,20 @@
     font-size: var(--font-sm);
     color: var(--text-secondary);
   }
+
+  .badge {
+    display: inline-block;
+    margin-left: 10px;
+    font-size: var(--font-sm);
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+  }
+  .badge.on { background: rgba(52, 211, 153, 0.15); color: #34d399; }
+  .badge.off { background: var(--bg-elevated, #2a2a32); color: var(--text-secondary); }
 
   .info-row {
     display: flex;

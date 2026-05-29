@@ -381,3 +381,23 @@ export const users = {
   setPreferences: (body: PreferencesUpdate) =>
     api.put<UserPreferences>('/api/v1/users/me/preferences', body),
 };
+
+// ── Scrobbling (ListenBrainz) ────────────────────────────────────
+// Per-user external scrobble link. The token is write-only — the
+// server returns only whether one is linked and whether submission is
+// enabled, never the token itself. An empty token unlinks (the server
+// forces enabled=false on an empty token). Mirrors the web client's
+// scrobbleApi; the listen-submit trigger is entirely server-side (on a
+// 'stopped' watch event past the listen threshold), so this is purely
+// the per-user link toggle.
+export interface ScrobbleStatus {
+  listenbrainz_linked: boolean;
+  listenbrainz_enabled: boolean;
+}
+
+export const scrobble = {
+  status: () => api.get<ScrobbleStatus>('/api/v1/users/me/scrobble'),
+  /** Link or update the ListenBrainz token. An empty token unlinks. */
+  setListenBrainz: (token: string, enabled: boolean) =>
+    api.put<void>('/api/v1/users/me/scrobble/listenbrainz', { token, enabled }),
+};
