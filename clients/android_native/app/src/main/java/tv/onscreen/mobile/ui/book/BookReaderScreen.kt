@@ -381,11 +381,27 @@ private fun EpubReader(ui: BookReaderUi) {
                         request: WebResourceRequest,
                     ): WebResourceResponse? {
                         val resp = assetLoader.shouldInterceptRequest(request.url)
-                        Log.d(
-                            "EpubReader",
-                            "intercept ${request.url} -> ${if (resp == null) "passthrough" else "handled mime=${resp.mimeType}"}",
-                        )
-                        return resp
+                        if (resp != null) {
+                            return resp
+                        }
+                        // Sandbox the book: deny any off-origin http(s) request a
+                        // malicious EPUB might issue (tracking pixels, data exfil,
+                        // SSRF-from-device). shouldInterceptRequest fires for every
+                        // request including main-frame navigation, so this also
+                        // blocks a book trying to navigate the reader off-origin.
+                        // Legit EPUB resources resolve via blob:/data: inside the
+                        // rendition iframe or through the appassets loader above —
+                        // never external http(s).
+                        val scheme = request.url.scheme?.lowercase()
+                        if (scheme == "http" || scheme == "https") {
+                            Log.d("EpubReader", "blocked off-origin request ${request.url}")
+                            return WebResourceResponse(
+                                "text/plain", "utf-8", 403, "Blocked",
+                                emptyMap(), ByteArray(0).inputStream(),
+                            )
+                        }
+                        // data:/blob:/about: — handled internally by the WebView.
+                        return null
                     }
                 }
                 loadUrl(

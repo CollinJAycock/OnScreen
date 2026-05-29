@@ -190,6 +190,17 @@ A defensive audit pass hardened the auth, SSRF, and content-handling surfaces:
   content handler is constructed without its library-ACL checker, since a nil
   checker would otherwise fail open (serve every library).
 
+### Security — clients
+
+- **TV client: platform-delegated TLS trust** — the Android TV client replaced
+  its hand-rolled PKIX trust manager (custom cert validation, plus an AIA
+  incomplete-chain bug that broke Cloudflare-fronted servers) with the same
+  system `X509TrustManager` delegation the phone client uses. Not trust-all;
+  hostname verification intact.
+- **Phone client: EPUB reader WebView sandboxed** — the in-app EPUB WebView now
+  blocks off-origin `http(s)` requests, so a malicious book can't beacon out,
+  exfiltrate, or navigate the reader off-origin. Bundled resources still render.
+
 ### Added — Windows installer
 
 - **Worker-only install mode** — a node joins an existing primary's fleet with
