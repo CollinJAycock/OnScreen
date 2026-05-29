@@ -27,6 +27,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -137,6 +138,15 @@ type LibraryAccessChecker interface {
 	AllowedLibraryIDs(ctx context.Context, userID uuid.UUID, isAdmin bool) (map[uuid.UUID]struct{}, error)
 }
 
+// ItemWatchLimit is the parental watch-limit surface the Progress handler uses
+// to gate + account playback. Satisfied by *watchlimit.Store. nil = no limits
+// enforced (the pre-feature behaviour).
+type ItemWatchLimit interface {
+	GetPolicy(ctx context.Context, userID uuid.UUID) (watchlimit.Policy, error)
+	TodayUsageSeconds(ctx context.Context, userID uuid.UUID, day time.Time) (int, error)
+	AddTick(ctx context.Context, userID uuid.UUID, day, now time.Time) (int, error)
+}
+
 // ItemHandler handles /api/v1/items.
 type ItemHandler struct {
 	media     ItemMediaService
@@ -147,9 +157,10 @@ type ItemHandler struct {
 	webhooks  ItemWebhookDispatcher
 	favorites ItemFavoriteChecker
 	markers   ItemMarkerService
-	access    LibraryAccessChecker
-	subs      ExternalSubLister
-	tracker   *streaming.Tracker
+	access     LibraryAccessChecker
+	watchLimit ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
+	subs       ExternalSubLister
+	tracker    *streaming.Tracker
 	sync      *notification.Broker
 	audit     *audit.Logger
 	tokens    *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file
@@ -206,6 +217,15 @@ func (h *ItemHandler) LibraryAccessWired() bool { return h.access != nil }
 // alongside the embedded streams.
 func (h *ItemHandler) WithExternalSubtitles(s ExternalSubLister) *ItemHandler {
 	h.subs = s
+	return h
+}
+
+// WithWatchLimit attaches the parental watch-limit store. When set, the
+// Progress handler blocks playing-state reports that fall outside the user's
+// allowed hours or past their daily cap (403 PARENTAL_LIMIT) and accrues active
+// watch time. nil = no enforcement.
+func (h *ItemHandler) WithWatchLimit(wl ItemWatchLimit) *ItemHandler {
+	h.watchLimit = wl
 	return h
 }
 
@@ -1281,6 +1301,32 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			body.ClientName = body.ClientName[:64]
 		}
 		clientNamePtr = &body.ClientName
+	}
+
+	// Parental watch-limit gate + accounting. Only 'playing' heartbeats are
+	// gated and accrue usage; pause/stop reports always fall through to
+	// Record so the resume position + scrobble still fire even once the cap
+	// is hit. Fail-open on a store error — a transient DB hiccup shouldn't
+	// break playback for everyone (the cap is best-effort, not a paywall).
+	if h.watchLimit != nil && body.State == "playing" {
+		now := time.Now()
+		policy, perr := h.watchLimit.GetPolicy(r.Context(), claims.UserID)
+		if perr != nil {
+			h.logger.WarnContext(r.Context(), "watch-limit: get policy", "err", perr)
+		} else if policy.Restricted() {
+			day := watchlimit.LocalDay(now)
+			used, uerr := h.watchLimit.TodayUsageSeconds(r.Context(), claims.UserID, day)
+			if uerr != nil {
+				h.logger.WarnContext(r.Context(), "watch-limit: today usage", "err", uerr)
+			} else if allowed, reason := watchlimit.Evaluate(policy, used, now); !allowed {
+				respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", reason)
+				return
+			}
+			// Accrue this active-watching heartbeat (best-effort).
+			if _, aerr := h.watchLimit.AddTick(r.Context(), claims.UserID, day, now); aerr != nil {
+				h.logger.WarnContext(r.Context(), "watch-limit: add tick", "err", aerr)
+			}
+		}
 	}
 
 	if err := h.watch.Record(r.Context(), watchevent.RecordParams{

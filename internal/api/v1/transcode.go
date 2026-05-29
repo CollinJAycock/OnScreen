@@ -27,6 +27,7 @@ import (
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -59,9 +60,10 @@ type SessionKiller interface {
 type NativeTranscodeHandler struct {
 	sessions *transcode.SessionStore
 	segToken *transcode.SegmentTokenManager
-	media    NativeTranscodeMediaService
-	access   LibraryAccessChecker
-	audit    *audit.Logger
+	media      NativeTranscodeMediaService
+	access     LibraryAccessChecker
+	watchLimit ItemWatchLimit // optional; when set, Start blocks playback that's outside allowed hours / past the daily cap
+	audit      *audit.Logger
 	cfg      *config.Config
 	logger   *slog.Logger
 	killer   SessionKiller // optional — set for embedded worker deployments
@@ -117,6 +119,14 @@ func (h *NativeTranscodeHandler) WithLibraryAccess(a LibraryAccessChecker) *Nati
 // WithAudit attaches the audit logger so transcode session creation is recorded.
 func (h *NativeTranscodeHandler) WithAudit(a *audit.Logger) *NativeTranscodeHandler {
 	h.audit = a
+	return h
+}
+
+// WithWatchLimit attaches the parental watch-limit store so Start refuses to
+// spin up a session when the user is outside their allowed hours or past their
+// daily cap. nil = no enforcement.
+func (h *NativeTranscodeHandler) WithWatchLimit(wl ItemWatchLimit) *NativeTranscodeHandler {
+	h.watchLimit = wl
 	return h
 }
 
@@ -302,6 +312,23 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
 			respond.Forbidden(w, r)
 			return
+		}
+	}
+
+	// Parental watch-limit gate — refuse to start a session outside the
+	// user's allowed hours or past their daily cap, before spending any
+	// worker resources. Fail-open on a store error (best-effort cap, not a
+	// paywall); the progress heartbeat re-checks during playback anyway.
+	if h.watchLimit != nil {
+		now := time.Now()
+		if policy, perr := h.watchLimit.GetPolicy(ctx, claims.UserID); perr != nil {
+			h.logger.WarnContext(ctx, "transcode: watch-limit get policy", "err", perr)
+		} else if policy.Restricted() {
+			used, _ := h.watchLimit.TodayUsageSeconds(ctx, claims.UserID, watchlimit.LocalDay(now))
+			if allowed, reason := watchlimit.Evaluate(policy, used, now); !allowed {
+				respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", reason)
+				return
+			}
 		}
 	}
 

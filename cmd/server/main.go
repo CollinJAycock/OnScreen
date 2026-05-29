@@ -36,6 +36,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/people"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/domain/watchstatus"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/intromarker"
@@ -594,6 +595,12 @@ func run() error {
 	scrobbleSvc := scrobble.NewService(scrobbleStore, scrobbleStore, safehttp.Default(), logger)
 	scrobbleHandler := v1.NewScrobbleHandler(scrobbleStore)
 
+	// Parental watch limits — per-user daily cap + allowed-hours, enforced at
+	// the progress + transcode-start chokepoints and surfaced to clients via
+	// the watch-limit endpoints. Raw-SQL store over the read-write pool.
+	watchLimitStore := watchlimit.NewStore(rwPool)
+	watchLimitHandler := v1.NewWatchLimitHandler(watchLimitStore)
+
 	// Watch event service (Phase 2).
 	rwWQ := &watchEventAdapter{q: gen.New(rwPool)}
 	roWQ := &watchEventAdapter{q: gen.New(roPool)}
@@ -732,6 +739,7 @@ func run() error {
 
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger).
 		WithLibraryAccess(libSvc).
+		WithWatchLimit(watchLimitStore).
 		WithAudit(auditLogger).
 		// Lets a remote worker without shared storage pull the source from this
 		// server over HTTP (a per-file stream token in the job's SourceURL).
@@ -808,6 +816,7 @@ func run() error {
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
 		WithEpisodePoster(gen.New(roPool)).
 		WithLibraryAccess(libSvc).
+		WithWatchLimit(watchLimitStore).
 		WithMarkers(intromarker.NewStore(rwPool)).
 		WithExternalSubtitles(subtitleSvc).
 		WithSyncBroker(notifBrokerEarly).
@@ -1192,6 +1201,7 @@ func run() error {
 		Notifications:   notifHandler,
 		Playback:        playbackHandler,
 		Scrobble:        scrobbleHandler,
+		WatchLimit:      watchLimitHandler,
 		Maintenance:     maintenanceHandler,
 		Backup:          backupHandler,
 		Tasks:           tasksHandler,

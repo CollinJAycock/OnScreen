@@ -75,7 +75,8 @@ type Handlers struct {
 	Notifications   *v1.NotificationHandler
 	Playback        *v1.PlaybackHandler
 	Favorites       *v1.FavoritesHandler
-	Scrobble        *v1.ScrobbleHandler // per-user ListenBrainz link
+	Scrobble        *v1.ScrobbleHandler   // per-user ListenBrainz link
+	WatchLimit      *v1.WatchLimitHandler // per-user parental watch limits
 	Maintenance     *v1.MaintenanceHandler
 	Backup          *v1.BackupHandler
 	Tasks           *v1.TasksHandler
@@ -535,6 +536,12 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/users/me/scrobble/listenbrainz", h.Scrobble.SetListenBrainz)
 			}
 
+			// Parental watch limits — the caller's own policy + today's
+			// usage + currently-allowed state (admin sets it below).
+			if h.WatchLimit != nil {
+				r.Get("/users/me/watch-limit", h.WatchLimit.Get)
+			}
+
 			// Native client device pairing — claim binds a PIN to the
 			// browser-authenticated user, authorising the waiting device.
 			if h.Pair != nil {
@@ -564,6 +571,9 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Patch("/users/{id}", h.User.SetAdmin)
 					r.Put("/users/{id}/password", h.User.ResetPassword)
 					r.Put("/users/{id}/content-rating", h.User.SetContentRating)
+					if h.WatchLimit != nil {
+						r.Put("/users/{id}/watch-limit", h.WatchLimit.Set)
+					}
 					r.Get("/users/{id}/libraries", h.User.GetUserLibraries)
 					r.Put("/users/{id}/libraries", h.User.SetUserLibraries)
 				})
