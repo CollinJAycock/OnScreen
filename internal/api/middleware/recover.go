@@ -24,6 +24,19 @@ func (rw *recoverWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Flush delegates to the underlying writer if it implements http.Flusher.
+// Without it, recoverWriter sits between the Logger's flush-delegating wrapper
+// and the socket and silently swallows flushes — so streaming responses (SSE
+// /notifications/stream, HLS playlists) buffer until Go's write buffer fills,
+// and non-browser clients (curl, Node, EventSource) see no bytes for many
+// seconds. The Unwrap below only helps http.ResponseController; the wrappers'
+// manual http.Flusher type-assertions don't follow it, so the method is needed.
+func (rw *recoverWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (rw *recoverWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }

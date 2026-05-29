@@ -20,16 +20,12 @@ const PASSWORD = process.env.E2E_PASSWORD ?? '';
 test.describe('SSE — notifications stream', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run SSE specs');
 
-  // SSE endpoint hangs without flushing initial bytes when probed from
-  // any non-browser client (curl, Node http, Playwright EventSource all
-  // observe 0 bytes for 30+ seconds). Real browsers accessing the web
-  // UI work fine — the stream is wired and used in production. Likely
-  // a Windows dev-build flush ordering issue or a middleware-wrapping
-  // bug that only manifests under specific client headers; needs its
-  // own investigation. Test stays in the file as a placeholder so the
-  // intent is documented.
-  test.skip(true, 'SSE flush behaviour blocks EventSource OPEN from Playwright; real browsers OK — see TODO');
-
+  // Regression guard: the SSE endpoint previously never flushed its initial
+  // bytes to non-browser clients, so EventSource never reached OPEN (curl /
+  // Node observed 0 bytes for 30+ seconds). Root cause was a response-writer
+  // wrapper (middleware.recoverWriter) that didn't implement http.Flusher,
+  // breaking the flush-delegation chain before the socket. Fixed by adding
+  // Flush to recoverWriter; this spec now exercises it end-to-end.
   test('three parallel /api/v1/notifications/stream subscribers all reach OPEN', async ({
     browser,
   }) => {
