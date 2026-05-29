@@ -192,20 +192,23 @@ class PlayerViewModelTest {
         }
 
     @Test
-    fun `direct play falls back to access token when stream token is absent`() = runTest(dispatcher) {
+    fun `direct play falls back to asset token when stream token is absent`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
         val sp = mockk<ServerPrefs>(relaxed = true)
         coEvery { sp.getServerUrl() } returns "http://srv"
-        coEvery { sp.getAccessToken() } returns "at-1h"
+        // No per-file stream token → fall back to the purpose=asset token.
+        // The general access token is deliberately NOT used in a query
+        // string; the asset-route middleware rejects it there.
+        coEvery { sp.getAssetToken() } returns "as-24h"
 
         val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), sp, subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
         val src = vm.state.value.source as PlaybackSource.DirectPlay
-        assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4?token=at-1h")
+        assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4?token=as-24h")
     }
 
     @Test
