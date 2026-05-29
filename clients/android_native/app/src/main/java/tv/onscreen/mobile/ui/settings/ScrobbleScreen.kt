@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -20,8 +22,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -31,7 +35,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -40,6 +46,16 @@ import androidx.hilt.navigation.compose.hiltViewModel
 
 private const val LISTENBRAINZ_SETTINGS_URL = "https://listenbrainz.org/settings/"
 
+// Mirrors the web --success badge colour (green pill for a linked account).
+private val BadgeOnContainer = Color(0x2634D399)
+private val BadgeOnContent = Color(0xFF34D399)
+
+/**
+ * Per-user ListenBrainz link screen. Laid out to mirror the web
+ * Settings → Scrobbling page: a single card with a status badge in the
+ * header, the same explainer copy, numbered link steps, an error banner,
+ * and the linked-state actions + hint.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScrobbleScreen(
@@ -68,55 +84,92 @@ fun ScrobbleScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(24.dp)
+                .padding(16.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            Text("ListenBrainz", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "When you finish a music track, OnScreen submits a listen to your " +
-                    "ListenBrainz account. A play counts once you're past half the " +
-                    "track, or four minutes — whichever comes first.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(24.dp))
-
-            when (val s = state) {
-                ScrobbleUiState.Loading -> CircularProgressIndicator()
-
-                is ScrobbleUiState.Unlinked -> LinkBody(
-                    error = s.error,
-                    busy = busy,
-                    onLink = vm::link,
-                    onCancel = null,
-                )
-
-                is ScrobbleUiState.Linked ->
-                    if (replacing) {
-                        LinkBody(
-                            error = s.error,
-                            busy = busy,
-                            onLink = { token -> replacing = false; vm.link(token) },
-                            onCancel = { replacing = false },
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Text(
+                            "ListenBrainz",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f),
                         )
-                    } else {
-                        LinkedBody(
-                            enabled = s.enabled,
-                            error = s.error,
-                            busy = busy,
-                            onReplace = { replacing = true },
-                            onUnlink = vm::unlink,
-                        )
+                        StatusBadge(state)
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "When you finish a music track, OnScreen submits a listen to " +
+                            "your ListenBrainz account. A play counts once you're past " +
+                            "half the track, or four minutes — whichever comes first. " +
+                            "One-way and best-effort: it never reads anything back and " +
+                            "never affects playback.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(20.dp))
+
+                    when (val s = state) {
+                        ScrobbleUiState.Loading ->
+                            CircularProgressIndicator()
+
+                        is ScrobbleUiState.Unlinked -> {
+                            s.error?.let { ErrorBanner(it); Spacer(Modifier.height(12.dp)) }
+                            LinkBody(busy = busy, onLink = vm::link, onCancel = null)
+                        }
+
+                        is ScrobbleUiState.Linked ->
+                            if (replacing) {
+                                s.error?.let { ErrorBanner(it); Spacer(Modifier.height(12.dp)) }
+                                LinkBody(
+                                    busy = busy,
+                                    onLink = { token -> replacing = false; vm.link(token) },
+                                    onCancel = { replacing = false },
+                                )
+                            } else {
+                                LinkedBody(
+                                    enabled = s.enabled,
+                                    error = s.error,
+                                    busy = busy,
+                                    onReplace = { replacing = true },
+                                    onUnlink = vm::unlink,
+                                )
+                            }
+                    }
+                }
             }
         }
     }
 }
 
+/** Status pill mirroring the web badge: Linked / Paused (green) when a
+ *  token is set, Off (muted) otherwise. Hidden while loading. */
+@Composable
+private fun StatusBadge(state: ScrobbleUiState) {
+    val (label, on) = when (state) {
+        ScrobbleUiState.Loading -> return
+        is ScrobbleUiState.Unlinked -> "Off" to false
+        is ScrobbleUiState.Linked -> (if (state.enabled) "Linked" else "Paused") to true
+    }
+    Surface(
+        color = if (on) BadgeOnContainer else MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(50),
+    ) {
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (on) BadgeOnContent else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
+    }
+}
+
 @Composable
 private fun LinkBody(
-    error: String?,
     busy: Boolean,
     onLink: (String) -> Unit,
     onCancel: (() -> Unit)?,
@@ -124,11 +177,13 @@ private fun LinkBody(
     val uriHandler = LocalUriHandler.current
     var token by remember { mutableStateOf("") }
 
-    Text(
-        "Paste your ListenBrainz user token to link.",
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Spacer(Modifier.height(12.dp))
+    StepRow(1, "Open your ListenBrainz settings and copy your user token.")
+    TextButton(onClick = { uriHandler.openUri(LISTENBRAINZ_SETTINGS_URL) }) {
+        Text("Open ListenBrainz settings")
+    }
+    Spacer(Modifier.height(8.dp))
+    StepRow(2, "Paste it here and link.")
+    Spacer(Modifier.height(8.dp))
     OutlinedTextField(
         value = token,
         onValueChange = { token = it },
@@ -138,10 +193,6 @@ private fun LinkBody(
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         modifier = Modifier.fillMaxWidth(),
     )
-    TextButton(onClick = { uriHandler.openUri(LISTENBRAINZ_SETTINGS_URL) }) {
-        Text("Get your token")
-    }
-    error?.let { Spacer(Modifier.height(8.dp)); ErrorText(it) }
     Spacer(Modifier.height(12.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(
@@ -170,7 +221,7 @@ private fun LinkedBody(
         },
         style = MaterialTheme.typography.bodyMedium,
     )
-    error?.let { Spacer(Modifier.height(8.dp)); ErrorText(it) }
+    error?.let { Spacer(Modifier.height(12.dp)); ErrorBanner(it) }
     Spacer(Modifier.height(16.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onReplace, enabled = !busy) { Text("Replace token") }
@@ -187,7 +238,30 @@ private fun LinkedBody(
 }
 
 @Composable
-private fun ErrorText(msg: String) {
-    Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-    Spacer(Modifier.height(8.dp))
+private fun StepRow(n: Int, text: String) {
+    Row {
+        Text(
+            "$n.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun ErrorBanner(msg: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            msg,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+    }
 }
