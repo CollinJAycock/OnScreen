@@ -40,6 +40,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenSecurity: () -> Unit,
+    onOpenScrobble: () -> Unit,
     vm: SettingsViewModel = hiltViewModel(),
 ) {
     val downloadOnWifiOnly by vm.downloadOnWifiOnly.collectAsState(initial = true)
@@ -135,6 +136,18 @@ fun SettingsScreen(
                 title = "Two-factor authentication",
                 description = "Add a code from an authenticator app to your password login.",
                 onClick = onOpenSecurity,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            SectionHeader("Scrobbling")
+
+            ActionRow(
+                title = "ListenBrainz",
+                description = "Submit a listen when you finish a music track.",
+                onClick = onOpenScrobble,
             )
 
             Spacer(Modifier.height(16.dp))

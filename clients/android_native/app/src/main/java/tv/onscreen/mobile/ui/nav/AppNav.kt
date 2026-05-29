@@ -36,6 +36,7 @@ import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
 import tv.onscreen.mobile.ui.series.SeriesScreen
 import tv.onscreen.mobile.ui.settings.AboutScreen
+import tv.onscreen.mobile.ui.settings.ScrobbleScreen
 import tv.onscreen.mobile.ui.settings.SecurityScreen
 import tv.onscreen.mobile.ui.settings.SettingsScreen
 import javax.inject.Inject
@@ -97,6 +98,7 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
                 onBack = { nav.popBackStack() },
                 onOpenAbout = { nav.navigate(Routes.ABOUT) },
                 onOpenSecurity = { nav.navigate(Routes.SECURITY) },
+                onOpenScrobble = { nav.navigate(Routes.SCROBBLE) },
             )
         }
         composable(Routes.ABOUT) {
@@ -104,6 +106,9 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         }
         composable(Routes.SECURITY) {
             SecurityScreen(onBack = { nav.popBackStack() })
+        }
+        composable(Routes.SCROBBLE) {
+            ScrobbleScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.PLAYLISTS) {
             PlaylistsScreen(onBack = { nav.popBackStack() })

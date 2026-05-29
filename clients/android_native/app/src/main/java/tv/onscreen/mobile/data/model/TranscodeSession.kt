@@ -72,3 +72,20 @@ data class TotpStatusResponse(
     val enabled: Boolean = false,
     val recovery_codes_remaining: Int = 0,
 )
+
+// ── Scrobbling (per-user ListenBrainz link) ──────────────────────────────────
+
+/** Client-safe scrobble status — never carries the token, only whether one is
+ *  linked and whether export is on. */
+@JsonClass(generateAdapter = true)
+data class ScrobbleStatusResponse(
+    val listenbrainz_linked: Boolean = false,
+    val listenbrainz_enabled: Boolean = false,
+)
+
+/** Body for PUT /users/me/scrobble/listenbrainz. An empty token unlinks. */
+@JsonClass(generateAdapter = true)
+data class SetListenBrainzRequest(
+    val token: String,
+    val enabled: Boolean,
+)

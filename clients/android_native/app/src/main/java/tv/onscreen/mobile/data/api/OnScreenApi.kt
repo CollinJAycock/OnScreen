@@ -250,6 +250,15 @@ interface OnScreenApi {
     @PUT("api/v1/users/me/preferences")
     suspend fun setPreferences(@Body body: UserPreferences): ApiResponse<UserPreferences>
 
+    // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
+
+    @GET("api/v1/users/me/scrobble")
+    suspend fun scrobbleStatus(): ApiResponse<ScrobbleStatusResponse>
+
+    /** Link/update the token (empty unlinks). 204 No Content — no body. */
+    @PUT("api/v1/users/me/scrobble/listenbrainz")
+    suspend fun setListenBrainz(@Body body: SetListenBrainzRequest)
+
     // ── History ─────────────────────────────────────────────────────────────
 
     @GET("api/v1/history")
