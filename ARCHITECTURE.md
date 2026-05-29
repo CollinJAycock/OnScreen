@@ -515,12 +515,14 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 
 | Concern | Approach |
 |---|---|
-| Auth tokens | Paseto v4 symmetric; no algorithm confusion; 15m access TTL |
+| Auth tokens | Paseto v4 symmetric; no algorithm confusion; 1h access TTL; `session_epoch` makes them revocable in seconds (demote/delete/force-logout) |
 | Refresh tokens | Opaque random bytes; only SHA-256 hash stored in DB |
-| PIN | bcrypt; stored separately from password |
-| Webhook secrets | AES-256-GCM encrypted at rest in DB |
+| PIN | bcrypt; stored separately from password; user-switch verification is failure-locked (5 / 15 min per target) |
+| Webhook secrets | AES-256-GCM at rest; HMAC-SHA256 signed delivery, refused (never sent unsigned) when the secret can't be decrypted |
 | Path traversal | All file-serve handlers clean and validate paths against roots |
 | SQL injection | sqlc generates parameterised queries; no raw string interpolation |
+| Outbound SSRF | Operator-configured URLs (webhooks, *arr, S3 storage, IdP discovery, M3U/EPG) dial through a post-DNS IP guard (`internal/safehttp`) blocking loopback/private/link-local/CGNAT/metadata unless the caller opts in |
+| Browser XSS | Nonce-based `script-src` CSP with `base-uri 'self'`, `object-src 'none'`, `frame-ancestors 'none'`; subtitle cues stripped of `<script>`/`on*=`/`javascript:` before serving |
 | Rate limiting | IP-based for auth endpoints; session-based for API; fails open if Valkey down |
 | HLS segments | Per-session signed JWT in query param; HLS.js cannot send arbitrary headers |
 | Direct stream | UUID acts as capability token; no auth header required |

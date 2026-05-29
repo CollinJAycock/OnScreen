@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 2.4.x   | :white_check_mark: |
+| < 2.4   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -44,4 +45,5 @@ Please include:
 - Keep PostgreSQL and Valkey on a private network, not exposed to the internet.
 - Use unique, strong passwords for database and SMTP credentials.
 - Restrict OAuth redirect URIs to your exact `BASE_URL`.
+- Enable two-factor authentication (TOTP) for admin accounts.
 - Keep OnScreen updated to the latest release.

@@ -433,6 +433,10 @@ paths:
   /api/v1/auth/pin-switch:
     post:
       summary: Switch to another local user via PIN
+      description: |
+        Verifies the target user's PIN and returns a token pair for them.
+        Brute-force protected: failures are locked out per target (5 per
+        15 min) and the route is additionally rate-limited per session.
       tags: [Auth]
       requestBody:
         required: true
@@ -451,6 +455,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenPairEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: |
+            Too many failed PIN attempts for this target (locked out for
+            ~15 min) or the per-session rate limit was hit. Body carries
+            `code: RATE_LIMITED`; `Retry-After` is set.
 
   # ── Pairing ────────────────────────────────────────────────────────────────
   /api/v1/auth/pair/code:
@@ -509,6 +519,8 @@ paths:
       responses:
         '204': { description: Claimed. The polling device now has tokens. }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: 'Per-session rate limit hit while claiming PIN codes. Body carries `code: RATE_LIMITED`.'
 
   # ── Libraries ──────────────────────────────────────────────────────────────
   /api/v1/libraries:
@@ -743,6 +755,11 @@ paths:
       tags: [Favorites]
       responses:
         '204': { description: Added. }
+        '404':
+          description: |
+            Item not found, or in a library the caller can't access / above
+            their content-rating ceiling (obfuscated as not-found) — the same
+            access gate the favorites list applies on reads.
     delete:
       summary: Remove an item from favorites
       tags: [Favorites]
@@ -1652,6 +1669,9 @@ paths:
   /api/v1/sessions:
     get:
       summary: Active playback sessions
+      description: |
+        Now-playing list. Non-admin callers see only their own sessions;
+        admins see every active session across the fleet.
       tags: [Sessions]
       responses:
         '200':
@@ -3850,6 +3870,7 @@ components:
         content_rating: { type: string, nullable: true }
         genres:         { type: array, items: { type: string } }
         parent_id:      { type: string, nullable: true, format: uuid }
+        grandparent_id: { type: string, nullable: true, format: uuid, description: 'Parent of the parent: for an episode this is the show id (episode -> season -> show), so a client can open the show page directly instead of replaying history. Best-effort; may be unset when unresolved.' }
         index:          { type: integer, nullable: true }
         view_offset_ms: { type: integer, format: int64 }
         is_favorite:    { type: boolean }

@@ -90,6 +90,17 @@ the asset-token migration.
   worker role. The per-node value wins over env; `IGNORE_NODE_DB_CONFIG=true` is
   a break-glass to boot a locked-out node from env only. The bootstrap set
   (`DATABASE_URL`, `SECRET_KEY`, `NODE_ID`) necessarily stays in the environment.
+- **`grandparent_id` on item detail** — episode detail resolves the show id
+  (episode → season → show) so the player's back button returns to the show
+  page instead of the previously-played episode; the web client uses it for
+  `goBack()` and falls back to browser history when it's unset.
+- **Self-service account deletion** — `DELETE /api/v1/users/me` lets a signed-in
+  user delete their own account (refused for the last admin); the access cookie
+  is cleared and the token dies immediately via the session-epoch check.
+- **`rotate-key` tool** — `cmd/rotate-key` re-encrypts every at-rest secret
+  (encrypted settings, webhook secrets, TOTP secrets) from an old `SECRET_KEY`
+  to a new one, so rotating the key is no longer destructive. Dry-run by
+  default. See [docs/key-rotation.md](docs/key-rotation.md).
 
 ### Changed — server
 
@@ -144,6 +155,40 @@ the asset-token migration.
   pgx can't scan a float64 into a `Numeric`, so these were silently nulled;
   scan the decimal string form instead.
 - **Index the FK cascade columns** the schema squash missed.
+
+### Security — server
+
+A defensive audit pass hardened the auth, SSRF, and content-handling surfaces:
+
+- **PIN user-switching is brute-force resistant** — `POST /auth/pin-switch`
+  applies a per-target failure lockout (5 attempts / 15 min) plus a per-session
+  rate limit, and `/auth/pair/claim` is rate-limited too, so a 4-digit switch
+  PIN can no longer be guessed into a token carrying the target user's
+  privileges.
+- **Now-playing is per-user** — `GET /api/v1/sessions` returns only the
+  caller's own sessions for non-admins; admins still get the full dashboard.
+- **Favorites enforce access on write** — adding a favorite applies the same
+  per-library ACL + content-rating ceiling as the read path, so an item in a
+  hidden library can't be favorited (404).
+- **Stricter CSP** — added `base-uri 'self'` and `object-src 'none'`.
+- **Tighter outbound SSRF policy** — the Radarr/Sonarr client no longer allows
+  link-local, the S3/MediaStore client dials through the shared SSRF guard, and
+  the guard now also blocks RFC 6598 CGNAT (100.64.0.0/10) unless a caller opts
+  into private ranges — keeping a misconfigured/abused URL away from cloud
+  metadata and internal hosts.
+- **Webhooks fail closed on a bad secret** — if a configured signing secret
+  can't be decrypted (e.g. after a `SECRET_KEY` rotation), delivery is refused
+  rather than sent unsigned.
+- **Subtitle cues are sanitized** — `<script>`, inline event handlers, and
+  `javascript:` URIs are stripped from external/OCR subtitles before caching,
+  as defense-in-depth for any client that renders cue text as HTML.
+- **Opt-in fail-closed rate limiting** — `OS_AUTH_RATE_LIMIT_FAIL_CLOSED=true`
+  makes the credential-path limiter reject (503) instead of failing open when
+  Valkey is unreachable, so an outage can't silently disable brute-force
+  protection. Default stays fail-open (ADR-015).
+- **Per-library access wiring asserted at startup** — the server fails fast if a
+  content handler is constructed without its library-ACL checker, since a nil
+  checker would otherwise fail open (serve every library).
 
 ### Added — Windows installer
 
