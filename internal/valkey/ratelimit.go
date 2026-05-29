@@ -73,6 +73,20 @@ return {1, limit - count - 1}
 // Returns (allowed=true, remaining, resetAt, nil) on success.
 // Returns (allowed=true, 0, zero, nil) when Valkey is unavailable (fail-open).
 func (r *RateLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, remaining int, resetAt time.Time, err error) {
+	return r.allow(ctx, key, limit, window, false)
+}
+
+// AllowFailClosed is like Allow but, when Valkey is unreachable, returns the
+// error (which the middleware maps to 503) instead of failing open. Operators
+// opt into this on the credential paths via OS_AUTH_RATE_LIMIT_FAIL_CLOSED so a
+// Valkey outage can't silently disable brute-force protection — at the cost of
+// rejecting auth attempts while the backend is down. Default stays fail-open
+// (ADR-015) for every other endpoint.
+func (r *RateLimiter) AllowFailClosed(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, remaining int, resetAt time.Time, err error) {
+	return r.allow(ctx, key, limit, window, true)
+}
+
+func (r *RateLimiter) allow(ctx context.Context, key string, limit int, window time.Duration, failClosed bool) (allowed bool, remaining int, resetAt time.Time, err error) {
 	nowMS := time.Now().UnixMilli()
 	windowMS := window.Milliseconds()
 
@@ -85,6 +99,12 @@ func (r *RateLimiter) Allow(ctx context.Context, key string, limit int, window t
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, 0, time.Time{}, err
+		}
+		if failClosed {
+			// Surface the error so the caller rejects (503) rather than
+			// granting a free pass while the backend is down.
+			r.logger.Error("rate limiter Valkey error, failing closed", "key", key, "err", err)
 			return false, 0, time.Time{}, err
 		}
 		// Valkey unavailable — fail open (ADR-015).

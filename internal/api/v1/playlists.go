@@ -76,6 +76,10 @@ func (h *PlaylistHandler) WithLibraryAccess(a LibraryAccessChecker) *PlaylistHan
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *PlaylistHandler) LibraryAccessWired() bool { return h.access != nil }
+
 type playlistResponse struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`

@@ -43,6 +43,11 @@ func (h *FavoritesHandler) WithLibraryAccess(a LibraryAccessChecker) *FavoritesH
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired. A nil
+// checker fails open (serves every library); api.Handlers.ValidateLibraryAccess
+// asserts this at startup so a forgotten wiring can't ship.
+func (h *FavoritesHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // FavoriteItemResponse is the JSON shape for a single favorited item.
 type FavoriteItemResponse struct {
 	ID          string  `json:"id"`

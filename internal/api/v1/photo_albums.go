@@ -59,6 +59,10 @@ func (h *PhotoAlbumHandler) WithLibraryAccess(a LibraryAccessChecker) *PhotoAlbu
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *PhotoAlbumHandler) LibraryAccessWired() bool { return h.access != nil }
+
 type photoAlbumResponse struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`

@@ -133,6 +133,22 @@ func TestAllow_FailsOpenWhenValkeyDown(t *testing.T) {
 	}
 }
 
+func TestAllowFailClosed_RejectsWhenValkeyDown(t *testing.T) {
+	r, mr, counter := newTestLimiter(t)
+	mr.Close() // simulate Valkey unavailable
+
+	allowed, _, _, err := r.AllowFailClosed(context.Background(), "k", 5, time.Second)
+	if err == nil {
+		t.Error("fail-closed must surface the backend error (maps to 503 upstream)")
+	}
+	if allowed {
+		t.Error("must fail CLOSED (reject request) when the backend is down")
+	}
+	if counter.Load() != 0 {
+		t.Errorf("fail-closed must not touch the fail-open counter, got %d", counter.Load())
+	}
+}
+
 func TestAllow_PropagatesContextCancellation(t *testing.T) {
 	r, _, counter := newTestLimiter(t)
 

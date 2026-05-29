@@ -46,6 +46,10 @@ func (h *BookHandler) WithLibraryAccess(a LibraryAccessChecker) *BookHandler {
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *BookHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // Page handles GET /api/v1/items/{id}/book/page/{n}.
 //
 // n is 1-indexed for human-friendliness — page 1 is the first page,

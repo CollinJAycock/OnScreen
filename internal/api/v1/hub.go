@@ -74,6 +74,10 @@ func (h *HubHandler) WithLibraryAccess(a LibraryAccessChecker) *HubHandler {
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *HubHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // WithEpisodePoster wires the lookup used to substitute the show
 // poster for episode rows in Continue Watching, Recently Added, and
 // Trending. Honours the per-user `episode_use_show_poster` flag —

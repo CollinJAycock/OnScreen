@@ -17,6 +17,11 @@ import (
 type RateLimitConfig struct {
 	Limit  int
 	Window time.Duration
+	// FailClosed rejects with 503 instead of allowing when the limiter backend
+	// (Valkey) is unreachable. Default false preserves the ADR-015 fail-open
+	// posture; opt in for credential paths so a Valkey outage can't silently
+	// disable brute-force protection.
+	FailClosed bool
 }
 
 // Production defaults. The E2E test suite easily exceeds the auth +
@@ -37,8 +42,9 @@ var (
 	// Loose enough for legitimate human users (login, password change, MFA),
 	// tight enough that brute-force attempts trip 429 quickly.
 	AuthLimit = RateLimitConfig{
-		Limit:  resolveLimit("OS_AUTH_RATE_LIMIT_PER_MIN", authLimitDefault),
-		Window: time.Minute,
+		Limit:      resolveLimit("OS_AUTH_RATE_LIMIT_PER_MIN", authLimitDefault),
+		Window:     time.Minute,
+		FailClosed: resolveBool("OS_AUTH_RATE_LIMIT_FAIL_CLOSED", false),
 	}
 	// SessionLimit applies to all authenticated endpoints — 1000 req/min per token.
 	SessionLimit = RateLimitConfig{Limit: 1000, Window: time.Minute}
@@ -76,13 +82,31 @@ func resolveLimit(envVar string, fallback int) int {
 	return n
 }
 
+// resolveBool reads a boolean env var at package init, falling back to the
+// supplied default on any parse failure or empty value.
+func resolveBool(envVar string, fallback bool) bool {
+	raw := os.Getenv(envVar)
+	if raw == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return b
+}
+
 // RateLimit returns a middleware that enforces the given rate limit config.
 // keyFn extracts the rate limit key from the request (e.g. client IP or session hash).
 func RateLimit(limiter *valkey.RateLimiter, cfg RateLimitConfig, keyFn func(r *http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := keyFn(r)
-			allowed, remaining, resetAt, err := limiter.Allow(r.Context(), key, cfg.Limit, cfg.Window)
+			allow := limiter.Allow
+			if cfg.FailClosed {
+				allow = limiter.AllowFailClosed
+			}
+			allowed, remaining, resetAt, err := allow(r.Context(), key, cfg.Limit, cfg.Window)
 			if err != nil {
 				writeRateLimitError(w, http.StatusServiceUnavailable,
 					"RATE_LIMITER_UNAVAILABLE", "request cancelled")

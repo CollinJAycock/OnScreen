@@ -228,6 +228,9 @@ func TestHLSProxy_AcquireOpensSessionAndPlaylist(t *testing.T) {
 }
 
 func TestHLSProxy_RefcountAcrossViewers(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
 	stub := &stubChannelStream{Reader: strings.NewReader("MPEGTS")}
 	p := &HLSProxy{
 		cfg:      HLSConfig{Dir: t.TempDir(), FFmpegBin: "sh"},
@@ -297,6 +300,9 @@ func (s *serviceShim) OpenChannelStream(ctx context.Context, id uuid.UUID) (Stre
 }
 
 func TestHLSProxy_ReleaseAfterCloseIsNoop(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
 	stub := &stubChannelStream{Reader: strings.NewReader("MPEGTS")}
 	p := &HLSProxy{
 		cfg:      HLSConfig{Dir: t.TempDir()},
@@ -321,6 +327,9 @@ func TestHLSProxy_ReleaseAfterCloseIsNoop(t *testing.T) {
 }
 
 func TestHLSProxy_ActiveSessionsReportsLiveCount(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
 	p := &HLSProxy{
 		cfg:      HLSConfig{Dir: t.TempDir()},
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),

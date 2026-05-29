@@ -50,6 +50,10 @@ func (h *CollectionHandler) WithLibraryAccess(a LibraryAccessChecker) *Collectio
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *CollectionHandler) LibraryAccessWired() bool { return h.access != nil }
+
 type collectionResponse struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`

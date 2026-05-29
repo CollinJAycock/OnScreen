@@ -315,6 +315,43 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
+// DeleteSelf handles DELETE /api/v1/users/me — a user deletes their own
+// account. Refuses if the caller is the last admin (deleting them would lock
+// everyone out), audits the deletion, and clears the auth cookies. The access
+// token dies on the next request regardless: the user row is gone, so the
+// epoch check fails closed on ErrUserNotFound.
+func (h *UserHandler) DeleteSelf(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	if claims.IsAdmin {
+		count, err := h.db.CountAdmins(r.Context())
+		if err != nil {
+			respond.InternalError(w, r)
+			return
+		}
+		if count <= 1 {
+			respond.BadRequest(w, r, "cannot delete the last admin account")
+			return
+		}
+	}
+	if err := h.db.DeleteUser(r.Context(), claims.UserID); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserDelete, claims.UserID.String(), nil, audit.ClientIP(r))
+	}
+	clearAuthCookies(w, r)
+	respond.NoContent(w)
+}
+
 // SetAdmin handles PATCH /api/v1/users/{id} — sets admin status (admin only).
 // Prevents demoting the last admin.
 func (h *UserHandler) SetAdmin(w http.ResponseWriter, r *http.Request) {

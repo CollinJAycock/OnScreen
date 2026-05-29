@@ -514,6 +514,7 @@ func NewRouter(h *Handlers) http.Handler {
 
 			// User profile — PIN management + user switching + preferences.
 			if h.User != nil {
+				r.Delete("/users/me", h.User.DeleteSelf)
 				r.Put("/users/me/pin", h.User.SetPIN)
 				r.Delete("/users/me/pin", h.User.ClearPIN)
 				r.Get("/users/me/preferences", h.User.GetPreferences)

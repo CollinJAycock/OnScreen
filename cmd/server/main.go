@@ -1212,6 +1212,13 @@ func run() error {
 		CORSAllowedOrigins: corsAllowedOrigins,
 		DevFrontendURL:     cfg.DevFrontendURL,
 	}
+	// Fail fast if a security-critical handler was built without its
+	// per-library access checker — a nil checker fails open (serves every
+	// library), so a forgotten .WithLibraryAccess() wiring must not boot.
+	if err := h.ValidateLibraryAccess(); err != nil {
+		logger.Error("startup: per-library access wiring check failed", "err", err)
+		os.Exit(1)
+	}
 	router := api.NewRouter(h)
 
 	// ── Health endpoints ──────────────────────────────────────────────────────

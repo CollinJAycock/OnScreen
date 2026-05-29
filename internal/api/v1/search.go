@@ -37,6 +37,10 @@ func (h *SearchHandler) WithLibraryAccess(a LibraryAccessChecker) *SearchHandler
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *SearchHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // WithEpisodePoster wires the episode → show poster substitution.
 // Honours the per-user episode_use_show_poster preference.
 func (h *SearchHandler) WithEpisodePoster(db EpisodePosterDB) *SearchHandler {

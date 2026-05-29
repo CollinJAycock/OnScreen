@@ -642,6 +642,49 @@ func TestUser_PINSwitch_BadPINRecordsFailure(t *testing.T) {
 	}
 }
 
+// ── DeleteSelf ──────────────────────────────────────────────────────────────
+
+func TestUser_DeleteSelf_RequiresAuth(t *testing.T) {
+	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{})
+	rec := httptest.NewRecorder()
+	h.DeleteSelf(rec, httptest.NewRequest("DELETE", "/api/v1/users/me", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", rec.Code)
+	}
+}
+
+func TestUser_DeleteSelf_LastAdminBlocked(t *testing.T) {
+	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{countAdmins: 1})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/users/me", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
+	h.DeleteSelf(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400 (last admin can't self-delete)", rec.Code)
+	}
+}
+
+func TestUser_DeleteSelf_Success(t *testing.T) {
+	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{countAdmins: 3})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/users/me", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: false}))
+	h.DeleteSelf(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status: got %d, want 204", rec.Code)
+	}
+	// Auth cookie must be expired on the way out.
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "onscreen_at" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("expected onscreen_at cookie to be expired on self-deletion")
+	}
+}
+
 func TestUser_PINSwitch_InvalidUserID(t *testing.T) {
 	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{})
 

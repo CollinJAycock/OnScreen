@@ -76,6 +76,10 @@ func (h *PhotosHandler) WithLibraryAccess(a LibraryAccessChecker) *PhotosHandler
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *PhotosHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // PhotoListItemResponse is the JSON shape one photo takes in the list
 // endpoint. Camera fields and dimensions are included so the grid can
 // render width/height-aware tiles without a second EXIF round-trip.

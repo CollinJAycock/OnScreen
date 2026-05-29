@@ -197,6 +197,10 @@ func (h *ItemHandler) WithLibraryAccess(a LibraryAccessChecker) *ItemHandler {
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *ItemHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // WithExternalSubtitles attaches the external subtitle lister so the Get
 // response includes user-fetched subtitles (e.g. from OpenSubtitles)
 // alongside the embedded streams.
@@ -439,8 +443,8 @@ type ItemDetailResponse struct {
 	// player jump straight to the show page instead of replaying browser
 	// history (which would land on the previously-played episode).
 	GrandparentID *string `json:"grandparent_id,omitempty"`
-	Index         *int     `json:"index,omitempty"`
-	ViewOffsetMS  int64    `json:"view_offset_ms"`
+	Index         *int    `json:"index,omitempty"`
+	ViewOffsetMS  int64   `json:"view_offset_ms"`
 	// LastClientName carries the name of the device that last emitted a
 	// scrobble/stop for this (user, media). Lets clients render "Resume
 	// from Living Room TV" UX instead of a bare position. Nil = never

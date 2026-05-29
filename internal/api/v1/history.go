@@ -36,6 +36,10 @@ func (h *HistoryHandler) WithLibraryAccess(a LibraryAccessChecker) *HistoryHandl
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired (a nil
+// checker fails open; see api.Handlers.ValidateLibraryAccess).
+func (h *HistoryHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // WithEpisodePoster wires the episode → show poster substitution.
 // Honours the per-user episode_use_show_poster preference.
 func (h *HistoryHandler) WithEpisodePoster(db EpisodePosterDB) *HistoryHandler {
