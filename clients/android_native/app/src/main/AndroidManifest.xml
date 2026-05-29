@@ -14,6 +14,10 @@
          on Android 14+; the type-specific permission is required
          alongside the generic FOREGROUND_SERVICE one. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Background music runs as a mediaPlayback foreground service
+         (Media3 MediaSessionService). Android 14+ requires this
+         type-specific permission alongside the generic FOREGROUND_SERVICE. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -52,6 +56,20 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- Background-audio session. Media3 promotes this to a
+             mediaPlayback foreground service when playback starts (while
+             the UI is still foreground) and tears it down on stop — there
+             is no manual startForegroundService call, which is the
+             start-on-teardown pattern the earlier handoff crashed on. -->
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
 
         <!-- Cast SDK options provider. The framework reflects on this
              metadata at app start and calls

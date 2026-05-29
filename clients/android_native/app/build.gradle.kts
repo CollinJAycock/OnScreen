@@ -147,6 +147,14 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
+    // media3-session powers the background-audio MediaSessionService:
+    // it owns the audio player, publishes a MediaSession (lockscreen /
+    // Bluetooth / Android Auto controls + the OS now-playing widget),
+    // and lets the UI drive playback through a MediaController. Media3
+    // manages the foreground-service promotion itself — the service goes
+    // foreground while the UI is foreground (playback starts on a tap),
+    // avoiding the start-FGS-on-teardown crash the old handoff hit.
+    implementation("androidx.media3:media3-session:1.3.1")
 
     // Google Cast SDK — `MediaRouteButton` for the Cast picker, plus
     // `CastContext` / `CastSession` for sending LOAD requests to the
