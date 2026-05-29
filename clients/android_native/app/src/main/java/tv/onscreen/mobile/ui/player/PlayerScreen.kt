@@ -83,7 +83,17 @@ import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.cast.CastMediaInfo
 import tv.onscreen.mobile.cast.CastSender
 import tv.onscreen.mobile.data.prefs.SubtitleStyle
+import android.content.ComponentName
+import android.os.Bundle
+import androidx.compose.runtime.produceState
+import androidx.core.content.ContextCompat
+import androidx.media3.common.MediaMetadata
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import kotlinx.coroutines.suspendCancellableCoroutine
+import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.playback.ActiveVideoTracker
+import tv.onscreen.mobile.playback.PlaybackService
 import tv.onscreen.mobile.ui.LocalInPipMode
 
 @OptIn(UnstableApi::class)
@@ -192,8 +202,34 @@ private fun PlayerHost(
     var showUpNext by remember { mutableStateOf(false) }
     val nextSibling = ui.nextSibling
 
-    val player = remember(source) {
-        ExoPlayer.Builder(context).build().apply {
+    // Type-first audio detection — used by ActiveVideoTracker to gate
+    // PiP, to pick the audio-vs-video layout, and to choose the player
+    // backend. The offline-play synthetic ItemFile carries no codec
+    // metadata, so a pure null-codec check would misclassify every
+    // offline video as audio.
+    val codec = ui.item?.files?.firstOrNull()?.video_codec
+    val isAudioOnly = when (itemType) {
+        "track", "audiobook", "podcast" -> true
+        "movie", "episode", "video", "photo" -> false
+        null -> codec.isNullOrEmpty()
+        else -> codec.isNullOrEmpty()
+    }
+
+    // Audio (music / audiobook / podcast) plays through the
+    // background-capable PlaybackService via a MediaController, so it
+    // survives this screen leaving the back stack and gets lockscreen /
+    // Bluetooth / Android Auto controls + the OS now-playing widget.
+    // Video keeps a screen-owned ExoPlayer (PiP is its background story).
+    val audioController = rememberAudioController(
+        enabled = isAudioOnly,
+        source = source,
+        itemId = itemId,
+        item = ui.item,
+    )
+    val videoPlayer: ExoPlayer? = remember(source, isAudioOnly) {
+        if (isAudioOnly) {
+            null
+        } else ExoPlayer.Builder(context).build().apply {
             // DefaultDataSource dispatches by URI scheme — file://
             // routes to FileDataSource, http(s):// to the wrapped
             // DefaultHttpDataSource. The bare HTTP factory we used
@@ -251,23 +287,31 @@ private fun PlayerHost(
                     .setPreferredTextLanguage(lang)
                     .build()
             }
+            // Manage audio focus so starting a video pauses music playing
+            // in the background through PlaybackService (which also handles
+            // focus) — without this the two streams overlap. Also makes
+            // video duck/pause for calls and other media, as expected.
+            setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                    .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
             seekTo(startMs)
             prepare()
             playWhenReady = true
         }
     }
 
-    // Type-first audio detection — used by ActiveVideoTracker to gate
-    // PiP and by the inline UI to pick the audio-vs-video layout.
-    // The offline-play synthetic ItemFile carries no codec metadata,
-    // so a pure null-codec check would misclassify every offline
-    // video as audio.
-    val codec = ui.item?.files?.firstOrNull()?.video_codec
-    val isAudioOnly = when (itemType) {
-        "track", "audiobook", "podcast" -> true
-        "movie", "episode", "video", "photo" -> false
-        null -> codec.isNullOrEmpty()
-        else -> codec.isNullOrEmpty()
+    // Unified Player the rest of this screen drives: the screen-owned
+    // ExoPlayer for video, or the background MediaController for audio.
+    // Null only while the audio controller is still connecting.
+    val player: Player = (videoPlayer ?: audioController) ?: run {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Color.White)
+        }
+        return
     }
 
     // Tell MainActivity whether to auto-enter PiP on
@@ -298,8 +342,14 @@ private fun PlayerHost(
     // the simpler "back stops playback" model matches what users
     // expect (and avoided a class of foreground-service-startup
     // crashes the handoff was introducing).
-    DisposableEffect(player) {
-        onDispose { player.release() }
+    DisposableEffect(player, isAudioOnly) {
+        onDispose {
+            // Video: free the screen-owned ExoPlayer. Audio: the
+            // MediaController is released by rememberAudioController's
+            // awaitDispose, and leaving the screen must NOT stop the
+            // background service player.
+            if (!isAudioOnly) player.release()
+        }
     }
 
     // Cross-device resume: when another of the user's devices reports
@@ -318,21 +368,27 @@ private fun PlayerHost(
     // the back stack if there's no next), tracks chain silently to
     // the next track without an overlay (the lead-in countdown
     // would clip the song's outro fade).
-    DisposableEffect(player, itemType, nextSibling) {
-        val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) {
-                    val nx = nextSibling
-                    when {
-                        nx == null -> onClose()
-                        itemType == "track" -> onNext(nx.id)
-                        else -> showUpNext = true
+    DisposableEffect(player, itemType, nextSibling, isAudioOnly) {
+        if (isAudioOnly) {
+            // Audio auto-advances inside PlaybackService (it owns the
+            // queue + chaining); the screen doesn't drive end-of-track.
+            onDispose { }
+        } else {
+            val listener = object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    if (state == Player.STATE_ENDED) {
+                        val nx = nextSibling
+                        when {
+                            nx == null -> onClose()
+                            itemType == "track" -> onNext(nx.id)
+                            else -> showUpNext = true
+                        }
                     }
                 }
             }
+            player.addListener(listener)
+            onDispose { player.removeListener(listener) }
         }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener) }
     }
 
     // Lead-in Up Next overlay for episodes — surfaces in the last
@@ -361,21 +417,28 @@ private fun PlayerHost(
     // auto-advances pops this screen — cancelling the VM scope — at
     // the same instant we report, and that's the event the server
     // scrobbles on, so it must outlive the teardown.
-    DisposableEffect(itemId, source) {
-        val job = scope.launch {
-            while (isActive) {
-                delay(10_000)
-                if (player.playWhenReady && player.duration > 0) {
-                    val pos = player.currentPosition + vm.hlsOffsetMs
-                    vm.reportProgress(itemId, pos, player.duration, "playing")
+    DisposableEffect(itemId, source, isAudioOnly) {
+        if (isAudioOnly) {
+            // PlaybackService owns 'playing'/'stopped' reporting for
+            // audio so it survives this screen — and the whole app —
+            // going away while music keeps playing in the background.
+            onDispose { }
+        } else {
+            val job = scope.launch {
+                while (isActive) {
+                    delay(10_000)
+                    if (player.playWhenReady && player.duration > 0) {
+                        val pos = player.currentPosition + vm.hlsOffsetMs
+                        vm.reportProgress(itemId, pos, player.duration, "playing")
+                    }
                 }
             }
-        }
-        onDispose {
-            job.cancel()
-            if (player.duration > 0) {
-                val pos = player.currentPosition + vm.hlsOffsetMs
-                vm.reportProgressFinal(itemId, pos, player.duration)
+            onDispose {
+                job.cancel()
+                if (player.duration > 0) {
+                    val pos = player.currentPosition + vm.hlsOffsetMs
+                    vm.reportProgressFinal(itemId, pos, player.duration)
+                }
             }
         }
     }
@@ -869,7 +932,7 @@ private fun applyAudioSelection(
     idx: Int,
     streams: List<AudioStream>,
     source: PlaybackSource,
-    player: ExoPlayer,
+    player: Player,
     vm: PlayerViewModel,
 ) {
     val stream = streams.getOrNull(idx) ?: return
@@ -924,7 +987,7 @@ private fun AudioPickerDialog(
 @Composable
 private fun SubtitlePickerDialog(
     streams: List<SubtitleStream>,
-    player: ExoPlayer,
+    player: Player,
     onFindMore: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1104,7 +1167,7 @@ private fun OnlineSubtitleRow(sub: OnlineSubtitle, onPick: () -> Unit) {
 
 @Composable
 private fun SkipMarkerOverlay(
-    player: ExoPlayer,
+    player: Player,
     markers: List<Marker>,
     hlsOffsetMs: Long,
 ) {
@@ -1166,6 +1229,76 @@ private fun SkipMarkerOverlay(
             }
         }
     }
+}
+
+/**
+ * Connect a [MediaController] to [PlaybackService] for audio and hand it
+ * the current item, so music plays in the background — surviving this
+ * screen leaving the back stack — with lockscreen / Bluetooth / Android
+ * Auto controls + the OS now-playing widget. Returns null while
+ * connecting, or for non-audio items ([enabled] = false).
+ *
+ * Only the controller (not the service player) is released when this
+ * leaves the composition, so backing out keeps audio playing. Re-entering
+ * for the item already playing in the service binds without restarting.
+ * Album art comes from the service player's extracted metadata, so no
+ * artworkUri is set here.
+ */
+@Composable
+private fun rememberAudioController(
+    enabled: Boolean,
+    source: PlaybackSource,
+    itemId: String,
+    item: ItemDetail?,
+): MediaController? {
+    val context = LocalContext.current
+    return produceState<MediaController?>(initialValue = null, enabled, source, itemId) {
+        if (!enabled || source !is PlaybackSource.DirectPlay) {
+            value = null
+            return@produceState
+        }
+        val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
+        val future = MediaController.Builder(context, token).buildAsync()
+        val controller: MediaController? = try {
+            suspendCancellableCoroutine { cont ->
+                future.addListener(
+                    { cont.resumeWith(Result.success(runCatching { future.get() }.getOrNull())) },
+                    ContextCompat.getMainExecutor(context),
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
+        if (controller == null) {
+            value = null
+            return@produceState
+        }
+
+        // Don't restart the track that's already playing in the service
+        // when the user re-opens the now-playing screen.
+        if (controller.currentMediaItem?.mediaId != itemId) {
+            val extras = Bundle().apply {
+                item?.type?.let { putString(PlaybackService.EXTRA_TYPE, it) }
+                item?.parent_id?.let { putString(PlaybackService.EXTRA_PARENT_ID, it) }
+                item?.index?.let { putInt(PlaybackService.EXTRA_INDEX, it) }
+            }
+            val mediaItem = MediaItem.Builder()
+                .setUri(Uri.parse(source.url))
+                .setMediaId(itemId)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(item?.title)
+                        .setExtras(extras)
+                        .build(),
+                )
+                .build()
+            controller.setMediaItem(mediaItem, source.startMs)
+            controller.prepare()
+            controller.playWhenReady = true
+        }
+        value = controller
+        awaitDispose { controller.release() }
+    }.value
 }
 
 /** Drop the host activity into PiP at a 16:9 aspect ratio. The
