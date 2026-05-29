@@ -2,10 +2,12 @@ package tv.onscreen.android.ui.settings
 
 import android.app.AlertDialog
 import android.os.Bundle
+import android.text.InputType
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
@@ -77,6 +79,8 @@ class SettingsFragment : Fragment() {
         val changeServerBtn = view.findViewById<Button>(R.id.btn_change_server)
         val logoutBtn = view.findViewById<Button>(R.id.btn_logout)
         val status = view.findViewById<TextView>(R.id.settings_status)
+        val scrobbleStatus = view.findViewById<TextView>(R.id.scrobble_status)
+        val scrobbleBtn = view.findViewById<Button>(R.id.btn_scrobble)
 
         viewLifecycleOwner.lifecycleScope.launch {
             val username = prefs.username.first()
@@ -89,6 +93,13 @@ class SettingsFragment : Fragment() {
                 audioBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_audio_lang)
                 subtitleBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_subtitle_lang)
                 ratingBtn.text = labelFor(RATING_OPTIONS, state.preferences.max_content_rating)
+
+                scrobbleStatus.text = when {
+                    !state.scrobbleLinked -> "ListenBrainz · Not linked"
+                    state.scrobbleEnabled -> "ListenBrainz · Linked"
+                    else -> "ListenBrainz · Paused"
+                }
+                scrobbleBtn.text = if (state.scrobbleLinked) "Manage" else "Link account"
 
                 when {
                     state.error != null -> {
@@ -119,6 +130,10 @@ class SettingsFragment : Fragment() {
             showOptionPicker(R.string.max_content_rating, RATING_OPTIONS, currentPrefs.max_content_rating) { code ->
                 viewModel.savePreferences(currentPrefs.copy(max_content_rating = code))
             }
+        }
+
+        scrobbleBtn.setOnClickListener {
+            if (viewModel.uiState.value.scrobbleLinked) showScrobbleManage() else showLinkDialog()
         }
 
         changeServerBtn.setOnClickListener {
@@ -174,6 +189,42 @@ class SettingsFragment : Fragment() {
                 onSelect(options[idx].first)
                 d.dismiss()
             }
+            .show()
+    }
+
+    /** Token-entry dialog. Typing a long token on a remote is slow, so the
+     *  message points at the easier web / phone flow too. An empty entry is
+     *  ignored. */
+    private fun showLinkDialog() {
+        val input = EditText(requireContext()).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            hint = "ListenBrainz user token"
+        }
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle("Link ListenBrainz")
+            .setMessage(
+                "When you finish a music track, OnScreen submits a listen to your " +
+                    "ListenBrainz account. Paste your user token from " +
+                    "listenbrainz.org/settings (or link from the web or phone app).",
+            )
+            .setView(input)
+            .setPositiveButton("Link") { d, _ ->
+                val token = input.text?.toString()?.trim().orEmpty()
+                if (token.isNotEmpty()) viewModel.linkListenBrainz(token)
+                d.dismiss()
+            }
+            .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
+            .show()
+    }
+
+    /** Linked-state actions: replace the token or unlink. */
+    private fun showScrobbleManage() {
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle("ListenBrainz")
+            .setMessage("Your ListenBrainz account is linked. Listens are submitted when you finish a music track.")
+            .setPositiveButton("Replace token") { d, _ -> d.dismiss(); showLinkDialog() }
+            .setNegativeButton("Unlink") { d, _ -> d.dismiss(); viewModel.unlinkListenBrainz() }
+            .setNeutralButton(R.string.cancel) { d, _ -> d.dismiss() }
             .show()
     }
 }

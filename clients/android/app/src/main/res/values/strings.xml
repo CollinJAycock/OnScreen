@@ -92,6 +92,7 @@
     <string name="preferred_subtitle_language">Preferred subtitle language</string>
     <string name="max_content_rating">Maximum content rating</string>
     <string name="account">Account</string>
+    <string name="scrobbling">Scrobbling</string>
     <string name="change_server">Change server</string>
     <string name="log_out">Log out</string>
     <string name="saved">Saved</string>

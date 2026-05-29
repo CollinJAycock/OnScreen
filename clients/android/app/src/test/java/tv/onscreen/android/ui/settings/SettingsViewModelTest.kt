@@ -2,6 +2,7 @@ package tv.onscreen.android.ui.settings
 
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -13,9 +14,11 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.android.data.model.ScrobbleStatusResponse
 import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.repository.AuthRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
+import tv.onscreen.android.data.repository.ScrobbleRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
@@ -28,6 +31,11 @@ class SettingsViewModelTest {
     @After
     fun tearDown() { Dispatchers.resetMain() }
 
+    // load() always probes scrobble status; stub it so the other assertions
+    // aren't disturbed.
+    private fun scrobbleRepo(status: ScrobbleStatusResponse = ScrobbleStatusResponse()) =
+        mockk<ScrobbleRepository>().also { coEvery { it.status() } returns status }
+
     @Test
     fun `load fetches preferences and stores identity`() = runTest(dispatcher) {
         val prefsRepo = mockk<PreferencesRepository>()
@@ -35,7 +43,7 @@ class SettingsViewModelTest {
         val saved = UserPreferences(preferred_audio_lang = "en")
         coEvery { prefsRepo.get() } returns saved
 
-        val vm = SettingsViewModel(prefsRepo, authRepo)
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
         vm.load(username = "alice", serverUrl = "http://server")
         advanceUntilIdle()
 
@@ -48,12 +56,30 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `load reflects linked scrobble status`() = runTest(dispatcher) {
+        val prefsRepo = mockk<PreferencesRepository>()
+        val authRepo = mockk<AuthRepository>()
+        coEvery { prefsRepo.get() } returns UserPreferences()
+
+        val vm = SettingsViewModel(
+            prefsRepo,
+            authRepo,
+            scrobbleRepo(ScrobbleStatusResponse(listenbrainz_linked = true, listenbrainz_enabled = true)),
+        )
+        vm.load(null, null)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.scrobbleLinked).isTrue()
+        assertThat(vm.uiState.value.scrobbleEnabled).isTrue()
+    }
+
+    @Test
     fun `load records error when preferences fetch fails`() = runTest(dispatcher) {
         val prefsRepo = mockk<PreferencesRepository>()
         val authRepo = mockk<AuthRepository>()
         coEvery { prefsRepo.get() } throws RuntimeException("boom")
 
-        val vm = SettingsViewModel(prefsRepo, authRepo)
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
         vm.load(null, null)
         advanceUntilIdle()
 
@@ -69,7 +95,7 @@ class SettingsViewModelTest {
         val returned = UserPreferences(preferred_audio_lang = "ja", max_content_rating = "PG-13")
         coEvery { prefsRepo.set(input) } returns returned
 
-        val vm = SettingsViewModel(prefsRepo, authRepo)
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
         vm.savePreferences(input)
         advanceUntilIdle()
 
@@ -84,7 +110,7 @@ class SettingsViewModelTest {
         val input = UserPreferences()
         coEvery { prefsRepo.set(input) } returns input
 
-        val vm = SettingsViewModel(prefsRepo, authRepo)
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
         vm.clearSavedFlag()
         assertThat(vm.uiState.value.saved).isFalse()
 
@@ -94,5 +120,38 @@ class SettingsViewModelTest {
 
         vm.clearSavedFlag()
         assertThat(vm.uiState.value.saved).isFalse()
+    }
+
+    @Test
+    fun `linkListenBrainz trims token, enables, and reloads status`() = runTest(dispatcher) {
+        val prefsRepo = mockk<PreferencesRepository>()
+        val authRepo = mockk<AuthRepository>()
+        val scrobble = mockk<ScrobbleRepository>()
+        coEvery { scrobble.setListenBrainz(any(), any()) } returns Unit
+        coEvery { scrobble.status() } returns
+            ScrobbleStatusResponse(listenbrainz_linked = true, listenbrainz_enabled = true)
+
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobble)
+        vm.linkListenBrainz("  tok123  ")
+        advanceUntilIdle()
+
+        coVerify { scrobble.setListenBrainz("tok123", true) }
+        assertThat(vm.uiState.value.scrobbleLinked).isTrue()
+    }
+
+    @Test
+    fun `unlinkListenBrainz clears with an empty token`() = runTest(dispatcher) {
+        val prefsRepo = mockk<PreferencesRepository>()
+        val authRepo = mockk<AuthRepository>()
+        val scrobble = mockk<ScrobbleRepository>()
+        coEvery { scrobble.setListenBrainz(any(), any()) } returns Unit
+        coEvery { scrobble.status() } returns ScrobbleStatusResponse()
+
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobble)
+        vm.unlinkListenBrainz()
+        advanceUntilIdle()
+
+        coVerify { scrobble.setListenBrainz("", false) }
+        assertThat(vm.uiState.value.scrobbleLinked).isFalse()
     }
 }

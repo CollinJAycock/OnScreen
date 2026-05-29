@@ -106,6 +106,39 @@
             android:focusable="true"
             android:gravity="start|center_vertical" />
 
+        <!-- Scrobbling section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="48dp"
+            android:text="@string/scrobbling"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/scrobble_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_scrobble"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="240dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="20dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:focusable="true"
+            android:gravity="start|center_vertical" />
+
         <!-- Account section -->
         <TextView
             android:layout_width="wrap_content"
