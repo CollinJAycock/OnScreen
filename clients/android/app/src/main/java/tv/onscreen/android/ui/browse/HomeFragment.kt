@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.*
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.ui.MainActivity
+import tv.onscreen.android.ui.NavigationDestination
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.NavCard
@@ -80,7 +82,20 @@ class HomeFragment : BrowseSupportFragment() {
                     state.libraryPreviews.any { it.second.isNotEmpty() } ||
                     state.collections.isNotEmpty()
                 if (state.error != null && !hasContent) {
-                    errorOverlay?.show(state.error) { viewModel.load() }
+                    errorOverlay?.show(
+                        state.error,
+                        onRetry = { viewModel.load() },
+                        // Escape hatch for a wrong/stale server URL: forget
+                        // the server and return to the setup screen, instead
+                        // of being trapped retrying a dead endpoint.
+                        onChangeServer = {
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                prefs.clearAll()
+                                (activity as? MainActivity)
+                                    ?.navigateTo(NavigationDestination.SERVER_SETUP)
+                            }
+                        },
+                    )
                 } else {
                     errorOverlay?.hide()
                     buildRows(state)

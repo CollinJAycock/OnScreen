@@ -18,8 +18,9 @@ class ErrorOverlay private constructor(
     private val titleView: TextView,
     private val messageView: TextView,
     private val retryButton: Button,
+    private val changeServerButton: Button,
 ) {
-    fun show(message: String?, onRetry: () -> Unit) {
+    fun show(message: String?, onChangeServer: (() -> Unit)? = null, onRetry: () -> Unit) {
         titleView.setText(R.string.error_connection)
         messageView.text = message ?: ""
         messageView.visibility = if (message.isNullOrBlank()) View.GONE else View.VISIBLE
@@ -27,6 +28,19 @@ class ErrorOverlay private constructor(
         retryButton.setOnClickListener {
             hide()
             onRetry()
+        }
+        // Offer "Change server" only when the caller supplies a handler
+        // (the connection/auth error). Without it, a user whose server URL
+        // is wrong or stale is trapped — Retry just re-hits the same dead
+        // endpoint with no way to forget the server in-app.
+        if (onChangeServer != null) {
+            changeServerButton.visibility = View.VISIBLE
+            changeServerButton.setOnClickListener {
+                hide()
+                onChangeServer()
+            }
+        } else {
+            changeServerButton.visibility = View.GONE
         }
         overlay.visibility = View.VISIBLE
         retryButton.requestFocus()
@@ -42,6 +56,7 @@ class ErrorOverlay private constructor(
         messageView.setText(messageRes)
         messageView.visibility = View.VISIBLE
         retryButton.visibility = View.GONE
+        changeServerButton.visibility = View.GONE
         overlay.visibility = View.VISIBLE
     }
 
@@ -80,6 +95,7 @@ class ErrorOverlay private constructor(
                 titleView = overlay.findViewById(R.id.error_title),
                 messageView = overlay.findViewById(R.id.error_message),
                 retryButton = overlay.findViewById(R.id.btn_retry),
+                changeServerButton = overlay.findViewById(R.id.btn_change_server),
             )
         }
     }

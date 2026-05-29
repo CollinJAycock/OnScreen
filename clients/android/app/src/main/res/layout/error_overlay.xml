@@ -41,4 +41,22 @@
         android:textAllCaps="false"
         android:focusable="true"
         android:text="@string/retry" />
+
+    <!-- Shown only on the connection/auth error (HomeFragment) so a user
+         stuck on a wrong/stale server URL can recover in-app instead of
+         being trapped with only Retry. Hidden for list-load / empty states. -->
+    <Button
+        android:id="@+id/btn_change_server"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_marginTop="12dp"
+        android:paddingHorizontal="28dp"
+        android:background="@drawable/btn_secondary"
+        android:textColor="@color/text_primary"
+        android:textSize="14sp"
+        android:textAllCaps="false"
+        android:focusable="true"
+        android:visibility="gone"
+        android:text="@string/change_server" />
 </LinearLayout>
