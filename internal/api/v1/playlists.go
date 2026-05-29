@@ -141,7 +141,12 @@ func (h *PlaylistHandler) List(w http.ResponseWriter, r *http.Request) {
 	for i, c := range rows {
 		out[i] = toPlaylistResponse(c)
 	}
-	respond.Success(w, r, out)
+	// Use the list envelope (data + meta) for parity with every other
+	// collection endpoint — including this handler's own Items sub-route and
+	// the favorites list. Clients that decode a typed list response require
+	// `meta`; emitting a bare `data` object (respond.Success) made the native
+	// phone client's Playlists screen fail with "Required value 'meta' missing".
+	respond.List(w, r, out, int64(len(out)), "")
 }
 
 // Create handles POST /api/v1/playlists.
