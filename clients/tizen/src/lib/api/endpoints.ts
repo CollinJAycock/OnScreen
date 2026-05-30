@@ -376,10 +376,28 @@ export interface PreferencesUpdate {
   forced_subtitles_only?: boolean;
 }
 
+// A user's parental watch policy plus today's usage and whether playback
+// is allowed right now. All three limit fields are null when unrestricted.
+// remaining_minutes is present only when a daily cap is set; reason is set
+// only when allowed is false ('daily_limit_reached' | 'outside_allowed_hours').
+export interface WatchLimitInfo {
+  daily_limit_minutes: number | null;
+  allowed_start_minute: number | null;
+  allowed_end_minute: number | null;
+  used_minutes_today: number;
+  remaining_minutes?: number;
+  allowed: boolean;
+  reason?: string;
+}
+
 export const users = {
   preferences: () => api.get<UserPreferences>('/api/v1/users/me/preferences'),
   setPreferences: (body: PreferencesUpdate) =>
     api.put<UserPreferences>('/api/v1/users/me/preferences', body),
+  /** The caller's own watch policy + today's usage + whether playback is
+   *  allowed right now. The player uses it to block a restricted user before
+   *  a stream starts (the transcode-start / progress 403 catches the rest). */
+  watchLimit: () => api.get<WatchLimitInfo>('/api/v1/users/me/watch-limit'),
 };
 
 // ── Scrobbling (ListenBrainz) ────────────────────────────────────

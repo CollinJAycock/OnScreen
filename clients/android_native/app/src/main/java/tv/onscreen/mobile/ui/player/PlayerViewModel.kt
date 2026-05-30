@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.data.api.apiError
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
@@ -25,6 +26,7 @@ import tv.onscreen.mobile.data.repository.OnlineSubtitleRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 import tv.onscreen.mobile.data.repository.TrickplayRepository
+import tv.onscreen.mobile.data.repository.WatchLimitRepository
 import tv.onscreen.mobile.trickplay.TrickplayVtt
 import javax.inject.Inject
 
@@ -90,6 +92,7 @@ class PlayerViewModel @Inject constructor(
     private val notifications: NotificationsRepository,
     private val onlineSubtitles: OnlineSubtitleRepository,
     private val trickplayRepo: TrickplayRepository,
+    private val watchLimitRepo: WatchLimitRepository,
 ) : ViewModel() {
 
     /** Whether to gate video playback behind a "you're on cellular,
@@ -414,6 +417,21 @@ class PlayerViewModel @Inject constructor(
                     ?.let { downloads.store.fileFor(it) }
                     ?.takeIf { it.exists() && it.length() > 0 }
 
+                // Parental watch-limit pre-flight — block a restricted user
+                // before any stream/transcode starts. Skipped for offline
+                // downloads (can't reach the server to check) and fail-open if
+                // the check errors; the transcode/progress 403 still catches a
+                // cap reached mid-session.
+                if (localFile == null) {
+                    try {
+                        val wl = watchLimitRepo.get()
+                        if (!wl.allowed) {
+                            _state.value = PlayerUiState(loading = false, error = parentalBlockMessage(wl.reason))
+                            return@launch
+                        }
+                    } catch (_: Exception) { /* limit lookup failed — fail open */ }
+                }
+
                 val source = when {
                     localFile != null -> {
                         hlsOffsetMs = 0
@@ -477,8 +495,13 @@ class PlayerViewModel @Inject constructor(
 
                 subscribeRemoteProgress(itemId)
             } catch (e: Exception) {
-                val msg = if (e is HttpException && e.code() == 403) "content_restricted"
-                else e.message
+                val msg = if (e is HttpException && e.code() == 403) {
+                    // 403 covers two gates: the content-rating ceiling and the
+                    // parental watch limit. Parse the code so each shows right.
+                    val err = e.apiError()
+                    if (err?.code == "PARENTAL_LIMIT") parentalBlockMessage(err.message)
+                    else "content_restricted"
+                } else e.message
                 _state.value = PlayerUiState(loading = false, error = msg)
             }
         }
@@ -669,6 +692,16 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Map a server PARENTAL_LIMIT reason to a friendly sentence. The screen
+     *  renders [PlayerUiState.error] verbatim, so this returns display text. */
+    private fun parentalBlockMessage(reason: String?): String = when (reason) {
+        "outside_allowed_hours" ->
+            "Playback is outside the allowed hours for this account. Try again during the permitted times."
+        "daily_limit_reached" ->
+            "You’ve reached today’s watch-time limit for this account. Check back tomorrow."
+        else -> "Playback is blocked by a parental watch limit on this account."
+    }
+
     /** Fire-and-forget progress publish. Best-effort: server
      *  unreachability shouldn't crash playback, and the next tick
      *  will pick up where this one left off. Runs on viewModelScope —
@@ -681,7 +714,19 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 itemRepo.updateProgress(itemId, positionMs, durationMs, state)
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                // A 'playing' heartbeat rejected with a parental watch-limit
+                // 403 means the cap was reached (or the allowed-hours window
+                // closed) mid-session. Surface the block — setting error tears
+                // down the player host and shows the message. Other failures
+                // stay best-effort.
+                if (state == "playing" && e is HttpException && e.code() == 403) {
+                    val err = e.apiError()
+                    if (err?.code == "PARENTAL_LIMIT") {
+                        _state.value = _state.value.copy(error = parentalBlockMessage(err.message))
+                    }
+                }
+            }
         }
     }
 

@@ -11,11 +11,13 @@ import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.Marker
 import retrofit2.HttpException
+import tv.onscreen.android.data.api.apiError
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
+import tv.onscreen.android.data.repository.WatchLimitRepository
 import javax.inject.Inject
 
 sealed class PlaybackSource {
@@ -66,6 +68,7 @@ class PlaybackViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val transcodeRepo: TranscodeRepository,
     private val preferencesRepo: PreferencesRepository,
+    private val watchLimitRepo: WatchLimitRepository,
     private val serverPrefs: ServerPrefs,
 ) : ViewModel() {
 
@@ -105,6 +108,18 @@ class PlaybackViewModel @Inject constructor(
                     _uiState.value = PlaybackUiState(error = "No playable file")
                     return@launch
                 }
+
+                // Parental watch-limit pre-flight — block a restricted user
+                // before any stream/transcode starts. Fail-open if the check
+                // itself errors; the transcode-start / progress 403 below still
+                // catches a cap reached mid-session.
+                try {
+                    val wl = watchLimitRepo.get()
+                    if (!wl.allowed) {
+                        _uiState.value = PlaybackUiState(error = "watch_limit:${wl.reason ?: ""}")
+                        return@launch
+                    }
+                } catch (_: Exception) { /* limit lookup failed — fail open */ }
 
                 val prefs = try { preferencesRepo.get() } catch (_: Exception) { null }
 
@@ -169,7 +184,14 @@ class PlaybackViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 val msg = when {
-                    e is HttpException && e.code() == 403 -> "content_restricted"
+                    e is HttpException && e.code() == 403 -> {
+                        // 403 covers two distinct gates: the content-rating
+                        // ceiling and the parental watch limit. Parse the error
+                        // code so each shows the right message.
+                        val err = e.apiError()
+                        if (err?.code == "PARENTAL_LIMIT") "watch_limit:${err.message ?: ""}"
+                        else "content_restricted"
+                    }
                     else -> e.message
                 }
                 _uiState.value = PlaybackUiState(error = msg)

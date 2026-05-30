@@ -259,6 +259,14 @@ interface OnScreenApi {
     @PUT("api/v1/users/me/scrobble/listenbrainz")
     suspend fun setListenBrainz(@Body body: SetListenBrainzRequest)
 
+    // ── Parental watch limits (self) ──────────────────────────────────────────
+
+    /** The caller's own watch policy + today's usage + whether playback is
+     *  allowed right now. The player pre-flights this before a stream starts;
+     *  the transcode-start / progress 403 (PARENTAL_LIMIT) catches the rest. */
+    @GET("api/v1/users/me/watch-limit")
+    suspend fun getWatchLimit(): ApiResponse<WatchLimitData>
+
     // ── History ─────────────────────────────────────────────────────────────
 
     @GET("api/v1/history")

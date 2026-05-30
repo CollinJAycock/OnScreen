@@ -5,6 +5,7 @@
   import {
     api,
     endpoints,
+    ApiError,
     Unauthorized,
     type ChildItem,
     type ItemDetail,
@@ -647,6 +648,16 @@
     syncEventSource = null;
   }
 
+  // Map a server PARENTAL_LIMIT reason to a friendly sentence for the
+  // block overlay. Mirrors the web + phone clients.
+  function parentalBlockMessage(reason: string): string {
+    if (reason === 'outside_allowed_hours')
+      return 'Outside the allowed hours for this account. Try again during the permitted times.';
+    if (reason === 'daily_limit_reached')
+      return "Today's watch-time limit for this account has been reached. Check back tomorrow.";
+    return 'Playback is blocked by a parental watch limit on this account.';
+  }
+
   onMount(() => {
     const offKey = focusManager.pushKeyHandler(onKey);
 
@@ -667,6 +678,18 @@
           loading = false;
           return;
         }
+
+        // Parental watch-limit pre-flight — block a restricted user before
+        // any stream/transcode starts. Fail-open if the check itself errors;
+        // the progress heartbeat below still catches a cap reached mid-session.
+        try {
+          const wl = await endpoints.users.watchLimit();
+          if (!wl.allowed) {
+            error = parentalBlockMessage(wl.reason ?? '');
+            loading = false;
+            return;
+          }
+        } catch { /* limit lookup failed — fail open, allow playback */ }
 
         // Markers + next-sibling load in parallel with the playback
         // session — neither is on the critical path; failures are
@@ -729,7 +752,17 @@
         }
 
         reporter = new ProgressReporter(itemID);
-        reporter.start(() => ({ positionMs: position, durationMs: duration }));
+        reporter.start(
+          () => ({ positionMs: position, durationMs: duration }),
+          (reason) => {
+            // Cap reached / allowed-hours window closed mid-session — pause
+            // and replace the player with the block message.
+            video?.pause();
+            reporter?.stop();
+            error = parentalBlockMessage(reason);
+            loading = false;
+          }
+        );
 
         video!.addEventListener('loadedmetadata', () => {
           if (startMs > 0 && video) video.currentTime = startMs / 1000;
@@ -789,7 +822,11 @@
         });
       } catch (e) {
         if (e instanceof Unauthorized) goto('#/login');
-        else {
+        else if (e instanceof ApiError && e.code === 'PARENTAL_LIMIT') {
+          // Transcode start refused by the parental watch limit.
+          error = parentalBlockMessage(e.message);
+          loading = false;
+        } else {
           error = (e as Error).message;
           loading = false;
         }

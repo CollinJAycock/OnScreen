@@ -5,6 +5,7 @@
   import {
     api,
     endpoints,
+    ApiError,
     Unauthorized,
     type ChildItem,
     type ItemDetail,
@@ -869,6 +870,28 @@
     avplayAnchor = null;
   }
 
+  // Map a server PARENTAL_LIMIT reason to a friendly sentence for the
+  // block overlay. Mirrors the web + webOS + phone clients.
+  function parentalBlockMessage(reason: string): string {
+    if (reason === 'outside_allowed_hours')
+      return 'Outside the allowed hours for this account. Try again during the permitted times.';
+    if (reason === 'daily_limit_reached')
+      return "Today's watch-time limit for this account has been reached. Check back tomorrow.";
+    return 'Playback is blocked by a parental watch limit on this account.';
+  }
+
+  // Stop playback and show the block message. Pauses whichever surface is
+  // active (AVPlay or the <video> element).
+  function applyParentalBlock(reason: string) {
+    reporter?.stop();
+    try {
+      if (usingAvPlay) avplay.pause();
+      else video?.pause();
+    } catch { /* ignore */ }
+    error = parentalBlockMessage(reason);
+    loading = false;
+  }
+
   onMount(() => {
     const offKey = focusManager.pushKeyHandler(onKey);
 
@@ -891,6 +914,18 @@
           loading = false;
           return;
         }
+
+        // Parental watch-limit pre-flight — block a restricted user before
+        // any stream/transcode starts. Fail-open if the check itself errors;
+        // the progress heartbeat below still catches a cap reached mid-session.
+        try {
+          const wl = await endpoints.users.watchLimit();
+          if (!wl.allowed) {
+            error = parentalBlockMessage(wl.reason ?? '');
+            loading = false;
+            return;
+          }
+        } catch { /* limit lookup failed — fail open, allow playback */ }
 
         // Markers + next-sibling load alongside the playback
         // session — neither blocks the start. Failures are
@@ -981,7 +1016,10 @@
         dbg(`url: ${fullURL.slice(0, 60)}…`);
 
         reporter = new ProgressReporter(itemID);
-        reporter.start(() => ({ positionMs: position, durationMs: duration }));
+        reporter.start(
+          () => ({ positionMs: position, durationMs: duration }),
+          (reason) => applyParentalBlock(reason)
+        );
 
         if (avplay.available()) {
           // Tizen hardware path. AVPlay handles HLS demux +
@@ -1078,7 +1116,11 @@
         }
       } catch (e) {
         if (e instanceof Unauthorized) goto('#/login');
-        else {
+        else if (e instanceof ApiError && e.code === 'PARENTAL_LIMIT') {
+          // Transcode start refused by the parental watch limit.
+          error = parentalBlockMessage(e.message);
+          loading = false;
+        } else {
           error = (e as Error).message;
           loading = false;
         }

@@ -1190,10 +1190,19 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun showErrorDialog(message: String) {
-        val (title, body) = if (message == "content_restricted") {
-            getString(R.string.content_restricted) to ""
-        } else {
-            "Playback error" to message
+        val (title, body) = when {
+            message == "content_restricted" ->
+                getString(R.string.content_restricted) to ""
+            // Parental watch limit — "watch_limit:<reason>" sentinel set by the
+            // ViewModel (pre-flight / transcode 403) and ProgressTracker (mid-
+            // session heartbeat 403).
+            message.startsWith("watch_limit:") ->
+                getString(R.string.watch_limit_title) to when (message.removePrefix("watch_limit:")) {
+                    "outside_allowed_hours" -> getString(R.string.watch_limit_outside_hours)
+                    "daily_limit_reached" -> getString(R.string.watch_limit_daily)
+                    else -> getString(R.string.watch_limit_generic)
+                }
+            else -> "Playback error" to message
         }
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(title)
@@ -1335,6 +1344,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             } else dur
         }
         tracker.updateOffset(viewModel.hlsOffsetMs)
+        // Daily cap reached / allowed-hours window closed mid-session — pause
+        // and surface the same block dialog the start path uses.
+        tracker.onBlocked = { reason ->
+            player?.pause()
+            showErrorDialog("watch_limit:$reason")
+        }
         tracker.start(itemId, viewModel.hlsOffsetMs)
         progressTracker = tracker
     }

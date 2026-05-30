@@ -1,6 +1,8 @@
 package tv.onscreen.android.ui.playback
 
 import kotlinx.coroutines.*
+import retrofit2.HttpException
+import tv.onscreen.android.data.api.apiError
 import tv.onscreen.android.data.repository.ItemRepository
 
 /**
@@ -20,6 +22,12 @@ class ProgressTracker(
 
     /** Duration provider — returns the total duration in ms. */
     var durationProvider: (() -> Long)? = null
+
+    /** Fires (on the main thread) when a 'playing' heartbeat is rejected by
+     *  the parental watch limit — a daily cap reached or the allowed-hours
+     *  window closing mid-session. The tracker stops itself first; the caller
+     *  pauses playback and shows the block message. */
+    var onBlocked: ((reason: String) -> Unit)? = null
 
     fun start(itemId: String, hlsOffsetMs: Long = 0) {
         this.itemId = itemId
@@ -71,8 +79,19 @@ class ProgressTracker(
         try {
             itemRepo.updateProgress(id, contentPos, dur, state)
             lastReportedContentMs = contentPos
-        } catch (_: Exception) {
-            // Best-effort — don't crash playback if server is unreachable.
+        } catch (e: Exception) {
+            // A 'playing' heartbeat rejected with a parental watch-limit 403
+            // means the cap was reached (or the allowed-hours window closed)
+            // mid-session — stop reporting and surface the block. Any other
+            // failure stays best-effort (don't crash playback on a hiccup).
+            if (state == "playing" && e is HttpException && e.code() == 403) {
+                val err = e.apiError()
+                if (err?.code == "PARENTAL_LIMIT") {
+                    stop()
+                    val cb = onBlocked
+                    if (cb != null) withContext(Dispatchers.Main) { cb(err.message ?: "") }
+                }
+            }
         }
     }
 }
