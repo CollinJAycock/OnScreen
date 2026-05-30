@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { progressUpdates } from '$lib/stores/notifications';
   import { capabilities } from '$lib/stores/capabilities';
   import { isTauri, nativeDownload } from '$lib/native';
@@ -51,6 +51,14 @@
   let loading = true;
   let error = '';
   let tonemapWarning = '';
+
+  // Parental watch-limit block. Set when the server returns 403
+  // PARENTAL_LIMIT — either pre-flight at playback start, or on a
+  // progress heartbeat once the daily cap is hit / the allowed-hours
+  // window closes mid-session. When true, the player tears down the
+  // stream and shows blockedMessage in place of the video.
+  let blocked = false;
+  let blockedMessage = '';
 
   // Video element reference
   let videoEl: HTMLVideoElement;
@@ -1025,6 +1033,8 @@
     skipAutoSeek = false;
     ended = false;
     error = '';
+    blocked = false;
+    blockedMessage = '';
     loading = true;
     transcodeSessionId = null;
     transcodeToken = null;
@@ -1478,7 +1488,46 @@
     }
   }
 
+  // Map a server PARENTAL_LIMIT reason code to a friendly sentence.
+  function parentalBlockMessage(reason: string): string {
+    switch (reason) {
+      case 'outside_allowed_hours':
+        return 'Playback is outside the allowed hours set for this account. Try again during the permitted times.';
+      case 'daily_limit_reached':
+        return "You've reached today's watch-time limit for this account. Check back tomorrow.";
+      default:
+        return 'Playback is blocked by a parental watch limit on this account.';
+    }
+  }
+
+  // Stop playback and surface the block message. Idempotent — a repeated
+  // heartbeat 403 while already blocked just refreshes the message.
+  function handleParentalBlock(reason: string) {
+    blocked = true;
+    blockedMessage = parentalBlockMessage(reason);
+    error = '';
+    buffering = false;
+    if (videoEl && !videoEl.paused) videoEl.pause();
+    stopProgressTimer();
+    cancelAutoplay(true);
+    void stopTranscodeSession();
+    destroyHls();
+  }
+
   async function startPlayback() {
+    // Parental watch-limit pre-flight — block before any stream or
+    // transcode starts so a restricted child never sees even a few
+    // seconds of content. Unrestricted users get allowed=true instantly.
+    // Fail open: if the limit service is unreachable, let playback
+    // proceed (the heartbeat 403 below still catches a mid-session cap).
+    try {
+      const wl = await userApi.getMyWatchLimit();
+      if (!wl.allowed) {
+        handleParentalBlock(wl.reason ?? '');
+        return;
+      }
+    } catch { /* limit lookup failed — fail open, don't block playback */ }
+
     // Seekbar thumbnail previews (best-effort — silent when not generated).
     if (item && (item.type === 'movie' || item.type === 'episode')) {
       loadTrickplay(item.id);
@@ -1688,8 +1737,12 @@
       const offsetSec = sess.start_offset_sec;
       attachHls(playlistUrl, offsetSec, wasPlaying, videoCopy, seg0Gap);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Transcode failed';
-      buffering = false;
+      if (e instanceof ApiRequestError && e.code === 'PARENTAL_LIMIT') {
+        handleParentalBlock(e.message);
+      } else {
+        error = e instanceof Error ? e.message : 'Transcode failed';
+        buffering = false;
+      }
     } finally {
       switchingTranscode = false;
     }
@@ -1966,7 +2019,16 @@
     lastSelfReportedMs = positionMs;
     try {
       await itemApi.progress(item.id, positionMs, Math.floor(duration * 1000), state);
-    } catch (e) { console.warn(e); }
+    } catch (e) {
+      // A daily cap reached (or the allowed-hours window closing) mid-
+      // session surfaces here as a 403 on the `playing` heartbeat —
+      // stop playback and show the block message.
+      if (e instanceof ApiRequestError && e.code === 'PARENTAL_LIMIT') {
+        handleParentalBlock(e.message);
+        return;
+      }
+      console.warn(e);
+    }
   }
 
   function togglePlay() {
@@ -2543,6 +2605,16 @@
   {#if loading}
     <div class="center-msg">
       <div class="spinner"></div>
+    </div>
+  {:else if blocked}
+    <div class="center-msg">
+      <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+      <p class="blocked-title">Watch limit reached</p>
+      <p class="blocked-text">{blockedMessage}</p>
+      <button class="back-btn" on:click={goBack}>← Back</button>
     </div>
   {:else if error}
     <div class="center-msg">
@@ -4493,6 +4565,13 @@
     color: #eeeef8;
   }
   .err-text { font-size: 0.9rem; color: #fca5a5; margin: 0; }
+
+  .blocked-icon { color: #facc15; opacity: 0.9; }
+  .blocked-title { font-size: 1.05rem; font-weight: 600; color: #f4f4fb; margin: 0; }
+  .blocked-text {
+    font-size: 0.88rem; color: #b7b7c8; margin: 0;
+    max-width: 28rem; line-height: 1.5; text-align: center;
+  }
 
   .spinner {
     width: 36px; height: 36px;

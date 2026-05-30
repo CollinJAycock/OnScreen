@@ -22,6 +22,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
+	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/streaming"
 )
@@ -458,6 +459,158 @@ func TestProgress_NoWebhookOnPlaying(t *testing.T) {
 
 	if wh.dispatched != "" {
 		t.Errorf("webhook should not dispatch on 'playing', got %q", wh.dispatched)
+	}
+}
+
+// ── Progress: parental watch-limit gate + accounting ─────────────────────────
+
+// mockItemWatchLimit is an in-memory ItemWatchLimit for Progress enforcement
+// tests. addTickCalls counts accruals so a test can assert a 'playing'
+// heartbeat accrued exactly once (and a blocked / non-playing one didn't).
+type mockItemWatchLimit struct {
+	policy       watchlimit.Policy
+	policyErr    error
+	used         int
+	usedErr      error
+	addErr       error
+	addTickCalls int
+}
+
+var _ ItemWatchLimit = (*mockItemWatchLimit)(nil)
+
+func (m *mockItemWatchLimit) GetPolicy(_ context.Context, _ uuid.UUID) (watchlimit.Policy, error) {
+	return m.policy, m.policyErr
+}
+func (m *mockItemWatchLimit) TodayUsageSeconds(_ context.Context, _ uuid.UUID, _ time.Time) (int, error) {
+	return m.used, m.usedErr
+}
+func (m *mockItemWatchLimit) AddTick(_ context.Context, _ uuid.UUID, _, _ time.Time) (int, error) {
+	m.addTickCalls++
+	return m.used, m.addErr
+}
+
+func TestProgress_WatchLimitBlocked(t *testing.T) {
+	id := uuid.New()
+	ws := &mockItemWatch{}
+	// 60-min daily cap, already 120 min used → over cap → blocked.
+	wl := &mockItemWatchLimit{
+		policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(60)},
+		used:   120 * 60,
+	}
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+		WithWatchLimit(wl)
+
+	rec := httptest.NewRecorder()
+	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
+	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
+	h.Progress(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error.Code != "PARENTAL_LIMIT" {
+		t.Errorf("error code: got %q, want PARENTAL_LIMIT", resp.Error.Code)
+	}
+	if resp.Error.Message != watchlimit.ReasonDailyLimit {
+		t.Errorf("reason: got %q, want %q", resp.Error.Message, watchlimit.ReasonDailyLimit)
+	}
+	// A blocked heartbeat must neither record a watch event nor accrue usage.
+	if ws.recorded {
+		t.Error("blocked heartbeat must not record a watch event")
+	}
+	if wl.addTickCalls != 0 {
+		t.Errorf("blocked heartbeat must not accrue usage; addTickCalls=%d", wl.addTickCalls)
+	}
+}
+
+func TestProgress_WatchLimitAllowedAccrues(t *testing.T) {
+	id := uuid.New()
+	ws := &mockItemWatch{}
+	// Restricted (60-min cap) but only 10 min used → allowed, and the
+	// 'playing' heartbeat should accrue exactly one tick.
+	wl := &mockItemWatchLimit{
+		policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(60)},
+		used:   10 * 60,
+	}
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+		WithWatchLimit(wl)
+
+	rec := httptest.NewRecorder()
+	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
+	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
+	h.Progress(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if wl.addTickCalls != 1 {
+		t.Errorf("expected exactly one accrual tick, got %d", wl.addTickCalls)
+	}
+	if !ws.recorded {
+		t.Error("expected watch event to be recorded")
+	}
+}
+
+func TestProgress_WatchLimitSkippedOnPause(t *testing.T) {
+	id := uuid.New()
+	ws := &mockItemWatch{}
+	// A policy that WOULD block (zero cap), but a 'paused' report must
+	// bypass the gate entirely so the resume position still saves.
+	wl := &mockItemWatchLimit{policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(0)}}
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+		WithWatchLimit(wl)
+
+	rec := httptest.NewRecorder()
+	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"paused"}`
+	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
+	h.Progress(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if wl.addTickCalls != 0 {
+		t.Errorf("pause must not accrue usage; addTickCalls=%d", wl.addTickCalls)
+	}
+	if !ws.recorded {
+		t.Error("pause report should still be recorded")
+	}
+}
+
+func TestProgress_WatchLimitFailOpen(t *testing.T) {
+	id := uuid.New()
+	ws := &mockItemWatch{}
+	// GetPolicy errors → fail open: playback proceeds (204) rather than
+	// breaking for everyone on a transient DB hiccup. No accrual either.
+	wl := &mockItemWatchLimit{policyErr: errors.New("db down")}
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+		WithWatchLimit(wl)
+
+	rec := httptest.NewRecorder()
+	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
+	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
+	h.Progress(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if !ws.recorded {
+		t.Error("fail-open: watch event should still be recorded")
+	}
+	if wl.addTickCalls != 0 {
+		t.Errorf("fail-open path must not accrue usage; addTickCalls=%d", wl.addTickCalls)
 	}
 }
 

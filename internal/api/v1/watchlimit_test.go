@@ -107,6 +107,61 @@ func TestWatchLimit_Get_ReturnsPolicyAndUsage(t *testing.T) {
 	}
 }
 
+func TestWatchLimit_GetForUser_RequiresAdmin(t *testing.T) {
+	target := uuid.New().String()
+	for _, claims := range []*auth.Claims{
+		nil,
+		{UserID: uuid.New(), IsAdmin: false},
+	} {
+		store := &mockWatchLimitStore{}
+		h := NewWatchLimitHandler(store)
+		rec := httptest.NewRecorder()
+		h.GetForUser(rec, wlReq(http.MethodGet, "/api/v1/users/x/watch-limit", claims, target, ""))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("claims=%v: status got %d, want 403", claims, rec.Code)
+		}
+	}
+}
+
+func TestWatchLimit_GetForUser_InvalidUserID(t *testing.T) {
+	admin := &auth.Claims{UserID: uuid.New(), IsAdmin: true}
+	store := &mockWatchLimitStore{}
+	h := NewWatchLimitHandler(store)
+	rec := httptest.NewRecorder()
+	// No chi "id" param → empty → parse fails → 400.
+	h.GetForUser(rec, wlReq(http.MethodGet, "/api/v1/users//watch-limit", admin, "", ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", rec.Code)
+	}
+}
+
+func TestWatchLimit_GetForUser_ReturnsPolicyAndUsage(t *testing.T) {
+	store := &mockWatchLimitStore{
+		policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(90)},
+		usage:  20 * 60,
+	}
+	h := NewWatchLimitHandler(store)
+	rec := httptest.NewRecorder()
+	admin := &auth.Claims{UserID: uuid.New(), IsAdmin: true}
+	h.GetForUser(rec, wlReq(http.MethodGet, "/api/v1/users/x/watch-limit", admin, uuid.New().String(), ""))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data watchLimitResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Data.UsedMinutesToday != 20 {
+		t.Errorf("used_minutes_today: got %d, want 20", resp.Data.UsedMinutesToday)
+	}
+	if resp.Data.RemainingMinutes == nil || *resp.Data.RemainingMinutes != 70 {
+		t.Errorf("remaining_minutes: got %v, want 70", resp.Data.RemainingMinutes)
+	}
+}
+
 func TestWatchLimit_Set_RequiresAdmin(t *testing.T) {
 	for _, claims := range []*auth.Claims{
 		nil,

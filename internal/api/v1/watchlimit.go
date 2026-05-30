@@ -52,13 +52,37 @@ func (h *WatchLimitHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
-	policy, err := h.store.GetPolicy(r.Context(), claims.UserID)
+	h.respondPolicy(w, r, claims.UserID)
+}
+
+// GetForUser handles GET /api/v1/users/{id}/watch-limit (admin only) — a target
+// user's policy plus today's usage, so the admin UI can pre-fill the editor
+// with the current values before a Set. Mirrors Set's admin gating.
+func (h *WatchLimitHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	h.respondPolicy(w, r, targetID)
+}
+
+// respondPolicy loads userID's policy + today's usage, evaluates the current
+// allowed/blocked state, and writes the watchLimitResponse. Shared by the self
+// Get and the admin GetForUser.
+func (h *WatchLimitHandler) respondPolicy(w http.ResponseWriter, r *http.Request, userID uuid.UUID) {
+	policy, err := h.store.GetPolicy(r.Context(), userID)
 	if err != nil {
 		respond.InternalError(w, r)
 		return
 	}
 	now := time.Now()
-	used, err := h.store.TodayUsageSeconds(r.Context(), claims.UserID, watchlimit.LocalDay(now))
+	used, err := h.store.TodayUsageSeconds(r.Context(), userID, watchlimit.LocalDay(now))
 	if err != nil {
 		respond.InternalError(w, r)
 		return

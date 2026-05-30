@@ -206,6 +206,22 @@ interface ApiError {
   };
 }
 
+/** Error thrown by the API client on a non-2xx response. Carries the HTTP
+ *  status and the server's error `code` so callers can branch on a specific
+ *  condition (e.g. a PARENTAL_LIMIT 403 raised when a child starts playback
+ *  outside their allowed hours or past their daily cap) instead of having to
+ *  string-match the message. */
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
 export interface UserMeta {
   user_id: string;
   username: string;
@@ -326,7 +342,11 @@ export class ApiClient {
         const json = (await resp.json()) as ApiResponse<T> | ApiError;
         if (!resp.ok) {
           const err = json as ApiError;
-          throw new Error(err.error?.message ?? `HTTP ${resp.status}`);
+          throw new ApiRequestError(
+            err.error?.message ?? `HTTP ${resp.status}`,
+            resp.status,
+            err.error?.code ?? '',
+          );
         }
         return (json as ApiResponse<T>).data;
       },
@@ -347,7 +367,11 @@ export class ApiClient {
         const json = await resp.json();
         if (!resp.ok) {
           const err = json as ApiError;
-          throw new Error(err.error?.message ?? `HTTP ${resp.status}`);
+          throw new ApiRequestError(
+            err.error?.message ?? `HTTP ${resp.status}`,
+            resp.status,
+            err.error?.code ?? '',
+          );
         }
         const envelope = json as ApiListResponse<T>;
         return { items: envelope.data ?? [], total: envelope.meta?.total ?? 0 };
@@ -714,8 +738,39 @@ export const userApi = {
   getLibraries: (userId: string) =>
     api.get<UserLibraryAccess[]>(`/users/${userId}/libraries`),
   setLibraries: (userId: string, libraryIds: string[]) =>
-    api.put<void>(`/users/${userId}/libraries`, { library_ids: libraryIds })
+    api.put<void>(`/users/${userId}/libraries`, { library_ids: libraryIds }),
+  getWatchLimit: (userId: string) =>
+    api.get<WatchLimitInfo>(`/users/${userId}/watch-limit`),
+  setWatchLimit: (userId: string, policy: WatchLimitPolicy) =>
+    api.put<void>(`/users/${userId}/watch-limit`, policy),
+  /** The caller's own watch policy + today's usage + whether playback is
+   *  allowed right now. Used by the player to pre-check before starting a
+   *  stream so a restricted child is blocked before any content plays. */
+  getMyWatchLimit: () =>
+    api.get<WatchLimitInfo>('/users/me/watch-limit')
 };
+
+/** A user's parental watch policy plus today's usage and current allowed
+ *  state. All three limit fields are null when unrestricted; the window
+ *  bounds are minutes from local midnight in [0,1440) and are set or cleared
+ *  together. remaining_minutes is present only when a daily cap is set. */
+export interface WatchLimitInfo {
+  daily_limit_minutes: number | null;
+  allowed_start_minute: number | null;
+  allowed_end_minute: number | null;
+  used_minutes_today: number;
+  remaining_minutes?: number;
+  allowed: boolean;
+  reason?: string;
+}
+
+/** The settable parental policy. null on a field clears that limit; the two
+ *  window bounds must be set or cleared together. */
+export interface WatchLimitPolicy {
+  daily_limit_minutes: number | null;
+  allowed_start_minute: number | null;
+  allowed_end_minute: number | null;
+}
 
 /** Per-user external-scrobble status. The token itself is never returned by
  *  the server — only whether one is linked and whether export is on. */

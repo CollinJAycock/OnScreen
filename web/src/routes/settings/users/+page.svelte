@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, userApi, inviteApi, type User, type UserMeta, type UserLibraryAccess } from '$lib/api';
+  import { api, userApi, inviteApi, type User, type UserMeta, type UserLibraryAccess, type WatchLimitInfo } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
@@ -29,6 +29,17 @@
   let libraryAccess: UserLibraryAccess[] = [];
   let librariesLoading = false;
   let librariesSaving = false;
+
+  // Watch limits (parental controls)
+  let limitsTarget: User | null = null;
+  let limitInfo: WatchLimitInfo | null = null;
+  let limitsLoading = false;
+  let limitsSaving = false;
+  let capEnabled = false;
+  let capMinutes = 120;
+  let hoursEnabled = false;
+  let startTime = '08:00';
+  let endTime = '20:00';
 
   // Invite flow
   let showInvite = false;
@@ -221,6 +232,60 @@
     );
   }
 
+  // Minutes-from-midnight ⇄ "HH:MM" for the allowed-hours time inputs.
+  function minutesToTime(min: number): string {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+  function timeToMinutes(t: string): number {
+    const [h, m] = t.split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  }
+
+  async function openLimits(user: User) {
+    limitsTarget = user;
+    limitsLoading = true;
+    limitInfo = null;
+    try {
+      const info = await userApi.getWatchLimit(user.id);
+      limitInfo = info;
+      capEnabled = info.daily_limit_minutes !== null;
+      capMinutes = info.daily_limit_minutes ?? 120;
+      hoursEnabled = info.allowed_start_minute !== null && info.allowed_end_minute !== null;
+      startTime = minutesToTime(info.allowed_start_minute ?? 480); // 08:00
+      endTime = minutesToTime(info.allowed_end_minute ?? 1200);    // 20:00
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load watch limits');
+      limitsTarget = null;
+    } finally {
+      limitsLoading = false;
+    }
+  }
+
+  async function saveLimits() {
+    if (!limitsTarget) return;
+    if (capEnabled && (!Number.isFinite(capMinutes) || capMinutes < 0)) {
+      toast.error('Daily limit must be 0 or more minutes');
+      return;
+    }
+    limitsSaving = true;
+    try {
+      await userApi.setWatchLimit(limitsTarget.id, {
+        daily_limit_minutes: capEnabled ? Math.round(capMinutes) : null,
+        allowed_start_minute: hoursEnabled ? timeToMinutes(startTime) : null,
+        allowed_end_minute: hoursEnabled ? timeToMinutes(endTime) : null
+      });
+      toast.success(`Watch limits updated for "${limitsTarget.username}"`);
+      limitsTarget = null;
+      limitInfo = null;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update watch limits');
+    } finally {
+      limitsSaving = false;
+    }
+  }
+
   function formatDate(dateStr: string): string {
     try {
       return new Date(dateStr).toLocaleDateString(undefined, {
@@ -370,6 +435,11 @@
                     on:click={() => openLibraries(user)}
                     title="Manage library access"
                   >Libraries</button>
+                  <button
+                    class="btn-limits"
+                    on:click={() => openLimits(user)}
+                    title="Set daily watch cap and allowed hours"
+                  >Limits</button>
                 {/if}
                 {#if !isSelf(user)}
                   <button
@@ -490,6 +560,62 @@
           <button class="btn-cancel" on:click={() => librariesTarget = null}>Cancel</button>
           <button class="btn-save" disabled={librariesLoading || librariesSaving} on:click={saveLibraries}>
             {librariesSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Watch limits (parental) dialog -->
+  {#if limitsTarget}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="overlay" on:click={() => limitsTarget = null}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="dialog" on:click|stopPropagation>
+        <h2>Watch limits</h2>
+        <p>Set a daily time cap and allowed hours for <strong>{limitsTarget.username}</strong>.</p>
+        {#if limitsLoading}
+          <div class="skeleton-block" style="height:140px;margin-bottom:1rem;"></div>
+        {:else}
+          {#if limitInfo}
+            <div class="usage-row">
+              <span>Used today</span>
+              <strong>{limitInfo.used_minutes_today} min{#if limitInfo.remaining_minutes != null} · {limitInfo.remaining_minutes} left{/if}</strong>
+            </div>
+          {/if}
+
+          <div class="limit-section">
+            <label class="limit-toggle">
+              <input type="checkbox" bind:checked={capEnabled} />
+              <span>Limit daily watch time</span>
+            </label>
+            {#if capEnabled}
+              <div class="limit-field">
+                <input type="number" min="0" max="1440" step="15" bind:value={capMinutes} />
+                <span class="unit">minutes / day</span>
+              </div>
+            {/if}
+          </div>
+
+          <div class="limit-section">
+            <label class="limit-toggle">
+              <input type="checkbox" bind:checked={hoursEnabled} />
+              <span>Restrict to allowed hours</span>
+            </label>
+            {#if hoursEnabled}
+              <div class="limit-field">
+                <input type="time" bind:value={startTime} />
+                <span class="unit">to</span>
+                <input type="time" bind:value={endTime} />
+              </div>
+              <p class="limit-hint">Set the end earlier than the start for an overnight window (e.g. 22:00 to 06:00).</p>
+            {/if}
+          </div>
+        {/if}
+        <div class="dialog-actions">
+          <button class="btn-cancel" on:click={() => limitsTarget = null}>Cancel</button>
+          <button class="btn-save" disabled={limitsLoading || limitsSaving} on:click={saveLimits}>
+            {limitsSaving ? 'Saving...' : 'Save'}
           </button>
         </div>
       </div>
@@ -669,6 +795,36 @@
     cursor: pointer; transition: all 0.15s;
   }
   .btn-libraries:hover { background: rgba(94,189,255,0.1); border-color: rgba(94,189,255,0.4); }
+  .btn-limits {
+    padding: 0.3rem 0.6rem; background: none;
+    border: 1px solid rgba(52,211,153,0.25); border-radius: 6px;
+    color: #34d399; font-size: 0.72rem; font-weight: 500;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn-limits:hover { background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.4); }
+
+  /* Watch-limit dialog */
+  .usage-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.8rem; color: var(--text-muted);
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.5rem 0.75rem; margin-bottom: 1rem;
+  }
+  .usage-row strong { color: var(--text-primary); font-weight: 600; }
+  .limit-section { margin-bottom: 1rem; }
+  .limit-toggle {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-size: 0.85rem; color: var(--text-primary); cursor: pointer;
+  }
+  .limit-toggle input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+  .limit-field {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin: 0.6rem 0 0 1.6rem;
+  }
+  .limit-field input[type="number"] { width: 80px; }
+  .limit-field input[type="time"] { width: auto; }
+  .limit-field .unit { font-size: 0.78rem; color: var(--text-muted); }
+  .dialog .limit-hint { font-size: 0.7rem; color: var(--text-muted); margin: 0.5rem 0 0 1.6rem; }
   .btn-view-as {
     padding: 0.3rem 0.6rem; background: none;
     border: 1px solid rgba(245,158,11,0.3); border-radius: 6px;

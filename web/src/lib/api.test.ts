@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ApiClient, authApi, libraryApi, userApi, notificationApi, subtitleApi, api } from './api';
+import { ApiClient, ApiRequestError, authApi, libraryApi, userApi, notificationApi, subtitleApi, api } from './api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -98,6 +98,21 @@ describe('ApiClient', () => {
     it('falls back to HTTP status when error.message missing', async () => {
       vi.stubGlobal('fetch', mockFetch(500, {}));
       await expect(client.get('/broken')).rejects.toThrow('HTTP 500');
+    });
+
+    it('throws ApiRequestError carrying status and code (PARENTAL_LIMIT)', async () => {
+      // The player branches on `e instanceof ApiRequestError && e.code ===
+      // 'PARENTAL_LIMIT'` to show the watch-limit block, so the thrown error
+      // must carry both the HTTP status and the server error code.
+      vi.stubGlobal('fetch', mockFetch(403, {
+        error: { code: 'PARENTAL_LIMIT', message: 'daily_limit_reached', request_id: 'req2' }
+      }));
+      const err = await client.get('/items/x/progress').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiRequestError);
+      const apiErr = err as ApiRequestError;
+      expect(apiErr.status).toBe(403);
+      expect(apiErr.code).toBe('PARENTAL_LIMIT');
+      expect(apiErr.message).toBe('daily_limit_reached');
     });
 
     it('sends POST body as JSON', async () => {
@@ -283,6 +298,62 @@ describe('userApi', () => {
     const result = await userApi.listSwitchable();
     expect(result).toHaveLength(1);
     expect(result[0].username).toBe('alice');
+  });
+
+  it('getWatchLimit calls GET /users/:id/watch-limit', async () => {
+    const info = {
+      daily_limit_minutes: 120, allowed_start_minute: null, allowed_end_minute: null,
+      used_minutes_today: 30, remaining_minutes: 90, allowed: true
+    };
+    const fetch = mockFetch(200, { data: info });
+    vi.stubGlobal('fetch', fetch);
+    const result = await userApi.getWatchLimit('user-9');
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/user-9/watch-limit');
+    expect(result.remaining_minutes).toBe(90);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('setWatchLimit PUTs the policy to /users/:id/watch-limit', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await userApi.setWatchLimit('user-9', {
+      daily_limit_minutes: 90, allowed_start_minute: 480, allowed_end_minute: 1200
+    });
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/user-9/watch-limit');
+    const [, opts] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(opts.method).toBe('PUT');
+    expect(JSON.parse(opts.body as string)).toEqual({
+      daily_limit_minutes: 90, allowed_start_minute: 480, allowed_end_minute: 1200
+    });
+  });
+
+  it('setWatchLimit sends nulls to clear all limits', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await userApi.setWatchLimit('user-9', {
+      daily_limit_minutes: null, allowed_start_minute: null, allowed_end_minute: null
+    });
+    const body = JSON.parse((fetch.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.daily_limit_minutes).toBeNull();
+    expect(body.allowed_start_minute).toBeNull();
+    expect(body.allowed_end_minute).toBeNull();
+  });
+
+  it('getMyWatchLimit calls GET /users/me/watch-limit', async () => {
+    const info = {
+      daily_limit_minutes: null, allowed_start_minute: 1320, allowed_end_minute: 360,
+      used_minutes_today: 0, allowed: false, reason: 'outside_allowed_hours'
+    };
+    const fetch = mockFetch(200, { data: info });
+    vi.stubGlobal('fetch', fetch);
+    const result = await userApi.getMyWatchLimit();
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/me/watch-limit');
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('outside_allowed_hours');
   });
 });
 
