@@ -639,6 +639,24 @@
   // downgrade a forced 4K HEVC transcode to remux mid-switch.
   let switchingTranscode = false;
 
+  // ── Stall watchdog ──────────────────────────────────────────────────────
+  // A transcode session can die under a playing stream — most often when the
+  // tab is backgrounded during a long pause, which throttles hls.js's playlist
+  // polling so the server's 60 s idle-kill reaps ffmpeg. The buffer then drains
+  // and the stream stalls silently at the live edge with no HLS error to
+  // recover from. This watchdog notices a *playing* HLS-transcode whose
+  // currentTime has stopped advancing and restarts the transcode at the current
+  // position. It only fires on a real stall (after playback has progressed at
+  // least once), so healthy pause/resume and cold-start seg-0 buffering are
+  // untouched and a still-alive session is never restarted needlessly.
+  let stallWatchdog: ReturnType<typeof setInterval> | null = null;
+  let stallLastCt = 0;          // last currentTime seen advancing
+  let stallProgressed = false;  // playback advanced at least once this session
+  let stallSinceMs = 0;         // wall-clock when progress stopped (0 = progressing)
+  let stallLastRestartMs = 0;   // cooldown anchor against restart loops
+  const STALL_RESTART_MS = 8000;    // no progress this long while playing → restart
+  const STALL_COOLDOWN_MS = 15000;  // min gap between stall-triggered restarts
+
   // Audio codecs that browsers can decode natively.
   // Audio codecs browsers can decode natively in MP4/WebM containers.
   // AC-3, E-AC-3, DTS, TrueHD, ALAC, MP2, raw PCM are not reliably supported
@@ -1867,9 +1885,11 @@
     } else {
       error = 'HLS playback is not supported in this browser.';
     }
+    startStallWatchdog();
   }
 
   function destroyHls() {
+    stopStallWatchdog();
     if (hlsInstance) {
       hlsInstance.destroy();
       hlsInstance = null;
@@ -2004,7 +2024,46 @@
   }
   function clearTimers() {
     stopProgressTimer();
+    stopStallWatchdog();
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  }
+
+  // ── Stall watchdog (see state declarations near the top of <script>) ──────
+  function startStallWatchdog() {
+    stopStallWatchdog();
+    stallLastCt = videoEl ? videoEl.currentTime : 0;
+    stallProgressed = false;
+    stallSinceMs = 0;
+    stallWatchdog = setInterval(checkStall, 3000);
+  }
+  function stopStallWatchdog() {
+    if (stallWatchdog) { clearInterval(stallWatchdog); stallWatchdog = null; }
+  }
+  function checkStall() {
+    // Only watch a playing HLS-transcode that isn't mid-switch.
+    if (!hlsActive || !transcodeSessionId || switchingTranscode) { stallSinceMs = 0; return; }
+    if (!videoEl || videoEl.paused || videoEl.seeking || videoEl.ended) { stallSinceMs = 0; return; }
+    const ct = videoEl.currentTime;
+    if (ct > stallLastCt + 0.25) {        // progressing normally
+      stallLastCt = ct;
+      stallProgressed = true;
+      stallSinceMs = 0;
+      return;
+    }
+    // Not advancing. Ignore until playback has actually started — cold-start
+    // seg-0 buffering legitimately sits at 0 with no HLS error.
+    if (!stallProgressed) return;
+    const now = Date.now();
+    if (stallSinceMs === 0) { stallSinceMs = now; return; }    // start the clock
+    if (now - stallSinceMs < STALL_RESTART_MS) return;         // not stalled long enough
+    if (now - stallLastRestartMs < STALL_COOLDOWN_MS) return;  // recently restarted; back off
+    // Genuine stall: the transcode session died (idle-reaped, etc.) and the
+    // buffer drained. Restart the transcode at the current content position.
+    stallLastRestartMs = now;
+    stallSinceMs = 0;
+    const posMs = Math.round((ct + hlsOffsetSec) * 1000);
+    console.warn('[HLS] playback stalled — restarting transcode at', posMs, 'ms');
+    switchToTranscode(selectedQuality.height, posMs, hlsIsRemux);
   }
 
   // Tracks the position the local device most recently published so
