@@ -98,6 +98,22 @@ class PlaybackViewModel @Inject constructor(
         val serverUrl: String,
     )
 
+    // Set while the active source is a direct play, so a fatal ExoPlayer
+    // decode/demux error can re-issue the item as a server transcode (the
+    // Android analogue of the web player's codec-escalation). Null on the
+    // remux / transcode paths — those already run server-side, so a failure
+    // there is a different problem. One-shot: cleared on the first fallback
+    // so a transcode that also fails surfaces the real error instead of
+    // looping.
+    private var directPlayContext: DirectPlayContext? = null
+
+    private data class DirectPlayContext(
+        val itemId: String,
+        val fileId: String,
+        val sourceHeight: Int,
+        val serverUrl: String,
+    )
+
     fun prepare(itemId: String, startMs: Long, serverUrl: String) {
         viewModelScope.launch {
             try {
@@ -125,9 +141,20 @@ class PlaybackViewModel @Inject constructor(
 
                 val mode = PlaybackHelper.decide(file)
 
+                // Default off; armed only on the direct-play branch below.
+                directPlayContext = null
+
                 val source = when (mode) {
                     is PlaybackMode.DirectPlay -> {
                         hlsOffsetMs = 0
+                        // Arm the transcode fallback: if ExoPlayer can't
+                        // actually decode this source (e.g. an HEVC profile
+                        // the device rejects, or a container quirk), the
+                        // fragment's onPlayerError re-issues it as a full
+                        // server transcode at the source resolution.
+                        directPlayContext = DirectPlayContext(
+                            itemId, file.id, file.resolution_h ?: 1080, serverUrl,
+                        )
                         // Direct play: ExoPlayer's track selector
                         // can swap audio + subtitle tracks by
                         // language, so no transcode-session re-
@@ -295,6 +322,42 @@ class PlaybackViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(source = source)
             } catch (_: Exception) {
                 // Best-effort — leave the existing session running.
+            }
+        }
+    }
+
+    /**
+     * ExoPlayer hit a fatal error on a direct-play source — a codec
+     * profile the device can't decode, a malformed container, etc. Re-issue
+     * the same item as a full server transcode at the source resolution and
+     * re-emit the source so the fragment rebinds the player. This is the
+     * Android analogue of the web player's codec-escalation (videoWidth == 0
+     * → switchToTranscode).
+     *
+     * Full re-encode (videoCopy = false), not remux: a direct-play decode
+     * failure means the device can't handle the source video codec, so
+     * stream-copying it into HLS would just reproduce an undecodable stream.
+     *
+     * One-shot — directPlayContext is cleared on entry, so if the transcode
+     * also fails the fragment shows the real error instead of looping.
+     */
+    fun fallbackFromDirectPlay(currentPositionMs: Long) {
+        val ctx = directPlayContext ?: return
+        directPlayContext = null
+        viewModelScope.launch {
+            try {
+                val height = if (ctx.sourceHeight >= 2160) 2160 else 1080
+                val source = startTranscode(
+                    itemId = ctx.itemId,
+                    height = height,
+                    posMs = currentPositionMs.coerceAtLeast(0L),
+                    fileId = ctx.fileId,
+                    videoCopy = false,
+                    serverUrl = ctx.serverUrl,
+                )
+                _uiState.value = _uiState.value.copy(source = source, error = null)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = e.message ?: "Playback failed")
             }
         }
     }

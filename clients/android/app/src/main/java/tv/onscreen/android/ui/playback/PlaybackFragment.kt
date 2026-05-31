@@ -680,6 +680,24 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // A direct-play source that ExoPlayer can't decode/demux (an
+            // HEVC profile the device rejects, a malformed container, etc.)
+            // is recoverable: re-issue it as a full server transcode and
+            // rebind, the Android analogue of the web player's codec-
+            // escalation. Only for DirectPlay — the ViewModel clears
+            // directPlayContext on the first fallback, so an HLS/transcode
+            // error that follows falls through to the dialog below instead
+            // of looping.
+            if (currentSource is PlaybackSource.DirectPlay) {
+                val pos = player?.currentPosition ?: 0L
+                android.util.Log.w(
+                    "PlaybackFragment",
+                    "direct play failed (${error.errorCodeName}); falling back to server transcode",
+                    error,
+                )
+                viewModel.fallbackFromDirectPlay(pos)
+                return
+            }
             // Surface ExoPlayer's actual error to the user instead
             // of the silent failure that produced the "audio file
             // not playable" report. Code + message together pin

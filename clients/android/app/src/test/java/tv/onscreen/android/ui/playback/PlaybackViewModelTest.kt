@@ -22,9 +22,11 @@ import tv.onscreen.android.data.model.Marker
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.model.TranscodeSession
 import tv.onscreen.android.data.model.UserPreferences
+import tv.onscreen.android.data.model.WatchLimitData
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
+import tv.onscreen.android.data.repository.WatchLimitRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackViewModelTest {
@@ -84,6 +86,23 @@ class PlaybackViewModelTest {
     private fun serverPrefs(): tv.onscreen.android.data.prefs.ServerPrefs =
         mockk(relaxed = true)
 
+    /** WatchLimitRepository stub that fails open (playback allowed) —
+     *  every prepare() runs a watch-limit pre-flight, so any test that
+     *  gets past the file-presence check needs it answered. */
+    private fun watchLimitRepo(): WatchLimitRepository {
+        val repo = mockk<WatchLimitRepository>()
+        coEvery { repo.get() } returns WatchLimitData(
+            daily_limit_minutes = null,
+            allowed_start_minute = null,
+            allowed_end_minute = null,
+            used_minutes_today = 0,
+            remaining_minutes = null,
+            allowed = true,
+            reason = null,
+        )
+        return repo
+    }
+
     /** ItemRepository mock with [getMarkers] pre-stubbed to an empty
      *  list — every PlaybackViewModel.prepare() call hits the markers
      *  endpoint regardless of item type, so any test that gets past
@@ -111,7 +130,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("movie-1", startMs = 12_000L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -147,7 +166,7 @@ class PlaybackViewModelTest {
             playlist_url = "/transcode/sess-1.m3u8",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("movie-1", startMs = 30_000L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -165,7 +184,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile()).copy(files = emptyList())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -180,7 +199,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem(any()) } throws RuntimeException("api 500")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -198,7 +217,7 @@ class PlaybackViewModelTest {
             ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("ep-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -218,7 +237,7 @@ class PlaybackViewModelTest {
             ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("ep-3", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -231,7 +250,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -246,7 +265,7 @@ class PlaybackViewModelTest {
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } throws RuntimeException("offline")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("ep-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -260,7 +279,7 @@ class PlaybackViewModelTest {
     fun `stopActiveTranscode is a no-op without an active session`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
 
         vm.stopActiveTranscode()
         advanceUntilIdle()
@@ -281,7 +300,7 @@ class PlaybackViewModelTest {
             token = "tok-9",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -294,5 +313,103 @@ class PlaybackViewModelTest {
         vm.stopActiveTranscode()
         advanceUntilIdle()
         coVerify(exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
+    }
+
+    @Test
+    fun `direct-play failure falls back to a full server transcode`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(
+            session_id = "fallback-sess",
+            token = "tok",
+            playlist_url = "/transcode/fallback.m3u8",
+        )
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+        // Sanity: a browser-compatible file starts as direct play.
+        assertThat(vm.uiState.value.source).isInstanceOf(PlaybackSource.DirectPlay::class.java)
+
+        // ExoPlayer couldn't decode it — escalate to a full transcode.
+        vm.fallbackFromDirectPlay(currentPositionMs = 5_000L)
+        advanceUntilIdle()
+
+        val src = vm.uiState.value.source
+        assertThat(src).isInstanceOf(PlaybackSource.Hls::class.java)
+        assertThat((src as PlaybackSource.Hls).playlistUrl)
+            .isEqualTo("http://srv/transcode/fallback.m3u8")
+        // Full re-encode (videoCopy=false) at the source tier, resuming
+        // at the position the direct play reached.
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1",
+                height = 1080,
+                positionMs = 5_000L,
+                fileId = "f1",
+                videoCopy = false,
+                audioStreamIndex = null,
+                supportsHevc = true,
+                supportsAv1 = true,
+            )
+        }
+    }
+
+    @Test
+    fun `direct-play fallback is one-shot`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(
+            session_id = "s",
+            token = "t",
+            playlist_url = "/p.m3u8",
+        )
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        vm.fallbackFromDirectPlay(0L)
+        advanceUntilIdle()
+        // Second call: context already cleared on the first fallback, so a
+        // transcode that also errors surfaces the real error, not a loop.
+        vm.fallbackFromDirectPlay(0L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `fallback is a no-op on the transcode path`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(
+            session_id = "sess-1",
+            token = "tok",
+            playlist_url = "/transcode/sess-1.m3u8",
+        )
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+        // The initial transcode start (1 call). directPlayContext is null on
+        // this path, so a stray fallback must not re-issue anything.
+        vm.fallbackFromDirectPlay(1_000L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        }
     }
 }
