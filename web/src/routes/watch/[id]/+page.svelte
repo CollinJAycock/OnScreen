@@ -673,6 +673,15 @@
     clientSupportsHEVC = typeof MediaSource !== 'undefined' &&
       MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"');
   } catch { /* MSE unavailable */ }
+  // 10-bit HEVC (Main 10) is a distinct capability from 8-bit (Main): many
+  // browsers/devices decode Main but not Main10, so a 10-bit source can't be
+  // direct-played/remuxed just because 8-bit HEVC works. The codec string
+  // hvc1.2.4.L150.B0 = Main 10 profile.
+  let clientSupports10bitHEVC = false;
+  try {
+    clientSupports10bitHEVC = typeof MediaSource !== 'undefined' &&
+      MediaSource.isTypeSupported('video/mp4; codecs="hvc1.2.4.L150.B0"');
+  } catch { /* MSE unavailable */ }
   // Detect AV1 playback support. The codec string `av01.0.05M.08` is
   // Main profile, level 5, 8-bit — covers the common 1080p/4K SDR
   // range. Reported to the server as `supports_av1` so the API can
@@ -705,11 +714,30 @@
   const clientSupportsHDR = typeof window !== 'undefined' &&
     window.matchMedia('(dynamic-range: high)').matches;
 
+  /** True when the browser can decode this file's video at its bit depth.
+   *  Browsers can't decode 10-bit H.264 (Hi10P) at all, and 10-bit HEVC needs
+   *  Main 10 support specifically (distinct from 8-bit Main). 8-bit always
+   *  passes; AV1/VP9 10-bit decode tracks their 8-bit support so it isn't
+   *  separately gated. Without this a 10-bit source direct-plays/remuxes and
+   *  the browser silently fails to decode it. */
+  function videoBitDepthOK(file: ItemFile | undefined): boolean {
+    if (!file) return false;
+    const depth = file.bit_depth ?? 8;
+    if (depth < 10) return true;
+    const codec = (file.video_codec ?? '').toLowerCase();
+    if (codec === 'h264' || codec === 'avc') return false; // Hi10P — no browser decodes it
+    if (codec === 'hevc' || codec === 'h265') return clientSupports10bitHEVC;
+    return true; // av1 / vp9 10-bit ≈ their 8-bit support
+  }
+
   /** True when the browser can play this file directly — compatible container + codecs + faststart. */
   function canDirectPlay(file: ItemFile | undefined): boolean {
     if (!file) return false;
     // HDR content on an SDR display needs tonemapping — can't direct play.
     if (file.hdr_type && !clientSupportsHDR) return false;
+    // 10-bit video the browser can't decode (Hi10P H.264, HEVC Main10 on a
+    // Main-only decoder) must transcode, not direct play.
+    if (!videoBitDepthOK(file)) return false;
     const container = (file.container ?? '').toLowerCase();
     const videoCodec = (file.video_codec ?? '').toLowerCase();
     const audioCodec = (file.audio_codec ?? '').toLowerCase();
@@ -728,6 +756,9 @@
     if (!file) return false;
     // HDR content on an SDR display needs tonemapping — can't remux.
     if (file.hdr_type && !clientSupportsHDR) return false;
+    // Remux preserves the source bit depth — a 10-bit stream the browser
+    // can't decode stays undecodable after a copy, so force a transcode.
+    if (!videoBitDepthOK(file)) return false;
     const videoCodec = (file.video_codec ?? '').toLowerCase();
     return remuxableVideoCodecs.has(videoCodec);
   }

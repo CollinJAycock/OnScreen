@@ -15,6 +15,10 @@ type ClientCapabilities struct {
 	MaxWidth         int
 	MaxHeight        int
 	MaxAudioChannels int
+	// MaxVideoBitDepth is the deepest video the client can decode (8 or 10).
+	// Defaults to 8 — most browsers/devices can't decode 10-bit (HEVC Main 10
+	// or H.264 Hi10P), so a client must explicitly declare 10-bit support.
+	MaxVideoBitDepth int
 	SupportsHDR      bool // HDR10
 	SupportsDV       bool // Dolby Vision
 	SupportsHEVC     bool // H.265
@@ -28,6 +32,7 @@ func ParseCapabilities(header string) ClientCapabilities {
 		MaxWidth:         1920,
 		MaxHeight:        1080,
 		MaxAudioChannels: 2,
+		MaxVideoBitDepth: 8,
 	}
 	if header == "" {
 		return caps
@@ -71,6 +76,10 @@ func ParseCapabilities(header string) ClientCapabilities {
 		case "maxaudiochannels":
 			if c := parseInt(val); c > 0 {
 				caps.MaxAudioChannels = c
+			}
+		case "maxbitdepth", "videobitdepth":
+			if d := parseInt(val); d > 0 {
+				caps.MaxVideoBitDepth = d
 			}
 		}
 	}
