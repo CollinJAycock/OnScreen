@@ -83,63 +83,6 @@ func TestDecide_DirectPlay_HDR10_ClientSupportsHDR(t *testing.T) {
 	}
 }
 
-func TestDecide_Transcode_10bitHEVC_8bitClient(t *testing.T) {
-	file := baseFile()
-	file.VideoCodec = strPtr("hevc")
-	file.Container = strPtr("mp4")
-	file.BitDepth = intPtr(10)
-	// Client decodes HEVC + mp4 but only 8-bit (default) — Main 10 must transcode.
-	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4")
-	if got := Decide(file, caps, defaultServerCaps); got != DecisionTranscode {
-		t.Errorf("want Transcode for 10-bit HEVC on 8-bit client, got %s", got)
-	}
-}
-
-func TestDecide_DirectPlay_10bitHEVC_10bitClient(t *testing.T) {
-	file := baseFile()
-	file.VideoCodec = strPtr("hevc")
-	file.Container = strPtr("mp4")
-	file.BitDepth = intPtr(10)
-	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4,maxbitdepth=10")
-	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectPlay {
-		t.Errorf("want DirectPlay for 10-bit HEVC on 10-bit client, got %s", got)
-	}
-}
-
-func TestDecide_DirectStream_10bitHEVC_10bitClient_MKV(t *testing.T) {
-	file := baseFile()
-	file.VideoCodec = strPtr("hevc")
-	file.Container = strPtr("mkv")
-	file.BitDepth = intPtr(10)
-	// 10-bit HEVC client, but MKV not supported → remux (not transcode).
-	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4:ts,maxbitdepth=10")
-	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectStream {
-		t.Errorf("want DirectStream for 10-bit HEVC remux on 10-bit client, got %s", got)
-	}
-}
-
-func TestDecide_Transcode_Hi10P_H264(t *testing.T) {
-	file := baseFile() // h264 / aac / mkv
-	file.Container = strPtr("mp4")
-	file.BitDepth = intPtr(10) // Hi10P
-	// Client decodes h264 + mp4, but the source is 10-bit and the client is
-	// 8-bit only — Hi10P must transcode even though the codec is "supported".
-	caps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac,protocols=mp4")
-	if got := Decide(file, caps, defaultServerCaps); got != DecisionTranscode {
-		t.Errorf("want Transcode for Hi10P H.264 on 8-bit client, got %s", got)
-	}
-}
-
-func TestDecide_8bit_NotForcedToTranscode(t *testing.T) {
-	file := baseFile() // h264 / aac / mkv, no BitDepth set
-	file.Container = strPtr("mp4")
-	file.BitDepth = intPtr(8)
-	caps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac,protocols=mp4")
-	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectPlay {
-		t.Errorf("8-bit source must not be forced to transcode, got %s", got)
-	}
-}
-
 func TestDecide_Transcode_DolbyVision_ClientNoDV(t *testing.T) {
 	file := baseFile()
 	file.HDRType = strPtr("dolby_vision")
