@@ -25,6 +25,7 @@ import tv.onscreen.android.ui.common.NavCardPresenter
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.ViewAllCard
 import tv.onscreen.android.ui.common.ViewAllCardPresenter
+import tv.onscreen.android.ui.common.focusableOnTv
 import tv.onscreen.android.ui.favorites.FavoritesFragment
 import tv.onscreen.android.ui.history.HistoryFragment
 import tv.onscreen.android.ui.livetv.LiveTVFragment
@@ -277,6 +278,8 @@ class HomeFragment : BrowseSupportFragment() {
             .setNegativeButton(R.string.start_over) { d, _ ->
                 d.dismiss(); onChoice(0)
             }
+            .create()
+            .focusableOnTv()
             .show()
     }
 

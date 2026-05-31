@@ -21,6 +21,7 @@ import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
+import tv.onscreen.android.ui.common.focusableOnTv
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -154,6 +155,12 @@ class SettingsFragment : Fragment() {
                 }
             }
         }
+
+        // Fire TV / D-pad: a plain Fragment opens with nothing focused, so the
+        // first remote press is swallowed establishing focus instead of acting
+        // on a control. Land focus on the first setting so the remote works on
+        // the very first press. Posted so the view is laid out before we ask.
+        audioBtn.post { audioBtn.requestFocus() }
     }
 
     private fun formatAccountLine(username: String?, server: String?): String {
@@ -172,6 +179,8 @@ class SettingsFragment : Fragment() {
             .setMessage(messageRes)
             .setPositiveButton(titleRes) { d, _ -> d.dismiss(); onConfirm() }
             .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
+            .create()
+            .focusableOnTv()
             .show()
     }
 
@@ -225,6 +234,8 @@ class SettingsFragment : Fragment() {
             .setPositiveButton("Replace token") { d, _ -> d.dismiss(); showLinkDialog() }
             .setNegativeButton("Unlink") { d, _ -> d.dismiss(); viewModel.unlinkListenBrainz() }
             .setNeutralButton(R.string.cancel) { d, _ -> d.dismiss() }
+            .create()
+            .focusableOnTv()
             .show()
     }
 }

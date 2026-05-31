@@ -20,6 +20,7 @@ import tv.onscreen.android.data.model.SearchResult
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.common.focusableOnTv
 import javax.inject.Inject
 
 /**
@@ -203,6 +204,8 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                 .setTitle(item.title)
                 .setMessage(getString(R.string.request_status_already, status))
                 .setPositiveButton(android.R.string.ok, null)
+                .create()
+                .focusableOnTv()
                 .show()
             return
         }
@@ -223,6 +226,8 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .create()
+            .focusableOnTv()
             .show()
     }
 

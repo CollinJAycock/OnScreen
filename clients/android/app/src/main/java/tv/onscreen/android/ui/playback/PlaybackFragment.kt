@@ -1,6 +1,7 @@
 package tv.onscreen.android.ui.playback
 
 import android.app.AlertDialog
+import tv.onscreen.android.ui.common.focusableOnTv
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -1211,6 +1212,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 d.dismiss()
                 parentFragmentManager.popBackStack()
             }
+            .create()
+            .focusableOnTv()
             .show()
     }
 
