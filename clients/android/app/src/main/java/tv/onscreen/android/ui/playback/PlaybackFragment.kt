@@ -586,10 +586,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
             override fun onCreateSecondaryActions(adapter: ArrayObjectAdapter) {
                 super.onCreateSecondaryActions(adapter)
-                audioAction = Action(ACTION_AUDIO_ID, getString(R.string.audio))
-                subtitleAction = Action(ACTION_SUBTITLE_ID, getString(R.string.subtitles))
-                chaptersAction = Action(ACTION_CHAPTERS_ID, getString(R.string.chapters))
-                speedAction = Action(ACTION_SPEED_ID, getString(R.string.speed_label, "1.0"))
+                // Each Action MUST carry an icon: PlaybackTransportControlGlue's
+                // secondary control bar is icon-only (no text fallback), so a
+                // label-only Action renders as a zero-width, invisible button —
+                // which is why the audio/subtitle pickers were unreachable.
+                val ctx = requireContext()
+                fun icon(resId: Int) = androidx.core.content.ContextCompat.getDrawable(ctx, resId)
+                audioAction = Action(ACTION_AUDIO_ID, getString(R.string.audio), null, icon(R.drawable.ic_audio_track))
+                subtitleAction = Action(ACTION_SUBTITLE_ID, getString(R.string.subtitles), null, icon(R.drawable.ic_subtitles))
+                chaptersAction = Action(ACTION_CHAPTERS_ID, getString(R.string.chapters), null, icon(R.drawable.ic_chapters))
+                speedAction = Action(ACTION_SPEED_ID, getString(R.string.speed_label, "1.0"), null, icon(R.drawable.ic_speed))
                 adapter.add(audioAction)
                 adapter.add(subtitleAction)
                 adapter.add(chaptersAction)
