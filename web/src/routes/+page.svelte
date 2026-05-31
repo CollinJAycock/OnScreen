@@ -143,14 +143,28 @@
     return type === 'music' || type === 'photo';
   }
 
-  const types: Record<string, { label: string; gradient: string; icon: string }> = {
-    movie: { label: 'Movies',   gradient: 'linear-gradient(135deg,#1a2744 0%,#0f1520 100%)', icon: '🎬' },
-    show:  { label: 'TV Shows', gradient: 'linear-gradient(135deg,#25173a 0%,#0f1520 100%)', icon: '📺' },
-    music: { label: 'Music',    gradient: 'linear-gradient(135deg,#0d2e28 0%,#0f1520 100%)', icon: '🎵' },
-    photo: { label: 'Photos',   gradient: 'linear-gradient(135deg,#2e1f0d 0%,#0f1520 100%)', icon: '🖼️' },
+  // Per-library-type presentation. `icon` + `label` drive the tile header;
+  // `colors` is the accent hue, used both for the type label and the tile's
+  // subtle background tint (see .lib-tile). The tint layers over the THEMED
+  // surface (var(--bg-elevated)), so tiles read correctly in both light and
+  // dark — they used to be hardcoded dark gradients that became dark-on-dark
+  // mush in light mode.
+  const types: Record<string, { label: string; icon: string }> = {
+    movie:      { label: 'Movies',      icon: '🎬' },
+    show:       { label: 'TV Shows',    icon: '📺' },
+    music:      { label: 'Music',       icon: '🎵' },
+    photo:      { label: 'Photos',      icon: '🖼️' },
+    anime:      { label: 'Anime',       icon: '🌸' },
+    audiobook:  { label: 'Audiobooks',  icon: '🎧' },
+    podcast:    { label: 'Podcasts',    icon: '🎙️' },
+    book:       { label: 'Books',       icon: '📚' },
+    home_video: { label: 'Home Videos', icon: '📹' },
+    dvr:        { label: 'DVR',          icon: '📡' },
   };
   const colors: Record<string, string> = {
-    movie: '#60a5fa', show: '#a78bfa', music: '#34d399', photo: '#fb923c'
+    movie: '#60a5fa', show: '#a78bfa', music: '#34d399', photo: '#fb923c',
+    anime: '#f472b6', audiobook: '#fbbf24', podcast: '#f87171',
+    book: '#818cf8', home_video: '#2dd4bf', dvr: '#fb7185',
   };
 </script>
 
@@ -294,13 +308,13 @@
   {:else if !loading}
     <div class="grid">
       {#each libraries as lib (lib.id)}
-        {@const t = types[lib.type] ?? { label: lib.type, gradient: 'linear-gradient(135deg,#1a1a2a,#0f0f18)', icon: '📁' }}
+        {@const t = types[lib.type] ?? { label: lib.type, icon: '📁' }}
         {@const color = colors[lib.type] ?? '#aaa'}
         <div
           class="lib-tile"
           role="button"
           tabindex="0"
-          style="background:{t.gradient}"
+          style="--tile-accent:{color}"
           on:click={() => goto(`/libraries/${lib.id}`)}
           on:keydown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), goto(`/libraries/${lib.id}`))}
         >
@@ -327,7 +341,7 @@
           </div>
 
           <div class="tile-body">
-            <div class="tile-type" style="color:{color}">{t.label}</div>
+            <div class="tile-type">{t.label}</div>
             <div class="tile-name">{lib.name}</div>
             {#if (lib.scan_paths ?? []).length > 0}
               <div class="tile-path">{lib.scan_paths[0]}{lib.scan_paths.length > 1 ? ` +${lib.scan_paths.length - 1}` : ''}</div>
@@ -514,15 +528,24 @@
   }
 
   .lib-tile {
+    --tile-accent: #8888aa;
     padding: 1.4rem 1.5rem 1.3rem;
     cursor: pointer;
-    transition: filter 0.15s;
+    transition: box-shadow 0.15s;
     min-height: 140px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+    /* Accent-tinted corner fading into the themed surface. Base is
+       var(--bg-elevated) (not a fixed dark), so the tile follows the theme
+       and the var(--text-primary) name/labels keep their contrast. */
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--tile-accent) 20%, transparent), transparent 58%),
+      var(--bg-elevated);
   }
-  .lib-tile:hover { filter: brightness(1.12); }
+  .lib-tile:hover {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tile-accent) 55%, transparent);
+  }
 
   .tile-top {
     display: flex;
@@ -547,13 +570,13 @@
     height: 26px;
     border: none;
     border-radius: 5px;
-    background: var(--border-strong);
-    color: rgba(255,255,255,0.55);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .tile-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
-  .tile-btn-danger:hover { background: var(--error); color: var(--error); }
+  .tile-btn:hover { background: var(--border-strong); color: var(--text-primary); }
+  .tile-btn-danger:hover { background: var(--error-bg); color: var(--error); }
 
   .tile-type {
     font-size: 0.68rem;
@@ -561,7 +584,10 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     margin-bottom: 0.3rem;
-    opacity: 0.85;
+    /* Accent hue nudged toward the theme's text color so bright accents
+       (amber, teal, green) stay legible on the near-white light-mode tile
+       while staying vivid on dark. */
+    color: color-mix(in srgb, var(--tile-accent) 78%, var(--text-primary));
   }
   .tile-name {
     font-size: 1rem;

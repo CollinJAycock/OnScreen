@@ -603,27 +603,34 @@
   :global([data-theme="light"]) {
     color-scheme: light;
 
-    --bg-primary: #f5f5f7;
-    --bg-secondary: #ffffff;
-    --bg-elevated: #ffffff;
-    --bg-hover: rgba(0,0,0,0.04);
-    --text-primary: #1a1a2e;
-    --text-secondary: #666680;
-    --text-muted: #9999aa;
+    /* Layered cool-grey ramp instead of a wall of #ffffff. The canvas (the
+     * largest surface) is a soft grey that's easy on the eyes; surfaces step
+     * UP toward white as they elevate (canvas → sidebar → card), mirroring the
+     * dark theme's primary→secondary→elevated lightening. No surface is pure
+     * white except form inputs, which we WANT to pop as fillable. */
+    --bg-primary: #e7e8ee;    /* canvas — soft, no glare */
+    --bg-secondary: #eef0f4;  /* sidebar / chrome */
+    --bg-elevated: #fbfbfd;   /* cards / panels / modals — near-white */
+    --bg-hover: rgba(20,22,50,0.05);
+    --text-primary: #1b1b2c;
+    --text-secondary: #51516a;
+    --text-muted: #71718a;    /* darkened from #9999aa for legibility on grey */
     --accent: #6c5ce7;
     --accent-hover: #5a4bd6;
-    --accent-bg: rgba(108,92,231,0.08);
-    --accent-text: #6c5ce7;
-    --border: rgba(0,0,0,0.08);
-    --border-strong: rgba(0,0,0,0.15);
-    --error: #ef4444;
-    --error-bg: rgba(239,68,68,0.08);
-    --success: #22c55e;
-    --success-bg: rgba(34,197,94,0.08);
-    --info: #3b82f6;
-    --info-bg: rgba(59,130,246,0.08);
-    --shadow: rgba(0,0,0,0.12);
-    --input-bg: rgba(0,0,0,0.03);
+    --accent-bg: rgba(108,92,231,0.10);
+    --accent-text: #5a4bd6;   /* darker than --accent for AA on light surfaces */
+    /* Borders/shadows carry a faint cool tint (not flat black) and are a touch
+     * stronger so the lighter cards still separate from the greyer canvas. */
+    --border: rgba(20,22,50,0.10);
+    --border-strong: rgba(20,22,50,0.16);
+    --error: #dc2626;
+    --error-bg: rgba(220,38,38,0.10);
+    --success: #16a34a;
+    --success-bg: rgba(22,163,74,0.10);
+    --info: #2563eb;
+    --info-bg: rgba(37,99,235,0.10);
+    --shadow: rgba(20,22,50,0.14);
+    --input-bg: #ffffff;
   }
 
   /* Belt-and-suspenders for Firefox, which doesn't fully style native
