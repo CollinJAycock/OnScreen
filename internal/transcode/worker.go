@@ -295,10 +295,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 
 	var ffArgs []string
 	var actualEncoder Encoder
-	// buildTranscodeArgs rebuilds the re-encode argv with QSV decode on/off, so
-	// the QSV-decode path can retry with software decode on an early failure.
-	// nil for the directStream branch (no QSV, no fallback).
-	var buildTranscodeArgs func(useQSV bool) []string
+	// buildTranscodeArgs rebuilds the re-encode argv with QSV decode on/off and
+	// an overridable start offset / segment number / playlist filename, so the
+	// QSV-decode path can retry with software decode on an early failure and
+	// the auto-continue path can resume past a premature EOF. nil for the
+	// directStream branch (no QSV, no fallback, no auto-continue).
+	var buildTranscodeArgs func(useQSV bool, startOffset float64, startNumber int, playlistName string) []string
 	// qsvDecodeUsable: this run actually attempts QSV hardware decode (HEVC
 	// re-encode on a QSV-enabled worker). Gates the fallback below.
 	qsvDecodeUsable := false
@@ -350,10 +352,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"libplacebo", w.hasLibplacebo,
 		)
 
-		buildTranscodeArgs = func(useQSV bool) []string {
+		buildTranscodeArgs = func(useQSV bool, startOffset float64, startNumber int, playlistName string) []string {
 			return BuildHLS(BuildArgs{
 				InputPath:            input,
-				StartOffset:          job.StartOffsetSec,
+				StartOffset:          startOffset,
+				StartNumber:          startNumber,
+				PlaylistName:         playlistName,
 				Encoder:              enc,
 				IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI || enc == EncoderAV1VAAPI,
 				IsHEVC:               job.IsHEVC,
@@ -381,7 +385,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		}
 		// QSV decode is HEVC-only and not used for stream-copy (remux).
 		qsvDecodeUsable = w.qsvDecode && job.IsHEVC && enc != "copy"
-		ffArgs = buildTranscodeArgs(qsvDecodeUsable)
+		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
 	}
 
@@ -500,6 +504,11 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	}
 
 	exitErr, selfExited := runFFmpeg(ffArgs)
+	// continuationUseQSV tracks whether an auto-continue run should use QSV
+	// decode — true unless the QSV→software fallback below fired, in which
+	// case QSV can't decode this source and the continuation must stay on
+	// software too (the continuation path has no retry of its own).
+	continuationUseQSV := qsvDecodeUsable
 	// QSV-decode fallback: if the QSV-decode run died on its own before
 	// producing any segment (the historical HW-decode failure mode — ffmpeg
 	// aborts at decode init), retry once with software decode so a source QSV
@@ -511,7 +520,18 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// Clear any partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
-		_, _ = runFFmpeg(buildTranscodeArgs(false))
+		continuationUseQSV = false
+		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
+	}
+
+	// Auto-continue: a clean ffmpeg exit (code 0) that stops short of the
+	// source duration means the input had a defect — a corrupt cluster or
+	// non-monotonic DTS — that made a linear `-c:v copy` demux hit a premature
+	// EOF. Seeking past the bad spot reads the remainder fine, so we extend
+	// the same HLS playlist rather than leaving the client stalled at the
+	// buffer edge. directStream uses a different builder, so scope to BuildHLS.
+	if job.Decision != "directStream" && buildTranscodeArgs != nil && selfExited && exitErr == nil {
+		w.continueShortSession(ctx, job, sessionDir, segExt, input, continuationUseQSV, buildTranscodeArgs, runFFmpeg)
 	}
 
 	w.mu.Lock()

@@ -132,6 +132,16 @@ type BuildArgs struct {
 	// Output
 	SessionDir    string // abs path, e.g. /tmp/onscreen/sessions/{id}
 	SegmentPrefix string // relative prefix for .ts files, e.g. "seg"
+	// StartNumber sets the HLS first-segment index (`-start_number`). Zero
+	// uses ffmpeg's default (0). Used by the auto-continue path to resume
+	// numbering past the segments an earlier ffmpeg run already wrote, so
+	// the continuation's segment files don't collide with the prefix.
+	StartNumber int
+	// PlaylistName overrides the output playlist filename within SessionDir.
+	// Empty defaults to "index.m3u8" (the file the API serves). The
+	// auto-continue path writes to a side playlist (e.g. "cont.m3u8") that
+	// the worker stitches onto index.m3u8 itself.
+	PlaylistName string
 }
 
 // SegmentDuration is the HLS segment duration in seconds (ADR-007).
@@ -512,7 +522,11 @@ func BuildHLS(a BuildArgs) []string {
 	}
 
 	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d"+segExt)
-	playlistPath := filepath.Join(a.SessionDir, "index.m3u8")
+	playlistName := a.PlaylistName
+	if playlistName == "" {
+		playlistName = "index.m3u8"
+	}
+	playlistPath := filepath.Join(a.SessionDir, playlistName)
 	// Single muxed init + segs for fMP4 sessions. hls.js's transmuxer
 	// demuxes muxed fMP4 internally before appending to the per-track
 	// SourceBuffers, so we don't need ffmpeg's `-var_stream_map`
@@ -552,6 +566,13 @@ func BuildHLS(a BuildArgs) []string {
 		"-hls_segment_filename", segPattern,
 		"-hls_delete_threshold", fmt.Sprint(deleteThreshold),
 	)
+	// Resume segment numbering for an auto-continue run so its segment
+	// files (and playlist entries) start past the prefix the earlier run
+	// already wrote. Honored only without `-hls_flags append_list`, which
+	// is why the continuation writes a side playlist the worker stitches in.
+	if a.StartNumber > 0 {
+		args = append(args, "-start_number", fmt.Sprint(a.StartNumber))
+	}
 	// Mid-stream -ss + AC3→AAC re-encode leaves seg 0 declared with
 	// "0 channels" and no audio packets — the AAC encoder's priming
 	// samples come in with negative DTS after the seek reset and get
