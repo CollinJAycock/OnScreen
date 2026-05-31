@@ -163,6 +163,23 @@ describe('authApi', () => {
     expect(result.access_token).toBe('tok');
   });
 
+  // Regression: a wrong-credentials 401 on login must throw an
+  // ApiRequestError the login page can display — NOT trigger the generic
+  // 401→refresh→redirect cascade (which fired a spurious /auth/refresh and
+  // hard-redirected to /login, blanking the form with no error shown).
+  it('login throws ApiRequestError on 401 without attempting a refresh', async () => {
+    const fetch = mockFetch(401, {
+      error: { code: 'INVALID_CREDENTIALS', message: 'Invalid username or password', request_id: 'r' }
+    });
+    vi.stubGlobal('fetch', fetch);
+    const err = await authApi.login('admin', 'wrong').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiRequestError);
+    expect((err as ApiRequestError).status).toBe(401);
+    // Exactly one call — no silent /auth/refresh retry.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls.every((c) => !String(c[0]).includes('/auth/refresh'))).toBe(true);
+  });
+
   it('register calls POST /auth/register', async () => {
     vi.stubGlobal('fetch', mockFetch(200, { data: { id: '1', username: 'admin' } }));
     const result = await authApi.register('admin', 'pass');

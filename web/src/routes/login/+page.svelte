@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { authApi, api } from '$lib/api';
+  import { authApi, api, ApiRequestError } from '$lib/api';
 
   let username = '';
   let password = '';
@@ -101,7 +101,12 @@
       api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
       goto(nextRedirect ?? '/');
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Login failed.';
+      // A 401 on the login endpoint is always "wrong username/password" —
+      // show a clear, non-leaky message instead of the raw server string
+      // (which never reveals which field was wrong, by design).
+      error = e instanceof ApiRequestError && e.status === 401
+        ? 'Incorrect username or password.'
+        : e instanceof Error ? e.message : 'Login failed.';
       password = '';
     } finally {
       loading = false;
@@ -255,7 +260,7 @@
   }
 
   .login-card {
-    background: #0e0e18;
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 16px;
     padding: 2.5rem;
@@ -314,14 +319,14 @@
   }
 
   .forgot-link:hover {
-    color: #8888a0;
+    color: var(--text-secondary);
   }
 
   label {
     display: block;
     font-size: 0.8rem;
     font-weight: 500;
-    color: #8888a0;
+    color: var(--text-secondary);
     margin-bottom: 0.4rem;
     letter-spacing: 0.02em;
   }
@@ -329,7 +334,7 @@
   input {
     width: 100%;
     padding: 0.7rem 0.85rem;
-    background: #111120;
+    background: var(--input-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
     font-size: 0.95rem;
@@ -344,7 +349,7 @@
   }
 
   input:focus {
-    border-color: rgba(124,106,247,0.5);
+    border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-bg);
   }
 
@@ -380,7 +385,7 @@
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #6b5ce6;
+    background: var(--accent-hover);
   }
 
   .btn-primary:active:not(:disabled) {
@@ -405,7 +410,7 @@
     padding: 0.25rem 0;
     transition: color 0.15s;
   }
-  .link-toggle:hover { color: #b0b0c8; }
+  .link-toggle:hover { color: var(--text-secondary); }
 
   .divider {
     display: flex;
@@ -440,7 +445,7 @@
     background: var(--bg-hover);
     border: 1px solid var(--border-strong);
     border-radius: 8px;
-    color: #b0b0c8;
+    color: var(--text-secondary);
     font-size: 0.8rem;
     font-weight: 500;
     cursor: pointer;
@@ -449,8 +454,8 @@
 
   .sso-btn:hover {
     background: var(--border);
-    border-color: rgba(255,255,255,0.14);
-    color: #ddddf0;
+    border-color: var(--border-strong);
+    color: var(--text-primary);
   }
 
   .setup-link {
@@ -466,7 +471,7 @@
   }
 
   .setup-link a:hover {
-    color: #8888a0;
+    color: var(--text-secondary);
   }
 
   @media (max-width: 768px) {

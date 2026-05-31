@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import Page from './+page.svelte';
+// Resolves to the mocked module below, which re-exports the REAL class via
+// importActual — so `new ApiRequestError(...)` here is the same constructor
+// the page checks with `instanceof`.
+import { ApiRequestError } from '$lib/api';
 
 // vi.mock is hoisted to top of file — use vi.hoisted() so vars are ready.
 const mockGoto = vi.hoisted(() => vi.fn());
@@ -14,17 +18,24 @@ const mockLdapEnabled = vi.hoisted(() => vi.fn());
 const mockSamlEnabled = vi.hoisted(() => vi.fn());
 const mockForgotEnabled = vi.hoisted(() => vi.fn());
 
-vi.mock('$lib/api', () => ({
-  authApi: {
-    login: mockLogin,
-    setupStatus: mockSetupStatus,
-    oidcEnabled: mockOidcEnabled,
-    ldapEnabled: mockLdapEnabled,
-    samlEnabled: mockSamlEnabled,
-    forgotPasswordEnabled: mockForgotEnabled,
-  },
-  api: { setUser: mockSetUser }
-}));
+vi.mock('$lib/api', async () => {
+  // Pull the real module so we can re-export the genuine ApiRequestError
+  // class — the page's 401 branch does `e instanceof ApiRequestError`, which
+  // would throw on an undefined import if the mock omitted it.
+  const actual = await vi.importActual<typeof import('$lib/api')>('$lib/api');
+  return {
+    ApiRequestError: actual.ApiRequestError,
+    authApi: {
+      login: mockLogin,
+      setupStatus: mockSetupStatus,
+      oidcEnabled: mockOidcEnabled,
+      ldapEnabled: mockLdapEnabled,
+      samlEnabled: mockSamlEnabled,
+      forgotPasswordEnabled: mockForgotEnabled,
+    },
+    api: { setUser: mockSetUser },
+  };
+});
 
 describe('Login page', () => {
   beforeEach(() => {
@@ -100,6 +111,15 @@ describe('Login page', () => {
     render(Page);
     await fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form')!);
     await waitFor(() => expect(screen.getByText('Invalid credentials')).toBeInTheDocument());
+  });
+
+  it('maps a 401 ApiRequestError to a friendly, non-leaky message', async () => {
+    mockLogin.mockRejectedValue(new ApiRequestError('unauthorized', 401, 'INVALID_CREDENTIALS'));
+    render(Page);
+    await fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form')!);
+    await waitFor(() =>
+      expect(screen.getByText('Incorrect username or password.')).toBeInTheDocument(),
+    );
   });
 
   it('shows generic error when non-Error thrown', async () => {

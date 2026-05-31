@@ -524,7 +524,13 @@ async function captureTokens(pair: TokenPair): Promise<TokenPair> {
 export const authApi = {
   setupStatus: () => api.get<{ setup_required: boolean }>('/setup/status'),
   login: async (username: string, password: string) => {
-    const pair = await api.post<TokenPair>('/auth/login', { username, password });
+    // postNoRefresh, NOT post: on the login endpoint a 401 means "wrong
+    // credentials — show the error", not "session expired, silently refresh".
+    // A fresh login has no session to refresh, so the generic 401 path would
+    // fire /auth/refresh (also 401) and then hard-redirect to /login, wiping
+    // the form before any error banner renders. NoRefresh lets the 401
+    // surface as an ApiRequestError the login page can display.
+    const pair = await api.postNoRefresh<TokenPair>('/auth/login', { username, password });
     // A TOTP-gated account returns no tokens yet — don't persist empties;
     // the caller drives the second-factor step and captures on verify.
     if (pair.totp_required) return pair;
@@ -563,7 +569,9 @@ export const authApi = {
   ldapEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/ldap/enabled'),
   samlEnabled: () => api.get<{ enabled: boolean; display_name: string }>('/auth/saml/enabled'),
   ldapLogin: async (username: string, password: string) =>
-    captureTokens(await api.post<TokenPair>('/auth/ldap/login', { username, password })),
+    // postNoRefresh for the same reason as login above: a 401 is "bad
+    // credentials", not a dead session to refresh-then-redirect away.
+    captureTokens(await api.postNoRefresh<TokenPair>('/auth/ldap/login', { username, password })),
   forgotPasswordEnabled: () => api.get<{ enabled: boolean }>('/auth/forgot-password/enabled'),
   forgotPassword: (email: string) => api.post<{ message: string }>('/auth/forgot-password', { email }),
   resetPassword: (token: string, password: string) => api.post<{ message: string }>('/auth/reset-password', { token, password }),
