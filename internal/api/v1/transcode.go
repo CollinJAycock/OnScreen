@@ -227,6 +227,10 @@ type transcodeStartRequest struct {
 	AudioStreamIndex *int    `json:"audio_stream_index"` // nil = default (first) audio stream
 	SupportsHEVC     bool    `json:"supports_hevc"`      // client can decode HEVC (H.265) output
 	SupportsAV1      bool    `json:"supports_av1"`       // client can decode AV1 output — used to auto-prefer AV1 re-encode for AV1 source files
+	// MaxAudioChannels caps the transcoded AAC channel count. nil/0 preserves
+	// the source layout (5.1/7.1 stays multichannel); a stereo-only client can
+	// send 2 to force a downmix.
+	MaxAudioChannels *int `json:"max_audio_channels,omitempty"`
 }
 
 type transcodeStartResponse struct {
@@ -554,6 +558,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		audioStreamIdx = *body.AudioStreamIndex
 	}
 
+	// AAC output channel count: preserve the source layout (5.1/7.1) instead of
+	// always downmixing to stereo, capped by any client-declared maximum. Used
+	// by both the single-session job and the ABR ladder below.
+	clientMaxChannels := 0
+	if body.MaxAudioChannels != nil {
+		clientMaxChannels = *body.MaxAudioChannels
+	}
+	audioChannels := transcode.TargetAudioChannels(
+		transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx), clientMaxChannels)
+
 	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
 	isSourceAV1 := file.VideoCodec != nil && strings.EqualFold(*file.VideoCodec, "av1")
 	isSourceHDR := file.HDRType != nil && *file.HDRType != ""
@@ -619,7 +633,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		ladderCap := abrLadderCap(body.Height, h.cfg.TranscodeABRAutoMaxHeight, h.cfg.TranscodeABRMaxHeight)
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap)
 		if len(ladder) > 1 {
-			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, isSourceHDR, abrCodec, body.PositionMS)
+			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS)
 			return
 		}
 	}
@@ -685,7 +699,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		Height:           height,
 		BitrateKbps:      jobBitrate,
 		AudioCodec:       "aac",
-		AudioChannels:    2,
+		AudioChannels:    audioChannels,
 		AudioStreamIndex: audioStreamIdx,
 		IsHEVC:           isSourceHEVC,
 		IsAV1:            isSourceAV1,

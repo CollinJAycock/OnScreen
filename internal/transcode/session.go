@@ -68,7 +68,10 @@ type Session struct {
 	ABRRenditions    []Rendition `json:"abr_renditions,omitempty"`
 	DurationMS       int64       `json:"duration_ms,omitempty"`
 	AudioStreamIndex int         `json:"audio_stream_index,omitempty"`
-	NeedsToneMap     bool        `json:"needs_tone_map,omitempty"`
+	// AudioChannels is the AAC output channel count for the ABR ladder's
+	// children (preserves the source 5.1/7.1 instead of downmixing to stereo).
+	AudioChannels int  `json:"audio_channels,omitempty"`
+	NeedsToneMap  bool `json:"needs_tone_map,omitempty"`
 	// FrameRate (parent ABR session) is the source fps. The predicted
 	// variant playlist and each child's restart offset are quantized to the
 	// frame ffmpeg actually forces a keyframe on (ceil(i*SegmentDuration*fps)

@@ -54,7 +54,7 @@ func (h *NativeTranscodeHandler) startABR(
 	w http.ResponseWriter, r *http.Request,
 	sessionID, segTok, sourceURL string, userID, itemID uuid.UUID,
 	file *media.File, ladder []transcode.Rendition,
-	audioStreamIndex int, needsToneMap bool, codec string, positionMS int64,
+	audioStreamIndex, audioChannels int, needsToneMap bool, codec string, positionMS int64,
 ) {
 	ctx := r.Context()
 	sess := transcode.Session{
@@ -75,6 +75,7 @@ func (h *NativeTranscodeHandler) startABR(
 		ABRRenditions:    ladder,
 		DurationMS:       *file.DurationMS,
 		AudioStreamIndex: audioStreamIndex,
+		AudioChannels:    audioChannels,
 		NeedsToneMap:     needsToneMap,
 		// HEVC/AV1 ladders are fMP4 (.m4s + init.mp4); H.264 stays mpegts
 		// .ts. One codec for the whole ladder, chosen by client capability
@@ -530,7 +531,7 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		Height:           rung.Height,
 		BitrateKbps:      rung.BitrateKbps,
 		AudioCodec:       "aac",
-		AudioChannels:    2,
+		AudioChannels:    parent.AudioChannels,
 		AudioStreamIndex: parent.AudioStreamIndex,
 		NeedsToneMap:     parent.NeedsToneMap,
 		EnqueuedAt:       time.Now(),

@@ -481,11 +481,13 @@ func BuildHLS(a BuildArgs) []string {
 			channels = 2 // default stereo
 		}
 		args = append(args, "-ac", fmt.Sprint(channels))
-		if a.AudioBitrateKbps > 0 {
-			args = append(args, "-b:a", fmt.Sprintf("%dk", a.AudioBitrateKbps))
-		} else {
-			args = append(args, "-b:a", "128k")
+		bitrate := a.AudioBitrateKbps
+		if bitrate <= 0 {
+			// Scale with channel count so a 5.1 / 7.1 downmix isn't starved
+			// the way a flat 128k would be (128k stereo, ~64k/channel above).
+			bitrate = AACBitrateKbps(channels)
 		}
+		args = append(args, "-b:a", fmt.Sprintf("%dk", bitrate))
 		// Align audio with video on remux (video-copy + audio-reencode)
 		// sessions where the source's first keyframe isn't at PTS=0.
 		// aresample=async=1 lets the resampler stretch/squeeze to keep
