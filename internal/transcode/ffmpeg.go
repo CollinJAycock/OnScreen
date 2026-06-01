@@ -89,6 +89,14 @@ type BuildArgs struct {
 	// Only honored for HEVC sources on a re-encode; the worker sets it from
 	// TRANSCODE_QSV_DECODE and falls back to software decode on failure.
 	QSVDecode bool
+	// CudaHevcDecode opts into NVDEC hardware HEVC decode (-c:v hevc_cuvid) on
+	// the input, offloading the (4K-bound) HEVC decode to the GPU while keeping
+	// frames in system memory so the existing scale/tonemap/encode chain runs
+	// unchanged — like QSVDecode, but for NVIDIA. Only honored for HEVC sources
+	// on a re-encode; the worker sets it from a startup decode probe and falls
+	// back to software decode on failure. Distinct from the AV1 full-VRAM
+	// (-hwaccel_output_format cuda) path.
+	CudaHevcDecode bool
 	// IsAV1 marks an AV1 source. Required so video_copy remux switches
 	// the HLS container to fMP4 + av01 tag — mpegts has no AV1 stream
 	// type, so an `-c:v copy` into mpegts segments crashes the muxer
@@ -254,6 +262,20 @@ func BuildHLS(a BuildArgs) []string {
 		// decode on QSV.
 		if a.QSVDecode && a.IsHEVC && !useCUDADecode {
 			args = append(args, "-hwaccel", "qsv", "-c:v", "hevc_qsv")
+		}
+
+		// NVDEC hardware HEVC decode (the NVIDIA analogue of the QSV path).
+		// hevc_cuvid decodes on the GPU and, with no -hwaccel_output_format
+		// cuda, returns frames to system memory so the existing scale/tonemap
+		// chain + NVENC encode run unchanged — this offloads the expensive 4K
+		// HEVC decode that software-decoding bottlenecks below real-time (the
+		// cause of the 4K-HDR stall). Gated on a real startup decode probe
+		// (CudaHevcDecode) because mainline ffmpeg + some drivers fail NVDEC
+		// HEVC on certain sources; the worker retries with software decode if a
+		// session produces no segments. Mutually exclusive with the QSV path
+		// and the AV1 full-VRAM carve-out above.
+		if a.CudaHevcDecode && a.IsHEVC && !useCUDADecode && !a.QSVDecode {
+			args = append(args, "-c:v", "hevc_cuvid")
 		}
 
 		// Vulkan device for the libplacebo GPU tonemap (buildVideoFilter emits

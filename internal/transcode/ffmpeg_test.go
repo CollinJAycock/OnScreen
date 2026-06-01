@@ -1066,6 +1066,95 @@ func TestBuildHLS_QSVDecode_IgnoredForNonHEVC(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_CudaHevcDecode(t *testing.T) {
+	// NVDEC decode opt-in on an HEVC source: -c:v hevc_cuvid before -i, frames
+	// returned to system memory (no -hwaccel_output_format cuda), NVENC encode.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/4k.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		IsHEVC:         true,
+		CudaHevcDecode: true,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/s",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+	decIdx := strings.Index(argStr, "-c:v hevc_cuvid")
+	iIdx := strings.Index(argStr, " -i ")
+	if decIdx < 0 {
+		t.Fatalf("expected -c:v hevc_cuvid for NVDEC decode: %s", argStr)
+	}
+	if iIdx < 0 || decIdx > iIdx {
+		t.Errorf("NVDEC decode flag must precede -i: %s", argStr)
+	}
+	// Must NOT pin frames to a CUDA surface — the software/scale chain needs CPU frames.
+	if strings.Contains(argStr, "-hwaccel_output_format cuda") {
+		t.Errorf("NVDEC HEVC decode must return frames to system memory (no -hwaccel_output_format cuda): %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaHevcDecode_OffByDefault(t *testing.T) {
+	// Without CudaHevcDecode, an HEVC source decodes in software (no cuvid).
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsHEVC:        true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	if strings.Contains(strings.Join(args, " "), "hevc_cuvid") {
+		t.Errorf("NVDEC decode must be off unless CudaHevcDecode is set: %v", args)
+	}
+}
+
+func TestBuildHLS_CudaHevcDecode_IgnoredForNonHEVC(t *testing.T) {
+	// CudaHevcDecode is HEVC-only; an H.264 source must not get -c:v hevc_cuvid.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/movie.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		IsHEVC:         false,
+		CudaHevcDecode: true,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/s",
+		SegmentPrefix:  "seg",
+	})
+	if strings.Contains(strings.Join(args, " "), "hevc_cuvid") {
+		t.Errorf("NVDEC decode must be HEVC-only: %v", args)
+	}
+}
+
+func TestBuildHLS_CudaHevcDecode_NotWithQSV(t *testing.T) {
+	// QSV and NVDEC are mutually exclusive — if both are set (shouldn't happen
+	// on a real single-vendor host) QSV wins and NVDEC is suppressed, so the two
+	// decoders never both attach to one input.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/4k.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		IsHEVC:         true,
+		QSVDecode:      true,
+		CudaHevcDecode: true,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/s",
+		SegmentPrefix:  "seg",
+	})
+	if strings.Contains(strings.Join(args, " "), "hevc_cuvid") {
+		t.Errorf("NVDEC must yield to QSV when both set: %v", args)
+	}
+}
+
 func TestBuildHLS_HDR_LibplaceboPreferredOverZscale(t *testing.T) {
 	// HDR + HasLibplacebo: GPU tonemap via libplacebo (Vulkan), NOT software
 	// zscale — even when zscale is also available. libplacebo does tonemap +

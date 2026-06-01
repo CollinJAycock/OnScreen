@@ -44,6 +44,7 @@ type Worker struct {
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
+	cudaHevcDecode   bool              // NVDEC HEVC decode works here (startup probe); offloads 4K HEVC decode to the GPU
 	nodeID           string            // NODE_ID (hostname default) — reported so the admin can find this node in Settings ▸ Nodes
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
@@ -90,6 +91,17 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	// end-to-end probe (not just filter presence) so a host with the filter but
 	// no working Vulkan device falls back to software zscale.
 	hasLibplacebo := ProbeLibplaceboVulkan(ctx)
+	// NVDEC HEVC decode offload. Real round-trip probe (NVENC-encode a tiny
+	// HEVC clip, then NVDEC-decode it) so it's enabled only where mainline
+	// ffmpeg + the driver survive NVDEC HEVC. Skip entirely unless an NVENC
+	// encoder is present — no point probing on a non-NVIDIA worker.
+	cudaHevcDecode := false
+	for _, e := range encoders {
+		if IsNVENCEncoder(e) {
+			cudaHevcDecode = ProbeCudaHevcDecode(ctx)
+			break
+		}
+	}
 	// Probe OpenCL platforms once at worker startup. Result is cached
 	// for the worker's lifetime; ffmpeg arg-builder reads
 	// PickOpenCLDevice(this list, encoder) at session-start to avoid
@@ -110,6 +122,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
 		hasLibplacebo:    hasLibplacebo,
+		cudaHevcDecode:   cudaHevcDecode,
 		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
 		logger:           logger,
@@ -145,6 +158,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
 		"libplacebo", w.hasLibplacebo,
+		"nvdec_hevc", w.cudaHevcDecode,
 		"opencl_platforms", openclSummary,
 	)
 
@@ -304,6 +318,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// qsvDecodeUsable: this run actually attempts QSV hardware decode (HEVC
 	// re-encode on a QSV-enabled worker). Gates the fallback below.
 	qsvDecodeUsable := false
+	// cudaHevcUsable: this run attempts NVDEC HEVC hardware decode. Same gating
+	// and software fallback as qsvDecodeUsable. Captured by buildTranscodeArgs
+	// below, so clearing it on fallback also drops NVDEC from continuation runs.
+	cudaHevcUsable := false
 	switch job.Decision {
 	case "directStream":
 		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
@@ -377,14 +395,18 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				SubtitleStreams:      job.SubtitleStreams,
 				EncoderOpts:          w.encoderOpts,
 				QSVDecode:            useQSV,
+				CudaHevcDecode:       cudaHevcUsable,
 				ReadRate:             1.0,
 				ReadRateInitialBurst: 30,
 				SessionDir:           sessionDir,
 				SegmentPrefix:        "seg",
 			})
 		}
-		// QSV decode is HEVC-only and not used for stream-copy (remux).
+		// QSV / NVDEC decode are HEVC-only and not used for stream-copy (remux).
+		// A host has at most one (QSV=Intel iGPU, NVDEC=NVIDIA dGPU); BuildArgs
+		// gates NVDEC behind !QSVDecode so both being set can't double-decode.
 		qsvDecodeUsable = w.qsvDecode && job.IsHEVC && enc != "copy"
+		cudaHevcUsable = w.cudaHevcDecode && job.IsHEVC && enc != "copy"
 		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
 	}
@@ -509,18 +531,21 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// case QSV can't decode this source and the continuation must stay on
 	// software too (the continuation path has no retry of its own).
 	continuationUseQSV := qsvDecodeUsable
-	// QSV-decode fallback: if the QSV-decode run died on its own before
-	// producing any segment (the historical HW-decode failure mode — ffmpeg
-	// aborts at decode init), retry once with software decode so a source QSV
-	// can't handle still plays. A kill (session stop / idle / ctx) is not a
-	// decode failure, so selfExited gates this.
-	if qsvDecodeUsable && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
-		w.logger.Warn("QSV decode produced no segments; retrying with software decode",
-			"session_id", job.SessionID, "err", exitErr)
+	// Hardware-decode fallback: if a hardware-decode run (QSV or NVDEC) died on
+	// its own before producing any segment (the historical HW-decode failure
+	// mode — ffmpeg aborts at decode init), retry once with software decode so a
+	// source the GPU can't handle still plays. A kill (session stop / idle /
+	// ctx) is not a decode failure, so selfExited gates this. Clearing
+	// cudaHevcUsable (captured by buildTranscodeArgs) and continuationUseQSV also
+	// drops hardware decode from the retry and any later continuation runs.
+	if (qsvDecodeUsable || cudaHevcUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
+		w.logger.Warn("hardware decode produced no segments; retrying with software decode",
+			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "err", exitErr)
 		// Clear any partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
 		continuationUseQSV = false
+		cudaHevcUsable = false
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
 	}
 

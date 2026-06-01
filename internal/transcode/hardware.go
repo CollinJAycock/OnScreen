@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // EncoderEntry pairs an encoder with a human-friendly device label for the UI.
@@ -525,6 +526,42 @@ func ProbeLibplaceboVulkan(ctx context.Context) bool {
 		"-f", "null", "-",
 	)
 	return cmd.Run() == nil
+}
+
+// ProbeCudaHevcDecode reports whether NVDEC HEVC decode (hevc_cuvid) actually
+// works end-to-end on this host. The transcode pipeline software-decodes HEVC
+// by default because mainline ffmpeg + some NVIDIA drivers fail NVDEC HEVC on
+// certain inputs ("No decoder surfaces left", EINVAL); it switches to NVDEC
+// only when this probe passes. Decoded frames are kept in system memory (no
+// -hwaccel_output_format cuda), matching how BuildHLS uses it — so this offloads
+// only the (4K-bound) decode while the existing scale/tonemap/encode chain is
+// unchanged. A real round-trip is required: encode a tiny HEVC clip with NVENC
+// (which also confirms the GPU is usable), then decode it back via NVDEC.
+func ProbeCudaHevcDecode(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	tmp, err := os.CreateTemp("", "nvdec-probe-*.hevc")
+	if err != nil {
+		return false
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+	// 1) tiny HEVC clip via NVENC (confirms the NVIDIA GPU encode path too).
+	enc := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=s=256x256:r=10:d=1",
+		"-c:v", "hevc_nvenc", "-frames:v", "10", tmp.Name())
+	if enc.Run() != nil {
+		return false
+	}
+	// 2) decode it back on the GPU via NVDEC, output to system memory.
+	dec := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
+		"-c:v", "hevc_cuvid", "-i", tmp.Name(), "-frames:v", "5", "-f", "null", "-")
+	return dec.Run() == nil
 }
 
 func ParseOverride(override string) []Encoder {
