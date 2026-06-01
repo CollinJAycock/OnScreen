@@ -493,13 +493,16 @@ func run() error {
 	// search misses ("Akame ga Kill Theater" → "Akame ga Kill!
 	// Gaiden: Theater"). The dataset auto-refreshes weekly; first
 	// load downloads ~30 MB JSON, subsequent boots hit the cached
-	// file. Cache lives next to the artwork cache so existing
-	// volume-mount conventions on TrueNAS / Docker deploys cover it
-	// without new env wiring. Open is best-effort: a network failure
-	// at boot logs a warning and the lookup degrades to a no-op,
-	// leaving live AniList search as the only resolution path
-	// (current behaviour).
-	animeDBCachePath := filepath.Join(filepath.Dir(cfg.CachePath), "animedb")
+	// file. Cache lives in an "animedb" subdir UNDER the cache root —
+	// same convention as photos/livetv/dvr — so the existing writable
+	// volume mount (CACHE_PATH, /var/cache/onscreen in the container)
+	// covers it without new env wiring. (Using filepath.Dir here would
+	// put it a level up, e.g. /var/cache, which is root-owned in the
+	// locked-down container and not writable by the runtime user.)
+	// Open is best-effort: if even this dir is read-only it falls back
+	// to a temp dir, and a total failure logs a warning while live
+	// AniList search remains the resolution path.
+	animeDBCachePath := filepath.Join(cfg.CachePath, "animedb")
 	animeDBClient := animedb.New(animeDBCachePath, logger)
 	go func() {
 		// Run in background so a slow first-time download doesn't block

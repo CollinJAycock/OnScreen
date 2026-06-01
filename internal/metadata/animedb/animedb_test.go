@@ -251,3 +251,44 @@ func TestOpen_RefreshUsesCachedFallback(t *testing.T) {
 		t.Error("stale cache should have been loaded")
 	}
 }
+
+// TestOpen_FallsBackToTempWhenCacheDirUnwritable covers the locked-down
+// container path: when the configured cache dir can't be created (here
+// its parent is a regular file, which makes MkdirAll fail on every OS),
+// Open falls back to a temp dir and the offline lookup still works
+// instead of disabling the fallback.
+func TestOpen_FallsBackToTempWhenCacheDirUnwritable(t *testing.T) {
+	// Capture real temp dirs before redirecting os.TempDir(), so the
+	// fallback lands in an isolated per-test dir we control + clean up.
+	blockerDir := t.TempDir()
+	isolatedTmp := t.TempDir()
+	t.Setenv("TMPDIR", isolatedTmp) // unix
+	t.Setenv("TMP", isolatedTmp)    // windows
+	t.Setenv("TEMP", isolatedTmp)   // windows
+
+	// Make the configured cache dir uncreatable by parking a regular
+	// file where a parent directory would need to be.
+	blocker := filepath.Join(blockerDir, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cacheDir := filepath.Join(blocker, "animedb")
+
+	srcPath := fixture(t)
+	db := NewWithSource(cacheDir, "file://"+srcPath, nil, nil)
+	if err := db.Open(context.Background()); err != nil {
+		t.Fatalf("Open should have fallen back to a temp dir, got: %v", err)
+	}
+
+	// The offline fallback works after the switch.
+	if _, ok := db.Lookup("Akame ga Kill!"); !ok {
+		t.Error("offline lookup should work via the temp fallback")
+	}
+	// cacheDir was switched to a writable location and the cache landed there.
+	if db.cacheDir == "" || db.cacheDir == cacheDir {
+		t.Errorf("expected cacheDir to switch to a writable fallback, got %q", db.cacheDir)
+	}
+	if _, err := os.Stat(db.cachePath()); err != nil {
+		t.Errorf("cache file should exist in the fallback dir: %v", err)
+	}
+}

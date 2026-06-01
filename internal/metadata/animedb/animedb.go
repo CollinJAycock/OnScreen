@@ -114,12 +114,12 @@ func NewWithSource(cacheDir, source string, c *http.Client, logger *slog.Logger)
 // is missing or stale. Safe to call repeatedly (each call refreshes
 // if needed), but cheap callers prefer Lookup which is read-only.
 func (db *DB) Open(ctx context.Context) error {
+	// Pick + create a writable cache dir. Falls back to a temp dir when
+	// the configured location is read-only (locked-down container whose
+	// parent dir is root-owned), and only leaves the dir empty — i.e.
+	// cache-less, fetch-each-boot — when nothing is writable at all.
+	db.ensureCacheDir(ctx)
 	cachePath := db.cachePath()
-	if cachePath != "" {
-		if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-			return fmt.Errorf("animedb: make cache dir: %w", err)
-		}
-	}
 
 	// Decide whether to fetch.
 	stale := true
@@ -208,6 +208,42 @@ func (db *DB) cachePath() string {
 		return ""
 	}
 	return filepath.Join(db.cacheDir, "anime-offline-database.json")
+}
+
+// ensureCacheDir creates the configured cache directory, mutating
+// db.cacheDir to whatever location actually worked so the rest of Open
+// (fetch + load) uses it.
+//
+// In a locked-down container the configured dir can be unwritable
+// because its parent is root-owned. Rather than disabling the offline
+// fallback entirely (the old behaviour: MkdirAll error → WARN), we fall
+// back to a per-host temp dir. That's lost on container restart, which
+// just re-triggers the weekly download — cheap insurance for a dataset
+// that refreshes weekly anyway. Only when nothing is writable (not even
+// temp) do we go cache-less, leaving cacheDir empty so Open fetches each
+// boot and hard-fails only when the network is also down.
+func (db *DB) ensureCacheDir(ctx context.Context) {
+	if db.cacheDir == "" {
+		return
+	}
+	err := os.MkdirAll(db.cacheDir, 0o755)
+	if err == nil {
+		return
+	}
+
+	fallback := filepath.Join(os.TempDir(), "onscreen-animedb")
+	if fallback != db.cacheDir {
+		if ferr := os.MkdirAll(fallback, 0o755); ferr == nil {
+			db.logger.InfoContext(ctx, "animedb: configured cache dir not writable; using temp fallback",
+				"configured", db.cacheDir, "fallback", fallback, "err", err)
+			db.cacheDir = fallback
+			return
+		}
+	}
+
+	db.logger.WarnContext(ctx, "animedb: no writable cache dir; on-disk cache disabled (fetching each boot)",
+		"configured", db.cacheDir, "err", err)
+	db.cacheDir = ""
 }
 
 func (db *DB) fetchToCache(ctx context.Context) error {
