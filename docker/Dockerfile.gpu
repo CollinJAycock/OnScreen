@@ -64,6 +64,14 @@ RUN groupadd -r onscreen && useradd -r -g onscreen onscreen \
  && chown -R onscreen:onscreen /var/cache/onscreen
 USER onscreen
 ENV CACHE_PATH=/var/cache/onscreen
+# CUDA JIT cache on the persistent, writable cache volume. ffmpeg ships its CUDA
+# filters (scale_cuda) as PTX that the driver JIT-compiles to this GPU's SASS on
+# first use — CPU-bound, ~90s cold on older arches. The default cache lives in
+# $HOME/.nv, which the non-root onscreen user can't write, so without this it
+# re-JITs on EVERY process (blowing the scale_cuda probe's timeout → cuda_scale
+# disabled, and a ~90s stall at the head of every transcode). Pointing it at the
+# /var/cache/onscreen volume makes the JIT a one-time cost that survives restarts.
+ENV CUDA_CACHE_PATH=/var/cache/onscreen/nv
 
 COPY --from=builder /bin/server  /usr/local/bin/server
 COPY --from=builder /bin/worker  /usr/local/bin/worker

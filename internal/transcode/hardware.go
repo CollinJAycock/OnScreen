@@ -580,7 +580,12 @@ func ProbeCudaHevcScale(ctx context.Context) bool {
 		return false
 	default:
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Generous timeout: on a cold CUDA JIT cache the driver compiles the
+	// scale_cuda kernels for this GPU arch on first use, which is CPU-bound and
+	// can take ~90s (measured ~84s on a Turing RTX 5000). The worker runs this
+	// in the background so the wait doesn't block startup, and CUDA_CACHE_PATH
+	// (persistent volume) means it's a one-time cost — warm runs return in ~2s.
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
 	tmp, err := os.CreateTemp("", "nvscale-probe-*.hevc")
 	if err != nil {

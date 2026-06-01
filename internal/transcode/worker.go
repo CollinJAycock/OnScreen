@@ -45,7 +45,7 @@ type Worker struct {
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
 	cudaHevcDecode   bool              // NVDEC HEVC decode works here (startup probe); offloads 4K HEVC decode to the GPU (system memory)
-	cudaScale        bool              // full-VRAM chain (cuvid→scale_cuda→NVENC) works here (startup probe); offloads SDR HEVC/H.264 scale to the GPU
+	cudaScale        atomic.Bool       // full-VRAM chain (cuvid→scale_cuda→NVENC) works here; probed in the background (cold scale_cuda JIT can take ~90s), flips on when warmed
 	nodeID           string            // NODE_ID (hostname default) — reported so the admin can find this node in Settings ▸ Nodes
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
@@ -97,15 +97,11 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	// ffmpeg + the driver survive NVDEC HEVC. Skip entirely unless an NVENC
 	// encoder is present — no point probing on a non-NVIDIA worker.
 	cudaHevcDecode := false
-	// Full-VRAM HEVC chain (cuvid→scale_cuda→NVENC). Used for 4K SDR re-encodes
-	// so the downscale stays on the GPU; HDR keeps the system-memory decode
-	// (cudaHevcDecode) + libplacebo tonemap. Separately probed because it's the
-	// historically fragile mainline path.
-	cudaScale := false
+	hasNVENC := false
 	for _, e := range encoders {
 		if IsNVENCEncoder(e) {
+			hasNVENC = true
 			cudaHevcDecode = ProbeCudaHevcDecode(ctx)
-			cudaScale = ProbeCudaHevcScale(ctx)
 			break
 		}
 	}
@@ -130,14 +126,40 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasZscale:        hasZscale,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
-		cudaScale:        cudaScale,
 		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
 		logger:           logger,
 		activeJobs:       make(map[string]*os.Process),
 	}
 	w.maxSessions.Store(int32(maxSessions))
+	// Probe the full-VRAM scale_cuda chain in the BACKGROUND. The first run on a
+	// cold CUDA JIT cache compiles the scale_cuda kernels for this GPU arch,
+	// which is CPU-bound and can take ~60-90s; running it synchronously here
+	// would delay the HTTP server (NewWorker is called before ListenAndServe)
+	// and trip the container health check into a restart loop. With
+	// CUDA_CACHE_PATH on a persistent volume that cost is paid once, then warm
+	// boots return in ~2s. Until it completes, cudaScale stays false and SDR
+	// HEVC/H.264 downscales use the system-memory / software path.
+	if hasNVENC {
+		go w.warmCudaScale()
+	}
 	return w
+}
+
+// warmCudaScale probes the full-VRAM scale_cuda chain and enables CudaVRAM if it
+// works. Runs in its own goroutine (see NewWorker) so the cold scale_cuda JIT
+// never blocks startup; the capability flips on once the kernels are compiled
+// and cached.
+func (w *Worker) warmCudaScale() {
+	start := time.Now()
+	if ProbeCudaHevcScale(context.Background()) {
+		w.cudaScale.Store(true)
+		w.logger.Info("cuda_scale enabled (full-VRAM scale_cuda path)",
+			"warmup", time.Since(start).Round(time.Second))
+	} else {
+		w.logger.Warn("cuda_scale unavailable; SDR HEVC/H.264 downscales stay on software scale",
+			"elapsed", time.Since(start).Round(time.Second))
+	}
 }
 
 // Start runs the worker: registers, starts the HTTP segment server,
@@ -167,7 +189,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"zscale", w.hasZscale,
 		"libplacebo", w.hasLibplacebo,
 		"nvdec_hevc", w.cudaHevcDecode,
-		"cuda_scale", w.cudaScale,
+		"cuda_scale", w.cudaScale.Load(), // false at startup; probed async, flips on after the scale_cuda JIT warms
 		"opencl_platforms", openclSummary,
 	)
 
@@ -427,7 +449,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// (cudaHevcUsable) decode. BuildArgs picks VRAM over the system-memory
 		// path when both are set, so the two don't conflict. H.264 shares the
 		// HEVC-validated probe — h264_cuvid is at least as reliable.
-		cudaVRAMUsable = w.cudaScale && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && enc != "copy"
+		cudaVRAMUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && enc != "copy"
 		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
 	}
