@@ -18,7 +18,7 @@ ARG CUDA_VERSION=12.8.0
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential nasm yasm pkg-config git wget patch \
+      build-essential clang nasm yasm pkg-config git wget patch \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
       libgnutls28-dev libzimg-dev ocl-icd-opencl-dev \
@@ -87,12 +87,24 @@ COPY docker/patches/ /tmp/ffmpeg-patches/
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
     for p in /tmp/ffmpeg-patches/*.patch; do echo "== applying $(basename "$p") ==" && patch -p1 < "$p"; done
 
+# Compile the CUDA kernels with clang (--enable-cuda-llvm), NOT nvcc. The
+# jellyfin tonemap_cuda patch (0004) + its enhanced converter (0003) use a CUDA
+# dither *texture object* that nvcc miscompiles: the kernel corrupts CUDA memory
+# at runtime, after which the decoder frame pool fails with
+# CUDA_ERROR_OUT_OF_MEMORY and cleanup hits cuMemFree CUDA_ERROR_ILLEGAL_ADDRESS
+# — observed on bare-metal Turing (QA RTX 5000) AND Blackwell/WSL2. scale_cuda
+# alone survives nvcc, but tonemap_cuda does not. jellyfin builds these kernels
+# with clang/cuda-llvm (their prebuilt binary runs tonemap_cuda fine), so we
+# match that toolchain. clang 18 (Ubuntu 24.04) compiles CUDA 12.8 -> PTX with
+# only a benign -Wunknown-cuda-version warning; ffmpeg emits sm_30 PTX that JITs
+# forward to any GPU. nvcc is no longer used for CUDA in this build.
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
     ./configure \
       --prefix=/usr/local \
       --enable-gpl \
       --enable-nonfree \
-      --enable-cuda-nvcc \
+      --enable-cuda-llvm \
+      --nvcc=clang \
       --enable-nvenc \
       --enable-nvdec \
       --enable-cuvid \
