@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential nasm yasm pkg-config git wget \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
-      libgnutls28-dev libzimg-dev ocl-icd-opencl-dev && \
+      libgnutls28-dev libzimg-dev ocl-icd-opencl-dev \
+      libplacebo-dev libvulkan-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # NVIDIA codec headers (required for nvenc/nvdec)
@@ -43,6 +44,8 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
       --enable-libfreetype \
       --enable-libzimg \
       --enable-opencl \
+      --enable-vulkan \
+      --enable-libplacebo \
       --enable-gnutls \
       --disable-static \
       --enable-shared && \
@@ -57,6 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
       libgnutls28-dev libzimg-dev ocl-icd-libopencl1 \
+      libplacebo338 libvulkan1 \
       libchromaprint-tools postgresql-client \
       tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa tesseract-ocr-fra \
       tesseract-ocr-deu tesseract-ocr-ita tesseract-ocr-por tesseract-ocr-jpn \
@@ -65,6 +69,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /etc/OpenCL/vendors && \
     echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd
+
+# libplacebo (Vulkan) GPU HDR→SDR tonemap: ffmpeg is built --enable-libplacebo
+# --enable-vulkan and the runtime carries the Vulkan loader (libvulkan1) +
+# libplacebo. The NVIDIA Vulkan ICD itself is injected by nvidia-container-
+# toolkit from the host driver — but ONLY when the container requests the
+# `graphics` capability. The GPU deploy must therefore set
+# NVIDIA_DRIVER_CAPABILITIES to include graphics (e.g. "all" or
+# "compute,video,utility,graphics"); with the default "compute,utility" the
+# loader finds no ICD and the worker silently falls back to software zscale.
 
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=builder /usr/local/lib/lib*.so* /usr/local/lib/

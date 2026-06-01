@@ -15,7 +15,11 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu, video]
+              # graphics + the Vulkan loader let nvidia-container-toolkit inject
+              # the NVIDIA Vulkan ICD, which libplacebo needs for GPU HDR→SDR
+              # tonemap. Without graphics the worker silently falls back to
+              # software zscale. compute/video/utility cover NVENC/NVDEC/CUDA.
+              capabilities: [gpu, compute, video, graphics, utility]
 
   worker:
     build:
@@ -27,7 +31,11 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu, video]
+              # graphics + the Vulkan loader let nvidia-container-toolkit inject
+              # the NVIDIA Vulkan ICD, which libplacebo needs for GPU HDR→SDR
+              # tonemap. Without graphics the worker silently falls back to
+              # software zscale. compute/video/utility cover NVENC/NVDEC/CUDA.
+              capabilities: [gpu, compute, video, graphics, utility]
 
   # Local worker running as a separate process/container.
   # Shares the same Valkey/Postgres/media but uses a different WORKER_ADDR.
@@ -60,4 +68,8 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu, video]
+              # graphics + the Vulkan loader let nvidia-container-toolkit inject
+              # the NVIDIA Vulkan ICD, which libplacebo needs for GPU HDR→SDR
+              # tonemap. Without graphics the worker silently falls back to
+              # software zscale. compute/video/utility cover NVENC/NVDEC/CUDA.
+              capabilities: [gpu, compute, video, graphics, utility]
