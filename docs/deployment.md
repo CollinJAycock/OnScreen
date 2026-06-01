@@ -275,7 +275,16 @@ Open `http://your-server:7070` in a browser and create your admin account.
 
 ## GPU-Accelerated Deployment (NVIDIA)
 
-For hardware-accelerated transcoding with NVENC, use the GPU Docker images. This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host.
+For hardware-accelerated transcoding with NVENC/NVDEC, use the GPU Docker images. This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host.
+
+### Driver and CUDA requirements
+
+The FFmpeg image is built on **CUDA 12.8** (`ARG CUDA_VERSION` in `docker/Dockerfile.ffmpeg`) — deliberately, not CUDA 13 — for broad hardware compatibility:
+
+- **CUDA 12.8** needs NVIDIA driver **≥ 570** and supports GPUs from **Maxwell through Blackwell**.
+- **CUDA 13** would require driver **≥ 580** (only released mid-2025) and drops every GPU older than Turing (compute < 7.5) — breaking GPU acceleration on the drivers most distros/NAS appliances actually ship (535/550/560/570) and on common cards like the GTX 10-series and Quadro P2000.
+
+Check the host with `nvidia-smi`: the driver must be **≥ 570** (the table's "CUDA Version" shows the max the driver supports — needs ≥ 12.8). NVENC/NVDEC themselves work on older drivers via the codec SDK, but the CUDA-runtime scaler (`scale_cuda`) needs the matched driver. The `nvidia/cuda` base is pinned in `.github/dependabot.yml` so it isn't auto-bumped back to 13; only raise `CUDA_VERSION` once a 580+ driver is broadly deployed.
 
 ### 1. Build the FFmpeg base image (one-time)
 
@@ -283,7 +292,7 @@ For hardware-accelerated transcoding with NVENC, use the GPU Docker images. This
 docker build -f docker/Dockerfile.ffmpeg -t onscreen-ffmpeg:latest .
 ```
 
-This builds a custom FFmpeg with NVENC, CUDA hwaccel, and tonemapping filters. It rarely changes, so the layer cache makes subsequent rebuilds fast.
+This builds a custom FFmpeg with NVENC, NVDEC, CUDA hwaccel (`scale_cuda`), and the libplacebo Vulkan tonemap. It rarely changes, so the layer cache makes subsequent rebuilds fast — **except** when `CUDA_VERSION` changes, which busts the cache for a full (~15–20 min) rebuild.
 
 ### 2. Build the GPU application image
 
@@ -304,18 +313,44 @@ worker:
         devices:
           - driver: nvidia
             count: 1
-            capabilities: [gpu, video]
+            capabilities: [gpu, compute, video, graphics, utility]
   environment:
     NVIDIA_VISIBLE_DEVICES: all
-    NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    NVIDIA_DRIVER_CAPABILITIES: all
     TRANSCODE_ENCODERS: nvenc,software
+  volumes:
+    - onscreen_cache:/var/cache/onscreen   # MUST persist — see below
 ```
 
 Or run directly:
 
 ```bash
-docker run --gpus all -e TRANSCODE_ENCODERS=nvenc,software onscreen:gpu
+docker run --gpus all -e TRANSCODE_ENCODERS=nvenc,software \
+  -v onscreen_cache:/var/cache/onscreen onscreen:gpu
 ```
+
+Two settings here are easy to miss and each silently disables a GPU path:
+
+- **`graphics` capability / `NVIDIA_DRIVER_CAPABILITIES` must include `graphics`** (or `all`). `nvidia-container-toolkit` only injects the NVIDIA Vulkan ICD when `graphics` is requested, and the libplacebo HDR tonemap (which also does the GPU downscale) needs it. Without it the worker logs `libplacebo=false` and falls back to a software scale/tonemap. The image bakes `NVIDIA_DRIVER_CAPABILITIES=all` in, but **orchestrators can override it** — notably TrueNAS apps, where you must set it explicitly in the app's environment.
+- **`/var/cache/onscreen` must be a persistent volume.** It holds the CUDA JIT cache (`CUDA_CACHE_PATH`). FFmpeg ships `scale_cuda` as PTX that the driver JIT-compiles to your GPU's SASS on first use — CPU-bound, up to ~90s cold on older arches. With a persistent volume that cost is paid **once**; on an ephemeral volume it recurs every deploy (non-blocking, but each fresh container re-warms for ~90s before `cuda_scale` turns on).
+
+### Verifying GPU acceleration
+
+On startup the worker probes the hardware and logs a `transcode worker ready` line. Check it:
+
+```bash
+docker logs <container> 2>&1 | grep "worker ready"
+```
+
+The flags that matter:
+
+| Flag | Meaning | Needs |
+|------|---------|-------|
+| `nvdec_hevc` | NVDEC HEVC decode to system memory (offloads the decode) | NVENC GPU + driver |
+| `cuda_scale` | Full-VRAM `cuvid → scale_cuda → NVENC` (GPU downscale, 4K SDR) | matched CUDA/driver + warm JIT cache |
+| `libplacebo` | Vulkan GPU HDR→SDR tonemap **and** scale (4K HDR) | `graphics` capability |
+
+`cuda_scale` is probed **in the background** and reads `false` in the initial `worker ready` line; on a cold JIT cache it flips on ~90s later (logged as `cuda_scale enabled (full-VRAM scale_cuda path)`), and within ~2s on warm boots. So a healthy GPU node ends up with all three `true`. If any stays `false`, see [Troubleshooting](#troubleshooting-gpu-acceleration).
 
 ### NVENC tuning
 
@@ -328,13 +363,43 @@ Configure NVENC quality/performance via environment variables (all hot-reloadabl
 
 ### HDR tonemapping
 
-HDR content is automatically tonemapped to SDR for clients that don't support HDR. The tonemapping filter is selected by priority:
+HDR content is automatically tonemapped to SDR for clients that don't support HDR. The worker picks the best available filter at runtime, in priority order:
 
-1. **tonemap_cuda** — all-GPU, fastest (requires jellyfin-ffmpeg fork)
-2. **tonemap_opencl** — CUDA decode → OpenCL tonemap → NVENC encode
-3. **zscale + tonemap** — CPU software fallback (requires libzimg)
+1. **libplacebo (Vulkan)** — GPU tonemap **and** scale in one pass; best quality and the preferred path. Requires the `graphics` capability (see above). This is what our mainline FFmpeg build uses.
+2. **tonemap_opencl** — OpenCL tonemap on the GPU; fallback when libplacebo's Vulkan device is unavailable.
+3. **zscale + tonemap** — CPU software fallback (requires libzimg).
+
+> Note: `tonemap_cuda` is **not** in our build — it's a jellyfin-ffmpeg downstream patch, not upstream FFmpeg. We build mainline FFmpeg and use libplacebo for the GPU HDR path instead. (SDR downscales go through `scale_cuda`, which *is* mainline.)
 
 The player displays a notice when tonemapping is active, recommending users enable HDR on their display.
+
+### Troubleshooting GPU acceleration
+
+Symptoms are read off the `worker ready` log line (see [Verifying GPU acceleration](#verifying-gpu-acceleration)).
+
+**`libplacebo=false` (4K HDR slow / software tonemap):** the container isn't getting the Vulkan ICD. Ensure `NVIDIA_DRIVER_CAPABILITIES` includes `graphics` (or `all`) **as actually applied to the container** — on TrueNAS/orchestrators the app layer can override the image default, so set it in the app env. Confirm inside the container: `ffmpeg -init_hw_device vulkan -f lavfi -i color=c=black:s=64x64 -frames:v 1 -f null -` should succeed.
+
+**`cuda_scale=false` (4K SDR slow / software scale):** almost always one of:
+- *CUDA/driver mismatch* — the image's CUDA toolkit is newer than the host driver supports. Check `nvidia-smi` driver ≥ 570 and that the container reports `/usr/local/cuda-12.8` (`docker exec <c> ls -d /usr/local/cuda-*`). NVENC/NVDEC will still work (they don't use the CUDA runtime), which is why `nvdec_hevc=true` but `cuda_scale=false`.
+- *Cold/non-persistent JIT cache* — if `/var/cache/onscreen` isn't a persistent, writable volume, the `scale_cuda` PTX re-JITs (~90s) on every process and the probe times out. Verify `CUDA_CACHE_PATH=/var/cache/onscreen/nv` resolves to a writable volume; after the first warm-up the dir should contain an `index` file. A quick reproducer in the container — run twice, expect cold (~90s) then warm (~2s):
+  ```bash
+  ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=640x480:r=10:d=1 -c:v hevc_nvenc -frames:v 10 /tmp/t.hevc
+  time ffmpeg -hide_banner -loglevel error -hwaccel cuda -hwaccel_output_format cuda -c:v hevc_cuvid -i /tmp/t.hevc -vf scale_cuda=320:240 -c:v hevc_nvenc -frames:v 5 -f null -
+  ```
+
+**First transcode after a fresh deploy is slow, then fine:** expected — that's the one-time cold `scale_cuda` JIT warming the cache. Persist `/var/cache/onscreen` so it doesn't recur.
+
+### Local GPU testing on Docker Desktop (Windows/WSL2)
+
+For contributors validating the GPU image on Windows: Docker Desktop's `--gpus` passthrough injects CUDA compute (`libcuda`) but **not** the NVENC/NVDEC codec libraries, so `hevc_nvenc`/`hevc_cuvid` fail with "Cannot load libnvidia-encode.so.1". Mount them from the WSL VM:
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm --gpus all \
+  -v /usr/lib/wsl/lib:/wsllib:ro -e LD_LIBRARY_PATH=/wsllib \
+  onscreen-ffmpeg:latest bash -c 'ffmpeg ...'
+```
+
+`MSYS_NO_PATHCONV=1` is only needed in Git Bash (it stops the `/usr/lib/wsl/lib` path being mangled to a Windows path). For the full stack, put the same `volumes`/`environment` in a local-only `docker/docker-compose.local-gpu.yml` (gitignored) layered as an extra `-f`. Note: libplacebo/Vulkan still won't initialize in WSL2 containers — that path can only be validated on real Linux.
 
 ---
 
