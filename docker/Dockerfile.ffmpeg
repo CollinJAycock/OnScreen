@@ -30,7 +30,6 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
       --enable-nvenc \
       --enable-nvdec \
       --enable-cuvid \
-      --enable-libnpp \
       --extra-cflags=-I/usr/local/cuda/include \
       --extra-ldflags=-L/usr/local/cuda/lib64 \
       --enable-libx264 \
