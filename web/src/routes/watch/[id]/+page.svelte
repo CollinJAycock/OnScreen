@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { progressUpdates } from '$lib/stores/notifications';
+  import { detectClientCaps, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
   import { capabilities } from '$lib/stores/capabilities';
   import { isTauri, nativeDownload } from '$lib/native';
   import {
@@ -657,110 +658,20 @@
   const STALL_RESTART_MS = 8000;    // no progress this long while playing → restart
   const STALL_COOLDOWN_MS = 15000;  // min gap between stall-triggered restarts
 
-  // Audio codecs that browsers can decode natively.
-  // Audio codecs browsers can decode natively in MP4/WebM containers.
-  // AC-3, E-AC-3, DTS, TrueHD, ALAC, MP2, raw PCM are not reliably supported
-  // in any browser — they must be transcoded to AAC.
-  const browserAudioCodecs = new Set([
-    'aac', 'mp3', 'opus', 'flac', 'vorbis',
-  ]);
-  // Containers browsers handle reliably for direct play (faststart MP4/MOV/WebM).
-  const browserContainers = new Set(['mp4', 'webm', 'mov']);
-  // Detect HEVC (H.265) playback support via MediaSource Extensions.
-  // HLS.js transmuxes MPEG-TS → fMP4 before feeding MSE, so check mp4 not mp2t.
-  let clientSupportsHEVC = false;
-  try {
-    clientSupportsHEVC = typeof MediaSource !== 'undefined' &&
-      MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"');
-  } catch { /* MSE unavailable */ }
-  // 10-bit HEVC (Main 10) is a distinct capability from 8-bit (Main): many
-  // browsers/devices decode Main but not Main10, so a 10-bit source can't be
-  // direct-played/remuxed just because 8-bit HEVC works. hvc1.2.4… = Main 10.
-  let clientSupports10bitHEVC = false;
-  try {
-    clientSupports10bitHEVC = typeof MediaSource !== 'undefined' &&
-      MediaSource.isTypeSupported('video/mp4; codecs="hvc1.2.4.L150.B0"');
-  } catch { /* MSE unavailable */ }
-  // Detect AV1 playback support. The codec string `av01.0.05M.08` is
-  // Main profile, level 5, 8-bit — covers the common 1080p/4K SDR
-  // range. Reported to the server as `supports_av1` so the API can
-  // auto-prefer AV1 re-encode for AV1 source files (avoids the
-  // AV1 → H.264 round-trip on a forced-quality click).
-  let clientSupportsAV1 = false;
-  try {
-    clientSupportsAV1 = typeof MediaSource !== 'undefined' &&
-      MediaSource.isTypeSupported('video/mp4; codecs="av01.0.05M.08"');
-  } catch { /* MSE unavailable */ }
-
-  // Video codecs browsers can decode natively.
-  const browserVideoCodecs = new Set(['h264', 'vp8', 'vp9', 'av1']);
-  // Video codecs that can be stream-copied (remuxed) into MPEG-TS for HLS.js.
-  // AV1 and VP8/VP9 are NOT here: MPEG-TS cannot carry AV1, and VP8/VP9 are
-  // WebM-only — putting them in MPEG-TS produces an unplayable stream.
-  const remuxableVideoCodecs = new Set(['h264']);
-
-  // HEVC direct play / remux: if the browser can hardware-decode H.265,
-  // treat it like H.264 — direct play from MP4, remux from MKV.
-  if (clientSupportsHEVC) {
-    browserVideoCodecs.add('hevc');
-    browserVideoCodecs.add('h265');
-    remuxableVideoCodecs.add('hevc');
-    remuxableVideoCodecs.add('h265');
-  }
-
-  // HDR display detection — avoid direct play/remux of HDR content on SDR screens
-  // (video plays but looks washed out without tonemapping).
-  const clientSupportsHDR = typeof window !== 'undefined' &&
-    window.matchMedia('(dynamic-range: high)').matches;
-
-  /** True when the browser can decode this file's video at its bit depth.
-   *  Browsers can't decode 10-bit H.264 (Hi10P) at all, and 10-bit HEVC needs
-   *  Main 10 support specifically (distinct from 8-bit Main). 8-bit always
-   *  passes; AV1/VP9 10-bit decode tracks their 8-bit support so it isn't
-   *  separately gated. Uses video_bit_depth (the video stream's depth), NOT
-   *  bit_depth (which is audio). Undefined → assume 8-bit (safe — no false
-   *  transcodes; a genuinely-undecodable 10-bit source falls back at decode). */
-  function videoBitDepthOK(file: ItemFile | undefined): boolean {
-    if (!file) return false;
-    const depth = file.video_bit_depth ?? 8;
-    if (depth < 10) return true;
-    const codec = (file.video_codec ?? '').toLowerCase();
-    if (codec === 'h264' || codec === 'avc') return false; // Hi10P — no browser decodes it
-    if (codec === 'hevc' || codec === 'h265') return clientSupports10bitHEVC;
-    return true; // av1 / vp9 10-bit ≈ their 8-bit support
-  }
-
-  /** True when the browser can play this file directly — compatible container + codecs + faststart. */
+  // Browser decode capabilities (probed once) + the play-decision helpers,
+  // extracted to $lib/playback-decision so they're unit-testable. Thin local
+  // wrappers keep every call site (canDirectPlay(file) / canRemuxVideo(file))
+  // unchanged. clientSupportsHEVC / clientSupportsAV1 are still reported to the
+  // server when starting a transcode (output-codec selection).
+  const clientCaps = detectClientCaps();
+  const clientSupportsHEVC = clientCaps.hevc;
+  const clientSupportsAV1 = clientCaps.av1;
+  const clientSupportsHDR = clientCaps.hdr;
   function canDirectPlay(file: ItemFile | undefined): boolean {
-    if (!file) return false;
-    // HDR content on an SDR display needs tonemapping — can't direct play.
-    if (file.hdr_type && !clientSupportsHDR) return false;
-    // 10-bit video the browser can't decode (Hi10P H.264, HEVC Main10 on a
-    // Main-only decoder) must transcode, not direct play.
-    if (!videoBitDepthOK(file)) return false;
-    const container = (file.container ?? '').toLowerCase();
-    const videoCodec = (file.video_codec ?? '').toLowerCase();
-    const audioCodec = (file.audio_codec ?? '').toLowerCase();
-    if (!browserContainers.has(container)) return false;
-    if (videoCodec && !browserVideoCodecs.has(videoCodec)) return false;
-    if (audioCodec && !browserAudioCodecs.has(audioCodec)) return false;
-    // Non-faststart MP4/MOV files have moov at the end — the browser must
-    // fetch the tail of the file before playback can begin, causing silence
-    // and buffering. Route these through the remux path instead.
-    if (!file.faststart) return false;
-    return true;
+    return canDirectPlayDecision(file, clientCaps);
   }
-
-  /** True when the video can be stream-copied (remuxed) into MPEG-TS HLS instead of re-encoded. */
   function canRemuxVideo(file: ItemFile | undefined): boolean {
-    if (!file) return false;
-    // HDR content on an SDR display needs tonemapping — can't remux.
-    if (file.hdr_type && !clientSupportsHDR) return false;
-    // Remux preserves the source bit depth — a 10-bit stream the browser
-    // can't decode stays undecodable after a copy, so force a transcode.
-    if (!videoBitDepthOK(file)) return false;
-    const videoCodec = (file.video_codec ?? '').toLowerCase();
-    return remuxableVideoCodecs.has(videoCodec);
+    return canRemuxVideoDecision(file, clientCaps);
   }
 
   // HLS transcode state

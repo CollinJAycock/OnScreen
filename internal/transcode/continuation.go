@@ -42,6 +42,30 @@ const (
 	maxContinuationSkipSec = 60.0
 )
 
+// shortOfSource reports whether the content produced so far (seconds from the
+// source's start) falls materially short of the source duration — i.e. ffmpeg
+// stopped before the real EOF and we should try to continue past a defect.
+// Returns false when the source duration is unknown (<= 0), so an unprobeable
+// source is never mistaken for a premature stop.
+func shortOfSource(producedEndSec, sourceDurSec float64) bool {
+	return sourceDurSec > 0 && producedEndSec < sourceDurSec-shortCompletionMarginSec
+}
+
+// continuationSkip computes the forward-skip for the next continuation attempt.
+// progressed=true (the last run advanced the produced position) resets the skip
+// to 0 — we're moving, keep going from where we are. progressed=false (the
+// defect sits on the seek keyframe so the run re-stopped immediately) grows the
+// skip by one step to jump past it; giveUp becomes true once the cumulative
+// skip would exceed the cap, at which point a defect that large is pathological
+// and we finalize the playlist where it stands.
+func continuationSkip(progressed bool, currentSkip float64) (next float64, giveUp bool) {
+	if progressed {
+		return 0, false
+	}
+	next = currentSkip + continuationSkipStepSec
+	return next, next > maxContinuationSkipSec
+}
+
 // playlistGlobalTags are the m3u8 header / control tags that describe a
 // playlist as a whole rather than an individual segment. When stitching a
 // continuation onto an existing playlist we keep the original's globals (so
@@ -213,7 +237,7 @@ func (w *Worker) continueShortSession(
 			return
 		}
 		producedEnd := job.StartOffsetSec + playlistDurationSec(pl)
-		if producedEnd >= sourceDur-shortCompletionMarginSec {
+		if !shortOfSource(producedEnd, sourceDur) {
 			return // reached the real end; ffmpeg's ENDLIST stands
 		}
 		// Only keep extending while the client still wants the session.
@@ -287,17 +311,15 @@ func (w *Worker) continueShortSession(
 		_ = os.Remove(contPath)
 
 		newProduced := job.StartOffsetSec + playlistDurationSec(merged)
-		if newProduced <= producedEnd+1.0 {
-			// No real forward progress — the defect sits on the seek keyframe.
-			// Jump further ahead next time; give up once the skip is absurd.
-			extraSkip += continuationSkipStepSec
-			if extraSkip > maxContinuationSkipSec {
-				w.logger.Warn("auto-continue stuck past source defect; finalizing",
-					"session_id", job.SessionID, "produced_sec", int(newProduced))
-				break
-			}
-		} else {
-			extraSkip = 0
+		progressed := newProduced > producedEnd+1.0
+		var giveUp bool
+		extraSkip, giveUp = continuationSkip(progressed, extraSkip)
+		if giveUp {
+			// The defect is larger than maxContinuationSkipSec — pathological.
+			// Finalize the playlist where it stands rather than skip further.
+			w.logger.Warn("auto-continue stuck past source defect; finalizing",
+				"session_id", job.SessionID, "produced_sec", int(newProduced))
+			break
 		}
 	}
 

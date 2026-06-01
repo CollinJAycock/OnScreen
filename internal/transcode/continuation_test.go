@@ -115,6 +115,55 @@ func TestStitchPlaylist_StripsPriorEndlist(t *testing.T) {
 	}
 }
 
+func TestShortOfSource(t *testing.T) {
+	// shortCompletionMarginSec is 12s; source = 2617s (Babylon S03E19).
+	cases := []struct {
+		name             string
+		produced, source float64
+		want             bool
+	}{
+		{"well short", 2000, 2617, true},
+		{"barely short, past margin", 2604, 2617, true}, // 2617-12 = 2605
+		{"just inside margin", 2606, 2617, false},
+		{"exactly at end", 2617, 2617, false},
+		{"unknown source duration", 1000, 0, false},
+		{"start of file", 100, 2617, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shortOfSource(tc.produced, tc.source); got != tc.want {
+				t.Errorf("shortOfSource(%v, %v) = %v, want %v", tc.produced, tc.source, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestContinuationSkip(t *testing.T) {
+	// step = 4s, cap = 60s.
+	cases := []struct {
+		name       string
+		progressed bool
+		cur        float64
+		wantNext   float64
+		wantGiveUp bool
+	}{
+		{"progress resets skip", true, 8, 0, false},
+		{"progress from zero stays zero", true, 0, 0, false},
+		{"no progress grows by a step", false, 0, 4, false},
+		{"no progress near cap still tries", false, 56, 60, false},
+		{"no progress over cap gives up", false, 60, 64, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			next, giveUp := continuationSkip(tc.progressed, tc.cur)
+			if next != tc.wantNext || giveUp != tc.wantGiveUp {
+				t.Errorf("continuationSkip(%v, %v) = (%v, %v), want (%v, %v)",
+					tc.progressed, tc.cur, next, giveUp, tc.wantNext, tc.wantGiveUp)
+			}
+		})
+	}
+}
+
 func TestBuildHLS_StartNumber(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath: "/in.mkv", Encoder: "copy", SessionDir: "/sess",
