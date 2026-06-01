@@ -55,3 +55,6 @@ installer/linux/.cache/
 installer/linux/.stage/
 /dist/
 .playwright-mcp/
+
+# Local-only Docker Desktop GPU override (mounts WSL codec libs; Windows-only)
+docker/docker-compose.local-gpu.yml
