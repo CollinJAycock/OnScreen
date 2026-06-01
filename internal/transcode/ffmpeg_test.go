@@ -1155,6 +1155,94 @@ func TestBuildHLS_CudaHevcDecode_NotWithQSV(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_CudaHevcVRAM_FullVRAMChain(t *testing.T) {
+	// HEVC SDR + CudaHevcVRAM: full-VRAM chain — NVDEC decodes into CUDA memory
+	// (-hwaccel cuda -hwaccel_output_format cuda), the dedicated cuvid decoder is
+	// pinned explicitly (the auto-path fails on mainline), extra_hw_frames sizes
+	// the surface pool, and scale_cuda downscales in VRAM.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsHEVC:        true,
+		CudaHevcVRAM:  true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	for _, want := range []string{
+		"-hwaccel cuda", "-hwaccel_output_format cuda",
+		"-extra_hw_frames 8", "-c:v hevc_cuvid", "scale_cuda=w=1920:h=1080",
+	} {
+		if !strings.Contains(argStr, want) {
+			t.Errorf("expected %q in VRAM chain: %s", want, argStr)
+		}
+	}
+	// Decoder selection precedes the input.
+	if di := strings.Index(argStr, "-c:v hevc_cuvid"); di < 0 || di > strings.Index(argStr, " -i ") {
+		t.Errorf("hevc_cuvid must precede -i: %s", argStr)
+	}
+	// scale_cuda keeps frames in VRAM — no software scale.
+	if strings.Contains(argStr, "scale=1920:1080") {
+		t.Errorf("VRAM path must use scale_cuda, not software scale: %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaHevcVRAM_OffByDefault(t *testing.T) {
+	// Without CudaHevcVRAM, an SDR HEVC re-encode does NOT enter the full-VRAM
+	// path (no -hwaccel_output_format cuda, no scale_cuda).
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsHEVC:        true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "-hwaccel_output_format cuda") || strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("VRAM path must be off unless CudaHevcVRAM is set: %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaHevcVRAM_HDRStaysSystemMemory(t *testing.T) {
+	// HDR needs the libplacebo tonemap, which runs from system memory — so even
+	// with CudaHevcVRAM set, an HDR HEVC source must NOT take the full-VRAM
+	// scale_cuda path; it stays on the system-memory cuvid decode + libplacebo.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/4khdr.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		IsHEVC:         true,
+		CudaHevcVRAM:   true,
+		CudaHevcDecode: true,
+		NeedsToneMap:   true,
+		HasLibplacebo:  true,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/s",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "-hwaccel_output_format cuda") || strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("HDR must not take the full-VRAM scale_cuda path: %s", argStr)
+	}
+	if !strings.Contains(argStr, "libplacebo") {
+		t.Errorf("HDR should tonemap via libplacebo: %s", argStr)
+	}
+	// System-memory NVDEC decode still offloads the decode for the libplacebo path.
+	if !strings.Contains(argStr, "-c:v hevc_cuvid") {
+		t.Errorf("HDR should still use system-memory NVDEC decode: %s", argStr)
+	}
+}
+
 func TestBuildHLS_HDR_LibplaceboPreferredOverZscale(t *testing.T) {
 	// HDR + HasLibplacebo: GPU tonemap via libplacebo (Vulkan), NOT software
 	// zscale — even when zscale is also available. libplacebo does tonemap +

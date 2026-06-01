@@ -564,6 +564,47 @@ func ProbeCudaHevcDecode(ctx context.Context) bool {
 	return dec.Run() == nil
 }
 
+// ProbeCudaHevcScale reports whether the full-VRAM HEVC pipeline — NVDEC decode
+// straight into CUDA memory, scale_cuda downscale in VRAM, NVENC encode — works
+// end-to-end on this host. This is the path that fixes 4K SDR transcodes (the
+// 4K scale never touches the CPU), but it is the historically fragile mainline
+// chain: the HEVC NVDEC auto-path fails to create the decoder on some
+// ffmpeg/driver combos, and reference-heavy sources can exhaust the decoder
+// surface pool. So the worker enables CudaHevcVRAM only when this real probe
+// passes, mirroring exactly what BuildHLS emits (explicit hevc_cuvid,
+// extra_hw_frames, scale_cuda). A 10-bit (Main10) clip is used because 10-bit
+// is the worst case for the cuda-frame chain.
+func ProbeCudaHevcScale(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	tmp, err := os.CreateTemp("", "nvscale-probe-*.hevc")
+	if err != nil {
+		return false
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+	// 1) tiny 10-bit HEVC clip (Main10) — the fragile case for the VRAM chain.
+	enc := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=s=640x480:r=10:d=1",
+		"-vf", "format=p010le", "-c:v", "hevc_nvenc", "-profile:v", "main10",
+		"-frames:v", "10", tmp.Name())
+	if enc.Run() != nil {
+		return false
+	}
+	// 2) full VRAM chain: cuvid decode -> scale_cuda -> NVENC, as BuildHLS emits.
+	dec := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
+		"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-extra_hw_frames", "8",
+		"-c:v", "hevc_cuvid", "-i", tmp.Name(),
+		"-vf", "scale_cuda=w=320:h=240:format=nv12",
+		"-c:v", "hevc_nvenc", "-frames:v", "5", "-f", "null", "-")
+	return dec.Run() == nil
+}
+
 func ParseOverride(override string) []Encoder {
 	var encoders []Encoder
 	for _, s := range strings.Split(override, ",") {

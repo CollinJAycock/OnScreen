@@ -97,6 +97,16 @@ type BuildArgs struct {
 	// back to software decode on failure. Distinct from the AV1 full-VRAM
 	// (-hwaccel_output_format cuda) path.
 	CudaHevcDecode bool
+	// CudaHevcVRAM opts into the full-VRAM HEVC path for SDR re-encodes: NVDEC
+	// decodes straight into CUDA memory (-hwaccel cuda -hwaccel_output_format
+	// cuda -c:v hevc_cuvid) and scale_cuda downscales in VRAM, so the 4K→1080p
+	// scale never touches the CPU and frames feed NVENC zero-copy. This is the
+	// HEVC analogue of the AV1 full-VRAM path. SDR-only: HDR re-encodes need a
+	// tonemap, which on this build runs through libplacebo (Vulkan) and so keeps
+	// the CudaHevcDecode (system-memory) path instead. The worker sets it from a
+	// startup probe of the full cuvid→scale_cuda→NVENC chain (the historically
+	// fragile mainline path) and falls back to software decode on failure.
+	CudaHevcVRAM bool
 	// IsAV1 marks an AV1 source. Required so video_copy remux switches
 	// the HLS container to fMP4 + av01 tag — mpegts has no AV1 stream
 	// type, so an `-c:v copy` into mpegts segments crashes the muxer
@@ -233,10 +243,14 @@ func BuildHLS(a BuildArgs) []string {
 	// out at seg14). HEVC software decode runs at 17× real-time
 	// for comparison — 4× the headroom AV1 has.
 	//
-	// HDR + AV1 paths still skip cuda decode (would need scale_cuda
-	// + tonemap_cuda chain that the broader pipeline doesn't yet
-	// guarantee). Tonemap branches stay on the software path.
-	useCUDADecode := IsNVENCEncoder(a.Encoder) && a.IsAV1 && !a.NeedsToneMap
+	// HDR paths still skip cuda decode (HDR needs a tonemap, which on
+	// this build runs through libplacebo/Vulkan from system memory — so
+	// HDR HEVC uses the CudaHevcDecode system-memory path instead).
+	// HEVC joins the full-VRAM path only when CudaHevcVRAM is set (gated
+	// on a startup probe of the fragile mainline cuvid→scale_cuda chain);
+	// AV1 has always been reliable enough to take it unconditionally.
+	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap &&
+		(a.IsAV1 || (a.IsHEVC && a.CudaHevcVRAM))
 
 	if !videoCopy {
 		// VAAPI init filter (must come before input for hardware decode).
@@ -245,9 +259,20 @@ func BuildHLS(a BuildArgs) []string {
 		}
 
 		if useCUDADecode {
-			// Pin AV1 decode to NVDEC and keep frames in VRAM through
-			// the encoder. scale filter switches to scale_cuda below.
+			// Decode to NVDEC and keep frames in VRAM through the encoder;
+			// the scale filter switches to scale_cuda below.
 			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda")
+			if a.IsHEVC {
+				// AV1 lets ffmpeg auto-select the decoder, but the HEVC NVDEC
+				// auto-path fails to bring up the decoder on mainline ffmpeg 8.x
+				// (cuvidCreateDecoder -> CUDA_ERROR_INVALID_VALUE, then a broken
+				// fallback to software→cuda that scale_cuda can't consume). Pin
+				// the dedicated cuvid decoder explicitly, which works. extra_hw_
+				// frames enlarges the decoder's output surface pool so scale_cuda
+				// + NVENC holding references downstream don't exhaust it ("No
+				// decoder surfaces left") on reference-heavy real-world sources.
+				args = append(args, "-extra_hw_frames", "8", "-c:v", "hevc_cuvid")
+			}
 		}
 
 		// QSV hardware HEVC decode (opt-in per worker via TRANSCODE_QSV_DECODE).
@@ -686,7 +711,11 @@ func buildVideoFilter(a BuildArgs) string {
 	isNVENC := a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC
 	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF || a.Encoder == EncoderAV1AMF
 	isQSV := a.Encoder == EncoderQSV || a.Encoder == EncoderHEVCQSV || a.Encoder == EncoderAV1QSV
-	useCUDADecode := IsNVENCEncoder(a.Encoder) && a.IsAV1 && !a.NeedsToneMap
+	// Must stay in lockstep with the decode-side useCUDADecode in BuildHLS: when
+	// the input decodes into CUDA memory, the scale filter must be scale_cuda so
+	// frames stay in VRAM. AV1 always; HEVC SDR only when CudaHevcVRAM is set.
+	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap &&
+		(a.IsAV1 || (a.IsHEVC && a.CudaHevcVRAM))
 
 	// HDR→SDR tone mapping (zscale + tonemap=hable on the CPU). zscale operates
 	// on CPU frames and can't reach hardware surfaces, so it runs before any
@@ -770,10 +799,11 @@ func buildVideoFilter(a BuildArgs) string {
 			case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI:
 				filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
 			case useCUDADecode:
-				// AV1 NVDEC path: keep frames in VRAM through scaling.
-				// scale_cuda outputs nv12 (8-bit) so 10-bit AV1 sources are
-				// downconverted in GPU memory — no CPU touch, no pad filter
-				// (no pad_cuda exists; the decrease flag preserves aspect).
+				// Full-VRAM NVDEC path (AV1 always; HEVC SDR when probed OK):
+				// keep frames in VRAM through scaling. scale_cuda outputs nv12
+				// (8-bit) so 10-bit sources are downconverted in GPU memory — no
+				// CPU touch, no pad filter (no pad_cuda exists; the decrease flag
+				// preserves aspect).
 				filters = append(filters, fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
 			default:
 				filters = append(filters, swScale)
