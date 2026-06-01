@@ -33,3 +33,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    ignore:
+      # Pin the CUDA base deliberately. CUDA 13 requires NVIDIA driver >= 580
+      # (mid-2025) and drops every GPU older than Turing, so an auto-bump
+      # silently breaks GPU acceleration for most self-hosters (this is exactly
+      # how the image landed on 13.2.1 before). Bump CUDA_VERSION in
+      # docker/Dockerfile.ffmpeg by hand once a 580+ driver is broadly deployed.
+      - dependency-name: "nvidia/cuda"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor

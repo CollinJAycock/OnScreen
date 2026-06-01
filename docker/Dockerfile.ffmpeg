@@ -1,9 +1,21 @@
-# Pre-built FFmpeg with NVENC/NVDEC/CUVID support.
+# Pre-built FFmpeg with NVENC/NVDEC/CUVID + Vulkan/libplacebo support.
 # Build once and tag — reused by Dockerfile.gpu as a cached base.
 #
 #   docker build -f docker/Dockerfile.ffmpeg -t onscreen-ffmpeg:latest .
 #
-FROM nvidia/cuda:13.2.1-devel-ubuntu24.04 AS builder
+# CUDA 12.x (NOT 13.x) on purpose: this image ships to self-hosters running a
+# wide range of NVIDIA drivers and GPUs. CUDA 13 requires driver >= 580 (only
+# released mid-2025) and drops every GPU older than Turing (compute < 7.5). On
+# the drivers most distros and NAS appliances actually ship today (535/550/560/
+# 570) a CUDA 13 build silently degrades scale_cuda to a software scale, and
+# Maxwell/Pascal cards (Quadro P2000, GTX 10-series — extremely common in home
+# servers) lose GPU acceleration entirely. CUDA 12.8's PTX JITs on driver
+# >= 570 and the toolkit supports Maxwell..Blackwell natively — covering the
+# vast majority of deployed hardware while still building for the newest GPUs.
+# NVENC/NVDEC ride the codec SDK / CUDA driver API and work on even older
+# drivers regardless. Bump only once a 580+ driver is broadly deployed.
+ARG CUDA_VERSION=12.8.0
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential nasm yasm pkg-config git wget \
@@ -92,7 +104,7 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
     make install
 
 # Runtime image with just the built binaries and libs
-FROM nvidia/cuda:13.2.1-runtime-ubuntu24.04
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates tzdata wget \
