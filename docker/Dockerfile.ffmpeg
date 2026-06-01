@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
       libgnutls28-dev libzimg-dev ocl-icd-opencl-dev \
-      libplacebo-dev libvulkan-dev && \
+      libvulkan-dev meson ninja-build python3-jinja2 libshaderc-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # NVIDIA codec headers (required for nvenc/nvdec)
@@ -30,6 +30,32 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_TAG} https://github.com/Khrono
     sed -i 's/^Version:.*/Version: 1.3.296/' "$VKPC" && \
     echo "patched $VKPC -> $(grep ^Version "$VKPC")" && \
     rm -rf /tmp/vk-headers
+
+# libplacebo from source. Ubuntu 24.04 ships 6.338, but ffmpeg 8.1's
+# vf_libplacebo.c uses PL_ALPHA_NONE (libplacebo API >= 344, i.e. v7), so the
+# distro lib is too old to compile against. Build a pinned v7: meson + ninja,
+# python3-jinja2 is a hard dep for the Vulkan glad-loader generation, and
+# shaderc compiles GLSL→SPIR-V (required for the Vulkan filter at runtime).
+# --libdir=lib puts libplacebo.so + libplacebo.pc in /usr/local/lib so the
+# runtime COPY picks the .so up and ffmpeg's pkg-config finds it (same dir
+# nv-codec-headers uses). Builds against the newer Vulkan headers overlaid above.
+ARG LIBPLACEBO_TAG=v7.349.0
+RUN git clone --recursive --depth 1 --shallow-submodules --branch ${LIBPLACEBO_TAG} \
+      https://code.videolan.org/videolan/libplacebo.git /tmp/libplacebo && \
+    cd /tmp/libplacebo && \
+    meson setup build \
+      --prefix=/usr/local \
+      --libdir=lib \
+      --buildtype=release \
+      -Ddefault_library=shared \
+      -Dvulkan=enabled \
+      -Dshaderc=enabled \
+      -Ddemos=false \
+      -Dtests=false && \
+    ninja -C build && \
+    ninja -C build install && \
+    ldconfig && \
+    rm -rf /tmp/libplacebo
 
 ARG FFMPEG_VERSION=8.1
 RUN wget -q https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -O /tmp/ffmpeg.tar.bz2 && \
@@ -73,7 +99,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
       libgnutls28-dev libzimg-dev ocl-icd-libopencl1 \
-      libplacebo338 libvulkan1 \
+      libvulkan1 libshaderc-dev \
       libchromaprint-tools postgresql-client \
       tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa tesseract-ocr-fra \
       tesseract-ocr-deu tesseract-ocr-ita tesseract-ocr-por tesseract-ocr-jpn \
@@ -84,8 +110,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd
 
 # libplacebo (Vulkan) GPU HDR→SDR tonemap: ffmpeg is built --enable-libplacebo
-# --enable-vulkan and the runtime carries the Vulkan loader (libvulkan1) +
-# libplacebo. The NVIDIA Vulkan ICD itself is injected by nvidia-container-
+# --enable-vulkan against a source-built libplacebo v7 (copied from the builder
+# via /usr/local/lib below). The runtime carries the Vulkan loader (libvulkan1)
+# and shaderc (libshaderc-dev — libplacebo links it for GLSL→SPIR-V).
+# The NVIDIA Vulkan ICD itself is injected by nvidia-container-
 # toolkit from the host driver — but ONLY when the container requests the
 # `graphics` capability. The GPU deploy must therefore set
 # NVIDIA_DRIVER_CAPABILITIES to include graphics (e.g. "all" or
