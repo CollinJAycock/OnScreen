@@ -2,3 +2,6 @@
 # Go sources are stored LF in git; force LF on checkout too so Windows
 # working trees don't drift to CRLF (which trips goimports under golangci-lint).
 *.go text eol=lf
+# ffmpeg patches must stay LF — `patch` in the Docker build chokes on CRLF, and
+# these are applied verbatim to the FFmpeg source in docker/Dockerfile.ffmpeg.
+*.patch text eol=lf
