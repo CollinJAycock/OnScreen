@@ -80,6 +80,31 @@ func TestStreamBitDepth(t *testing.T) {
 	}
 }
 
+func TestVideoBitDepth(t *testing.T) {
+	cases := []struct {
+		name string
+		s    *ffprobeStream
+		want int
+	}{
+		{"8-bit yuv420p", &ffprobeStream{PixFmt: "yuv420p"}, 8},
+		{"8-bit nv12", &ffprobeStream{PixFmt: "nv12"}, 8},
+		{"10-bit yuv420p10le", &ffprobeStream{PixFmt: "yuv420p10le"}, 10},
+		{"10-bit p010le", &ffprobeStream{PixFmt: "p010le"}, 10},
+		{"10-bit yuv444p10le", &ffprobeStream{PixFmt: "yuv444p10le"}, 10},
+		{"12-bit yuv420p12le", &ffprobeStream{PixFmt: "yuv420p12le"}, 12},
+		{"16-bit yuv420p16le", &ffprobeStream{PixFmt: "yuv420p16le"}, 16},
+		{"pix_fmt empty falls back to raw sample", &ffprobeStream{BitsPerRawSample: "10"}, 10},
+		{"unknown stream returns zero", &ffprobeStream{}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := videoBitDepth(tc.s); got != tc.want {
+				t.Errorf("got %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestChannelLayoutFromCount(t *testing.T) {
 	cases := []struct {
 		n    int

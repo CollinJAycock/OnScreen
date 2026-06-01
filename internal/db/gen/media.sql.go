@@ -134,14 +134,16 @@ INSERT INTO media_files (
     audio_streams, subtitle_streams, chapters, file_hash, duration_ms,
     bit_depth, sample_rate, channel_layout, lossless,
     replaygain_track_gain, replaygain_track_peak,
-    replaygain_album_gain, replaygain_album_peak
+    replaygain_album_gain, replaygain_album_peak,
+    video_bit_depth
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
     $17, $18, $19, $20,
     $21, $22,
-    $23, $24
+    $23, $24,
+    $25
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -149,7 +151,7 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           status, missing_since, scanned_at, created_at, duration_ms,
           bit_depth, sample_rate, channel_layout, lossless,
           replaygain_track_gain, replaygain_track_peak,
-          replaygain_album_gain, replaygain_album_peak
+          replaygain_album_gain, replaygain_album_peak, video_bit_depth
 `
 
 type CreateMediaFileParams struct {
@@ -177,6 +179,7 @@ type CreateMediaFileParams struct {
 	ReplaygainTrackPeak pgtype.Numeric `json:"replaygain_track_peak"`
 	ReplaygainAlbumGain pgtype.Numeric `json:"replaygain_album_gain"`
 	ReplaygainAlbumPeak pgtype.Numeric `json:"replaygain_album_peak"`
+	VideoBitDepth       *int32         `json:"video_bit_depth"`
 }
 
 // best quality first (ADR-031)
@@ -206,6 +209,7 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		arg.ReplaygainTrackPeak,
 		arg.ReplaygainAlbumGain,
 		arg.ReplaygainAlbumPeak,
+		arg.VideoBitDepth,
 	)
 	var i MediaFile
 	err := row.Scan(
@@ -238,6 +242,7 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		&i.ReplaygainTrackPeak,
 		&i.ReplaygainAlbumGain,
 		&i.ReplaygainAlbumPeak,
+		&i.VideoBitDepth,
 	)
 	return i, err
 }
@@ -669,7 +674,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE id = $1
 `
@@ -708,6 +713,7 @@ func (q *Queries) GetMediaFile(ctx context.Context, id uuid.UUID) (MediaFile, er
 		&i.ReplaygainTrackPeak,
 		&i.ReplaygainAlbumGain,
 		&i.ReplaygainAlbumPeak,
+		&i.VideoBitDepth,
 	)
 	return i, err
 }
@@ -719,7 +725,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE file_hash = $1 AND status = 'missing'
 ORDER BY created_at DESC
@@ -762,6 +768,7 @@ func (q *Queries) GetMediaFileByHash(ctx context.Context, fileHash *string) (Med
 		&i.ReplaygainTrackPeak,
 		&i.ReplaygainAlbumGain,
 		&i.ReplaygainAlbumPeak,
+		&i.VideoBitDepth,
 	)
 	return i, err
 }
@@ -773,7 +780,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE file_path = $1
 `
@@ -811,6 +818,7 @@ func (q *Queries) GetMediaFileByPath(ctx context.Context, filePath string) (Medi
 		&i.ReplaygainTrackPeak,
 		&i.ReplaygainAlbumGain,
 		&i.ReplaygainAlbumPeak,
+		&i.VideoBitDepth,
 	)
 	return i, err
 }
@@ -1173,7 +1181,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms,
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
-       mf.replaygain_album_gain, mf.replaygain_album_peak
+       mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active'
@@ -1218,6 +1226,7 @@ func (q *Queries) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 			&i.ReplaygainTrackPeak,
 			&i.ReplaygainAlbumGain,
 			&i.ReplaygainAlbumPeak,
+			&i.VideoBitDepth,
 		); err != nil {
 			return nil, err
 		}
@@ -1904,7 +1913,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC
@@ -1949,6 +1958,7 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID uuid.UU
 			&i.ReplaygainTrackPeak,
 			&i.ReplaygainAlbumGain,
 			&i.ReplaygainAlbumPeak,
+			&i.VideoBitDepth,
 		); err != nil {
 			return nil, err
 		}
@@ -3655,7 +3665,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000
@@ -3700,6 +3710,7 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 			&i.ReplaygainTrackPeak,
 			&i.ReplaygainAlbumGain,
 			&i.ReplaygainAlbumPeak,
+			&i.VideoBitDepth,
 		); err != nil {
 			return nil, err
 		}
@@ -4882,6 +4893,7 @@ SET container        = $2,
     subtitle_streams = $11,
     chapters         = $12,
     duration_ms      = $13,
+    video_bit_depth  = $14,
     scanned_at       = NOW()
 WHERE id = $1
 `
@@ -4900,6 +4912,7 @@ type UpdateMediaFileTechnicalMetadataParams struct {
 	SubtitleStreams []byte         `json:"subtitle_streams"`
 	Chapters        []byte         `json:"chapters"`
 	DurationMs      *int64         `json:"duration_ms"`
+	VideoBitDepth   *int32         `json:"video_bit_depth"`
 }
 
 func (q *Queries) UpdateMediaFileTechnicalMetadata(ctx context.Context, arg UpdateMediaFileTechnicalMetadataParams) error {
@@ -4917,6 +4930,7 @@ func (q *Queries) UpdateMediaFileTechnicalMetadata(ctx context.Context, arg Upda
 		arg.SubtitleStreams,
 		arg.Chapters,
 		arg.DurationMs,
+		arg.VideoBitDepth,
 	)
 	return err
 }

@@ -1379,6 +1379,9 @@ export interface ItemFile {
   hdr_type?: string;
   duration_ms?: number;
   faststart: boolean;
+  // Video bit depth (8/10/12) of the primary video stream, from pix_fmt.
+  // Distinct from bit_depth (audio). Undefined until the file is (re)probed.
+  video_bit_depth?: number;
   // Audio quality fields (music libraries — undefined for video).
   bit_depth?: number;
   sample_rate?: number;

@@ -375,6 +375,7 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		SubtitleStreams: p.SubtitleStreams,
 		Chapters:        p.Chapters,
 		DurationMs:      p.DurationMS,
+		VideoBitDepth:   intPtrToInt32Ptr(p.VideoBitDepth),
 	})
 }
 

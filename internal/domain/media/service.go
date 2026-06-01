@@ -152,6 +152,10 @@ type File struct {
 	// covering the FLAC/ALAC/WAV/DSD/etc. family; clients gate silent
 	// transcoding on it.
 	BitDepth            *int
+	// VideoBitDepth is the primary video stream's bit depth (8/10/12), derived
+	// from pix_fmt at scan time. Distinct from BitDepth (audio). Drives the
+	// 10-bit play decision (HEVC Main 10 / H.264 Hi10P).
+	VideoBitDepth       *int
 	SampleRate          *int
 	ChannelLayout       *string
 	Lossless            *bool
@@ -521,6 +525,10 @@ type CreateFileParams struct {
 	FileHash            *string
 	DurationMS          *int64
 	BitDepth            *int
+	// VideoBitDepth is the primary video stream's bit depth (8/10/12), derived
+	// from pix_fmt at scan time. Distinct from BitDepth (audio). Drives the
+	// 10-bit play decision (HEVC Main 10 / H.264 Hi10P).
+	VideoBitDepth       *int
 	SampleRate          *int
 	ChannelLayout       *string
 	Lossless            *bool

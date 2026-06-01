@@ -7,10 +7,9 @@ package gen
 import (
 	"net/netip"
 
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 )
 
 type ArrService struct {
@@ -228,6 +227,7 @@ type MediaFile struct {
 	ReplaygainTrackPeak pgtype.Numeric     `json:"replaygain_track_peak"`
 	ReplaygainAlbumGain pgtype.Numeric     `json:"replaygain_album_gain"`
 	ReplaygainAlbumPeak pgtype.Numeric     `json:"replaygain_album_peak"`
+	VideoBitDepth       *int32             `json:"video_bit_depth"`
 }
 
 type MediaItem struct {
@@ -534,12 +534,36 @@ type UserFavorite struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type UserScrobble struct {
+	UserID              uuid.UUID          `json:"user_id"`
+	ListenbrainzToken   *string            `json:"listenbrainz_token"`
+	ListenbrainzEnabled bool               `json:"listenbrainz_enabled"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserWatchLimit struct {
+	UserID             uuid.UUID          `json:"user_id"`
+	DailyLimitMinutes  *int32             `json:"daily_limit_minutes"`
+	AllowedStartMinute *int32             `json:"allowed_start_minute"`
+	AllowedEndMinute   *int32             `json:"allowed_end_minute"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type UserWatchStatus struct {
 	UserID      uuid.UUID          `json:"user_id"`
 	MediaItemID uuid.UUID          `json:"media_item_id"`
 	Status      string             `json:"status"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserWatchUsage struct {
+	UserID         uuid.UUID          `json:"user_id"`
+	Day            pgtype.Date        `json:"day"`
+	WatchedSeconds int32              `json:"watched_seconds"`
+	LastTickAt     pgtype.Timestamptz `json:"last_tick_at"`
 }
 
 type WatchEvent struct {

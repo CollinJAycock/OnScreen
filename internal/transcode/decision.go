@@ -61,6 +61,16 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		return DecisionTranscode
 	}
 
+	// Bit-depth check: a video stream deeper than the client can decode
+	// (10-bit HEVC Main 10 / H.264 Hi10P on an 8-bit-only decoder) must
+	// transcode — otherwise the client direct-plays or remuxes and silently
+	// fails to decode. Uses VideoBitDepth (the video stream's depth), not
+	// BitDepth (audio). Both DirectPlay and DirectStream preserve source bit
+	// depth, so only a re-encode (down to 8-bit) fixes it.
+	if bd := derefInt(file.VideoBitDepth); bd > 0 && caps.MaxVideoBitDepth > 0 && bd > caps.MaxVideoBitDepth {
+		return DecisionTranscode
+	}
+
 	// Resolution check: if source exceeds client's declared max, must transcode.
 	w := derefInt(file.ResolutionW)
 	h := derefInt(file.ResolutionH)

@@ -1262,7 +1262,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE id = $1;
 
@@ -1273,7 +1273,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE file_path = $1;
 
@@ -1284,7 +1284,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 -- Move detection only matches against status='missing' rows now —
 -- the 'deleted' arm went away when "delete = hard delete" landed
@@ -1300,7 +1300,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best quality first (ADR-031)
@@ -1312,14 +1312,16 @@ INSERT INTO media_files (
     audio_streams, subtitle_streams, chapters, file_hash, duration_ms,
     bit_depth, sample_rate, channel_layout, lossless,
     replaygain_track_gain, replaygain_track_peak,
-    replaygain_album_gain, replaygain_album_peak
+    replaygain_album_gain, replaygain_album_peak,
+    video_bit_depth
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
     $17, $18, $19, $20,
     $21, $22,
-    $23, $24
+    $23, $24,
+    $25
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -1327,7 +1329,7 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           status, missing_since, scanned_at, created_at, duration_ms,
           bit_depth, sample_rate, channel_layout, lossless,
           replaygain_track_gain, replaygain_track_peak,
-          replaygain_album_gain, replaygain_album_peak;
+          replaygain_album_gain, replaygain_album_peak, video_bit_depth;
 
 -- name: UpdateMediaFilePath :exec
 UPDATE media_files
@@ -1385,6 +1387,7 @@ SET container        = $2,
     subtitle_streams = $11,
     chapters         = $12,
     duration_ms      = $13,
+    video_bit_depth  = $14,
     scanned_at       = NOW()
 WHERE id = $1;
 
@@ -1395,7 +1398,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms,
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
-       mf.replaygain_album_gain, mf.replaygain_album_peak
+       mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';
@@ -1469,7 +1472,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000;

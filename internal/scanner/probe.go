@@ -28,6 +28,9 @@ type ProbeResult struct {
 	DurationMs      *int64
 	HDRType         *string
 	FrameRate       *float64
+	// VideoBitDepth is the primary video stream's bit depth (8/10/12), from
+	// pix_fmt. Distinct from BitDepth (audio). nil when not a video stream.
+	VideoBitDepth   *int
 	AudioStreams    []byte
 	SubtitleStreams []byte
 	Chapters        []byte
@@ -62,6 +65,7 @@ type ffprobeStream struct {
 	SampleRate       string            `json:"sample_rate"`
 	BitsPerRawSample string            `json:"bits_per_raw_sample"`
 	BitsPerSample    int               `json:"bits_per_sample"`
+	PixFmt           string            `json:"pix_fmt"`
 	Tags             map[string]string `json:"tags"`
 	Disposition      map[string]int    `json:"disposition"`
 	ColorTransfer    string            `json:"color_transfer"`
@@ -223,6 +227,9 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 					result.FrameRate = &fps
 				}
 				result.HDRType = detectHDR(&s)
+				if bd := videoBitDepth(&s); bd > 0 {
+					result.VideoBitDepth = &bd
+				}
 			}
 
 		case "audio":
@@ -361,6 +368,33 @@ func streamBitDepth(s *ffprobeStream) int {
 	}
 	if s.BitsPerSample > 0 {
 		return s.BitsPerSample
+	}
+	return 0
+}
+
+// videoBitDepth derives a video stream's bit depth from its pix_fmt — the
+// reliable signal (yuv420p10le → 10, p010le → 10, yuv444p12le → 12). Falls
+// back to bits_per_raw_sample, then defaults to 8 for a recognized 8-bit
+// pix_fmt (yuv420p, nv12, …). Returns 0 only when ffprobe exposes neither,
+// so the column stays NULL and clients treat it as 8-bit. Distinct from
+// streamBitDepth, which reads audio depth.
+func videoBitDepth(s *ffprobeStream) int {
+	pf := strings.ToLower(s.PixFmt)
+	switch {
+	case strings.Contains(pf, "p016") || strings.Contains(pf, "16le") || strings.Contains(pf, "16be"):
+		return 16
+	case strings.Contains(pf, "p012") || strings.Contains(pf, "p12") || strings.Contains(pf, "12le") || strings.Contains(pf, "12be"):
+		return 12
+	case strings.Contains(pf, "p010") || strings.Contains(pf, "p10") || strings.Contains(pf, "10le") || strings.Contains(pf, "10be"):
+		return 10
+	}
+	if s.BitsPerRawSample != "" {
+		if n, err := strconv.Atoi(s.BitsPerRawSample); err == nil && n > 0 {
+			return n
+		}
+	}
+	if pf != "" {
+		return 8 // recognized 8-bit pix_fmt (yuv420p, nv12, yuvj420p, …)
 	}
 	return 0
 }

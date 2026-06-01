@@ -127,6 +127,18 @@ func TestParseCapabilities(t *testing.T) {
 	}
 }
 
+func TestParseCapabilities_BitDepth(t *testing.T) {
+	if d := ParseCapabilities("").MaxVideoBitDepth; d != 8 {
+		t.Errorf("default MaxVideoBitDepth: want 8, got %d", d)
+	}
+	if d := ParseCapabilities("maxbitdepth=10").MaxVideoBitDepth; d != 10 {
+		t.Errorf("maxbitdepth=10: want 10, got %d", d)
+	}
+	if d := ParseCapabilities("videobitdepth=12").MaxVideoBitDepth; d != 12 {
+		t.Errorf("videobitdepth=12 alias: want 12, got %d", d)
+	}
+}
+
 func TestClientCapabilities_Supports(t *testing.T) {
 	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac:ac3,protocols=mkv:mp4")
 

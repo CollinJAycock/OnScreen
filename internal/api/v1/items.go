@@ -409,6 +409,7 @@ type ItemFileResponse struct {
 	DurationMS          *int64                 `json:"duration_ms,omitempty"`
 	Faststart           bool                   `json:"faststart"`
 	BitDepth            *int                   `json:"bit_depth,omitempty"`
+	VideoBitDepth       *int                   `json:"video_bit_depth,omitempty"`
 	SampleRate          *int                   `json:"sample_rate,omitempty"`
 	ChannelLayout       *string                `json:"channel_layout,omitempty"`
 	Lossless            *bool                  `json:"lossless,omitempty"`
@@ -695,6 +696,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			DurationMS:          f.DurationMS,
 			Faststart:           h.faststart(r.Context(), f.FilePath),
 			BitDepth:            f.BitDepth,
+			VideoBitDepth:       f.VideoBitDepth,
 			SampleRate:          f.SampleRate,
 			ChannelLayout:       f.ChannelLayout,
 			Lossless:            f.Lossless,
