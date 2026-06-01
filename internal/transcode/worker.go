@@ -357,6 +357,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// NVENC) for an SDR HEVC/H.264 re-encode. Same gating/fallback; also captured
 	// by buildTranscodeArgs so the software fallback drops it from later runs.
 	cudaVRAMUsable := false
+	// cudaHDRUsable: this run attempts the GPU-assisted HDR chain (cuvid→
+	// scale_cuda(p010)→hwdownload→zscale tonemap) — the libplacebo-unavailable
+	// fallback. Same gating/fallback; also captured by buildTranscodeArgs.
+	cudaHDRUsable := false
 	switch job.Decision {
 	case "directStream":
 		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
@@ -433,6 +437,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				QSVDecode:            useQSV,
 				CudaHevcDecode:       cudaHevcUsable,
 				CudaVRAM:             cudaVRAMUsable,
+				CudaHDRTonemap:       cudaHDRUsable,
 				ReadRate:             1.0,
 				ReadRateInitialBurst: 30,
 				SessionDir:           sessionDir,
@@ -450,6 +455,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// path when both are set, so the two don't conflict. H.264 shares the
 		// HEVC-validated probe — h264_cuvid is at least as reliable.
 		cudaVRAMUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && enc != "copy"
+		// GPU-assisted HDR (libplacebo-unavailable fallback): same scale_cuda
+		// capability, but for HDR sources it downscales in 10-bit then zscale-
+		// tonemaps the small frame. Gated off when libplacebo is available (that
+		// path is preferred and wins in BuildArgs) and requires zscale + NVENC.
+		cudaHDRUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap &&
+			w.hasZscale && !w.hasLibplacebo && IsNVENCEncoder(enc) && enc != "copy"
 		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
 	}
@@ -581,15 +592,16 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// ctx) is not a decode failure, so selfExited gates this. Clearing
 	// cudaHevcUsable (captured by buildTranscodeArgs) and continuationUseQSV also
 	// drops hardware decode from the retry and any later continuation runs.
-	if (qsvDecodeUsable || cudaHevcUsable || cudaVRAMUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
+	if (qsvDecodeUsable || cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
 		w.logger.Warn("hardware decode produced no segments; retrying with software decode",
-			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "err", exitErr)
+			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable, "err", exitErr)
 		// Clear any partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
 		continuationUseQSV = false
 		cudaHevcUsable = false
 		cudaVRAMUsable = false
+		cudaHDRUsable = false
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
 	}
 

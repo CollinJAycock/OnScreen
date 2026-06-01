@@ -107,6 +107,16 @@ type BuildArgs struct {
 	// it from a startup probe of the full cuvid→scale_cuda→NVENC chain (the
 	// historically fragile mainline path) and falls back to software on failure.
 	CudaVRAM bool
+	// CudaHDRTonemap opts into the GPU-assisted HDR path for HEVC/H.264: NVDEC
+	// decodes into CUDA memory, scale_cuda downscales in VRAM keeping 10-bit
+	// (p010, so the HDR signal survives), then the frame is hwdownload'd and the
+	// zscale tonemap runs on the now-small (e.g. 1080p) frame. This puts the
+	// expensive 4K pixel work on the GPU while only the light tonemap touches the
+	// CPU. It's the fallback for hosts where libplacebo (Vulkan) is unavailable —
+	// notably TrueNAS, whose GPU passthrough doesn't inject the Vulkan stack. The
+	// worker sets it (NeedsToneMap + cuda_scale + zscale + no libplacebo + NVENC);
+	// libplacebo, when present, is still preferred and takes precedence.
+	CudaHDRTonemap bool
 	// IsAV1 marks an AV1 source. Required so video_copy remux switches
 	// the HLS container to fMP4 + av01 tag — mpegts has no AV1 stream
 	// type, so an `-c:v copy` into mpegts segments crashes the muxer
@@ -262,9 +272,11 @@ func BuildHLS(a BuildArgs) []string {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		if useCUDADecode {
-			// Decode to NVDEC and keep frames in VRAM through the encoder;
-			// the scale filter switches to scale_cuda below.
+		if useCUDADecode || a.CudaHDRTonemap {
+			// Decode to NVDEC and keep frames in VRAM. For SDR (useCUDADecode) the
+			// scale filter is scale_cuda→nv12 straight to the encoder; for HDR
+			// (CudaHDRTonemap) it's scale_cuda→p010 then hwdownload + zscale
+			// tonemap. Either way the decode lands in CUDA memory.
 			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda")
 			// AV1 lets ffmpeg auto-select the decoder, but the HEVC NVDEC
 			// auto-path fails to bring up the decoder on mainline ffmpeg 8.x
@@ -292,7 +304,7 @@ func BuildHLS(a BuildArgs) []string {
 		// and the two are mutually exclusive by source codec. Opt-in per worker
 		// (TRANSCODE_QSV_DECODE); disable it for a worker if a source fails to
 		// decode on QSV.
-		if a.QSVDecode && a.IsHEVC && !useCUDADecode {
+		if a.QSVDecode && a.IsHEVC && !useCUDADecode && !a.CudaHDRTonemap {
 			args = append(args, "-hwaccel", "qsv", "-c:v", "hevc_qsv")
 		}
 
@@ -306,7 +318,7 @@ func BuildHLS(a BuildArgs) []string {
 		// HEVC on certain sources; the worker retries with software decode if a
 		// session produces no segments. Mutually exclusive with the QSV path
 		// and the AV1 full-VRAM carve-out above.
-		if a.CudaHevcDecode && a.IsHEVC && !useCUDADecode && !a.QSVDecode {
+		if a.CudaHevcDecode && a.IsHEVC && !useCUDADecode && !a.CudaHDRTonemap && !a.QSVDecode {
 			args = append(args, "-c:v", "hevc_cuvid")
 		}
 
@@ -778,6 +790,15 @@ func buildVideoFilter(a BuildArgs) string {
 	// and the AV1 cuda-decode path carries no tonemap.
 	swTonemapScaleFirst := needsSoftwareTonemap && swScale != "" && !a.IsVAAPI && !useCUDADecode
 
+	// GPU-assisted HDR (libplacebo unavailable): scale_cuda does the expensive
+	// downscale in VRAM keeping 10-bit (p010 — nv12 would clip the HDR signal to
+	// 8-bit before tonemapping), then hwdownload hands the small frame to the
+	// same zscale tonemap the software path uses. Decode is in CUDA memory
+	// (CudaHDRTonemap → full-VRAM decode in BuildHLS). Takes precedence over the
+	// software scale; libplacebo still wins when present (checked first below).
+	cudaHDRTonemap := a.CudaHDRTonemap && a.NeedsToneMap && a.HasZscale &&
+		!lpTonemap && !a.IsVAAPI && (a.IsHEVC || a.IsH264)
+
 	switch {
 	case lpTonemap:
 		// libplacebo (Vulkan): tonemap + scale + 8-bit downconvert in one GPU
@@ -788,6 +809,18 @@ func buildVideoFilter(a BuildArgs) string {
 			lp = fmt.Sprintf("libplacebo=w=%d:h=%d:tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p", a.Width, a.Height)
 		}
 		filters = append(filters, lp, "hwdownload", "format=yuv420p")
+	case cudaHDRTonemap:
+		// scale_cuda downscale in VRAM at 10-bit, then download + zscale tonemap
+		// on the smaller frame. format=p010le keeps the HDR signal through the
+		// resize; scale_cuda propagates the source's transfer/primaries metadata
+		// so the zscale chain linearizes the PQ/HLG signal correctly (same
+		// assumption as the software `scale` path). No pad — Width/Height are
+		// already aspect-correct.
+		sc := "scale_cuda=format=p010le"
+		if a.Width > 0 && a.Height > 0 {
+			sc = fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=p010le", a.Width, a.Height)
+		}
+		filters = append(filters, sc, "hwdownload", "format=p010le", toneMap)
 	case swTonemapScaleFirst:
 		filters = append(filters, swScale, toneMap)
 	default:

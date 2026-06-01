@@ -1432,6 +1432,74 @@ func TestBuildHLS_CudaVRAM_H264HDRStaysSystemMemory(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_CudaHDRTonemap_FullChain(t *testing.T) {
+	// HDR HEVC + CudaHDRTonemap (libplacebo unavailable): full-VRAM NVDEC decode,
+	// scale_cuda downscale in 10-bit (p010 — NOT nv12, so the HDR signal survives),
+	// hwdownload, then the zscale tonemap on the small frame.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/4khdr.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		IsHEVC:         true,
+		CudaHDRTonemap: true,
+		NeedsToneMap:   true,
+		HasZscale:      true,
+		HasLibplacebo:  false,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/s",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+	for _, want := range []string{
+		"-hwaccel cuda", "-hwaccel_output_format cuda", "-c:v hevc_cuvid",
+		"scale_cuda=w=1920:h=1080:force_original_aspect_ratio=decrease:format=p010le",
+		"hwdownload", "format=p010le",
+		"zscale=t=linear:npl=100", "tonemap=tonemap=hable", // the zscale HDR chain
+	} {
+		if !strings.Contains(argStr, want) {
+			t.Errorf("expected %q in HDR-CUDA chain: %s", want, argStr)
+		}
+	}
+	// HDR must keep 10-bit through the GPU scale — nv12 (8-bit) would clip the
+	// signal before tonemapping.
+	if strings.Contains(argStr, "scale_cuda") && strings.Contains(argStr, "format=nv12") {
+		t.Errorf("HDR scale_cuda must output p010le, not nv12: %s", argStr)
+	}
+	// The expensive scale is on the GPU — no software scale+pad chain.
+	if strings.Contains(argStr, "scale=1920:1080:force_original_aspect_ratio") {
+		t.Errorf("HDR-CUDA must scale on GPU (scale_cuda), not software scale: %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaHDRTonemap_LibplaceboWins(t *testing.T) {
+	// When libplacebo IS available, it's preferred even if CudaHDRTonemap is set —
+	// the scale_cuda+zscale path is only the libplacebo-unavailable fallback.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/4khdr.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		IsHEVC:         true,
+		CudaHDRTonemap: true,
+		NeedsToneMap:   true,
+		HasZscale:      true,
+		HasLibplacebo:  true,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/s",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "libplacebo") {
+		t.Errorf("libplacebo must win over the CUDA-HDR fallback when available: %s", argStr)
+	}
+	if strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("CUDA-HDR path must not engage when libplacebo is used: %s", argStr)
+	}
+}
+
 func TestBuildHLS_HDR_LibplaceboPreferredOverZscale(t *testing.T) {
 	// HDR + HasLibplacebo: GPU tonemap via libplacebo (Vulkan), NOT software
 	// zscale — even when zscale is also available. libplacebo does tonemap +
