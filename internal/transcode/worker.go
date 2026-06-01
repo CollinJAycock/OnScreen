@@ -45,7 +45,7 @@ type Worker struct {
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
 	cudaHevcDecode   bool              // NVDEC HEVC decode works here (startup probe); offloads 4K HEVC decode to the GPU (system memory)
-	cudaHevcScale    bool              // full-VRAM HEVC chain (cuvid→scale_cuda→NVENC) works here (startup probe); offloads 4K SDR scale to the GPU
+	cudaScale        bool              // full-VRAM chain (cuvid→scale_cuda→NVENC) works here (startup probe); offloads SDR HEVC/H.264 scale to the GPU
 	nodeID           string            // NODE_ID (hostname default) — reported so the admin can find this node in Settings ▸ Nodes
 	logger           *slog.Logger
 	activeSessions   atomic.Int32
@@ -101,11 +101,11 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	// so the downscale stays on the GPU; HDR keeps the system-memory decode
 	// (cudaHevcDecode) + libplacebo tonemap. Separately probed because it's the
 	// historically fragile mainline path.
-	cudaHevcScale := false
+	cudaScale := false
 	for _, e := range encoders {
 		if IsNVENCEncoder(e) {
 			cudaHevcDecode = ProbeCudaHevcDecode(ctx)
-			cudaHevcScale = ProbeCudaHevcScale(ctx)
+			cudaScale = ProbeCudaHevcScale(ctx)
 			break
 		}
 	}
@@ -130,7 +130,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasZscale:        hasZscale,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
-		cudaHevcScale:    cudaHevcScale,
+		cudaScale:        cudaScale,
 		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
 		logger:           logger,
@@ -167,7 +167,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"zscale", w.hasZscale,
 		"libplacebo", w.hasLibplacebo,
 		"nvdec_hevc", w.cudaHevcDecode,
-		"cuda_scale", w.cudaHevcScale,
+		"cuda_scale", w.cudaScale,
 		"opencl_platforms", openclSummary,
 	)
 
@@ -331,10 +331,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// and software fallback as qsvDecodeUsable. Captured by buildTranscodeArgs
 	// below, so clearing it on fallback also drops NVDEC from continuation runs.
 	cudaHevcUsable := false
-	// cudaHevcVRAMUsable: this run attempts the full-VRAM HEVC chain (cuvid→
-	// scale_cuda→NVENC) for an SDR re-encode. Same gating/fallback; also captured
+	// cudaVRAMUsable: this run attempts the full-VRAM chain (cuvid→scale_cuda→
+	// NVENC) for an SDR HEVC/H.264 re-encode. Same gating/fallback; also captured
 	// by buildTranscodeArgs so the software fallback drops it from later runs.
-	cudaHevcVRAMUsable := false
+	cudaVRAMUsable := false
 	switch job.Decision {
 	case "directStream":
 		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
@@ -393,6 +393,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI || enc == EncoderAV1VAAPI,
 				IsHEVC:               job.IsHEVC,
 				IsAV1:                job.IsAV1,
+				IsH264:               job.IsH264,
 				Width:                job.Width,
 				Height:               job.Height,
 				BitrateKbps:          bitrate,
@@ -409,7 +410,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				EncoderOpts:          w.encoderOpts,
 				QSVDecode:            useQSV,
 				CudaHevcDecode:       cudaHevcUsable,
-				CudaHevcVRAM:         cudaHevcVRAMUsable,
+				CudaVRAM:             cudaVRAMUsable,
 				ReadRate:             1.0,
 				ReadRateInitialBurst: 30,
 				SessionDir:           sessionDir,
@@ -421,11 +422,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// gates NVDEC behind !QSVDecode so both being set can't double-decode.
 		qsvDecodeUsable = w.qsvDecode && job.IsHEVC && enc != "copy"
 		cudaHevcUsable = w.cudaHevcDecode && job.IsHEVC && enc != "copy"
-		// Full-VRAM HEVC scale_cuda path is SDR-only: HDR re-encodes need the
-		// libplacebo tonemap, which runs from the system-memory (cudaHevcUsable)
-		// decode. BuildArgs picks VRAM over the system-memory path when both are
-		// set, so the two don't conflict.
-		cudaHevcVRAMUsable = w.cudaHevcScale && job.IsHEVC && !job.NeedsToneMap && enc != "copy"
+		// Full-VRAM scale_cuda path is SDR-only (HEVC or H.264): HDR re-encodes
+		// need the libplacebo tonemap, which runs from the system-memory
+		// (cudaHevcUsable) decode. BuildArgs picks VRAM over the system-memory
+		// path when both are set, so the two don't conflict. H.264 shares the
+		// HEVC-validated probe — h264_cuvid is at least as reliable.
+		cudaVRAMUsable = w.cudaScale && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && enc != "copy"
 		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
 	}
@@ -557,15 +559,15 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// ctx) is not a decode failure, so selfExited gates this. Clearing
 	// cudaHevcUsable (captured by buildTranscodeArgs) and continuationUseQSV also
 	// drops hardware decode from the retry and any later continuation runs.
-	if (qsvDecodeUsable || cudaHevcUsable || cudaHevcVRAMUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
+	if (qsvDecodeUsable || cudaHevcUsable || cudaVRAMUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
 		w.logger.Warn("hardware decode produced no segments; retrying with software decode",
-			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaHevcVRAMUsable, "err", exitErr)
+			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "err", exitErr)
 		// Clear any partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
 		continuationUseQSV = false
 		cudaHevcUsable = false
-		cudaHevcVRAMUsable = false
+		cudaVRAMUsable = false
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
 	}
 

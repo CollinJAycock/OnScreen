@@ -1155,8 +1155,8 @@ func TestBuildHLS_CudaHevcDecode_NotWithQSV(t *testing.T) {
 	}
 }
 
-func TestBuildHLS_CudaHevcVRAM_FullVRAMChain(t *testing.T) {
-	// HEVC SDR + CudaHevcVRAM: full-VRAM chain — NVDEC decodes into CUDA memory
+func TestBuildHLS_CudaVRAM_FullVRAMChain(t *testing.T) {
+	// HEVC SDR + CudaVRAM: full-VRAM chain — NVDEC decodes into CUDA memory
 	// (-hwaccel cuda -hwaccel_output_format cuda), the dedicated cuvid decoder is
 	// pinned explicitly (the auto-path fails on mainline), extra_hw_frames sizes
 	// the surface pool, and scale_cuda downscales in VRAM.
@@ -1164,7 +1164,7 @@ func TestBuildHLS_CudaHevcVRAM_FullVRAMChain(t *testing.T) {
 		InputPath:     "/media/4k.mkv",
 		Encoder:       EncoderHEVCNVENC,
 		IsHEVC:        true,
-		CudaHevcVRAM:  true,
+		CudaVRAM:      true,
 		Width:         1920,
 		Height:        1080,
 		BitrateKbps:   8000,
@@ -1191,8 +1191,8 @@ func TestBuildHLS_CudaHevcVRAM_FullVRAMChain(t *testing.T) {
 	}
 }
 
-func TestBuildHLS_CudaHevcVRAM_OffByDefault(t *testing.T) {
-	// Without CudaHevcVRAM, an SDR HEVC re-encode does NOT enter the full-VRAM
+func TestBuildHLS_CudaVRAM_OffByDefault(t *testing.T) {
+	// Without CudaVRAM, an SDR HEVC re-encode does NOT enter the full-VRAM
 	// path (no -hwaccel_output_format cuda, no scale_cuda).
 	args := BuildHLS(BuildArgs{
 		InputPath:     "/media/4k.mkv",
@@ -1207,19 +1207,19 @@ func TestBuildHLS_CudaHevcVRAM_OffByDefault(t *testing.T) {
 	})
 	argStr := strings.Join(args, " ")
 	if strings.Contains(argStr, "-hwaccel_output_format cuda") || strings.Contains(argStr, "scale_cuda") {
-		t.Errorf("VRAM path must be off unless CudaHevcVRAM is set: %s", argStr)
+		t.Errorf("VRAM path must be off unless CudaVRAM is set: %s", argStr)
 	}
 }
 
-func TestBuildHLS_CudaHevcVRAM_HDRStaysSystemMemory(t *testing.T) {
+func TestBuildHLS_CudaVRAM_HDRStaysSystemMemory(t *testing.T) {
 	// HDR needs the libplacebo tonemap, which runs from system memory — so even
-	// with CudaHevcVRAM set, an HDR HEVC source must NOT take the full-VRAM
+	// with CudaVRAM set, an HDR HEVC source must NOT take the full-VRAM
 	// scale_cuda path; it stays on the system-memory cuvid decode + libplacebo.
 	args := BuildHLS(BuildArgs{
 		InputPath:      "/media/4khdr.mkv",
 		Encoder:        EncoderHEVCNVENC,
 		IsHEVC:         true,
-		CudaHevcVRAM:   true,
+		CudaVRAM:       true,
 		CudaHevcDecode: true,
 		NeedsToneMap:   true,
 		HasLibplacebo:  true,
@@ -1240,6 +1240,58 @@ func TestBuildHLS_CudaHevcVRAM_HDRStaysSystemMemory(t *testing.T) {
 	// System-memory NVDEC decode still offloads the decode for the libplacebo path.
 	if !strings.Contains(argStr, "-c:v hevc_cuvid") {
 		t.Errorf("HDR should still use system-memory NVDEC decode: %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaVRAM_H264FullVRAMChain(t *testing.T) {
+	// H.264 SDR + CudaVRAM: same full-VRAM chain as HEVC but pins the h264_cuvid
+	// decoder — NVDEC into CUDA memory, scale_cuda in VRAM, NVENC zero-copy.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsH264:        true,
+		CudaVRAM:      true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	for _, want := range []string{
+		"-hwaccel cuda", "-hwaccel_output_format cuda",
+		"-extra_hw_frames 8", "-c:v h264_cuvid", "scale_cuda=w=1920:h=1080",
+	} {
+		if !strings.Contains(argStr, want) {
+			t.Errorf("expected %q in H.264 VRAM chain: %s", want, argStr)
+		}
+	}
+	// Must NOT pin the HEVC decoder for an H.264 source.
+	if strings.Contains(argStr, "hevc_cuvid") {
+		t.Errorf("H.264 source must use h264_cuvid, not hevc_cuvid: %s", argStr)
+	}
+	if strings.Contains(argStr, "scale=1920:1080") {
+		t.Errorf("VRAM path must use scale_cuda, not software scale: %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaVRAM_H264OffByDefault(t *testing.T) {
+	// Without CudaVRAM, an H.264 re-encode stays on the software path.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderNVENC,
+		IsH264:        true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "h264_cuvid") || strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("H.264 VRAM path must be off unless CudaVRAM is set: %s", argStr)
 	}
 }
 

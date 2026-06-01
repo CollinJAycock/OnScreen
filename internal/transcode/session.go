@@ -57,6 +57,7 @@ type Session struct {
 	// off the SOURCE codec, and rung-child jobs would otherwise lose it.
 	SourceIsHEVC bool `json:"source_is_hevc,omitempty"`
 	SourceIsAV1  bool `json:"source_is_av1,omitempty"`
+	SourceIsH264 bool `json:"source_is_h264,omitempty"`
 
 	// ── Adaptive-bitrate (on-demand ladder) ───────────────────────────────
 	// On an ABR PARENT session, ABR=true and the fields below describe the
@@ -777,6 +778,7 @@ type TranscodeJob struct {
 	NeedsToneMap     bool    `json:"needs_tone_map"`
 	IsHEVC           bool    `json:"is_hevc"`
 	IsAV1            bool    `json:"is_av1"`      // source is AV1; remux must use fMP4 (mpegts has no AV1 stream type)
+	IsH264           bool    `json:"is_h264"`     // source is H.264; pins h264_cuvid on the full-VRAM scale_cuda path
 	PreferHEVC       bool    `json:"prefer_hevc"` // request HEVC output (4K + client supports it)
 	PreferAV1        bool    `json:"prefer_av1"`  // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
 	SubtitleStreams  []int   `json:"subtitle_streams,omitempty"`

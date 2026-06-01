@@ -92,6 +92,8 @@ func (h *NativeTranscodeHandler) startABR(
 			sess.SourceIsHEVC = true
 		case "av1":
 			sess.SourceIsAV1 = true
+		case "h264", "avc", "avc1":
+			sess.SourceIsH264 = true
 		}
 	}
 	if file.FrameRate != nil {
@@ -527,6 +529,7 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		// opt-in QSV HEVC). Distinct from Prefer* (the output codec).
 		IsHEVC:           parent.SourceIsHEVC,
 		IsAV1:            parent.SourceIsAV1,
+		IsH264:           parent.SourceIsH264,
 		Width:            rung.Width,
 		Height:           rung.Height,
 		BitrateKbps:      rung.BitrateKbps,

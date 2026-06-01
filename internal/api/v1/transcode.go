@@ -570,6 +570,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
 	isSourceAV1 := file.VideoCodec != nil && strings.EqualFold(*file.VideoCodec, "av1")
+	isSourceH264 := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "h264") || strings.EqualFold(*file.VideoCodec, "avc") || strings.EqualFold(*file.VideoCodec, "avc1"))
 	isSourceHDR := file.HDRType != nil && *file.HDRType != ""
 
 	// HEVC output preference fires in two cases:
@@ -703,6 +704,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		AudioStreamIndex: audioStreamIdx,
 		IsHEVC:           isSourceHEVC,
 		IsAV1:            isSourceAV1,
+		IsH264:           isSourceH264,
 		NeedsToneMap:     isSourceHDR && !body.VideoCopy,
 		PreferHEVC:       preferHEVC,
 		PreferAV1:        preferAV1,

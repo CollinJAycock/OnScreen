@@ -570,7 +570,7 @@ func ProbeCudaHevcDecode(ctx context.Context) bool {
 // 4K scale never touches the CPU), but it is the historically fragile mainline
 // chain: the HEVC NVDEC auto-path fails to create the decoder on some
 // ffmpeg/driver combos, and reference-heavy sources can exhaust the decoder
-// surface pool. So the worker enables CudaHevcVRAM only when this real probe
+// surface pool. So the worker enables CudaVRAM only when this real probe
 // passes, mirroring exactly what BuildHLS emits (explicit hevc_cuvid,
 // extra_hw_frames, scale_cuda). A 10-bit (Main10) clip is used because 10-bit
 // is the worst case for the cuda-frame chain.
