@@ -1295,6 +1295,143 @@ func TestBuildHLS_CudaVRAM_H264OffByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_CudaVRAM_IgnoredForUnsupportedSource(t *testing.T) {
+	// CudaVRAM only pins a cuvid decoder for codecs we've validated (HEVC/H.264;
+	// AV1 has its own path). A source that's none of those (e.g. VP9/MPEG-2,
+	// where IsHEVC/IsAV1/IsH264 are all false) must NOT take the VRAM path —
+	// pinning the wrong cuvid decoder would fail at init. It stays software.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/old.mkv",
+		Encoder:       EncoderNVENC,
+		CudaVRAM:      true, // set, but no supported source flag
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	for _, bad := range []string{"-hwaccel_output_format cuda", "scale_cuda", "_cuvid"} {
+		if strings.Contains(argStr, bad) {
+			t.Errorf("unsupported source must not take VRAM path (found %q): %s", bad, argStr)
+		}
+	}
+}
+
+func TestBuildHLS_CudaVRAM_KeepsFramesInVRAM(t *testing.T) {
+	// VRAM-residency integrity: scale_cuda must do the 8-bit downconvert itself
+	// (format=nv12 inside the filter), and there must be NO standalone software
+	// format=yuv420p strip — that would force a hwdownload and break the
+	// zero-copy pipeline. (SDR path, so no libplacebo yuv420p either.)
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsHEVC:        true,
+		CudaVRAM:      true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "scale_cuda=w=1920:h=1080:force_original_aspect_ratio=decrease:format=nv12") {
+		t.Errorf("scale_cuda must downconvert to nv12 in VRAM: %s", argStr)
+	}
+	if strings.Contains(argStr, "format=yuv420p") {
+		t.Errorf("VRAM path must not insert a software format=yuv420p (forces hwdownload): %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaVRAM_PrecedenceOverQSVAndSysmem(t *testing.T) {
+	// If a single config somehow carries all three HEVC decode opts, the
+	// full-VRAM path must win exactly once: -hwaccel_output_format cuda +
+	// scale_cuda, a single hevc_cuvid, and neither the QSV (-hwaccel qsv) nor a
+	// second system-memory cuvid attaches — so the input is never double-decoded.
+	args := BuildHLS(BuildArgs{
+		InputPath:      "/media/4k.mkv",
+		Encoder:        EncoderHEVCNVENC,
+		IsHEVC:         true,
+		CudaVRAM:       true,
+		CudaHevcDecode: true,
+		QSVDecode:      true,
+		Width:          1920,
+		Height:         1080,
+		BitrateKbps:    8000,
+		AudioCodec:     "aac",
+		SessionDir:     "/tmp/s",
+		SegmentPrefix:  "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-hwaccel_output_format cuda") || !strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("full-VRAM path must win: %s", argStr)
+	}
+	if n := strings.Count(argStr, "hevc_cuvid"); n != 1 {
+		t.Errorf("expected exactly one hevc_cuvid (no double decode), got %d: %s", n, argStr)
+	}
+	if strings.Contains(argStr, "-hwaccel qsv") || strings.Contains(argStr, "hevc_qsv") {
+		t.Errorf("QSV decode must yield to the full-VRAM path: %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaVRAM_AV1KeepsAutoDecoder(t *testing.T) {
+	// AV1 takes the full-VRAM path unconditionally and lets ffmpeg auto-select
+	// the decoder. Even with CudaVRAM set, an AV1 source must NOT get an explicit
+	// hevc_cuvid/h264_cuvid pin or the extra_hw_frames hardening (both scoped to
+	// the HEVC/H.264 cuvid cases) — it just scales in VRAM via scale_cuda.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4k.mkv",
+		Encoder:       EncoderAV1NVENC,
+		IsAV1:         true,
+		CudaVRAM:      true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-hwaccel_output_format cuda") || !strings.Contains(argStr, "scale_cuda") {
+		t.Errorf("AV1 must still use the full-VRAM path: %s", argStr)
+	}
+	if strings.Contains(argStr, "_cuvid") {
+		t.Errorf("AV1 must auto-select its decoder, not pin a cuvid: %s", argStr)
+	}
+	if strings.Contains(argStr, "-extra_hw_frames") {
+		t.Errorf("extra_hw_frames is scoped to HEVC/H.264, not AV1: %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaVRAM_H264HDRStaysSystemMemory(t *testing.T) {
+	// The "CudaVRAM is SDR-only" invariant holds for H.264 too: an HDR H.264
+	// source needs the libplacebo tonemap from system memory, so it must not
+	// take the full-VRAM scale_cuda path even with CudaVRAM set.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4khdr.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsH264:        true,
+		CudaVRAM:      true,
+		NeedsToneMap:  true,
+		HasLibplacebo: true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "-hwaccel_output_format cuda") || strings.Contains(argStr, "scale_cuda") || strings.Contains(argStr, "h264_cuvid") {
+		t.Errorf("HDR H.264 must not take the full-VRAM path: %s", argStr)
+	}
+	if !strings.Contains(argStr, "libplacebo") {
+		t.Errorf("HDR H.264 should tonemap via libplacebo: %s", argStr)
+	}
+}
+
 func TestBuildHLS_HDR_LibplaceboPreferredOverZscale(t *testing.T) {
 	// HDR + HasLibplacebo: GPU tonemap via libplacebo (Vulkan), NOT software
 	// zscale — even when zscale is also available. libplacebo does tonemap +
