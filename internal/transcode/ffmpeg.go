@@ -62,12 +62,19 @@ type BuildArgs struct {
 	StartOffset float64 // seconds (seek to this position)
 
 	// Video
-	Encoder          Encoder
-	Width            int
-	Height           int
-	BitrateKbps      int
-	NeedsToneMap     bool // HDR→SDR tone mapping (ADR-030)
-	HasTonemapCuda   bool // tonemap_cuda filter available in FFmpeg
+	Encoder      Encoder
+	Width        int
+	Height       int
+	BitrateKbps  int
+	NeedsToneMap bool // HDR→SDR tone mapping (ADR-030)
+	// CudaTonemap opts into the all-VRAM CUDA HDR→SDR path: NVDEC decode into
+	// CUDA memory, scale_cuda downscale, tonemap_cuda HDR→SDR, NVENC — all in
+	// VRAM, no round-trips. tonemap_cuda is our curated patch (jellyfin-ffmpeg's
+	// filter on mainline 8.1.1); it needs only CUDA, not Vulkan, so it's the
+	// preferred HDR path on NVIDIA hosts where libplacebo can't init (TrueNAS).
+	// The worker sets it from a startup probe (NeedsToneMap + NVENC + HEVC/H.264)
+	// and falls back to libplacebo / scale_cuda+zscale / software on failure.
+	CudaTonemap      bool
 	HasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
 	HasZscale        bool // zscale filter available (libzimg) for software tonemap
 	// HasLibplacebo enables GPU HDR→SDR tonemap via the libplacebo (Vulkan)
@@ -272,11 +279,12 @@ func BuildHLS(a BuildArgs) []string {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
 		}
 
-		if useCUDADecode || a.CudaHDRTonemap {
-			// Decode to NVDEC and keep frames in VRAM. For SDR (useCUDADecode) the
-			// scale filter is scale_cuda→nv12 straight to the encoder; for HDR
-			// (CudaHDRTonemap) it's scale_cuda→p010 then hwdownload + zscale
-			// tonemap. Either way the decode lands in CUDA memory.
+		if useCUDADecode || a.CudaHDRTonemap || a.CudaTonemap {
+			// Decode to NVDEC and keep frames in VRAM. SDR (useCUDADecode):
+			// scale_cuda→nv12 straight to the encoder. HDR via tonemap_cuda
+			// (CudaTonemap): scale_cuda→tonemap_cuda, all VRAM. HDR fallback
+			// (CudaHDRTonemap): scale_cuda→p010 then hwdownload + zscale. Either
+			// way the decode lands in CUDA memory.
 			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda")
 			// AV1 lets ffmpeg auto-select the decoder, but the HEVC NVDEC
 			// auto-path fails to bring up the decoder on mainline ffmpeg 8.x
@@ -304,7 +312,7 @@ func BuildHLS(a BuildArgs) []string {
 		// and the two are mutually exclusive by source codec. Opt-in per worker
 		// (TRANSCODE_QSV_DECODE); disable it for a worker if a source fails to
 		// decode on QSV.
-		if a.QSVDecode && a.IsHEVC && !useCUDADecode && !a.CudaHDRTonemap {
+		if a.QSVDecode && a.IsHEVC && !useCUDADecode && !a.CudaHDRTonemap && !a.CudaTonemap {
 			args = append(args, "-hwaccel", "qsv", "-c:v", "hevc_qsv")
 		}
 
@@ -318,7 +326,7 @@ func BuildHLS(a BuildArgs) []string {
 		// HEVC on certain sources; the worker retries with software decode if a
 		// session produces no segments. Mutually exclusive with the QSV path
 		// and the AV1 full-VRAM carve-out above.
-		if a.CudaHevcDecode && a.IsHEVC && !useCUDADecode && !a.CudaHDRTonemap && !a.QSVDecode {
+		if a.CudaHevcDecode && a.IsHEVC && !useCUDADecode && !a.CudaHDRTonemap && !a.CudaTonemap && !a.QSVDecode {
 			args = append(args, "-c:v", "hevc_cuvid")
 		}
 
@@ -790,16 +798,30 @@ func buildVideoFilter(a BuildArgs) string {
 	// and the AV1 cuda-decode path carries no tonemap.
 	swTonemapScaleFirst := needsSoftwareTonemap && swScale != "" && !a.IsVAAPI && !useCUDADecode
 
-	// GPU-assisted HDR (libplacebo unavailable): scale_cuda does the expensive
-	// downscale in VRAM keeping 10-bit (p010 — nv12 would clip the HDR signal to
-	// 8-bit before tonemapping), then hwdownload hands the small frame to the
-	// same zscale tonemap the software path uses. Decode is in CUDA memory
-	// (CudaHDRTonemap → full-VRAM decode in BuildHLS). Takes precedence over the
-	// software scale; libplacebo still wins when present (checked first below).
+	// All-VRAM NVIDIA HDR via tonemap_cuda: scale_cuda downscale + tonemap_cuda
+	// HDR→SDR, both in CUDA memory, straight to NVENC — no CPU, no hwdownload, no
+	// Vulkan. The preferred HDR path on NVIDIA (works on TrueNAS where libplacebo
+	// can't init); decode is in CUDA memory (CudaTonemap → full-VRAM decode).
+	cudaTonemap := a.CudaTonemap && a.NeedsToneMap && !a.IsVAAPI && (a.IsHEVC || a.IsH264)
+
+	// GPU-assisted HDR fallback (no tonemap_cuda, no libplacebo): scale_cuda does
+	// the expensive downscale in VRAM keeping 10-bit (p010 — nv12 would clip the
+	// HDR signal to 8-bit before tonemapping), then hwdownload hands the small
+	// frame to the same zscale tonemap the software path uses.
 	cudaHDRTonemap := a.CudaHDRTonemap && a.NeedsToneMap && a.HasZscale &&
-		!lpTonemap && !a.IsVAAPI && (a.IsHEVC || a.IsH264)
+		!cudaTonemap && !lpTonemap && !a.IsVAAPI && (a.IsHEVC || a.IsH264)
 
 	switch {
+	case cudaTonemap:
+		// scale_cuda keeps 10-bit (no format=), tonemap_cuda does HDR→SDR to nv12;
+		// the CUDA nv12 frame feeds NVENC directly.
+		tm := "tonemap_cuda=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format=nv12"
+		if a.Width > 0 && a.Height > 0 {
+			filters = append(filters,
+				fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height), tm)
+		} else {
+			filters = append(filters, tm)
+		}
 	case lpTonemap:
 		// libplacebo (Vulkan): tonemap + scale + 8-bit downconvert in one GPU
 		// pass, then hwdownload to CPU yuv420p for the encoder. a.Width/Height
@@ -851,7 +873,7 @@ func buildVideoFilter(a BuildArgs) string {
 		}
 	}
 
-	if !needsSoftwareTonemap && !lpTonemap && !useCUDADecode && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
+	if !needsSoftwareTonemap && !lpTonemap && !useCUDADecode && !cudaTonemap && !cudaHDRTonemap && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
 		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
 		// ("10-bit input video is not supported"). libx264 *accepts*
 		// 10-bit input but emits 10-bit High 10 profile H.264 — valid

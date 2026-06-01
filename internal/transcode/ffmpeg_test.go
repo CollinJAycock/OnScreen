@@ -896,7 +896,6 @@ func TestBuildHLS_NVENC_TonemapFallback(t *testing.T) {
 		Height:         1080,
 		BitrateKbps:    8000,
 		NeedsToneMap:   true,
-		HasTonemapCuda: false,
 		HasZscale:      true,
 		AudioCodec:     "aac",
 		SessionDir:     "/tmp/sessions/x",
@@ -933,7 +932,6 @@ func TestBuildHLS_NVENC_HDRSourceUsesZscale(t *testing.T) {
 		Height:           1080,
 		BitrateKbps:      8000,
 		NeedsToneMap:     true,
-		HasTonemapCuda:   true, // even if reported, we no longer use it
 		HasTonemapOpenCL: true, // same
 		HasZscale:        true,
 		AudioCodec:       "aac",
@@ -975,7 +973,6 @@ func TestBuildHLS_NVENC_NoTonemapAvailable(t *testing.T) {
 		Height:           1080,
 		BitrateKbps:      8000,
 		NeedsToneMap:     true,
-		HasTonemapCuda:   false,
 		HasTonemapOpenCL: false,
 		HasZscale:        false,
 		AudioCodec:       "aac",
@@ -1500,6 +1497,72 @@ func TestBuildHLS_CudaHDRTonemap_LibplaceboWins(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_CudaTonemap_AllVRAMChain(t *testing.T) {
+	// HDR HEVC + CudaTonemap: full-VRAM NVDEC decode -> scale_cuda (keeps 10-bit,
+	// no format=) -> tonemap_cuda (HDR->SDR nv12) -> NVENC. No hwdownload, no
+	// zscale, no libplacebo — the tonemap runs on the GPU.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4khdr.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsHEVC:        true,
+		CudaTonemap:   true,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	for _, want := range []string{
+		"-hwaccel cuda", "-hwaccel_output_format cuda", "-c:v hevc_cuvid",
+		"scale_cuda=w=1920:h=1080:force_original_aspect_ratio=decrease",
+		"tonemap_cuda=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format=nv12",
+	} {
+		if !strings.Contains(argStr, want) {
+			t.Errorf("expected %q in all-VRAM tonemap_cuda chain: %s", want, argStr)
+		}
+	}
+	for _, bad := range []string{"hwdownload", "zscale", "libplacebo"} {
+		if strings.Contains(argStr, bad) {
+			t.Errorf("all-VRAM tonemap_cuda chain must not contain %q: %s", bad, argStr)
+		}
+	}
+	// scale_cuda must keep 10-bit (no format=nv12 on it) so tonemap_cuda gets HDR.
+	if strings.Contains(argStr, "scale_cuda=w=1920:h=1080:force_original_aspect_ratio=decrease:format=nv12") {
+		t.Errorf("scale_cuda before tonemap_cuda must keep 10-bit (no format=nv12): %s", argStr)
+	}
+}
+
+func TestBuildHLS_CudaTonemap_PreferredOverLibplacebo(t *testing.T) {
+	// tonemap_cuda is the NVIDIA-native HDR path; when both it and libplacebo are
+	// available it wins (all-VRAM, no Vulkan round-trip).
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/4khdr.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		IsHEVC:        true,
+		CudaTonemap:   true,
+		NeedsToneMap:  true,
+		HasLibplacebo: true,
+		HasZscale:     true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/s",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "tonemap_cuda") {
+		t.Errorf("tonemap_cuda should be preferred for NVENC HDR: %s", argStr)
+	}
+	if strings.Contains(argStr, "libplacebo") {
+		t.Errorf("libplacebo must not engage when tonemap_cuda is used: %s", argStr)
+	}
+}
+
 func TestBuildHLS_HDR_LibplaceboPreferredOverZscale(t *testing.T) {
 	// HDR + HasLibplacebo: GPU tonemap via libplacebo (Vulkan), NOT software
 	// zscale — even when zscale is also available. libplacebo does tonemap +
@@ -1628,7 +1691,6 @@ func TestBuildHLS_HEVC_NVENC_HDRSourceUsesZscale(t *testing.T) {
 		Height:           2160,
 		BitrateKbps:      24000,
 		NeedsToneMap:     true,
-		HasTonemapCuda:   true, // even if reported, we no longer use it
 		HasTonemapOpenCL: true, // same
 		HasZscale:        true,
 		AudioCodec:       "aac",
@@ -1941,7 +2003,6 @@ func TestBuildHLS_HEVC_NVENC_NoTonemap(t *testing.T) {
 		Height:         2160,
 		BitrateKbps:    24000,
 		NeedsToneMap:   false,
-		HasTonemapCuda: true,
 		AudioCodec:     "aac",
 		SessionDir:     "/tmp/sessions/x",
 		SegmentPrefix:  "seg",

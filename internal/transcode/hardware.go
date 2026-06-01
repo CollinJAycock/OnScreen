@@ -610,6 +610,47 @@ func ProbeCudaHevcScale(ctx context.Context) bool {
 	return dec.Run() == nil
 }
 
+// ProbeTonemapCuda reports whether the all-VRAM CUDA HDR→SDR pipeline works
+// end-to-end: NVDEC decode into CUDA memory, scale_cuda downscale, tonemap_cuda
+// HDR→SDR, NVENC — all in VRAM, no round-trips. tonemap_cuda is our own
+// curated patch (lifted from jellyfin-ffmpeg onto mainline 8.1.1); it's the
+// preferred HDR path on NVIDIA because it needs only CUDA, not Vulkan (so it
+// works on TrueNAS where libplacebo can't init). A REAL round-trip is required
+// because the filter's CUDA kernels can fault on archs jellyfin hasn't validated
+// (observed CUDA_ERROR_ILLEGAL_ADDRESS on Blackwell/sm_120) — there the probe
+// fails and the worker falls back to scale_cuda+zscale or software. Same cold-
+// JIT cost as ProbeCudaHevcScale, so the worker runs it in the background.
+func ProbeTonemapCuda(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	tmp, err := os.CreateTemp("", "nvtonemap-probe-*.hevc")
+	if err != nil {
+		return false
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+	// 1) tiny 10-bit HDR10 (PQ/bt2020) clip to exercise the tonemap.
+	enc := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=s=640x480:r=10:d=1",
+		"-vf", "format=p010le,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc",
+		"-c:v", "hevc_nvenc", "-profile:v", "main10", "-frames:v", "10", tmp.Name())
+	if enc.Run() != nil {
+		return false
+	}
+	// 2) all-VRAM chain: cuvid -> scale_cuda -> tonemap_cuda -> NVENC, as BuildHLS emits.
+	dec := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
+		"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-extra_hw_frames", "8",
+		"-c:v", "hevc_cuvid", "-i", tmp.Name(),
+		"-vf", "scale_cuda=w=320:h=240,tonemap_cuda=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format=nv12",
+		"-c:v", "hevc_nvenc", "-frames:v", "5", "-f", "null", "-")
+	return dec.Run() == nil
+}
+
 func ParseOverride(override string) []Encoder {
 	var encoders []Encoder
 	for _, s := range strings.Split(override, ",") {

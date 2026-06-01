@@ -37,7 +37,7 @@ type Worker struct {
 	store            *SessionStore
 	encoders         []Encoder
 	encoderLabels    map[string]string // encoder → human label, detected once at startup
-	hasTonemapCuda   bool              // tonemap_cuda filter available in FFmpeg
+	cudaTonemap      atomic.Bool       // all-VRAM CUDA HDR→SDR (scale_cuda+tonemap_cuda) works here; probed in the background (cold JIT), flips on when warmed
 	hasTonemapOpenCL bool              // tonemap_opencl filter available in FFmpeg
 	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
 	hasLibplacebo    bool              // libplacebo+Vulkan HDR→SDR tonemap works (GPU, vendor-agnostic; preferred over zscale)
@@ -85,7 +85,6 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	for _, e := range encoders {
 		labels[string(e)] = detectGPUName(ctx, e)
 	}
-	hasTonemap := ProbeFilter(ctx, "tonemap_cuda")
 	hasTonemapOCL := ProbeFilter(ctx, "tonemap_opencl")
 	hasZscale := ProbeFilter(ctx, "zscale")
 	// GPU HDR→SDR via libplacebo (Vulkan) — the preferred tonemap path. Real
@@ -121,7 +120,6 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		store:            store,
 		encoders:         encoders,
 		encoderLabels:    labels,
-		hasTonemapCuda:   hasTonemap,
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
 		hasLibplacebo:    hasLibplacebo,
@@ -132,25 +130,27 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		activeJobs:       make(map[string]*os.Process),
 	}
 	w.maxSessions.Store(int32(maxSessions))
-	// Probe the full-VRAM scale_cuda chain in the BACKGROUND. The first run on a
-	// cold CUDA JIT cache compiles the scale_cuda kernels for this GPU arch,
-	// which is CPU-bound and can take ~60-90s; running it synchronously here
-	// would delay the HTTP server (NewWorker is called before ListenAndServe)
-	// and trip the container health check into a restart loop. With
-	// CUDA_CACHE_PATH on a persistent volume that cost is paid once, then warm
-	// boots return in ~2s. Until it completes, cudaScale stays false and SDR
-	// HEVC/H.264 downscales use the system-memory / software path.
+	// Probe the CUDA filter chains in the BACKGROUND. The first run on a cold
+	// CUDA JIT cache compiles the scale_cuda / tonemap_cuda kernels for this GPU
+	// arch, which is CPU-bound and can take ~60-90s; running it synchronously
+	// here would delay the HTTP server (NewWorker is called before
+	// ListenAndServe) and trip the container health check into a restart loop.
+	// With CUDA_CACHE_PATH on a persistent volume that cost is paid once, then
+	// warm boots return in ~2s. Until they complete, the capabilities stay false
+	// and HDR/SDR fall back to libplacebo / system-memory / software paths.
 	if hasNVENC {
-		go w.warmCudaScale()
+		go w.warmCudaFilters()
 	}
 	return w
 }
 
-// warmCudaScale probes the full-VRAM scale_cuda chain and enables CudaVRAM if it
-// works. Runs in its own goroutine (see NewWorker) so the cold scale_cuda JIT
-// never blocks startup; the capability flips on once the kernels are compiled
-// and cached.
-func (w *Worker) warmCudaScale() {
+// warmCudaFilters probes the GPU CUDA-filter chains (scale_cuda for SDR VRAM,
+// scale_cuda+tonemap_cuda for HDR) and enables them if they work. Runs in its
+// own goroutine (see NewWorker) so the cold CUDA JIT never blocks startup; each
+// capability flips on once its kernels are compiled and cached. tonemap_cuda is
+// probed for real because its kernels can fault on archs jellyfin hasn't
+// validated (e.g. Blackwell) — there it stays off and HDR falls back.
+func (w *Worker) warmCudaFilters() {
 	start := time.Now()
 	if ProbeCudaHevcScale(context.Background()) {
 		w.cudaScale.Store(true)
@@ -159,6 +159,15 @@ func (w *Worker) warmCudaScale() {
 	} else {
 		w.logger.Warn("cuda_scale unavailable; SDR HEVC/H.264 downscales stay on software scale",
 			"elapsed", time.Since(start).Round(time.Second))
+	}
+	tm := time.Now()
+	if ProbeTonemapCuda(context.Background()) {
+		w.cudaTonemap.Store(true)
+		w.logger.Info("tonemap_cuda enabled (all-VRAM CUDA HDR→SDR path)",
+			"warmup", time.Since(tm).Round(time.Second))
+	} else {
+		w.logger.Warn("tonemap_cuda unavailable; HDR falls back to libplacebo / scale_cuda+zscale / software",
+			"elapsed", time.Since(tm).Round(time.Second))
 	}
 }
 
@@ -184,7 +193,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"addr", w.addr,
 		"encoders", EncoderNames(w.encoders),
 		"max_sessions", int(w.maxSessions.Load()),
-		"tonemap_cuda", w.hasTonemapCuda,
+		"tonemap_cuda", w.cudaTonemap.Load(), // false at startup; probed async, flips on after the tonemap_cuda JIT warms
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
 		"libplacebo", w.hasLibplacebo,
@@ -207,7 +216,7 @@ func (w *Worker) register(ctx context.Context) error {
 		MaxSessions:     int(w.maxSessions.Load()),
 		ActiveSessions:  int(w.activeSessions.Load()),
 		ActiveCostCenti: int(w.activeCostCenti.Load()),
-		HasGPUTonemap:   w.hasLibplacebo || w.hasTonemapCuda || w.hasTonemapOpenCL,
+		HasGPUTonemap:   w.hasLibplacebo || w.cudaTonemap.Load() || w.hasTonemapOpenCL,
 		RegisteredAt:    time.Now(),
 	})
 }
@@ -358,9 +367,13 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// by buildTranscodeArgs so the software fallback drops it from later runs.
 	cudaVRAMUsable := false
 	// cudaHDRUsable: this run attempts the GPU-assisted HDR chain (cuvid→
-	// scale_cuda(p010)→hwdownload→zscale tonemap) — the libplacebo-unavailable
-	// fallback. Same gating/fallback; also captured by buildTranscodeArgs.
+	// scale_cuda(p010)→hwdownload→zscale tonemap) — the fallback when tonemap_cuda
+	// is unavailable. Same gating/fallback; also captured by buildTranscodeArgs.
 	cudaHDRUsable := false
+	// cudaTonemapUsable: this run attempts the all-VRAM CUDA HDR chain (cuvid→
+	// scale_cuda→tonemap_cuda→NVENC) — the preferred HDR path on NVIDIA. Same
+	// gating/fallback; also captured by buildTranscodeArgs.
+	cudaTonemapUsable := false
 	switch job.Decision {
 	case "directStream":
 		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
@@ -403,7 +416,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"tonemap", job.NeedsToneMap,
 			"prefer_hevc", job.PreferHEVC,
 			"prefer_av1", job.PreferAV1,
-			"tonemap_cuda", w.hasTonemapCuda,
+			"tonemap_cuda", w.cudaTonemap.Load(),
 			"tonemap_opencl", w.hasTonemapOpenCL,
 			"zscale", w.hasZscale,
 			"libplacebo", w.hasLibplacebo,
@@ -424,7 +437,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				Height:               job.Height,
 				BitrateKbps:          bitrate,
 				NeedsToneMap:         job.NeedsToneMap,
-				HasTonemapCuda:       w.hasTonemapCuda,
+				CudaTonemap:          cudaTonemapUsable,
 				HasTonemapOpenCL:     w.hasTonemapOpenCL,
 				HasZscale:            w.hasZscale,
 				HasLibplacebo:        w.hasLibplacebo,
@@ -455,11 +468,15 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// path when both are set, so the two don't conflict. H.264 shares the
 		// HEVC-validated probe — h264_cuvid is at least as reliable.
 		cudaVRAMUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && enc != "copy"
-		// GPU-assisted HDR (libplacebo-unavailable fallback): same scale_cuda
-		// capability, but for HDR sources it downscales in 10-bit then zscale-
-		// tonemaps the small frame. Gated off when libplacebo is available (that
-		// path is preferred and wins in BuildArgs) and requires zscale + NVENC.
-		cudaHDRUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap &&
+		// All-VRAM CUDA HDR (preferred on NVIDIA): cuvid→scale_cuda→tonemap_cuda
+		// →NVENC, no Vulkan. The HDR analogue of cudaVRAMUsable.
+		cudaTonemapUsable = w.cudaTonemap.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap &&
+			IsNVENCEncoder(enc) && enc != "copy"
+		// GPU-assisted HDR fallback (scale_cuda + CPU zscale tonemap): used when
+		// tonemap_cuda is unavailable AND libplacebo is unavailable. Requires the
+		// scale_cuda capability + zscale + NVENC. tonemap_cuda and libplacebo both
+		// take precedence (in BuildArgs), so gate this off when either applies.
+		cudaHDRUsable = !cudaTonemapUsable && w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap &&
 			w.hasZscale && !w.hasLibplacebo && IsNVENCEncoder(enc) && enc != "copy"
 		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
@@ -592,9 +609,9 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// ctx) is not a decode failure, so selfExited gates this. Clearing
 	// cudaHevcUsable (captured by buildTranscodeArgs) and continuationUseQSV also
 	// drops hardware decode from the retry and any later continuation runs.
-	if (qsvDecodeUsable || cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
+	if (qsvDecodeUsable || cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable || cudaTonemapUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
 		w.logger.Warn("hardware decode produced no segments; retrying with software decode",
-			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable, "err", exitErr)
+			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable, "tonemap_cuda", cudaTonemapUsable, "err", exitErr)
 		// Clear any partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
@@ -602,6 +619,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		cudaHevcUsable = false
 		cudaVRAMUsable = false
 		cudaHDRUsable = false
+		cudaTonemapUsable = false
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
 	}
 

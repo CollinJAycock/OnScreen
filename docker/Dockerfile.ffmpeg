@@ -18,7 +18,7 @@ ARG CUDA_VERSION=12.8.0
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential nasm yasm pkg-config git wget \
+      build-essential nasm yasm pkg-config git wget patch \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
       libgnutls28-dev libzimg-dev ocl-icd-opencl-dev \
@@ -69,9 +69,23 @@ RUN git clone --recursive --depth 1 --shallow-submodules --branch ${LIBPLACEBO_T
     ldconfig && \
     rm -rf /tmp/libplacebo
 
-ARG FFMPEG_VERSION=8.1
+ARG FFMPEG_VERSION=8.1.1
 RUN wget -q https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -O /tmp/ffmpeg.tar.bz2 && \
     cd /tmp && tar xjf ffmpeg.tar.bz2
+
+# Our curated CUDA-tonemap patch set, lifted from jellyfin-ffmpeg's 8.1.1 branch
+# (GPL) and carried as the minimal 3-patch chain on top of mainline 8.1.1:
+#   0002 update-cuda-func-header             (CUDA runtime header additions)
+#   0003 add-enhanced-cuda-pixfmt-converter  (jellyfin's enhanced scale_cuda)
+#   0004 add-cuda-tonemap-impl               (the tonemap_cuda filter)
+# This gives an all-VRAM NVIDIA HDR->SDR path (cuvid -> scale_cuda -> tonemap_cuda
+# -> NVENC) that runs on plain CUDA — no Vulkan, so it works on hosts (TrueNAS)
+# where libplacebo can't init. libplacebo stays for Vulkan-capable hosts. Skipped
+# patch 0001 (segment-muxer, unrelated); the chain only needs 0002->0004 and they
+# apply to mainline 8.1.1. Re-vendor from the same branch when bumping FFmpeg.
+COPY docker/patches/ /tmp/ffmpeg-patches/
+RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
+    for p in /tmp/ffmpeg-patches/*.patch; do echo "== applying $(basename "$p") ==" && patch -p1 < "$p"; done
 
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
     ./configure \
