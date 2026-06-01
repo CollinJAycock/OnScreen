@@ -71,9 +71,16 @@ COPY --from=builder /bin/goose   /usr/local/bin/goose
 
 COPY --chown=onscreen:onscreen internal/db/migrations /migrations
 
-# NVIDIA runtime env — makes nvidia-smi and GPU visible inside the container
+# NVIDIA runtime env — makes nvidia-smi and GPU visible inside the container.
+# `graphics` is REQUIRED, not optional: nvidia-container-toolkit only injects
+# the NVIDIA Vulkan ICD when `graphics` is among the requested capabilities,
+# and the libplacebo (Vulkan) HDR→SDR tonemap — which also does the GPU-side
+# downscale in the same pass — silently falls back to software zscale without
+# it (observed on the RTX 5000 TrueNAS deploy: ProbeLibplaceboVulkan failed,
+# 4K transcodes capped at ~0.5× real-time on the software scale). Use `all`
+# so the Vulkan loader finds the ICD; see the matching note in Dockerfile.ffmpeg.
 ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 VOLUME /var/cache/onscreen
 EXPOSE 7070 7071
