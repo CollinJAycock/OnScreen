@@ -936,12 +936,16 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	}
 
 	// Wait for seg0 to land — that's the minimum a client needs to start
-	// playback. Once it's ready, opportunistically wait a little longer
-	// for seg1 so HLS.js has 2 entries on its first playlist parse, but
-	// don't block on it indefinitely: on slow inputs (SW HDR tonemap,
-	// flaky media drive, large remux source) seg1 can lag the worker's
-	// 60 s start-of-session grace by several seconds, and seg0-only is
-	// already enough for HLS.js to begin fetching.
+	// playback. Once it's ready, briefly wait for seg1 so HLS.js has 2
+	// entries on its first playlist parse — but cap that wait tightly.
+	// seg0-only is already enough for HLS.js to begin fetching, and on a
+	// slow first segment (Turing CUDA warmup, large remux, paced readrate)
+	// seg1 can lag seg0 by 10 s+; a generous grace adds that lag straight
+	// onto every transcode's start latency (measured: a 4K HDR start blocked
+	// ~20 s on QA — ~11 s to seg0 plus the full 10 s grace waiting on a
+	// lagging seg1). A 2 s cap still covers the fast-GPU case (seg1 lands
+	// ~1 s after seg0, as on the local 5080) without penalising slow ones:
+	// they return seg0-only and HLS.js picks up seg1 on its next poll.
 	//
 	// Each poll iteration stamps TouchActivity on the session so the
 	// worker's supervisor doesn't reap an actively-waiting client as
@@ -949,7 +953,7 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	// uses CreatedAt as the anchor, and kills the session at the 60 s
 	// mark even though the client (this handler) is blocked in the
 	// loop below.
-	const seg1ExtraGrace = 10 * time.Second
+	const seg1ExtraGrace = 2 * time.Second
 	haveSeg0 := false
 	var seg1Deadline time.Time
 	for time.Now().Before(deadline) {
