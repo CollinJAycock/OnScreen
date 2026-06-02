@@ -258,15 +258,38 @@ library) surfaced two real gaps the shadow was meant to catch:
   fallback when the verdict isn't available. `e082b1a` endpoint, `23a24e4`
   codec-aware bit-depth, no-header h264/aac defaults all in.
 
-**Remaining:**
-1. Redeploy local; verify the flipped web plays direct/remux/transcode correctly
-   (incl. the non-faststart `mov` → remux and `mkv/h264/ac3` → video-copy cases),
-   then re-run the QA sweep.
-2. Retire the per-client decision logic on the other clients (Android → Tizen →
-   Roku) once each sends a profile + calls the endpoint.
-3. Phase 3: audio passthrough (true 7.1/Atmos), video profile/level.
+**Done — response-envelope fix (`ea91ad4`), the linchpin.** The endpoint used
+`respond.JSON` (raw body) instead of `respond.Success` ({"data": …} envelope), so
+every client's `ApiResponse<T>` parser failed and *silently fell back to local* —
+the web flip included (its validation passed only because local still plays,
+masking the bug). Caught on-device: the Android phone logged `server=null` despite
+a 200 + 75-byte body with no `data` wrapper. Without this, the entire flip is
+inert across all clients.
 
-Why staged: the flip changes how playback *starts*. Testing the server decision
-against the live dev library before flipping caught the DirectStream model gap
-that a blind cut-over would have shipped as a library-wide full-transcode
-regression.
+**Done — all clients migrated.** Every client now sends `X-Client-Capabilities`
+(from its real capability source) and — except Roku — consumes
+`/playback-decision` with a local fallback:
+- Web `b5d496a`; **Android mobile `267b09d` — verified on a Galaxy S24** (logged
+  `server=directPlay`, ExoPlayer decoded h264+eac3 natively, no crash); Android
+  TV `44fa653` (compile-checked, mirrors mobile); Tizen + webOS `163014f`
+  (`svelte-check`; verdict→`video_copy`). webOS's header was corrected to an
+  MSE-probe (it's hls.js/MSE, not AVPlay — can't claim HEVC/AC-3 blindly).
+- **Roku flip deferred** (`9538076` = header only): `Playback_Decide` runs in the
+  render thread where a blocking `Client_PostSync` hangs the UI (needs an async
+  decision Task), and Roku's local decision already probes `roDeviceInfo` — the
+  most accurate local decision of any client. Lowest value, highest risk; revisit
+  with a real Roku.
+
+**Remaining:**
+1. **Redeploy QA** with `ea91ad4` so the *web* flip actually consults the server
+   there (the 175-sweep verified playback + the 7.1 fix, but the web was still on
+   local-fallback). 142/175 passed (141 + 1 transient DNS); a stall at #143 was
+   build/sweep resource contention, not a playback bug.
+2. Device-test the un-verified flips (Fire TV, Tizen/webOS TVs) — fallback-safe
+   meanwhile.
+3. Roku async-decision flip when a Roku is connected.
+4. Phase 3: audio passthrough (true 7.1/Atmos), video profile/level.
+
+Why staged: the flip changes how playback *starts*. Driving the real endpoint
+per-client (local dev, then the phone on-device) caught both the `DirectStream`
+model gap and the response-envelope bug that a blind cut-over would have shipped.
