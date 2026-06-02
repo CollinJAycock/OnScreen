@@ -667,40 +667,57 @@
   const clientSupportsHEVC = clientCaps.hevc;
   const clientSupportsAV1 = clientCaps.av1;
   const clientSupportsHDR = clientCaps.hdr;
+  // Play-decision wrappers. The server's capability-profile decision
+  // (POST /items/{id}/playback-decision, from the X-Client-Capabilities header)
+  // is authoritative for codec / container / audio / HDR / bit-depth. We refine
+  // it locally only for faststart — a progressive-download concern the server
+  // can't see (it isn't on media.File). Falls back to the local heuristic when
+  // the server verdict isn't available yet (still fetching, fetch failed, or a
+  // non-source file). See docs/capability-profiles.md.
+  let serverDecision: { fileId: string; decision: string } | null = null;
+  let decisionFetchedFor = '';
+
+  function serverDecisionFor(file: ItemFile | undefined): string | null {
+    return file && serverDecision && serverDecision.fileId === file.id ? serverDecision.decision : null;
+  }
   function canDirectPlay(file: ItemFile | undefined): boolean {
-    return canDirectPlayDecision(file, clientCaps);
+    const d = serverDecisionFor(file);
+    if (d !== null) return d === 'directPlay' && (file?.faststart ?? true);
+    return canDirectPlayDecision(file, clientCaps); // fallback: no server verdict
   }
   function canRemuxVideo(file: ItemFile | undefined): boolean {
-    return canRemuxVideoDecision(file, clientCaps);
+    const d = serverDecisionFor(file);
+    if (d !== null) {
+      if (d === 'directStream') return true;
+      // A direct-playable file that isn't faststart can't be progressive-played
+      // (tail moov) → remux it, but only if the video codec is HLS-muxable.
+      if (d === 'directPlay' && !(file?.faststart ?? true)) return canRemuxVideoDecision(file, clientCaps);
+      return false;
+    }
+    return canRemuxVideoDecision(file, clientCaps); // fallback
+  }
+  // _verdict is the serverDecision dependency (read inside the wrappers); it's
+  // passed only so Svelte tracks it for canAuto's reactivity.
+  function autoPlayable(file: ItemFile | undefined, _verdict: unknown): boolean {
+    return canDirectPlay(file) || canRemuxVideo(file);
   }
 
-  // ── Capability-profile shadow check (docs/capability-profiles.md) ──────────
-  // Compares the server's X-Client-Capabilities decision against the local
-  // playback-decision for the source file and logs any mismatch. SHADOW ONLY —
-  // the local decision still drives playback; this verifies the two agree
-  // across the library (via the 4K sweep + browsing) before we make the server
-  // decision authoritative. Remove once the cut-over lands.
-  let shadowCheckedItemId = '';
-  async function shadowCheckDecision(file: ItemFile) {
+  async function fetchServerDecision(file: ItemFile) {
     if (!item) return;
-    const local = canDirectPlayDecision(file, clientCaps)
-      ? 'directPlay'
-      : canRemuxVideoDecision(file, clientCaps)
-        ? 'directStream'
-        : 'transcode';
     try {
-      // No file_id → server resolves the best/first file, which is sourceFile.
-      const srv = await transcodeApi.decide(item.id);
+      const srv = await transcodeApi.decide(item.id, file.id);
+      serverDecision = { fileId: srv.file_id || file.id, decision: srv.decision };
+      const local = canDirectPlayDecision(file, clientCaps)
+        ? 'directPlay'
+        : canRemuxVideoDecision(file, clientCaps)
+          ? 'directStream'
+          : 'transcode';
       if (srv.decision !== local) {
-        console.warn('[capability-shadow] MISMATCH ' + JSON.stringify({
-          title: item.title, local, server: srv.decision,
-          video_codec: file.video_codec, audio_codec: file.audio_codec,
-          container: file.container, video_bit_depth: file.video_bit_depth,
-          hdr_type: file.hdr_type, faststart: file.faststart,
-        }));
+        console.info(`[capability] ${file.video_codec}/${file.audio_codec}: server=${srv.decision} local=${local} faststart=${file.faststart}`);
       }
     } catch (e) {
-      console.warn('[capability-shadow] decision call failed: ' + String(e));
+      serverDecision = null; // fall back to the local heuristic
+      console.warn('[capability] decision fetch failed, using local: ' + String(e));
     }
   }
 
@@ -729,11 +746,14 @@
   // Hide "Auto (Direct Play)" when the file requires transcoding.
   $: sourceWidth = item?.files?.[0]?.resolution_w ?? 0;
   $: sourceFile = item?.files?.[0];
-  $: canAuto = canDirectPlay(sourceFile) || canRemuxVideo(sourceFile);
-  // Fire the capability shadow check once per item (sourceFile is item.files[0]).
-  $: if (sourceFile && item && shadowCheckedItemId !== item.id) {
-    shadowCheckedItemId = item.id;
-    void shadowCheckDecision(sourceFile);
+  // Pass serverDecision so Svelte re-evaluates canAuto when the verdict resolves
+  // (the wrappers read it internally, which Svelte can't see through the call).
+  $: canAuto = autoPlayable(sourceFile, serverDecision);
+  // Fetch the server play decision once per item (sourceFile is item.files[0]).
+  $: if (sourceFile && item && decisionFetchedFor !== item.id) {
+    decisionFetchedFor = item.id;
+    serverDecision = null; // reset until the new item's verdict resolves
+    void fetchServerDecision(sourceFile);
   }
   $: availableQualities = qualityOptions.filter(
     q => {
