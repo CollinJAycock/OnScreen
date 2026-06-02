@@ -31,8 +31,8 @@ func ParseCapabilities(header string) ClientCapabilities {
 	caps := ClientCapabilities{
 		MaxWidth:         1920,
 		MaxHeight:        1080,
-		MaxAudioChannels: 2,
-		MaxVideoBitDepth: 8,
+		MaxAudioChannels: 6, // 5.1 default — surround where it works; a client that
+		MaxVideoBitDepth: 8, // can't decode >2ch must declare maxAudioChannels=2.
 	}
 	if header == "" {
 		return caps

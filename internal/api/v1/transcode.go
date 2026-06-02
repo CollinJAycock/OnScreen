@@ -233,6 +233,26 @@ type transcodeStartRequest struct {
 	MaxAudioChannels *int `json:"max_audio_channels,omitempty"`
 }
 
+// clientCaps resolves the effective client playback capabilities for a transcode
+// request. The source of truth is the X-Client-Capabilities header (parsed into a
+// transcode.ClientCapabilities — codecs, channels, resolution, bit-depth); the
+// legacy per-request booleans (supports_hevc/av1, max_audio_channels) are folded
+// in for back-compat with clients that haven't migrated to the header yet. When
+// no header is present the result mirrors today's boolean-driven behavior, so
+// existing clients are unaffected. See docs/capability-profiles.md.
+func clientCaps(r *http.Request, body transcodeStartRequest) (caps transcode.ClientCapabilities, hasProfile bool) {
+	raw := r.Header.Get("X-Client-Capabilities")
+	caps = transcode.ParseCapabilities(raw)
+	// Legacy booleans OR-in (never downgrade a header-declared capability).
+	caps.SupportsHEVC = caps.SupportsHEVC || body.SupportsHEVC
+	caps.SupportsAV1 = caps.SupportsAV1 || body.SupportsAV1
+	// An explicit per-request channel cap (legacy clients, test injection) wins.
+	if body.MaxAudioChannels != nil && *body.MaxAudioChannels > 0 {
+		caps.MaxAudioChannels = *body.MaxAudioChannels
+	}
+	return caps, raw != ""
+}
+
 type transcodeStartResponse struct {
 	SessionID   string `json:"session_id"`
 	PlaylistURL string `json:"playlist_url"`
@@ -558,15 +578,29 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		audioStreamIdx = *body.AudioStreamIndex
 	}
 
+	// Resolve the client's playback capabilities (X-Client-Capabilities header,
+	// with the legacy supports_* booleans folded in). Drives the audio-channel
+	// and output-codec targets below. Inert for clients that send no header —
+	// the result then mirrors the prior boolean behavior. See clientCaps.
+	caps, hasProfile := clientCaps(r, body)
+	h.logger.DebugContext(ctx, "resolved client capabilities",
+		"profile_header", hasProfile,
+		"supports_hevc", caps.SupportsHEVC, "supports_av1", caps.SupportsAV1,
+		"max_audio_channels", caps.MaxAudioChannels,
+		"max_w", caps.MaxWidth, "max_h", caps.MaxHeight, "max_bit_depth", caps.MaxVideoBitDepth)
+	// Echo the resolved profile back so it's debuggable without log access
+	// (curl -i / devtools): confirms exactly what the server thinks the client
+	// can play. Set before any body write.
+	w.Header().Set("X-OnScreen-Client-Caps", fmt.Sprintf(
+		"profile=%t;hevc=%t;av1=%t;maxAudioChannels=%d;maxW=%d;maxH=%d;maxBitDepth=%d",
+		hasProfile, caps.SupportsHEVC, caps.SupportsAV1, caps.MaxAudioChannels,
+		caps.MaxWidth, caps.MaxHeight, caps.MaxVideoBitDepth))
+
 	// AAC output channel count: preserve the source layout (5.1/7.1) instead of
-	// always downmixing to stereo, capped by any client-declared maximum. Used
-	// by both the single-session job and the ABR ladder below.
-	clientMaxChannels := 0
-	if body.MaxAudioChannels != nil {
-		clientMaxChannels = *body.MaxAudioChannels
-	}
+	// always downmixing to stereo, capped by the client's declared maximum (5.1
+	// default). Used by both the single-session job and the ABR ladder below.
 	audioChannels := transcode.TargetAudioChannels(
-		transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx), clientMaxChannels)
+		transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx), caps.MaxAudioChannels)
 
 	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
 	isSourceAV1 := file.VideoCodec != nil && strings.EqualFold(*file.VideoCodec, "av1")
@@ -580,7 +614,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	//     format the source already paid for, instead of round-tripping
 	//     HEVC → H.264 just because the client also speaks H.264.
 	// Mirrors the AV1 source-preservation rule below.
-	preferHEVC := body.SupportsHEVC && !body.VideoCopy && (height >= 2160 || isSourceHEVC)
+	preferHEVC := caps.SupportsHEVC && !body.VideoCopy && (height >= 2160 || isSourceHEVC)
 	// Auto-prefer AV1 output for AV1-source playback when the client supports it.
 	// Avoids the AV1 → H.264 round-trip we'd otherwise do (any non-Auto quality
 	// click on an AV1 source). The worker confirms an AV1 encoder is actually
@@ -588,7 +622,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// AV1 takes priority over HEVC at the worker — natural use case is "play
 	// the AV1 source," and re-encoding AV1 → HEVC throws away the format
 	// efficiency the source already paid for.
-	preferAV1 := body.SupportsAV1 && isSourceAV1 && !body.VideoCopy
+	preferAV1 := caps.SupportsAV1 && isSourceAV1 && !body.VideoCopy
 
 	// For remux, use the source file bitrate (video is copied unchanged).
 	// For full transcode, use the target bitrate from quality selection.
@@ -621,9 +655,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// universally-decodable default. HEVC/AV1 ladders are fMP4 (.m4s).
 		abrCodec := transcode.LadderH264
 		switch {
-		case body.SupportsAV1 && isSourceAV1:
+		case caps.SupportsAV1 && isSourceAV1:
 			abrCodec = transcode.LadderAV1
-		case body.SupportsHEVC && (isSourceHEVC || sourceH >= 2160):
+		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160):
 			abrCodec = transcode.LadderHEVC
 		}
 		// Resolve the ladder height ceiling. An explicit quality pick wins;
@@ -726,8 +760,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			return ""
 		}(),
 		"needs_tonemap", job.NeedsToneMap,
-		"supports_hevc", body.SupportsHEVC,
-		"supports_av1", body.SupportsAV1,
+		"supports_hevc", caps.SupportsHEVC,
+		"supports_av1", caps.SupportsAV1,
+		"audio_channels", audioChannels,
+		"client_profile", hasProfile,
 	)
 
 	workerAddr, err := h.sessions.DispatchJob(ctx, job)

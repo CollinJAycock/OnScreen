@@ -12,8 +12,8 @@ func TestParseCapabilities_Empty(t *testing.T) {
 	if caps.MaxHeight != 1080 {
 		t.Errorf("want MaxHeight 1080, got %d", caps.MaxHeight)
 	}
-	if caps.MaxAudioChannels != 2 {
-		t.Errorf("want MaxAudioChannels 2, got %d", caps.MaxAudioChannels)
+	if caps.MaxAudioChannels != 6 {
+		t.Errorf("want MaxAudioChannels 6 (5.1 default), got %d", caps.MaxAudioChannels)
 	}
 }
 
@@ -31,7 +31,7 @@ func TestParseCapabilities(t *testing.T) {
 				AudioCodecs:      []string{"aac"},
 				MaxWidth:         1920,
 				MaxHeight:        1080,
-				MaxAudioChannels: 2,
+				MaxAudioChannels: 6,
 			},
 		},
 		{
@@ -43,7 +43,7 @@ func TestParseCapabilities(t *testing.T) {
 				SupportsHEVC:     true,
 				MaxWidth:         1920,
 				MaxHeight:        1080,
-				MaxAudioChannels: 2,
+				MaxAudioChannels: 6,
 			},
 		},
 		{
@@ -54,7 +54,7 @@ func TestParseCapabilities(t *testing.T) {
 				SupportsHEVC:     true,
 				MaxWidth:         1920,
 				MaxHeight:        1080,
-				MaxAudioChannels: 2,
+				MaxAudioChannels: 6,
 			},
 		},
 		{
@@ -65,7 +65,7 @@ func TestParseCapabilities(t *testing.T) {
 				SupportsAV1:      true,
 				MaxWidth:         1920,
 				MaxHeight:        1080,
-				MaxAudioChannels: 2,
+				MaxAudioChannels: 6,
 			},
 		},
 		{
@@ -86,7 +86,7 @@ func TestParseCapabilities(t *testing.T) {
 				Containers:       []string{"mkv", "mp4"},
 				MaxWidth:         1920,
 				MaxHeight:        1080,
-				MaxAudioChannels: 2,
+				MaxAudioChannels: 6,
 			},
 		},
 		{
@@ -97,7 +97,7 @@ func TestParseCapabilities(t *testing.T) {
 				AudioCodecs:      []string{"aac"},
 				MaxWidth:         1920,
 				MaxHeight:        1080,
-				MaxAudioChannels: 2,
+				MaxAudioChannels: 6,
 			},
 		},
 	}
