@@ -207,4 +207,3 @@ Delete its bespoke decision logic once the server decides.
 - The `web/tests/e2e/4k-sweep.spec.ts` browser sweep is the integration backstop:
   with real profiles flowing, the whole 4K library should DirectPlay/transcode to
   playable output with no 7.1-AAC class failures.
-</content>
