@@ -12,9 +12,16 @@ type Decision int
 const (
 	// DecisionDirectPlay — serve the file as-is. Zero server CPU.
 	DecisionDirectPlay Decision = iota
-	// DecisionDirectStream — remux container only. Audio/video pass through.
+	// DecisionDirectStream — stream-copy the video into a client-supported
+	// container (MPEG-TS / fMP4) and transcode the audio only if the client
+	// can't decode it. The video is never re-encoded. (ADR-016, widened: was
+	// "remux container only, both streams pass through" — broadened to the
+	// video-copy + audio-transcode path the clients actually use, since copying
+	// H.264/HEVC while only re-encoding AC-3/DTS/TrueHD audio is far cheaper than
+	// a full re-encode.)
 	DecisionDirectStream
-	// DecisionTranscode — full video (and optionally audio) transcode.
+	// DecisionTranscode — full video re-encode (codec the client can't decode or
+	// can't remux, HDR tonemap, bit-depth reduction, or downscale).
 	DecisionTranscode
 )
 
@@ -30,13 +37,17 @@ func (d Decision) String() string {
 }
 
 // Decide returns the optimal play decision for a media file + client capabilities.
-// Decision order (ADR-016):
-//  1. Client supports container + all streams → DirectPlay
-//  2. Client supports all streams but not container → DirectStream
-//  3. Otherwise → Transcode
+// Decision order (ADR-016, as widened for the video-copy path):
+//  1. Video undecodable / HDR-on-SDR / too-deep / oversized → Transcode (re-encode)
+//  2. Video decodable + audio + container all client-supported → DirectPlay
+//  3. Video decodable + remux-carriable (h264/hevc, or audio-only) → DirectStream
+//     (stream-copy video, adapt container, transcode audio if needed)
+//  4. Video decodable but not remux-carriable (AV1/VP9 in a wrong container) → Transcode
 //
 // HDR handling (ADR-030): HDR content forces Transcode if the client doesn't
-// support HDR, even when it would otherwise DirectStream.
+// support HDR. Note: faststart (progressive-download readiness) is NOT modeled
+// here — it isn't on media.File; clients refine a DirectPlay verdict with their
+// own faststart check (see docs/capability-profiles.md).
 func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Decision {
 	videoCodec := deref(file.VideoCodec)
 	audioCodec := deref(file.AudioCodec)
@@ -96,17 +107,29 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		return DecisionTranscode
 	}
 
-	// If client supports everything → DirectPlay.
-	if clientSupportsVideo && clientSupportsAudio && clientSupportsContainer {
+	// Video the client can't decode at all (unsupported codec) → full transcode.
+	// (HDR tonemap, bit-depth reduction, and downscale already returned Transcode
+	// above — those re-encode a codec the client otherwise supports.)
+	if !clientSupportsVideo {
+		return DecisionTranscode
+	}
+
+	// Video is client-decodable. If audio + container are also fine, play as-is.
+	if clientSupportsAudio && clientSupportsContainer {
 		return DecisionDirectPlay
 	}
 
-	// If client supports streams but not container → DirectStream (remux).
-	if clientSupportsVideo && clientSupportsAudio {
+	// Video is decodable but the container and/or audio need adapting. Prefer a
+	// stream-copy of the video (DirectStream) over a full re-encode — but only
+	// when the video can be carried by the HLS remux container. Audio-only files
+	// always remux (just the container). H.264 (MPEG-TS) and HEVC (fMP4, when the
+	// client decodes it — guaranteed here, else we'd have transcoded above) are
+	// remux-carriable; AV1/VP9 are NOT (TS can't carry AV1, VP9 is WebM-only), so
+	// a decodable-but-not-carriable codec in a wrong container needs a full
+	// transcode. Mirrors the web client's remuxableVideoCodecs.
+	if audioOnly || videoAlias == "h264" || videoAlias == "h265" {
 		return DecisionDirectStream
 	}
-
-	// Otherwise must transcode.
 	return DecisionTranscode
 }
 

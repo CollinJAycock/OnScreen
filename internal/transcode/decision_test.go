@@ -106,15 +106,25 @@ func TestDecide_DirectPlay_10bitHEVC_10bitClient(t *testing.T) {
 	}
 }
 
-func TestDecide_Transcode_7_1_ExceedsClientChannelCap(t *testing.T) {
-	file := baseFile()
+func TestDecide_DirectStream_7_1_ExceedsClientChannelCap(t *testing.T) {
+	file := baseFile() // h264 / aac / mkv
 	file.AudioStreams = []byte(`[{"channels":8}]`) // 7.1 source
-	// Client decodes AAC + container but caps at 5.1 (ParseCapabilities default
-	// 6). 7.1 can't direct-play or remux — the layout is fixed in the stream —
-	// so it must transcode (downmix). This is the 7.1-AAC class of failure.
+	// 7.1 exceeds the 5.1 cap so the audio must be downmixed — but the H.264
+	// video can be stream-copied, so this is a video-copy DirectStream (remux +
+	// audio downmix), NOT a full re-encode.
+	caps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac,protocols=mkv:mp4")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectStream {
+		t.Errorf("want DirectStream (video-copy + downmix) for 7.1 on 5.1 client, got %s", got)
+	}
+}
+
+func TestDecide_Transcode_7_1_UnsupportedVideo(t *testing.T) {
+	file := baseFile()
+	file.VideoCodec = strPtr("hevc") // not client-decodable → full transcode
+	file.AudioStreams = []byte(`[{"channels":8}]`)
 	caps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac,protocols=mkv:mp4")
 	if got := Decide(file, caps, defaultServerCaps); got != DecisionTranscode {
-		t.Errorf("want Transcode for 7.1 source on 5.1 client, got %s", got)
+		t.Errorf("want Transcode for 7.1 HEVC on a non-HEVC client, got %s", got)
 	}
 }
 
@@ -393,17 +403,18 @@ func TestDecide_DirectStream_HEVC_MKV_SDR(t *testing.T) {
 	}
 }
 
-func TestDecide_Transcode_HEVC_MKV_DTS(t *testing.T) {
-	// Real-world case: Alien (1979) — HEVC MKV with DTS audio.
-	// Client supports HEVC but not DTS → must transcode audio.
+func TestDecide_DirectStream_HEVC_MKV_DTS(t *testing.T) {
+	// Real-world case: Alien (1979) — HEVC MKV with DTS audio. Client decodes
+	// HEVC but not DTS → stream-copy the HEVC video (into fMP4) and transcode
+	// only the DTS audio. That's DirectStream, not a full HEVC re-encode.
 	file := baseFile()
 	*file.VideoCodec = "hevc"
 	*file.Container = "mkv"
 	*file.AudioCodec = "dts"
 	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac:mp3:opus:flac,protocols=mp4:ts")
 	got := Decide(file, caps, defaultServerCaps)
-	if got != DecisionTranscode {
-		t.Errorf("want Transcode for HEVC MKV + DTS (audio unsupported), got %s", got)
+	if got != DecisionDirectStream {
+		t.Errorf("want DirectStream (copy HEVC + transcode DTS audio), got %s", got)
 	}
 }
 
@@ -496,14 +507,14 @@ func TestDecide_CodecMatrix(t *testing.T) {
 		// ── MKV files ──────────────────────────────────────────────────────────
 		{"mkv/h264/aac", "mkv", "h264", "aac", DecisionDirectStream,
 			"h264/aac supported but MKV container not → remux to MPEG-TS"},
-		{"mkv/h264/ac3", "mkv", "h264", "ac3", DecisionTranscode,
-			"h264 OK but AC-3 audio not browser-supported → transcode audio"},
-		{"mkv/h264/eac3", "mkv", "h264", "eac3", DecisionTranscode,
-			"E-AC-3 (Dolby Digital Plus) not browser-supported"},
-		{"mkv/h264/dts", "mkv", "h264", "dts", DecisionTranscode,
-			"DTS not browser-supported"},
-		{"mkv/h264/truehd", "mkv", "h264", "truehd", DecisionTranscode,
-			"TrueHD not browser-supported"},
+		{"mkv/h264/ac3", "mkv", "h264", "ac3", DecisionDirectStream,
+			"h264 copyable; AC-3 not browser-decodable → remux video + transcode audio"},
+		{"mkv/h264/eac3", "mkv", "h264", "eac3", DecisionDirectStream,
+			"h264 copyable; E-AC-3 not browser-decodable → remux video + transcode audio"},
+		{"mkv/h264/dts", "mkv", "h264", "dts", DecisionDirectStream,
+			"h264 copyable; DTS not browser-decodable → remux video + transcode audio"},
+		{"mkv/h264/truehd", "mkv", "h264", "truehd", DecisionDirectStream,
+			"h264 copyable; TrueHD not browser-decodable → remux video + transcode audio"},
 		{"mkv/h264/opus", "mkv", "h264", "opus", DecisionDirectStream,
 			"h264/opus both supported, remux MKV→MPEG-TS"},
 		{"mkv/hevc/eac3", "mkv", "hevc", "eac3", DecisionTranscode,
@@ -528,8 +539,8 @@ func TestDecide_CodecMatrix(t *testing.T) {
 		// ── MPEG-TS files ──────────────────────────────────────────────────────
 		{"ts/mpeg2video/ac3", "ts", "mpeg2video", "ac3", DecisionTranscode,
 			"MPEG-2 video not browser-playable"},
-		{"ts/h264/dts", "ts", "h264", "dts", DecisionTranscode,
-			"h264 OK but DTS audio not supported → transcode audio"},
+		{"ts/h264/dts", "ts", "h264", "dts", DecisionDirectStream,
+			"h264 copyable; DTS not browser-decodable → remux video + transcode audio"},
 	}
 
 	for _, tc := range cases {
@@ -574,24 +585,24 @@ func TestDecide_CodecMatrix_HEVCClient(t *testing.T) {
 			"unchanged — h264/aac/mp4 always direct play"},
 		{"mp4/hevc/aac", "mp4", "hevc", "aac", DecisionDirectPlay,
 			"HEVC client can direct play HEVC MP4"},
-		{"mp4/hevc/eac3", "mp4", "hevc", "eac3", DecisionTranscode,
-			"HEVC OK but E-AC-3 audio not browser-supported → transcode"},
+		{"mp4/hevc/eac3", "mp4", "hevc", "eac3", DecisionDirectStream,
+			"HEVC copyable; E-AC-3 not decodable → remux video + transcode audio"},
 
 		// ── MKV files ──────────────────────────────────────────────────────
 		{"mkv/h264/aac", "mkv", "h264", "aac", DecisionDirectStream,
 			"h264/aac supported, MKV not → remux"},
 		{"mkv/hevc/aac", "mkv", "hevc", "aac", DecisionDirectStream,
 			"HEVC client: HEVC/aac supported, MKV not → remux"},
-		{"mkv/hevc/eac3", "mkv", "hevc", "eac3", DecisionTranscode,
-			"HEVC OK but E-AC-3 not supported → transcode audio"},
-		{"mkv/hevc/ac3", "mkv", "hevc", "ac3", DecisionTranscode,
-			"HEVC OK but AC-3 not supported → transcode audio"},
-		{"mkv/hevc/dts", "mkv", "hevc", "dts", DecisionTranscode,
-			"HEVC OK but DTS not supported → transcode audio"},
-		{"mkv/hevc/truehd", "mkv", "hevc", "truehd", DecisionTranscode,
-			"HEVC OK but TrueHD not supported → transcode audio"},
-		{"mkv/h264/dts", "mkv", "h264", "dts", DecisionTranscode,
-			"DTS still not supported even with HEVC client"},
+		{"mkv/hevc/eac3", "mkv", "hevc", "eac3", DecisionDirectStream,
+			"HEVC copyable; E-AC-3 not decodable → remux video + transcode audio"},
+		{"mkv/hevc/ac3", "mkv", "hevc", "ac3", DecisionDirectStream,
+			"HEVC copyable; AC-3 not decodable → remux video + transcode audio"},
+		{"mkv/hevc/dts", "mkv", "hevc", "dts", DecisionDirectStream,
+			"HEVC copyable; DTS not decodable → remux video + transcode audio"},
+		{"mkv/hevc/truehd", "mkv", "hevc", "truehd", DecisionDirectStream,
+			"HEVC copyable; TrueHD not decodable → remux video + transcode audio"},
+		{"mkv/h264/dts", "mkv", "h264", "dts", DecisionDirectStream,
+			"h264 copyable; DTS not decodable → remux video + transcode audio"},
 		{"mkv/h264/opus", "mkv", "h264", "opus", DecisionDirectStream,
 			"unchanged — h264/opus remux"},
 		{"mkv/av1/opus", "mkv", "av1", "opus", DecisionTranscode,
@@ -600,8 +611,8 @@ func TestDecide_CodecMatrix_HEVCClient(t *testing.T) {
 		// ── MPEG-TS files ──────────────────────────────────────────────────
 		{"ts/mpeg2video/ac3", "ts", "mpeg2video", "ac3", DecisionTranscode,
 			"MPEG-2 video not browser-playable"},
-		{"ts/h264/dts", "ts", "h264", "dts", DecisionTranscode,
-			"DTS audio not supported"},
+		{"ts/h264/dts", "ts", "h264", "dts", DecisionDirectStream,
+			"h264 copyable; DTS not decodable → remux video + transcode audio"},
 	}
 
 	for _, tc := range cases {

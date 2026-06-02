@@ -62,15 +62,29 @@ func TestDecision_DirectPlayWhenCompatible(t *testing.T) {
 	}
 }
 
-func TestDecision_TranscodeWhen7_1ExceedsCap(t *testing.T) {
+func TestDecision_DirectStreamWhen7_1ExceedsCap(t *testing.T) {
 	h := newDecisionHandler(t, media.File{
 		VideoCodec: strPtr("h264"), AudioCodec: strPtr("aac"), Container: strPtr("mp4"),
 		AudioStreams: []byte(`[{"channels":8}]`), // 7.1 — exceeds the default 5.1 cap
 	})
 	rec := httptest.NewRecorder()
 	h.Decision(rec, decisionRequest(t, "videoDecoder=h264,audioDecoder=aac,protocols=mp4", true))
+	// H.264 video copies; only the 7.1 audio needs downmixing → video-copy remux.
+	if !bodyHas(rec, `"decision":"directStream"`) {
+		t.Errorf("7.1 on h264 should directStream (video-copy + downmix); body: %s", rec.Body.String())
+	}
+}
+
+func TestDecision_TranscodeWhenVideoUnsupported(t *testing.T) {
+	h := newDecisionHandler(t, media.File{
+		VideoCodec: strPtr("av1"), AudioCodec: strPtr("aac"), Container: strPtr("mkv"),
+		AudioStreams: []byte(`[{"channels":6}]`),
+	})
+	rec := httptest.NewRecorder()
+	// Client decodes h264 only; AV1 can't be decoded or remuxed → full transcode.
+	h.Decision(rec, decisionRequest(t, "videoDecoder=h264,audioDecoder=aac,protocols=mkv:mp4", true))
 	if !bodyHas(rec, `"decision":"transcode"`) {
-		t.Errorf("7.1 source on a 5.1 client should transcode; body: %s", rec.Body.String())
+		t.Errorf("AV1 on a non-AV1 client should transcode; body: %s", rec.Body.String())
 	}
 }
 

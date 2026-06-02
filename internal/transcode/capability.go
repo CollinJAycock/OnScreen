@@ -89,6 +89,17 @@ func ParseCapabilities(header string) ClientCapabilities {
 			caps.SupportsDV = parseInt(val) > 0 || strings.EqualFold(val, "true")
 		}
 	}
+	// Safe no-profile defaults: a client that declared no codecs still gets the
+	// universal baseline (H.264 video / AAC audio) so a blank profile direct-plays
+	// the common case instead of transcoding everything. Only applied when the
+	// client declared nothing — a client that lists codecs gets exactly those.
+	// Containers fall back to mkv/mp4/mov in SupportsContainer.
+	if len(caps.VideoCodecs) == 0 {
+		caps.VideoCodecs = []string{"h264"}
+	}
+	if len(caps.AudioCodecs) == 0 {
+		caps.AudioCodecs = []string{"aac"}
+	}
 	return caps
 }
 
