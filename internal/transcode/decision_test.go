@@ -187,15 +187,19 @@ func TestDecide_AudioBitDepthDoesNotForceTranscode(t *testing.T) {
 	}
 }
 
-func TestDecide_Transcode_DolbyVision_ClientNoDV(t *testing.T) {
+func TestDecide_Unsupported_DolbyVision_ClientNoDV(t *testing.T) {
 	file := baseFile()
 	file.HDRType = strPtr("dolby_vision")
 	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4")
 	caps.SupportsHDR = true // HDR10 support doesn't cover DV
 	caps.SupportsDV = false
+	// DV on a client that can't direct-play it is Unsupported, NOT Transcode: the
+	// only correct DV tonemapper (libplacebo) can't init on the deployment host
+	// and tonemap_cuda mangles the colors, so we refuse instead of serving a
+	// broken transcode (see docs/dolby-vision.md).
 	got := Decide(file, caps, defaultServerCaps)
-	if got != DecisionTranscode {
-		t.Errorf("want Transcode for DV without DV support, got %s", got)
+	if got != DecisionUnsupported {
+		t.Errorf("want Unsupported for DV without DV support, got %s", got)
 	}
 }
 

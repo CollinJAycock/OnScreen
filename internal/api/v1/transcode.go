@@ -482,6 +482,25 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Dolby Vision gate: refuse rather than serve a broken stream. The only
+	// correct DV tonemapper (libplacebo) can't init on the deployment host and
+	// tonemap_cuda wrecks the colors (docs/dolby-vision.md), so a DV title can't
+	// be transcoded correctly here. Return a clear error the client shows as
+	// "Dolby Vision is not supported". Honors a DV-capable client (dovi=1), which
+	// would direct-play and not hit transcode-start anyway. This mirrors the
+	// transcode.Decide DecisionUnsupported verdict the playback-decision endpoint
+	// returns, so the client refusing up-front and a client that skips the
+	// decision both end at the same clear message.
+	if file.HDRType != nil && strings.EqualFold(*file.HDRType, "dolby_vision") {
+		if dvCaps, _ := clientCaps(r, body); !dvCaps.SupportsDV {
+			h.logger.InfoContext(ctx, "transcode: refusing Dolby Vision (unsupported)",
+				"item_id", itemID, "file_id", file.ID)
+			respond.Error(w, r, http.StatusUnsupportedMediaType,
+				"DOLBY_VISION_UNSUPPORTED", "Dolby Vision is not supported")
+			return
+		}
+	}
+
 	// Serve a pre-encoded ("static") ABR ladder when one exists for this file —
 	// the player gets a master playlist whose segments come from object storage /
 	// CDN, so no live session or ffmpeg is spent (HA roadmap §5). Only when ABR is

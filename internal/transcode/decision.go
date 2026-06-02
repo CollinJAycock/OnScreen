@@ -23,6 +23,14 @@ const (
 	// DecisionTranscode — full video re-encode (codec the client can't decode or
 	// can't remux, HDR tonemap, bit-depth reduction, or downscale).
 	DecisionTranscode
+	// DecisionUnsupported — the content can't be played and must NOT be
+	// transcoded either: the result would be broken. Today the only case is
+	// Dolby Vision on a client that can't direct-play it — the only correct DV
+	// tonemapper (libplacebo) can't initialize on the deployment host, and
+	// tonemap_cuda produces the green/IPT cast (see docs/dolby-vision.md). The
+	// client surfaces a clear "Dolby Vision is not supported" message instead of
+	// playing a mangled stream.
+	DecisionUnsupported
 )
 
 func (d Decision) String() string {
@@ -31,6 +39,8 @@ func (d Decision) String() string {
 		return "directPlay"
 	case DecisionDirectStream:
 		return "directStream"
+	case DecisionUnsupported:
+		return "unsupported"
 	default:
 		return "transcode"
 	}
@@ -75,7 +85,17 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	clientSupportsAudio := audioAlias == "" || (caps.SupportsAudioCodec(audioAlias) && channelsFit)
 	clientSupportsContainer := caps.SupportsContainer(containerAlias)
 
-	// HDR check: if source is HDR and client doesn't support it, must transcode.
+	// Dolby Vision: we neither pass it through nor tonemap it. The only correct
+	// DV tonemapper (libplacebo apply_dolbyvision) can't init on the deployment
+	// host (no Vulkan), and tonemap_cuda mangles the colors — so a client that
+	// can't direct-play DV gets an explicit "unsupported" verdict and shows a
+	// clear message rather than a broken transcode (see docs/dolby-vision.md). A
+	// future DV-capable client (dovi=1) direct-plays and never reaches here.
+	if strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDV {
+		return DecisionUnsupported
+	}
+	// Other HDR (HDR10 / HDR10+ / HLG): if the client can't display it, tonemap
+	// (transcode). These carry a standard base that tonemap_cuda handles fine.
 	if isHDR(hdrType) && !clientSupportsHDR(caps, hdrType) {
 		return DecisionTranscode
 	}

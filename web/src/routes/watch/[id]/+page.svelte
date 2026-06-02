@@ -701,6 +701,19 @@
   function autoPlayable(file: ItemFile | undefined, _verdict: unknown): boolean {
     return canDirectPlay(file) || canRemuxVideo(file);
   }
+  // Dolby Vision is not supported: we neither pass it through nor tonemap it (the
+  // only correct DV tonemapper can't run on the server — see docs/dolby-vision.md).
+  // The server returns decision 'unsupported'; until that verdict resolves we fall
+  // back to the file's hdr_type. We show a message instead of a broken transcode.
+  function isUnsupported(file: ItemFile | undefined): boolean {
+    if (!file) return false;
+    if (serverDecisionFor(file) === 'unsupported') return true;
+    return (file.hdr_type ?? '').toLowerCase() === 'dolby_vision';
+  }
+  // _verdict is the serverDecision reactivity dependency (read inside isUnsupported).
+  function unsupportedReactive(file: ItemFile | undefined, _verdict: unknown): boolean {
+    return isUnsupported(file);
+  }
 
   async function fetchServerDecision(file: ItemFile) {
     if (!item) return;
@@ -748,7 +761,8 @@
   $: sourceFile = item?.files?.[0];
   // Pass serverDecision so Svelte re-evaluates canAuto when the verdict resolves
   // (the wrappers read it internally, which Svelte can't see through the call).
-  $: canAuto = autoPlayable(sourceFile, serverDecision);
+  $: dvUnsupported = unsupportedReactive(sourceFile, serverDecision);
+  $: canAuto = !dvUnsupported && autoPlayable(sourceFile, serverDecision);
   // Fetch the server play decision once per item (sourceFile is item.files[0]).
   $: if (sourceFile && item && decisionFetchedFor !== item.id) {
     decisionFetchedFor = item.id;
@@ -1566,6 +1580,12 @@
     if (!item?.files?.[0]?.stream_url || !videoEl) return;
 
     const file = item.files[0];
+    // Dolby Vision — refuse rather than play a broken transcode. The dvUnsupported
+    // player branch shows "Dolby Vision is not supported"; don't start a stream.
+    if (isUnsupported(file)) {
+      paused = true;
+      return;
+    }
     // Signal intent to auto-play so controls don't flash a paused state.
     paused = false;
     // Non-default audio track selected — must go through transcode even for direct-playable files.
@@ -2670,6 +2690,16 @@
       </svg>
       <p class="blocked-title">Watch limit reached</p>
       <p class="blocked-text">{blockedMessage}</p>
+      <button class="back-btn" on:click={goBack}>← Back</button>
+    </div>
+  {:else if dvUnsupported}
+    <div class="center-msg">
+      <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M9 9l6 6M15 9l-6 6"/>
+      </svg>
+      <p class="blocked-title">Dolby Vision is not supported</p>
+      <p class="blocked-text">This title is encoded in Dolby Vision, which OnScreen can't play. A non–Dolby Vision (HDR10 or SDR) version will play normally.</p>
       <button class="back-btn" on:click={goBack}>← Back</button>
     </div>
   {:else if error}

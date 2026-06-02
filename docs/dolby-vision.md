@@ -6,7 +6,30 @@ multi-source pass, 2026-06-02 (19 verified claims; sources cited inline).
 
 ## TL;DR / the decision
 
-**Should OnScreen support Dolby Vision? — No, don't build in-server DV support.
+**Should OnScreen support Dolby Vision? — No. DV is explicitly unsupported:
+OnScreen detects it and shows "Dolby Vision is not supported" instead of
+attempting a broken transcode. No passthrough, no tonemap, no RPU handling.**
+
+**Shipped (2026-06-02):** DV detection already existed (the scanner reads the
+"DOVI configuration record" side-data → persists `HDRType="dolby_vision"`). On
+top of that:
+- `transcode.Decide` returns a new `DecisionUnsupported` verdict for DV when the
+  client can't direct-play it (all clients today). The `playback-decision`
+  endpoint returns `decision:"unsupported"`.
+- Transcode-start refuses DV with HTTP 415 `DOLBY_VISION_UNSUPPORTED` /
+  "Dolby Vision is not supported" — the universal gate, so any client that skips
+  the decision still fails cleanly instead of streaming a green/garbled transcode.
+- Web watch page shows a "Dolby Vision is not supported" panel (mirrors the
+  parental-block panel) and never starts playback for a DV title.
+- Follow-up (not blocking): native clients (Android/Tizen/webOS/Roku) currently
+  surface the 415 generically; give them the same dedicated message when next
+  touched.
+
+Everything below is the original research/rationale for *why* not to build it.
+
+---
+
+**Original framing — don't build in-server DV support.
 Just stop DV titles from hard-failing (PTS fix), and fix the colors *off-server*
 if anyone cares. Don't build DV passthrough, RPU handling, or per-profile logic.**
 
