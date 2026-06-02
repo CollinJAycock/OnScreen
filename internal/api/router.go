@@ -991,6 +991,8 @@ func NewRouter(h *Handlers) http.Handler {
 				r.With(middleware.RateLimit(h.RateLimiter, middleware.TranscodeStartLimit,
 					middleware.SessionKey("ratelimit:transcode_start"))).
 					Post("/items/{id}/transcode", h.NativeTranscode.Start)
+					// Server-authoritative play decision (docs/capability-profiles.md).
+					r.Post("/items/{id}/playback-decision", h.NativeTranscode.Decision)
 				r.Delete("/transcode/sessions/{sid}", h.NativeTranscode.Stop)
 			}
 		})
