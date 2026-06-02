@@ -11,6 +11,10 @@
  * after a URL change without a full reload.
  */
 
+// Value import is safe: playback-decision only type-imports from api (erased at
+// compile), so there's no runtime import cycle.
+import { clientCapabilitiesHeader } from './playback-decision';
+
 let apiBase = '/api/v1';
 
 /** Override the API base — Tauri startup flow calls this with the
@@ -145,6 +149,11 @@ export function assetUrl(path: string): string {
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (bearerToken) h.Authorization = `Bearer ${bearerToken}`;
+  // Declarative playback capability profile (see docs/capability-profiles.md).
+  // Memoized + browser-only; '' in SSR so the header is simply omitted and the
+  // server falls back to its safe defaults.
+  const caps = clientCapabilitiesHeader();
+  if (caps) h['X-Client-Capabilities'] = caps;
   return h;
 }
 

@@ -118,3 +118,36 @@ export function detectClientCaps(): ClientCaps {
     hdr: typeof window !== 'undefined' && window.matchMedia('(dynamic-range: high)').matches,
   };
 }
+
+let capsHeaderCache: string | null = null;
+
+/** Build the `X-Client-Capabilities` header value from the running browser's
+ *  decode capabilities, in the grammar the server's ParseCapabilities expects
+ *  (`videoDecoder=h264:h265,audioDecoder=aac:...,maxAudioChannels=6,...`). This
+ *  is the declarative profile the server uses to pick transcode targets +
+ *  (eventually) the play decision — see docs/capability-profiles.md.
+ *
+ *  Memoized — capabilities don't change within a session. Returns '' in
+ *  non-browser/SSR contexts (no MSE), where the caller should omit the header
+ *  and let the server fall back to its safe defaults. */
+export function clientCapabilitiesHeader(): string {
+  if (capsHeaderCache !== null) return capsHeaderCache;
+  if (typeof MediaSource === 'undefined') return ''; // SSR / no MSE — don't cache
+  const caps = detectClientCaps();
+  const video = ['h264', 'vp9'];
+  if (caps.hevc) video.push('h265');
+  if (caps.av1) video.push('av1');
+  capsHeaderCache = [
+    `videoDecoder=${video.join(':')}`,
+    `audioDecoder=${[...browserAudioCodecs].join(':')}`,
+    `protocols=${[...browserContainers].join(':')}`,
+    'maxWidth=3840',
+    'maxHeight=2160',
+    // Browsers decode up to 5.1 AAC via MSE; 7.1 (8ch) AAC is undecodable and
+    // stalls playback entirely (the 7.1 sweep finding) — declare 6, never 8.
+    'maxAudioChannels=6',
+    `maxbitdepth=${caps.hevc10bit ? 10 : 8}`,
+    `hdr=${caps.hdr ? 1 : 0}`,
+  ].join(',');
+  return capsHeaderCache;
+}
