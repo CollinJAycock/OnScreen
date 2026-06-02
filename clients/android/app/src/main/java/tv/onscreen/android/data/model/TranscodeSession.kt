@@ -50,7 +50,8 @@ data class PlaybackDecisionRequest(
 )
 
 /** Server-authoritative play decision: "directPlay" | "directStream" |
- *  "transcode". See docs/capability-profiles.md. */
+ *  "transcode" | "unsupported" (Dolby Vision — can't be played; show a message).
+ *  See docs/capability-profiles.md and docs/dolby-vision.md. */
 @JsonClass(generateAdapter = true)
 data class PlaybackDecision(
     val decision: String,

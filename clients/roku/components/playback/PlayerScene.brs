@@ -121,6 +121,14 @@ sub onItemTaskState()
 
     decision = Playback_Decide(m.file, Playback_SupportsHevc())
 
+    ' Dolby Vision is not supported — Playback_Decide flags it "unsupported"
+    ' (the server can't tonemap DV correctly and refuses with 415; see
+    ' docs/dolby-vision.md). Show a clear message instead of bailing silently.
+    if decision.mode = "unsupported"
+        showUnsupportedDialog("Dolby Vision is not supported.")
+        return
+    end if
+
     serverUrl = Prefs_GetServerUrl()
     if serverUrl = invalid
         bailToHome()
@@ -640,6 +648,31 @@ end function
 sub bailToHome()
     stopTranscodeSession()
     getMainScene().callFunc("navigateTo", "HomeScene")
+end sub
+
+' Show a one-button dialog (e.g. "Dolby Vision is not supported.") on the main
+' scene, then return to Home when the user dismisses it. This is the only
+' user-facing message path in the Roku client — every other failure bails
+' silently — so it's kept deliberately small and self-contained.
+sub showUnsupportedDialog(msg as String)
+    dlg = createObject("roSGNode", "Dialog")
+    dlg.title = "Can't play this title"
+    dlg.message = msg
+    dlg.buttons = ["OK"]
+    m.unsupportedDialog = dlg
+    ' OK press fires buttonSelected; Back press fires wasClosed. Either way we
+    ' tear down + go Home (the handler guards against a double bail).
+    dlg.observeField("buttonSelected", "onUnsupportedDialogClosed")
+    dlg.observeField("wasClosed", "onUnsupportedDialogClosed")
+    scene = getMainScene()
+    if scene <> invalid then scene.dialog = dlg
+end sub
+
+sub onUnsupportedDialogClosed()
+    if m.unsupportedDialog = invalid then return
+    m.unsupportedDialog.close = true
+    m.unsupportedDialog = invalid
+    bailToHome()
 end sub
 
 function getMainScene() as Object

@@ -21,9 +21,16 @@ top of that:
   the decision still fails cleanly instead of streaming a green/garbled transcode.
 - Web watch page shows a "Dolby Vision is not supported" panel (mirrors the
   parental-block panel) and never starts playback for a DV title.
-- Follow-up (not blocking): native clients (Android/Tizen/webOS/Roku) currently
-  surface the 415 generically; give them the same dedicated message when next
-  touched.
+- All native clients now show the dedicated message too (consume the
+  `unsupported` verdict, with a local `hdr_type=="dolby_vision"` fallback when the
+  decision call fails):
+  - Android phone + TV: `PlaybackViewModel` short-circuits to a "Dolby Vision is
+    not supported" error/dialog (TV via a `dolby_vision` sentinel in
+    `showErrorDialog`).
+  - Tizen / webOS: watch-page guard before `transcode.start`.
+  - Roku: `Playback_Decide` flags DV as a new `"unsupported"` mode; `PlayerScene`
+    shows a one-button dialog (the first user-facing message in the Roku client —
+    every other failure bails silently). Covered by `PlaybackDecide_test`.
 
 Everything below is the original research/rationale for *why* not to build it.
 

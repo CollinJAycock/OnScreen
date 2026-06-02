@@ -1007,6 +1007,16 @@
         } catch (e) {
           dbg('playback-decision failed, using local codec check: ' + e);
         }
+        // Dolby Vision is not supported — the server returns the "unsupported"
+        // verdict (DV can't be tonemapped correctly server-side; see
+        // docs/dolby-vision.md). Show a clear message instead of a broken
+        // transcode. The hdr_type check covers a failed/absent decision call.
+        if (serverVerdict === 'unsupported' ||
+            (file.hdr_type ?? '').toLowerCase() === 'dolby_vision') {
+          error = 'Dolby Vision is not supported';
+          loading = false;
+          return;
+        }
         const codecOK = serverVerdict ? serverVerdict !== 'transcode' : localCodecOK;
         const videoCopy = codecOK && file.faststart !== false;
         dbg(`decision: server=${serverVerdict} codecOK=${codecOK} → transcode.start (video_copy=${videoCopy}) …`);

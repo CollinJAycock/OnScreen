@@ -91,6 +91,15 @@ function Playback_Decide(file as Object, supportsHevc as Boolean) as Object
         return out
     end if
 
+    ' Dolby Vision is not supported. The server can't tonemap it correctly
+    ' (libplacebo can't init on the deploy host — see docs/dolby-vision.md) and
+    ' refuses with HTTP 415, so flag it here and skip the doomed transcode. The
+    ' caller turns "unsupported" into a clear on-screen message.
+    if lcaseSafe(file.hdr_type) = "dolby_vision"
+        out.mode = "unsupported"
+        return out
+    end if
+
     videoOk = inList(Playback_DirectVideoCodecs(supportsHevc), videoCodec)
     audioOk = audioCodec = "" or inList(Playback_DirectAudioCodecs(), audioCodec)
     containerOk = inList(Playback_DirectContainers(), container)

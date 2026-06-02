@@ -29,6 +29,12 @@ sub Main()
     runCase4K("hevc 4k without hevc support → transcode at 2160", { container: "matroska", video_codec: "hevc", audio_codec: "aac", resolution_h: 2160 }, false, "transcode", 2160)
     runCase4K("vc1 1080 → transcode at 1080", { container: "ts", video_codec: "vc1", audio_codec: "aac", resolution_h: 1080 }, false, "transcode", 1080)
 
+    ' Dolby Vision is never playable regardless of codec/HEVC support — flagged
+    ' "unsupported" so the player shows a message (server can't tonemap DV; 415).
+    runCase("DV → unsupported even with hevc support", { container: "mp4", video_codec: "hevc", audio_codec: "aac", hdr_type: "dolby_vision" }, true, "unsupported", false)
+    ' Plain HDR10 is NOT gated by the Roku decision (server tonemaps it) — direct.
+    runCase("hdr10 hevc/aac/mp4 with hevc support → direct (only DV is gated)", { container: "mp4", video_codec: "hevc", audio_codec: "aac", hdr_type: "hdr10" }, true, "direct", false)
+
     print "DONE: PlaybackDecide_test"
 end sub
 

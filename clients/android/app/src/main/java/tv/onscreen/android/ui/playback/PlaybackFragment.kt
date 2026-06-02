@@ -1227,6 +1227,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     "daily_limit_reached" -> getString(R.string.watch_limit_daily)
                     else -> getString(R.string.watch_limit_generic)
                 }
+            // Dolby Vision sentinel from PlaybackViewModel — DV isn't played (it
+            // can't be tonemapped correctly server-side; see docs/dolby-vision.md).
+            message == "dolby_vision" ->
+                "Dolby Vision" to "Dolby Vision is not supported on this device."
             else -> "Playback error" to message
         }
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)

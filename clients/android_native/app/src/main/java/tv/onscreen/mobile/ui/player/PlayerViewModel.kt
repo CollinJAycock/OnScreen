@@ -409,15 +409,17 @@ class PlayerViewModel @Inject constructor(
                 // server what it can decode; map the verdict to a PlaybackMode and
                 // fall back to the local PlaybackHelper when the server is
                 // unreachable. ExoPlayer range-requests, so no faststart refinement.
+                val verdict = transcodeRepo.decide(itemId, file.id)
                 val mode = run {
-                    val verdict = transcodeRepo.decide(itemId, file.id)
                     val resolved = when (verdict) {
                         "directPlay" -> PlaybackMode.DirectPlay
                         "directStream" -> PlaybackMode.Remux
                         "transcode" -> PlaybackMode.Transcode(
                             if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080
                         )
-                        else -> PlaybackHelper.decide(file) // server unreachable → local
+                        // "unsupported" (Dolby Vision) is handled below before use;
+                        // null/unknown → local fallback (server unreachable).
+                        else -> PlaybackHelper.decide(file)
                     }
                     android.util.Log.i(
                         "PlayerViewModel",
@@ -450,6 +452,18 @@ class PlayerViewModel @Inject constructor(
                             return@launch
                         }
                     } catch (_: Exception) { /* limit lookup failed — fail open */ }
+                }
+
+                // Dolby Vision is not supported: the server returns the "unsupported"
+                // verdict (DV can't be tonemapped correctly server-side — see
+                // docs/dolby-vision.md). Show a clear message instead of a broken
+                // transcode. A completed local download still plays (ExoPlayer decodes
+                // DV on-device), so this only gates server streaming; the hdr_type
+                // check covers a failed/absent decision call.
+                if (localFile == null && (verdict == "unsupported" ||
+                        file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true)) {
+                    _state.value = PlayerUiState(loading = false, error = "Dolby Vision is not supported")
+                    return@launch
                 }
 
                 val source = when {

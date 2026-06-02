@@ -144,21 +144,32 @@ class PlaybackViewModel @Inject constructor(
                 // server what it can decode; map the verdict to a PlaybackMode and
                 // fall back to the local PlaybackHelper when the server is
                 // unreachable. ExoPlayer range-requests, so no faststart refinement.
+                val verdict = transcodeRepo.decide(itemId, file.id)
                 val mode = run {
-                    val verdict = transcodeRepo.decide(itemId, file.id)
                     val resolved = when (verdict) {
                         "directPlay" -> PlaybackMode.DirectPlay
                         "directStream" -> PlaybackMode.Remux
                         "transcode" -> PlaybackMode.Transcode(
                             if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080
                         )
-                        else -> PlaybackHelper.decide(file) // server unreachable → local
+                        // "unsupported" (Dolby Vision) handled below; null → local fallback.
+                        else -> PlaybackHelper.decide(file)
                     }
                     android.util.Log.i(
                         "PlaybackViewModel",
                         "playback decision: server=$verdict -> $resolved (${file.video_codec}/${file.audio_codec})",
                     )
                     resolved
+                }
+
+                // Dolby Vision is not supported: the server returns the "unsupported"
+                // verdict (DV can't be tonemapped correctly server-side — see
+                // docs/dolby-vision.md). Show a clear message rather than a broken
+                // transcode. hdr_type covers a failed/absent decision call.
+                if (verdict == "unsupported" ||
+                        file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true) {
+                    _uiState.value = PlaybackUiState(error = "dolby_vision")
+                    return@launch
                 }
 
                 // Default off; armed only on the direct-play branch below.
