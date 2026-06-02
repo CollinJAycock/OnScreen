@@ -149,6 +149,14 @@ export const transcode = {
       audio_stream_index: opts.audioStreamIndex ?? null,
       supports_hevc: opts.supportsHEVC ?? false
     }),
+  // Server-authoritative play decision (capability profiles). Returns
+  // "directPlay" | "directStream" | "transcode". The capability profile rides
+  // the X-Client-Capabilities header (client.ts). See docs/capability-profiles.md.
+  decide: (itemId: string, fileId?: string) =>
+    api.post<{ decision: string; file_id: string }>(
+      `/api/v1/items/${itemId}/playback-decision`,
+      fileId ? { file_id: fileId } : {}
+    ),
   stop: (sessionId: string, token: string) =>
     api.del<void>(
       `/api/v1/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`

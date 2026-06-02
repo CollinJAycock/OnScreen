@@ -724,12 +724,24 @@
         if (isAudioOnly) {
           video!.src = api.assetUrl(file.stream_url);
         } else {
+          // Server-authoritative play decision (capability profiles): the server
+          // uses our X-Client-Capabilities header. directPlay/directStream → the
+          // server stream-copies the video (hls.js plays it); transcode → full
+          // re-encode. Falls back to full transcode if the call fails.
+          let verdict: string | null = null;
+          try {
+            verdict = (await endpoints.transcode.decide(itemID, file.id)).decision;
+          } catch (e) {
+            console.warn('[capability] playback-decision failed, full transcode:', e);
+          }
+          const videoCopy = verdict ? verdict !== 'transcode' : false;
           session = await endpoints.transcode.start({
             itemId: itemID,
             height: 1080,
             positionMs: startMs,
             fileId: file.id,
-            supportsHEVC: true
+            supportsHEVC: true,
+            videoCopy
           });
 
           const Hls = await loadHls();

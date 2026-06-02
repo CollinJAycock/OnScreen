@@ -994,11 +994,22 @@
         // 4K HEVC HDR symptom). Mirrors the web client's
         // canRemuxVideo logic.
         const sourceCodec = (file.video_codec ?? '').toLowerCase();
-        const codecOK = sourceCodec === 'hevc' || sourceCodec === 'h265' ||
-                        sourceCodec === 'h264' || sourceCodec === 'avc' ||
-                        sourceCodec === 'av1';
+        const localCodecOK = sourceCodec === 'hevc' || sourceCodec === 'h265' ||
+                             sourceCodec === 'h264' || sourceCodec === 'avc' ||
+                             sourceCodec === 'av1';
+        // Server-authoritative play decision (capability profiles): the server
+        // uses our X-Client-Capabilities header. directPlay/directStream → copy
+        // the video; transcode → re-encode. Falls back to the local codec check
+        // when the call fails. See docs/capability-profiles.md.
+        let serverVerdict: string | null = null;
+        try {
+          serverVerdict = (await endpoints.transcode.decide(itemID, file.id)).decision;
+        } catch (e) {
+          dbg('playback-decision failed, using local codec check: ' + e);
+        }
+        const codecOK = serverVerdict ? serverVerdict !== 'transcode' : localCodecOK;
         const videoCopy = codecOK && file.faststart !== false;
-        dbg(`transcode.start (video_copy=${videoCopy}) …`);
+        dbg(`decision: server=${serverVerdict} codecOK=${codecOK} → transcode.start (video_copy=${videoCopy}) …`);
         session = await endpoints.transcode.start({
           itemId: itemID,
           // 2160 = the Q80B-class 4K hardware decoder's ceiling.
