@@ -177,6 +177,12 @@ interface OnScreenApi {
         @Body body: TranscodeRequest,
     ): ApiResponse<TranscodeSession>
 
+    @POST("api/v1/items/{id}/playback-decision")
+    suspend fun playbackDecision(
+        @Path("id") itemId: String,
+        @Body body: PlaybackDecisionRequest,
+    ): ApiResponse<PlaybackDecision>
+
     @DELETE("api/v1/transcode/sessions/{sid}")
     suspend fun stopTranscode(
         @Path("sid") sessionId: String,

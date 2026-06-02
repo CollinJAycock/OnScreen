@@ -404,7 +404,27 @@ class PlayerViewModel @Inject constructor(
                 val itemId = resolvedId
                 val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
                 val prefs = try { preferencesRepo.get() } catch (_: Exception) { null }
-                val mode = PlaybackHelper.decide(file)
+                // Server-authoritative play decision (capability profiles). The
+                // device's X-Client-Capabilities header (AuthInterceptor) tells the
+                // server what it can decode; map the verdict to a PlaybackMode and
+                // fall back to the local PlaybackHelper when the server is
+                // unreachable. ExoPlayer range-requests, so no faststart refinement.
+                val mode = run {
+                    val verdict = transcodeRepo.decide(itemId, file.id)
+                    val resolved = when (verdict) {
+                        "directPlay" -> PlaybackMode.DirectPlay
+                        "directStream" -> PlaybackMode.Remux
+                        "transcode" -> PlaybackMode.Transcode(
+                            if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080
+                        )
+                        else -> PlaybackHelper.decide(file) // server unreachable → local
+                    }
+                    android.util.Log.i(
+                        "PlayerViewModel",
+                        "playback decision: server=$verdict -> $resolved (${file.video_codec}/${file.audio_codec})",
+                    )
+                    resolved
+                }
                 val startMs = item.view_offset_ms
 
                 // Offline-first: if the user has a completed download
