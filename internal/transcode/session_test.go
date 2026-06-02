@@ -141,6 +141,46 @@ func TestIntegration_SessionStore_ListByUserItem(t *testing.T) {
 	}
 }
 
+// CountByUser must count only LIVE sessions (activity within ActiveSessionWindow)
+// so an abandoned session — TV powered off mid-stream, client crash, missed
+// DELETE — whose Valkey entry lingers for the 4 h TTL doesn't falsely hold a
+// concurrency-cap slot. A brand-new session with no LastActivityAt falls back to
+// CreatedAt so rapid Start-spam is still capped.
+func TestIntegration_SessionStore_CountByUser_ExcludesStale(t *testing.T) {
+	v := testvalkey.New(t)
+	store := NewSessionStore(v)
+	ctx := context.Background()
+
+	user := uuid.New()
+	now := time.Now().UTC()
+
+	sessions := []Session{
+		// live: heartbeat just now → counted (even though created long ago)
+		{ID: NewSessionID(), UserID: user, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: now.Add(-10 * time.Minute), LastActivityAt: now},
+		// brand-new: no LastActivityAt yet, just created → counted (CreatedAt fallback)
+		{ID: NewSessionID(), UserID: user, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: now},
+		// abandoned: last activity well past the window → NOT counted
+		{ID: NewSessionID(), UserID: user, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: now.Add(-30 * time.Minute), LastActivityAt: now.Add(-5 * time.Minute)},
+		// created long ago, never fetched a segment → NOT counted (stale CreatedAt)
+		{ID: NewSessionID(), UserID: user, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: now.Add(-10 * time.Minute)},
+		// different user, live → not counted for `user`
+		{ID: NewSessionID(), UserID: uuid.New(), MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: now, LastActivityAt: now},
+	}
+	for i, s := range sessions {
+		if err := store.Create(ctx, s); err != nil {
+			t.Fatalf("Create[%d]: %v", i, err)
+		}
+	}
+
+	n, err := store.CountByUser(ctx, user)
+	if err != nil {
+		t.Fatalf("CountByUser: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("CountByUser = %d, want 2 (live + brand-new counted; abandoned/stale excluded)", n)
+	}
+}
+
 func TestIntegration_SessionStore_ListByUserItem_NoMatch(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)

@@ -18,8 +18,11 @@ import (
 )
 
 // sessionActivityTimeout is how long a transcode session can be inactive
-// (no progress heartbeat) before being hidden from "Now Playing".
-const sessionActivityTimeout = 2 * time.Minute
+// (no progress heartbeat) before being hidden from "Now Playing". Shares the
+// same window as the per-user concurrency cap (transcode.CountByUser), so a
+// session that's hidden here is also no longer counted against the cap — one
+// definition of "live".
+const sessionActivityTimeout = transcode.ActiveSessionWindow
 
 type sessionItemQuerier interface {
 	GetMediaItemsForSessions(ctx context.Context, ids []uuid.UUID) ([]gen.SessionMediaItem, error)

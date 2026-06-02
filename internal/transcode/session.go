@@ -276,19 +276,44 @@ func (s *SessionStore) TouchActivity(ctx context.Context, sessionID string) {
 	_ = s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
 }
 
-// CountByUser returns the number of active sessions for the given user
-// across all media items. Used by the per-user concurrency cap so a
-// single account can't pin every GPU/CPU slot by spamming Start with
-// different item IDs (each one bypasses supersedeUserItem because the
-// match key is (user, item), not (user)).
+// ActiveSessionWindow is how long since the last segment-fetch / progress
+// heartbeat a session still counts as "live" for the per-user concurrency cap.
+// Sessions quieter than this are treated as abandoned — the client crashed, the
+// TV was powered off mid-stream, or a DELETE never fired — and their ffmpeg has
+// already idle-exited, so they hold no GPU slot and must not hold a cap slot
+// either. Mirrors the api/v1 "Now Playing" display window so "live" means the
+// same thing in both places.
+const ActiveSessionWindow = 2 * time.Minute
+
+// CountByUser returns the number of LIVE sessions for the given user across all
+// media items — those with activity within ActiveSessionWindow. Used by the
+// per-user concurrency cap so a single account can't pin every GPU/CPU slot by
+// spamming Start with different item IDs (each one bypasses supersedeUserItem
+// because the match key is (user, item), not (user)).
+//
+// Stale/abandoned sessions are deliberately NOT counted. Their Valkey entry
+// lingers for the full sessionTTL (4 h), but the ffmpeg behind it has idle-
+// exited (no GPU held). Counting them would falsely lock a user out at the cap
+// — "you already have 5 active streams" while they're watching nothing — for up
+// to 4 h, with no way to see or kill the phantom sessions. A brand-new session
+// that hasn't fetched its first segment yet has no LastActivityAt, so we fall
+// back to CreatedAt: rapid Start-spam is still capped (all freshly created).
 func (s *SessionStore) CountByUser(ctx context.Context, userID uuid.UUID) (int, error) {
 	all, err := s.List(ctx)
 	if err != nil {
 		return 0, err
 	}
+	now := time.Now()
 	n := 0
 	for _, sess := range all {
-		if sess.UserID == userID {
+		if sess.UserID != userID {
+			continue
+		}
+		activeAt := sess.LastActivityAt
+		if activeAt.IsZero() {
+			activeAt = sess.CreatedAt
+		}
+		if now.Sub(activeAt) <= ActiveSessionWindow {
 			n++
 		}
 	}
