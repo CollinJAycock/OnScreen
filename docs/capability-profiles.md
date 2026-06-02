@@ -230,17 +230,28 @@ change until the final wiring step lands, so it's all safe to deploy as-is.
   `X-Client-Capabilities` grammar gained `hdr`/`dovi` flags. `Decide` is fully
   tested but **not yet on the live path** — the handler still decides.
 
-**Remaining — Phase 2 wiring (do interactively, reshapes the playback-start flow):**
-1. Extract the handler's target logic into a reusable `pickTargets(file, caps,
-   serverCaps)` so the same code serves both the endpoint and the existing path.
-2. Add `POST /items/{id}/playback-decision` → runs `Decide(file, caps)` and
-   returns `{decision: directPlay|directStream|transcode, url?, targets?}`.
-   Additive; nothing breaks.
-3. Migrate the web watch page to call it instead of running
-   `playback-decision.ts` locally; verify the full sweep; then retire the
-   per-client decision logic (web first, then Android/Tizen/Roku).
+**Done — Phase 2 endpoint + parity prep:**
+- `e082b1a` — `POST /items/{id}/playback-decision` runs `Decide` and returns
+  `{decision, file_id}`. Additive, read-only; nothing uses it for playback yet.
+- `23a24e4` — `Decide` bit-depth check made codec-aware (AV1/VP9 10-bit no longer
+  force-transcode), closing a parity gap vs the web's `videoBitDepthOK`.
+- `9c121d5` — web **shadow check**: the watch page calls the endpoint for the
+  source file and logs `[capability-shadow]` server-vs-local divergences; the
+  local decision still drives playback (zero behavior change). The 4K sweep
+  harvests these into `4k-shadow-mismatches.json`.
+
+**Remaining — verify parity, then flip:**
+1. Deploy; run the 4K sweep → read `4k-shadow-mismatches.json`. Expected
+   divergences: **faststart** (computed per-request in items.go, not on
+   `media.File` — Decide can't see it; plan: keep it as a client-side refinement
+   on top of the server decision) and any odd codec/container cases.
+2. Close real gaps; confirm a clean shadow run (no unexpected mismatches).
+3. **Flip:** the web wrappers (`canDirectPlay`/`canRemuxVideo`) consume the
+   server decision (+ client-side faststart refinement), with local fallback on
+   error. Re-run the sweep + browse to confirm. Then retire the per-client
+   decision logic (web → Android/Tizen/Roku).
 4. Phase 3 later: audio passthrough (true 7.1/Atmos), video profile/level.
 
-Why interactive: step 3 changes how playback *starts* — the most critical user
-flow — across clients. It wants live testing + a quick rollback path, not an
-unattended push to a branch that auto-deploys.
+Why staged: the flip changes how playback *starts* — the most critical user flow.
+Shadow-mode + the sweep turn "I think the decisions match" into "the sweep proved
+it across the whole library," so the flip is safe rather than hopeful.
