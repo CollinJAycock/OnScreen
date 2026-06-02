@@ -207,3 +207,40 @@ Delete its bespoke decision logic once the server decides.
 - The `web/tests/e2e/4k-sweep.spec.ts` browser sweep is the integration backstop:
   with real profiles flowing, the whole 4K library should DirectPlay/transcode to
   playable output with no 7.1-AAC class failures.
+
+## 11. Implementation status (2026-06-02)
+
+Everything below is **back-compat and behavior-equivalent** — no client sees a
+change until the final wiring step lands, so it's all safe to deploy as-is.
+
+**Done — Phase 1 (server reads the profile for targets):**
+- `5024767` — transcode-start handler resolves `transcode.ClientCapabilities`
+  from the `X-Client-Capabilities` header via `clientCaps()` (legacy
+  supports_*/max_audio_channels fold in), and drives the audio-channel count +
+  HEVC/AV1 output preference (incl. the ABR ladder) from it. Logs the resolved
+  caps + echoes an `X-OnScreen-Client-Caps` debug response header. No-profile
+  audio default = 5.1.
+- `9c6143c` — web client builds the profile from `detectClientCaps()`
+  (`clientCapabilitiesHeader()`) and sends it on every request; CORS allows the
+  request header + exposes the debug header.
+
+**Done — Phase 2 model (Decide is now complete + ready):**
+- `d92cce7` — `Decide()` gained the audio-channel check (7.1 source on a
+  5.1/stereo client → Transcode, not DirectPlay/DirectStream) and the
+  `X-Client-Capabilities` grammar gained `hdr`/`dovi` flags. `Decide` is fully
+  tested but **not yet on the live path** — the handler still decides.
+
+**Remaining — Phase 2 wiring (do interactively, reshapes the playback-start flow):**
+1. Extract the handler's target logic into a reusable `pickTargets(file, caps,
+   serverCaps)` so the same code serves both the endpoint and the existing path.
+2. Add `POST /items/{id}/playback-decision` → runs `Decide(file, caps)` and
+   returns `{decision: directPlay|directStream|transcode, url?, targets?}`.
+   Additive; nothing breaks.
+3. Migrate the web watch page to call it instead of running
+   `playback-decision.ts` locally; verify the full sweep; then retire the
+   per-client decision logic (web first, then Android/Tizen/Roku).
+4. Phase 3 later: audio passthrough (true 7.1/Atmos), video profile/level.
+
+Why interactive: step 3 changes how playback *starts* — the most critical user
+flow — across clients. It wants live testing + a quick rollback path, not an
+unattended push to a branch that auto-deploys.
