@@ -75,6 +75,13 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
                     outline.setRoundRect(Rect(0, 0, view.width, view.height), cornerPx)
                 }
             }
+            // The focus RING (card_focus_state foreground) keys off state_focused,
+            // but the focusable view is the parent container — without mirroring
+            // its state the frame is never "focused", so the ring never painted
+            // and the only focus feedback was the 1.05× scale (near-invisible →
+            // "can't tell which card is selected", and D-pad moves looked like
+            // nothing happened). Duplicate the parent's state so the ring lights up.
+            isDuplicateParentStateEnabled = true
             foreground = context.getDrawable(R.drawable.card_focus_state)
             tag = "frame"
         }
@@ -95,6 +102,12 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
                 topMargin = (10 * density).toInt()
             }
             gravity = Gravity.CENTER_HORIZONTAL
+            // Always reserve exactly two lines. Without minLines, a 1-line title
+            // ("Chobits") yields a shorter card than a 2-line one ("Code Geass:
+            // Lelouch of the…"); in a VerticalGrid those uneven heights stagger
+            // the rows so titles drift into the gaps ("rows all off"). Fixed
+            // two-line height ⇒ uniform card height ⇒ aligned rows.
+            minLines = 2
             maxLines = 2
             setTextColor(context.getColor(R.color.text_primary))
             textSize = 13f

@@ -163,10 +163,13 @@ class LibraryFragment : VerticalGridSupportFragment() {
             }
         }
 
-        setOnItemViewSelectedListener { _, _, _, row ->
-            // Load more when near the end.
-            val pos = gridAdapter.indexOf(row)
-            if (pos >= gridAdapter.size() - 10) {
+        setOnItemViewSelectedListener { _, item, _, _ ->
+            // Prefetch the next page as the selection nears the end. On a
+            // VerticalGrid the selected object is `item`; the 4th `row` param is
+            // null (a grid has no Row objects), so the old indexOf(row) was always
+            // -1 and loadMore() never fired — the grid was stuck on the first page.
+            val pos = gridAdapter.indexOf(item)
+            if (pos >= 0 && pos >= gridAdapter.size() - 10) {
                 viewModel.loadMore()
             }
         }
