@@ -5,6 +5,8 @@
 // - Configurable origin — user enters their server URL on first launch.
 // - No /login redirect — on 401, surface to caller; route decides.
 
+import { clientCapabilitiesHeader } from './capabilities';
+
 const ORIGIN_KEY = 'onscreen.api_origin';
 const TOKEN_KEY = 'onscreen.access_token';
 const REFRESH_KEY = 'onscreen.refresh_token';
@@ -207,6 +209,9 @@ export class ApiClient {
 
     const headers: Record<string, string> = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
+    // Declarative capability profile on every request (docs/capability-profiles.md),
+    // mirroring the web client. Drives server-side transcode target selection.
+    headers['X-Client-Capabilities'] = clientCapabilitiesHeader();
     if (auth) {
       const tok = this.getToken();
       if (tok) headers['Authorization'] = `Bearer ${tok}`;
