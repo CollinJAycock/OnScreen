@@ -2,9 +2,15 @@ package transcode
 
 import "encoding/json"
 
-// maxAACChannels caps AAC output at 7.1. AAC-LC handles up to this cleanly;
-// sources with more channels are downmixed to it by the encoder.
-const maxAACChannels = 8
+// maxAACChannels caps transcoded AAC output at 5.1 (6ch). The encoder
+// (libfdk_aac) handles 7.1 fine, but most CLIENTS can't DECODE 7.1 AAC —
+// browsers via MSE/hls.js reject an 8-channel AAC track outright and playback
+// never starts at all (not just muted). Validated on QA: every 7.1 source
+// failed to play in-browser while every <=5.1 source played, independent of
+// the source codec (TrueHD/DTS/AAC). 5.1 is universally supported; genuine 7.1
+// surround is delivered to capable clients via audio passthrough (direct play),
+// not this AAC transcode fallback.
+const maxAACChannels = 6
 
 // SourceAudioChannels returns the channel count of the selected audio stream
 // (audioStreamIdx; -1 = the first / default stream), parsed from a file's
