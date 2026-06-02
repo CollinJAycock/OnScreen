@@ -137,6 +137,20 @@ func TestDecide_DirectPlay_7_1_ClientSupports7_1(t *testing.T) {
 	}
 }
 
+func TestDecide_DirectPlay_10bitAV1_DefaultBitDepthCap(t *testing.T) {
+	file := baseFile()
+	file.VideoCodec = strPtr("av1")
+	file.Container = strPtr("mp4")
+	file.VideoBitDepth = intPtr(10)
+	// AV1 10-bit decode tracks 8-bit support, so an av1-capable client direct-
+	// plays it even at the default 8-bit cap — unlike HEVC Main 10 (mirrors the
+	// web client's videoBitDepthOK).
+	caps := ParseCapabilities("videoDecoder=h264:av1,audioDecoder=aac,protocols=mkv:mp4")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectPlay {
+		t.Errorf("want DirectPlay for 10-bit AV1 on av1 client, got %s", got)
+	}
+}
+
 func TestDecide_Transcode_Hi10P_H264(t *testing.T) {
 	file := baseFile() // h264 / aac / mkv
 	file.Container = strPtr("mp4")

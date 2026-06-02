@@ -69,14 +69,23 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		return DecisionTranscode
 	}
 
-	// Bit-depth check: a video stream deeper than the client can decode
-	// (10-bit HEVC Main 10 / H.264 Hi10P on an 8-bit-only decoder) must
-	// transcode — otherwise the client direct-plays or remuxes and silently
-	// fails to decode. Uses VideoBitDepth (the video stream's depth), not
-	// BitDepth (audio). Both DirectPlay and DirectStream preserve source bit
-	// depth, so only a re-encode (down to 8-bit) fixes it.
-	if bd := derefInt(file.VideoBitDepth); bd > 0 && caps.MaxVideoBitDepth > 0 && bd > caps.MaxVideoBitDepth {
-		return DecisionTranscode
+	// Bit-depth check: a 10-bit (or deeper) video stream the client can't decode
+	// must transcode — otherwise the client direct-plays/remuxes and silently
+	// fails. Codec-aware, mirroring the web client's videoBitDepthOK: H.264 Hi10P
+	// is undecodable by browsers regardless of any declared depth; HEVC Main 10
+	// needs a declared 10-bit capability; AV1/VP9 10-bit decode tracks their
+	// 8-bit support, so it isn't gated here. Uses VideoBitDepth (the video
+	// stream's depth), not BitDepth (audio). Both DirectPlay and DirectStream
+	// preserve source bit depth, so only a re-encode fixes it.
+	if bd := derefInt(file.VideoBitDepth); bd >= 10 {
+		switch videoAlias {
+		case "h264":
+			return DecisionTranscode // Hi10P — no browser decodes it
+		case "h265":
+			if caps.MaxVideoBitDepth < 10 {
+				return DecisionTranscode // Main 10 on an 8-bit-only decoder
+			}
+		}
 	}
 
 	// Resolution check: if source exceeds client's declared max, must transcode.
