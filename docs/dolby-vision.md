@@ -6,23 +6,35 @@ multi-source pass, 2026-06-02 (19 verified claims; sources cited inline).
 
 ## TL;DR / the decision
 
-**Should OnScreen support Dolby Vision? — Support DV *content* (tonemap it so it
-plays correctly everywhere); do NOT build DV *passthrough*.**
+**Should OnScreen support Dolby Vision? — No, don't build in-server DV support.
+Just stop DV titles from hard-failing (PTS fix), and fix the colors *off-server*
+if anyone cares. Don't build DV passthrough, RPU handling, or per-profile logic.**
 
-DV splits into two very different commitments:
-1. **Make DV titles play correctly** (tonemap DV → SDR/HDR10). Bounded effort,
-   high value — the titles currently don't play at all. **Recommended.**
-2. **Deliver the DV *experience*** (passthrough the DV bitstream + per-scene RPU
-   to DV-capable displays). Large, ongoing complexity (per-client DV matrix,
-   Profile-7 dual-layer demux via `dovi_tool`, RPU preservation) for a tiny
-   footprint, and **OnScreen's clients mostly can't direct-play DV anyway**
-   (browsers/MSE never can). **Not worth it now — explicitly out of scope.**
+Why — the deployment hardware forecloses the "correct" path:
+- The ONLY tool that tonemaps DV (esp. Profile 5) correctly is **libplacebo
+  `apply_dolbyvision`**. It IS compiled into our ffmpeg (v7.349.0) **but it
+  cannot initialize on the TrueNAS/QA host** — no working Vulkan. That's the
+  documented reason OnScreen uses `tonemap_cuda` there (`docker/Dockerfile.ffmpeg`
+  lines 82–83: *"works on hosts (TrueNAS) where libplacebo can't init"*).
+- `tonemap_cuda` (the path that DOES run on QA) **cannot** reshape the DV RPU →
+  Profile-5 content tonemaps to the green/IPT cast regardless.
+- So correct in-server DV on QA would first require getting Vulkan/libplacebo
+  running in the TrueNAS container — a separate, uncertain infra effort — for a
+  **2-title** footprint. Not worth it.
 
-So: treat DV as "a harder HDR variant we tonemap," using **libplacebo** for
-correct colors. This is the same posture as our HDR10 tonemapping, just with the
-DV-aware filter. **Caveat that gates everything:** this requires our ffmpeg build
-to expose `libplacebo` with `apply_dolbyvision` + Profile-5 reshaping — verify
-before committing (see Open items).
+What to do instead:
+1. **Fix the PTS** so DV files don't hard-fail (they currently never start). They
+   then play via `tonemap_cuda`; Profile-5 colors will be imperfect.
+2. **(Optional, content-side) fix the 2 Profile-5 files off-server**: on the dev
+   box (RTX 5080 / Windows, where Vulkan + libplacebo *do* work), convert them to
+   plain HDR10 once via libplacebo/`dovi_tool`. They then become standard HDR10 →
+   play correctly everywhere with **zero server changes**.
+3. **Don't** build DV passthrough (per-client DV matrix, Profile-7 dual-layer +
+   `dovi_tool`, RPU preservation) — heavy, and OnScreen's clients mostly can't
+   direct-play DV anyway (browsers/MSE never can).
+
+The rest of this doc is the research backing (kept for if DV content ever grows
+enough to justify standing up Vulkan/libplacebo on the server).
 
 ## Why DV is different — the one axis that matters
 
@@ -107,10 +119,13 @@ Approach trade-offs:
 
 ## Open items (gate the plan)
 
-- **Does our ffmpeg/libplacebo build expose `apply_dolbyvision` with Profile-5
-  reshaping?** Check: `ffmpeg -h filter=libplacebo` (look for `apply_dolbyvision`)
-  on the QA/GPU image. If absent → rebuild needed, which raises the cost of even
-  option 1 (re-weigh vs "just fix PTS, accept imperfect colors for 2 titles").
+- **RESOLVED (the deal-breaker):** libplacebo v7.349.0 *is* compiled in (it has
+  `apply_dolbyvision`), but per `docker/Dockerfile.ffmpeg` it **can't init on
+  TrueNAS** (no Vulkan) — confirm anytime with
+  `docker exec ix-on-screen-on-screen-1 ffmpeg -init_hw_device vulkan` (expected
+  to fail on QA). So correct in-server DV needs Vulkan stood up in the container
+  first; until then `tonemap_cuda` is the only GPU tonemapper on QA and it can't
+  fix Profile 5. This is why the recommendation is "don't build it."
 - Licensing note: tonemapping DV (stripping it) is what other OSS servers
   (Jellyfin/Emby via libplacebo/dovi_tool) do; passthrough would push DV decode
   onto the licensed client. We're choosing tonemap-only, so no server-side DV
