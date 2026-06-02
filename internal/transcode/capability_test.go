@@ -15,6 +15,14 @@ func TestParseCapabilities_Empty(t *testing.T) {
 	if caps.MaxAudioChannels != 6 {
 		t.Errorf("want MaxAudioChannels 6 (5.1 default), got %d", caps.MaxAudioChannels)
 	}
+	// A client that sent no profile still gets the universal h264/aac baseline so
+	// the common case direct-plays instead of transcoding everything.
+	if len(caps.VideoCodecs) != 1 || caps.VideoCodecs[0] != "h264" {
+		t.Errorf("want default VideoCodecs [h264], got %v", caps.VideoCodecs)
+	}
+	if len(caps.AudioCodecs) != 1 || caps.AudioCodecs[0] != "aac" {
+		t.Errorf("want default AudioCodecs [aac], got %v", caps.AudioCodecs)
+	}
 }
 
 func TestParseCapabilities(t *testing.T) {

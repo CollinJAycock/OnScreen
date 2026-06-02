@@ -34,11 +34,9 @@ func ParseCapabilities(header string) ClientCapabilities {
 		MaxAudioChannels: 6, // 5.1 default — surround where it works; a client that
 		MaxVideoBitDepth: 8, // can't decode >2ch must declare maxAudioChannels=2.
 	}
-	if header == "" {
-		return caps
-	}
 
-	// Parse key=val pairs separated by & or ,
+	// Parse key=val pairs separated by & or , (an empty header yields no pairs and
+	// falls through to the h264/aac safe defaults at the end).
 	parts := strings.FieldsFunc(header, func(r rune) bool {
 		return r == '&' || r == ','
 	})
