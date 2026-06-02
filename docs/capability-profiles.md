@@ -240,18 +240,33 @@ change until the final wiring step lands, so it's all safe to deploy as-is.
   local decision still drives playback (zero behavior change). The 4K sweep
   harvests these into `4k-shadow-mismatches.json`.
 
-**Remaining — verify parity, then flip:**
-1. Deploy; run the 4K sweep → read `4k-shadow-mismatches.json`. Expected
-   divergences: **faststart** (computed per-request in items.go, not on
-   `media.File` — Decide can't see it; plan: keep it as a client-side refinement
-   on top of the server decision) and any odd codec/container cases.
-2. Close real gaps; confirm a clean shadow run (no unexpected mismatches).
-3. **Flip:** the web wrappers (`canDirectPlay`/`canRemuxVideo`) consume the
-   server decision (+ client-side faststart refinement), with local fallback on
-   error. Re-run the sweep + browse to confirm. Then retire the per-client
-   decision logic (web → Android/Tizen/Roku).
-4. Phase 3 later: audio passthrough (true 7.1/Atmos), video profile/level.
+**Done — Phase 2 model reconciliation + flip (validated against local):**
+The local endpoint test (logged in, drove `/playback-decision` over the dev
+library) surfaced two real gaps the shadow was meant to catch:
+- **Decision-model mismatch.** Server `DirectStream` meant "copy both streams"
+  and required browser-decodable audio, so the dominant `mkv/h264/{ac3,dts,…}`
+  case fell through to a *full transcode* — where the clients stream-copy the
+  video and transcode only the audio. Fixed by widening `DirectStream` to the
+  video-copy + audio-transcode path (`9be5eb5`); flipping as-was would have
+  turned nearly every fast remux into a full re-encode.
+- **faststart.** Non-faststart `mov` files returned `directPlay` (server can't
+  see faststart — it isn't on `media.File`), which would stall progressive
+  playback. Kept as a client-side refinement: a `directPlay` verdict on a
+  non-faststart file becomes a remux.
+- **Flip (`b5d496a`):** the web watch page now drives `canDirectPlay`/
+  `canRemuxVideo` from the server verdict (+ faststart refinement), with local
+  fallback when the verdict isn't available. `e082b1a` endpoint, `23a24e4`
+  codec-aware bit-depth, no-header h264/aac defaults all in.
 
-Why staged: the flip changes how playback *starts* — the most critical user flow.
-Shadow-mode + the sweep turn "I think the decisions match" into "the sweep proved
-it across the whole library," so the flip is safe rather than hopeful.
+**Remaining:**
+1. Redeploy local; verify the flipped web plays direct/remux/transcode correctly
+   (incl. the non-faststart `mov` → remux and `mkv/h264/ac3` → video-copy cases),
+   then re-run the QA sweep.
+2. Retire the per-client decision logic on the other clients (Android → Tizen →
+   Roku) once each sends a profile + calls the endpoint.
+3. Phase 3: audio passthrough (true 7.1/Atmos), video profile/level.
+
+Why staged: the flip changes how playback *starts*. Testing the server decision
+against the live dev library before flipping caught the DirectStream model gap
+that a blind cut-over would have shipped as a library-wide full-transcode
+regression.
