@@ -116,7 +116,10 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 		hasProfile, caps.SupportsHEVC, caps.SupportsAV1, caps.MaxAudioChannels,
 		caps.MaxWidth, caps.MaxHeight, caps.MaxVideoBitDepth))
 
-	respond.JSON(w, r, http.StatusOK, playbackDecisionResponse{
+	// respond.Success wraps in the standard {"data": ...} envelope that every
+	// client's ApiResponse<T> parser expects — using respond.JSON here (raw body)
+	// made all clients fail to parse and silently fall back to local decisions.
+	respond.Success(w, r, playbackDecisionResponse{
 		Decision: decision.String(),
 		FileID:   file.ID.String(),
 	})

@@ -60,6 +60,11 @@ func TestDecision_DirectPlayWhenCompatible(t *testing.T) {
 	if !bodyHas(rec, `"decision":"directPlay"`) {
 		t.Errorf("want directPlay; body: %s", rec.Body.String())
 	}
+	// Must use the standard {"data": ...} envelope — clients' ApiResponse<T>
+	// parsers require it; a raw body makes every client fall back to local.
+	if !bodyHas(rec, `"data":`) {
+		t.Errorf("response must be {data:...}-wrapped; body: %s", rec.Body.String())
+	}
 }
 
 func TestDecision_DirectStreamWhen7_1ExceedsCap(t *testing.T) {
