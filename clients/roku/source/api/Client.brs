@@ -43,6 +43,9 @@ function Client_BuildTransfer(path as String, auth as Boolean) as Object
     transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
     transfer.AddHeader("Accept", "application/json")
     transfer.AddHeader("Content-Type", "application/json")
+    ' Declarative capability profile (docs/capability-profiles.md), mirroring the
+    ' web client. Drives server-side transcode target selection.
+    transfer.AddHeader("X-Client-Capabilities", Client_CapabilitiesHeader())
 
     if auth
         token = Prefs_GetAccessToken()
@@ -52,6 +55,29 @@ function Client_BuildTransfer(path as String, auth as Boolean) as Object
     end if
 
     return transfer
+end function
+
+' Builds the X-Client-Capabilities header from this Roku's decode capabilities.
+' Self-contained (HEVC probe inlined) so it's in scope wherever Client.brs is —
+' the fetch Tasks include Client.brs but not the playback Decide.brs. Mirrors
+' Playback_SupportsHevc's roDeviceInfo probe. The server uses this for transcode
+' target selection and the POST /items/{id}/playback-decision endpoint. The
+' maxbitdepth/hdr fields are starting values — verify per device before adopting
+' the decision endpoint. See docs/capability-profiles.md for the grammar.
+function Client_CapabilitiesHeader() as String
+    video = "h264"
+    info = CreateObject("roDeviceInfo")
+    if info <> invalid and info.CanDecodeVideo <> invalid
+        hevc = info.CanDecodeVideo({ Codec: "hevc" })
+        if hevc <> invalid and hevc.Result = true then video = video + ":h265"
+    end if
+    header = "videoDecoder=" + video
+    header = header + ",audioDecoder=aac:ac3:eac3:mp3:flac"
+    header = header + ",protocols=mp4:ts"
+    header = header + ",maxWidth=3840,maxHeight=2160"
+    header = header + ",maxAudioChannels=6"
+    header = header + ",maxbitdepth=10,hdr=1"
+    return header
 end function
 
 ' Synchronous GET. Returns the parsed JSON envelope unwrapped to
