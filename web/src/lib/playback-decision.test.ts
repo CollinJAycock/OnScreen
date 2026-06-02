@@ -26,6 +26,10 @@ describe('videoBitDepthOK', () => {
   it('10-bit AV1 tracks 8-bit support (not separately gated)', () => {
     expect(videoBitDepthOK(f({ video_codec: 'av1', video_bit_depth: 10 }), BASIC)).toBe(true);
   });
+  it('12-bit HEVC (Main 12) never passes — a Main 10 decoder cannot decode it', () => {
+    // Regression: Fruits Basket S1E1 is HEVC 12-bit; hevc10bit must NOT imply Main 12.
+    expect(videoBitDepthOK(f({ video_codec: 'hevc', video_bit_depth: 12 }), FULL)).toBe(false);
+  });
 });
 
 describe('canDirectPlay', () => {

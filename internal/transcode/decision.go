@@ -100,21 +100,25 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		return DecisionTranscode
 	}
 
-	// Bit-depth check: a 10-bit (or deeper) video stream the client can't decode
-	// must transcode — otherwise the client direct-plays/remuxes and silently
-	// fails. Codec-aware, mirroring the web client's videoBitDepthOK: H.264 Hi10P
-	// is undecodable by browsers regardless of any declared depth; HEVC Main 10
-	// needs a declared 10-bit capability; AV1/VP9 10-bit decode tracks their
-	// 8-bit support, so it isn't gated here. Uses VideoBitDepth (the video
-	// stream's depth), not BitDepth (audio). Both DirectPlay and DirectStream
-	// preserve source bit depth, so only a re-encode fixes it.
+	// Bit-depth check: a video stream deeper than the client's decoder can
+	// handle must transcode — otherwise the client direct-plays/remuxes an
+	// undecodable bitstream and silently fails (black screen). Compare the
+	// SOURCE depth against the client's declared MaxVideoBitDepth, not a fixed
+	// constant: a 12-bit HEVC (Main 12) source must transcode for a 10-bit
+	// (Main 10) decoder just as a 10-bit source must for an 8-bit one. (Regression
+	// fix: Fruits Basket S1E1 is HEVC Main 12 and was being directStream'd to
+	// Main-10 clients like Fire TV, which can't decode it.) Codec-aware: H.264
+	// Hi10P/Hi12P is undecodable by browsers/most devices regardless of declared
+	// depth; AV1/VP9 high-bit-depth decode tracks their 8-bit support so isn't
+	// gated here. Uses VideoBitDepth (video stream depth), not BitDepth (audio).
+	// Both DirectPlay and DirectStream preserve source depth, so only a re-encode fixes it.
 	if bd := derefInt(file.VideoBitDepth); bd >= 10 {
 		switch videoAlias {
 		case "h264":
-			return DecisionTranscode // Hi10P — no browser decodes it
+			return DecisionTranscode // Hi10P/Hi12P — no browser/device decodes it
 		case "h265":
-			if caps.MaxVideoBitDepth < 10 {
-				return DecisionTranscode // Main 10 on an 8-bit-only decoder
+			if caps.MaxVideoBitDepth < bd {
+				return DecisionTranscode // e.g. Main 12 source on a Main 10 (or 8-bit) decoder
 			}
 		}
 	}

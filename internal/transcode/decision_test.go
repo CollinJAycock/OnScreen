@@ -106,6 +106,21 @@ func TestDecide_DirectPlay_10bitHEVC_10bitClient(t *testing.T) {
 	}
 }
 
+// Regression: Fruits Basket S1E1 is HEVC Main 12 (12-bit). A Main-10 client
+// (e.g. Fire TV, which declares maxbitdepth=10) can't decode it, so the source
+// depth — not a fixed 10 — must drive the gate: 12 > 10 ⇒ Transcode, never
+// DirectStream the undecodable bitstream.
+func TestDecide_Transcode_12bitHEVC_10bitClient(t *testing.T) {
+	file := baseFile()
+	file.VideoCodec = strPtr("hevc")
+	file.Container = strPtr("mkv")
+	file.VideoBitDepth = intPtr(12)
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4,maxbitdepth=10")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionTranscode {
+		t.Errorf("want Transcode for 12-bit HEVC on a 10-bit (Main 10) client, got %s", got)
+	}
+}
+
 func TestDecide_DirectStream_7_1_ExceedsClientChannelCap(t *testing.T) {
 	file := baseFile() // h264 / aac / mkv
 	file.AudioStreams = []byte(`[{"channels":8}]`) // 7.1 source

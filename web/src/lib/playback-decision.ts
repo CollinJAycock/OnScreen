@@ -49,20 +49,22 @@ function remuxableVideoCodecs(caps: ClientCaps): Set<string> {
 }
 
 /** True when the browser can decode this file's video at its bit depth.
- *  Browsers can't decode 10-bit H.264 (Hi10P) at all, and 10-bit HEVC needs
- *  Main 10 support specifically (distinct from 8-bit Main). 8-bit always
- *  passes; AV1/VP9 10-bit decode tracks their 8-bit support so it isn't
- *  separately gated. Uses video_bit_depth (the video stream's depth), NOT
- *  bit_depth (which is audio). Undefined → assume 8-bit (safe — no false
- *  transcodes; a genuinely-undecodable 10-bit source falls back at decode). */
+ *  Browsers can't decode 10-bit H.264 (Hi10P) at all, and HEVC bit depth must
+ *  not exceed the decoder's: Main 10 support (hevc10bit) covers ≤10-bit, but
+ *  12-bit (Main 12 — e.g. some anime encodes like Fruits Basket) is NOT
+ *  decodable since we only probe up to Main 10. 8-bit always passes; AV1/VP9
+ *  high-bit-depth decode tracks their 8-bit support so it isn't separately
+ *  gated. Uses video_bit_depth (the video stream's depth), NOT bit_depth (which
+ *  is audio). Undefined → assume 8-bit (safe — no false transcodes; a
+ *  genuinely-undecodable source falls back at decode). */
 export function videoBitDepthOK(file: ItemFile | undefined, caps: ClientCaps): boolean {
   if (!file) return false;
   const depth = file.video_bit_depth ?? 8;
   if (depth < 10) return true;
   const codec = (file.video_codec ?? '').toLowerCase();
-  if (codec === 'h264' || codec === 'avc') return false; // Hi10P — no browser decodes it
-  if (codec === 'hevc' || codec === 'h265') return caps.hevc10bit;
-  return true; // av1 / vp9 10-bit ≈ their 8-bit support
+  if (codec === 'h264' || codec === 'avc') return false; // Hi10P/Hi12P — no browser decodes it
+  if (codec === 'hevc' || codec === 'h265') return depth <= 10 && caps.hevc10bit; // Main 10 covers ≤10-bit only
+  return true; // av1 / vp9 high-bit-depth ≈ their 8-bit support
 }
 
 /** True when the browser can play this file directly — compatible container +
