@@ -2177,6 +2177,13 @@ export const transcodeApi = {
       supports_hevc: supportsHEVC ?? false,
       supports_av1: supportsAV1 ?? false
     }),
+  // Server-authoritative play decision (capability profiles). Returns the
+  // server's verdict for a file given the client's X-Client-Capabilities header.
+  // Currently consumed in shadow mode (compared against the local decision) —
+  // see the watch page. docs/capability-profiles.md.
+  decide: (itemId: string, fileId?: string) =>
+    api.post<{ decision: string; file_id: string }>(
+      `/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)
 };

@@ -72,6 +72,7 @@ test.describe('4K playback sweep @chromium-only', () => {
     await loginViaUI(page);
 
     let sid = '';
+    const shadow: string[] = []; // [capability-shadow] mismatch/failure lines (server-vs-local decision)
     page.on('request', (req) => {
       const m = req.url().match(/transcode\/sessions\/([0-9a-f-]+)\//);
       if (m) sid = m[1];
@@ -101,7 +102,11 @@ test.describe('4K playback sweep @chromium-only', () => {
 
     async function attempt(mv: any) {
       const errors: string[] = [];
-      const onErr = (msg: any) => { if (msg.type() === 'error') errors.push(msg.text()); };
+      const onErr = (msg: any) => {
+        const txt = msg.text();
+        if (msg.type() === 'error') errors.push(txt);
+        if (txt.includes('[capability-shadow]')) shadow.push(txt);
+      };
       const onPageErr = (e: any) => errors.push(e.message);
       page.on('console', onErr);
       page.on('pageerror', onPageErr);
@@ -179,5 +184,14 @@ test.describe('4K playback sweep @chromium-only', () => {
     for (const f of fails) {
       console.log(`  FAIL "${f.title}" (a=${f.audio_codec}/v=${f.video_codec}) video=${f.video_started} audio=${f.audio_started} sess=${f.session_id} ${f.note} | ${f.errors.join(' || ')}`);
     }
+
+    // Capability-profile parity: server-vs-local decision mismatches observed in
+    // shadow mode. Empty = the server decision agrees with the local one across
+    // the swept library (safe to make the server authoritative). Each line tells
+    // which file class diverged (codec/audio/container/bitdepth/hdr/faststart).
+    const uniqShadow = [...new Set(shadow)];
+    console.log(`\n=== capability-shadow: ${uniqShadow.length} decision divergence line(s) ===`);
+    for (const s of uniqShadow) console.log('  ' + s);
+    fs.writeFileSync(path.join(specDir, '4k-shadow-mismatches.json'), JSON.stringify(uniqShadow, null, 2));
   });
 });

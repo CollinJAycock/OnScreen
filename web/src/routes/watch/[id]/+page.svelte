@@ -674,6 +674,36 @@
     return canRemuxVideoDecision(file, clientCaps);
   }
 
+  // ── Capability-profile shadow check (docs/capability-profiles.md) ──────────
+  // Compares the server's X-Client-Capabilities decision against the local
+  // playback-decision for the source file and logs any mismatch. SHADOW ONLY —
+  // the local decision still drives playback; this verifies the two agree
+  // across the library (via the 4K sweep + browsing) before we make the server
+  // decision authoritative. Remove once the cut-over lands.
+  let shadowCheckedItemId = '';
+  async function shadowCheckDecision(file: ItemFile) {
+    if (!item) return;
+    const local = canDirectPlayDecision(file, clientCaps)
+      ? 'directPlay'
+      : canRemuxVideoDecision(file, clientCaps)
+        ? 'directStream'
+        : 'transcode';
+    try {
+      // No file_id → server resolves the best/first file, which is sourceFile.
+      const srv = await transcodeApi.decide(item.id);
+      if (srv.decision !== local) {
+        console.warn('[capability-shadow] MISMATCH ' + JSON.stringify({
+          title: item.title, local, server: srv.decision,
+          video_codec: file.video_codec, audio_codec: file.audio_codec,
+          container: file.container, video_bit_depth: file.video_bit_depth,
+          hdr_type: file.hdr_type, faststart: file.faststart,
+        }));
+      }
+    } catch (e) {
+      console.warn('[capability-shadow] decision call failed: ' + String(e));
+    }
+  }
+
   // HLS transcode state
   let hlsInstance: Hls | null = null;
   let transcodeSessionId: string | null = null;
@@ -700,6 +730,11 @@
   $: sourceWidth = item?.files?.[0]?.resolution_w ?? 0;
   $: sourceFile = item?.files?.[0];
   $: canAuto = canDirectPlay(sourceFile) || canRemuxVideo(sourceFile);
+  // Fire the capability shadow check once per item (sourceFile is item.files[0]).
+  $: if (sourceFile && item && shadowCheckedItemId !== item.id) {
+    shadowCheckedItemId = item.id;
+    void shadowCheckDecision(sourceFile);
+  }
   $: availableQualities = qualityOptions.filter(
     q => {
       if (q.height === 0) return canAuto;

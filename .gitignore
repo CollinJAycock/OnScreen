@@ -37,6 +37,7 @@ coverage.html
 # 4K playback sweep — generated artifacts (regenerable from the API) + its report
 /web/tests/e2e/4k-movies.json
 /web/tests/e2e/4k-sweep-results.json
+/web/tests/e2e/4k-shadow-mismatches.json
 /4K-SWEEP-REPORT.md
 
 # Go
