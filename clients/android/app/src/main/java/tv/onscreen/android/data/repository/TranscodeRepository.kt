@@ -1,6 +1,7 @@
 package tv.onscreen.android.data.repository
 
 import tv.onscreen.android.data.api.OnScreenApi
+import tv.onscreen.android.data.model.PlaybackDecisionRequest
 import tv.onscreen.android.data.model.TranscodeRequest
 import tv.onscreen.android.data.model.TranscodeSession
 import javax.inject.Inject
@@ -32,6 +33,19 @@ class TranscodeRepository @Inject constructor(
                 supports_av1 = supportsAv1,
             )
         ).data
+    }
+
+    /** Server-authoritative play decision (capability profiles). Returns
+     *  "directPlay" | "directStream" | "transcode", or null on any failure so
+     *  the caller falls back to the local PlaybackHelper. The device's
+     *  X-Client-Capabilities header (added by AuthInterceptor) tells the server
+     *  what this device can decode. See docs/capability-profiles.md. */
+    suspend fun decide(itemId: String, fileId: String?): String? {
+        return try {
+            api.playbackDecision(itemId, PlaybackDecisionRequest(file_id = fileId)).data.decision
+        } catch (_: Exception) {
+            null
+        }
     }
 
     suspend fun stop(sessionId: String, token: String) {

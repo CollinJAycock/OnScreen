@@ -42,6 +42,21 @@ data class TranscodeRequest(
     val supports_av1: Boolean = false,
 )
 
+/** Body for POST /items/{id}/playback-decision. The capability profile rides the
+ *  X-Client-Capabilities header (AuthInterceptor); the body just picks the file. */
+@JsonClass(generateAdapter = true)
+data class PlaybackDecisionRequest(
+    val file_id: String? = null,
+)
+
+/** Server-authoritative play decision: "directPlay" | "directStream" |
+ *  "transcode". See docs/capability-profiles.md. */
+@JsonClass(generateAdapter = true)
+data class PlaybackDecision(
+    val decision: String,
+    val file_id: String? = null,
+)
+
 @JsonClass(generateAdapter = true)
 data class ProgressRequest(
     val view_offset_ms: Long,
