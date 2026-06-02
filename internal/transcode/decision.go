@@ -53,7 +53,15 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	// codec and music would always fall through to Transcode.
 	audioOnly := videoAlias == "" && audioAlias != ""
 	clientSupportsVideo := audioOnly || caps.SupportsVideoCodec(videoAlias)
-	clientSupportsAudio := caps.SupportsAudioCodec(audioAlias) || audioAlias == ""
+	// Audio is playable as-is only if the client decodes the codec AND can
+	// render the channel layout. A source with more channels than the client's
+	// cap (e.g. 7.1 to a 5.1/stereo client) can't direct-play or remux — the
+	// layout is fixed in the bitstream, and most decoders reject >5.1 AAC
+	// outright (the 7.1-AAC browser finding) — so it must transcode to downmix.
+	// The downmix target is chosen separately by TargetAudioChannels.
+	srcChannels := SourceAudioChannels(file.AudioStreams, -1)
+	channelsFit := caps.MaxAudioChannels <= 0 || srcChannels <= 0 || srcChannels <= caps.MaxAudioChannels
+	clientSupportsAudio := audioAlias == "" || (caps.SupportsAudioCodec(audioAlias) && channelsFit)
 	clientSupportsContainer := caps.SupportsContainer(containerAlias)
 
 	// HDR check: if source is HDR and client doesn't support it, must transcode.

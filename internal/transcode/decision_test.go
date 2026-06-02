@@ -106,6 +106,37 @@ func TestDecide_DirectPlay_10bitHEVC_10bitClient(t *testing.T) {
 	}
 }
 
+func TestDecide_Transcode_7_1_ExceedsClientChannelCap(t *testing.T) {
+	file := baseFile()
+	file.AudioStreams = []byte(`[{"channels":8}]`) // 7.1 source
+	// Client decodes AAC + container but caps at 5.1 (ParseCapabilities default
+	// 6). 7.1 can't direct-play or remux — the layout is fixed in the stream —
+	// so it must transcode (downmix). This is the 7.1-AAC class of failure.
+	caps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac,protocols=mkv:mp4")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionTranscode {
+		t.Errorf("want Transcode for 7.1 source on 5.1 client, got %s", got)
+	}
+}
+
+func TestDecide_DirectPlay_5_1_WithinClientChannelCap(t *testing.T) {
+	file := baseFile()
+	file.AudioStreams = []byte(`[{"channels":6}]`) // 5.1 source
+	caps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac,protocols=mkv:mp4")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectPlay {
+		t.Errorf("want DirectPlay for 5.1 source within 5.1 cap, got %s", got)
+	}
+}
+
+func TestDecide_DirectPlay_7_1_ClientSupports7_1(t *testing.T) {
+	file := baseFile()
+	file.AudioStreams = []byte(`[{"channels":8}]`) // 7.1 source
+	// A client that declares it can render 7.1 keeps direct-play.
+	caps := ParseCapabilities("videoDecoder=h264,audioDecoder=aac,protocols=mkv:mp4,maxAudioChannels=8")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectPlay {
+		t.Errorf("want DirectPlay for 7.1 source on 7.1-capable client, got %s", got)
+	}
+}
+
 func TestDecide_Transcode_Hi10P_H264(t *testing.T) {
 	file := baseFile() // h264 / aac / mkv
 	file.Container = strPtr("mp4")

@@ -81,6 +81,12 @@ func ParseCapabilities(header string) ClientCapabilities {
 			if d := parseInt(val); d > 0 {
 				caps.MaxVideoBitDepth = d
 			}
+		case "hdr":
+			// HDR10 / HLG display capability (e.g. hdr=1). Drives the HDR gate
+			// in Decide — an HDR source on a non-HDR client must tonemap.
+			caps.SupportsHDR = parseInt(val) > 0 || strings.EqualFold(val, "true")
+		case "dovi", "dolbyvision":
+			caps.SupportsDV = parseInt(val) > 0 || strings.EqualFold(val, "true")
 		}
 	}
 	return caps

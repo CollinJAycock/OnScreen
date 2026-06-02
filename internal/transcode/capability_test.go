@@ -139,6 +139,21 @@ func TestParseCapabilities_BitDepth(t *testing.T) {
 	}
 }
 
+func TestParseCapabilities_HDR(t *testing.T) {
+	if ParseCapabilities("").SupportsHDR {
+		t.Error("default SupportsHDR should be false")
+	}
+	if !ParseCapabilities("hdr=1").SupportsHDR {
+		t.Error("hdr=1 should set SupportsHDR")
+	}
+	if ParseCapabilities("hdr=0").SupportsHDR {
+		t.Error("hdr=0 should not set SupportsHDR")
+	}
+	if !ParseCapabilities("dovi=1").SupportsDV {
+		t.Error("dovi=1 should set SupportsDV")
+	}
+}
+
 func TestClientCapabilities_Supports(t *testing.T) {
 	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac:ac3,protocols=mkv:mp4")
 
