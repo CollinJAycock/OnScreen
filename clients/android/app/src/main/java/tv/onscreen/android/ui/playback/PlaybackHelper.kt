@@ -102,4 +102,30 @@ object PlaybackHelper {
     fun supportsAv1(): Boolean {
         return true
     }
+
+    /**
+     * Builds the X-Client-Capabilities header value from this device's decode
+     * support — the declarative profile the server uses for transcode target
+     * selection and (once adopted) the POST /items/{id}/playback-decision
+     * endpoint. Built from the same supportsHevc()/supportsAv1() + codec sets
+     * that decide() and the transcode request use, so it stays consistent with
+     * what this client claims. ExoPlayer decodes up to 7.1, so maxAudioChannels
+     * is 8 (the AAC transcode fallback still caps at 5.1 server-side). See
+     * docs/capability-profiles.md for the grammar.
+     */
+    fun clientCapabilitiesHeader(): String {
+        val video = mutableListOf("h264", "vp9")
+        if (supportsHevc()) video.add("h265")
+        if (supportsAv1()) video.add("av1")
+        return listOf(
+            "videoDecoder=" + video.joinToString(":"),
+            "audioDecoder=aac:mp3:opus:flac:vorbis:ac3:eac3:dts",
+            "protocols=mp4:mkv:webm:mov:ts",
+            "maxWidth=3840",
+            "maxHeight=2160",
+            "maxAudioChannels=8",
+            "maxbitdepth=10",
+            "hdr=1",
+        ).joinToString(",")
+    }
 }

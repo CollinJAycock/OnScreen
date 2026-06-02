@@ -49,4 +49,29 @@ object PlaybackHelper {
     // a device where the hint is wrong, ExoPlayer falls back to a
     // software decoder rather than failing loud.
     fun supportsHevc(): Boolean = true
+
+    /**
+     * Builds the X-Client-Capabilities header from this device's decode support
+     * — the declarative profile the server uses for transcode target selection
+     * and (once adopted) the POST /items/{id}/playback-decision endpoint. Built
+     * from the same supportsHevc() + codec sets that decide() uses, so it stays
+     * consistent with what this client claims. AV1 isn't declared (no
+     * supportsAv1() hint here). The bit-depth/HDR/channel fields are a starting
+     * point — verify against real devices (MediaCodecList) before adopting the
+     * decision endpoint. See docs/capability-profiles.md.
+     */
+    fun clientCapabilitiesHeader(): String {
+        val video = mutableListOf("h264", "vp9")
+        if (supportsHevc()) video.add("h265")
+        return listOf(
+            "videoDecoder=" + video.joinToString(":"),
+            "audioDecoder=aac:mp3:opus:flac:vorbis:ac3:eac3:dts",
+            "protocols=mp4:mkv:webm:mov:ts",
+            "maxWidth=3840",
+            "maxHeight=2160",
+            "maxAudioChannels=8",
+            "maxbitdepth=10",
+            "hdr=1",
+        ).joinToString(",")
+    }
 }

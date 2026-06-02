@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.Response
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.ui.playback.PlaybackHelper
 
 /**
  * Attaches Authorization: Bearer header to API requests. Used for
@@ -77,6 +78,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
         val authed = request.newBuilder()
             .header("Authorization", "Bearer $token")
+            .header("X-Client-Capabilities", PlaybackHelper.clientCapabilitiesHeader())
             .build()
         return chain.proceed(authed)
     }
