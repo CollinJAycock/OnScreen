@@ -35,7 +35,9 @@ const SETTLE_MS = Number(process.env.SWEEP_SETTLE_SECONDS ?? 12) * 1000;
 const DEADLINE_MS = Number(process.env.SWEEP_DEADLINE_HOURS ?? 9) * 3600 * 1000;
 const LIMIT = Number(process.env.SWEEP_LIMIT ?? 0); // 0 = all
 
-const moviesPath = path.join(specDir, '4k-movies.json');
+const moviesPath = process.env.SWEEP_MOVIES
+  ? path.resolve(process.env.SWEEP_MOVIES)
+  : path.join(specDir, '4k-movies.json');
 const resultsPath = path.join(specDir, '4k-sweep-results.json');
 const movies: any[] = fs.existsSync(moviesPath)
   ? JSON.parse(fs.readFileSync(moviesPath, 'utf-8'))
