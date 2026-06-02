@@ -40,6 +40,7 @@ type Worker struct {
 	cudaTonemap      atomic.Bool       // all-VRAM CUDA HDR→SDR (scale_cuda+tonemap_cuda) works here; probed in the background (cold JIT), flips on when warmed
 	hasTonemapOpenCL bool              // tonemap_opencl filter available in FFmpeg
 	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
+	hasLibfdkAAC     bool              // libfdk_aac encoder available; preferred over native aac (far faster first segment on multichannel)
 	hasLibplacebo    bool              // libplacebo+Vulkan HDR→SDR tonemap works (GPU, vendor-agnostic; preferred over zscale)
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
@@ -87,6 +88,9 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	}
 	hasTonemapOCL := ProbeFilter(ctx, "tonemap_opencl")
 	hasZscale := ProbeFilter(ctx, "zscale")
+	// Prefer libfdk_aac over native aac — far faster first segment on
+	// multichannel audio (see BuildArgs.HasLibfdkAAC).
+	hasLibfdkAAC := ProbeEncoder(ctx, "libfdk_aac")
 	// GPU HDR→SDR via libplacebo (Vulkan) — the preferred tonemap path. Real
 	// end-to-end probe (not just filter presence) so a host with the filter but
 	// no working Vulkan device falls back to software zscale.
@@ -122,6 +126,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		encoderLabels:    labels,
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
+		hasLibfdkAAC:     hasLibfdkAAC,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
 		openclDevices:    openclDevices,
@@ -196,6 +201,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"tonemap_cuda", w.cudaTonemap.Load(), // false at startup; probed async, flips on after the tonemap_cuda JIT warms
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
+		"libfdk_aac", w.hasLibfdkAAC,
 		"libplacebo", w.hasLibplacebo,
 		"nvdec_hevc", w.cudaHevcDecode,
 		"cuda_scale", w.cudaScale.Load(), // false at startup; probed async, flips on after the scale_cuda JIT warms
@@ -440,6 +446,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				CudaTonemap:          cudaTonemapUsable,
 				HasTonemapOpenCL:     w.hasTonemapOpenCL,
 				HasZscale:            w.hasZscale,
+				HasLibfdkAAC:         w.hasLibfdkAAC,
 				HasLibplacebo:        w.hasLibplacebo,
 				OpenCLDevice:         PickOpenCLDevice(w.openclDevices, enc),
 				AudioCodec:           job.AudioCodec,

@@ -498,6 +498,25 @@ func ProbeFilter(ctx context.Context, name string) bool {
 	return false
 }
 
+// ProbeEncoder returns true if the named FFmpeg encoder is available. Used to
+// prefer libfdk_aac over the native aac encoder, whose multichannel startup is
+// dramatically slower (a 7.1 TrueHD source's first HLS segment: ~15s native aac
+// vs ~5s libfdk_aac — the native encoder dominated time-to-first-segment).
+func ProbeEncoder(ctx context.Context, name string) bool {
+	out, err := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-encoders").Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		// Encoder listing format: " A..... name  description"
+		if len(fields) >= 2 && fields[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
 // ProbeLibplaceboVulkan reports whether GPU HDR→SDR tonemapping via the
 // libplacebo (Vulkan) filter actually works on this host — not just that the
 // filter is compiled in, but that a Vulkan device initializes and a libplacebo

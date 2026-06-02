@@ -148,6 +148,48 @@ func TestBuildHLS_AudioCopy_NoChannelArgs(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_PrefersLibfdkAACWhenAvailable(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		AudioCodec:    "aac",
+		AudioChannels: 8,
+		HasLibfdkAAC:  true,
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-c:a libfdk_aac") {
+		t.Errorf("expected -c:a libfdk_aac when HasLibfdkAAC set: %s", argStr)
+	}
+	if strings.Contains(argStr, "-c:a aac") {
+		t.Errorf("should not emit native -c:a aac when libfdk available: %s", argStr)
+	}
+	// The aac config block is keyed on the logical codec, so it still applies.
+	if !strings.Contains(argStr, "-ac 8") {
+		t.Errorf("expected -ac 8 (aac config still applies under libfdk): %s", argStr)
+	}
+}
+
+func TestBuildHLS_FallsBackToNativeAACWhenLibfdkAbsent(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		AudioCodec:    "aac",
+		AudioChannels: 2,
+		// HasLibfdkAAC defaults false — a build without libfdk_aac.
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-c:a aac") {
+		t.Errorf("expected native -c:a aac when libfdk unavailable: %s", argStr)
+	}
+	if strings.Contains(argStr, "libfdk") {
+		t.Errorf("should not emit libfdk when unavailable: %s", argStr)
+	}
+}
+
 func TestBuildHLS_Subtitles(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath:       "/media/movie.mkv",

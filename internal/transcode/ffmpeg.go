@@ -77,6 +77,13 @@ type BuildArgs struct {
 	CudaTonemap      bool
 	HasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
 	HasZscale        bool // zscale filter available (libzimg) for software tonemap
+	// HasLibfdkAAC selects the libfdk_aac encoder over the native aac encoder for
+	// AAC output. libfdk is higher quality and — critically — far faster to start
+	// on multichannel audio: a 7.1 TrueHD source's first HLS segment took ~15s
+	// with native aac vs ~5s with libfdk (native aac's multichannel startup
+	// dominated HDR-transcode time-to-first-segment). The worker sets it from a
+	// startup encoder probe; falls back to native aac when libfdk isn't built in.
+	HasLibfdkAAC bool
 	// HasLibplacebo enables GPU HDR→SDR tonemap via the libplacebo (Vulkan)
 	// filter — the preferred path: vendor-agnostic, GPU-resident, and far
 	// faster than software zscale on 4K HDR (it also does the downscale). When
@@ -548,7 +555,16 @@ func BuildHLS(a BuildArgs) []string {
 	}
 
 	// ── Audio ────────────────────────────────────────────────────────────────
-	args = append(args, "-c:a", a.AudioCodec)
+	// Prefer libfdk_aac over the native aac encoder when the build has it: the
+	// native encoder is ~10s slower to emit the first segment on multichannel
+	// audio (7.1 TrueHD source: ~15s vs ~5s), which dominated HDR-transcode start
+	// latency. The "aac" config block below keys on the logical codec, so it still
+	// applies. Falls back to native aac when libfdk isn't available.
+	audioCodec := a.AudioCodec
+	if a.AudioCodec == "aac" && a.HasLibfdkAAC {
+		audioCodec = "libfdk_aac"
+	}
+	args = append(args, "-c:a", audioCodec)
 	if a.AudioCodec == "aac" {
 		channels := a.AudioChannels
 		if channels <= 0 {
