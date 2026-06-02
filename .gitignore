@@ -34,6 +34,10 @@ coverage.out
 coverage.html
 /web/test-results/
 /web/playwright-report/
+# 4K playback sweep — generated artifacts (regenerable from the API) + its report
+/web/tests/e2e/4k-movies.json
+/web/tests/e2e/4k-sweep-results.json
+/4K-SWEEP-REPORT.md
 
 # Go
 vendor/
