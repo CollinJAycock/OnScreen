@@ -20,6 +20,7 @@ import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.NavCard
 import tv.onscreen.android.ui.common.NavCardPresenter
 import tv.onscreen.android.ui.common.Navigator
@@ -46,6 +47,10 @@ class HomeFragment : BrowseSupportFragment() {
     // identical we skip rebuilding the rows — a rebuild reassigns the adapter and
     // snaps the Browse fragment's focus/scroll back to the first row.
     private var lastBuiltState: HomeUiState? = null
+    // Returning from a sub-screen recreates this view and (when content changed)
+    // rebuilds the rows from a fresh adapter, which snaps focus back to the first
+    // row. Remember the selected row and re-apply it after the rebuild.
+    private val scroll = GridScrollMemory()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,6 +72,7 @@ class HomeFragment : BrowseSupportFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[HomeViewModel::class.java]
+        scroll.onViewRecreated()
 
         // Read serverUrl FIRST, then start collecting UI state. Two
         // parallel coroutines raced before — if the cached API response
@@ -107,6 +113,12 @@ class HomeFragment : BrowseSupportFragment() {
                         lastBuiltState = state
                         buildRows(state)
                     }
+                    // Returning here recreated the view: a rebuild (content changed)
+                    // reassigns the adapter and a skipped rebuild (unchanged) reuses
+                    // the retained one — either way put focus back on the row the user
+                    // left from instead of snapping to the top.
+                    val rows = (adapter as? ArrayObjectAdapter)?.size() ?: 0
+                    scroll.restoreIfPending(rows) { setSelectedPosition(it) }
                 }
             }
         }
@@ -169,6 +181,11 @@ class HomeFragment : BrowseSupportFragment() {
                 }
             }
         }
+
+        // Track which row is focused so a rebuild-on-return can land back on it
+        // instead of the top. (Browse's 4th `row` param is the Row; selectedPosition
+        // is the simpler, equivalent row index.)
+        setOnItemViewSelectedListener { _, _, _, _ -> scroll.record(selectedPosition) }
 
         setOnSearchClickedListener {
             parentFragmentManager.beginTransaction()

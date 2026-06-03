@@ -10,6 +10,9 @@ package tv.onscreen.android.ui.common
  * (this object) survives that round-trip; we re-apply it once the recreated grid
  * has repopulated.
  *
+ * Works for a flat VerticalGrid (position = card index) and for a Browse fragment's
+ * rows (position = selected row index) — anything with a setSelectedPosition(Int).
+ *
  * Usage in a VerticalGridSupportFragment:
  *   private val scroll = GridScrollMemory()
  *   // after `adapter = gridAdapter`:        scroll.onViewRecreated()
@@ -27,18 +30,23 @@ class GridScrollMemory {
         restorePending = savedPosition > 0
     }
 
-    /** Record the current selection so a later view recreation can return to it. */
+    /** Record the current selection so a later view recreation can return to it.
+     *  Ignored while a restore is pending: repopulating the adapter auto-selects
+     *  position 0 and fires the selection listener, which would otherwise clobber
+     *  the remembered position before restoreIfPending gets to re-apply it. */
     fun record(position: Int) {
+        if (restorePending) return
         if (position >= 0) savedPosition = position
     }
 
-    /** After the adapter repopulates, re-apply the remembered position exactly once
-     *  (only if it's within the loaded range — a deep position past the first page
-     *  waits harmlessly). */
+    /** After the adapter repopulates, re-apply the remembered position. Consumes the
+     *  pending flag on the first non-empty repopulate — applying the position if it's
+     *  within range, otherwise just disarming so a shrunk list can't lock out
+     *  record() forever. Empty interim emissions are skipped so a deep position can
+     *  wait for the page it lives on to load. */
     fun restoreIfPending(adapterSize: Int, apply: (Int) -> Unit) {
-        if (restorePending && savedPosition in 1 until adapterSize) {
-            restorePending = false
-            apply(savedPosition)
-        }
+        if (!restorePending || adapterSize == 0) return
+        restorePending = false
+        if (savedPosition in 1 until adapterSize) apply(savedPosition)
     }
 }
