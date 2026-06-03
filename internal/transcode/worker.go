@@ -27,6 +27,66 @@ var tracer = otel.Tracer("onscreen/transcode")
 
 var segmentBaseDir = filepath.Join(os.TempDir(), "onscreen", "sessions")
 
+// sourceProbe carries what the worker needs to decide how to re-encode a
+// rotated source: the display rotation (degrees) and the source's overall
+// bitrate (kbps, 0 if unknown).
+type sourceProbe struct {
+	rotationDeg int
+	bitrateKbps int
+}
+
+// parseSourceProbe pulls rotation and bitrate out of ffprobe default-format
+// ("key=value") lines. Rotation comes from the display-matrix side data
+// ("rotation=") or the legacy stream tag ("rotate="), normalized to [0,360);
+// bitrate from the container's "bit_rate=" (bits/s → kbps). Split out so the
+// parsing is unit-testable without invoking ffprobe.
+func parseSourceProbe(out string) sourceProbe {
+	var p sourceProbe
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		eq := strings.IndexByte(line, '=')
+		if eq < 0 {
+			continue
+		}
+		key, val := line[:eq], strings.TrimSpace(line[eq+1:])
+		switch key {
+		case "rotation", "rotate":
+			if deg, err := strconv.Atoi(val); err == nil {
+				if d := ((deg % 360) + 360) % 360; d != 0 && p.rotationDeg == 0 {
+					p.rotationDeg = d
+				}
+			}
+		case "bit_rate":
+			if bps, err := strconv.ParseInt(val, 10, 64); err == nil && bps > 0 {
+				p.bitrateKbps = int(bps / 1000)
+			}
+		}
+	}
+	return p
+}
+
+// probeSource probes the input's primary video stream for a display-matrix
+// rotation plus the container bitrate. Portrait phone clips are stored as a
+// landscape frame plus a "rotate 90°" matrix; a stream-copy remux into MPEG-TS
+// drops that matrix and the clip plays sideways, so the worker forces a software
+// re-encode (autorotate bakes the rotation in) when rotationDeg != 0. Returns a
+// zero value on any probe error/timeout so a flaky probe never blocks playback.
+func probeSource(ctx context.Context, input string) sourceProbe {
+	pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(pctx, "ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream_side_data=rotation:stream_tags=rotate:format=bit_rate",
+		"-of", "default=nw=1",
+		input,
+	).Output()
+	if err != nil {
+		return sourceProbe{}
+	}
+	return parseSourceProbe(string(out))
+}
+
 const heartbeatInterval = 2 * time.Second
 
 // Worker is a transcode worker that picks up jobs from the Valkey queue,
@@ -380,7 +440,31 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// scale_cuda→tonemap_cuda→NVENC) — the preferred HDR path on NVIDIA. Same
 	// gating/fallback; also captured by buildTranscodeArgs.
 	cudaTonemapUsable := false
-	switch job.Decision {
+	// Phone videos carry a rotation matrix (portrait footage stored as a
+	// landscape frame + "rotate 90°"). A stream-copy remux into MPEG-TS drops
+	// the matrix and the clip plays sideways, so force a full software re-encode:
+	// ffmpeg's autorotate (on by default on the software-decode path) bakes the
+	// rotation into the pixels. Encode at native (auto-rotated) resolution — no
+	// scale/pad, so no pillarbox. Probe failures return 0 (treated as upright).
+	probe := probeSource(ctx, input)
+	rotated := probe.rotationDeg != 0
+	decision := job.Decision
+	if rotated {
+		decision = "transcode"       // never stream-copy: that drops the rotation
+		job.Width, job.Height = 0, 0 // encode at the auto-rotated source resolution
+		// A remux job carries no target bitrate (stream copy needs none); supply
+		// one for the forced re-encode from the source's own bitrate, with a
+		// floor so a missing probe value can't starve the encode.
+		if job.BitrateKbps <= 0 {
+			job.BitrateKbps = probe.bitrateKbps
+			if job.BitrateKbps <= 0 {
+				job.BitrateKbps = 8000
+			}
+		}
+		w.logger.Info("rotated source — forcing software re-encode to bake orientation",
+			"session_id", job.SessionID, "rotation_deg", probe.rotationDeg, "bitrate_kbps", job.BitrateKbps)
+	}
+	switch decision {
 	case "directStream":
 		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
 	default:
@@ -410,6 +494,14 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			} else if HEVCBitrateRatio > 0 {
 				job.BitrateKbps = int(float64(job.BitrateKbps) / HEVCBitrateRatio)
 			}
+		}
+
+		// Rotated source: force the pure-software encoder so the whole pipeline
+		// (decode + encode) runs on the CPU and ffmpeg's autorotate applies. A
+		// hardware decode keeps frames in VRAM where autorotate can't run, so the
+		// rotation would still be lost. libx264 on a 1080p phone clip is cheap.
+		if rotated {
+			enc = EncoderSoftware
 		}
 
 		bitrate := job.BitrateKbps
