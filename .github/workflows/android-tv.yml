@@ -38,6 +38,18 @@ jobs:
       # Gradle dependency + build cache (keyed on the wrapper + build files).
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Point the Gradle daemon JVM at the runner's JDK
+        # The committed gradle.properties pins org.gradle.java.installations.paths
+        # to the Windows Android Studio JBR (for local dev). On the Linux runner
+        # that path is invalid ("Cannot convert relative path C:\... to absolute").
+        # Override it in GRADLE_USER_HOME (higher precedence than the project file,
+        # the per-machine escape hatch the comment in gradle.properties describes)
+        # so daemon-JVM detection finds JDK 21 at JAVA_HOME (toolchainVersion=21).
+        run: |
+          GUH="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$GUH"
+          echo "org.gradle.java.installations.paths=$JAVA_HOME" >> "$GUH/gradle.properties"
+
       - name: Run unit tests
         # chmod is a safety net — gradlew is committed executable (100755), but
         # this keeps CI green if the bit is ever lost on a Windows-authored commit.
