@@ -20,6 +20,7 @@ import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.common.syncItems
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -62,8 +63,7 @@ class FavoritesFragment : VerticalGridSupportFragment() {
             adapter = gridAdapter
 
             viewModel.uiState.collectLatest { state ->
-                gridAdapter.clear()
-                state.items.forEach { gridAdapter.add(it) }
+                gridAdapter.syncItems(state.items) { it.id }
                 when {
                     state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
                     !state.isLoading && state.items.isEmpty() ->

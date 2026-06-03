@@ -37,9 +37,10 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState
 
-    init {
-        load()
-    }
+    // NOTE: no init{load()} — HomeFragment.onResume() drives the load. Having both
+    // double-fetched every endpoint on launch and rebuilt the rows twice (flicker +
+    // focus reset). onResume always fires after onViewCreated, so the first launch
+    // still loads exactly once.
 
     fun load() {
         viewModelScope.launch {

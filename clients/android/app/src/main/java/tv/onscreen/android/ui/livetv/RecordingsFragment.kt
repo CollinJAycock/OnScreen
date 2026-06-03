@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.Recording
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.detail.DetailFragment
 
 @AndroidEntryPoint
@@ -55,8 +56,7 @@ class RecordingsFragment : VerticalGridSupportFragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiState.collectLatest { state ->
-                gridAdapter.clear()
-                state.items.forEach { gridAdapter.add(it) }
+                gridAdapter.syncItems(state.items) { it.id }
                 when {
                     state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
                     !state.isLoading && state.items.isEmpty() ->

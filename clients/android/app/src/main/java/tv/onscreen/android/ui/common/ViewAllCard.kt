@@ -71,6 +71,10 @@ class ViewAllCardPresenter(private val context: Context) : Presenter() {
                 }
             }
             setBackgroundColor(context.resources.getColor(R.color.bg_secondary, null))
+            // Mirror the focusable parent's state so the card_focus_state ring
+            // (keyed on state_focused) actually paints — without this the "View
+            // all" tile shows no focus indicator at all (same bug as CardPresenter).
+            isDuplicateParentStateEnabled = true
             foreground = context.getDrawable(R.drawable.card_focus_state)
         }
 

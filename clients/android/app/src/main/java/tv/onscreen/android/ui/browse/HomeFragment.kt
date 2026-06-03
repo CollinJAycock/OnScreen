@@ -42,6 +42,10 @@ class HomeFragment : BrowseSupportFragment() {
     private lateinit var viewModel: HomeViewModel
     private var serverUrl: String = ""
     private var errorOverlay: ErrorOverlay? = null
+    // Last state we actually rendered. onResume re-fetches, but if the content is
+    // identical we skip rebuilding the rows — a rebuild reassigns the adapter and
+    // snaps the Browse fragment's focus/scroll back to the first row.
+    private var lastBuiltState: HomeUiState? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,7 +103,10 @@ class HomeFragment : BrowseSupportFragment() {
                     )
                 } else {
                     errorOverlay?.hide()
-                    buildRows(state)
+                    if (state != lastBuiltState) {
+                        lastBuiltState = state
+                        buildRows(state)
+                    }
                 }
             }
         }

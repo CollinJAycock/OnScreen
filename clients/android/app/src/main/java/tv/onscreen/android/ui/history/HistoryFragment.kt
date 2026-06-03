@@ -19,6 +19,7 @@ import tv.onscreen.android.data.model.HistoryItem
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.detail.DetailFragment
 import javax.inject.Inject
 
@@ -62,12 +63,10 @@ class HistoryFragment : VerticalGridSupportFragment() {
             adapter = gridAdapter
 
             viewModel.uiState.collectLatest { state ->
-                gridAdapter.clear()
                 // De-dupe by media_id so rewatching doesn't spam the grid.
                 val seen = mutableSetOf<String>()
-                state.items.forEach { item ->
-                    if (seen.add(item.media_id)) gridAdapter.add(item)
-                }
+                val deduped = state.items.filter { seen.add(it.media_id) }
+                gridAdapter.syncItems(deduped) { it.media_id }
                 when {
                     state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
                     !state.isLoading && gridAdapter.size() == 0 ->

@@ -22,6 +22,7 @@ import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.photo.PhotoViewFragment
 import javax.inject.Inject
 
@@ -118,8 +119,10 @@ class LibraryFragment : VerticalGridSupportFragment() {
 
             launch {
                 viewModel.items.collectLatest { items ->
-                    gridAdapter.clear()
-                    items.forEach { gridAdapter.add(it) }
+                    // Append-or-rebuild preserving focus/scroll — critical for the
+                    // pagination path: a new page must stream in WITHOUT yanking the
+                    // user back to the top mid-scroll.
+                    gridAdapter.syncItems(items) { it.id }
                 }
             }
             launch {

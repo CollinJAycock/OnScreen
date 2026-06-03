@@ -120,6 +120,7 @@ class DetailFragment : Fragment() {
                     boundItem,
                     view.findViewById(R.id.btn_play),
                     view.findViewById(R.id.btn_play_from_start),
+                    focusPlay = false, // refresh-only: keep the user's current focus
                 )
             }
         }
@@ -201,7 +202,7 @@ class DetailFragment : Fragment() {
         configureEpisodes(root, item, seasons)
     }
 
-    private fun configurePlayButtons(item: ItemDetail, btnPlay: Button, btnFromStart: Button) {
+    private fun configurePlayButtons(item: ItemDetail, btnPlay: Button, btnFromStart: Button, focusPlay: Boolean = true) {
         // Audiobook is dual-shape: a single-file book has files of its
         // own (no children) and behaves like a leaf, while a multi-file
         // book has audiobook_chapter children and behaves like an
@@ -277,7 +278,10 @@ class DetailFragment : Fragment() {
                 }
             }
         }
-        if (btnPlay.visibility == View.VISIBLE) btnPlay.requestFocus()
+        // Only grab focus on the initial bind. The post-playback result-listener
+        // re-bind (which updates the Resume label) must NOT yank focus back up to
+        // Play — that's what threw the user off the episode list on return.
+        if (focusPlay && btnPlay.visibility == View.VISIBLE) btnPlay.requestFocus()
     }
 
     private fun firstEpisode(): ChildItem? {

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.syncItems
 
 @AndroidEntryPoint
 class LiveTVFragment : VerticalGridSupportFragment() {
@@ -55,8 +56,7 @@ class LiveTVFragment : VerticalGridSupportFragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiState.collectLatest { state ->
-                gridAdapter.clear()
-                state.channels.forEach { gridAdapter.add(it) }
+                gridAdapter.syncItems(state.channels) { it.channel.id }
                 when {
                     state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
                     !state.isLoading && state.channels.isEmpty() ->

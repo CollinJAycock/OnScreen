@@ -17,6 +17,7 @@ import tv.onscreen.android.data.model.CollectionItem
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.common.syncItems
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -67,8 +68,7 @@ class CollectionFragment : VerticalGridSupportFragment() {
             viewModel.load(collectionId)
 
             viewModel.items.collectLatest { items ->
-                gridAdapter.clear()
-                items.forEach { gridAdapter.add(it) }
+                gridAdapter.syncItems(items) { it.id }
             }
         }
 
