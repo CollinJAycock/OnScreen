@@ -2446,6 +2446,19 @@
     }
   }
 
+  // Back button on the show/movie detail page. history.back() is wrong here:
+  // the player exits by navigating to the show page (see goBack), so a raw
+  // back would bounce straight into the episode just watched. A season sits
+  // under its show, so step up to it; everything else returns to the home
+  // screen.
+  function detailBack() {
+    if (item?.type === 'season' && item.parent_id) {
+      goto(`/watch/${item.parent_id}`);
+      return;
+    }
+    goto('/');
+  }
+
   // ── Mobile touch gestures ──────────────────────────────────────────────────
   let isMobile = false;
   let touchStartX = 0;
@@ -3478,7 +3491,7 @@
   {/if}
 
   <div class="detail-content" class:no-hero={!item.fanart_path}>
-    <button class="detail-back" on:click={() => history.back()}>
+    <button class="detail-back" on:click={detailBack}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><polyline points="15 18 9 12 15 6"/></svg>
       Back
     </button>
