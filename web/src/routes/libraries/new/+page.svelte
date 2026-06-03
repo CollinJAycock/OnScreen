@@ -81,10 +81,14 @@
         <input id="name" bind:value={name} placeholder="Movies" autocomplete="off" />
       </div>
       <div class="type-picker">
-        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🍙','Anime'],['cartoons','🦸','Cartoons'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label]}
+        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime','/goku.png'],['cartoons','🦸','Cartoons','/cage-superman.png'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
-            <span class="type-icon">{icon}</span>
+            {#if img}
+              <img class="type-icon-img" src={img} alt={label} />
+            {:else}
+              <span class="type-icon">{icon}</span>
+            {/if}
             <span>{label}</span>
           </label>
         {/each}
@@ -237,6 +241,13 @@
   }
   .type-opt input { display: none; }
   .type-icon { font-size: 1.4rem; line-height: 1; }
+  .type-icon-img {
+    width: 1.8rem;
+    height: 1.8rem;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+  }
   .type-opt:hover { border-color: rgba(255,255,255,0.14); color: var(--text-secondary); }
   .type-opt.selected {
     border-color: var(--accent);
