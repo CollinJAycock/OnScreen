@@ -1,0 +1,51 @@
+name: Android TV
+
+# Fast PR gate for the Android TV client's JVM unit tests. The suite had
+# silently drifted red (untested capability/Dolby-Vision changes + an
+# android.util.Log call that throws in unit tests); this stops that from
+# recurring. Unit tests only — no APK assembly (slow, and not needed to catch
+# logic regressions). Path-filtered so it only runs when the TV client changes.
+on:
+  push:
+    paths:
+      - 'clients/android/**'
+      - '.github/workflows/android-tv.yml'
+  pull_request:
+    paths:
+      - 'clients/android/**'
+      - '.github/workflows/android-tv.yml'
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/android
+    steps:
+      - uses: actions/checkout@v4
+
+      # AGP 9.2 / Gradle 9.4 require JDK 17+; the module compiles to 17 bytecode.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Provides cmdline-tools + accepts SDK licenses so AGP can resolve
+      # compileSdk 35 / build-tools on the runner.
+      - uses: android-actions/setup-android@v3
+
+      # Gradle dependency + build cache (keyed on the wrapper + build files).
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-test-report
+          path: clients/android/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 7
