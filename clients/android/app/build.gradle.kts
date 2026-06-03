@@ -89,6 +89,11 @@ android {
     }
 
     testOptions {
+        // Return defaults (0/null/false) for android.jar stubs in JVM unit tests
+        // instead of throwing "Method … not mocked". PlaybackViewModel.prepare()
+        // logs the play decision via android.util.Log.i, which otherwise throws and
+        // fails every prepare()-based test.
+        unitTests.isReturnDefaultValues = true
         unitTests.all {
             it.maxHeapSize = "2g"
             it.jvmArgs = listOf(

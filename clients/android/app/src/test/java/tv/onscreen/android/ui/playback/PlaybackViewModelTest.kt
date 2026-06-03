@@ -114,6 +114,17 @@ class PlaybackViewModelTest {
         return repo
     }
 
+    /** TranscodeRepository mock with the server play-decision stubbed to null —
+     *  prepare() calls decide() before anything else, so an unstubbed (non-relaxed)
+     *  mock throws and fails the test. Null means "server unreachable", which is
+     *  exactly the local-PlaybackHelper.decide path these tests assert against.
+     *  Tests layer their own coEvery { start(...) } on the returned mock. */
+    private fun transcodeRepoMock(relaxed: Boolean = false): TranscodeRepository {
+        val repo = if (relaxed) mockk<TranscodeRepository>(relaxed = true) else mockk()
+        coEvery { repo.decide(any(), any()) } returns null
+        return repo
+    }
+
     private fun episodeDetail(file: ItemFile, parentId: String, index: Int) = ItemDetail(
         id = "ep-$index",
         library_id = "lib-1",
@@ -127,7 +138,7 @@ class PlaybackViewModelTest {
     @Test
     fun `direct play movie produces DirectPlay source with start position`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
         val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
@@ -148,7 +159,7 @@ class PlaybackViewModelTest {
     @Test
     fun `unsupported codec triggers transcode and produces Hls source`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         coEvery {
             transcodeRepo.start(
@@ -181,7 +192,7 @@ class PlaybackViewModelTest {
     @Test
     fun `missing files surfaces error in ui state`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile()).copy(files = emptyList())
 
         val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
@@ -196,7 +207,7 @@ class PlaybackViewModelTest {
     @Test
     fun `repository failure surfaces error message`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem(any()) } throws RuntimeException("api 500")
 
         val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
@@ -209,7 +220,7 @@ class PlaybackViewModelTest {
     @Test
     fun `episode load fetches next episode by index plus one`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } returns listOf(
             ChildItem(id = "ep-1", title = "E1", type = "episode", index = 1),
@@ -229,7 +240,7 @@ class PlaybackViewModelTest {
     @Test
     fun `final episode in season has no next episode`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("ep-3") } returns episodeDetail(directPlayFile(), "season-1", 3)
         coEvery { itemRepo.getChildren("season-1") } returns listOf(
             ChildItem(id = "ep-1", title = "E1", type = "episode", index = 1),
@@ -247,7 +258,7 @@ class PlaybackViewModelTest {
     @Test
     fun `non-episode items do not query siblings`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
         val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
@@ -261,7 +272,7 @@ class PlaybackViewModelTest {
     @Test
     fun `getChildren failure does not break main playback flow`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } throws RuntimeException("offline")
 
@@ -278,7 +289,7 @@ class PlaybackViewModelTest {
     @Test
     fun `stopActiveTranscode is a no-op without an active session`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
         val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
 
         vm.stopActiveTranscode()
@@ -290,7 +301,7 @@ class PlaybackViewModelTest {
     @Test
     fun `stopActiveTranscode sends stop request when session is active`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         coEvery {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
@@ -318,7 +329,7 @@ class PlaybackViewModelTest {
     @Test
     fun `direct-play failure falls back to a full server transcode`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
         coEvery {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
@@ -361,7 +372,7 @@ class PlaybackViewModelTest {
     @Test
     fun `direct-play fallback is one-shot`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
         coEvery {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
@@ -390,7 +401,7 @@ class PlaybackViewModelTest {
     @Test
     fun `fallback is a no-op on the transcode path`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
-        val transcodeRepo = mockk<TranscodeRepository>()
+        val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         coEvery {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
@@ -411,5 +422,35 @@ class PlaybackViewModelTest {
         coVerify(exactly = 1) {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         }
+    }
+
+    @Test
+    fun `server unsupported verdict surfaces dolby vision error and no source`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>()
+        coEvery { transcodeRepo.decide(any(), any()) } returns "unsupported"
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.error).isEqualTo("dolby_vision")
+        assertThat(vm.uiState.value.source).isNull()
+    }
+
+    @Test
+    fun `dolby vision source is refused even when the server decision is unavailable`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock() // decide() -> null (server unreachable)
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(directPlayFile().copy(hdr_type = "dolby_vision"))
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.error).isEqualTo("dolby_vision")
+        assertThat(vm.uiState.value.source).isNull()
     }
 }

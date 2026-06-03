@@ -76,6 +76,7 @@ class HomeViewModelTest {
         coEvery { m.lib.getItems("l1", limit = 20) } returns (listOf(item("a"), item("b")) to 2)
 
         val vm = HomeViewModel(m.hub, m.lib, m.col)
+        vm.load()
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -94,6 +95,7 @@ class HomeViewModelTest {
         coEvery { m.hub.getHub() } throws RuntimeException("offline")
 
         val vm = HomeViewModel(m.hub, m.lib, m.col)
+        vm.load()
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.error).isEqualTo("offline")
@@ -107,6 +109,7 @@ class HomeViewModelTest {
         coEvery { m.lib.getItems("l2", limit = 20) } throws RuntimeException("lib2 down")
 
         val vm = HomeViewModel(m.hub, m.lib, m.col)
+        vm.load()
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -131,6 +134,7 @@ class HomeViewModelTest {
             ),
         )
         val vm = HomeViewModel(m.hub, m.lib, m.col)
+        vm.load()
         advanceUntilIdle()
         val state = vm.uiState.value
         assertThat(state.continueWatchingTV.map { it.id }).containsExactly("ep1")
