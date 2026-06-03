@@ -825,7 +825,7 @@ export interface UserPreferences {
 export interface Library {
   id: string;
   name: string;
-  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book' | 'anime';
+  type: 'movie' | 'show' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book' | 'anime' | 'cartoons';
   scan_paths: string[];
   agent: string;
   language: string;

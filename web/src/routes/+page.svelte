@@ -157,6 +157,7 @@
     music:      { label: 'Music',       icon: '🎵' },
     photo:      { label: 'Photos',      icon: '🖼️' },
     anime:      { label: 'Anime',       icon: '🌸', image: '/goku.png' },
+    cartoons:   { label: 'Cartoons',    icon: '🦸', image: '/cage-superman.png' },
     audiobook:  { label: 'Audiobooks',  icon: '🎧' },
     podcast:    { label: 'Podcasts',    icon: '🎙️' },
     book:       { label: 'Books',       icon: '📚' },
@@ -165,7 +166,7 @@
   };
   const colors: Record<string, string> = {
     movie: '#60a5fa', show: '#a78bfa', music: '#34d399', photo: '#fb923c',
-    anime: '#f472b6', audiobook: '#fbbf24', podcast: '#f87171',
+    anime: '#f472b6', cartoons: '#2563eb', audiobook: '#fbbf24', podcast: '#f87171',
     book: '#818cf8', home_video: '#2dd4bf', dvr: '#fb7185',
   };
 </script>

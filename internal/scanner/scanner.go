@@ -576,13 +576,13 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 // swallowed so a dedupe failure never fails the scan.
 func (s *Scanner) dedupeLibrary(ctx context.Context, libraryID uuid.UUID, libraryType string) {
 	switch libraryType {
-	case "show", "movie", "anime":
-		// Anime libraries dedupe through the show path — same
-		// hierarchy (show → season → episode), same merge behaviour.
-		// Pass libraryType straight through; the dedup only branches
-		// on hierarchy shape, not on origin.
+	case "show", "movie", "anime", "cartoons":
+		// Anime and cartoons libraries dedupe through the show path —
+		// same hierarchy (show → season → episode), same merge behaviour.
+		// Their top-level items are stored as type "show", so canonicalize
+		// to that; movie/show pass straight through.
 		canonicalType := libraryType
-		if libraryType == "anime" {
+		if libraryType == "anime" || libraryType == "cartoons" {
 			canonicalType = "show"
 		}
 		dedup, err := s.media.DedupeTopLevelItems(ctx, canonicalType, &libraryID)
@@ -988,7 +988,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if bkErr != nil {
 			return nil, nil, false, fmt.Errorf("book for %s: %w", path, bkErr)
 		}
-	} else if libraryType == "show" || libraryType == "anime" {
+	} else if libraryType == "show" || libraryType == "anime" || libraryType == "cartoons" {
 		// Anime libraries share the show → season → episode hierarchy
 		// with `show` libraries; the library type only flips which
 		// metadata agent the enricher prefers (AniList primary), not
@@ -1409,11 +1409,11 @@ func cleanTitle(name string) (title string, year *int) {
 // fileTypeForLibrary maps library type to the media_item type used for top-level items.
 func fileTypeForLibrary(libraryType string) string {
 	switch libraryType {
-	case "show", "anime":
-		// Anime contents are shows with episodes — same media-item
-		// hierarchy as `show`, just enriched against AniList instead
-		// of TMDB by default. The library type is the only signal
-		// the enricher reads for that flip.
+	case "show", "anime", "cartoons":
+		// Anime and cartoons are shows with episodes — same media-item
+		// hierarchy as `show`. The library type only flips which agent
+		// the enricher prefers (anime → AniList; cartoons → TMDB, same
+		// as show), not the content shape.
 		return "episode"
 	case "music":
 		return "track"

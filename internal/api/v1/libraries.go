@@ -517,8 +517,8 @@ func (h *LibraryHandler) DetectIntros(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if lib.Type != "show" && lib.Type != "anime" {
-		respond.BadRequest(w, r, "intro detection only applies to show / anime libraries")
+	if lib.Type != "show" && lib.Type != "anime" && lib.Type != "cartoons" {
+		respond.BadRequest(w, r, "intro detection only applies to show / anime / cartoons libraries")
 		return
 	}
 	detectCtx := context.WithoutCancel(r.Context())
@@ -837,10 +837,11 @@ func rootItemType(libraryType string) string {
 	switch libraryType {
 	case "music":
 		return "artist"
-	case "show", "anime":
-		// Anime libraries share the show → season → episode shape
-		// with `show` libraries. The library type only flips which
-		// metadata agent the enricher prefers, not the hierarchy.
+	case "show", "anime", "cartoons":
+		// Anime and cartoons libraries share the show → season → episode
+		// shape with `show` libraries. The library type only flips which
+		// metadata agent the enricher prefers (anime → AniList; show and
+		// cartoons → TMDB), not the hierarchy.
 		return "show"
 	case "photo":
 		return "photo"
@@ -869,7 +870,7 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 		case "artist", "album", "track", "music_video":
 			return true
 		}
-	case "show", "anime":
+	case "show", "anime", "cartoons":
 		switch itemType {
 		case "show", "season", "episode":
 			return true
