@@ -103,6 +103,25 @@ type BuildArgs struct {
 	// Only honored for HEVC sources on a re-encode; the worker sets it from
 	// TRANSCODE_QSV_DECODE and falls back to software decode on failure.
 	QSVDecode bool
+	// QSVVRAM opts into the full-VRAM Intel QSV path for SDR HEVC/H.264/AV1
+	// re-encodes on a QSV encoder: QSV decodes straight into QSV (VA) surfaces
+	// (-hwaccel qsv -hwaccel_output_format qsv -c:v {hevc,h264,av1}_qsv), vpp_qsv
+	// scales in GPU memory, and the QSV encoder reads those surfaces directly —
+	// the Intel analogue of the NVDEC→scale_cuda→NVENC path. Requires ONE Intel
+	// GPU to both decode and encode (the system-memory QSVDecode path stays for
+	// the iGPU-decode/dGPU-encode split). SDR-only: HDR tonemap has no trusted
+	// QSV filter, so it keeps the libplacebo/zscale path. Opt-in
+	// (TRANSCODE_QSV_VRAM), default off, software fallback on failure — needs
+	// validation on real Intel hardware before it's trusted.
+	QSVVRAM bool
+	// VAAPIVRAM opts into the full-VRAM VAAPI path for SDR re-encodes on a VAAPI
+	// encoder: VAAPI hardware-decodes into VA surfaces (-hwaccel vaapi
+	// -hwaccel_output_format vaapi), scale_vaapi runs in GPU memory, and the
+	// VAAPI encoder reads those surfaces — no software decode, no hwupload (the
+	// default VAAPI path software-decodes then uploads). Same single-GPU + SDR-
+	// only constraints, opt-in (TRANSCODE_VAAPI_VRAM), default off, software
+	// fallback — needs validation on real Intel/AMD hardware.
+	VAAPIVRAM bool
 	// CudaHevcDecode opts into NVDEC hardware HEVC decode (-c:v hevc_cuvid) on
 	// the input, offloading the (4K-bound) HEVC decode to the GPU while keeping
 	// frames in system memory so the existing scale/tonemap/encode chain runs
@@ -284,6 +303,14 @@ func BuildHLS(a BuildArgs) []string {
 		// VAAPI init filter (must come before input for hardware decode).
 		if a.IsVAAPI {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
+			// Full-VRAM VAAPI (opt-in TRANSCODE_VAAPI_VRAM): hardware-decode into
+			// VA surfaces so scale_vaapi + the encoder run with no software decode
+			// and no hwupload. SDR-only — HDR keeps the software/libplacebo path,
+			// which needs CPU frames. The default VAAPI path software-decodes then
+			// uploads (buildVideoFilter skips the hwupload when this is set).
+			if a.VAAPIVRAM && !a.NeedsToneMap {
+				args = append(args, "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi")
+			}
 		}
 
 		if useCUDADecode || a.CudaHDRTonemap || a.CudaTonemap {
@@ -319,8 +346,26 @@ func BuildHLS(a BuildArgs) []string {
 		// and the two are mutually exclusive by source codec. Opt-in per worker
 		// (TRANSCODE_QSV_DECODE); disable it for a worker if a source fails to
 		// decode on QSV.
-		if a.QSVDecode && a.IsHEVC && !useCUDADecode && !a.CudaHDRTonemap && !a.CudaTonemap {
+		if a.QSVDecode && a.IsHEVC && !a.QSVVRAM && !useCUDADecode && !a.CudaHDRTonemap && !a.CudaTonemap {
 			args = append(args, "-hwaccel", "qsv", "-c:v", "hevc_qsv")
+		}
+
+		// Full-VRAM Intel QSV (opt-in TRANSCODE_QSV_VRAM): decode straight into
+		// QSV (VA) surfaces with -hwaccel_output_format qsv and keep them there
+		// through vpp_qsv + the QSV encoder — the Intel analogue of the NVDEC→
+		// scale_cuda→NVENC path. SDR-only; the worker only sets QSVVRAM on a QSV
+		// encoder (single Intel GPU does both decode and encode). Mutually
+		// exclusive with the system-memory QSVDecode path above.
+		if a.QSVVRAM && !a.NeedsToneMap && !useCUDADecode && !a.CudaHDRTonemap && !a.CudaTonemap {
+			args = append(args, "-hwaccel", "qsv", "-hwaccel_output_format", "qsv")
+			switch {
+			case a.IsHEVC:
+				args = append(args, "-c:v", "hevc_qsv")
+			case a.IsH264:
+				args = append(args, "-c:v", "h264_qsv")
+			case a.IsAV1:
+				args = append(args, "-c:v", "av1_qsv")
+			}
 		}
 
 		// NVDEC hardware HEVC decode (the NVIDIA analogue of the QSV path).
@@ -759,6 +804,12 @@ func buildVideoFilter(a BuildArgs) string {
 	// frames stay in VRAM. AV1 always; HEVC/H.264 SDR only when CudaVRAM is set.
 	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap &&
 		(a.IsAV1 || ((a.IsHEVC || a.IsH264) && a.CudaVRAM))
+	// Intel full-VRAM scale paths — must stay in lockstep with the decode-side
+	// QSVVRAM/VAAPIVRAM branches in BuildHLS. When the input decodes into QSV/VA
+	// surfaces, scale with the matching GPU filter (vpp_qsv / scale_vaapi) so
+	// frames never leave VRAM. SDR-only (HDR keeps the software/libplacebo path).
+	useQSVVRAM := isQSV && a.QSVVRAM && !a.NeedsToneMap
+	useVAAPIVRAM := a.IsVAAPI && a.VAAPIVRAM && !a.NeedsToneMap
 
 	// HDR→SDR tone mapping (zscale + tonemap=hable on the CPU). zscale operates
 	// on CPU frames and can't reach hardware surfaces, so it runs before any
@@ -867,15 +918,27 @@ func buildVideoFilter(a BuildArgs) string {
 		}
 		// VAAPI hwupload prep — after the tonemap chain so HDR sources are
 		// downconverted to bt709 yuv420p in CPU first, then re-formatted to
-		// nv12 and uploaded to a VAAPI surface for scale_vaapi + encode.
-		if a.IsVAAPI {
+		// nv12 and uploaded to a VAAPI surface for scale_vaapi + encode. Skipped
+		// on the full-VRAM VAAPI path: the input was hardware-decoded straight
+		// into VA surfaces, so there's nothing to upload.
+		if a.IsVAAPI && !useVAAPIVRAM {
 			filters = append(filters, "format=nv12", "hwupload")
 		}
 		// Scale to target resolution, maintaining aspect ratio.
 		if a.Width > 0 && a.Height > 0 {
 			switch {
+			case useQSVVRAM:
+				// Full-VRAM Intel QSV: vpp_qsv scales in QSV (VA) memory and outputs
+				// nv12 (8-bit), downconverting 10-bit sources on the GPU — the Intel
+				// analogue of scale_cuda. No pad (vpp_qsv has none); the API's
+				// Width/Height are already aspect-correct.
+				filters = append(filters, fmt.Sprintf("vpp_qsv=w=%d:h=%d:format=nv12", a.Width, a.Height))
 			case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI:
-				filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height))
+				// scale_vaapi runs on VA surfaces — fed by the hwupload above on the
+				// default path, or directly by the hardware decode on VAAPIVRAM.
+				// format=nv12 forces 8-bit (a no-op after the nv12 hwupload; on the
+				// VRAM path it downconverts a 10-bit hardware-decoded surface).
+				filters = append(filters, fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease:format=nv12", a.Width, a.Height))
 			case useCUDADecode:
 				// Full-VRAM NVDEC path (AV1 always; HEVC/H.264 SDR when probed
 				// OK): keep frames in VRAM through scaling. scale_cuda outputs nv12
@@ -889,7 +952,7 @@ func buildVideoFilter(a BuildArgs) string {
 		}
 	}
 
-	if !needsSoftwareTonemap && !lpTonemap && !useCUDADecode && !cudaTonemap && !cudaHDRTonemap && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
+	if !needsSoftwareTonemap && !lpTonemap && !useCUDADecode && !useQSVVRAM && !useVAAPIVRAM && !cudaTonemap && !cudaHDRTonemap && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
 		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
 		// ("10-bit input video is not supported"). libx264 *accepts*
 		// 10-bit input but emits 10-bit High 10 profile H.264 — valid
@@ -947,6 +1010,28 @@ func subtitleBurnFilter(input string, si int) string {
 func IsNVENCEncoder(enc Encoder) bool {
 	switch enc {
 	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsQSVEncoder reports whether enc is any Intel Quick Sync encoder. All three
+// read QSV (VA) surfaces directly, so they share the full-VRAM QSVVRAM path.
+func IsQSVEncoder(enc Encoder) bool {
+	switch enc {
+	case EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsVAAPIEncoder reports whether enc is any VAAPI encoder. All three read VA
+// surfaces directly, so they share the full-VRAM VAAPIVRAM path.
+func IsVAAPIEncoder(enc Encoder) bool {
+	switch enc {
+	case EncoderVAAPI, EncoderHEVCVAAPI, EncoderAV1VAAPI:
 		return true
 	default:
 		return false

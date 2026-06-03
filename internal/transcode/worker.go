@@ -105,6 +105,8 @@ type Worker struct {
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
+	qsvVRAM          bool              // opt-in full-VRAM Intel QSV (TRANSCODE_QSV_VRAM): qsv decode→vpp_qsv→qsv encode, all in VA surfaces. Off by default; validate on Intel HW
+	vaapiVRAM        bool              // opt-in full-VRAM VAAPI (TRANSCODE_VAAPI_VRAM): vaapi hw-decode→scale_vaapi→vaapi encode, all in VA surfaces. Off by default; validate on Intel/AMD HW
 	cudaHevcDecode   bool              // NVDEC HEVC decode works here (startup probe); offloads 4K HEVC decode to the GPU (system memory)
 	cudaScale        atomic.Bool       // full-VRAM chain (cuvid→scale_cuda→NVENC) works here; probed in the background (cold scale_cuda JIT can take ~90s), flips on when warmed
 	nodeID           string            // NODE_ID (hostname default) — reported so the admin can find this node in Settings ▸ Nodes
@@ -130,6 +132,20 @@ func (w *Worker) SetMaxSessions(n int) {
 // (TRANSCODE_QSV_DECODE). Off by default; the worker falls back to software
 // decode if a QSV-decode ffmpeg fails before producing its first segment.
 func (w *Worker) SetQSVDecode(v bool) { w.qsvDecode = v }
+
+// SetQSVVRAM enables the full-VRAM Intel QSV path (TRANSCODE_QSV_VRAM): QSV
+// decodes into VA surfaces, vpp_qsv scales in GPU memory, and the QSV encoder
+// reads those surfaces — the Intel analogue of the NVDEC→scale_cuda→NVENC path.
+// Off by default. SDR-only, single-GPU (QSV decode + QSV encode); falls back to
+// software if it fails before the first segment. Validate on Intel hardware
+// before enabling.
+func (w *Worker) SetQSVVRAM(v bool) { w.qsvVRAM = v }
+
+// SetVAAPIVRAM enables the full-VRAM VAAPI path (TRANSCODE_VAAPI_VRAM): VAAPI
+// hardware-decodes into VA surfaces, scale_vaapi scales in GPU memory, and the
+// VAAPI encoder reads those surfaces (no software decode, no hwupload). Off by
+// default. SDR-only, single-GPU; software fallback. Validate before enabling.
+func (w *Worker) SetVAAPIVRAM(v bool) { w.vaapiVRAM = v }
 
 // SetNodeID records this worker's NODE_ID so its registration advertises the
 // node identity its per-node config (Settings ▸ Nodes) is keyed by.
@@ -432,6 +448,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// NVENC) for an SDR HEVC/H.264 re-encode. Same gating/fallback; also captured
 	// by buildTranscodeArgs so the software fallback drops it from later runs.
 	cudaVRAMUsable := false
+	// qsvVRAMUsable / vaapiVRAMUsable: this run attempts the full-VRAM Intel path
+	// (QSV: qsv decode→vpp_qsv→qsv encode; VAAPI: vaapi hw-decode→scale_vaapi→
+	// vaapi encode). Opt-in + SDR-only + matching encoder; captured by
+	// buildTranscodeArgs and cleared on fallback like the CUDA flags.
+	qsvVRAMUsable := false
+	vaapiVRAMUsable := false
 	// cudaHDRUsable: this run attempts the GPU-assisted HDR chain (cuvid→
 	// scale_cuda(p010)→hwdownload→zscale tonemap) — the fallback when tonemap_cuda
 	// is unavailable. Same gating/fallback; also captured by buildTranscodeArgs.
@@ -547,6 +569,8 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				SubtitleStreams:      job.SubtitleStreams,
 				EncoderOpts:          w.encoderOpts,
 				QSVDecode:            useQSV,
+				QSVVRAM:              qsvVRAMUsable,
+				VAAPIVRAM:            vaapiVRAMUsable,
 				CudaHevcDecode:       cudaHevcUsable,
 				CudaVRAM:             cudaVRAMUsable,
 				CudaHDRTonemap:       cudaHDRUsable,
@@ -560,6 +584,16 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// A host has at most one (QSV=Intel iGPU, NVDEC=NVIDIA dGPU); BuildArgs
 		// gates NVDEC behind !QSVDecode so both being set can't double-decode.
 		qsvDecodeUsable = w.qsvDecode && job.IsHEVC && enc != "copy"
+		// Full-VRAM Intel paths (opt-in, default off): SDR-only, and only when the
+		// SAME Intel GPU both decodes and encodes — i.e. the encoder is a QSV
+		// (resp. VAAPI) encoder. The decoder is driven off the source codec in
+		// BuildArgs. Cleared on fallback below like the CUDA flags. qsvVRAM takes
+		// the system-memory QSVDecode's place when set (BuildArgs gates QSVDecode
+		// behind !QSVVRAM).
+		qsvVRAMUsable = w.qsvVRAM && !job.NeedsToneMap && IsQSVEncoder(enc) &&
+			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
+		vaapiVRAMUsable = w.vaapiVRAM && !job.NeedsToneMap && IsVAAPIEncoder(enc) &&
+			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
 		cudaHevcUsable = w.cudaHevcDecode && job.IsHEVC && enc != "copy"
 		// Full-VRAM scale_cuda path is SDR-only (HEVC or H.264): HDR re-encodes
 		// need the libplacebo tonemap, which runs from the system-memory
@@ -708,9 +742,9 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// ctx) is not a decode failure, so selfExited gates this. Clearing
 	// cudaHevcUsable (captured by buildTranscodeArgs) and continuationUseQSV also
 	// drops hardware decode from the retry and any later continuation runs.
-	if (qsvDecodeUsable || cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable || cudaTonemapUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
+	if (qsvDecodeUsable || qsvVRAMUsable || vaapiVRAMUsable || cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable || cudaTonemapUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
 		w.logger.Warn("hardware decode produced no segments; retrying with software decode",
-			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable, "tonemap_cuda", cudaTonemapUsable, "err", exitErr)
+			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "qsv_vram", qsvVRAMUsable, "vaapi_vram", vaapiVRAMUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable, "tonemap_cuda", cudaTonemapUsable, "err", exitErr)
 		// Clear any partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
@@ -719,6 +753,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		cudaVRAMUsable = false
 		cudaHDRUsable = false
 		cudaTonemapUsable = false
+		// Drop the full-VRAM Intel paths too — the retry keeps the HW encoder but
+		// software-decodes (QSV/VAAPI default path), which is the safe fallback.
+		qsvVRAMUsable = false
+		vaapiVRAMUsable = false
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
 	}
 

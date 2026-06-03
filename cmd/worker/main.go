@@ -209,6 +209,18 @@ func run() error {
 	if cfg.TranscodeQSVDecode {
 		logger.Info("QSV hardware HEVC decode enabled")
 	}
+	// Opt-in full-VRAM Intel paths (TRANSCODE_QSV_VRAM / TRANSCODE_VAAPI_VRAM) —
+	// decode→scale→encode stays in VA surfaces, the Intel analogue of the NVIDIA
+	// full-VRAM path. Off by default; enable only on a worker whose QSV/VAAPI
+	// stack is confirmed good (software fallback on failure).
+	transcodeWorker.SetQSVVRAM(cfg.TranscodeQSVVRAM)
+	transcodeWorker.SetVAAPIVRAM(cfg.TranscodeVAAPIVRAM)
+	if cfg.TranscodeQSVVRAM {
+		logger.Info("full-VRAM Intel QSV path enabled (TRANSCODE_QSV_VRAM)")
+	}
+	if cfg.TranscodeVAAPIVRAM {
+		logger.Info("full-VRAM VAAPI path enabled (TRANSCODE_VAAPI_VRAM)")
+	}
 
 	// ── Health server ─────────────────────────────────────────────────────────
 	liveH, readyH := observability.HealthHandler(
