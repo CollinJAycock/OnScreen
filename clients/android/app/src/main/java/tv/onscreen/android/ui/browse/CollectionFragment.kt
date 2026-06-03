@@ -16,6 +16,7 @@ import tv.onscreen.android.R
 import tv.onscreen.android.data.model.CollectionItem
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
+import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.syncItems
 import javax.inject.Inject
@@ -27,6 +28,7 @@ class CollectionFragment : VerticalGridSupportFragment() {
 
     private lateinit var viewModel: CollectionViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
+    private val scroll = GridScrollMemory() // keep grid position across detail/back
 
     companion object {
         private const val ARG_COLLECTION_ID = "collection_id"
@@ -64,11 +66,13 @@ class CollectionFragment : VerticalGridSupportFragment() {
             val serverUrl = prefs.serverUrl.first() ?: ""
             gridAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             adapter = gridAdapter
+            scroll.onViewRecreated()
 
             viewModel.load(collectionId)
 
             viewModel.items.collectLatest { items ->
                 gridAdapter.syncItems(items) { it.id }
+                scroll.restoreIfPending(gridAdapter.size(), ::setSelectedPosition)
             }
         }
 
@@ -84,6 +88,7 @@ class CollectionFragment : VerticalGridSupportFragment() {
         // appends the page so focus/scroll is preserved.
         setOnItemViewSelectedListener { _, item, _, _ ->
             val pos = gridAdapter.indexOf(item)
+            scroll.record(pos) // remember position for a detail/back restore
             if (pos >= 0 && pos >= gridAdapter.size() - 10) {
                 viewModel.loadMore()
             }

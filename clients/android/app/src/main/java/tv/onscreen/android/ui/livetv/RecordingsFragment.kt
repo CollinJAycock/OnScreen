@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.Recording
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.detail.DetailFragment
 
@@ -26,6 +27,7 @@ class RecordingsFragment : VerticalGridSupportFragment() {
     private lateinit var viewModel: RecordingsViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
     private var errorOverlay: ErrorOverlay? = null
+    private val scroll = GridScrollMemory() // keep grid position across detail/back
 
     companion object {
         private const val NUM_COLUMNS = 4
@@ -53,10 +55,12 @@ class RecordingsFragment : VerticalGridSupportFragment() {
         viewModel = ViewModelProvider(this)[RecordingsViewModel::class.java]
         gridAdapter = ArrayObjectAdapter(RecordingCardPresenter(requireContext()))
         adapter = gridAdapter
+        scroll.onViewRecreated()
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiState.collectLatest { state ->
                 gridAdapter.syncItems(state.items) { it.id }
+                scroll.restoreIfPending(gridAdapter.size(), ::setSelectedPosition)
                 when {
                     state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
                     !state.isLoading && state.items.isEmpty() ->
@@ -87,6 +91,7 @@ class RecordingsFragment : VerticalGridSupportFragment() {
                 Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
             }
         }
+        setOnItemViewSelectedListener { _, item, _, _ -> scroll.record(gridAdapter.indexOf(item)) }
     }
 
     override fun onResume() {

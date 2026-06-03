@@ -19,6 +19,7 @@ import tv.onscreen.android.data.model.HistoryItem
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.detail.DetailFragment
 import javax.inject.Inject
@@ -31,6 +32,7 @@ class HistoryFragment : VerticalGridSupportFragment() {
     private lateinit var viewModel: HistoryViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
     private var errorOverlay: ErrorOverlay? = null
+    private val scroll = GridScrollMemory() // keep grid position across detail/back
 
     companion object {
         private const val NUM_COLUMNS = 5
@@ -61,12 +63,14 @@ class HistoryFragment : VerticalGridSupportFragment() {
             val serverUrl = prefs.serverUrl.first() ?: ""
             gridAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             adapter = gridAdapter
+            scroll.onViewRecreated()
 
             viewModel.uiState.collectLatest { state ->
                 // De-dupe by media_id so rewatching doesn't spam the grid.
                 val seen = mutableSetOf<String>()
                 val deduped = state.items.filter { seen.add(it.media_id) }
                 gridAdapter.syncItems(deduped) { it.media_id }
+                scroll.restoreIfPending(gridAdapter.size(), ::setSelectedPosition)
                 when {
                     state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
                     !state.isLoading && gridAdapter.size() == 0 ->
@@ -84,6 +88,7 @@ class HistoryFragment : VerticalGridSupportFragment() {
                 .addToBackStack(null)
                 .commit()
         }
+        setOnItemViewSelectedListener { _, item, _, _ -> scroll.record(gridAdapter.indexOf(item)) }
     }
 
     override fun onResume() {

@@ -21,6 +21,7 @@ import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.photo.PhotoViewFragment
@@ -35,6 +36,9 @@ class LibraryFragment : VerticalGridSupportFragment() {
     private lateinit var gridAdapter: ArrayObjectAdapter
     private var baseTitle: String = ""
     private var errorOverlay: ErrorOverlay? = null
+    // Restores the grid position across the view recreation a detail/back round-trip
+    // causes (see GridScrollMemory) — else the grid snaps back to the top on return.
+    private val scroll = GridScrollMemory()
 
     companion object {
         private const val ARG_LIBRARY_ID = "library_id"
@@ -114,6 +118,7 @@ class LibraryFragment : VerticalGridSupportFragment() {
             val serverUrl = prefs.serverUrl.first() ?: ""
             gridAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             adapter = gridAdapter
+            scroll.onViewRecreated() // arm position restore for a detail/back return
 
             viewModel.load(libraryId, libraryType)
 
@@ -123,6 +128,9 @@ class LibraryFragment : VerticalGridSupportFragment() {
                     // pagination path: a new page must stream in WITHOUT yanking the
                     // user back to the top mid-scroll.
                     gridAdapter.syncItems(items) { it.id }
+                    // Restore the pre-navigation position once the recreated grid has
+                    // repopulated (the view is destroyed on a detail/back round-trip).
+                    scroll.restoreIfPending(gridAdapter.size(), ::setSelectedPosition)
                 }
             }
             launch {
@@ -170,11 +178,13 @@ class LibraryFragment : VerticalGridSupportFragment() {
         }
 
         setOnItemViewSelectedListener { _, item, _, _ ->
-            // Prefetch the next page as the selection nears the end. On a
-            // VerticalGrid the selected object is `item`; the 4th `row` param is
-            // null (a grid has no Row objects), so the old indexOf(row) was always
-            // -1 and loadMore() never fired — the grid was stuck on the first page.
+            // On a VerticalGrid the selected object is `item` (the 4th `row` param is
+            // null), so indexOf(item) is the current position.
             val pos = gridAdapter.indexOf(item)
+            // Remember where we are so a detail/back round-trip can restore it.
+            scroll.record(pos)
+            // Prefetch the next page as the selection nears the end (old indexOf(row)
+            // was always -1, so loadMore() never fired — the grid stuck on page 1).
             if (pos >= 0 && pos >= gridAdapter.size() - 10) {
                 viewModel.loadMore()
             }

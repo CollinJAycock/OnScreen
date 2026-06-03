@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.syncItems
 
 @AndroidEntryPoint
@@ -23,6 +24,7 @@ class LiveTVFragment : VerticalGridSupportFragment() {
     private lateinit var viewModel: LiveTVViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
     private var errorOverlay: ErrorOverlay? = null
+    private val scroll = GridScrollMemory() // keep grid position across detail/back
 
     companion object {
         // Channel cards are wider than poster cards so 4 across reads
@@ -53,10 +55,12 @@ class LiveTVFragment : VerticalGridSupportFragment() {
         viewModel = ViewModelProvider(this)[LiveTVViewModel::class.java]
         gridAdapter = ArrayObjectAdapter(ChannelCardPresenter(requireContext()))
         adapter = gridAdapter
+        scroll.onViewRecreated()
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiState.collectLatest { state ->
                 gridAdapter.syncItems(state.channels) { it.channel.id }
+                scroll.restoreIfPending(gridAdapter.size(), ::setSelectedPosition)
                 when {
                     state.error != null -> errorOverlay?.show(state.error) { viewModel.load() }
                     !state.isLoading && state.channels.isEmpty() ->
@@ -76,6 +80,7 @@ class LiveTVFragment : VerticalGridSupportFragment() {
                 .addToBackStack(null)
                 .commit()
         }
+        setOnItemViewSelectedListener { _, item, _, _ -> scroll.record(gridAdapter.indexOf(item)) }
     }
 
     override fun onResume() {
