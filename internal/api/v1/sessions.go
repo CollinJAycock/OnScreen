@@ -173,13 +173,55 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	// (avoids duplicate cards when a client follows the direct-play redirect).
 	if h.tracker != nil && claims.IsAdmin {
 		coveredPaths := make(map[string]bool, len(valkeySessions))
+		coveredItems := make(map[uuid.UUID]bool, len(valkeySessions))
 		for _, s := range valkeySessions {
 			coveredPaths[s.FilePath] = true
+			coveredItems[s.MediaItemID] = true
 		}
+		// A direct-play stream can surface as BOTH a file-traffic entry (path) and
+		// a progress-heartbeat entry (item) at once; collapse them by client+item
+		// so it shows a single card.
+		emitted := make(map[string]bool)
 		for _, entry := range h.tracker.List() {
-			if coveredPaths[entry.FilePath] {
-				continue
+			var mi *gen.SessionMediaItem
+			var itemID uuid.UUID
+			if entry.MediaItemID != uuid.Nil {
+				// Progress-heartbeat entry: resolve by item id; it carries no path.
+				if coveredItems[entry.MediaItemID] {
+					continue // already shown as a Valkey (e.g. transcode) session
+				}
+				itemID = entry.MediaItemID
+				if items, err := h.db.GetMediaItemsForSessions(ctx, []uuid.UUID{itemID}); err != nil {
+					h.logger.WarnContext(ctx, "sessions: heartbeat item lookup", "err", err)
+				} else if len(items) > 0 {
+					mi = &items[0]
+				}
+				if mi == nil {
+					continue // can't render a useful card without the item
+				}
+			} else {
+				// File-traffic entry: resolve by path.
+				if coveredPaths[entry.FilePath] {
+					continue
+				}
+				m, err := h.db.GetMediaItemByFilePath(ctx, entry.FilePath)
+				if err != nil && err != pgx.ErrNoRows {
+					h.logger.WarnContext(ctx, "sessions: file path lookup", "err", err)
+				}
+				mi = m
+				if mi != nil {
+					itemID = mi.ID
+				}
 			}
+
+			if itemID != uuid.Nil {
+				dedupKey := entry.ClientIP + "|" + itemID.String()
+				if emitted[dedupKey] {
+					continue
+				}
+				emitted[dedupKey] = true
+			}
+
 			as := activeSession{
 				ID:         entry.ClientIP + "|" + entry.FilePath,
 				Decision:   "directPlay",
@@ -187,9 +229,9 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 				StartedAt:  entry.FirstSeen.Format("2006-01-02T15:04:05Z"),
 				Title:      filepath.Base(entry.FilePath),
 			}
-			mi, err := h.db.GetMediaItemByFilePath(ctx, entry.FilePath)
-			if err != nil && err != pgx.ErrNoRows {
-				h.logger.WarnContext(ctx, "sessions: file path lookup", "err", err)
+			if itemID != uuid.Nil {
+				// Stable id per client+item regardless of which entry won the dedup.
+				as.ID = entry.ClientIP + "|" + itemID.String()
 			}
 			if mi != nil {
 				as.Title = mi.Title

@@ -23,13 +23,18 @@ import (
 
 const entryTTL = 45 * time.Second
 
-// Entry represents one active direct-play stream.
+// Entry represents one active direct-play stream. It is populated one of two
+// ways: from raw file-server traffic (Touch — FilePath set, MediaItemID zero)
+// or from a player's progress heartbeat (Heartbeat — MediaItemID set, FilePath
+// empty). The heartbeat form keeps a stream visible while a buffering client
+// has stopped fetching bytes (see Heartbeat).
 type Entry struct {
-	FilePath   string
-	ClientIP   string
-	ClientName string
-	FirstSeen  time.Time
-	LastSeen   time.Time
+	FilePath    string
+	MediaItemID uuid.UUID
+	ClientIP    string
+	ClientName  string
+	FirstSeen   time.Time
+	LastSeen    time.Time
 }
 
 // Tracker records and expires direct-play stream activity.
@@ -129,6 +134,60 @@ func (t *Tracker) Touch(clientIP, filePath, clientName string) {
 	}
 }
 
+// Heartbeat records or refreshes a direct-play stream from a player's progress
+// beacon rather than raw file traffic. A buffering browser fetches a chunk of
+// /media/files and then plays from its buffer for tens of seconds without
+// another request, so the Touch-based entry expires mid-playback and the stream
+// vanishes from "Now Playing". The ~5s progress heartbeat is the reliable
+// "still watching" signal; keying off (clientIP, mediaItemID) keeps the card
+// alive for as long as the player reports playing. Carries the media item id so
+// the sessions API can resolve it without a file path.
+func (t *Tracker) Heartbeat(clientIP string, mediaItemID uuid.UUID, clientName string) {
+	key := itemEntryKey(clientIP, mediaItemID)
+	now := time.Now()
+
+	if t.v != nil {
+		var e Entry
+		if raw, err := t.v.Get(context.Background(), streamKey(key)); err == nil {
+			_ = json.Unmarshal([]byte(raw), &e)
+		}
+		if e.FirstSeen.IsZero() {
+			e = Entry{MediaItemID: mediaItemID, ClientIP: clientIP, FirstSeen: now}
+		}
+		e.MediaItemID = mediaItemID
+		e.LastSeen = now
+		e.ClientName = clientName
+		if b, err := json.Marshal(e); err == nil {
+			_ = t.v.Set(context.Background(), streamKey(key), string(b), entryTTL)
+		}
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if e, ok := t.entries[key]; ok {
+		e.MediaItemID = mediaItemID
+		e.LastSeen = now
+		e.ClientName = clientName
+	} else {
+		t.entries[key] = &Entry{MediaItemID: mediaItemID, ClientIP: clientIP, ClientName: clientName, FirstSeen: now, LastSeen: now}
+	}
+}
+
+// RemoveHeartbeat drops a progress-driven entry immediately, called on a
+// "stopped" beacon so a finished stream leaves "Now Playing" right away instead
+// of lingering for entryTTL.
+func (t *Tracker) RemoveHeartbeat(clientIP string, mediaItemID uuid.UUID) {
+	key := itemEntryKey(clientIP, mediaItemID)
+	if t.v != nil {
+		_ = t.v.Del(context.Background(), streamKey(key))
+		return
+	}
+	t.mu.Lock()
+	delete(t.entries, key)
+	t.mu.Unlock()
+}
+
 // List returns all entries seen within entryTTL. Expired in-memory entries
 // are pruned on each call; Valkey entries expire automatically via TTL.
 func (t *Tracker) List() []Entry {
@@ -194,3 +253,9 @@ func (t *Tracker) Middleware(urlPrefix, diskBase string, next http.Handler) http
 
 func streamKey(entryKey string) string { return "stream:entry:" + entryKey }
 func posKey(id uuid.UUID) string       { return fmt.Sprintf("stream:pos:%s", id) }
+
+// itemEntryKey keys a progress-driven (Heartbeat) entry. The "item:" segment
+// keeps it from colliding with a path-keyed (Touch) entry for the same client.
+func itemEntryKey(clientIP string, id uuid.UUID) string {
+	return clientIP + "|item:" + id.String()
+}

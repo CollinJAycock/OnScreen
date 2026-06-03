@@ -1353,6 +1353,22 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 
 	if h.tracker != nil {
 		h.tracker.SetItemState(id, body.ViewOffsetMS, body.DurationMS)
+		// Keep direct-play streams in "Now Playing". A direct-play client (notably
+		// a browser) streams straight from /media/files with no Valkey session, so
+		// it only appears via the file-traffic tracker entry — which expires once
+		// the client buffers ahead and stops fetching for entryTTL. The progress
+		// beacon (~5s) is the reliable still-watching signal, so refresh a
+		// heartbeat entry from it and drop it on stop. Transcode streams also beat
+		// here but carry a Valkey session and are deduped out in the sessions API.
+		clientIP := r.RemoteAddr
+		if host, _, err := net.SplitHostPort(clientIP); err == nil {
+			clientIP = host
+		}
+		if body.State == "stopped" {
+			h.tracker.RemoveHeartbeat(clientIP, id)
+		} else {
+			h.tracker.Heartbeat(clientIP, id, body.ClientName)
+		}
 	}
 
 	if h.sessions != nil {

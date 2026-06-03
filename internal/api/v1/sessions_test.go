@@ -14,6 +14,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/testvalkey"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
@@ -24,6 +25,29 @@ func (s *stubSessionItems) GetMediaItemsForSessions(_ context.Context, _ []uuid.
 	return nil, nil
 }
 func (s *stubSessionItems) GetMediaItemByFilePath(_ context.Context, _ string) (*gen.SessionMediaItem, error) {
+	return nil, nil
+}
+
+// mapSessionItems resolves items by id (for progress-heartbeat entries) and by
+// path (for file-traffic entries).
+type mapSessionItems struct {
+	byID   map[uuid.UUID]gen.SessionMediaItem
+	byPath map[string]gen.SessionMediaItem
+}
+
+func (s *mapSessionItems) GetMediaItemsForSessions(_ context.Context, ids []uuid.UUID) ([]gen.SessionMediaItem, error) {
+	var out []gen.SessionMediaItem
+	for _, id := range ids {
+		if mi, ok := s.byID[id]; ok {
+			out = append(out, mi)
+		}
+	}
+	return out, nil
+}
+func (s *mapSessionItems) GetMediaItemByFilePath(_ context.Context, p string) (*gen.SessionMediaItem, error) {
+	if mi, ok := s.byPath[p]; ok {
+		return &mi, nil
+	}
 	return nil, nil
 }
 
@@ -102,6 +126,94 @@ func TestSessions_List_ABRRenditionAndChildFiltering(t *testing.T) {
 	// Parent runs no encode; bitrate must come from the selected rung.
 	if got.BitrateKbps == nil || *got.BitrateKbps != 2534 {
 		t.Errorf("bitrate_kbps: got %v, want 2534 (the 720p rung)", got.BitrateKbps)
+	}
+}
+
+// A direct-play stream with no Valkey session (e.g. a browser streaming straight
+// from /media/files) is kept in "Now Playing" by the player's progress heartbeat,
+// which the tracker records by item id. Regression: such streams used to vanish
+// ~45s in, once the client buffered ahead and stopped fetching bytes.
+func TestSessions_List_DirectPlayHeartbeatVisible(t *testing.T) {
+	v := testvalkey.New(t)
+	store := transcode.NewSessionStore(v)
+	tr := streaming.NewTracker()
+	itemID := uuid.New()
+	tr.Heartbeat("10.0.0.9", itemID, "Chrome")
+
+	items := &mapSessionItems{byID: map[uuid.UUID]gen.SessionMediaItem{
+		itemID: {ID: itemID, Title: "Vox Machina", Type: "show"},
+	}}
+	h := NewNativeSessionsHandler(store, tr, items, slog.Default())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
+	h.List(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data []struct {
+			Title    string `json:"title"`
+			Decision string `json:"decision"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(body.Data) != 1 {
+		t.Fatalf("want 1 direct-play card from the heartbeat, got %d: %s", len(body.Data), rec.Body.String())
+	}
+	if body.Data[0].Title != "Vox Machina" || body.Data[0].Decision != "directPlay" {
+		t.Errorf("card: got %+v, want Vox Machina/directPlay", body.Data[0])
+	}
+}
+
+// A transcode stream sends progress beacons too, so it also gets a tracker
+// heartbeat — but it already shows via its Valkey session, so the heartbeat must
+// be deduped out (one card, not two).
+func TestSessions_List_HeartbeatDedupedAgainstSession(t *testing.T) {
+	v := testvalkey.New(t)
+	store := transcode.NewSessionStore(v)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	itemID := uuid.New()
+	sess := transcode.Session{
+		ID: transcode.NewSessionID(), UserID: uuid.New(), MediaItemID: itemID, FileID: uuid.New(),
+		Decision: "transcode", FilePath: "/media/movie.mkv", CreatedAt: now, LastActivityAt: now,
+	}
+	if err := store.Create(ctx, sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	tr := streaming.NewTracker()
+	tr.Heartbeat("10.0.0.9", itemID, "Chrome") // same item, would double-show without dedup
+
+	items := &mapSessionItems{byID: map[uuid.UUID]gen.SessionMediaItem{
+		itemID: {ID: itemID, Title: "Movie", Type: "movie"},
+	}}
+	h := NewNativeSessionsHandler(store, tr, items, slog.Default())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
+	h.List(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data []struct {
+			Decision string `json:"decision"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(body.Data) != 1 {
+		t.Fatalf("want 1 card (heartbeat deduped against the session), got %d: %s", len(body.Data), rec.Body.String())
+	}
+	if body.Data[0].Decision != "transcode" {
+		t.Errorf("decision: got %q, want transcode (the Valkey session wins)", body.Data[0].Decision)
 	}
 }
 

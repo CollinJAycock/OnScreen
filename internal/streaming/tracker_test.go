@@ -120,6 +120,64 @@ func TestTracker_List_Empty(t *testing.T) {
 	}
 }
 
+// ── Heartbeat (progress-driven entries) ────────────────────────────────────────
+
+func TestTracker_Heartbeat_NewEntry(t *testing.T) {
+	tr := NewTracker()
+	id := uuid.New()
+	tr.Heartbeat("10.0.0.5", id, "Chrome")
+
+	entries := tr.List()
+	if len(entries) != 1 {
+		t.Fatalf("entries: got %d, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.MediaItemID != id {
+		t.Errorf("MediaItemID: got %v, want %v", e.MediaItemID, id)
+	}
+	if e.FilePath != "" {
+		t.Errorf("FilePath should be empty for a heartbeat entry: got %q", e.FilePath)
+	}
+	if e.ClientIP != "10.0.0.5" || e.ClientName != "Chrome" {
+		t.Errorf("client: got ip=%q name=%q", e.ClientIP, e.ClientName)
+	}
+}
+
+func TestTracker_Heartbeat_RefreshesNotDuplicates(t *testing.T) {
+	tr := NewTracker()
+	id := uuid.New()
+	tr.Heartbeat("10.0.0.5", id, "Chrome")
+	tr.Heartbeat("10.0.0.5", id, "Chrome") // same client+item ~5s later
+
+	if entries := tr.List(); len(entries) != 1 {
+		t.Fatalf("repeated heartbeat should refresh one entry, got %d", len(entries))
+	}
+}
+
+func TestTracker_Heartbeat_DistinctFromFileTraffic(t *testing.T) {
+	tr := NewTracker()
+	id := uuid.New()
+	// A file-traffic entry and a heartbeat entry for the same client are
+	// distinct rows here (keyed differently); the sessions API collapses them.
+	tr.Touch("10.0.0.5", "/media/movie.mkv", "Chrome")
+	tr.Heartbeat("10.0.0.5", id, "Chrome")
+
+	if entries := tr.List(); len(entries) != 2 {
+		t.Fatalf("entries: got %d, want 2 (path + item keyed)", len(entries))
+	}
+}
+
+func TestTracker_RemoveHeartbeat(t *testing.T) {
+	tr := NewTracker()
+	id := uuid.New()
+	tr.Heartbeat("10.0.0.5", id, "Chrome")
+	tr.RemoveHeartbeat("10.0.0.5", id)
+
+	if entries := tr.List(); len(entries) != 0 {
+		t.Fatalf("entry should be gone after RemoveHeartbeat, got %d", len(entries))
+	}
+}
+
 // ── Middleware ────────────────────────────────────────────────────────────────
 
 func TestMiddleware_RecordsGETRequest(t *testing.T) {
