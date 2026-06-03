@@ -94,6 +94,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private var upNextOverlay: View? = null
     private var upNextJob: Job? = null
     private var upNextShown = false
+    // The Up Next countdown. A field (not a local) so "Play Now" / dismiss /
+    // teardown can cancel it — otherwise it keeps ticking and fires a SECOND
+    // goToNextEpisode after the user already advanced. navigatedToNext guards
+    // goToNextEpisode against a double fragment-replace from the same race.
+    private var countdownJob: Job? = null
+    private var navigatedToNext = false
 
     private var audioAction: Action? = null
     private var subtitleAction: Action? = null
@@ -228,23 +234,30 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 audioStreams = state.audioStreams
                 subtitleStreams = state.subtitles
                 nextEpisode = state.nextEpisode
+
+                // Only (re)load the player + tracks + progress tracker when the
+                // SOURCE actually changes — the initial load, or an audio switch
+                // that issues a fresh transcode session. A metadata-only re-emit
+                // (e.g. loadNextSibling's copy(nextEpisode=…)) keeps the same
+                // source instance; re-running playSource there would RESTART
+                // playback, stack a second progress tracker, and re-clobber the
+                // user's track selection. playerWasReused skips the (re)load
+                // entirely — the reclaimed-from-service player is already playing
+                // this exact source — but still re-installs the fragment-side
+                // progress tracker.
+                val sourceChanged = source !== currentSource
                 currentSource = source
-
-                // Skip the first prepare() when we re-took a player
-                // already playing this item from the
-                // MediaSessionService — calling setMediaSource
-                // would restart the song from 0:00. The transcode
-                // session and HLS playlist URL haven't changed
-                // since the original prepare, so the existing
-                // ExoPlayer state is still correct.
-                if (playerWasReused) {
-                    playerWasReused = false
-                } else {
-                    playSource(source)
+                when {
+                    playerWasReused -> {
+                        playerWasReused = false
+                        installProgressTracker(itemId)
+                    }
+                    sourceChanged -> {
+                        playSource(source)
+                        applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang)
+                        installProgressTracker(itemId)
+                    }
                 }
-                applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang)
-
-                installProgressTracker(itemId)
 
                 glue?.title = state.item?.title ?: ""
                 glue?.subtitle = state.item?.year?.toString() ?: ""
@@ -475,7 +488,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun hideSkipMarker() {
+        // If the skip button currently holds focus and we hide it (the marker
+        // window elapsed without a tap), hand focus back to the player — else
+        // it's stranded on the GONE button and the next D-pad press does nothing.
+        val hadFocus = skipMarkerOverlay?.hasFocus() == true
         skipMarkerOverlay?.visibility = View.GONE
+        if (hadFocus) view?.requestFocus()
     }
 
     /**
@@ -1181,7 +1199,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         playBtn.setOnClickListener { goToNextEpisode(next) }
         cancelBtn.setOnClickListener { dismissUpNext(permanent = true) }
 
-        val countdownJob = viewLifecycleOwner.lifecycleScope.launch {
+        // Never stack countdowns: a second showUpNextOverlay (e.g. EOS firing
+        // while the lead-in countdown is already running) would otherwise leave
+        // two timers racing to advance. dismissUpNext + goToNextEpisode also
+        // cancel this job.
+        countdownJob?.cancel()
+        countdownJob = viewLifecycleOwner.lifecycleScope.launch {
             for (sec in UP_NEXT_COUNTDOWN_SEC downTo 1) {
                 labelView.text = "UP NEXT · ${sec}s"
                 delay(1000)
@@ -1189,16 +1212,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             }
             goToNextEpisode(next)
         }
-        // Cancel countdown if overlay is dismissed.
-        cancelBtn.setOnClickListener {
-            countdownJob.cancel()
-            dismissUpNext(permanent = true)
-        }
 
-        if (immediate) playBtn.requestFocus() else playBtn.requestFocus()
+        playBtn.requestFocus()
     }
 
     private fun dismissUpNext(permanent: Boolean) {
+        countdownJob?.cancel()
         upNextOverlay?.visibility = View.GONE
         if (permanent) {
             upNextJob?.cancel()
@@ -1207,6 +1226,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun goToNextEpisode(ep: ChildItem) {
+        // Guard against a double advance — "Play Now" and the countdown elapsing
+        // (or the lead-in + EOS overlays) can both call this; only the first wins.
+        if (navigatedToNext) return
+        navigatedToNext = true
+        countdownJob?.cancel()
+        upNextJob?.cancel()
         progressTracker?.onStop()
         val newFrag = newInstance(ep.id, 0)
         parentFragmentManager.beginTransaction()
@@ -1366,6 +1391,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  return-to-foreground. Reads currentItem for the duration
      *  fallback, which is populated by the time the reporter fires. */
     private fun installProgressTracker(itemId: String) {
+        // Stop any prior tracker before replacing the field — otherwise the old
+        // one's 10 s heartbeat coroutine keeps running and we double-report.
+        progressTracker?.stop()
         val tracker = ProgressTracker(viewLifecycleOwner.lifecycleScope, itemRepo)
         tracker.positionProvider = { player?.currentPosition ?: 0L }
         tracker.durationProvider = {
