@@ -223,6 +223,8 @@ class SettingsFragment : Fragment() {
                 d.dismiss()
             }
             .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
+            .create()
+            .focusableOnTv()
             .show()
     }
 

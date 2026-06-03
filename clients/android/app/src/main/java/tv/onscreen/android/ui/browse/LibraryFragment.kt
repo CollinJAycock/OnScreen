@@ -135,7 +135,10 @@ class LibraryFragment : VerticalGridSupportFragment() {
             launch {
                 viewModel.error.collectLatest { err ->
                     if (err != null) {
-                        errorOverlay?.show(err) { viewModel.load(libraryId) }
+                        // Pass libraryType so a retry keeps the per-type default
+                        // sort (e.g. home_video/photo = newest-first) instead of
+                        // silently falling back to Title A–Z.
+                        errorOverlay?.show(err) { viewModel.load(libraryId, libraryType) }
                     } else {
                         errorOverlay?.hide()
                     }

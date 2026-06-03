@@ -77,5 +77,16 @@ class CollectionFragment : VerticalGridSupportFragment() {
                 Navigator.open(parentFragmentManager, item.id, item.type, 0)
             }
         }
+
+        // Prefetch the next page as the selection nears the end — without this a
+        // collection with >50 items only ever showed its first page. Uses the
+        // selected `item` (a VerticalGrid's 4th `row` param is null); syncItems
+        // appends the page so focus/scroll is preserved.
+        setOnItemViewSelectedListener { _, item, _, _ ->
+            val pos = gridAdapter.indexOf(item)
+            if (pos >= 0 && pos >= gridAdapter.size() - 10) {
+                viewModel.loadMore()
+            }
+        }
     }
 }
