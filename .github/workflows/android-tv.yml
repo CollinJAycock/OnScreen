@@ -39,7 +39,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+        # chmod is a safety net — gradlew is committed executable (100755), but
+        # this keeps CI green if the bit is ever lost on a Windows-authored commit.
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
 
       - name: Upload test report on failure
         if: failure()
