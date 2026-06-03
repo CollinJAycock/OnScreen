@@ -120,7 +120,13 @@ object PlaybackHelper {
         return listOf(
             "videoDecoder=" + video.joinToString(":"),
             "audioDecoder=aac:mp3:opus:flac:vorbis:ac3:eac3:dts",
-            "protocols=mp4:mkv:webm:mov:ts",
+            // Raw-audio containers must be listed too, or the server can't
+            // DirectPlay a music file (e.g. a .flac track): audioDecoder=flac
+            // says we decode the codec, but the play decision also checks the
+            // CONTAINER, and an audio-only source in a flac/mp3/ogg/wav/aac
+            // container would otherwise fall to a (broken) audio-only transcode.
+            // ExoPlayer plays all of these natively, so claim them for passthrough.
+            "protocols=mp4:mkv:webm:mov:ts:flac:mp3:ogg:wav:aac:aiff:m4a",
             "maxWidth=3840",
             "maxHeight=2160",
             "maxAudioChannels=8",

@@ -50,6 +50,27 @@ func TestDecide_DirectStream_ContainerMismatch(t *testing.T) {
 	}
 }
 
+// A FLAC track DirectPlays when the client declares both the flac codec AND the
+// flac container — the bug was the Android client advertising the flac *decoder*
+// but not the flac *container* in its capability profile, so the server couldn't
+// DirectPlay and fell to an audio-only DirectStream the pipeline can't run. The
+// fix is client-side (declare the raw-audio containers ExoPlayer can demux); this
+// pins the server contract the fix relies on.
+func TestDecide_DirectPlay_AudioOnly_FlacContainerDeclared(t *testing.T) {
+	file := media.File{
+		ID:          uuid.New(),
+		MediaItemID: uuid.New(),
+		FilePath:    "/media/track.flac",
+		VideoCodec:  nil, // audio-only
+		AudioCodec:  strPtr("flac"),
+		Container:   strPtr("flac"),
+	}
+	caps := ParseCapabilities("audioDecoder=aac:flac,protocols=mp4:mkv:ts:flac:mp3")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectPlay {
+		t.Errorf("audio-only flac with flac container declared: want DirectPlay, got %s", got)
+	}
+}
+
 func TestDecide_Transcode_UnsupportedVideo(t *testing.T) {
 	file := baseFile()
 	*file.VideoCodec = "hevc"
@@ -122,7 +143,7 @@ func TestDecide_Transcode_12bitHEVC_10bitClient(t *testing.T) {
 }
 
 func TestDecide_DirectStream_7_1_ExceedsClientChannelCap(t *testing.T) {
-	file := baseFile() // h264 / aac / mkv
+	file := baseFile()                             // h264 / aac / mkv
 	file.AudioStreams = []byte(`[{"channels":8}]`) // 7.1 source
 	// 7.1 exceeds the 5.1 cap so the audio must be downmixed — but the H.264
 	// video can be stream-copied, so this is a video-copy DirectStream (remux +
