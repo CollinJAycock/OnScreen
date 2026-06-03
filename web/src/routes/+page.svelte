@@ -149,26 +149,14 @@
   // surface (var(--bg-elevated)), so tiles read correctly in both light and
   // dark — they used to be hardcoded dark gradients that became dark-on-dark
   // mush in light mode.
-  // A little Goku-style headshot for the Anime tile: orange "gi" backing so the
-  // black spiky hair reads on the dark tile, skin-tone face, simple eyes. Static
-  // markup (no user input) so {@html} is safe.
-  const GOKU_SVG = `<svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Goku">
-    <circle cx="24" cy="24" r="23" fill="#f97316"/>
-    <ellipse cx="24" cy="29.5" rx="10.3" ry="11.3" fill="#f6cda0"/>
-    <path fill="#171717" d="M24 4 28 15 32 8.5 33.5 16.5 37.5 12.5 37 21 Q 37.5 24 35.8 28.5 Q 34 19 24 17.2 Q 14 19 12.2 28.5 Q 10.5 24 11 21 L 10.5 12.5 14.5 16.5 16 8.5 20 15 Z"/>
-    <path fill="#171717" d="M19.8 17.2 22 21.5 24 17.4 26 21.5 28.2 17.2 Q 24 18.8 19.8 17.2 Z"/>
-    <path d="M17.6 26.4 21 27" stroke="#171717" stroke-width="1.3" stroke-linecap="round" fill="none"/>
-    <path d="M30.4 26.4 27 27" stroke="#171717" stroke-width="1.3" stroke-linecap="round" fill="none"/>
-    <ellipse cx="20.2" cy="30" rx="1.5" ry="2.3" fill="#1b1b1b"/>
-    <ellipse cx="27.8" cy="30" rx="1.5" ry="2.3" fill="#1b1b1b"/>
-  </svg>`;
-
-  const types: Record<string, { label: string; icon: string; svg?: string }> = {
+  // The Anime tile uses a real Goku headshot (bundled static asset) instead of an
+  // emoji. Other types fall back to their emoji glyph.
+  const types: Record<string, { label: string; icon: string; image?: string }> = {
     movie:      { label: 'Movies',      icon: '🎬' },
     show:       { label: 'TV Shows',    icon: '📺' },
     music:      { label: 'Music',       icon: '🎵' },
     photo:      { label: 'Photos',      icon: '🖼️' },
-    anime:      { label: 'Anime',       icon: '🌸', svg: GOKU_SVG },
+    anime:      { label: 'Anime',       icon: '🌸', image: '/goku.png' },
     audiobook:  { label: 'Audiobooks',  icon: '🎧' },
     podcast:    { label: 'Podcasts',    icon: '🎙️' },
     book:       { label: 'Books',       icon: '📚' },
@@ -322,7 +310,7 @@
   {:else if !loading}
     <div class="grid">
       {#each libraries as lib (lib.id)}
-        {@const t = types[lib.type] ?? { label: lib.type, icon: '📁', svg: undefined }}
+        {@const t = types[lib.type] ?? { label: lib.type, icon: '📁', image: undefined }}
         {@const color = colors[lib.type] ?? '#aaa'}
         <div
           class="lib-tile"
@@ -333,8 +321,8 @@
           on:keydown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), goto(`/libraries/${lib.id}`))}
         >
           <div class="tile-top">
-            {#if t.svg}
-              <span class="tile-icon tile-icon-svg">{@html t.svg}</span>
+            {#if t.image}
+              <img class="tile-icon-img" src={t.image} alt={t.label} />
             {:else}
               <span class="tile-icon">{t.icon}</span>
             {/if}
@@ -572,8 +560,14 @@
     margin-bottom: 1.25rem;
   }
   .tile-icon { font-size: 1.4rem; line-height: 1; }
-  .tile-icon-svg { display: inline-flex; }
-  .tile-icon-svg :global(svg) { width: 1.85rem; height: 1.85rem; display: block; }
+  .tile-icon-img {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+    box-shadow: 0 0 0 1.5px var(--tile-accent, #f472b6);
+  }
   .tile-actions {
     display: flex;
     gap: 2px;
