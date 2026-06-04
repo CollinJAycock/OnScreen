@@ -38,7 +38,7 @@ OnScreen server software on their own hardware (NAS, mini-PC,
 or VPS) and points this TV app at the server's URL. All media
 playback streams from that user-owned server.
 
-## 3. Test Account / Server (for Samsung QA review)
+## 3. Test Account / Server (for store QA review)
 
 | Field | Value |
 |---|---|
@@ -46,6 +46,16 @@ playback streams from that user-owned server.
 | Test Username | testUser |
 | Test Password | testPassword |
 | First-launch flow | (A) App prompts for server URL → enter the URL above. (B) App prompts for pairing PIN → use the test credentials above on the web /pair page to claim. |
+
+**About this review account.** `testUser` is scoped to a demo library
+containing **exclusively public-domain and Creative Commons titles** —
+Blender Foundation open movies (Big Buck Bunny, Sintel, Tears of Steel,
+Spring, etc.) under CC-BY, LibriVox public-domain audiobooks, Kevin MacLeod
+CC-BY music, and NASA public-domain imagery. It is representative of the app's
+functionality and contains no commercial content. The app itself ships no
+media; it is a client for a user's own self-hosted OnScreen server (see §2).
+Attribution for the demo content is in
+`docs/store-assets/demo-library-CREDITS.md`.
 
 ## 4. Geo-IP Whitelist Status
 
