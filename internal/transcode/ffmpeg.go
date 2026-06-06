@@ -203,6 +203,13 @@ type BuildArgs struct {
 	// drain a 2.5 h subtitle stream.
 	ReadRate             float64
 	ReadRateInitialBurst int // seconds of input read at full speed before pacing kicks in
+	// ReadrateCatchup is the catch-up read multiple used alongside -readrate:
+	// when a transcode falls behind real time (a GPU hiccup, a blocked output)
+	// ffmpeg may read up to this many times real time until it regains its lead,
+	// then settles back to ReadRate. Zero omits the flag. Probe-gated by the
+	// worker (ProbeReadrateCatchup) — pre-2025 ffmpeg aborts on the unknown
+	// option, which would kill every transcode. Only emitted when > ReadRate.
+	ReadrateCatchup float64
 
 	// Output
 	SessionDir    string // abs path, e.g. /tmp/onscreen/sessions/{id}
@@ -217,6 +224,17 @@ type BuildArgs struct {
 	// auto-continue path writes to a side playlist (e.g. "cont.m3u8") that
 	// the worker stitches onto index.m3u8 itself.
 	PlaylistName string
+}
+
+// readrateCatchupRate returns the -readrate_catchup multiple to request when
+// the ffmpeg build supports it (probe-gated), or 0 to omit the flag. 2x lets a
+// transcode that briefly fell behind real time regain its lead quickly without
+// racing to completion (the very thing -readrate is there to prevent).
+func readrateCatchupRate(supported bool) float64 {
+	if supported {
+		return 2.0
+	}
+	return 0
 }
 
 // SegmentDuration is the HLS segment duration in seconds (ADR-007).
@@ -285,6 +303,12 @@ func BuildHLS(a BuildArgs) []string {
 		args = append(args, "-readrate", fmt.Sprintf("%.2f", a.ReadRate))
 		if a.ReadRateInitialBurst > 0 {
 			args = append(args, "-readrate_initial_burst", fmt.Sprint(a.ReadRateInitialBurst))
+		}
+		// Let ffmpeg read faster than real time to rebuild its lead after
+		// falling behind, then settle back to ReadRate. Probe-gated by the
+		// worker — pre-2025 builds don't have the option.
+		if a.ReadrateCatchup > a.ReadRate {
+			args = append(args, "-readrate_catchup", fmt.Sprintf("%.2f", a.ReadrateCatchup))
 		}
 	}
 

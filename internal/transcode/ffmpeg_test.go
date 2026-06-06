@@ -597,6 +597,35 @@ func TestBuildHLS_AV1Source_Remux_FMP4(t *testing.T) {
 	}
 }
 
+// TestBuildHLS_ReadrateCatchup verifies the catch-up read rate is emitted only
+// when set above the base read rate. The worker gates ReadrateCatchup on a
+// startup probe of ffmpeg's -readrate_catchup support; pre-2025 builds abort on
+// the unknown flag, so the unset path must omit it entirely.
+func TestBuildHLS_ReadrateCatchup(t *testing.T) {
+	base := BuildArgs{
+		InputPath:            "/media/movie.mkv",
+		Encoder:              EncoderNVENC,
+		Width:                1920,
+		Height:               1080,
+		BitrateKbps:          8000,
+		AudioCodec:           "aac",
+		ReadRate:             1.0,
+		ReadRateInitialBurst: 60,
+		SessionDir:           "/tmp/sessions/x",
+		SegmentPrefix:        "seg",
+	}
+	with := base
+	with.ReadrateCatchup = 2.0
+	if got := strings.Join(BuildHLS(with), " "); !strings.Contains(got, "-readrate_catchup 2.00") {
+		t.Errorf("expected -readrate_catchup 2.00 when ReadrateCatchup=2.0: %s", got)
+	}
+	// Unset (older-ffmpeg path): the flag must be absent so the build never
+	// receives an option it doesn't recognize.
+	if got := strings.Join(BuildHLS(base), " "); strings.Contains(got, "-readrate_catchup") {
+		t.Errorf("did not expect -readrate_catchup when ReadrateCatchup unset: %s", got)
+	}
+}
+
 // TestBuildHLS_ReadRate_PacingFlags verifies the input-rate pacing
 // flags appear before `-i` when ReadRate is set. Production worker
 // sets ReadRate=1.0 so ffmpeg stays alive for the full playback

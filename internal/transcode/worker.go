@@ -109,6 +109,7 @@ type Worker struct {
 	vaapiVRAM        bool              // full-VRAM VAAPI (TRANSCODE_VAAPI_VRAM): vaapi hw-decode→scale_vaapi→vaapi encode, all in VA surfaces. Default on; activates only on a VAAPI encoder (SDR)
 	vaapiTonemap     bool              // all-VRAM VAAPI HDR→SDR (scale_vaapi→tonemap_vaapi on VA surfaces) works here (startup probe); keeps HDR tonemap on the GPU instead of CPU zscale
 	cudaHevcDecode   bool              // NVDEC HEVC decode works here (startup probe); offloads 4K HEVC decode to the GPU (system memory)
+	readrateCatchup  bool              // ffmpeg build supports -readrate_catchup (startup probe); lets a transcode that fell behind real time rebuild its lead instead of staying pinned at the live edge
 	encoderFailover  bool              // fail a hardware ENCODER over to the next configured provider when it can't acquire the GPU (e.g. GeForce NVENC 8-session cap → Intel iGPU QSV). Default on (TRANSCODE_ENCODER_FAILOVER); only fires when the box has a second provider
 	cudaScale        atomic.Bool       // full-VRAM chain (cuvid→scale_cuda→NVENC) works here; probed in the background (cold scale_cuda JIT can take ~90s), flips on when warmed
 	nodeID           string            // NODE_ID (hostname default) — reported so the admin can find this node in Settings ▸ Nodes
@@ -206,6 +207,10 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 			break
 		}
 	}
+	// Whether this ffmpeg build supports -readrate_catchup. Cheap parse-time
+	// probe, gated so an older build never receives the unknown flag (which
+	// would abort every transcode).
+	readrateCatchup := ProbeReadrateCatchup(ctx)
 	// Probe OpenCL platforms once at worker startup. Result is cached
 	// for the worker's lifetime; ffmpeg arg-builder reads
 	// PickOpenCLDevice(this list, encoder) at session-start to avoid
@@ -227,6 +232,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasLibfdkAAC:     hasLibfdkAAC,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
+		readrateCatchup:  readrateCatchup,
 		encoderFailover:  true,         // default on; opt out via TRANSCODE_ENCODER_FAILOVER
 		qsvVRAM:          true,         // "run in VRAM when possible" default; only activates when a QSV encoder is selected, per-job software fallback covers sources/HW where it fails
 		vaapiVRAM:        true,         // same, for VAAPI; activates only when a VAAPI encoder is selected
@@ -306,6 +312,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"zscale", w.hasZscale,
 		"libfdk_aac", w.hasLibfdkAAC,
 		"libplacebo", w.hasLibplacebo,
+		"readrate_catchup", w.readrateCatchup,
 		"nvdec_hevc", w.cudaHevcDecode,
 		"cuda_scale", w.cudaScale.Load(), // false at startup; probed async, flips on after the scale_cuda JIT warms
 		"opencl_platforms", openclSummary,
@@ -615,6 +622,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				CudaHDRTonemap:       cudaHDRUsable,
 				ReadRate:             1.0,
 				ReadRateInitialBurst: 60,
+				ReadrateCatchup:      readrateCatchupRate(w.readrateCatchup),
 				SessionDir:           sessionDir,
 				SegmentPrefix:        "seg",
 			})

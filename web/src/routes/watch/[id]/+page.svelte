@@ -1836,9 +1836,20 @@
         // "playback stops and buffers for a while" stall.
         maxBufferLength: 60,
         maxMaxBufferLength: 60,
+        // The real cap on buffer DEPTH is bytes, not seconds: hls.js stops
+        // loading at whichever of maxBufferLength / maxBufferSize it hits
+        // first, and the 60 MB default is far less than 60 s at higher
+        // bitrates — so the 60 s target was silently byte-truncated. Raise to
+        // 100 MB so the 60 s cushion actually fills, staying under the browser
+        // MSE SourceBuffer quota (Chrome ~150 MB).
+        maxBufferSize: 100 * 1000 * 1000,
         startFragPrefetch: true,
         lowLatencyMode: false,
-        backBufferLength: Infinity,
+        // Finite back-buffer. Infinity never evicts played media, so on a long
+        // film the SourceBuffer grows until it hits the MSE quota and the
+        // browser evicts/stalls mid-playback (a documented hls.js memory leak).
+        // 90 s covers short seek-backs; server-side seeks handle the rest.
+        backBufferLength: 90,
         // Cold-start transcode window. ffmpeg can take 10–20 s to
         // open AV1 / HEVC sources with full decode setup before the
         // first segment lands; over Cloudflare Tunnel free tier the

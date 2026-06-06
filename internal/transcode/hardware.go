@@ -609,6 +609,25 @@ func ProbeEncoder(ctx context.Context, name string) bool {
 	return false
 }
 
+// ProbeReadrateCatchup reports whether this FFmpeg build recognizes the
+// -readrate_catchup option (added in 2025). With -readrate capping input
+// reading at real time, an encoder that briefly falls behind (a GPU hiccup, a
+// momentarily blocked output) can never rebuild its lead — it stays pinned at
+// the live edge, so the next client stall has no buffer to ride out.
+// -readrate_catchup lets ffmpeg read faster than the base rate until it has
+// caught back up, then settle to real time. Older builds abort at parse time
+// with "Option readrate_catchup not found", which would kill EVERY transcode,
+// so the worker only adds the flag when this probe passes. The probe is a
+// no-op run: ffmpeg validates option names before doing any real work.
+func ProbeReadrateCatchup(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
+		"-readrate", "1.0", "-readrate_catchup", "2.0",
+		"-f", "lavfi", "-i", "color=c=black:s=64x64", "-t", "0.1", "-f", "null", "-")
+	return cmd.Run() == nil
+}
+
 // ProbeLibplaceboVulkan reports whether GPU HDR→SDR tonemapping via the
 // libplacebo (Vulkan) filter actually works on this host — not just that the
 // filter is compiled in, but that a Vulkan device initializes and a libplacebo
