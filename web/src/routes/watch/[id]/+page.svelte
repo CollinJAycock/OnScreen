@@ -1824,12 +1824,18 @@
 
     if (Hls.isSupported()) {
       hlsInstance = new Hls({
-        // Cap the forward buffer to 30 s and lock maxMaxBufferLength to match.
+        // Cap the forward buffer to 60 s and lock maxMaxBufferLength to match.
         // If maxMaxBufferLength > maxBufferLength, HLS.js can expand its target
         // up to that ceiling, race ahead to FFmpeg's live edge, and stall when
         // there are no more segments to fetch. Jellyfin uses this same pattern.
-        maxBufferLength: 30,
-        maxMaxBufferLength: 30,
+        // 60 s matches the server's ReadRateInitialBurst (transcode/ffmpeg.go):
+        // ffmpeg front-loads ~60 s, so the client can fill a full 60 s cushion
+        // at startup. After a transient network dip the player falls behind the
+        // live edge but the missing segments are already on disk, so it refills
+        // at network speed rather than the 1x encoder pace — the fix for the
+        // "playback stops and buffers for a while" stall.
+        maxBufferLength: 60,
+        maxMaxBufferLength: 60,
         startFragPrefetch: true,
         lowLatencyMode: false,
         backBufferLength: Infinity,

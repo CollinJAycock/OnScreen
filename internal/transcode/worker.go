@@ -614,7 +614,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				CudaVRAM:             cudaVRAMUsable,
 				CudaHDRTonemap:       cudaHDRUsable,
 				ReadRate:             1.0,
-				ReadRateInitialBurst: 30,
+				ReadRateInitialBurst: 60,
 				SessionDir:           sessionDir,
 				SegmentPrefix:        "seg",
 			})
@@ -886,9 +886,25 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// player happily fetches segments from the previous session for
 	// a few hundred ms after a supersede and would 404 on a wiped
 	// dir instead of failing cleanly via the revoked seg token.
+	//
+	// Natural completion is special: with the ReadRateInitialBurst the
+	// encoder finishes ~burst seconds AHEAD of the player (it front-loads
+	// that many seconds, then paces at 1x, so it hits EOF before playback
+	// does). A flat 30 s wipe would then delete the file's tail out from
+	// under a client that's still draining its buffer — the player would
+	// 404 in the final seconds of the movie. Give natural completion a
+	// longer grace that comfortably exceeds the burst so the wipe lands
+	// after the player has finished. Kills (supersede / idle / DELETE /
+	// ctx) happen AT or BEHIND the player's position, so segments behind
+	// the kill point are already consumed — their 30 s in-flight-drain
+	// grace is unchanged.
+	wipeDelay := 30 * time.Second
+	if selfExited && exitErr == nil {
+		wipeDelay = 120 * time.Second
+	}
 	sessID := job.SessionID
 	go func() {
-		time.Sleep(30 * time.Second)
+		time.Sleep(wipeDelay)
 		if err := os.RemoveAll(SessionDir(sessID)); err != nil {
 			w.logger.Warn("session dir cleanup",
 				"session_id", sessID, "err", err)

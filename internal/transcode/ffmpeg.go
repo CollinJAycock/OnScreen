@@ -272,9 +272,13 @@ func BuildHLS(a BuildArgs) []string {
 	// past seg ~17. Player gets a 404 wall on the next segment fetch.
 	//
 	// ReadRate=1.0 keeps ffmpeg alive for the whole playback duration;
-	// ReadRateInitialBurst=30 lets the first 30 s of source burst at
-	// full speed for fast seg0 / initial buffer. Standard pattern Plex
-	// / Jellyfin both use. Caller decides whether to enable — e.g.
+	// ReadRateInitialBurst=60 lets the first 60 s of source burst at
+	// full speed for fast seg0 + a deep enough initial buffer that a
+	// transient network dip (e.g. a Cloudflare-tunnel throughput sag)
+	// drains the client cushion without stalling — the client refills
+	// the produced-but-unfetched segments from disk at network speed,
+	// not at the 1x encoder pace. Standard pattern Plex / Jellyfin both
+	// use. Caller decides whether to enable — e.g.
 	// integration tests using `-t 8` skip this so a multi-output run
 	// doesn't wait real-time for ancillary contexts.
 	if a.ReadRate > 0 {
@@ -777,7 +781,7 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 	// Real-time read pacing — see BuildHLS for rationale. Container
 	// remux runs at 50-100× real-time which would race the worker's
 	// post-completion cleanup just as hard as the transcode path.
-	args = append(args, "-readrate", "1.0", "-readrate_initial_burst", "30")
+	args = append(args, "-readrate", "1.0", "-readrate_initial_burst", "60")
 	// HTTP source resilience for a remote worker pulling the source over the
 	// LAN (see BuildHLS). No-op for a local file input.
 	if isHTTPURL(inputPath) {
