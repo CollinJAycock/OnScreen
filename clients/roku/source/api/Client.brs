@@ -41,6 +41,13 @@ function Client_BuildTransfer(path as String, auth as Boolean) as Object
     transfer = CreateObject("roUrlTransfer")
     transfer.SetUrl(serverUrl + path)
     transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    ' Bound every request so a black-holed / unreachable server can't
+    ' hang the calling thread indefinitely. The synchronous GetToString
+    ' / PostFromString paths block until this elapses; the async paths
+    ' surface a timeout roUrlEvent. 15 s is generous for the JSON API
+    ' calls that use this builder (transcode-start has its own longer
+    ' server-side budget but still returns its session JSON quickly).
+    transfer.SetTimeout(15000)
     transfer.AddHeader("Accept", "application/json")
     transfer.AddHeader("Content-Type", "application/json")
     ' Declarative capability profile (docs/capability-profiles.md), mirroring the

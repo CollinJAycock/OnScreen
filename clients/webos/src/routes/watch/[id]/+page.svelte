@@ -7,6 +7,7 @@
     endpoints,
     ApiError,
     Unauthorized,
+    supportsHEVC,
     type ChildItem,
     type ItemDetail,
     type Chapter,
@@ -16,6 +17,7 @@
   import { focusManager } from '$lib/focus/manager';
   import type { RemoteKey } from '$lib/focus/keys';
   import { loadHls } from '$lib/player/hls-loader';
+  import type HlsType from 'hls.js';
   import { ProgressReporter } from '$lib/player/progress-reporter';
   import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
   import type { OnlineSubtitle } from '$lib/api';
@@ -32,7 +34,14 @@
   let controlsVisible = $state(true);
   let controlsTimer: ReturnType<typeof setTimeout> | null = null;
 
-  let hls: { destroy: () => void } | null = null;
+  let hls: InstanceType<typeof HlsType> | null = null;
+  // The URL currently loaded into hls — kept so the error handler can
+  // re-init the same session as a last resort on an unrecoverable fatal.
+  let currentPlaylistUrl = '';
+  // A user seek issued before loadedmetadata fires (early scrub during
+  // "Starting playback…"). The initial-seek-on-metadata path would
+  // otherwise clobber it back to the resume offset; honour it instead.
+  let pendingSeekMs: number | null = null;
   let session: {
     session_id: string;
     token: string;
@@ -164,6 +173,16 @@
 
   function seek(deltaMs: number) {
     if (!video) return;
+    if (loading) {
+      // Metadata hasn't arrived yet, so currentTime won't stick. Record
+      // the intent relative to the resume offset; the loadedmetadata
+      // handler applies it instead of snapping back to startMs.
+      const base = pendingSeekMs ?? item?.view_offset_ms ?? 0;
+      const cap = duration > 0 ? duration : Number.MAX_SAFE_INTEGER;
+      pendingSeekMs = Math.max(0, Math.min(cap, base + deltaMs));
+      showControls();
+      return;
+    }
     const pos = Math.max(0, Math.min(duration, position + deltaMs));
     video.currentTime = pos / 1000;
     showControls();
@@ -186,12 +205,56 @@
     showControls();
   }
 
+  // Single-owner teardown. Both the onMount cleanup and onDestroy (and
+  // goToNext / stopAndLeave) can reach here; nulling the ref after
+  // destroy makes repeat calls no-ops so the instance isn't double-
+  // destroyed.
+  function destroyHls() {
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+  }
+
+  // Wire fatal-error recovery onto an hls.js instance — shared by the
+  // initial mount and switchAudioStream so every session is equally
+  // hardened. Standard hls.js pattern: NETWORK fatals resume the load,
+  // MEDIA fatals get one decoder recovery, and a truly unrecoverable
+  // fatal surfaces an error after one re-init attempt.
+  let hlsMediaRecovered = false;
+  let hlsReinitAttempted = false;
+  function attachHlsErrorHandling(inst: InstanceType<typeof HlsType>, Hls: typeof HlsType) {
+    inst.on(Hls.Events.ERROR, (_event, data) => {
+      console.warn('[HLS] error', data.type, data.details, data.fatal);
+      if (!data.fatal) return;
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        inst.startLoad();
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !hlsMediaRecovered) {
+        hlsMediaRecovered = true;
+        inst.recoverMediaError();
+      } else if (!hlsReinitAttempted && currentPlaylistUrl && video) {
+        // Last resort: one full re-init of the same source before giving up.
+        hlsReinitAttempted = true;
+        hlsMediaRecovered = false;
+        destroyHls();
+        const fresh = new Hls({ lowLatencyMode: false });
+        attachHlsErrorHandling(fresh, Hls);
+        fresh.loadSource(currentPlaylistUrl);
+        fresh.attachMedia(video);
+        hls = fresh;
+      } else {
+        error = `Playback error: ${data.details ?? 'unknown'}`;
+        loading = false;
+      }
+    });
+  }
+
   async function stopAndLeave() {
     if (reporter) reporter.stopped(position, duration);
     if (session && api.getToken()) {
       void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
     }
-    if (hls) hls.destroy();
+    destroyHls();
     goto(`#/item/${itemID}`);
   }
 
@@ -420,22 +483,27 @@
         height: 1080,
         positionMs,
         fileId: file.id,
-        supportsHEVC: true,
+        supportsHEVC: supportsHEVC(),
         audioStreamIndex,
       });
       // Tear down the previous hls.js instance before swapping the
       // source — fragments would otherwise keep buffering in the
       // background until destroyed.
-      hls?.destroy();
-      hls = null;
+      destroyHls();
       session = fresh;
 
       const Hls = await loadHls();
       const fullURL = fresh.playlist_url.startsWith('http')
         ? fresh.playlist_url
         : api.mediaUrl(fresh.playlist_url);
+      currentPlaylistUrl = fullURL;
       if (Hls.isSupported()) {
+        // Fresh session starts with a clean recovery budget and the
+        // same error hardening as the initial mount.
+        hlsMediaRecovered = false;
+        hlsReinitAttempted = false;
         const inst = new Hls({ lowLatencyMode: false });
+        attachHlsErrorHandling(inst, Hls);
         inst.loadSource(fullURL);
         inst.attachMedia(video);
         hls = inst;
@@ -595,13 +663,24 @@
     if (session && api.getToken()) {
       void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
     }
-    hls?.destroy();
+    destroyHls();
     goto(`#/watch/${target.id}`);
   }
 
   // ── Cross-device sync ──────────────────────────────────────────────
 
+  // Reconnect bookkeeping. The asset token in the `?token=` query can
+  // expire mid-movie (long playback outlives the token TTL); the server
+  // then closes the stream and EventSource fires onerror. We refresh the
+  // token and reconnect with capped backoff so cross-device sync survives
+  // a feature-length film.
+  let syncReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let syncReconnectDelay = 1000;
+  let syncStopped = false;
+  const SYNC_RECONNECT_MAX = 30_000;
+
   function startSyncStream() {
+    syncStopped = false;
     const origin = api.getOrigin();
     const tok = api.getAssetToken();
     if (!origin || !tok) return;
@@ -611,14 +690,45 @@
     // which now rejects a general access token in a URL; the asset
     // token authenticates here and can't be replayed as a Bearer.
     try {
-      syncEventSource = new EventSource(
+      const es = new EventSource(
         `${origin}/api/v1/notifications/stream?token=${encodeURIComponent(tok)}`
       );
-      syncEventSource.onmessage = onSyncEvent;
+      es.onmessage = onSyncEvent;
+      es.onopen = () => {
+        // Healthy connection — reset the backoff so the next drop
+        // retries promptly.
+        syncReconnectDelay = 1000;
+      };
+      es.onerror = () => {
+        // EventSource auto-retries on transient drops but keeps using
+        // the same (now-expired) token, so it loops on 401. Take over:
+        // close, refresh the token, and reconnect ourselves.
+        es.close();
+        if (syncEventSource === es) syncEventSource = null;
+        scheduleSyncReconnect();
+      };
+      syncEventSource = es;
     } catch {
       // EventSource construction itself rarely throws; treat any
-      // failure as "no sync today" and keep playing.
+      // failure as a drop and retry on backoff.
+      scheduleSyncReconnect();
     }
+  }
+
+  function scheduleSyncReconnect() {
+    if (syncStopped || syncReconnectTimer) return;
+    const delay = syncReconnectDelay;
+    syncReconnectDelay = Math.min(syncReconnectDelay * 2, SYNC_RECONNECT_MAX);
+    syncReconnectTimer = setTimeout(() => {
+      syncReconnectTimer = null;
+      if (syncStopped) return;
+      // Refresh first so the reconnect carries a fresh asset token; if
+      // refresh fails we still try with whatever we have and let the
+      // next onerror reschedule.
+      void api.refreshTokens().finally(() => {
+        if (!syncStopped) startSyncStream();
+      });
+    }, delay);
   }
 
   function onSyncEvent(ev: MessageEvent) {
@@ -644,8 +754,101 @@
   }
 
   function stopSyncStream() {
+    syncStopped = true;
+    if (syncReconnectTimer) {
+      clearTimeout(syncReconnectTimer);
+      syncReconnectTimer = null;
+    }
     syncEventSource?.close();
     syncEventSource = null;
+  }
+
+  // ── App suspend / resume ───────────────────────────────────────────
+  //
+  // webOS holds a single hardware video decoder per app. Leaving it bound
+  // while the app is backgrounded (Home pressed, an overlay app opened)
+  // can leave the decoder wedged on return, so we release the player on
+  // background and re-acquire on foreground. visibilitychange covers the
+  // common case; webOSRelaunch fires on some firmwares when the app is
+  // re-launched while resident.
+  let suspended = false;
+  let suspendPositionMs = 0;
+  let wasPlayingBeforeSuspend = false;
+
+  function releasePlayerForSuspend() {
+    if (suspended || loading) return;
+    suspended = true;
+    suspendPositionMs = position;
+    wasPlayingBeforeSuspend = !!video && !video.paused;
+    reporter?.paused(position, duration);
+    video?.pause();
+    // Drop the transcode session + decoder. We re-issue on resume rather
+    // than keep the server transcode running against a paused client.
+    if (session && api.getToken()) {
+      void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
+    }
+    session = null;
+    destroyHls();
+    if (video && !isAudioItem) video.removeAttribute('src');
+  }
+
+  async function reacquirePlayerAfterResume() {
+    if (!suspended) return;
+    suspended = false;
+    if (!video || !item || error) return;
+    const file = item.files[0];
+    if (!file) return;
+    const positionMs = suspendPositionMs;
+    try {
+      if (isAudioItem) {
+        // Audio re-binds its direct source and seeks back.
+        video.src = api.assetUrl(file.stream_url);
+        video.addEventListener('loadedmetadata', () => {
+          if (video) video.currentTime = positionMs / 1000;
+          if (wasPlayingBeforeSuspend) void video?.play();
+        }, { once: true });
+        return;
+      }
+      // Re-issue the transcode session at the saved position and rebuild
+      // the hls instance with the same error hardening.
+      const fresh = await endpoints.transcode.start({
+        itemId: itemID,
+        height: 1080,
+        positionMs,
+        fileId: file.id,
+        supportsHEVC: supportsHEVC(),
+        audioStreamIndex: activeAudioIndex > 0 ? audioStreams[activeAudioIndex]?.index : undefined,
+      });
+      session = fresh;
+      const Hls = await loadHls();
+      const fullURL = fresh.playlist_url.startsWith('http')
+        ? fresh.playlist_url
+        : api.mediaUrl(fresh.playlist_url);
+      currentPlaylistUrl = fullURL;
+      if (Hls.isSupported()) {
+        hlsMediaRecovered = false;
+        hlsReinitAttempted = false;
+        const inst = new Hls({ lowLatencyMode: false });
+        attachHlsErrorHandling(inst, Hls);
+        inst.loadSource(fullURL);
+        inst.attachMedia(video);
+        hls = inst;
+      } else {
+        video.src = fullURL;
+      }
+      video.addEventListener('loadedmetadata', () => {
+        if (video) video.currentTime = positionMs / 1000;
+        if (wasPlayingBeforeSuspend) void video?.play();
+      }, { once: true });
+    } catch (e) {
+      console.warn('resume re-acquire failed', e);
+      error = 'Could not resume playback. Press Back and try again.';
+    }
+  }
+
+  function onVisibilityChange() {
+    if (document.hidden) releasePlayerForSuspend();
+    else void reacquirePlayerAfterResume();
   }
 
   // Map a server PARENTAL_LIMIT reason to a friendly sentence for the
@@ -660,6 +863,8 @@
 
   onMount(() => {
     const offKey = focusManager.pushKeyHandler(onKey);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('webOSRelaunch', onVisibilityChange);
 
     (async () => {
       try {
@@ -750,7 +955,7 @@
             height: 1080,
             positionMs: startMs,
             fileId: file.id,
-            supportsHEVC: true,
+            supportsHEVC: supportsHEVC(),
             videoCopy
           });
 
@@ -758,9 +963,11 @@
           const fullURL = session.playlist_url.startsWith('http')
             ? session.playlist_url
             : api.mediaUrl(session.playlist_url);
+          currentPlaylistUrl = fullURL;
 
           if (Hls.isSupported()) {
             const hlsInst = new Hls({ lowLatencyMode: false });
+            attachHlsErrorHandling(hlsInst, Hls);
             hlsInst.loadSource(fullURL);
             hlsInst.attachMedia(video!);
             hls = hlsInst;
@@ -787,7 +994,12 @@
         );
 
         video!.addEventListener('loadedmetadata', () => {
-          if (startMs > 0 && video) video.currentTime = startMs / 1000;
+          // A user seek issued before metadata arrived wins over the
+          // resume offset — otherwise an early scrub during "Starting
+          // playback…" silently snaps back to startMs.
+          const seekTo = pendingSeekMs ?? (startMs > 0 ? startMs : null);
+          pendingSeekMs = null;
+          if (seekTo !== null && video) video.currentTime = seekTo / 1000;
           loading = false;
           void video?.play();
           showControls();
@@ -857,19 +1069,23 @@
 
     return () => {
       offKey();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('webOSRelaunch', onVisibilityChange);
       reporter?.stopped(position, duration);
       if (session && api.getToken()) {
         void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
       }
-      hls?.destroy();
+      destroyHls();
       if (controlsTimer) clearTimeout(controlsTimer);
       if (upNextTimer) clearInterval(upNextTimer);
       stopSyncStream();
     };
   });
 
+  // Defence-in-depth: destroyHls() is idempotent (nulls the ref), so this
+  // is a no-op if the onMount cleanup already ran. Single-owner teardown.
   onDestroy(() => {
-    hls?.destroy();
+    destroyHls();
     stopSyncStream();
     if (upNextTimer) clearInterval(upNextTimer);
   });

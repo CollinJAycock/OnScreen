@@ -38,10 +38,35 @@
 
   let video: HTMLVideoElement | undefined = $state();
   let hls: { destroy: () => void } | null = null;
+  // Bounds the automatic re-tune to a single attempt per channel so a
+  // permanently-dead tuner doesn't loop. Reset on each user-initiated tune.
+  let retuneAttempted = false;
+
+  // Channel we were tuned to when the app went to the background, so we
+  // can re-tune on resume. Live has no resume position — re-tuning rejoins
+  // the live edge, which is the desired behaviour anyway.
+  let suspendedChannel: Channel | null = null;
+
+  // Release / re-acquire the hardware decoder around app suspend so it
+  // isn't held while backgrounded. webOS fires visibilitychange and (on
+  // some firmwares) a webOSRelaunch DOM event when the app is brought
+  // back; handle both.
+  function onVisibilityChange() {
+    if (document.hidden) {
+      if (mode === 'playing' && activeChannel) {
+        suspendedChannel = activeChannel;
+        stopPlayback();
+      }
+    } else if (suspendedChannel) {
+      const ch = suspendedChannel;
+      suspendedChannel = null;
+      void play(ch);
+    }
+  }
 
   onMount(() => {
     void loadAll();
-    return focusManager.pushBack(() => {
+    const offBack = focusManager.pushBack(() => {
       if (mode === 'playing') {
         stopPlayback();
         return true;
@@ -49,6 +74,13 @@
       goto('#/hub');
       return true;
     });
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('webOSRelaunch', onVisibilityChange);
+    return () => {
+      offBack();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('webOSRelaunch', onVisibilityChange);
+    };
   });
 
   onDestroy(() => {
@@ -90,6 +122,9 @@
       error = 'Not signed in';
       return;
     }
+    // A genuinely new channel (not the auto re-tune below) resets the
+    // single-shot recovery budget.
+    if (activeChannel?.id !== channel.id) retuneAttempted = false;
     activeChannel = channel;
     mode = 'playing';
     // The HLS endpoint takes the purpose=asset token as `?token=` —
@@ -104,6 +139,29 @@
       if (Hls.isSupported()) {
         hls?.destroy();
         const inst = new Hls({ lowLatencyMode: true });
+        // Fatal-error recovery, standard hls.js pattern: a live tuner
+        // stream drops fragments on signal hiccups and tuner re-keys,
+        // so a NETWORK fatal should resume the load rather than bail.
+        // MEDIA fatals get one decoder recovery; anything else (or a
+        // recovery that doesn't take) tears down and re-tunes once.
+        let mediaRecovered = false;
+        inst.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            inst.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecovered) {
+            mediaRecovered = true;
+            inst.recoverMediaError();
+          } else if (activeChannel && !retuneAttempted) {
+            // Unrecoverable — re-tune the same channel once.
+            retuneAttempted = true;
+            const ch = activeChannel;
+            stopPlayback();
+            void play(ch);
+          } else {
+            error = `Playback error: ${data.details ?? 'unknown'}`;
+          }
+        });
         inst.loadSource(url);
         inst.attachMedia(video);
         hls = inst;

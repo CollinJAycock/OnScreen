@@ -7,6 +7,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import tv.onscreen.android.R
@@ -21,9 +22,23 @@ class EpisodeAdapter(
     private val items = mutableListOf<ChildItem>()
 
     fun submit(list: List<ChildItem>) {
+        // DiffUtil over notifyDataSetChanged: only the rows that actually
+        // changed (e.g. a watched/progress update after returning from
+        // playback) rebind, which keeps D-pad focus stable and avoids
+        // re-decoding every thumbnail on a full refresh.
+        val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize(): Int = items.size
+            override fun getNewListSize(): Int = list.size
+            override fun areItemsTheSame(oldPos: Int, newPos: Int): Boolean =
+                items[oldPos].id == list[newPos].id
+            // ChildItem is a data class, so structural equality covers
+            // every rendered field (watched, view_offset_ms, title, …).
+            override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean =
+                items[oldPos] == list[newPos]
+        })
         items.clear()
         items.addAll(list)
-        notifyDataSetChanged()
+        diff.dispatchUpdatesTo(this)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {

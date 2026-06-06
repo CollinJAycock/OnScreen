@@ -91,10 +91,22 @@ end function
 ' ── Search debounce + query lifecycle ──────────────────────────────
 
 sub onQueryChange()
-    if m.debounceTimer <> invalid
-        m.debounceTimer.unobserveField("fire")
+    ' Reuse a single debounce Timer node across keystrokes — restart
+    ' it on each change instead of minting a fresh node every char.
+    ' The previous code appendChild'd a new Timer per keystroke and
+    ' never removed the old ones, leaking a child node per character.
+    if m.debounceTimer = invalid
+        m.debounceTimer = CreateObject("roSGNode", "Timer")
+        m.debounceTimer.duration = 0.3
+        m.debounceTimer.repeat = false
+        m.debounceTimer.observeField("fire", "onDebounceFire")
+        m.top.appendChild(m.debounceTimer)
+    else
+        ' Stop a pending countdown so a fast typist doesn't fire the
+        ' search on the previous keystroke's timer.
         m.debounceTimer.control = "stop"
     end if
+
     q = m.queryField.text
     if q = invalid then q = ""
     if Len(q) < 2
@@ -105,13 +117,7 @@ sub onQueryChange()
         m.results.visible = false
         return
     end if
-    timer = CreateObject("roSGNode", "Timer")
-    timer.duration = 0.3
-    timer.repeat = false
-    timer.observeField("fire", "onDebounceFire")
-    timer.control = "start"
-    m.top.appendChild(timer)
-    m.debounceTimer = timer
+    m.debounceTimer.control = "start"
 end sub
 
 sub onDebounceFire()

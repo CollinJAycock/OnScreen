@@ -58,7 +58,9 @@ sub onSignInPressed()
         return
     end if
 
-    persistAndGoHome(pair)
+    if not persistAndGoHome(pair)
+        showError("Login failed — the server sent an incomplete response")
+    end if
 end sub
 
 ' Hide the username/password rows and reveal the code entry.
@@ -95,17 +97,33 @@ sub onVerifyPressed()
         return
     end if
 
-    persistAndGoHome(pair)
+    if not persistAndGoHome(pair)
+        showError("Verification failed — the server sent an incomplete response")
+    end if
 end sub
 
-sub persistAndGoHome(pair as Object)
+' Persist the token pair and route Home. Guards every value before it
+' crosses into Prefs (whose setters declare `as String`): a partial
+' response with an invalid access_token / refresh_token would be a
+' Type Mismatch crash, not a clean failure. Returns false (without
+' navigating) when the required tokens are missing so the caller can
+' surface an error; the username is optional and coerced to "".
+function persistAndGoHome(pair as Object) as Boolean
+    access = pair["access_token"]
+    refresh = pair["refresh_token"]
+    if not Prefs_IsNonEmptyString(access) or not Prefs_IsNonEmptyString(refresh) then return false
+
     assetTok = pair["asset_token"]
-    if assetTok = invalid then assetTok = ""
-    Prefs_SetTokens(pair["access_token"], pair["refresh_token"], assetTok)
-    Prefs_Set(PrefsKeyUsername(), pair["username"])
+    if not Prefs_IsString(assetTok) then assetTok = ""
+    username = pair["username"]
+    if not Prefs_IsString(username) then username = ""
+
+    Prefs_SetTokens(access, refresh, assetTok)
+    Prefs_Set(PrefsKeyUsername(), username)
 
     getMainScene().callFunc("navigateTo", "HomeScene")
-end sub
+    return true
+end function
 
 sub onChangeServerPressed()
     Prefs_Delete(PrefsKeyServerUrl())

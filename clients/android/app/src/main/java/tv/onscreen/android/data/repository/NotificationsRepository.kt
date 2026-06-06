@@ -1,8 +1,16 @@
 package tv.onscreen.android.data.repository
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.retry
+import kotlinx.coroutines.flow.shareIn
 import tv.onscreen.android.data.api.NotificationsStream
+import tv.onscreen.android.data.model.NotificationItem
 import tv.onscreen.android.data.model.PlaybackTransferData
 import tv.onscreen.android.data.model.ProgressUpdateData
 import tv.onscreen.android.data.model.asPlaybackTransfer
@@ -27,12 +35,38 @@ import javax.inject.Singleton
 open class NotificationsRepository @Inject constructor(
     private val stream: NotificationsStream,
 ) {
+    // App-lifetime scope for the shared SSE. The repository is a
+    // @Singleton, so this lives as long as the process.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Single shared SSE connection, fanned out to every subscriber.
+     *
+     * Previously each of [subscribeProgressUpdates] /
+     * [subscribePlaybackTransfers] called `stream.subscribe()`, opening
+     * an independent SSE — so during playback MainActivity (transfers)
+     * and PlaybackFragment (progress sync) held two concurrent
+     * connections to the same endpoint. shareIn collapses them onto one
+     * hot upstream: the SSE opens when the first subscriber arrives
+     * (WhileSubscribed) and closes ~5 s after the last one leaves.
+     *
+     * The underlying `callbackFlow` completes when the SSE drops
+     * (onClosed / onFailure); `retry` reconnects after a short delay so
+     * the shared stream stays alive across timeouts and server restarts.
+     * Callers keep their own outer reconnect loops, but those now just
+     * re-attach to this shared flow rather than opening a new socket.
+     */
+    private val events: Flow<NotificationItem> =
+        stream.subscribe()
+            .retry { delay(5_000); true }
+            .shareIn(scope, SharingStarted.WhileSubscribed(5_000), replay = 0)
+
     /** Cross-device progress sync. Emits whenever the same user posts
      *  new progress on any item from any device, so the active player
-     *  can update its resume position without polling. Each subscription
-     *  opens its own underlying SSE. */
+     *  can update its resume position without polling. Filters the
+     *  shared notifications stream. */
     open fun subscribeProgressUpdates(): Flow<ProgressUpdateData> =
-        stream.subscribe().mapNotNull { ev ->
+        events.mapNotNull { ev ->
             if (ev.type == PROGRESS_UPDATED_TYPE) ev.asProgressUpdate() else null
         }
 
@@ -43,7 +77,7 @@ open class NotificationsRepository @Inject constructor(
      *  channel is per-user, not per-device, so all of the user's
      *  subscribed clients receive every transfer event. */
     open fun subscribePlaybackTransfers(): Flow<PlaybackTransferData> =
-        stream.subscribe().mapNotNull { ev ->
+        events.mapNotNull { ev ->
             if (ev.type == PLAYBACK_TRANSFER_TYPE) ev.asPlaybackTransfer() else null
         }
 

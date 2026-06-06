@@ -54,13 +54,13 @@
     if (cached) return cached;
     const existing = inFlight.get(sib.id);
     if (existing) return existing;
-    const tok = api.getToken();
-    if (!tok) throw new Error('not signed in');
+    if (!api.getToken()) throw new Error('not signed in');
     const url = urlForSibling(sib);
     if (!url) throw new Error('no origin');
     const p = (async () => {
-      const resp = await fetch(url, { headers: { Authorization: `Bearer ${tok}` } });
-      if (resp.status === 401) throw new Unauthorized();
+      // Route through the refresh-aware client so a token that expired
+      // mid-session refreshes + retries instead of hard-failing on 401.
+      const resp = await api.authedFetch(url);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const blob = await resp.blob();
       const objUrl = URL.createObjectURL(blob);
@@ -213,14 +213,9 @@
     limit: number,
     offset: number
   ): Promise<PhotoListItem[]> {
-    const origin = api.getOrigin();
-    if (!origin) throw new Error('API origin not configured');
-    const tok = api.getToken();
-    const resp = await fetch(
-      `${origin}/api/v1/photos?library_id=${libraryID}&limit=${limit}&offset=${offset}`,
-      { headers: tok ? { Authorization: `Bearer ${tok}` } : {} }
+    const resp = await api.authedFetch(
+      `/api/v1/photos?library_id=${libraryID}&limit=${limit}&offset=${offset}`
     );
-    if (resp.status === 401) throw new Unauthorized();
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const j = await resp.json();
     const data = j?.data ?? j;

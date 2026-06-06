@@ -140,6 +140,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  marker windows. */
     private var skipMarkerOverlay: Button? = null
     private var skipMarkerJob: Job? = null
+    /** start_ms of the marker the overlay is currently showing, or null
+     *  when hidden. Gates showSkipMarker so the per-appearance setup
+     *  (label, click listener, focus request) runs exactly once when a
+     *  marker first appears — the watcher calls showSkipMarker on every
+     *  ~500 ms tick while inside the window, and re-requesting focus each
+     *  tick fought the user for D-pad focus. */
+    private var shownSkipMarkerStartMs: Long? = null
     private var markers: List<tv.onscreen.android.data.model.Marker> = emptyList()
 
     /** Most recent item detail emitted by the ViewModel. Used by the
@@ -456,6 +463,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun showSkipMarker(marker: tv.onscreen.android.data.model.Marker) {
+        // Already showing this exact marker — the watcher just ticked again
+        // inside the same window. Don't re-bind the label/listener or, most
+        // importantly, re-request focus (that fought the user for D-pad
+        // focus every 500 ms).
+        if (shownSkipMarkerStartMs == marker.start_ms) return
         val rootContainer = (view as? ViewGroup) ?: return
         val overlay = skipMarkerOverlay ?: run {
             val btn = LayoutInflater.from(requireContext())
@@ -481,13 +493,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             player?.seekTo(targetPlayerMs)
             hideSkipMarker()
         }
-        if (overlay.visibility != View.VISIBLE) {
-            overlay.visibility = View.VISIBLE
-            overlay.requestFocus()
-        }
+        overlay.visibility = View.VISIBLE
+        overlay.requestFocus()
+        shownSkipMarkerStartMs = marker.start_ms
     }
 
     private fun hideSkipMarker() {
+        shownSkipMarkerStartMs = null
         // If the skip button currently holds focus and we hide it (the marker
         // window elapsed without a tap), hand focus back to the player — else
         // it's stranded on the GONE button and the next D-pad press does nothing.
@@ -1083,13 +1095,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                         try {
                             onlineSubtitleRepo.download(itemId, fileId, pick)
                             Toast.makeText(ctx, R.string.subtitles_downloaded, Toast.LENGTH_SHORT).show()
-                            // Re-prepare so the new track surfaces in
-                            // ExoPlayer's track list. Cheaper than
-                            // tearing down the player session — the
-                            // server side just returned a row that
-                            // the next item-fetch will include.
-                            viewModel.prepare(itemId, player?.currentPosition ?: 0L,
-                                prefs.serverUrl.first() ?: "")
+                            // Surface the new track without restarting from
+                            // the resume point. reloadSubtitles refreshes the
+                            // picker list in place and, for HLS, re-issues the
+                            // transcode session at the *current* position so
+                            // the subtitle appears in the playlist; direct play
+                            // keeps its running source untouched (a re-prepare
+                            // would restart playback and still couldn't render
+                            // the server-side sidecar sub anyway).
+                            viewModel.reloadSubtitles(itemId, player?.currentPosition ?: 0L)
                         } catch (e: Exception) {
                             Toast.makeText(ctx, e.message ?: getString(R.string.subtitles_download_failed), Toast.LENGTH_LONG).show()
                         }
@@ -1120,6 +1134,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             .setPreferredAudioLanguage(language.ifBlank { null })
             .build()
         exo.trackSelectionParameters = params
+        // Keep the picker's checkmark in sync. Unlike HLS (where
+        // switchAudioStream re-issues the session and the source re-emit
+        // carries the new active track), direct-play swaps happen entirely
+        // client-side, so nothing else updates activeAudioIndex — without
+        // this the radio dialog re-opens checked on the old track.
+        val idx = audioStreams.indexOfFirst { it.language.equals(language, ignoreCase = true) }
+        if (idx >= 0) activeAudioIndex = idx
     }
 
     private fun selectSubtitleByLanguage(language: String) {

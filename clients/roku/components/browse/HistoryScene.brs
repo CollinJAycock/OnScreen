@@ -31,18 +31,25 @@ sub onTaskState()
     root = createObject("roSGNode", "ContentNode")
     row = root.createChild("ContentNode")
     for each it in items
-        node = row.createChild("ContentNode")
-        node.title = it.title
         ' History rows expose media_id for the playback target;
         ' .id on the server response is the watch_event PK and
-        ' isn't what we want to route to.
-        node.id = it.media_id
-        node.addField("itemType", "string", false)
-        node.itemType = it.type
-        artPath = invalid
-        if it.thumb_path <> invalid then artPath = it.thumb_path
-        if artPath <> invalid and serverUrl <> invalid and token <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
+        ' isn't what we want to route to. When the underlying media
+        ' has been deleted the server can return a null/empty
+        ' media_id — skip the row entirely rather than rendering a
+        ' card that routes to an empty id (which lands on a 404 /
+        ' bails straight back to Home, a dead-end for the user).
+        ' BrightScript has no `continue`, so guard with an if-block.
+        if it.media_id <> invalid and it.media_id <> ""
+            node = row.createChild("ContentNode")
+            node.title = it.title
+            node.id = it.media_id
+            node.addField("itemType", "string", false)
+            node.itemType = it.type
+            artPath = invalid
+            if it.thumb_path <> invalid then artPath = it.thumb_path
+            if artPath <> invalid and serverUrl <> invalid and token <> invalid
+                node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
+            end if
         end if
     end for
     m.rows.content = root

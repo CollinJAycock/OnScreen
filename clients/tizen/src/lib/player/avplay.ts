@@ -37,6 +37,18 @@ interface AvPlayApi {
   getCurrentTime(): number;
   getDuration(): number;
   getState(): string;
+  /** Track listing — entries carry { type: 'TEXT'|'AUDIO'|'VIDEO',
+   *  index, extra_info }. AVPlay's own per-type numbering, NOT the
+   *  source file's stream index. */
+  getTotalTrackInfo?(): AvTrackInfo[];
+  /** Select a track by AVPlay's own index for the given type. */
+  setSelectTrack?(type: 'TEXT' | 'AUDIO' | 'VIDEO', index: number): void;
+}
+
+interface AvTrackInfo {
+  type: string;
+  index: number;
+  extra_info?: string;
 }
 
 interface AvPlayListener {
@@ -79,6 +91,14 @@ export interface PlayHandlers {
   onProgress?: (currentMs: number, durationMs: number) => void;
   onEnded?: () => void;
   onError?: (message: string) => void;
+  /** Rebuffering started — the picture is paused while the firmware
+   *  refills its buffer. Caller re-shows the loading overlay. */
+  onBufferingStart?: () => void;
+  /** Rebuffering progress, 0..100. */
+  onBufferingProgress?: (percent: number) => void;
+  /** Buffer refilled — the firmware is about to resume the picture.
+   *  Caller hides the loading overlay. */
+  onBufferingComplete?: () => void;
 }
 
 /** Singleton wrapper around webapis.avplay. Returns no-op stubs in
@@ -87,6 +107,23 @@ export interface PlayHandlers {
 export class AvPlay {
   private api: AvPlayApi | null;
   private prepared = false;
+  // Last open() args, kept so a transient onerror can re-open/prepare
+  // the same source once without the caller rebuilding everything.
+  private lastSource: PlaySource | null = null;
+  private lastHandlers: PlayHandlers = {};
+  // One automatic re-prepare per open() — reset on each fresh open()
+  // so a later session gets its own retry budget. Avoids a flapping
+  // stream looping open→error→open forever.
+  private retried = false;
+  // Pending resume seek. seekTo() before the first frame is decoded is
+  // unreliable on Samsung firmware, so a startMs is applied on the first
+  // onbufferingcomplete after play() rather than inside prepareAsync.
+  private pendingSeekMs = 0;
+  // Source/handlers stashed by suspend() (app backgrounded) so restore()
+  // can re-open the exact session at the suspended position. Kept apart
+  // from lastSource because close() (called inside suspend) clears that.
+  private suspendedSource: PlaySource | null = null;
+  private suspendedHandlers: PlayHandlers = {};
 
   constructor() {
     this.api = (typeof window !== 'undefined' && window.webapis?.avplay) || null;
@@ -102,6 +139,19 @@ export class AvPlay {
 
   open(source: PlaySource, handlers: PlayHandlers = {}): void {
     if (!this.api) return;
+    // Remember the source/handlers + reset the retry budget so a
+    // transient onerror can re-open exactly this session once.
+    this.lastSource = source;
+    this.lastHandlers = handlers;
+    this.retried = false;
+    this.reopen(source, handlers);
+  }
+
+  /** Internal (re)open. Shared by the public open() and the one-shot
+   *  transient-error retry so both build the identical session. */
+  private reopen(source: PlaySource, handlers: PlayHandlers): void {
+    if (!this.api) return;
+    this.pendingSeekMs = source.startMs && source.startMs > 0 ? source.startMs : 0;
     const url = source.bearer
       ? `${source.url}${source.url.includes('?') ? '&' : '?'}token=${encodeURIComponent(source.bearer)}`
       : source.url;
@@ -124,7 +174,22 @@ export class AvPlay {
     this.api.setListener({
       oncurrentplaytime: (ms) => handlers.onProgress?.(ms, this.api!.getDuration()),
       onstreamcompleted: () => handlers.onEnded?.(),
-      onerror: (e) => handlers.onError?.(typeof e === 'string' ? e : JSON.stringify(e))
+      // Rebuffering: re-show the loading overlay (distinct from a hard
+      // stall — these fire as a pair around a mid-stream refill).
+      onbufferingstart: () => handlers.onBufferingStart?.(),
+      onbufferingprogress: (percent) => handlers.onBufferingProgress?.(percent),
+      onbufferingcomplete: () => {
+        // Apply a deferred resume seek now that real data is buffered —
+        // seekTo() before the first decoded frame is unreliable on
+        // Samsung firmware (snaps to 0 / no-ops). Fire-and-forget once.
+        if (this.pendingSeekMs > 0) {
+          const target = this.pendingSeekMs;
+          this.pendingSeekMs = 0;
+          try { this.api!.seekTo(target); } catch { /* best-effort */ }
+        }
+        handlers.onBufferingComplete?.();
+      },
+      onerror: (e) => this.handleError(e)
     });
 
     // Position AVPlay's hardware overlay where the anchor `<object>`
@@ -156,25 +221,132 @@ export class AvPlay {
     this.api.prepareAsync(
       () => {
         this.prepared = true;
-        if (source.startMs && source.startMs > 0) {
-          this.api!.seekTo(source.startMs);
-        }
+        // Don't seek here — the first frame isn't decoded yet and
+        // seekTo() is unreliable pre-frame on Samsung firmware. play()
+        // first; the deferred startMs is applied on the first
+        // onbufferingcomplete (see setListener above).
         this.api!.play();
       },
-      (e) => handlers.onError?.(typeof e === 'string' ? e : JSON.stringify(e))
+      // prepare failures are routed through the same transient-retry
+      // path as runtime onerror — a flaky first segment often succeeds
+      // on a single re-prepare.
+      (e) => this.handleError(e)
     );
   }
 
-  pause(): void {
-    if (this.prepared) this.api?.pause();
+  /** Single best-effort recovery for a transient AVPlay error: close,
+   *  re-open, and re-prepare the same source exactly once. If we've
+   *  already retried this session (or have nothing to retry), the error
+   *  is surfaced to the caller as fatal. */
+  private handleError(e: unknown): void {
+    const msg = typeof e === 'string' ? e : JSON.stringify(e);
+    if (!this.retried && this.lastSource) {
+      this.retried = true;
+      const source = this.lastSource;
+      const handlers = this.lastHandlers;
+      try {
+        this.api?.stop();
+      } catch { /* may not be prepared — ignore */ }
+      this.prepared = false;
+      try {
+        this.reopen(source, handlers);
+        return;
+      } catch {
+        // Re-open itself threw — fall through to the fatal path.
+      }
+    }
+    this.lastHandlers.onError?.(msg);
   }
 
-  resume(): void {
-    if (this.prepared) this.api?.play();
+  /** Pause. Returns true only when the firmware actually paused (the
+   *  session is prepared) so callers don't flip UI state on a no-op
+   *  guard-fail. */
+  pause(): boolean {
+    if (!this.prepared) return false;
+    try {
+      this.api?.pause();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Resume. Returns true only when playback actually resumed — see
+   *  pause() for the rationale. */
+  resume(): boolean {
+    if (!this.prepared) return false;
+    try {
+      this.api?.play();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   seekTo(positionMs: number): void {
     if (this.prepared) this.api?.seekTo(positionMs);
+  }
+
+  /** True when a session is prepared (decoder bound, play() valid). */
+  isPrepared(): boolean {
+    return this.prepared;
+  }
+
+  /** AVPlay's own TEXT (subtitle) tracks, in AVPlay index order. The
+   *  Nth entry here is the Nth subtitle the file exposes to AVPlay —
+   *  use this index with selectTextTrack(), NOT the server's
+   *  subtitle_streams file-stream index (the two numberings differ). */
+  textTracks(): AvTrackInfo[] {
+    if (!this.prepared || !this.api?.getTotalTrackInfo) return [];
+    try {
+      return (this.api.getTotalTrackInfo() ?? []).filter((t) => t.type === 'TEXT');
+    } catch {
+      return [];
+    }
+  }
+
+  /** Select an AVPlay TEXT track by its AVPlay index (not file-stream
+   *  index). Disabling is firmware-dependent; callers pass the index
+   *  resolved via textTracks(). */
+  selectTextTrack(avplayIndex: number): void {
+    if (!this.prepared) return;
+    try {
+      this.api?.setSelectTrack?.('TEXT', avplayIndex);
+    } catch {
+      /* firmware-quirk fallback — silent */
+    }
+  }
+
+  /** App backgrounded: tear the decoder down so it isn't held while
+   *  hidden (resume otherwise comes back black/stale). The last source
+   *  + the live position are captured so restore() can re-open exactly
+   *  where we left off. Returns true if there was an active session to
+   *  suspend. */
+  suspend(): boolean {
+    if (!this.api || !this.lastSource || !this.prepared) return false;
+    // Snapshot the resume point before close() clears state.
+    const pos = this.currentMs();
+    const resumeSource: PlaySource = {
+      ...this.lastSource,
+      startMs: pos > 0 ? pos : (this.lastSource.startMs ?? 0),
+    };
+    const resumeHandlers = this.lastHandlers;
+    this.close(); // clears lastSource — re-stash for restore() below
+    this.suspendedSource = resumeSource;
+    this.suspendedHandlers = resumeHandlers;
+    return true;
+  }
+
+  /** App foregrounded: re-open + re-prepare the suspended source at the
+   *  position it was suspended at. No-op if nothing was suspended. */
+  restore(): boolean {
+    if (!this.api || !this.suspendedSource) return false;
+    const source = this.suspendedSource;
+    const handlers = this.suspendedHandlers;
+    this.suspendedSource = null;
+    this.suspendedHandlers = {};
+    this.open(source, handlers);
+    return true;
   }
 
   currentMs(): number {
@@ -195,6 +367,12 @@ export class AvPlay {
 
   close(): void {
     if (!this.api) return;
+    // Drop the retry source first so a late onerror fired during/after
+    // teardown can't re-open a session we're tearing down.
+    this.lastSource = null;
+    this.lastHandlers = {};
+    this.retried = false;
+    this.pendingSeekMs = 0;
     try {
       this.api.stop();
     } catch {

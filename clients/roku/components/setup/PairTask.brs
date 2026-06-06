@@ -90,10 +90,22 @@ function pollOnce(deviceToken as String) as String
         if envelope = invalid then return "failed"
         pair = envelope.data
         if pair = invalid then return "failed"
+        ' Guard every value before it crosses into Prefs (whose setters
+        ' declare `as String`). A partial 200 — access_token or
+        ' refresh_token missing / non-string — would otherwise crash
+        ' the task with a Type Mismatch. Treat it as a failed poll so
+        ' the outer loop retries rather than dying mid-pairing.
+        access = pair["access_token"]
+        refresh = pair["refresh_token"]
+        if not Prefs_IsNonEmptyString(access) or not Prefs_IsNonEmptyString(refresh)
+            m.top.failureReason = "Server sent an incomplete pairing response"
+            return "failed"
+        end if
         assetTok = pair["asset_token"]
-        if assetTok = invalid then assetTok = ""
-        Prefs_SetTokens(pair["access_token"], pair["refresh_token"], assetTok)
-        if pair["username"] <> invalid then Prefs_Set(PrefsKeyUsername(), pair["username"])
+        if not Prefs_IsString(assetTok) then assetTok = ""
+        Prefs_SetTokens(access, refresh, assetTok)
+        username = pair["username"]
+        if Prefs_IsString(username) then Prefs_Set(PrefsKeyUsername(), username)
         return "done"
     end if
     if httpStatus = 202 then return "pending"

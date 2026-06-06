@@ -110,6 +110,12 @@
         </Group>
 
         <ItemFetchTask id="itemTask" />
+        <!-- Periodic cross-device sync fetch. The render thread must
+             never run the synchronous Client_GetSync (it freezes the
+             UI), so the syncTimer fires this Task instead and we read
+             the result back via its `state` observer. Reuses
+             ItemFetchTask since it already GETs /items/{id}. -->
+        <ItemFetchTask id="syncTask" />
         <TranscodeStartTask id="transcodeTask" />
         <ListFetchTask id="markersTask" />
         <ListFetchTask id="childrenTask" />

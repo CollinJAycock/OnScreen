@@ -83,10 +83,22 @@ class FocusManager {
     }
 
     if (k === 'back') {
-      const handler = this.backStack[this.backStack.length - 1];
-      if (handler && handler()) {
+      // Walk the back stack top-down; the first handler that consumes
+      // the event wins (in-app back navigation).
+      for (let i = this.backStack.length - 1; i >= 0; i--) {
+        if (this.backStack[i]()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+      // Nothing in-app handled Back — hand it to the platform so webOS
+      // performs its native back / app-exit instead of swallowing the
+      // key (which would otherwise leave the user stuck at the root).
+      if (typeof window !== 'undefined' && window.webOS?.platformBack) {
         e.preventDefault();
         e.stopPropagation();
+        window.webOS.platformBack();
       }
       return;
     }

@@ -17,6 +17,17 @@ class ProgressTracker(
     private var itemId: String? = null
     private var hlsOffsetMs: Long = 0
 
+    // Survivable scope for the terminal pause/stop reports. The injected
+    // [scope] is the fragment's viewLifecycleOwner.lifecycleScope, which is
+    // cancelled the instant the view is destroyed — so a `paused` / `stopped`
+    // report launched there during teardown (onStop → onDestroyView) could be
+    // cancelled before the PUT leaves the device, losing the final position.
+    // This application-survivable scope outlives the view so the last
+    // position actually persists. SupervisorJob so one failed report doesn't
+    // poison the next.
+    private val terminalScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** Position provider — returns the raw player position in ms. */
     var positionProvider: (() -> Long)? = null
 
@@ -43,12 +54,15 @@ class ProgressTracker(
 
     fun onPause() {
         job?.cancel()
-        scope.launch { report("paused") }
+        // Launch on the survivable scope: onPause often coincides with view
+        // teardown, and the final position must persist even though the view
+        // scope is being cancelled.
+        terminalScope.launch { report("paused") }
     }
 
     fun onStop() {
         job?.cancel()
-        scope.launch { report("stopped") }
+        terminalScope.launch { report("stopped") }
     }
 
     fun stop() {

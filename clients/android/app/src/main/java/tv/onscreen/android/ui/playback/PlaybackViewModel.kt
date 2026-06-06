@@ -358,6 +358,59 @@ class PlaybackViewModel @Inject constructor(
     }
 
     /**
+     * Refresh the subtitle track list after an online subtitle download,
+     * without restarting playback from the stored resume point.
+     *
+     * The downloaded subtitle is a new server-side row, so we re-fetch
+     * the item to pick it up in `subtitle_streams` and update the picker
+     * list + item metadata in place. The source is only re-issued for
+     * HLS — a transcoded session bakes the subtitle set into its
+     * playlist, so the new track can't appear until we re-issue the
+     * session (done here at [currentPositionMs], NOT from the resume
+     * point). Direct play keeps its existing source untouched: re-
+     * preparing it would restart playback for nothing (the server-side
+     * sidecar sub isn't muxed into the direct-play container anyway —
+     * full prepare() never surfaced it either).
+     */
+    fun reloadSubtitles(itemId: String, currentPositionMs: Long) {
+        viewModelScope.launch {
+            try {
+                val item = itemRepo.getItem(itemId)
+                val file = item.files.firstOrNull() ?: return@launch
+                val req = lastTranscodeRequest
+                if (req != null) {
+                    // HLS / transcode: re-issue at the current position so
+                    // the new subtitle shows up in the session playlist.
+                    val source = startTranscode(
+                        itemId = req.itemId,
+                        height = req.height,
+                        posMs = currentPositionMs + hlsOffsetMs,
+                        fileId = req.fileId,
+                        videoCopy = req.videoCopy,
+                        serverUrl = req.serverUrl,
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        source = source,
+                        item = item,
+                        subtitles = file.subtitle_streams,
+                    )
+                } else {
+                    // Direct play: refresh the list only, leave the source
+                    // (and thus the running player) alone.
+                    _uiState.value = _uiState.value.copy(
+                        item = item,
+                        subtitles = file.subtitle_streams,
+                    )
+                }
+            } catch (_: Exception) {
+                // Best-effort — the download already succeeded; a failed
+                // metadata refresh just means the new track shows up on the
+                // next natural reload.
+            }
+        }
+    }
+
+    /**
      * ExoPlayer hit a fatal error on a direct-play source — a codec
      * profile the device can't decode, a malformed container, etc. Re-issue
      * the same item as a full server transcode at the source resolution and
@@ -393,13 +446,24 @@ class PlaybackViewModel @Inject constructor(
         }
     }
 
-    fun stopActiveTranscode() {
+    /**
+     * Tell the server to tear down the active transcode session.
+     *
+     * [scope] defaults to [viewModelScope] for the in-session calls
+     * (onStop, audio-switch, fallback). The onCleared safety-net passes
+     * [appScope] instead: viewModelScope is *already cancelled* by the
+     * time onCleared runs, so a DELETE launched on it would be cancelled
+     * before the request leaves the device — leaking the server-side
+     * ffmpeg process. appScope outlives the ViewModel so the DELETE
+     * actually fires.
+     */
+    fun stopActiveTranscode(scope: kotlinx.coroutines.CoroutineScope = viewModelScope) {
         val sid = transcodeSessionId ?: return
         val tok = transcodeToken ?: return
         transcodeSessionId = null
         transcodeToken = null
 
-        viewModelScope.launch {
+        scope.launch {
             transcodeRepo.stop(sid, tok)
         }
     }
@@ -428,6 +492,20 @@ class PlaybackViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        stopActiveTranscode()
+        // viewModelScope is cancelled by super.onCleared(), so launch the
+        // safety-net DELETE on the application-scoped survivor instead —
+        // otherwise it's cancelled before the request goes out and the
+        // server-side ffmpeg session leaks.
+        stopActiveTranscode(appScope)
+    }
+
+    companion object {
+        /** Application-scoped survivor for fire-and-forget teardown that
+         *  must outlive the ViewModel (the onCleared transcode DELETE).
+         *  SupervisorJob so one failed teardown doesn't poison the next. */
+        private val appScope =
+            kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+            )
     }
 }

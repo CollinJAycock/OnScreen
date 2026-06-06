@@ -23,6 +23,7 @@
 sub init()
     m.video = m.top.findNode("video")
     m.itemTask = m.top.findNode("itemTask")
+    m.syncTask = m.top.findNode("syncTask")
     m.transcodeTask = m.top.findNode("transcodeTask")
     m.markersTask = m.top.findNode("markersTask")
     m.childrenTask = m.top.findNode("childrenTask")
@@ -52,6 +53,14 @@ sub init()
     m.lastTranscodeRequest = invalid
 
     m.session = invalid ' { session_id, token } when remux/transcode
+    ' True while an audio re-issue is in flight: the current m.session
+    ' is kept live (as a deletable fallback) until the replacement
+    ' session lands, then the old one is retired. See reissueAudioTrack.
+    m.reissuing = false
+    ' Holds the roUrlTransfer for an in-flight session DELETE so it
+    ' isn't GC'd before the request completes (see deleteTranscodeSession).
+    m.deletePort = invalid
+    m.deleteTransfers = []
     m.item = invalid
     m.file = invalid
 
@@ -71,15 +80,25 @@ sub init()
 
     ' Cross-device sync: track the last position we reported via
     ' /progress so we can ignore self-loop echoes on the polled
-    ' item-detail re-fetch.
+    ' item-detail re-fetch. syncInFlight gates overlapping fetches so
+    ' a slow response doesn't pile up at the 5 s timer cadence.
     m.lastReportedPositionMs = -1
+    m.syncInFlight = false
 
     m.itemTask.observeField("state", "onItemTaskState")
+    m.syncTask.observeField("state", "onSyncTaskState")
     m.transcodeTask.observeField("state", "onTranscodeTaskState")
     m.markersTask.observeField("state", "onMarkersTaskState")
     m.childrenTask.observeField("state", "onChildrenTaskState")
     m.video.observeField("state", "onVideoState")
     m.video.observeField("position", "onVideoPosition")
+    ' availableSubtitleTracks is populated by the firmware only once
+    ' playback starts + the playlist is parsed. If the user picks a
+    ' subtitle before then, applySubtitleSelection records the intent
+    ' (m.pendingSubtitleIndex) and this observer applies it the moment
+    ' the tracks surface — instead of silently dropping the pick.
+    m.video.observeField("availableSubtitleTracks", "onAvailableSubtitleTracks")
+    m.pendingSubtitleIndex = -1
     m.syncTimer.observeField("fire", "onSyncTimerFire")
     m.trackPickerList.observeField("itemSelected", "onTrackPickerSelect")
 
@@ -203,7 +222,18 @@ sub onTranscodeTaskState()
         return
     end if
 
-    m.session = { session_id: sess.session_id, token: sess.token }
+    ' If this completion is the result of an audio re-issue, the
+    ' previous session is still live (we deliberately didn't DELETE
+    ' it up front so a mid-flight bail had something to clean up).
+    ' Now that the replacement has landed, retire the old one.
+    if m.reissuing = true
+        m.reissuing = false
+        retired = m.session
+        m.session = { session_id: sess.session_id, token: sess.token }
+        deleteTranscodeSession(retired)
+    else
+        m.session = { session_id: sess.session_id, token: sess.token }
+    end if
 
     ' Server returns playlist_url already-relative + already-tokenised
     ' (?token=<seg-token>). Prepend the origin to make absolute.
@@ -366,11 +396,34 @@ end sub
 ' the convention is "the device that's actively playing wins, the
 ' paused player accepts updates from elsewhere." Self-loop guard
 ' ignores echoes within 2 s of our own most recent progress write.
+'
+' The actual fetch runs in syncTask (a Task node) — Client_GetSync
+' is synchronous and MUST NOT run on this render thread, or the UI
+' freezes for the duration of the request. The timer only kicks the
+' task; onSyncTaskState applies the result.
 sub onSyncTimerFire()
     if m.video = invalid then return
     if m.video.state <> "paused" then return
     if m.top.itemId = invalid or m.top.itemId = "" then return
-    parsed = Client_GetSync(ApiItem(m.top.itemId), true)
+    ' Skip if a sync fetch is still in flight — at a 5 s cadence a
+    ' slow/black-holed response shouldn't pile up overlapping runs.
+    if m.syncInFlight = true then return
+    m.syncInFlight = true
+    m.syncTask.itemId = m.top.itemId
+    m.syncTask.control = "RUN"
+end sub
+
+' Sync fetch landed (off the render thread). Apply the cross-device
+' offset using the same guards the synchronous version used: only
+' while paused, ignore self-loop echoes within 2 s of our own
+' progress write, and only seek when the remote offset diverges from
+' local by more than 2 s.
+sub onSyncTaskState()
+    if m.syncTask.state <> "done" then return
+    m.syncInFlight = false
+    if m.video = invalid then return
+    if m.video.state <> "paused" then return
+    parsed = m.syncTask.result
     if parsed = invalid then return
     if parsed.view_offset_ms = invalid then return
     newPos = parsed.view_offset_ms
@@ -433,6 +486,16 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
             openTrackPicker("subtitle")
             return true
         end if
+    end if
+    ' Back during normal playback (no overlay open) leaves the player
+    ' rather than exiting the channel. Stop playback, tear down any
+    ' transcode session, and return Home. Returning true consumes the
+    ' press so it never bubbles to MainScene as a channel exit — the
+    ' player is mid-stack, not the root.
+    if key = "back"
+        m.video.control = "stop"
+        bailToHome()
+        return true
     end if
     return false
 end function
@@ -570,7 +633,10 @@ sub onTrackPickerSelect()
             m.activeSubtitleIndex = -1
             ' Roku's Video node uses globalCaptionMode + the
             ' selected subtitle index from `availableSubtitleTracks`.
-            ' Setting subtitleTrack to "" disables.
+            ' Setting subtitleTrack to "" disables. Clear any deferred
+            ' pick so a not-yet-applied selection doesn't re-enable
+            ' subtitles after the user turned them off.
+            m.pendingSubtitleIndex = -1
             m.video.subtitleTrack = ""
         else
             m.activeSubtitleIndex = idx - 1
@@ -584,10 +650,21 @@ end sub
 ' a new audio_stream_index. Server emits one audio per session for
 ' transcode/remux mode, so language switching can't ride the player's
 ' track selector — only a fresh session carries the chosen language.
+'
+' Leak guard: the old code DELETEd the current session and nulled
+' m.session immediately, then fired the new task. If the user left
+' during the gap (before the new session id landed), bailToHome's
+' stopTranscodeSession saw m.session = invalid and skipped the DELETE,
+' leaking the old session. Instead we KEEP m.session pointing at the
+' current session until the new one is confirmed in onTranscodeTaskState,
+' so there is always a live, deletable session for cleanup to tear
+' down. The replaced session is DELETEd the moment its successor lands.
 sub reissueAudioTrack(audioStreamIndex as Integer)
     if m.lastTranscodeRequest = invalid then return
     posMs = Int(m.video.position * 1000)
-    stopTranscodeSession()
+    ' Mark the current session as the one to retire once the new one
+    ' arrives; leave m.session intact as the cleanup fallback.
+    m.reissuing = true
     req = m.lastTranscodeRequest
     m.transcodeTask.itemId = req.itemId
     m.transcodeTask.fileId = req.fileId
@@ -606,14 +683,32 @@ sub applySubtitleSelection(streamIdx as Integer)
     avail = m.video.availableSubtitleTracks
     if avail = invalid or avail.Count() = 0
         ' Subtitles aren't surfaced yet (race during initial playlist
-        ' parse) — store the pick and the LabelList will retry on
-        ' the next user interaction. Best-effort.
+        ' parse) — record the intent and let onAvailableSubtitleTracks
+        ' apply it the moment the firmware populates the track list,
+        ' rather than dropping the pick until the next interaction.
+        m.pendingSubtitleIndex = streamIdx
         return
     end if
     ' availableSubtitleTracks order matches the file's subtitle_streams
     ' order. Roku's TrackName field is what subtitleTrack expects.
     if streamIdx >= 0 and streamIdx < avail.Count()
         m.video.subtitleTrack = avail[streamIdx].TrackName
+        ' Applied — clear any recorded intent so it isn't re-applied.
+        m.pendingSubtitleIndex = -1
+    end if
+end sub
+
+' Fires when the firmware finishes populating availableSubtitleTracks
+' (shortly after playback starts). If the user picked a subtitle track
+' before it was ready, apply that deferred intent now.
+sub onAvailableSubtitleTracks()
+    if m.pendingSubtitleIndex < 0 then return
+    avail = m.video.availableSubtitleTracks
+    if avail = invalid or avail.Count() = 0 then return
+    idx = m.pendingSubtitleIndex
+    if idx >= 0 and idx < avail.Count()
+        m.video.subtitleTrack = avail[idx].TrackName
+        m.pendingSubtitleIndex = -1
     end if
 end sub
 
@@ -623,12 +718,28 @@ end sub
 ' free the GPU / CPU slot promptly when the user navigates off.
 sub stopTranscodeSession()
     if m.session = invalid then return
-    transfer = Client_BuildTransfer(ApiTranscodeStop(m.session.session_id, m.session.token), false)
-    if transfer <> invalid
-        transfer.SetRequest("DELETE")
-        transfer.AsyncGetToString()
-    end if
+    deleteTranscodeSession(m.session)
     m.session = invalid
+end sub
+
+' Fire-and-forget DELETE for a single { session_id, token } session.
+' Uses the codebase's persistent async pattern (see Client_StartAsync):
+' AsyncGetToString needs a message port AND the caller must hold the
+' transfer reference, or BrightScript GC frees the local immediately
+' and the request is silently dropped before it leaves the box. We
+' attach a persistent port and stash the transfer in m.deleteTransfers
+' so it survives long enough for the DELETE to actually go out — even
+' if the scene is being torn down right after.
+sub deleteTranscodeSession(sess as Object)
+    if sess = invalid or sess.session_id = invalid then return
+    transfer = Client_BuildTransfer(ApiTranscodeStop(sess.session_id, sess.token), false)
+    if transfer = invalid then return
+    if m.deletePort = invalid then m.deletePort = CreateObject("roMessagePort")
+    transfer.SetMessagePort(m.deletePort)
+    transfer.SetRequest("DELETE")
+    transfer.AsyncGetToString()
+    ' Hold the reference so GC doesn't reap it mid-flight.
+    m.deleteTransfers.push(transfer)
 end sub
 
 ' Best-effort stream-format guess from file extension. The Go

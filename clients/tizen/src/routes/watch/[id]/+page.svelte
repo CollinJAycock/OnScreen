@@ -43,6 +43,10 @@
   let duration = $state(0);
   let controlsVisible = $state(true);
   let controlsTimer: ReturnType<typeof setTimeout> | null = null;
+  // Belt-and-suspenders timeout that forces the music view to paint if
+  // loadedmetadata never fires (audio-only path). Tracked so it can be
+  // cleared on teardown — otherwise it leaks past unmount.
+  let audioLoadTimer: ReturnType<typeof setTimeout> | null = null;
 
   let session: {
     session_id: string;
@@ -51,6 +55,17 @@
   } | null = null;
   let reporter: ProgressReporter | null = null;
   let usingAvPlay = $state(false);
+
+  // Start (or restart) the 'playing' heartbeat. Shared by initial play
+  // and by resume after a pause — the heartbeat is stopped on pause so
+  // it doesn't keep reporting 'playing' (which corrupts watch-time and
+  // parental watch-limit accounting) while the picture is frozen.
+  function startHeartbeat() {
+    reporter?.start(
+      () => ({ positionMs: position, durationMs: duration }),
+      (reason) => applyParentalBlock(reason)
+    );
+  }
 
   // Lightweight breadcrumb logger — routes to the debug console only.
   // Used to ship as an on-screen HUD; the HUD is gone now that the
@@ -111,6 +126,19 @@
   // device left off. Active local playback wins.
   let syncEventSource: EventSource | null = null;
   let lastReportedPositionMs = -1;
+  // The ?token= on the SSE URL is an asset token that expires mid-movie
+  // on a long title. Reconnect on error (the token may have been rotated
+  // by the authed progress heartbeat, which refreshes on 401) with a
+  // capped backoff, and proactively rotate well inside the token TTL.
+  let syncReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let syncRotateTimer: ReturnType<typeof setInterval> | null = null;
+  let syncBackoffMs = 2_000;
+  const SYNC_BACKOFF_MAX_MS = 60_000;
+  // Asset-token TTL is comfortably longer than this; reconnecting every
+  // ~10 min picks up a token the heartbeat refreshed, so the SSE never
+  // outlives its baked-in token on a feature-length movie.
+  const SYNC_ROTATE_MS = 10 * 60_000;
+  let syncStopped = false;
 
   // Trickplay scrub-preview state. Cues parsed from the WebVTT
   // index on mount; null when the item has no sprite sheets
@@ -177,6 +205,13 @@
   }
 
   function seek(deltaMs: number) {
+    // Duration is 0 until the first playtime tick lands; clamping to it
+    // would snap an early seek to 0 (jumping the user to the start).
+    // Treat a seek before we know the duration as a no-op.
+    if (duration <= 0) {
+      showControls();
+      return;
+    }
     const target = Math.max(0, Math.min(duration, position + deltaMs));
     if (usingAvPlay) {
       avplay.seekTo(target);
@@ -186,15 +221,39 @@
     showControls();
   }
 
-  function togglePlay() {
+  // Resume playback. On the AVPlay path only flip UI/reporter state on
+  // a confirmed resume() (it no-ops before the session is prepared, so
+  // an unconditional flip would desync the UI). The <video> path drives
+  // paused/reporter state from its own 'play'/'pause' events.
+  function resumePlayback() {
     if (usingAvPlay) {
-      if (paused) avplay.resume();
-      else avplay.pause();
-      paused = !paused;
+      if (avplay.resume()) {
+        paused = false;
+        startHeartbeat(); // restart the heartbeat pause stopped
+      }
     } else if (video) {
-      if (video.paused) void video.play();
-      else video.pause();
+      void video.play();
     }
+  }
+
+  // Pause playback. AVPlay path: only on a confirmed pause() do we flip
+  // state, stop the 'playing' heartbeat, and emit one 'paused' event so
+  // watch-time / parental accounting stays accurate.
+  function pausePlayback() {
+    if (usingAvPlay) {
+      if (avplay.pause()) {
+        paused = true;
+        reporter?.stop();
+        reporter?.paused(position, duration);
+      }
+    } else if (video) {
+      video.pause();
+    }
+  }
+
+  function togglePlay() {
+    if (paused) resumePlayback();
+    else pausePlayback();
     showControls();
   }
 
@@ -210,12 +269,28 @@
     showControls();
   }
 
-  async function stopAndLeave() {
-    if (reporter) reporter.stopped(position, duration);
+  // Single-owner, idempotent playback teardown. Both the explicit
+  // leave/advance paths (stopAndLeave / goToNext) and Svelte's unmount
+  // hooks (onMount-return + onDestroy) route through here, so 'stopped'
+  // is reported exactly once, close()/stop() aren't called redundantly,
+  // and every timer is cleared regardless of which path runs first.
+  let tornDown = false;
+  function teardown() {
+    if (tornDown) return;
+    tornDown = true;
+    reporter?.stopped(position, duration);
     if (session && api.getToken()) {
       void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
     }
     if (usingAvPlay) avplay.close();
+    stopSyncStream();
+    if (controlsTimer) { clearTimeout(controlsTimer); controlsTimer = null; }
+    if (audioLoadTimer) { clearTimeout(audioLoadTimer); audioLoadTimer = null; }
+    if (upNextTimer) { clearInterval(upNextTimer); upNextTimer = null; }
+  }
+
+  async function stopAndLeave() {
+    teardown();
     goto(`#/item/${itemID}`);
   }
 
@@ -244,18 +319,10 @@
         togglePlay();
         return true;
       case 'play':
-        if (paused) {
-          if (usingAvPlay) avplay.resume();
-          else void video?.play();
-          paused = false;
-        }
+        if (paused) resumePlayback();
         return true;
       case 'pause':
-        if (!paused) {
-          if (usingAvPlay) avplay.pause();
-          else video?.pause();
-          paused = true;
-        }
+        if (!paused) pausePlayback();
         return true;
       case 'left':
         seek(-10_000);
@@ -510,7 +577,10 @@
             if (nextSibling) goToNext(nextSibling);
             else goto(`#/item/${itemID}`);
           },
-          onError: (msg) => { error = msg; },
+          // Rebuffering re-shows the loading overlay; refill hides it.
+          onBufferingStart: () => { loading = true; },
+          onBufferingComplete: () => { loading = false; },
+          onError: (msg) => { error = msg; loading = false; },
         },
       );
       paused = false;
@@ -530,15 +600,15 @@
   function applySubtitleSelection(streamIndex: number) {
     activeSubtitleIndex = streamIndex;
     if (usingAvPlay) {
-      // AVPlay's track index API differs by firmware. Best-effort:
-      // try webapis.avplay.setSelectTrack('TEXT', index) where
-      // negative disables.
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).webapis?.avplay?.setSelectTrack?.('TEXT', streamIndex);
-      } catch {
-        /* firmware-quirk fallback — silent */
-      }
+      // AVPlay TEXT tracks use AVPlay's OWN per-type numbering, which is
+      // not the server's subtitle_streams file-stream index. Map our
+      // picker position (the Nth selectable subtitle stream) onto the
+      // Nth AVPlay TEXT track via getTotalTrackInfo() instead of passing
+      // the file-stream index straight through.
+      if (streamIndex < 0) return; // "Off" — leave current track; firmware-dependent disable
+      const textTracks = avplay.textTracks();
+      const track = textTracks[streamIndex];
+      if (track) avplay.selectTextTrack(track.index);
       return;
     }
     if (!video) return;
@@ -675,36 +745,64 @@
   }
 
   function goToNext(target: ChildItem) {
-    if (upNextTimer) {
-      clearInterval(upNextTimer);
-      upNextTimer = null;
-    }
-    reporter?.stopped(position, duration);
-    if (session && api.getToken()) {
-      void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
-    }
-    if (usingAvPlay) avplay.close();
+    teardown();
     goto(`#/watch/${target.id}`);
   }
 
   // ── Cross-device sync ────────────────────────────────────────────
 
-  function startSyncStream() {
+  // (Re)connect the SSE with a freshly-read asset token. Reused by the
+  // initial connect, the error-driven reconnect, and the periodic
+  // rotation. NOTE: the AVPlay playback URL also bakes its token in once
+  // (open() appends ?token=) and AVPlay can't swap it without a full
+  // close()/open() re-prepare, which would visibly re-buffer — so the
+  // stream URL is intentionally left as-is here; only the SSE is kept
+  // alive across token expiry. A mid-movie AVPlay 401 still falls back
+  // to the onerror retry path in the wrapper.
+  function connectSyncStream() {
+    if (syncStopped) return;
     const origin = api.getOrigin();
     // SSE can't carry an Authorization header — pass the purpose=asset
     // token in ?token=. The server rejects a general access token in a
-    // URL; the asset token authenticates /notifications/stream.
+    // URL; the asset token authenticates /notifications/stream. Re-read
+    // it each connect so a token the heartbeat refreshed is picked up.
     const tok = api.getAssetToken();
     if (!origin || !tok) return;
+    // Drop any prior connection before opening a fresh one.
+    syncEventSource?.close();
     try {
-      syncEventSource = new EventSource(
+      const es = new EventSource(
         `${origin}/api/v1/notifications/stream?token=${encodeURIComponent(tok)}`
       );
-      syncEventSource.onmessage = onSyncEvent;
+      es.onmessage = onSyncEvent;
+      es.onopen = () => { syncBackoffMs = 2_000; }; // reset backoff on success
+      es.onerror = () => {
+        // EventSource auto-reconnects with the SAME (possibly expired)
+        // URL, so close it and reconnect with a freshly-read token after
+        // a capped backoff.
+        if (syncStopped) return;
+        es.close();
+        if (syncEventSource === es) syncEventSource = null;
+        if (syncReconnectTimer) clearTimeout(syncReconnectTimer);
+        syncReconnectTimer = setTimeout(connectSyncStream, syncBackoffMs);
+        syncBackoffMs = Math.min(syncBackoffMs * 2, SYNC_BACKOFF_MAX_MS);
+      };
+      syncEventSource = es;
     } catch {
       // EventSource construction rarely throws; treat any failure
       // as "no sync today" and keep playing.
     }
+  }
+
+  function startSyncStream() {
+    syncStopped = false;
+    syncBackoffMs = 2_000;
+    connectSyncStream();
+    // Proactively rotate the connection (and thus its baked-in token)
+    // well inside the asset-token TTL so a feature-length title doesn't
+    // outlive its token.
+    if (syncRotateTimer) clearInterval(syncRotateTimer);
+    syncRotateTimer = setInterval(connectSyncStream, SYNC_ROTATE_MS);
   }
 
   function onSyncEvent(ev: MessageEvent) {
@@ -726,6 +824,9 @@
   }
 
   function stopSyncStream() {
+    syncStopped = true;
+    if (syncReconnectTimer) { clearTimeout(syncReconnectTimer); syncReconnectTimer = null; }
+    if (syncRotateTimer) { clearInterval(syncRotateTimer); syncRotateTimer = null; }
     syncEventSource?.close();
     syncEventSource = null;
   }
@@ -974,7 +1075,10 @@
           // Belt + suspenders: some webviews don't fire loadedmetadata
           // for audio-only sources reliably. If we haven't flipped
           // loading inside 8 s, force it off so the music view paints.
-          setTimeout(() => {
+          // Tracked so teardown() clears it on unmount (a fast Back out
+          // before metadata loads would otherwise leak this timer).
+          audioLoadTimer = setTimeout(() => {
+            audioLoadTimer = null;
             if (loading) {
               dbg('audio loadedmetadata timeout — forcing loading=false');
               loading = false;
@@ -1037,10 +1141,7 @@
         dbg(`url: ${fullURL.slice(0, 60)}…`);
 
         reporter = new ProgressReporter(itemID);
-        reporter.start(
-          () => ({ positionMs: position, durationMs: duration }),
-          (reason) => applyParentalBlock(reason)
-        );
+        startHeartbeat();
 
         if (avplay.available()) {
           // Tizen hardware path. AVPlay handles HLS demux +
@@ -1117,6 +1218,21 @@
                   goto(`#/item/${itemID}`);
                 }
               },
+              // Mid-stream rebuffering: re-show the loading overlay so
+              // the user sees a spinner instead of a frozen frame, and
+              // distinguish a refill from a hard stall (the 30 s
+              // watchdog still covers a genuine stall on startup).
+              onBufferingStart: () => {
+                if (position > 0) loading = true;
+              },
+              onBufferingComplete: () => {
+                clearWatchdog();
+                // Only hide here for a mid-stream refill (position > 0).
+                // The initial first-frame hide is owned by onProgress
+                // (currentMs > 0) so the spinner stays up until the
+                // picture actually lands, not just when the buffer fills.
+                if (position > 0) loading = false;
+              },
               onError: (msg) => {
                 clearWatchdog();
                 dbg(`onError: ${msg || '(empty)'}`);
@@ -1149,24 +1265,22 @@
     })();
 
     return () => {
+      // Playback teardown is idempotent and may already have run via
+      // stopAndLeave / goToNext; the DOM-side cleanup below is unmount-
+      // only so it stays here rather than inside teardown().
+      teardown();
       disableAvplayCompositing();
       destroyLoadingEl();
       offKey();
-      reporter?.stopped(position, duration);
-      if (session && api.getToken()) {
-        void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
-      }
-      if (usingAvPlay) avplay.close();
-      if (controlsTimer) clearTimeout(controlsTimer);
-      if (upNextTimer) clearInterval(upNextTimer);
-      stopSyncStream();
     };
   });
 
+  // Belt-and-suspenders: onDestroy also runs on unmount. teardown() is
+  // idempotent (guarded by tornDown) so this can't double-report
+  // 'stopped' or double-close() — it only matters if the onMount-return
+  // somehow didn't run.
   onDestroy(() => {
-    if (usingAvPlay) avplay.close();
-    stopSyncStream();
-    if (upNextTimer) clearInterval(upNextTimer);
+    teardown();
   });
 
   const progressPct = $derived(duration > 0 ? (position / duration) * 100 : 0);

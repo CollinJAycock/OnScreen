@@ -14,6 +14,10 @@ const REFRESH_KEY = 'onscreen.refresh_token';
 // general access token — the server rejects a general token in a URL.
 const ASSET_KEY = 'onscreen.asset_token';
 const USER_KEY = 'onscreen.user';
+// Wall-clock ceiling on a single API request. Long enough for a cold
+// transcode-start on a slow box, short enough that a dead connection
+// surfaces an error instead of hanging the UI indefinitely.
+const REQUEST_TIMEOUT_MS = 20_000;
 
 export interface UserMeta {
   user_id: string;
@@ -151,6 +155,18 @@ export class ApiClient {
     }
   }
 
+  /** Force a token refresh and report success. Used by long-lived
+   *  out-of-band connections (the EventSource sync stream) that carry a
+   *  `?token=` asset token which can expire mid-movie — they refresh,
+   *  then reconnect with the freshly-minted asset token. Shares the
+   *  in-flight refresh so a concurrent API 401 doesn't double-refresh. */
+  async refreshTokens(): Promise<boolean> {
+    if (!this.refreshing) {
+      this.refreshing = this.tryRefresh().finally(() => (this.refreshing = null));
+    }
+    return this.refreshing;
+  }
+
   async get<T>(path: string): Promise<T> {
     return this.authed<T>('GET', path);
   }
@@ -199,6 +215,43 @@ export class ApiClient {
     return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
   }
 
+  /**
+   * Refresh-aware fetch for endpoints that return non-JSON bodies
+   * (image blobs, raw text) which can't go through `get`/`post`. Adds the
+   * Bearer header, applies the same request timeout, and on a 401
+   * refreshes the token once and retries — so a token that expired mid-
+   * session recovers instead of dead-ending on the bare access token.
+   *
+   * `path` may be an absolute URL or an origin-relative path; either way
+   * the caller gets the raw Response back to consume as `.blob()` /
+   * `.text()` / `.json()`.
+   */
+  async authedFetch(path: string, retry = true): Promise<Response> {
+    const origin = this.getOrigin();
+    if (!origin) throw new Error('API origin not configured');
+    const url = path.startsWith('http') ? path : `${origin}${path}`;
+    const tok = this.getToken();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+        signal: controller.signal
+      });
+    } catch (e) {
+      if (controller.signal.aborted) throw new Error(`Request timed out: ${url}`);
+      throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (resp.status === 401) {
+      if (retry && (await this.refreshTokens())) return this.authedFetch(path, false);
+      throw new Unauthorized();
+    }
+    return resp;
+  }
+
   private async authed<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
     try {
       return await this.raw<T>(method, path, body, true);
@@ -228,11 +281,29 @@ export class ApiClient {
       if (tok) headers['Authorization'] = `Bearer ${tok}`;
     }
 
-    const resp = await fetch(`${origin}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
+    // Abort a hung request so a stalled TCP connection (TV dropped Wi-Fi,
+    // server wedged) doesn't leave the caller waiting forever. A timeout
+    // and a transport failure both surface as a clean Error the caller
+    // can catch and retry, rather than a never-settling promise.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch(`${origin}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal
+      });
+    } catch (e) {
+      if (controller.signal.aborted) {
+        throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`);
+      }
+      // DNS / TLS / connection-refused — normalise to a readable message.
+      throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (resp.status === 401) throw new Unauthorized();
 

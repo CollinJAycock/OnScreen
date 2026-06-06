@@ -22,6 +22,7 @@
     <string name="live_tv">Live TV</string>
     <string name="recordings">Recordings</string>
     <string name="live_tv_no_guide">No guide data</string>
+    <string name="live_channel_error">Channel unavailable</string>
     <string name="recording_scheduled_msg">Scheduled — won\'t be playable until it records.</string>
     <string name="recording_in_progress_msg">Recording in progress.</string>
     <string name="recording_failed_msg">Recording failed.</string>

@@ -16,6 +16,15 @@ function isTypeSupported(s: string): boolean {
   }
 }
 
+/** Whether this TV can decode HEVC over MSE (hls.js transmuxes to fMP4,
+ *  so we probe the mp4 codec string). Drives the transcode-start
+ *  supports_hevc flag — telling the server we can take HEVC lets it
+ *  stream-copy or HEVC-encode instead of falling back to H.264 on a
+ *  panel that can't actually decode it. */
+export function supportsHEVC(): boolean {
+  return isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"');
+}
+
 export function clientCapabilitiesHeader(): string {
   const hevc = isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"');
   const hevc10bit = isTypeSupported('video/mp4; codecs="hvc1.2.4.L150.B0"');

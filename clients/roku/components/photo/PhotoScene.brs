@@ -23,6 +23,11 @@ sub init()
 
     m.siblings = []      ' [String] of photo item ids
     m.currentIndex = 0   ' index into siblings
+    ' Re-entrancy guard (mirrors DetailScene): MainScene sets itemId
+    ' before mount AND init() reads it, so both init and the itemId
+    ' observer can fire for the same id. Without this, a re-fire would
+    ' restart every fetch and reset the sibling list / current index.
+    m.kickedOff = false
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.parentChildrenTask.observeField("state", "onParentChildrenState")
@@ -37,12 +42,13 @@ sub init()
 end sub
 
 sub onItemIdSet()
-    if m.top.itemId <> invalid and m.top.itemId <> ""
+    if m.top.itemId <> invalid and m.top.itemId <> "" and not m.kickedOff
         kickoff()
     end if
 end sub
 
 sub kickoff()
+    m.kickedOff = true
     m.itemTask.itemId = m.top.itemId
     m.itemTask.control = "RUN"
     renderCurrent(m.top.itemId)
@@ -157,9 +163,13 @@ sub refreshPositionLabel()
 end sub
 
 ' Roku delivers D-pad + back keys via onKeyEvent on the scene
-' that has focus. PhotoScene captures left/right + back here so
-' the user can navigate without any focus-grabbing widget on the
-' page (the Poster node is non-focusable by default).
+' that has focus. PhotoScene captures left/right here so the user
+' can page through siblings without any focus-grabbing widget on
+' the page (the Poster node is non-focusable by default). "back"
+' is deliberately left unhandled so it bubbles to MainScene's
+' back-stack, which pops to the screen the viewer was opened from
+' (the album / library / search result) rather than jumping all
+' the way to Home.
 function onKeyEvent(key as String, press as Boolean) as Boolean
     if not press then return false
     if key = "left" or key = "rewind"
@@ -168,10 +178,6 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
     end if
     if key = "right" or key = "fastforward"
         advance(1)
-        return true
-    end if
-    if key = "back"
-        getMainScene().callFunc("navigateTo", "HomeScene")
         return true
     end if
     return false

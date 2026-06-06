@@ -1,6 +1,7 @@
 package tv.onscreen.android.ui.livetv
 
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -9,6 +10,7 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -17,6 +19,7 @@ import androidx.media3.ui.PlayerView
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import tv.onscreen.android.R
 import tv.onscreen.android.data.prefs.ServerPrefs
 import javax.inject.Inject
 
@@ -43,6 +46,10 @@ class LiveChannelPlayerFragment : Fragment() {
 
     private var player: ExoPlayer? = null
     private var playerView: PlayerView? = null
+    /** Resolved stream URL — built once on first start, reused when the
+     *  player is rebuilt after an onStop release so we don't re-resolve
+     *  the server URL / token on every foreground cycle. */
+    private var streamUrl: String? = null
 
     companion object {
         private const val ARG_CHANNEL_ID = "channel_id"
@@ -91,33 +98,129 @@ class LiveChannelPlayerFragment : Fragment() {
             // for query-token auth to apply — see the live-stream-auth
             // follow-up.
             val token = prefs.assetToken.first() ?: ""
-            val url = "$serverUrl/api/v1/tv/channels/$channelId/stream.m3u8?token=$token"
-
-            val exo = ExoPlayer.Builder(requireContext()).build()
-            val source = HlsMediaSource.Factory(DefaultHttpDataSource.Factory())
-                .createMediaSource(MediaItem.fromUri(Uri.parse(url)))
-            exo.setMediaSource(source)
-            exo.prepare()
-            exo.playWhenReady = true
-            playerView?.player = exo
-            player = exo
+            // Guard the empty-token case: the live route is behind
+            // RequiredAllowQueryToken, so an empty `?token=` 401s and the
+            // user just stares at a black PlayerView. Surface it instead.
+            if (token.isEmpty()) {
+                showError(getString(R.string.live_channel_error))
+                return@launch
+            }
+            streamUrl = "$serverUrl/api/v1/tv/channels/$channelId/stream.m3u8?token=$token"
+            startPlayer()
         }
     }
 
-    override fun onPause() {
-        super.onPause()
-        player?.playWhenReady = false
+    /** Build the ExoPlayer and start playback of [streamUrl]. Idempotent
+     *  per-foreground: releases any existing player first so onStart
+     *  after an onStop park rebuilds cleanly. Mirrors PlaybackFragment's
+     *  longer transcode timeouts + retry policy (default 8 s connect/read
+     *  with no retries is too tight for a tuner / proxy warming up). */
+    private fun startPlayer() {
+        val url = streamUrl ?: return
+        releasePlayer()
+
+        val exo = ExoPlayer.Builder(requireContext()).build()
+        // DefaultHttpDataSource's 8 s connect / 8 s read defaults are too
+        // tight for the tuner / proxy spinning up the first segment, and
+        // the default load-error policy gives up after one try. Mirror the
+        // main player's 30 s/60 s + 6-retry profile so a slow first
+        // segment doesn't fail the channel.
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(30_000)
+            .setReadTimeoutMs(60_000)
+            .setAllowCrossProtocolRedirects(true)
+            .setUserAgent("OnScreen-Android/1.0 (ExoPlayer)")
+        val errorPolicy =
+            androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6)
+        val source = HlsMediaSource.Factory(httpFactory)
+            .setLoadErrorHandlingPolicy(errorPolicy)
+            .createMediaSource(MediaItem.fromUri(Uri.parse(url)))
+        exo.addListener(playerListener)
+        exo.setMediaSource(source)
+        exo.prepare()
+        exo.playWhenReady = true
+        playerView?.player = exo
+        player = exo
     }
 
-    override fun onResume() {
-        super.onResume()
-        player?.playWhenReady = true
+    /** Screen-on flag + error surfacing, mirroring PlaybackFragment's
+     *  createPlayerListener. Toggling FLAG_KEEP_SCREEN_ON on isPlaying
+     *  keeps the TV screensaver from kicking in mid-broadcast, and
+     *  releases it the moment playback stops. */
+    private val playerListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            val window = activity?.window ?: return
+            if (isPlaying) {
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Surface the failure with a Retry instead of leaving the user
+            // on a silent black screen. Retry rebuilds the player from the
+            // already-resolved stream URL.
+            val cause = error.cause
+            val urlPart = if (cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException) {
+                "\n${cause.dataSpec.uri}"
+            } else ""
+            showError("${error.errorCodeName}: ${error.message}$urlPart")
+        }
+    }
+
+    private fun showError(message: String) {
+        if (!isAdded) return
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.live_channel_error)
+            .setMessage(message)
+            .setPositiveButton(R.string.retry) { d, _ ->
+                d.dismiss()
+                startPlayer()
+            }
+            .setNegativeButton(android.R.string.cancel) { d, _ ->
+                d.dismiss()
+                parentFragmentManager.popBackStack()
+            }
+            .show()
+    }
+
+    private fun releasePlayer() {
+        // Drop the screen-on flag whenever we tear the player down so a
+        // backgrounded channel doesn't hold the screen awake.
+        activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        player?.run {
+            removeListener(playerListener)
+            release()
+        }
+        player = null
+        playerView?.player = null
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Rebuild the player when returning to the foreground after onStop
+        // released it. Skipped on the very first start — onViewCreated
+        // resolves the URL asynchronously and calls startPlayer() itself
+        // (streamUrl is still null here on the cold path).
+        if (player == null && streamUrl != null) {
+            startPlayer()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Release the decoder / tuner the moment the activity stops
+        // (HOME / app backgrounded) instead of holding them until
+        // onDestroyView — a live tuner is a scarce resource and the
+        // decoder shouldn't keep running behind the launcher. onStart
+        // rebuilds from the cached streamUrl. Mirrors PlaybackFragment's
+        // video onStop teardown.
+        releasePlayer()
     }
 
     override fun onDestroyView() {
-        player?.release()
-        player = null
-        playerView?.player = null
+        releasePlayer()
         playerView = null
         super.onDestroyView()
     }

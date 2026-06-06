@@ -3,8 +3,28 @@
   import { onMount } from 'svelte';
   import { focusManager } from '$lib/focus/manager';
   import { registerTizenKeys } from '$lib/focus/keys';
+  import { avplay } from '$lib/player/avplay';
 
   let { children } = $props();
+
+  // True when AVPlay was torn down by a background event so foreground
+  // restore() only fires if we actually suspended (not for unrelated
+  // visibility flaps with no active playback).
+  let suspendedForBackground = false;
+
+  // App pause/resume → release / re-prepare the hardware decoder.
+  // Tizen fires `visibilitychange` (document.hidden) when the app is
+  // backgrounded (Home/launcher, input switch, screen off). AVPlay's
+  // decoder stays bound across a background unless we release it, so
+  // resume comes back black or stale. Suspend on hide, restore on show.
+  function onVisibilityChange() {
+    if (document.hidden) {
+      suspendedForBackground = avplay.suspend();
+    } else if (suspendedForBackground) {
+      suspendedForBackground = false;
+      avplay.restore();
+    }
+  }
 
   onMount(() => {
     // Tell the Tizen firmware to forward Back, MediaPlay/Pause,
@@ -13,7 +33,11 @@
     // No-op outside the Tizen webview (e.g., `vite dev`).
     registerTizenKeys();
     focusManager.init();
-    return () => focusManager.destroy();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      focusManager.destroy();
+    };
   });
 </script>
 

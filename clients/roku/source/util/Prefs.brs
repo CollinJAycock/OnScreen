@@ -43,6 +43,22 @@ function PrefsKeyUsername() as String
     return "username"
 end function
 
+' True when v is a non-invalid BrightScript string. Used to guard
+' values pulled out of a parsed JSON response before they cross into
+' the typed setters below (which declare `as String` and would raise
+' a Type Mismatch on invalid). JSON parsing yields roString for
+' string fields, so Type() must accept both the boxed and intrinsic
+' forms.
+function Prefs_IsString(v as Dynamic) as Boolean
+    if v = invalid then return false
+    t = Type(v)
+    return t = "String" or t = "roString"
+end function
+
+function Prefs_IsNonEmptyString(v as Dynamic) as Boolean
+    return Prefs_IsString(v) and v <> ""
+end function
+
 function Prefs_Get(key as String) as Dynamic
     section = CreateObject("roRegistrySection", PrefsSection())
     if section.Exists(key) then return section.Read(key)
