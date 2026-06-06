@@ -28,9 +28,9 @@ func TestSourceAudioChannels(t *testing.T) {
 
 func TestTargetAudioChannels(t *testing.T) {
 	cases := []struct {
-		name             string
+		name              string
 		source, clientMax int
-		want             int
+		want              int
 	}{
 		{"5.1 preserved (no client cap)", 6, 0, 6},
 		{"7.1 source downmixed to 5.1 (clients can't decode 7.1 AAC)", 8, 0, 6},

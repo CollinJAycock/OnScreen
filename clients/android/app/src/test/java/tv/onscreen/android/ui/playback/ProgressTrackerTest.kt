@@ -48,7 +48,7 @@ class ProgressTrackerTest {
     private fun newTracker(
         repo: ItemRepository,
         scope: CoroutineScope,
-    ): ProgressTracker = ProgressTracker(scope, repo).apply {
+    ): ProgressTracker = ProgressTracker(scope, repo, scope).apply {
         positionProvider = { 5_000L }
         durationProvider = { 60_000L }
     }
@@ -145,7 +145,7 @@ class ProgressTrackerTest {
     @Test
     fun `report is skipped when duration is zero`() = runTest(StandardTestDispatcher()) {
         val repo = FakeRepo()
-        val tracker = ProgressTracker(this, repo).apply {
+        val tracker = ProgressTracker(this, repo, this).apply {
             positionProvider = { 5_000L }
             durationProvider = { 0L }
         }
@@ -161,7 +161,7 @@ class ProgressTrackerTest {
     @Test
     fun `report is skipped when providers are not set`() = runTest(StandardTestDispatcher()) {
         val repo = FakeRepo()
-        val tracker = ProgressTracker(this, repo)
+        val tracker = ProgressTracker(this, repo, this)
 
         tracker.start("item-1")
         tracker.onPause()

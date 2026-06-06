@@ -227,9 +227,9 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasLibfdkAAC:     hasLibfdkAAC,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
-		encoderFailover:  true, // default on; opt out via TRANSCODE_ENCODER_FAILOVER
-		qsvVRAM:          true, // "run in VRAM when possible" default; only activates when a QSV encoder is selected, per-job software fallback covers sources/HW where it fails
-		vaapiVRAM:        true, // same, for VAAPI; activates only when a VAAPI encoder is selected
+		encoderFailover:  true,         // default on; opt out via TRANSCODE_ENCODER_FAILOVER
+		qsvVRAM:          true,         // "run in VRAM when possible" default; only activates when a QSV encoder is selected, per-job software fallback covers sources/HW where it fails
+		vaapiVRAM:        true,         // same, for VAAPI; activates only when a VAAPI encoder is selected
 		vaapiTonemap:     vaapiTonemap, // GPU HDR tonemap (probe-gated); keeps HDR off the CPU on VAAPI boxes
 		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
@@ -835,7 +835,8 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// Conservative path on the fallback provider: software decode + hardware
 		// encode, no full-VRAM chains (those are gated on the original GPU).
 		continuationUseQSV = false
-		qsvDecodeUsable = false
+		// (qsvDecodeUsable isn't cleared here: the fallback run passes useQSV=false
+		// to buildTranscodeArgs explicitly, so the flag is never re-read.)
 		cudaHevcUsable = false
 		cudaVRAMUsable = false
 		cudaHDRUsable = false
@@ -848,8 +849,8 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// (and the session's HEVC/AV1 flags, via runFFmpeg → SetWorkerInfo)
 		// defensively so the playlist handler waits on the right segment extension.
 		actualEncoder = enc
-		actualHEVC = IsHEVCEncoder(enc)
-		actualAV1 = IsAV1Encoder(enc)
+		actualHEVC = IsHEVCEncoder(actualEncoder)
+		actualAV1 = IsAV1Encoder(actualEncoder)
 		segExt = ".ts"
 		if actualHEVC || actualAV1 {
 			segExt = ".m4s"

@@ -30,7 +30,6 @@ var (
 	concurrency = flag.Int("concurrency", 10, "concurrent workers per endpoint")
 	warmup      = flag.Duration("warmup", 2*time.Second, "warmup before measuring")
 	mode        = flag.String("mode", "api", "test mode: api or transcode")
-	sessions    = flag.Int("sessions", 4, "concurrent transcode sessions (transcode mode)")
 	interval    = flag.Duration("interval", 30*time.Second, "time between new viewers (transcode mode)")
 	watchDur    = flag.Duration("watch", 5*time.Minute, "how long each viewer watches (transcode mode)")
 	users       = flag.String("users", "", "transcode mode: comma-separated usernames to spread viewers across (each ≤5 streams); all share -pass. Empty = single -user")

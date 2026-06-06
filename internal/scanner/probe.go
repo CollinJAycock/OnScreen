@@ -19,15 +19,15 @@ import (
 
 // ProbeResult holds the technical metadata extracted from a media file by ffprobe.
 type ProbeResult struct {
-	Container       *string
-	VideoCodec      *string
-	AudioCodec      *string
-	ResolutionW     *int
-	ResolutionH     *int
-	Bitrate         *int64
-	DurationMs      *int64
-	HDRType         *string
-	FrameRate       *float64
+	Container   *string
+	VideoCodec  *string
+	AudioCodec  *string
+	ResolutionW *int
+	ResolutionH *int
+	Bitrate     *int64
+	DurationMs  *int64
+	HDRType     *string
+	FrameRate   *float64
 	// VideoBitDepth is the primary video stream's bit depth (8/10/12), from
 	// pix_fmt. Distinct from BitDepth (audio). nil when not a video stream.
 	VideoBitDepth   *int

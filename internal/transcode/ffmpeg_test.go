@@ -995,16 +995,16 @@ func TestBuildHLS_NVENC_NoCudaHwaccel(t *testing.T) {
 
 func TestBuildHLS_NVENC_TonemapFallback(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:      "/media/hdr_movie.mkv",
-		Encoder:        EncoderNVENC,
-		Width:          1920,
-		Height:         1080,
-		BitrateKbps:    8000,
-		NeedsToneMap:   true,
-		HasZscale:      true,
-		AudioCodec:     "aac",
-		SessionDir:     "/tmp/sessions/x",
-		SegmentPrefix:  "seg",
+		InputPath:     "/media/hdr_movie.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
 
@@ -2102,15 +2102,15 @@ func TestBuildHLS_MaxrateRatio_Software(t *testing.T) {
 func TestBuildHLS_HEVC_NVENC_NoTonemap(t *testing.T) {
 	// 4K HEVC SDR — NVENC encode, no tonemapping needed.
 	args := BuildHLS(BuildArgs{
-		InputPath:      "/media/4k_sdr_movie.mkv",
-		Encoder:        EncoderHEVCNVENC,
-		Width:          3840,
-		Height:         2160,
-		BitrateKbps:    24000,
-		NeedsToneMap:   false,
-		AudioCodec:     "aac",
-		SessionDir:     "/tmp/sessions/x",
-		SegmentPrefix:  "seg",
+		InputPath:     "/media/4k_sdr_movie.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		Width:         3840,
+		Height:        2160,
+		BitrateKbps:   24000,
+		NeedsToneMap:  false,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
 

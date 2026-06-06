@@ -151,7 +151,7 @@ type File struct {
 	// stream of video files as well). Lossless is a scanner-derived flag
 	// covering the FLAC/ALAC/WAV/DSD/etc. family; clients gate silent
 	// transcoding on it.
-	BitDepth            *int
+	BitDepth *int
 	// VideoBitDepth is the primary video stream's bit depth (8/10/12), derived
 	// from pix_fmt at scan time. Distinct from BitDepth (audio). Drives the
 	// 10-bit play decision (HEVC Main 10 / H.264 Hi10P).
@@ -508,23 +508,23 @@ type UpdateItemMetadataParams struct {
 
 // CreateFileParams holds the input for creating a media file record.
 type CreateFileParams struct {
-	MediaItemID         uuid.UUID
-	FilePath            string
-	FileSize            int64
-	Container           *string
-	VideoCodec          *string
-	AudioCodec          *string
-	ResolutionW         *int
-	ResolutionH         *int
-	Bitrate             *int64
-	HDRType             *string
-	FrameRate           *float64
-	AudioStreams        []byte
-	SubtitleStreams     []byte
-	Chapters            []byte
-	FileHash            *string
-	DurationMS          *int64
-	BitDepth            *int
+	MediaItemID     uuid.UUID
+	FilePath        string
+	FileSize        int64
+	Container       *string
+	VideoCodec      *string
+	AudioCodec      *string
+	ResolutionW     *int
+	ResolutionH     *int
+	Bitrate         *int64
+	HDRType         *string
+	FrameRate       *float64
+	AudioStreams    []byte
+	SubtitleStreams []byte
+	Chapters        []byte
+	FileHash        *string
+	DurationMS      *int64
+	BitDepth        *int
 	// VideoBitDepth is the primary video stream's bit depth (8/10/12), derived
 	// from pix_fmt at scan time. Distinct from BitDepth (audio). Drives the
 	// 10-bit play decision (HEVC Main 10 / H.264 Hi10P).
