@@ -296,6 +296,98 @@ func BestAV1Encoder(encoders []Encoder) Encoder {
 	return ""
 }
 
+// vendorClass returns a coarse hardware-vendor/device class for an encoder, used
+// by FallbackEncoders to avoid "failing over" to the same physical GPU that just
+// rejected the job. NVENC/QSV/VAAPI/AMF map to their vendor; everything else
+// (the software encoders) is "software".
+func vendorClass(enc Encoder) string {
+	switch {
+	case IsNVENCEncoder(enc):
+		return "nvenc"
+	case IsQSVEncoder(enc):
+		return "qsv"
+	case IsVAAPIEncoder(enc):
+		return "vaapi"
+	case enc == EncoderAMF || enc == EncoderHEVCAMF || enc == EncoderAV1AMF:
+		return "amf"
+	default:
+		return "software"
+	}
+}
+
+// IsHardwareEncoder reports whether enc runs on a GPU (NVENC/QSV/VAAPI/AMF) as
+// opposed to a CPU (software) encoder. A stream-copy ("copy") is not an encoder
+// and returns false.
+func IsHardwareEncoder(enc Encoder) bool {
+	return vendorClass(enc) != "software" && enc != "copy"
+}
+
+// codecFamily returns the output codec family ("h264", "hevc", "av1") an encoder
+// produces. FallbackEncoders keeps fail-over within the same family so a session
+// already stamped H.264 (.ts segments) doesn't switch to HEVC/AV1 (.m4s) mid-stream.
+func codecFamily(enc Encoder) string {
+	switch {
+	case IsAV1Encoder(enc):
+		return "av1"
+	case IsHEVCEncoder(enc):
+		return "hevc"
+	default:
+		return "h264"
+	}
+}
+
+// softwareEncoderForFamily returns the CPU encoder that produces the given output
+// codec family — the always-runnable last-resort fail-over target.
+func softwareEncoderForFamily(family string) Encoder {
+	switch family {
+	case "av1":
+		return EncoderAV1Software
+	case "hevc":
+		return EncoderHEVCSoftware
+	default:
+		return EncoderSoftware
+	}
+}
+
+// FallbackEncoders returns the ordered list of alternate encoders to try when a
+// hardware ENCODER can't start a job — most often a GeForce NVENC worker that hit
+// the driver's 8-concurrent-session cap (the consumer-card limit), but also a
+// QSV/VAAPI device momentarily out of surfaces. Candidates are drawn from this
+// worker's detected `available` encoders (so fail-over only happens "if
+// configured" — i.e. the box actually has a second provider), kept to the SAME
+// output codec family as `primary`, and restricted to a DIFFERENT hardware vendor
+// (retrying the same saturated GPU is pointless). The matching software encoder is
+// appended as the always-runnable last resort.
+//
+// Example (laptop: RTX 4080 dGPU + Intel iGPU):
+//
+//	FallbackEncoders("h264_nvenc",
+//	  [h264_nvenc, hevc_nvenc, av1_nvenc, h264_qsv, hevc_qsv, libx264])
+//	  → [h264_qsv, libx264]
+//
+// A software or stream-copy primary returns nil — there's nothing to fail over
+// from (the CPU encoder can't run out of GPU sessions).
+func FallbackEncoders(primary Encoder, available []Encoder) []Encoder {
+	if !IsHardwareEncoder(primary) {
+		return nil
+	}
+	fam := codecFamily(primary)
+	pv := vendorClass(primary)
+	seen := map[Encoder]bool{primary: true}
+	var out []Encoder
+	for _, e := range available {
+		if seen[e] || codecFamily(e) != fam || !IsHardwareEncoder(e) || vendorClass(e) == pv {
+			continue
+		}
+		out = append(out, e)
+		seen[e] = true
+	}
+	if sw := softwareEncoderForFamily(fam); !seen[sw] {
+		out = append(out, sw)
+	}
+	return out
+}
+
 // detectGPUName tries to return a human-readable GPU name (e.g. "NVIDIA GeForce RTX 5080").
 // Falls back to a generic label based on the encoder type.
 func detectGPUName(ctx context.Context, enc Encoder) string {
@@ -667,6 +759,51 @@ func ProbeTonemapCuda(ctx context.Context) bool {
 		"-c:v", "hevc_cuvid", "-i", tmp.Name(),
 		"-vf", "scale_cuda=w=320:h=240,tonemap_cuda=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format=nv12",
 		"-c:v", "hevc_nvenc", "-frames:v", "5", "-f", "null", "-")
+	return dec.Run() == nil
+}
+
+// ProbeTonemapVAAPI reports whether the all-VRAM VAAPI HDR→SDR chain works end to
+// end on this host: VAAPI decode into VA surfaces, scale_vaapi downscale, tonemap_vaapi
+// HDR→SDR, VAAPI encode — all in VRAM, no CPU zscale. tonemap_vaapi's HDR-metadata
+// handling varies by iHD/Mesa driver version, so the worker enables the VRAM HDR path
+// only when this real round-trip passes; otherwise it keeps the software zscale tonemap.
+// A genuine HDR10 source is required, and crucially tonemap_vaapi refuses input
+// without SMPTE-2086 mastering-display metadata ("No mastering display data from
+// input"). Real HDR10 movies always carry it, but a synthetic source doesn't — so
+// the probe builds the test clip with libx265 + master-display/max-cll params, which
+// writes the metadata tonemap_vaapi needs. (HLG or metadata-less HDR sources fail
+// tonemap_vaapi at runtime and fall back to the CPU zscale path per-job.)
+func ProbeTonemapVAAPI(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	tmp, err := os.CreateTemp("", "vatonemap-probe-*.hevc")
+	if err != nil {
+		return false
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+	// 1) tiny HDR10 (PQ/bt2020) clip WITH mastering-display + content-light metadata
+	// (libx265 -x265-params) — tonemap_vaapi requires that metadata on the input.
+	enc := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=s=640x480:r=10:d=1",
+		"-vf", "format=p010le",
+		"-c:v", "libx265",
+		"-x265-params", "hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(40000000,50):max-cll=1000,400",
+		"-frames:v", "10", tmp.Name())
+	if enc.Run() != nil {
+		return false
+	}
+	// 2) all-VRAM chain: vaapi decode -> scale_vaapi -> tonemap_vaapi -> vaapi encode, as BuildHLS emits.
+	dec := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
+		"-vaapi_device", "/dev/dri/renderD128",
+		"-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi", "-i", tmp.Name(),
+		"-vf", "scale_vaapi=w=320:h=240,tonemap_vaapi=format=nv12:matrix=bt709:primaries=bt709:transfer=bt709",
+		"-c:v", "h264_vaapi", "-frames:v", "5", "-f", "null", "-")
 	return dec.Run() == nil
 }
 

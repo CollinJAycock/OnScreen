@@ -122,6 +122,16 @@ type BuildArgs struct {
 	// only constraints, opt-in (TRANSCODE_VAAPI_VRAM), default off, software
 	// fallback — needs validation on real Intel/AMD hardware.
 	VAAPIVRAM bool
+	// VAAPITonemap opts into the all-VRAM VAAPI HDR→SDR path (the VAAPI analogue of
+	// CudaTonemap): VAAPI hardware-decodes the HDR source into VA surfaces,
+	// scale_vaapi downscales in GPU memory keeping the HDR signal, tonemap_vaapi
+	// does HDR→SDR on the GPU, and the VAAPI encoder reads the result — all in VRAM,
+	// no software zscale, no hwdownload. Replaces the CPU zscale tonemap that the
+	// default VAAPI HDR path uses. SDR uses VAAPIVRAM; this is the HDR counterpart.
+	// The worker sets it from a startup probe of the tonemap_vaapi chain (the iHD
+	// driver's HDR-metadata handling varies, so it's probe-gated) and falls back to
+	// the software zscale path on failure.
+	VAAPITonemap bool
 	// CudaHevcDecode opts into NVDEC hardware HEVC decode (-c:v hevc_cuvid) on
 	// the input, offloading the (4K-bound) HEVC decode to the GPU while keeping
 	// frames in system memory so the existing scale/tonemap/encode chain runs
@@ -303,12 +313,13 @@ func BuildHLS(a BuildArgs) []string {
 		// VAAPI init filter (must come before input for hardware decode).
 		if a.IsVAAPI {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
-			// Full-VRAM VAAPI (opt-in TRANSCODE_VAAPI_VRAM): hardware-decode into
-			// VA surfaces so scale_vaapi + the encoder run with no software decode
-			// and no hwupload. SDR-only — HDR keeps the software/libplacebo path,
-			// which needs CPU frames. The default VAAPI path software-decodes then
-			// uploads (buildVideoFilter skips the hwupload when this is set).
-			if a.VAAPIVRAM && !a.NeedsToneMap {
+			// Full-VRAM VAAPI: hardware-decode into VA surfaces so scale_vaapi +
+			// the encoder run with no software decode and no hwupload. SDR uses
+			// VAAPIVRAM; HDR uses VAAPITonemap (scale_vaapi → tonemap_vaapi, all in
+			// VRAM). Either way the decode stays on VA surfaces; buildVideoFilter
+			// skips the hwupload when this is set. (The default VAAPI path software-
+			// decodes, CPU-tonemaps for HDR, then uploads.)
+			if (a.VAAPIVRAM && !a.NeedsToneMap) || a.VAAPITonemap {
 				args = append(args, "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi")
 			}
 		}
@@ -835,7 +846,14 @@ func buildVideoFilter(a BuildArgs) string {
 	// fallback when libplacebo/Vulkan isn't available on the host.
 	lpTonemap := a.NeedsToneMap && a.HasLibplacebo && !a.IsVAAPI
 
-	needsSoftwareTonemap := !lpTonemap && a.NeedsToneMap && a.HasZscale &&
+	// All-VRAM VAAPI HDR via tonemap_vaapi: scale_vaapi downscale (keeps the HDR
+	// signal) + tonemap_vaapi HDR→SDR, both on VA surfaces, straight to the VAAPI
+	// encoder — no CPU zscale, no hwdownload. The VAAPI analogue of cudaTonemap;
+	// probe-gated (VAAPITonemap) because the iHD driver's HDR handling varies.
+	vaapiTonemap := a.VAAPITonemap && a.NeedsToneMap && a.IsVAAPI &&
+		(a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI)
+
+	needsSoftwareTonemap := !lpTonemap && !vaapiTonemap && a.NeedsToneMap && a.HasZscale &&
 		(a.Encoder == EncoderSoftware || a.Encoder == EncoderHEVCSoftware ||
 			isAMF || isQSV || isNVENC || a.IsVAAPI)
 
@@ -910,6 +928,19 @@ func buildVideoFilter(a BuildArgs) string {
 			sc = fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease:format=p010le", a.Width, a.Height)
 		}
 		filters = append(filters, sc, "hwdownload", "format=p010le", toneMap)
+	case vaapiTonemap:
+		// All-VRAM VAAPI HDR: scale_vaapi downscales on VA surfaces keeping the HDR
+		// signal (no format=, so 10-bit p010 survives the resize), then tonemap_vaapi
+		// does HDR→SDR to nv12 on the GPU. Both stay in VRAM and feed the VAAPI
+		// encoder zero-copy — no CPU zscale, no hwdownload. No pad (scale_vaapi's
+		// decrease flag preserves aspect; Width/Height are already correct).
+		tm := "tonemap_vaapi=format=nv12:matrix=bt709:primaries=bt709:transfer=bt709"
+		if a.Width > 0 && a.Height > 0 {
+			filters = append(filters,
+				fmt.Sprintf("scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height), tm)
+		} else {
+			filters = append(filters, tm)
+		}
 	case swTonemapScaleFirst:
 		filters = append(filters, swScale, toneMap)
 	default:

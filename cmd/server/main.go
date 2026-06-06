@@ -982,6 +982,11 @@ func run() error {
 		)
 
 		embeddedWorker.SetNodeID(cfg.NodeID)
+		// Hardware-encoder fail-over (TRANSCODE_ENCODER_FAILOVER, default on): on a
+		// box with two encode providers (e.g. an NVIDIA dGPU + AMD/Intel iGPU) a job
+		// that can't acquire the primary GPU retries on the next provider instead of
+		// failing. No-op when the box has a single provider.
+		embeddedWorker.SetEncoderFailover(cfg.TranscodeEncoderFailover)
 		// Wire embedded worker into transcode handler so Stop can kill FFmpeg immediately.
 		nativeTranscodeHandler.SetSessionKiller(embeddedWorker)
 		// Wire into settings so the fleet UI can retune its session cap live.

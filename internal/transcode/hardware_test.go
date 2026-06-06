@@ -179,3 +179,111 @@ func TestParseOverride_RoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func encEq(a, b []Encoder) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestFallbackEncoders(t *testing.T) {
+	// The laptop: RTX 4080 dGPU (NVENC) + Intel iGPU (QSV), Windows (no VAAPI).
+	laptop := []Encoder{
+		EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC,
+		EncoderQSV, EncoderHEVCQSV,
+		EncoderSoftware,
+	}
+	// A single-GPU NVENC box (no second provider): software is the only fallback.
+	nvencOnly := []Encoder{EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC, EncoderSoftware}
+	// The Arc box (Linux): VAAPI + QSV on the same Intel GPU.
+	arc := []Encoder{
+		EncoderVAAPI, EncoderHEVCVAAPI, EncoderAV1VAAPI,
+		EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV,
+		EncoderSoftware,
+	}
+
+	tests := []struct {
+		name      string
+		primary   Encoder
+		available []Encoder
+		want      []Encoder
+	}{
+		{
+			// The headline case: NVENC H.264 saturates → Intel iGPU QSV → CPU.
+			name:      "laptop nvenc h264 -> qsv -> software",
+			primary:   EncoderNVENC,
+			available: laptop,
+			want:      []Encoder{EncoderQSV, EncoderSoftware},
+		},
+		{
+			// HEVC stays HEVC: hevc_nvenc -> hevc_qsv -> libx265 (same .m4s family).
+			name:      "laptop nvenc hevc -> qsv hevc -> software hevc",
+			primary:   EncoderHEVCNVENC,
+			available: laptop,
+			want:      []Encoder{EncoderHEVCQSV, EncoderHEVCSoftware},
+		},
+		{
+			// AV1 nvenc has no QSV AV1 on this box (laptop QSV lacks av1_qsv) → just software AV1.
+			name:      "laptop nvenc av1 -> software av1 (no qsv av1 present)",
+			primary:   EncoderAV1NVENC,
+			available: laptop,
+			want:      []Encoder{EncoderAV1Software},
+		},
+		{
+			// Single-provider box: nothing to spill to but the CPU.
+			name:      "nvenc-only box -> software",
+			primary:   EncoderNVENC,
+			available: nvencOnly,
+			want:      []Encoder{EncoderSoftware},
+		},
+		{
+			// VAAPI primary on the Arc box -> QSV (different driver class) -> software.
+			name:      "arc vaapi h264 -> qsv -> software",
+			primary:   EncoderVAAPI,
+			available: arc,
+			want:      []Encoder{EncoderQSV, EncoderSoftware},
+		},
+		{
+			// AV1 on the Arc box has a real QSV AV1 sibling -> av1_qsv -> software.
+			name:      "arc vaapi av1 -> qsv av1 -> software",
+			primary:   EncoderAV1VAAPI,
+			available: arc,
+			want:      []Encoder{EncoderAV1QSV, EncoderAV1Software},
+		},
+		{
+			// A software primary can't run out of GPU sessions — no fail-over.
+			name:      "software primary -> nil",
+			primary:   EncoderSoftware,
+			available: laptop,
+			want:      nil,
+		},
+		{
+			// Stream-copy is not an encoder — no fail-over.
+			name:      "copy primary -> nil",
+			primary:   "copy",
+			available: laptop,
+			want:      nil,
+		},
+		{
+			// Same-vendor siblings are never fail-over targets (same saturated GPU).
+			name:      "never falls over to a same-vendor sibling",
+			primary:   EncoderNVENC,
+			available: []Encoder{EncoderNVENC, EncoderHEVCNVENC, EncoderSoftware},
+			want:      []Encoder{EncoderSoftware},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FallbackEncoders(tt.primary, tt.available)
+			if !encEq(got, tt.want) {
+				t.Errorf("FallbackEncoders(%s) = %v, want %v", tt.primary, got, tt.want)
+			}
+		})
+	}
+}

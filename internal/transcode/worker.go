@@ -106,8 +106,10 @@ type Worker struct {
 	encoderOpts      EncoderOpts       // per-deployment NVENC/maxrate tuning
 	qsvDecode        bool              // opt-in QSV hardware HEVC decode (TRANSCODE_QSV_DECODE)
 	qsvVRAM          bool              // opt-in full-VRAM Intel QSV (TRANSCODE_QSV_VRAM): qsv decode→vpp_qsv→qsv encode, all in VA surfaces. Off by default; validate on Intel HW
-	vaapiVRAM        bool              // opt-in full-VRAM VAAPI (TRANSCODE_VAAPI_VRAM): vaapi hw-decode→scale_vaapi→vaapi encode, all in VA surfaces. Off by default; validate on Intel/AMD HW
+	vaapiVRAM        bool              // full-VRAM VAAPI (TRANSCODE_VAAPI_VRAM): vaapi hw-decode→scale_vaapi→vaapi encode, all in VA surfaces. Default on; activates only on a VAAPI encoder (SDR)
+	vaapiTonemap     bool              // all-VRAM VAAPI HDR→SDR (scale_vaapi→tonemap_vaapi on VA surfaces) works here (startup probe); keeps HDR tonemap on the GPU instead of CPU zscale
 	cudaHevcDecode   bool              // NVDEC HEVC decode works here (startup probe); offloads 4K HEVC decode to the GPU (system memory)
+	encoderFailover  bool              // fail a hardware ENCODER over to the next configured provider when it can't acquire the GPU (e.g. GeForce NVENC 8-session cap → Intel iGPU QSV). Default on (TRANSCODE_ENCODER_FAILOVER); only fires when the box has a second provider
 	cudaScale        atomic.Bool       // full-VRAM chain (cuvid→scale_cuda→NVENC) works here; probed in the background (cold scale_cuda JIT can take ~90s), flips on when warmed
 	nodeID           string            // NODE_ID (hostname default) — reported so the admin can find this node in Settings ▸ Nodes
 	logger           *slog.Logger
@@ -147,6 +149,14 @@ func (w *Worker) SetQSVVRAM(v bool) { w.qsvVRAM = v }
 // default. SDR-only, single-GPU; software fallback. Validate before enabling.
 func (w *Worker) SetVAAPIVRAM(v bool) { w.vaapiVRAM = v }
 
+// SetEncoderFailover toggles hardware-encoder fail-over (TRANSCODE_ENCODER_FAILOVER,
+// default on). When on, a job whose hardware encoder can't acquire the GPU — most
+// commonly a GeForce NVENC worker hitting the driver's 8-session cap — is retried
+// on the next encode provider the box has configured (e.g. the Intel iGPU's QSV,
+// then software) instead of failing the stream. No effect on single-provider boxes,
+// where the fail-over chain is empty.
+func (w *Worker) SetEncoderFailover(v bool) { w.encoderFailover = v }
+
 // SetNodeID records this worker's NODE_ID so its registration advertises the
 // node identity its per-node config (Settings ▸ Nodes) is keyed by.
 func (w *Worker) SetNodeID(id string) { w.nodeID = id }
@@ -184,6 +194,18 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 			break
 		}
 	}
+	// All-VRAM VAAPI HDR→SDR (scale_vaapi→tonemap_vaapi) — real round-trip probe so
+	// the GPU HDR path is enabled only where the iHD/Mesa driver's tonemap_vaapi
+	// actually works; otherwise HDR keeps the software zscale tonemap. Skip unless a
+	// VAAPI encoder is present (no point probing on a non-VAAPI worker). Fast (~2-3s,
+	// no cold-JIT like the CUDA probes), so it runs synchronously here.
+	vaapiTonemap := false
+	for _, e := range encoders {
+		if IsVAAPIEncoder(e) {
+			vaapiTonemap = ProbeTonemapVAAPI(ctx)
+			break
+		}
+	}
 	// Probe OpenCL platforms once at worker startup. Result is cached
 	// for the worker's lifetime; ffmpeg arg-builder reads
 	// PickOpenCLDevice(this list, encoder) at session-start to avoid
@@ -205,6 +227,10 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasLibfdkAAC:     hasLibfdkAAC,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
+		encoderFailover:  true, // default on; opt out via TRANSCODE_ENCODER_FAILOVER
+		qsvVRAM:          true, // "run in VRAM when possible" default; only activates when a QSV encoder is selected, per-job software fallback covers sources/HW where it fails
+		vaapiVRAM:        true, // same, for VAAPI; activates only when a VAAPI encoder is selected
+		vaapiTonemap:     vaapiTonemap, // GPU HDR tonemap (probe-gated); keeps HDR off the CPU on VAAPI boxes
 		openclDevices:    openclDevices,
 		encoderOpts:      encOpts,
 		logger:           logger,
@@ -275,6 +301,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"encoders", EncoderNames(w.encoders),
 		"max_sessions", int(w.maxSessions.Load()),
 		"tonemap_cuda", w.cudaTonemap.Load(), // false at startup; probed async, flips on after the tonemap_cuda JIT warms
+		"tonemap_vaapi", w.vaapiTonemap, // GPU HDR→SDR on VAAPI (probe-gated at startup)
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
 		"libfdk_aac", w.hasLibfdkAAC,
@@ -298,7 +325,7 @@ func (w *Worker) register(ctx context.Context) error {
 		MaxSessions:     int(w.maxSessions.Load()),
 		ActiveSessions:  int(w.activeSessions.Load()),
 		ActiveCostCenti: int(w.activeCostCenti.Load()),
-		HasGPUTonemap:   w.hasLibplacebo || w.cudaTonemap.Load() || w.hasTonemapOpenCL,
+		HasGPUTonemap:   w.hasLibplacebo || w.cudaTonemap.Load() || w.hasTonemapOpenCL || w.vaapiTonemap,
 		RegisteredAt:    time.Now(),
 	})
 }
@@ -431,6 +458,13 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 
 	var ffArgs []string
 	var actualEncoder Encoder
+	// enc is hoisted to function scope (rather than living inside the switch's
+	// default case) so the encoder fail-over loop after the run can reassign it
+	// and rebuild the ffmpeg args on the next provider. encFallbacks is the
+	// ordered chain of alternate providers to try (empty unless this box has a
+	// second one configured).
+	var enc Encoder
+	var encFallbacks []Encoder
 	// buildTranscodeArgs rebuilds the re-encode argv with QSV decode on/off and
 	// an overridable start offset / segment number / playlist filename, so the
 	// QSV-decode path can retry with software decode on an early failure and
@@ -454,6 +488,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// buildTranscodeArgs and cleared on fallback like the CUDA flags.
 	qsvVRAMUsable := false
 	vaapiVRAMUsable := false
+	// vaapiTonemapUsable: all-VRAM VAAPI HDR (vaapi decode -> scale_vaapi ->
+	// tonemap_vaapi -> vaapi encode) — the HDR analogue of vaapiVRAMUsable, keeping
+	// HDR tonemap on the GPU. Same gating + per-job software fallback.
+	vaapiTonemapUsable := false
 	// cudaHDRUsable: this run attempts the GPU-assisted HDR chain (cuvid→
 	// scale_cuda(p010)→hwdownload→zscale tonemap) — the fallback when tonemap_cuda
 	// is unavailable. Same gating/fallback; also captured by buildTranscodeArgs.
@@ -490,7 +528,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	case "directStream":
 		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
 	default:
-		enc := Encoder(job.Encoder)
+		enc = Encoder(job.Encoder)
 		if enc == "" {
 			enc = BestEncoder(w.encoders)
 		}
@@ -571,6 +609,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				QSVDecode:            useQSV,
 				QSVVRAM:              qsvVRAMUsable,
 				VAAPIVRAM:            vaapiVRAMUsable,
+				VAAPITonemap:         vaapiTonemapUsable,
 				CudaHevcDecode:       cudaHevcUsable,
 				CudaVRAM:             cudaVRAMUsable,
 				CudaHDRTonemap:       cudaHDRUsable,
@@ -594,6 +633,11 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
 		vaapiVRAMUsable = w.vaapiVRAM && !job.NeedsToneMap && IsVAAPIEncoder(enc) &&
 			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
+		// All-VRAM VAAPI HDR (the HDR counterpart of vaapiVRAMUsable): keep the
+		// HDR→SDR tonemap on the GPU (scale_vaapi→tonemap_vaapi) instead of CPU
+		// zscale. Probe-gated (w.vaapiTonemap); software-zscale fallback on failure.
+		vaapiTonemapUsable = w.vaapiTonemap && job.NeedsToneMap && IsVAAPIEncoder(enc) &&
+			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
 		cudaHevcUsable = w.cudaHevcDecode && job.IsHEVC && enc != "copy"
 		// Full-VRAM scale_cuda path is SDR-only (HEVC or H.264): HDR re-encodes
 		// need the libplacebo tonemap, which runs from the system-memory
@@ -613,6 +657,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			w.hasZscale && !w.hasLibplacebo && IsNVENCEncoder(enc) && enc != "copy"
 		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
+		// Build the encoder fail-over chain for this provider (NVENC→QSV→…→
+		// software, same output codec family). Empty unless this box has a second
+		// provider configured — so single-GPU workers behave exactly as before.
+		if w.encoderFailover {
+			encFallbacks = FallbackEncoders(enc, w.encoders)
+		}
 	}
 
 	// Stamp the session with this worker's address and actual HEVC/AV1
@@ -742,9 +792,9 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// ctx) is not a decode failure, so selfExited gates this. Clearing
 	// cudaHevcUsable (captured by buildTranscodeArgs) and continuationUseQSV also
 	// drops hardware decode from the retry and any later continuation runs.
-	if (qsvDecodeUsable || qsvVRAMUsable || vaapiVRAMUsable || cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable || cudaTonemapUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
+	if (qsvDecodeUsable || qsvVRAMUsable || vaapiVRAMUsable || vaapiTonemapUsable || cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable || cudaTonemapUsable) && selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0 {
 		w.logger.Warn("hardware decode produced no segments; retrying with software decode",
-			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "qsv_vram", qsvVRAMUsable, "vaapi_vram", vaapiVRAMUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable, "tonemap_cuda", cudaTonemapUsable, "err", exitErr)
+			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "qsv_vram", qsvVRAMUsable, "vaapi_vram", vaapiVRAMUsable, "vaapi_tonemap", vaapiTonemapUsable, "nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable, "tonemap_cuda", cudaTonemapUsable, "err", exitErr)
 		// Clear any partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
@@ -754,9 +804,56 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		cudaHDRUsable = false
 		cudaTonemapUsable = false
 		// Drop the full-VRAM Intel paths too — the retry keeps the HW encoder but
-		// software-decodes (QSV/VAAPI default path), which is the safe fallback.
+		// software-decodes (QSV/VAAPI default path; VAAPI HDR falls back to CPU
+		// zscale tonemap), which is the safe fallback.
 		qsvVRAMUsable = false
 		vaapiVRAMUsable = false
+		vaapiTonemapUsable = false
+		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
+	}
+
+	// Encoder fail-over: a hardware ENCODER that can't acquire the GPU self-exits
+	// at init with no segment produced. The classic case is a GeForce NVENC worker
+	// hitting the driver's 8-concurrent-session cap (the consumer-card limit), but a
+	// QSV/VAAPI device momentarily out of surfaces looks identical. When this box
+	// has another encode provider configured (e.g. the laptop's Intel iGPU QSV
+	// alongside its RTX 4080), retry the job on the next provider instead of failing
+	// the stream — same failure signature as the hardware-decode fallback above:
+	// selfExited, non-nil err, zero segments on disk. A kill (session stop / idle /
+	// ctx-cancel) clears selfExited, so a stopped session never triggers fail-over.
+	// encFallbacks is empty on single-provider boxes, so the loop is a no-op there.
+	for _, fb := range encFallbacks {
+		if !(selfExited && exitErr != nil && HighestSegmentIndex(sessionDir, segExt) < 0) {
+			break // produced output (or was killed) — keep the current encoder
+		}
+		w.logger.Warn("encoder could not acquire device; failing over to next provider",
+			"session_id", job.SessionID, "from", enc, "to", fb, "err", exitErr)
+		// Reset partial output so segment numbering restarts at 0.
+		_ = os.RemoveAll(sessionDir)
+		_ = os.MkdirAll(sessionDir, 0755)
+		enc = fb
+		// Conservative path on the fallback provider: software decode + hardware
+		// encode, no full-VRAM chains (those are gated on the original GPU).
+		continuationUseQSV = false
+		qsvDecodeUsable = false
+		cudaHevcUsable = false
+		cudaVRAMUsable = false
+		cudaHDRUsable = false
+		cudaTonemapUsable = false
+		qsvVRAMUsable = false
+		vaapiVRAMUsable = false
+		vaapiTonemapUsable = false
+		// Re-stamp the output codec family for the new encoder. FallbackEncoders
+		// keeps the same family, so segExt is unchanged in practice — re-derive it
+		// (and the session's HEVC/AV1 flags, via runFFmpeg → SetWorkerInfo)
+		// defensively so the playlist handler waits on the right segment extension.
+		actualEncoder = enc
+		actualHEVC = IsHEVCEncoder(enc)
+		actualAV1 = IsAV1Encoder(enc)
+		segExt = ".ts"
+		if actualHEVC || actualAV1 {
+			segExt = ".m4s"
+		}
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
 	}
 

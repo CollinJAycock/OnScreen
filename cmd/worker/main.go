@@ -221,6 +221,14 @@ func run() error {
 	if cfg.TranscodeVAAPIVRAM {
 		logger.Info("full-VRAM VAAPI path enabled (TRANSCODE_VAAPI_VRAM)")
 	}
+	// Hardware-encoder fail-over (TRANSCODE_ENCODER_FAILOVER, default on): if this
+	// worker's hardware encoder can't acquire the GPU (e.g. a GeForce NVENC worker
+	// hitting the 8-session driver cap), retry the job on the next provider this box
+	// has (Intel iGPU QSV, then software) instead of failing the stream.
+	transcodeWorker.SetEncoderFailover(cfg.TranscodeEncoderFailover)
+	if !cfg.TranscodeEncoderFailover {
+		logger.Info("hardware-encoder fail-over disabled (TRANSCODE_ENCODER_FAILOVER=false)")
+	}
 
 	// ── Health server ─────────────────────────────────────────────────────────
 	liveH, readyH := observability.HealthHandler(

@@ -33,6 +33,8 @@ var (
 	sessions    = flag.Int("sessions", 4, "concurrent transcode sessions (transcode mode)")
 	interval    = flag.Duration("interval", 30*time.Second, "time between new viewers (transcode mode)")
 	watchDur    = flag.Duration("watch", 5*time.Minute, "how long each viewer watches (transcode mode)")
+	users       = flag.String("users", "", "transcode mode: comma-separated usernames to spread viewers across (each ≤5 streams); all share -pass. Empty = single -user")
+	movies      = flag.String("movies", "", "transcode mode: restrict viewers to these comma-separated item IDs (e.g. HDR-only to saturate the tonemap path). Empty = all library movies")
 )
 
 // result captures a single request outcome.
@@ -131,7 +133,11 @@ func main() {
 
 	// Transcode mode — spin up concurrent HLS sessions.
 	if *mode == "transcode" {
-		runTranscodeLoadTest(client, *baseURL, accessToken, *sessions, *duration)
+		tokens := []string{accessToken}
+		if *users != "" {
+			tokens = loginUsers(client, *baseURL, strings.Split(*users, ","), *password)
+		}
+		runTranscodeLoadTest(client, *baseURL, tokens, *movies, *duration)
 		return
 	}
 
@@ -357,6 +363,31 @@ func main() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// loginUsers logs in each named user (all sharing pass) and returns their access
+// tokens. Used by transcode mode to spread viewers across users so the per-user
+// 5-stream cap doesn't bottleneck a high-concurrency fleet test.
+func loginUsers(client *http.Client, base string, names []string, pass string) []string {
+	var tokens []string
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		acc, _, err := login(client, base, n, pass)
+		if err != nil {
+			fmt.Printf("  warning: login %s failed: %v\n", n, err)
+			continue
+		}
+		tokens = append(tokens, acc)
+	}
+	if len(tokens) == 0 {
+		fmt.Fprintln(os.Stderr, "no users logged in for transcode mode")
+		os.Exit(1)
+	}
+	fmt.Printf("Logged in %d users for transcode load (≤5 streams each)\n", len(tokens))
+	return tokens
+}
 
 func login(client *http.Client, base, user, pass string) (access, refresh string, err error) {
 	body, _ := json.Marshal(map[string]string{"username": user, "password": pass})

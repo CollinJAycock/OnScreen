@@ -123,21 +123,30 @@ type Config struct {
 	// cross-GPU surface sharing. Only applies to HEVC sources on a re-encode.
 	// If a source fails to decode on QSV, disable the flag for that worker.
 	TranscodeQSVDecode bool `env:"TRANSCODE_QSV_DECODE" envDefault:"false"`
-	// TranscodeQSVVRAM opts a worker into the full-VRAM Intel QSV path: QSV
-	// decodes into VA surfaces (`-hwaccel qsv -hwaccel_output_format qsv`),
-	// vpp_qsv scales in GPU memory, and a QSV encoder reads those surfaces —
-	// the Intel analogue of the NVDEC→scale_cuda→NVENC zero-copy path. Off by
-	// default, opt-in per worker, SDR-only, and only when the SAME Intel GPU
-	// both decodes and encodes (a QSV encoder is selected). Software fallback on
-	// failure. Unvalidated until run on real Intel hardware — enable only on a
-	// worker whose QSV stack is confirmed good.
-	TranscodeQSVVRAM bool `env:"TRANSCODE_QSV_VRAM" envDefault:"false"`
+	// TranscodeQSVVRAM uses the full-VRAM Intel QSV path: QSV decodes into VA
+	// surfaces (`-hwaccel qsv -hwaccel_output_format qsv`), vpp_qsv scales in GPU
+	// memory, and a QSV encoder reads those surfaces — the Intel analogue of the
+	// NVDEC→scale_cuda→NVENC zero-copy path. ON by default ("run in VRAM when
+	// possible"): it only activates when a QSV encoder is actually selected (SDR-
+	// only, same GPU decodes + encodes), and the worker falls back to software
+	// decode per-job if the VRAM pipeline fails before the first segment. Validated
+	// on the Intel UHD iGPU and Arc A770. Set false to force the software path.
+	TranscodeQSVVRAM bool `env:"TRANSCODE_QSV_VRAM" envDefault:"true"`
 	// TranscodeVAAPIVRAM is the VAAPI equivalent of TranscodeQSVVRAM: VAAPI
 	// hardware-decodes into VA surfaces (`-hwaccel vaapi -hwaccel_output_format
 	// vaapi`), scale_vaapi scales in GPU memory, and a VAAPI encoder reads those
-	// surfaces (no software decode, no hwupload). Same constraints, off by
-	// default, software fallback, validate before enabling.
-	TranscodeVAAPIVRAM bool `env:"TRANSCODE_VAAPI_VRAM" envDefault:"false"`
+	// surfaces (no software decode, no hwupload). ON by default; activates only when
+	// a VAAPI encoder is selected, with the same per-job software fallback. Validated
+	// on the Arc A770 — cut host CPU load ~65% vs software decode at equal load. Set
+	// false to force the software path.
+	TranscodeVAAPIVRAM bool `env:"TRANSCODE_VAAPI_VRAM" envDefault:"true"`
+	// TranscodeEncoderFailover lets a worker fail a job over to the next encode
+	// provider it has configured when its hardware encoder can't acquire the GPU —
+	// most commonly a GeForce NVENC worker hitting the driver's 8-concurrent-session
+	// cap, which then spills onto the box's Intel iGPU (QSV), then software. On by
+	// default; only fires on boxes that actually have a second provider, so it's a
+	// no-op on single-GPU workers. Set false to force a hard failure instead.
+	TranscodeEncoderFailover bool `env:"TRANSCODE_ENCODER_FAILOVER" envDefault:"true"`
 	// AutoMigrate runs pending embedded DB migrations on startup, before serving.
 	// Off by default — most deploys apply migrations as an explicit step (Docker
 	// migrate service, installer migrate.sh, `server migrate`). Set true for

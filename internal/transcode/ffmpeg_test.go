@@ -131,6 +131,69 @@ func TestBuildHLS_ToneMap_Software(t *testing.T) {
 	}
 }
 
+func TestBuildHLS_ToneMap_VAAPI_VRAM(t *testing.T) {
+	// HDR on a VAAPI encoder WITH the tonemap_vaapi probe passed → all-VRAM GPU
+	// path: hardware-decode into VA surfaces, scale_vaapi + tonemap_vaapi, no CPU.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/hdr.mkv",
+		Encoder:       EncoderHEVCVAAPI,
+		IsVAAPI:       true,
+		IsHEVC:        true,
+		NeedsToneMap:  true,
+		VAAPITonemap:  true,
+		HasZscale:     true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-hwaccel vaapi -hwaccel_output_format vaapi") {
+		t.Errorf("expected VAAPI hardware decode into VA surfaces: %s", argStr)
+	}
+	if !strings.Contains(argStr, "tonemap_vaapi") {
+		t.Errorf("expected GPU tonemap_vaapi in args: %s", argStr)
+	}
+	if !strings.Contains(argStr, "scale_vaapi") {
+		t.Errorf("expected scale_vaapi in args: %s", argStr)
+	}
+	// Must NOT touch the CPU: no zscale tonemap, no hwupload (input is HW-decoded).
+	if strings.Contains(argStr, "zscale") {
+		t.Errorf("VAAPI VRAM HDR must not use CPU zscale: %s", argStr)
+	}
+	if strings.Contains(argStr, "hwupload") {
+		t.Errorf("VAAPI VRAM HDR hardware-decodes; must not hwupload: %s", argStr)
+	}
+}
+
+func TestBuildHLS_ToneMap_VAAPI_FallsBackToSoftwareWithoutProbe(t *testing.T) {
+	// HDR on a VAAPI encoder WITHOUT the tonemap_vaapi probe → CPU zscale path.
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/hdr.mkv",
+		Encoder:       EncoderHEVCVAAPI,
+		IsVAAPI:       true,
+		IsHEVC:        true,
+		NeedsToneMap:  true,
+		VAAPITonemap:  false,
+		HasZscale:     true,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if strings.Contains(argStr, "tonemap_vaapi") {
+		t.Errorf("without the probe, HDR VAAPI must not use tonemap_vaapi: %s", argStr)
+	}
+	if !strings.Contains(argStr, "zscale") {
+		t.Errorf("without the probe, HDR VAAPI should fall back to CPU zscale: %s", argStr)
+	}
+}
+
 func TestBuildHLS_AudioCopy_NoChannelArgs(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath:     "/media/movie.mkv",

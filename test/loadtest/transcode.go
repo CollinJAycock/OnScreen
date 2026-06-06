@@ -63,7 +63,7 @@ type movieItem struct {
 	Title string
 }
 
-func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur time.Duration) {
+func runTranscodeLoadTest(client *http.Client, base string, tokens []string, movieFilter string, dur time.Duration) {
 	fmt.Println("=== Transcode Load Test (Real-World) ===")
 	fmt.Printf("Target:         %s\n", base)
 	fmt.Printf("Duration:       %s (new viewers spawn for this long)\n", dur)
@@ -75,10 +75,28 @@ func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur ti
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	// Discover all movies.
-	movies := discoverAllMovies(client, base, token)
+	// Discover all movies (any token works).
+	movies := discoverAllMovies(client, base, tokens[0])
+	// Optional filter: restrict to specific item IDs (e.g. HDR-only to saturate
+	// the GPU tonemap path).
+	if movieFilter != "" {
+		want := map[string]bool{}
+		for _, id := range strings.Split(movieFilter, ",") {
+			if s := strings.TrimSpace(id); s != "" {
+				want[s] = true
+			}
+		}
+		var filtered []movieItem
+		for _, m := range movies {
+			if want[m.ID] {
+				filtered = append(filtered, m)
+			}
+		}
+		movies = filtered
+		fmt.Printf("Movie filter active: %d of the requested IDs matched\n", len(movies))
+	}
 	if len(movies) == 0 {
-		fmt.Println("ERROR: no movies found in any library")
+		fmt.Println("ERROR: no movies found (check library / -movies filter)")
 		return
 	}
 	fmt.Printf("Found %d movies in library\n\n", len(movies))
@@ -138,7 +156,10 @@ func runTranscodeLoadTest(client *http.Client, base, token string, _ int, dur ti
 			}
 
 			fmt.Printf("  Viewer %d started: %s\n", idx, movie.Title)
-			runViewer(ctx, client, base, token, idx, movie, *watchDur, st, &totalSegs)
+			// Round-robin viewers across the user pool so no single user trips the
+			// per-user 5-stream cap.
+			tok := tokens[(idx-1)%len(tokens)]
+			runViewer(ctx, client, base, tok, idx, movie, *watchDur, st, &totalSegs)
 			atomic.AddInt32(&curActive, -1)
 			fmt.Printf("  Viewer %d finished: %d segs, %s\n", idx, st.segCount, formatBytes(st.segBytes))
 		}()
