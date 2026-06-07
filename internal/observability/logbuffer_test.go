@@ -101,6 +101,42 @@ func TestLogRingBuffer_FiltersByLevel(t *testing.T) {
 	}
 }
 
+func TestLogRingBuffer_WarningsSurviveInfoFlood(t *testing.T) {
+	// The whole point of the dedicated warn ring: a warning must stay
+	// retrievable via a WARN query even after a flood of INFO has wrapped the
+	// all-level ring many times over. This reproduces the production failure
+	// (scan/request INFO evicting transcode warnings within minutes).
+	buf := newRing(4, slog.LevelDebug) // tiny ring so a few writes wrap it
+	logger := slog.New(buf)
+
+	emit(t, logger, slog.LevelWarn, "the-warning")
+	emit(t, logger, slog.LevelError, "the-error")
+	for i := 0; i < 50; i++ { // overrun the 4-slot all ring 12×
+		emit(t, logger, slog.LevelInfo, "noise", "n", i)
+	}
+
+	// All-level view has been overrun — the warning/error are gone there.
+	for _, e := range buf.Snapshot(slog.LevelDebug) {
+		if e.Message == "the-warning" || e.Message == "the-error" {
+			t.Fatalf("expected %q to be evicted from the all ring by the INFO flood", e.Message)
+		}
+	}
+
+	// WARN view still has both, oldest-to-newest, untouched by the flood.
+	got := buf.Snapshot(slog.LevelWarn)
+	if len(got) != 2 {
+		t.Fatalf("warn ring: got %d entries, want 2 (warning survived the flood)", len(got))
+	}
+	if got[0].Message != "the-warning" || got[1].Message != "the-error" {
+		t.Errorf("warn ring order/content wrong: %+v", got)
+	}
+
+	// ERROR view filters the warn ring down to just the error.
+	if errs := buf.Snapshot(slog.LevelError); len(errs) != 1 || errs[0].Message != "the-error" {
+		t.Errorf("error view: got %+v, want [the-error]", errs)
+	}
+}
+
 func TestLogRingBuffer_RespectsInnerEnabled(t *testing.T) {
 	// Inner handler suppresses Debug — the ring should never see those
 	// records since slog.Logger short-circuits on Enabled() == false.

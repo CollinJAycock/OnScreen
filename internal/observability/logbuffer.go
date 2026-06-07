@@ -12,19 +12,79 @@ import (
 // LogRingBuffer is a fixed-capacity, thread-safe ring of recent log records.
 // It wraps an inner slog.Handler so every Handle call writes through to the
 // real destination (stdout JSON in production) AND captures the formatted
-// JSON line in the ring. The /admin/logs endpoint reads from this ring so
+// JSON line in a ring. The /admin/logs endpoint reads from this ring so
 // operators can pull recent server output without shell access to the host.
 //
-// Capacity is fixed at construction; oldest entries are evicted in O(1) when
-// the ring fills. Memory ceiling is roughly capacity × line size — for
-// capacity=2000 and ~500 B per line that's ~1 MB, comfortable on the heap
-// without becoming the largest single allocation in the process.
+// It keeps TWO rings:
+//
+//   - all:  every record the inner handler emits (INFO+ in production). This is
+//     the "recent activity" view. Under load it's dominated by high-volume INFO
+//     (request logs, per-item scan/enrichment lines) and wraps within minutes —
+//     that's fine, it's meant to show what's happening *now*.
+//   - warn: WARN and ERROR records only. Warnings/errors are rare, so this ring
+//     retains them for a long time REGARDLESS of INFO volume. Without it, a
+//     burst of INFO evicts a warning within minutes and an operator pulling
+//     `?level=warn` later sees nothing — the exact failure mode that made this
+//     buffer useless for diagnosing intermittent transcode/playback issues.
+//
+// A WARN-or-higher Snapshot reads the warn ring; anything lower reads all.
+//
+// Capacity is fixed at construction; oldest entries are evicted in O(1) when a
+// ring fills. Memory ceiling is roughly 2 × capacity × line size — for
+// capacity=2000 and ~500 B per line that's ~2 MB, comfortable on the heap.
 type LogRingBuffer struct {
-	mu      sync.Mutex
+	mu    sync.Mutex
+	all   ringBuf // all levels — recent-activity view, INFO-dominated
+	warn  ringBuf // WARN/ERROR only — durable; an INFO flood can't evict it
+	inner slog.Handler
+}
+
+// ringBuf is a fixed-capacity ring of log entries. It is not safe for
+// concurrent use on its own — LogRingBuffer.mu guards every access.
+type ringBuf struct {
 	entries []logEntry
 	pos     int
 	full    bool
-	inner   slog.Handler
+}
+
+// push appends e, evicting the oldest entry when the ring is full.
+func (r *ringBuf) push(e logEntry) {
+	r.entries[r.pos] = e
+	r.pos = (r.pos + 1) % len(r.entries)
+	if r.pos == 0 {
+		r.full = true
+	}
+}
+
+// scan returns the ring's entries oldest-to-newest, excluding levels below
+// minLevel.
+func (r *ringBuf) scan(minLevel slog.Level) []LogEntry {
+	count := r.pos
+	start := 0
+	if r.full {
+		count = len(r.entries)
+		start = r.pos
+	}
+	out := make([]LogEntry, 0, count)
+	for i := 0; i < count; i++ {
+		e := r.entries[(start+i)%len(r.entries)]
+		if e.level < minLevel {
+			continue
+		}
+		entry := LogEntry{
+			Time:    e.t,
+			Level:   e.level.String(),
+			Message: e.msg,
+		}
+		if len(e.rawAttrs) > 0 {
+			var attrs map[string]any
+			if err := json.Unmarshal(e.rawAttrs, &attrs); err == nil {
+				entry.Attrs = attrs
+			}
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // LogEntry is the public shape returned to API consumers. Fields mirror the
@@ -46,14 +106,16 @@ type logEntry struct {
 	rawAttrs []byte
 }
 
-// NewLogRingBuffer wraps inner with a ring of the given capacity.
+// NewLogRingBuffer wraps inner with rings of the given capacity (one for all
+// records, one for WARN+).
 func NewLogRingBuffer(inner slog.Handler, capacity int) *LogRingBuffer {
 	if capacity <= 0 {
 		capacity = 1000
 	}
 	return &LogRingBuffer{
-		entries: make([]logEntry, capacity),
-		inner:   inner,
+		all:   ringBuf{entries: make([]logEntry, capacity)},
+		warn:  ringBuf{entries: make([]logEntry, capacity)},
+		inner: inner,
 	}
 }
 
@@ -64,7 +126,7 @@ func (r *LogRingBuffer) Enabled(ctx context.Context, level slog.Level) bool {
 	return r.inner.Enabled(ctx, level)
 }
 
-// Handle writes the record to the inner handler and appends it to the ring.
+// Handle writes the record to the inner handler and appends it to the ring(s).
 // Inner-write errors are returned so the caller (slog) sees the same outcome
 // it would without us in the chain.
 func (r *LogRingBuffer) Handle(ctx context.Context, rec slog.Record) error {
@@ -91,16 +153,20 @@ func (r *LogRingBuffer) Handle(ctx context.Context, rec slog.Record) error {
 		_ = enc.Encode(attrs)
 	}
 
-	r.mu.Lock()
-	r.entries[r.pos] = logEntry{
+	e := logEntry{
 		t:        rec.Time,
 		level:    rec.Level,
 		msg:      rec.Message,
 		rawAttrs: append([]byte(nil), buf.Bytes()...),
 	}
-	r.pos = (r.pos + 1) % len(r.entries)
-	if r.pos == 0 {
-		r.full = true
+
+	r.mu.Lock()
+	r.all.push(e)
+	// Mirror warnings/errors into their own ring so a high-volume INFO stream
+	// (scans, request logs) can't evict them — this is what keeps a warning
+	// retrievable via `?level=warn` minutes or hours after it happened.
+	if rec.Level >= slog.LevelWarn {
+		r.warn.push(e)
 	}
 	r.mu.Unlock()
 
@@ -110,47 +176,25 @@ func (r *LogRingBuffer) Handle(ctx context.Context, rec slog.Record) error {
 // WithAttrs / WithGroup delegate to the inner handler. The ring captures
 // only the per-record attrs (not the bound ones) — operators reading
 // /admin/logs care about the message + immediate context; the bound
-// request_id / user_id are already in the per-record stream.
+// request_id / user_id are already in the per-record stream. The clone
+// shares the parent's ring backing arrays.
 func (r *LogRingBuffer) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &LogRingBuffer{entries: r.entries, pos: r.pos, full: r.full, inner: r.inner.WithAttrs(attrs)}
+	return &LogRingBuffer{all: r.all, warn: r.warn, inner: r.inner.WithAttrs(attrs)}
 }
 
 func (r *LogRingBuffer) WithGroup(name string) slog.Handler {
-	return &LogRingBuffer{entries: r.entries, pos: r.pos, full: r.full, inner: r.inner.WithGroup(name)}
+	return &LogRingBuffer{all: r.all, warn: r.warn, inner: r.inner.WithGroup(name)}
 }
 
-// Snapshot returns the ring entries in oldest-to-newest order. Callers that
-// want only the tail should slice from the end. Levels below minLevel are
-// excluded; pass slog.LevelDebug to include everything.
+// Snapshot returns ring entries in oldest-to-newest order. Levels below
+// minLevel are excluded; pass slog.LevelDebug to include everything. A
+// WARN-or-higher minLevel reads the dedicated warn ring (durable across INFO
+// floods); anything lower reads the all-level ring.
 func (r *LogRingBuffer) Snapshot(minLevel slog.Level) []LogEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	count := r.pos
-	start := 0
-	if r.full {
-		count = len(r.entries)
-		start = r.pos
+	if minLevel >= slog.LevelWarn {
+		return r.warn.scan(minLevel)
 	}
-
-	out := make([]LogEntry, 0, count)
-	for i := 0; i < count; i++ {
-		e := r.entries[(start+i)%len(r.entries)]
-		if e.level < minLevel {
-			continue
-		}
-		entry := LogEntry{
-			Time:    e.t,
-			Level:   e.level.String(),
-			Message: e.msg,
-		}
-		if len(e.rawAttrs) > 0 {
-			var attrs map[string]any
-			if err := json.Unmarshal(e.rawAttrs, &attrs); err == nil {
-				entry.Attrs = attrs
-			}
-		}
-		out = append(out, entry)
-	}
-	return out
+	return r.all.scan(minLevel)
 }
