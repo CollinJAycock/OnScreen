@@ -1046,7 +1046,7 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rewritten := rewritePlaylist(data, sessionID, token)
+	rewritten := rewritePlaylist(data, sessionID, token, h.cfg.PublicSegmentBaseURL)
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write(rewritten)
@@ -1193,10 +1193,25 @@ func sanitizePathComponent(s string) string {
 	return filepath.Base(strings.ReplaceAll(s, `\`, `/`))
 }
 
-// rewritePlaylist rewrites segment URIs in an HLS playlist to absolute API paths
-// with the auth token embedded, so HLS.js can request them without extra config.
-// Handles both MPEG-TS (.ts) and fMP4 (.m4s / init.mp4) segment references.
-func rewritePlaylist(data []byte, sessionID, token string) []byte {
+// publicSeg prefixes a relative transcode URL with the configured public segment
+// base URL (PUBLIC_SEGMENT_BASE_URL) when set, so the bandwidth-heavy segment /
+// rung-playlist traffic can be routed to a direct host that bypasses a CDN/tunnel
+// while the API and UI stay on the main host. Empty base → path unchanged
+// (same-origin). A trailing slash on base is tolerated.
+func publicSeg(base, path string) string {
+	if base == "" {
+		return path
+	}
+	return strings.TrimRight(base, "/") + path
+}
+
+// rewritePlaylist rewrites segment URIs in an HLS playlist to API paths with the
+// auth token embedded, so HLS.js can request them without extra config. Handles
+// both MPEG-TS (.ts) and fMP4 (.m4s / init.mp4) segment references. When baseURL
+// is non-empty, segment URLs are made absolute against it (see publicSeg) so the
+// heavy segment fetches can ride a direct/CDN host while the manifest — which
+// the player re-polls from the main host — stays where it was served.
+func rewritePlaylist(data []byte, sessionID, token, baseURL string) []byte {
 	var buf bytes.Buffer
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
@@ -1205,8 +1220,8 @@ func rewritePlaylist(data []byte, sessionID, token string) []byte {
 		if !strings.HasPrefix(line, "#") &&
 			(strings.HasSuffix(line, ".ts") || strings.HasSuffix(line, ".m4s") || strings.HasSuffix(line, ".mp4")) {
 			name := filepath.Base(line)
-			line = fmt.Sprintf("/api/v1/transcode/sessions/%s/seg/%s?token=%s",
-				sessionID, name, token)
+			line = publicSeg(baseURL, fmt.Sprintf("/api/v1/transcode/sessions/%s/seg/%s?token=%s",
+				sessionID, name, token))
 		}
 		// Rewrite #EXT-X-MAP URI (fMP4 init segment).
 		if strings.HasPrefix(line, "#EXT-X-MAP:URI=") {
@@ -1214,8 +1229,8 @@ func rewritePlaylist(data []byte, sessionID, token string) []byte {
 			name := strings.TrimPrefix(line, "#EXT-X-MAP:URI=")
 			name = strings.Trim(name, "\"")
 			name = filepath.Base(name)
-			line = fmt.Sprintf("#EXT-X-MAP:URI=\"/api/v1/transcode/sessions/%s/seg/%s?token=%s\"",
-				sessionID, name, token)
+			line = fmt.Sprintf("#EXT-X-MAP:URI=\"%s\"", publicSeg(baseURL, fmt.Sprintf("/api/v1/transcode/sessions/%s/seg/%s?token=%s",
+				sessionID, name, token)))
 		}
 		buf.WriteString(line + "\n")
 	}

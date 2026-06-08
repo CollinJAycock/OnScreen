@@ -95,7 +95,7 @@ func (h *NativeTranscodeHandler) StaticMaster(w http.ResponseWriter, r *http.Req
 		return
 	}
 	token := r.URL.Query().Get("token")
-	base := fmt.Sprintf("/api/v1/transcode/static/%s", file.ID)
+	base := publicSeg(h.cfg.PublicSegmentBaseURL, fmt.Sprintf("/api/v1/transcode/static/%s", file.ID))
 	out := rewritePlaylistURIs(master, func(uri string) string {
 		// uri is "<rung>/index.m3u8" relative to the master.
 		return base + "/" + uri + tokenQuery(token)
@@ -119,7 +119,7 @@ func (h *NativeTranscodeHandler) StaticRung(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	token := r.URL.Query().Get("token")
-	base := fmt.Sprintf("/api/v1/transcode/static/%s/%s", file.ID, rung)
+	base := publicSeg(h.cfg.PublicSegmentBaseURL, fmt.Sprintf("/api/v1/transcode/static/%s/%s", file.ID, rung))
 	out := rewritePlaylistURIs(playlist, func(seg string) string {
 		key := h.staticKey(staticabr.SegmentKey(file.ID, rung, seg))
 		if signed, serr := h.mediaStore().SignedURL(ctx, key, auth.StreamTokenTTL); serr == nil && signed != "" {

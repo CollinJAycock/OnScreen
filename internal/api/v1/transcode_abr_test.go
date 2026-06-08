@@ -12,7 +12,7 @@ import (
 
 func TestBuildPredictedVariantPlaylist(t *testing.T) {
 	// 10s source @ 4s segments (fps unknown → flat grid) → segs 0,1,2 (last = 2s).
-	pl := buildPredictedVariantPlaylist(10_000, 0, "sid123", "720p", "tok", false)
+	pl := buildPredictedVariantPlaylist(10_000, 0, "sid123", "720p", "tok", false, "")
 
 	if !strings.HasPrefix(pl, "#EXTM3U\n") {
 		t.Fatalf("must start with #EXTM3U:\n%s", pl)
@@ -42,7 +42,7 @@ func TestBuildPredictedVariantPlaylist(t *testing.T) {
 
 func TestBuildPredictedVariantPlaylist_ExactMultiple(t *testing.T) {
 	// 8s → exactly 2 full segments, no partial tail.
-	pl := buildPredictedVariantPlaylist(8_000, 0, "s", "480p", "t", false)
+	pl := buildPredictedVariantPlaylist(8_000, 0, "s", "480p", "t", false, "")
 	if n := strings.Count(pl, "#EXTINF:"); n != 2 {
 		t.Errorf("got %d segments, want 2:\n%s", n, pl)
 	}
@@ -56,7 +56,7 @@ func TestBuildPredictedVariantPlaylist_FrameQuantized(t *testing.T) {
 	// 0, 96/fps=4.004, 192/fps=8.008. A 10s source yields segs at those
 	// boundaries with a 1.992s tail — matching the encoder, not a flat grid.
 	const fps = 24000.0 / 1001.0
-	pl := buildPredictedVariantPlaylist(10_000, fps, "sid", "720p", "tok", false)
+	pl := buildPredictedVariantPlaylist(10_000, fps, "sid", "720p", "tok", false, "")
 
 	if n := strings.Count(pl, "#EXTINF:"); n != 3 {
 		t.Fatalf("got %d segments, want 3:\n%s", n, pl)
@@ -163,7 +163,7 @@ func TestABRMasterURLsUseRungLabels(t *testing.T) {
 func TestBuildPredictedVariantPlaylist_FMP4(t *testing.T) {
 	// HEVC fMP4 ladder: the playlist references an init segment via EXT-X-MAP
 	// and uses .m4s media segments, not .ts.
-	pl := buildPredictedVariantPlaylist(10_000, 0, "sid", "1080p", "tok", true)
+	pl := buildPredictedVariantPlaylist(10_000, 0, "sid", "1080p", "tok", true, "")
 
 	if !strings.Contains(pl, `#EXT-X-MAP:URI="/api/v1/transcode/sessions/sid/abr/1080p/seg/init.mp4?token=tok"`) {
 		t.Errorf("fMP4 playlist missing EXT-X-MAP init segment:\n%s", pl)

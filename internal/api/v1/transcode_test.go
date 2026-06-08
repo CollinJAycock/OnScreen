@@ -11,7 +11,7 @@ func TestRewritePlaylist_RewritesSegmentURIs(t *testing.T) {
 	sessionID := "abc123"
 	token := "tok456"
 
-	out := string(rewritePlaylist(input, sessionID, token))
+	out := string(rewritePlaylist(input, sessionID, token, ""))
 
 	want1 := "/api/v1/transcode/sessions/abc123/seg/seg000.ts?token=tok456"
 	want2 := "/api/v1/transcode/sessions/abc123/seg/seg001.ts?token=tok456"
@@ -25,7 +25,7 @@ func TestRewritePlaylist_RewritesSegmentURIs(t *testing.T) {
 
 func TestRewritePlaylist_PreservesNonSegmentLines(t *testing.T) {
 	input := []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:4.000,\nseg000.ts\n")
-	out := string(rewritePlaylist(input, "sid", "tok"))
+	out := string(rewritePlaylist(input, "sid", "tok", ""))
 
 	if !containsLine(out, "#EXTM3U") {
 		t.Error("missing #EXTM3U header")
@@ -38,7 +38,7 @@ func TestRewritePlaylist_PreservesNonSegmentLines(t *testing.T) {
 func TestRewritePlaylist_HandlesSubdirectoryPaths(t *testing.T) {
 	// FFmpeg might emit "sub/seg000.ts" — filepath.Base should extract just "seg000.ts".
 	input := []byte("#EXTM3U\n#EXTINF:4.000,\nsub/seg000.ts\n")
-	out := string(rewritePlaylist(input, "sid", "tok"))
+	out := string(rewritePlaylist(input, "sid", "tok", ""))
 
 	want := "/api/v1/transcode/sessions/sid/seg/seg000.ts?token=tok"
 	if !containsLine(out, want) {
@@ -47,9 +47,37 @@ func TestRewritePlaylist_HandlesSubdirectoryPaths(t *testing.T) {
 }
 
 func TestRewritePlaylist_EmptyInput(t *testing.T) {
-	out := rewritePlaylist([]byte(""), "sid", "tok")
+	out := rewritePlaylist([]byte(""), "sid", "tok", "")
 	if len(out) > 1 { // may contain trailing newline
 		// Should not panic and should return minimal output.
+	}
+}
+
+func TestRewritePlaylist_PublicSegmentBaseURL(t *testing.T) {
+	input := []byte("#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:4.000,\nseg000.m4s\n")
+	out := string(rewritePlaylist(input, "sid", "tok", "https://seg.example.com/"))
+
+	// Segment + init URIs go absolute against the base (trailing slash trimmed).
+	wantSeg := "https://seg.example.com/api/v1/transcode/sessions/sid/seg/seg000.m4s?token=tok"
+	if !containsLine(out, wantSeg) {
+		t.Errorf("segment not prefixed with public base: want %q in:\n%s", wantSeg, out)
+	}
+	wantMap := "#EXT-X-MAP:URI=\"https://seg.example.com/api/v1/transcode/sessions/sid/seg/init.mp4?token=tok\""
+	if !containsLine(out, wantMap) {
+		t.Errorf("EXT-X-MAP not prefixed: want %q in:\n%s", wantMap, out)
+	}
+}
+
+func TestPublicSeg(t *testing.T) {
+	cases := []struct{ base, path, want string }{
+		{"", "/api/v1/x", "/api/v1/x"}, // same-origin: unchanged
+		{"https://seg.example.com", "/api/v1/x", "https://seg.example.com/api/v1/x"},
+		{"https://seg.example.com/", "/api/v1/x", "https://seg.example.com/api/v1/x"}, // trailing slash trimmed
+	}
+	for _, c := range cases {
+		if got := publicSeg(c.base, c.path); got != c.want {
+			t.Errorf("publicSeg(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
+		}
 	}
 }
 

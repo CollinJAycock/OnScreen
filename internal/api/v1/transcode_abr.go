@@ -139,7 +139,7 @@ func (h *NativeTranscodeHandler) serveABRMaster(w http.ResponseWriter, r *http.R
 		}
 	}
 	master := transcode.BuildMasterPlaylist(sess.ABRRenditions, codecs, func(rd transcode.Rendition) string {
-		return fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token)
+		return publicSeg(h.cfg.PublicSegmentBaseURL, fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token))
 	})
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -171,7 +171,7 @@ func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *ht
 		return
 	}
 
-	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, abrIsFMP4(sess))
+	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, abrIsFMP4(sess), h.cfg.PublicSegmentBaseURL)
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write([]byte(playlist))
@@ -212,7 +212,7 @@ func abrSegmentBoundarySec(segIdx int, fps float64) float64 {
 // will actually cut (see abrSegmentBoundarySec); the last segment carries the
 // remainder. Segment URIs are global indices the segment handler maps to
 // on-demand transcode offsets.
-func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, token string, fmp4 bool) string {
+func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, token string, fmp4 bool, baseURL string) string {
 	segDur := transcode.SegmentDuration
 	total := float64(durationMS) / 1000.0
 	ext := abrSegExt(fmp4)
@@ -223,7 +223,7 @@ func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, tok
 	b.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n")
 	// fMP4 (HEVC) segments need the shared init segment up front.
 	if fmp4 {
-		fmt.Fprintf(&b, "#EXT-X-MAP:URI=\"/api/v1/transcode/sessions/%s/abr/%s/seg/init.mp4?token=%s\"\n", sid, rung, token)
+		fmt.Fprintf(&b, "#EXT-X-MAP:URI=\"%s\"\n", publicSeg(baseURL, fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/seg/init.mp4?token=%s", sid, rung, token)))
 	}
 	for i := 0; ; i++ {
 		start := abrSegmentBoundarySec(i, fps)
@@ -239,7 +239,7 @@ func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, tok
 			break
 		}
 		fmt.Fprintf(&b, "#EXTINF:%.3f,\n", dur)
-		fmt.Fprintf(&b, "/api/v1/transcode/sessions/%s/abr/%s/seg/%d%s?token=%s\n", sid, rung, i, ext, token)
+		fmt.Fprintf(&b, "%s\n", publicSeg(baseURL, fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/seg/%d%s?token=%s", sid, rung, i, ext, token)))
 		if end >= total {
 			break // this segment reached EOF
 		}

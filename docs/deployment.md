@@ -865,4 +865,29 @@ Every HA/scale feature is **opt-in and off by default** — the deployment above
 - **Static-ABR** (`STATIC_ABR_ENABLED=true`): pre-encodes popular titles' ABR ladders to the store so hot-title playback serves from the CDN, not the live fleet.
 - **Multi-site DR**: set `SITE_ID`, monitor `GET /health/cluster` (`{site_id, role, replication_lag_seconds}`), and follow the failover/fail-back procedures.
 
+### Split segment access (bypass a CDN/tunnel for video)
+
+Some remote-access setups can't put bulk video through the main hostname — e.g. a
+**Cloudflare Tunnel**, whose terms restrict proxying self-hosted video through the
+CDN and which can throttle sustained streams. Set `PUBLIC_SEGMENT_BASE_URL` to a
+host that reaches **this same server** by a *direct* path (a DNS-only / "grey-cloud"
+record, a `stream.` subdomain port-forwarded to the origin, a Tailscale name, etc.):
+
+```bash
+PUBLIC_SEGMENT_BASE_URL=https://stream.example.com
+```
+
+The HLS **manifests** (small, re-polled) keep coming from the main host, but every
+**segment / rung-playlist URL** inside them is rewritten to
+`https://stream.example.com/api/v1/transcode/...` — so the bandwidth-heavy bytes
+ride the direct host while the UI/API stay behind the tunnel. Notes:
+
+- `stream.example.com` must terminate TLS and reach the **same** OnScreen origin —
+  it's a different *network path*, not a different backend (segment tokens and
+  session state are shared). Leave unset for a normal single-host deploy.
+- Covers single-stream, ABR (master + rungs), and static-ABR playlists. Direct-play
+  (`/media/stream/...`), artwork, and subtitles are small and stay on the main host.
+
+---
+
 Full operational procedures — enabling each tier, monitoring, and failover/fail-back: **[dr-runbook.md](dr-runbook.md)**. Design and rationale: **[ha-roadmap.md](ha-roadmap.md)**.

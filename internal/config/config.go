@@ -68,6 +68,13 @@ type Config struct {
 	TLSCertFile string `env:"TLS_CERT_FILE"`
 	TLSKeyFile  string `env:"TLS_KEY_FILE"`
 
+	// PublicSegmentBaseURL, when set, prefixes the HLS playlist/segment URLs
+	// handed to players so the bandwidth-heavy transcode traffic is fetched from
+	// this host — typically a direct connection that bypasses a CDN/tunnel —
+	// while the API and UI stay on the main host. Empty = same-origin (default).
+	// A trailing slash is tolerated. See docs/deployment.md "Split segment access".
+	PublicSegmentBaseURL string `env:"PUBLIC_SEGMENT_BASE_URL"`
+
 	// ServerName is the human-friendly name advertised over LAN discovery
 	// and surfaced in capability responses. Defaults to "OnScreen" if unset.
 	ServerName string `env:"SERVER_NAME" envDefault:"OnScreen"`
