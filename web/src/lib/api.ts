@@ -1429,7 +1429,11 @@ export interface ItemDetail {
   original_title?: string;
   year?: number;
   summary?: string;
-  rating?: number;
+  rating?: number; // external critic score (provider)
+  audience_rating?: number; // external audience score (provider)
+  user_rating?: number; // the signed-in user's own 0-10 rating
+  community_rating?: number; // mean of all OnScreen users' ratings
+  rating_count?: number; // number of OnScreen user ratings behind community_rating
   duration_ms?: number;
   poster_path?: string;
   fanart_path?: string;
@@ -1688,6 +1692,10 @@ export const itemApi = {
       position_ms: positionMs,
     }),
   addFavorite: (id: string) => api.post<void>(`/items/${id}/favorite`, {}),
+  // Per-user star rating (0-10). setRating upserts; clearRating un-rates.
+  setRating: (id: string, score: number) =>
+    api.put<{ score: number }>(`/items/${id}/rating`, { score }),
+  clearRating: (id: string) => api.delete(`/items/${id}/rating`),
   removeFavorite: (id: string) => api.delete(`/items/${id}/favorite`),
   listMarkers: (id: string) => api.requestList<Marker>(`/items/${id}/markers`),
   upsertMarker: (id: string, kind: 'intro' | 'credits', startMs: number, endMs: number) =>

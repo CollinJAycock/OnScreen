@@ -432,6 +432,33 @@
     }
   }
 
+  // Per-user star rating. The 5-star UI maps each star to two points (2..10).
+  // Clicking the current rating toggles it off. After any change we re-fetch the
+  // item so the community average + count stay in sync.
+  async function setMyRating(score: number) {
+    if (!item) return;
+    if (score === item.user_rating) {
+      await clearMyRating();
+      return;
+    }
+    try {
+      await itemApi.setRating(item.id, score);
+      item = await itemApi.get(item.id);
+    } catch (e: unknown) {
+      console.error('rating update failed', e);
+    }
+  }
+
+  async function clearMyRating() {
+    if (!item) return;
+    try {
+      await itemApi.clearRating(item.id);
+      item = await itemApi.get(item.id);
+    } catch (e: unknown) {
+      console.error('rating clear failed', e);
+    }
+  }
+
   async function downloadSubtitle(res: SubtitleSearchResult) {
     if (!item?.files?.[0]) return;
     subtitleDownloadingId = res.provider_file_id;
@@ -3525,7 +3552,21 @@
         <div class="detail-tags">
           {#if item.year}<span>{item.year}</span>{/if}
           {#if item.content_rating}<span>{item.content_rating}</span>{/if}
-          {#if item.rating}<span>&#9733; {item.rating.toFixed(1)}</span>{/if}
+          {#if item.rating}<span title="Critic rating">&#9733; {item.rating.toFixed(1)}</span>{/if}
+          {#if item.audience_rating}<span title="Audience rating">&#128101; {item.audience_rating.toFixed(1)}</span>{/if}
+          {#if item.community_rating}<span title="OnScreen users ({item.rating_count})">OnScreen {item.community_rating.toFixed(1)}</span>{/if}
+        </div>
+        <div class="detail-tags" aria-label="Your rating" style="align-items:center;gap:2px;">
+          <span style="margin-right:4px;opacity:0.7;">Your rating</span>
+          {#each [1, 2, 3, 4, 5] as s}
+            <button type="button" title="{s * 2}/10" aria-label="Rate {s * 2} out of 10"
+              on:click={() => setMyRating(s * 2)}
+              style="background:none;border:none;cursor:pointer;font-size:1.15rem;line-height:1;padding:0 1px;color:{(item.user_rating ?? 0) >= s * 2 ? '#f5c518' : '#555'};">&#9733;</button>
+          {/each}
+          {#if item.user_rating}
+            <button type="button" on:click={clearMyRating} title="Clear your rating"
+              style="background:none;border:none;cursor:pointer;margin-left:6px;font-size:0.8rem;opacity:0.7;">clear</button>
+          {/if}
         </div>
         {#if item.genres?.length}
           <div class="detail-genres">{item.genres.join(', ')}</div>
