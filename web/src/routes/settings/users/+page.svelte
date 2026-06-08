@@ -41,6 +41,15 @@
   let startTime = '08:00';
   let endTime = '20:00';
 
+  // Streaming caps (admin-enforced per-user)
+  let capsTarget: User | null = null;
+  let capsLoading = false;
+  let capsSaving = false;
+  let concurrentEnabled = false;
+  let concurrentVal = 2;
+  let bitrateEnabled = false;
+  let bitrateMbps = 8;
+
   // Invite flow
   let showInvite = false;
   let inviteEmail = '';
@@ -286,6 +295,42 @@
     }
   }
 
+  async function openCaps(user: User) {
+    capsTarget = user;
+    capsLoading = true;
+    try {
+      const c = await userApi.getStreamingLimits(user.id);
+      concurrentEnabled = c.max_concurrent_streams !== null;
+      concurrentVal = c.max_concurrent_streams ?? 2;
+      bitrateEnabled = c.max_stream_bitrate_kbps !== null;
+      bitrateMbps = c.max_stream_bitrate_kbps != null
+        ? Math.round((c.max_stream_bitrate_kbps / 1000) * 10) / 10
+        : 8;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load streaming caps');
+      capsTarget = null;
+    } finally {
+      capsLoading = false;
+    }
+  }
+
+  async function saveCaps() {
+    if (!capsTarget) return;
+    capsSaving = true;
+    try {
+      await userApi.setStreamingLimits(capsTarget.id, {
+        max_concurrent_streams: concurrentEnabled ? Math.max(1, Math.round(concurrentVal)) : null,
+        max_stream_bitrate_kbps: bitrateEnabled ? Math.max(1, Math.round(bitrateMbps * 1000)) : null
+      });
+      toast.success(`Streaming caps updated for "${capsTarget.username}"`);
+      capsTarget = null;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update streaming caps');
+    } finally {
+      capsSaving = false;
+    }
+  }
+
   function formatDate(dateStr: string): string {
     try {
       return new Date(dateStr).toLocaleDateString(undefined, {
@@ -440,6 +485,11 @@
                     on:click={() => openLimits(user)}
                     title="Set daily watch cap and allowed hours"
                   >Limits</button>
+                  <button
+                    class="btn-limits"
+                    on:click={() => openCaps(user)}
+                    title="Set streaming bitrate + concurrent-stream caps"
+                  >Caps</button>
                 {/if}
                 {#if !isSelf(user)}
                   <button
@@ -616,6 +666,54 @@
           <button class="btn-cancel" on:click={() => limitsTarget = null}>Cancel</button>
           <button class="btn-save" disabled={limitsLoading || limitsSaving} on:click={saveLimits}>
             {limitsSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Streaming caps (admin) dialog -->
+  {#if capsTarget}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="overlay" on:click={() => capsTarget = null}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="dialog" on:click|stopPropagation>
+        <h2>Streaming caps</h2>
+        <p>Limit streams for <strong>{capsTarget.username}</strong>. Enforced server-side; leave a box unchecked for no cap.</p>
+        {#if capsLoading}
+          <div class="skeleton-block" style="height:120px;margin-bottom:1rem;"></div>
+        {:else}
+          <div class="limit-section">
+            <label class="limit-toggle">
+              <input type="checkbox" bind:checked={concurrentEnabled} />
+              <span>Limit concurrent streams</span>
+            </label>
+            {#if concurrentEnabled}
+              <div class="limit-field">
+                <input type="number" min="1" max="50" step="1" bind:value={concurrentVal} />
+                <span class="unit">streams at once</span>
+              </div>
+            {/if}
+          </div>
+
+          <div class="limit-section">
+            <label class="limit-toggle">
+              <input type="checkbox" bind:checked={bitrateEnabled} />
+              <span>Limit streaming bitrate</span>
+            </label>
+            {#if bitrateEnabled}
+              <div class="limit-field">
+                <input type="number" min="0.5" max="120" step="0.5" bind:value={bitrateMbps} />
+                <span class="unit">Mbps max</span>
+              </div>
+              <p class="limit-hint">A direct play above this is re-encoded down; transcodes are capped to it.</p>
+            {/if}
+          </div>
+        {/if}
+        <div class="dialog-actions">
+          <button class="btn-cancel" on:click={() => capsTarget = null}>Cancel</button>
+          <button class="btn-save" disabled={capsLoading || capsSaving} on:click={saveCaps}>
+            {capsSaving ? 'Saving...' : 'Save'}
           </button>
         </div>
       </div>

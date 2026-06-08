@@ -760,6 +760,11 @@ export const userApi = {
     api.get<WatchLimitInfo>(`/users/${userId}/watch-limit`),
   setWatchLimit: (userId: string, policy: WatchLimitPolicy) =>
     api.put<void>(`/users/${userId}/watch-limit`, policy),
+  /** Admin-enforced streaming caps for the target user (null = no cap). */
+  getStreamingLimits: (userId: string) =>
+    api.get<StreamingLimits>(`/users/${userId}/streaming-limits`),
+  setStreamingLimits: (userId: string, limits: StreamingLimits) =>
+    api.put<void>(`/users/${userId}/streaming-limits`, limits),
   /** The caller's own watch policy + today's usage + whether playback is
    *  allowed right now. Used by the player to pre-check before starting a
    *  stream so a restricted child is blocked before any content plays. */
@@ -771,6 +776,11 @@ export const userApi = {
  *  state. All three limit fields are null when unrestricted; the window
  *  bounds are minutes from local midnight in [0,1440) and are set or cleared
  *  together. remaining_minutes is present only when a daily cap is set. */
+export interface StreamingLimits {
+  max_concurrent_streams: number | null;
+  max_stream_bitrate_kbps: number | null;
+}
+
 export interface WatchLimitInfo {
   daily_limit_minutes: number | null;
   allowed_start_minute: number | null;
