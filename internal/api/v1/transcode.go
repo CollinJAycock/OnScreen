@@ -1046,7 +1046,7 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rewritten := rewritePlaylist(data, sessionID, token, h.cfg.PublicSegmentBaseURL)
+	rewritten := rewritePlaylist(data, sessionID, token, h.segBase())
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write(rewritten)
@@ -1203,6 +1203,16 @@ func publicSeg(base, path string) string {
 		return path
 	}
 	return strings.TrimRight(base, "/") + path
+}
+
+// segBase returns the configured public segment base URL, or "" when no config
+// is wired (e.g. test handlers) or the split is disabled. Keeps the URL builders
+// nil-safe — see publicSeg / PUBLIC_SEGMENT_BASE_URL.
+func (h *NativeTranscodeHandler) segBase() string {
+	if h.cfg == nil {
+		return ""
+	}
+	return h.segBase()
 }
 
 // rewritePlaylist rewrites segment URIs in an HLS playlist to API paths with the

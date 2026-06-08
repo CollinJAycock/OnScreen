@@ -139,7 +139,7 @@ func (h *NativeTranscodeHandler) serveABRMaster(w http.ResponseWriter, r *http.R
 		}
 	}
 	master := transcode.BuildMasterPlaylist(sess.ABRRenditions, codecs, func(rd transcode.Rendition) string {
-		return publicSeg(h.cfg.PublicSegmentBaseURL, fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token))
+		return publicSeg(h.segBase(), fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token))
 	})
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -171,7 +171,7 @@ func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *ht
 		return
 	}
 
-	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, abrIsFMP4(sess), h.cfg.PublicSegmentBaseURL)
+	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, abrIsFMP4(sess), h.segBase())
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write([]byte(playlist))
