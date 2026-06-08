@@ -315,31 +315,12 @@ func (s *Scanner) ScanDirectory(ctx context.Context, libraryID uuid.UUID, librar
 	return s.scan(ctx, libraryID, libraryType, []string{dirPath}, libraryRoots, false /* directory scope only */)
 }
 
-func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType string, walkPaths, parsingRoots []string, fullScan bool) (*ScanResult, error) {
-	ctx, span := tracer.Start(ctx, "scanner.library", trace.WithAttributes(
-		attribute.String("library.id", libraryID.String()),
-		attribute.String("library.type", libraryType),
-		attribute.Int("library.path_count", len(walkPaths)),
-	))
-	defer span.End()
-
-	// All path-shape parsing inside the scan body uses parsingRoots. The
-	// walkPaths are only used to enumerate the files to process.
-	paths := parsingRoots
-
-	start := time.Now()
-	result := &ScanResult{LibraryID: libraryID}
-
-	s.logger.InfoContext(ctx, "scan starting",
-		"library_id", libraryID,
-		"library_type", libraryType,
-		"walk_paths", walkPaths,
-		"parsing_roots", parsingRoots,
-	)
-
-	// Collect all files from walkPaths. Hierarchy parsing inside processFile
-	// uses parsingRoots (passed via the closed-over `paths` alias) so a
-	// targeted watcher scan still produces the same shape as a full scan.
+// walkLibraryFiles enumerates the media files under walkPaths, applying the
+// shared media-file / allowed-path filters. `paths` are the library's parsing
+// roots, used for the allowed-path check. It is the single source of truth for
+// "what files does this library contain on disk" — used both by the main scan
+// and by the orphan-detection re-walk, so their counts are directly comparable.
+func (s *Scanner) walkLibraryFiles(ctx context.Context, walkPaths, paths []string, libraryType string) ([]string, error) {
 	var filePaths []string
 	// collect applies the shared media-file filters and records keepers. Used by
 	// both walk modes so local and remote discovery yield the same set.
@@ -403,6 +384,38 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 		}); err != nil {
 			return nil, fmt.Errorf("scan walk %s: %w", root, err)
 		}
+	}
+	return filePaths, nil
+}
+
+func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType string, walkPaths, parsingRoots []string, fullScan bool) (*ScanResult, error) {
+	ctx, span := tracer.Start(ctx, "scanner.library", trace.WithAttributes(
+		attribute.String("library.id", libraryID.String()),
+		attribute.String("library.type", libraryType),
+		attribute.Int("library.path_count", len(walkPaths)),
+	))
+	defer span.End()
+
+	// All path-shape parsing inside the scan body uses parsingRoots. The
+	// walkPaths are only used to enumerate the files to process.
+	paths := parsingRoots
+
+	start := time.Now()
+	result := &ScanResult{LibraryID: libraryID}
+
+	s.logger.InfoContext(ctx, "scan starting",
+		"library_id", libraryID,
+		"library_type", libraryType,
+		"walk_paths", walkPaths,
+		"parsing_roots", parsingRoots,
+	)
+
+	// Enumerate the files on disk. walkLibraryFiles is the single source of
+	// truth for "what does this library contain"; the orphan-detection pass
+	// below re-walks through it so the two counts are directly comparable.
+	filePaths, err := s.walkLibraryFiles(ctx, walkPaths, paths, libraryType)
+	if err != nil {
+		return nil, err
 	}
 
 	s.logger.InfoContext(ctx, "scan walk complete", "library_id", libraryID, "files_found", len(filePaths))
@@ -497,11 +510,31 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	//     when the media volume is briefly unmounted (e.g. during
 	//     container restarts).
 	activeFiles, _ := s.media.ListActiveFilesForLibrary(ctx, libraryID)
-	if fullScan && (len(activeFiles) == 0 || len(filePaths) >= len(activeFiles)/2) {
-		s.markOrphanedFiles(ctx, libraryID, filePaths)
+	walked := filePaths
+	// A full scan whose walk came back with far fewer files than the DB knows
+	// about is almost always a transient empty/partial mount view — the media
+	// bind mount momentarily presenting an incomplete tree. (Observed only on
+	// the largest library, while db_active keeps climbing, so the mount clearly
+	// recovers between blips.) Before deciding, pause briefly and re-walk once:
+	// a transient clears and orphan detection runs against an accurate list; a
+	// genuinely unmounted volume stays empty and we still skip — so a mount blip
+	// can never turn into a false mass-delete.
+	if fullScan && len(activeFiles) > 0 && len(walked) < len(activeFiles)/2 {
+		select {
+		case <-ctx.Done():
+		case <-time.After(3 * time.Second):
+		}
+		if rewalked, rerr := s.walkLibraryFiles(ctx, walkPaths, paths, libraryType); rerr == nil && len(rewalked) > len(walked) {
+			s.logger.InfoContext(ctx, "orphan walk came back short; re-walked before orphan check",
+				"library_id", libraryID, "first_walk", len(walked), "rewalk", len(rewalked), "db_active", len(activeFiles))
+			walked = rewalked
+		}
+	}
+	if fullScan && (len(activeFiles) == 0 || len(walked) >= len(activeFiles)/2) {
+		s.markOrphanedFiles(ctx, libraryID, walked)
 	} else {
 		s.logger.WarnContext(ctx, "skipping orphan detection — walk found far fewer files than expected (possible mount issue)",
-			"library_id", libraryID, "walked", len(filePaths), "db_active", len(activeFiles))
+			"library_id", libraryID, "walked", len(walked), "db_active", len(activeFiles))
 	}
 
 	// Clean up stale missing files from prior scans and remove items

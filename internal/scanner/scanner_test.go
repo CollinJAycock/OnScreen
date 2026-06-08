@@ -1,9 +1,57 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// touchFile creates path (and parent dirs) with a byte of content.
+func touchFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWalkLibraryFiles covers the extracted single-source-of-truth walk used by
+// both the main scan and the orphan-detection re-walk: it collects media files,
+// skips non-media and (in a non-photo library) image files, and prunes
+// filesystem-trash directories via SkipDir.
+func TestWalkLibraryFiles(t *testing.T) {
+	root := t.TempDir()
+	touchFile(t, filepath.Join(root, "Show", "S01", "ep1.mkv"))
+	touchFile(t, filepath.Join(root, "Show", "S01", "ep2.mp4"))
+	touchFile(t, filepath.Join(root, "Show", "readme.txt"))  // non-media: skipped
+	touchFile(t, filepath.Join(root, "Show", "poster.jpg"))  // image in non-photo lib: skipped
+	touchFile(t, filepath.Join(root, "@eaDir", "thumb.mkv")) // trash dir: pruned
+
+	s := &Scanner{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	got, err := s.walkLibraryFiles(context.Background(), []string{root}, []string{root}, "show")
+	if err != nil {
+		t.Fatalf("walkLibraryFiles: %v", err)
+	}
+
+	want := map[string]bool{
+		filepath.Join(root, "Show", "S01", "ep1.mkv"): true,
+		filepath.Join(root, "Show", "S01", "ep2.mp4"): true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("walked %d files, want %d: %v", len(got), len(want), got)
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("unexpected file in walk result: %q", p)
+		}
+	}
+}
 
 func TestCleanTitle(t *testing.T) {
 	tests := []struct {
