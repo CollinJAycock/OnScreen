@@ -526,6 +526,8 @@ type User struct {
 	EpisodeUseShowPoster  bool               `json:"episode_use_show_poster"`
 	TotpSecret            *string            `json:"totp_secret"`
 	TotpEnabled           bool               `json:"totp_enabled"`
+	MaxConcurrentStreams  *int32             `json:"max_concurrent_streams"`
+	MaxStreamBitrateKbps  *int32             `json:"max_stream_bitrate_kbps"`
 }
 
 type UserFavorite struct {

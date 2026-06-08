@@ -56,6 +56,21 @@ type SessionKiller interface {
 	KillSession(sessionID string)
 }
 
+// StreamCaps holds a user's admin-set streaming ceilings. Zero means "no cap"
+// (fall back to the server-wide default).
+type StreamCaps struct {
+	ConcurrentStreams int
+	BitrateKbps       int
+}
+
+// UserStreamCapsReader reads a user's admin-set streaming caps. Optional on the
+// handler (WithUserCaps); nil = no per-user caps, so the server-wide defaults
+// apply. Read at transcode-start (not from the token) so an admin change takes
+// effect on the user's next stream.
+type UserStreamCapsReader interface {
+	GetStreamCaps(ctx context.Context, userID uuid.UUID) (StreamCaps, error)
+}
+
 // NativeTranscodeHandler handles HLS transcoding for the native web player.
 type NativeTranscodeHandler struct {
 	sessions   *transcode.SessionStore
@@ -66,7 +81,8 @@ type NativeTranscodeHandler struct {
 	audit      *audit.Logger
 	cfg        *config.Config
 	logger     *slog.Logger
-	killer     SessionKiller // optional — set for embedded worker deployments
+	killer     SessionKiller        // optional — set for embedded worker deployments
+	userCaps   UserStreamCapsReader // optional — per-user admin concurrent/bitrate caps
 	// tokens mints the per-file stream token embedded in a job's SourceURL
 	// so a remote worker without shared storage can pull the source over
 	// HTTP. Optional — when nil, jobs carry no SourceURL and workers must
@@ -113,6 +129,13 @@ func NewNativeTranscodeHandler(
 // WithLibraryAccess attaches per-library ACL enforcement to Start.
 func (h *NativeTranscodeHandler) WithLibraryAccess(a LibraryAccessChecker) *NativeTranscodeHandler {
 	h.access = a
+	return h
+}
+
+// WithUserCaps attaches the per-user streaming-cap reader. When nil, Start uses
+// only the server-wide concurrent + bitrate limits.
+func (h *NativeTranscodeHandler) WithUserCaps(c UserStreamCapsReader) *NativeTranscodeHandler {
+	h.userCaps = c
 	return h
 }
 
@@ -429,7 +452,17 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// segments to disk at real-time. Cap at 5 concurrent sessions per
 	// user — 4 devices in a household plus a small slack — and reject
 	// further Start requests with 429 until the user tears one down.
-	const maxSessionsPerUser = 5
+	// Per-user admin caps (concurrent streams + bitrate). Read from the DB so an
+	// admin change applies on the next stream; zero / error = fall back to the
+	// server-wide defaults (5 sessions, server bitrate ceiling).
+	var streamCaps StreamCaps
+	if h.userCaps != nil {
+		streamCaps, _ = h.userCaps.GetStreamCaps(ctx, claims.UserID)
+	}
+	maxSessionsPerUser := 5
+	if streamCaps.ConcurrentStreams > 0 {
+		maxSessionsPerUser = streamCaps.ConcurrentStreams
+	}
 	if active, err := h.sessions.CountByUser(ctx, claims.UserID); err == nil && active >= maxSessionsPerUser {
 		h.logger.WarnContext(ctx, "per-user transcode session cap reached",
 			"user_id", claims.UserID, "active", active, "cap", maxSessionsPerUser)
@@ -534,12 +567,24 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		sourceH = *file.ResolutionH
 	}
 
+	// Per-user bitrate cap: a direct-play (copy) whose source exceeds the ceiling
+	// is forced into a clamped transcode so a guest can't sail past their cap;
+	// transcodes are clamped to it below.
+	if streamCaps.BitrateKbps > 0 && body.VideoCopy && file.Bitrate != nil &&
+		int(*file.Bitrate/1000) > streamCaps.BitrateKbps {
+		body.VideoCopy = false
+	}
+
 	if body.VideoCopy {
 		encoder = "copy"
 		// No resolution or bitrate needed — video passes through unchanged.
 	} else {
+		maxBitrate := h.cfg.TranscodeMaxBitrate
+		if streamCaps.BitrateKbps > 0 && streamCaps.BitrateKbps < maxBitrate {
+			maxBitrate = streamCaps.BitrateKbps
+		}
 		serverCaps := transcode.ServerCaps{
-			MaxBitrateKbps: h.cfg.TranscodeMaxBitrate,
+			MaxBitrateKbps: maxBitrate,
 			MaxWidth:       h.cfg.TranscodeMaxWidth,
 			MaxHeight:      h.cfg.TranscodeMaxHeight,
 		}

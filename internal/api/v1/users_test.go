@@ -142,6 +142,14 @@ func (m *mockUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUser
 	return nil
 }
 
+func (m *mockUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStreamCapsParams) error {
+	return nil
+}
+
+func (m *mockUserDB) GetUserStreamCaps(_ context.Context, _ uuid.UUID) (gen.GetUserStreamCapsRow, error) {
+	return gen.GetUserStreamCapsRow{}, nil
+}
+
 // Test plumbing for SetProfileInheritLibraryAccess: tests must opt in
 // to "0 rows, no error" by setting inheritRows=0 explicitly along with
 // inheritErr=nil. The default zero value of inheritRows means tests

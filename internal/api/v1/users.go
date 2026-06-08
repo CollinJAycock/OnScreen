@@ -71,6 +71,8 @@ type UserDB interface {
 	UpdateUserPreferences(ctx context.Context, arg gen.UpdateUserPreferencesParams) error
 	UpdateUserQualityProfile(ctx context.Context, arg gen.UpdateUserQualityProfileParams) error
 	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
+	UpdateUserStreamCaps(ctx context.Context, arg gen.UpdateUserStreamCapsParams) error
+	GetUserStreamCaps(ctx context.Context, id uuid.UUID) (gen.GetUserStreamCapsRow, error)
 	SetProfileInheritLibraryAccess(ctx context.Context, arg gen.SetProfileInheritLibraryAccessParams) (int64, error)
 }
 
@@ -1161,6 +1163,73 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.UpdateUserContentRating(r.Context(), gen.UpdateUserContentRatingParams{
 		ID:               targetID,
 		MaxContentRating: body.MaxContentRating,
+	}); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
+}
+
+// GetStreamingLimits returns a user's admin-set streaming caps (admin only).
+// GET /api/v1/users/{id}/streaming-limits. null fields = no cap.
+func (h *UserHandler) GetStreamingLimits(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	row, err := h.db.GetUserStreamCaps(r.Context(), targetID)
+	if err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, map[string]any{
+		"max_concurrent_streams":  row.MaxConcurrentStreams,
+		"max_stream_bitrate_kbps": row.MaxStreamBitrateKbps,
+	})
+}
+
+// SetStreamingLimits sets a user's admin-enforced streaming caps (admin only).
+// PUT /api/v1/users/{id}/streaming-limits with
+// {"max_concurrent_streams": N|null, "max_stream_bitrate_kbps": N|null}.
+// null = remove the cap. Enforced server-side at transcode start (read from the
+// DB), so it takes effect on the user's next stream — no re-login needed.
+func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	var body struct {
+		MaxConcurrentStreams *int32 `json:"max_concurrent_streams"`
+		MaxStreamBitrateKbps *int32 `json:"max_stream_bitrate_kbps"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body: "+err.Error())
+		return
+	}
+	// Reject negative caps (0/null both mean "no cap").
+	if (body.MaxConcurrentStreams != nil && *body.MaxConcurrentStreams < 0) ||
+		(body.MaxStreamBitrateKbps != nil && *body.MaxStreamBitrateKbps < 0) {
+		respond.BadRequest(w, r, "caps must be non-negative")
+		return
+	}
+	if err := h.db.UpdateUserStreamCaps(r.Context(), gen.UpdateUserStreamCapsParams{
+		ID:                   targetID,
+		MaxConcurrentStreams: body.MaxConcurrentStreams,
+		MaxStreamBitrateKbps: body.MaxStreamBitrateKbps,
 	}); err != nil {
 		respond.InternalError(w, r)
 		return

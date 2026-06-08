@@ -571,6 +571,8 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Patch("/users/{id}", h.User.SetAdmin)
 					r.Put("/users/{id}/password", h.User.ResetPassword)
 					r.Put("/users/{id}/content-rating", h.User.SetContentRating)
+					r.Get("/users/{id}/streaming-limits", h.User.GetStreamingLimits)
+					r.Put("/users/{id}/streaming-limits", h.User.SetStreamingLimits)
 					if h.WatchLimit != nil {
 						r.Get("/users/{id}/watch-limit", h.WatchLimit.GetForUser)
 						r.Put("/users/{id}/watch-limit", h.WatchLimit.Set)

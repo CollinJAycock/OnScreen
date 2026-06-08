@@ -749,7 +749,9 @@ func run() error {
 		// server over HTTP (a per-file stream token in the job's SourceURL).
 		WithStreamTokenMaker(tokenMaker).
 		// Prefer an object-storage / CDN signed source URL when configured.
-		WithMediaStore(mediaStoreProvider)
+		WithMediaStore(mediaStoreProvider).
+		// Per-user admin caps (concurrent streams + bitrate), read at start.
+		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)})
 
 	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
 	// rootDir holds sprite_NNN.jpg + index.vtt per item. Lives alongside the
