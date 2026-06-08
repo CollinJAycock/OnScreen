@@ -34,6 +34,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/people"
+	"github.com/onscreen/onscreen/internal/domain/ratings"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
@@ -816,6 +817,7 @@ func run() error {
 	}
 	peopleSvc := people.New(peopleQ, peopleAgentFn)
 
+	ratingsSvc := ratings.New(gen.New(rwPool))
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
 		WithEpisodePoster(gen.New(roPool)).
 		WithLibraryAccess(libSvc).
@@ -829,6 +831,7 @@ func run() error {
 		WithSubtreeDeleter(&subtreeDeleter{q: gen.New(rwPool)}).
 		WithCreditsRefresher(peopleSvc).
 		WithDownloadGate(settingsSvc).
+		WithRatings(ratingsSvc).
 		WithMediaStore(mediaStoreProvider)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).

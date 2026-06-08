@@ -26,6 +26,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/domain/ratings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/intromarker"
@@ -147,6 +148,16 @@ type ItemWatchLimit interface {
 	AddTick(ctx context.Context, userID uuid.UUID, day, now time.Time) (int, error)
 }
 
+// ItemRatingService stores per-user star ratings (0-10) and computes the
+// community average. Optional on the handler (WithRatings); when nil the rating
+// fields are omitted from the detail response and the rating endpoints 404.
+type ItemRatingService interface {
+	Get(ctx context.Context, userID, mediaID uuid.UUID) (float64, error)
+	Set(ctx context.Context, userID, mediaID uuid.UUID, score float64) error
+	Clear(ctx context.Context, userID, mediaID uuid.UUID) error
+	CommunityAverage(ctx context.Context, mediaID uuid.UUID) (float64, int, error)
+}
+
 // ItemHandler handles /api/v1/items.
 type ItemHandler struct {
 	media      ItemMediaService
@@ -156,6 +167,7 @@ type ItemHandler struct {
 	matcher    ItemMatchSearcher
 	webhooks   ItemWebhookDispatcher
 	favorites  ItemFavoriteChecker
+	ratings    ItemRatingService // optional; per-user + community ratings (WithRatings)
 	markers    ItemMarkerService
 	access     LibraryAccessChecker
 	watchLimit ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
@@ -226,6 +238,13 @@ func (h *ItemHandler) WithExternalSubtitles(s ExternalSubLister) *ItemHandler {
 // watch time. nil = no enforcement.
 func (h *ItemHandler) WithWatchLimit(wl ItemWatchLimit) *ItemHandler {
 	h.watchLimit = wl
+	return h
+}
+
+// WithRatings attaches the per-user/community rating service. When nil, the
+// detail response omits the rating fields and the rating endpoints 404.
+func (h *ItemHandler) WithRatings(rs ItemRatingService) *ItemHandler {
+	h.ratings = rs
 	return h
 }
 
@@ -449,16 +468,23 @@ type ItemDetailResponse struct {
 	// for audiobooks (re-purposed by the audiobook scanner). The detail
 	// page uses it as a byline fallback when the parent author lookup
 	// fails — same field surfaced on the grid response in libraries.go.
-	OriginalTitle *string  `json:"original_title,omitempty"`
-	Year          *int     `json:"year,omitempty"`
-	Summary       *string  `json:"summary,omitempty"`
-	Rating        *float64 `json:"rating,omitempty"`
-	DurationMS    *int64   `json:"duration_ms,omitempty"`
-	PosterPath    *string  `json:"poster_path,omitempty"`
-	FanartPath    *string  `json:"fanart_path,omitempty"`
-	ContentRating *string  `json:"content_rating,omitempty"`
-	Genres        []string `json:"genres"`
-	ParentID      *string  `json:"parent_id,omitempty"`
+	OriginalTitle  *string  `json:"original_title,omitempty"`
+	Year           *int     `json:"year,omitempty"`
+	Summary        *string  `json:"summary,omitempty"`
+	Rating         *float64 `json:"rating,omitempty"`          // external critic score (provider)
+	AudienceRating *float64 `json:"audience_rating,omitempty"` // external audience score (provider)
+	// UserRating is the caller's own 0-10 rating (nil = unrated). CommunityRating
+	// is the mean of all OnScreen users' ratings; RatingCount is how many. Both
+	// omitted when nobody has rated the item yet.
+	UserRating      *float64 `json:"user_rating,omitempty"`
+	CommunityRating *float64 `json:"community_rating,omitempty"`
+	RatingCount     int      `json:"rating_count,omitempty"`
+	DurationMS      *int64   `json:"duration_ms,omitempty"`
+	PosterPath      *string  `json:"poster_path,omitempty"`
+	FanartPath      *string  `json:"fanart_path,omitempty"`
+	ContentRating   *string  `json:"content_rating,omitempty"`
+	Genres          []string `json:"genres"`
+	ParentID        *string  `json:"parent_id,omitempty"`
 	// GrandparentID is the parent of the parent — for an episode it's the
 	// show id (episode → season → show), letting the back button on the
 	// player jump straight to the show page instead of replaying browser
@@ -581,6 +607,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var viewOffsetMS int64
 	var isFavorite bool
 	var lastClientName *string
+	var userRating *float64
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		state, _ := h.watch.GetState(r.Context(), claims.UserID, id)
 		if state.Status == "in_progress" {
@@ -592,6 +619,23 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 				isFavorite = fav
 			}
 		}
+		if h.ratings != nil {
+			if score, rerr := h.ratings.Get(r.Context(), claims.UserID, id); rerr == nil {
+				ur := score
+				userRating = &ur
+			}
+		}
+	}
+
+	// Community rating (mean of all users' ratings) — independent of the caller.
+	var communityRating *float64
+	var ratingCount int
+	if h.ratings != nil {
+		if avg, count, cerr := h.ratings.CommunityAverage(r.Context(), id); cerr == nil && count > 0 {
+			ca := avg
+			communityRating = &ca
+			ratingCount = count
+		}
 	}
 
 	genres := item.Genres
@@ -600,26 +644,30 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := ItemDetailResponse{
-		ID:             item.ID.String(),
-		LibraryID:      item.LibraryID.String(),
-		Title:          item.Title,
-		Type:           item.Type,
-		OriginalTitle:  item.OriginalTitle,
-		Year:           item.Year,
-		Summary:        item.Summary,
-		Rating:         item.Rating,
-		DurationMS:     item.DurationMS,
-		PosterPath:     item.PosterPath,
-		FanartPath:     item.FanartPath,
-		ContentRating:  item.ContentRating,
-		Genres:         genres,
-		Index:          item.Index,
-		ViewOffsetMS:   viewOffsetMS,
-		LastClientName: lastClientName,
-		IsFavorite:     isFavorite,
-		UpdatedAt:      item.UpdatedAt.UnixMilli(),
-		TakenAt:        item.OriginallyAvailableAt,
-		Files:          make([]ItemFileResponse, 0, len(files)),
+		ID:              item.ID.String(),
+		LibraryID:       item.LibraryID.String(),
+		Title:           item.Title,
+		Type:            item.Type,
+		OriginalTitle:   item.OriginalTitle,
+		Year:            item.Year,
+		Summary:         item.Summary,
+		Rating:          item.Rating,
+		AudienceRating:  item.AudienceRating,
+		UserRating:      userRating,
+		CommunityRating: communityRating,
+		RatingCount:     ratingCount,
+		DurationMS:      item.DurationMS,
+		PosterPath:      item.PosterPath,
+		FanartPath:      item.FanartPath,
+		ContentRating:   item.ContentRating,
+		Genres:          genres,
+		Index:           item.Index,
+		ViewOffsetMS:    viewOffsetMS,
+		LastClientName:  lastClientName,
+		IsFavorite:      isFavorite,
+		UpdatedAt:       item.UpdatedAt.UnixMilli(),
+		TakenAt:         item.OriginallyAvailableAt,
+		Files:           make([]ItemFileResponse, 0, len(files)),
 	}
 	if item.ParentID != nil {
 		s := item.ParentID.String()
@@ -1037,6 +1085,92 @@ type PhotoEXIFResponse struct {
 	GPSLat        *float64   `json:"gps_lat,omitempty"`
 	GPSLon        *float64   `json:"gps_lon,omitempty"`
 	GPSAlt        *float64   `json:"gps_alt,omitempty"`
+}
+
+// GetRating returns the authenticated user's own rating for the item.
+// GET /items/{id}/rating → {"score": 8}. 404 when the user hasn't rated it.
+func (h *ItemHandler) GetRating(w http.ResponseWriter, r *http.Request) {
+	if h.ratings == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	score, err := h.ratings.Get(r.Context(), claims.UserID, id)
+	if err != nil {
+		if errors.Is(err, ratings.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "get rating", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, map[string]any{"score": score})
+}
+
+// SetRating creates or updates the user's rating. PUT /items/{id}/rating with
+// {"score": 0-10}. Out-of-range scores get a 400.
+func (h *ItemHandler) SetRating(w http.ResponseWriter, r *http.Request) {
+	if h.ratings == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	var body struct {
+		Score float64 `json:"score"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid body")
+		return
+	}
+	if err := h.ratings.Set(r.Context(), claims.UserID, id, body.Score); err != nil {
+		respond.BadRequest(w, r, err.Error())
+		return
+	}
+	respond.Success(w, r, map[string]any{"score": body.Score})
+}
+
+// DeleteRating removes the user's rating ("un-rate"). DELETE /items/{id}/rating.
+// Removing a non-existent rating is a no-op (still 204).
+func (h *ItemHandler) DeleteRating(w http.ResponseWriter, r *http.Request) {
+	if h.ratings == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	if err := h.ratings.Clear(r.Context(), claims.UserID, id); err != nil {
+		h.logger.ErrorContext(r.Context(), "clear rating", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
 }
 
 // GetEXIF handles GET /api/v1/items/{id}/exif. Returns 404 only when the

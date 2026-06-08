@@ -534,6 +534,14 @@ type UserFavorite struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type UserRating struct {
+	UserID      uuid.UUID          `json:"user_id"`
+	MediaItemID uuid.UUID          `json:"media_item_id"`
+	Score       float64            `json:"score"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type UserScrobble struct {
 	UserID              uuid.UUID          `json:"user_id"`
 	ListenbrainzToken   *string            `json:"listenbrainz_token"`
