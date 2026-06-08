@@ -118,6 +118,7 @@
   ];
   let selectedQuality: QualityOption = qualityOptions[0];
   let showQualityMenu = false;
+  let showVersionMenu = false;
   let showSleepTimerMenu = false;
 
   // Sleep-timer menu options: time-based plus an "end of episode" mode
@@ -1674,6 +1675,42 @@
 
   // ── Quality switching ────────────────────────────────────────────────────────
 
+  // Short human label for a file version, built from its tech specs. Same-spec
+  // editions (e.g. Theatrical vs Director's Cut, both 1080p H.264) read
+  // identically until a scanner-inferred edition label lands (follow-up).
+  function fileLabel(f: ItemFile): string {
+    const parts: string[] = [];
+    const h = f.resolution_h ?? 0;
+    if (h >= 2000) parts.push('4K');
+    else if (h >= 1) parts.push(`${h}p`);
+    if (f.hdr_type) parts.push(f.hdr_type.replace(/_/g, ' ').toUpperCase());
+    if (f.video_codec) parts.push(f.video_codec.toUpperCase());
+    if (f.container) parts.push(f.container.toUpperCase());
+    return parts.join(' · ') || 'Source';
+  }
+
+  // Switch to a different file/version of the same item. Reordering item.files so
+  // the chosen file is primary (files[0]) reuses the entire existing play
+  // pipeline — every path already keys off files[0] — then we re-run the "Auto"
+  // play decision for the new source.
+  async function selectVersion(f: ItemFile) {
+    showVersionMenu = false;
+    if (!item || !item.files?.length || f.id === item.files[0].id) return;
+    item = { ...item, files: [f, ...item.files.filter(x => x.id !== f.id)] };
+    selectedQuality = qualityOptions[0];
+    decisionFetchedFor = ''; // force the server play-decision to refetch for the new file
+    const posMs = Math.floor(currentTime * 1000);
+    skipAutoSeek = true;
+    const file = item.files[0];
+    if (canDirectPlay(file)) {
+      await switchToDirectPlay(posMs);
+    } else if (canRemuxVideo(file)) {
+      await switchToTranscode(0, posMs, true);
+    } else {
+      await switchToTranscode(file.resolution_h ?? 1080, posMs, false);
+    }
+  }
+
   async function selectQuality(q: QualityOption) {
     // Short-circuit only when this click would truly change nothing.
     // The picker is auto-initialized to the source's resolution tier so
@@ -2167,7 +2204,7 @@
     }
     if (!videoEl) return;
     // Close menus on Escape
-    if (e.key === 'Escape') { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; showSleepTimerMenu = false; return; }
+    if (e.key === 'Escape') { showQualityMenu = false; showVersionMenu = false; showSubtitleMenu = false; showAudioMenu = false; showSleepTimerMenu = false; return; }
     switch (e.key) {
       case ' ':
       case 'k':
@@ -2672,7 +2709,7 @@
 <svelte:head><title>{item?.title ?? 'Watch'} — OnScreen</title></svelte:head>
 
 <!-- svelte-ignore avoid-is -->
-<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; showSleepTimerMenu = false; }} />
+<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showVersionMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; showSleepTimerMenu = false; }} />
 
 {#if isPhoto && item}
 <!-- Photo viewer -->
@@ -3249,6 +3286,36 @@
                   <line x1="2" y1="20" x2="2.01" y2="20"/>
                 </svg>
               </button>
+            {/if}
+
+            <!-- Version picker (multiple files/editions of this item) -->
+            {#if (item?.files?.length ?? 0) > 1}
+              <div class="quality-picker" on:click|stopPropagation>
+                <button
+                  class="icon-btn small quality-btn"
+                  on:click|stopPropagation={() => { showVersionMenu = !showVersionMenu; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
+                  title="Version"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M4 6h16M4 12h16M4 18h10"/>
+                  </svg>
+                  <span class="quality-label">Version</span>
+                </button>
+
+                {#if showVersionMenu}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label="Versions">
+                    {#each item.files as f}
+                      <button
+                        class="quality-option"
+                        class:active={f.id === item.files[0].id}
+                        on:click={() => selectVersion(f)}
+                        role="menuitem"
+                      >{fileLabel(f)}</button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             {/if}
 
             <!-- Quality picker -->
