@@ -121,6 +121,11 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
+// maxImagePixels caps the decoded resolution of an in-process image decode
+// (JPEG/PNG/GIF). A few-KB file can declare ~50000×50000 px and decode to
+// tens of GB of RGBA; reject anything over this before Decode allocates.
+const maxImagePixels = 100_000_000 // 100 MP
+
 // decodeSource opens sourcePath and returns the decoded image plus whether
 // EXIF orientation was already applied during decode (true for HEIC and
 // audiobook covers, both of which are decoded by ffmpeg with -autorotate).
@@ -138,6 +143,18 @@ func decodeSource(ctx context.Context, sourcePath string) (image.Image, bool, er
 		return nil, false, fmt.Errorf("open: %w", err)
 	}
 	defer f.Close()
+	// Reject decompression/pixel-flood bombs before allocating: read only the
+	// header, check the declared dimensions, then rewind and decode.
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return nil, false, fmt.Errorf("decode config: %w", err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > maxImagePixels {
+		return nil, false, fmt.Errorf("image too large: %dx%d exceeds %d px", cfg.Width, cfg.Height, maxImagePixels)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, false, fmt.Errorf("seek: %w", err)
+	}
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return nil, false, fmt.Errorf("decode: %w", err)

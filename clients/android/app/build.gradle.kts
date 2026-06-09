@@ -38,7 +38,7 @@ android {
         // those calls trigger.
         minSdk = 23
         targetSdk = 35
-        versionCode = 8
+        versionCode = 9
         versionName = "1.0.6"
     }
 

@@ -163,12 +163,20 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 		return fmt.Errorf("open channel stream: %w", err)
 	}
 
-	// Remux MPEG-TS → MP4. Stream-copy keeps CPU near zero since the
-	// live-TV pipeline's HDHomeRun tune yields standard broadcast
-	// codecs. If codec compatibility becomes an issue we can promote to
+	// Remux source → MP4. Stream-copy keeps CPU near zero: HDHomeRun/IPTV
+	// tunes yield standard broadcast codecs and RTMP broadcasts are already
+	// H.264/AAC. If codec compatibility becomes an issue we can promote to
 	// transcode here too — mirrors the HLS proxy's approach.
-	cmd := exec.CommandContext(captureCtx, w.cfg.FFmpegBin,
-		"-fflags", "+genpts+discardcorrupt",
+	//
+	// Optional input-format hint: TS tuners autodetect; the RTMP broadcast
+	// reader returns "flv" so ffmpeg doesn't have to probe a live pipe.
+	ffArgs := []string{"-fflags", "+genpts+discardcorrupt"}
+	if hinter, ok := upstream.(inputFormatHinter); ok {
+		if f := hinter.FFmpegInputFormat(); f != "" {
+			ffArgs = append(ffArgs, "-f", f)
+		}
+	}
+	ffArgs = append(ffArgs,
 		"-i", "pipe:0",
 		"-map", "0:v:0",
 		"-map", "0:a:0?",
@@ -178,6 +186,7 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 		"-f", "mp4",
 		path,
 	)
+	cmd := exec.CommandContext(captureCtx, w.cfg.FFmpegBin, ffArgs...)
 	cmd.Stdin = upstream
 	// Pipe stderr to discard for now; failures surface via exit code.
 	cmd.Stderr = io.Discard

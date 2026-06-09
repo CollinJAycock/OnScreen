@@ -53,8 +53,12 @@ type Config struct {
 	CachePath string `env:"CACHE_PATH"`
 
 	// ── Server ───────────────────────────────────────────────────────────────
-	ListenAddr   string `env:"LISTEN_ADDR"   envDefault:":7070"`
-	MetricsAddr  string `env:"METRICS_ADDR"  envDefault:":7071"`
+	ListenAddr string `env:"LISTEN_ADDR"   envDefault:":7070"`
+	// MetricsAddr also serves /debug/pprof (heap/goroutine dumps that can hold
+	// live tokens/secrets) with no auth, so it binds to loopback by default.
+	// Expose it (METRICS_ADDR=:7071 or a management interface) only behind a
+	// firewall / private network.
+	MetricsAddr  string `env:"METRICS_ADDR"  envDefault:"127.0.0.1:7071"`
 	RetainMonths int    `env:"RETAIN_MONTHS" envDefault:"24"`
 
 	// TLS — when both files are set the API server serves HTTPS via
@@ -83,6 +87,18 @@ type Config struct {
 	// Set DiscoveryEnabled=false to disable broadcasting entirely.
 	DiscoveryEnabled bool `env:"DISCOVERY_ENABLED" envDefault:"true"`
 	DiscoveryPort    int  `env:"DISCOVERY_PORT"    envDefault:"7368"`
+
+	// ── RTMP ingest (live broadcast / "go live") ─────────────────────────────
+	// When enabled, an embedded RTMP server accepts OBS/ffmpeg pushes and
+	// exposes each authorized stream key as a Live TV channel. The listen port
+	// (1935 is the RTMP standard) is separate from the HTTP API port and must
+	// be reachable by broadcasters. A bind failure is non-fatal — the rest of
+	// the server still starts. RTMPPublicHost is the hostname shown in the
+	// broadcast admin UI's ingest URL (rtmp://<host>:<port>/live/<key>); when
+	// empty the UI falls back to the request host.
+	RTMPEnabled    bool   `env:"RTMP_ENABLED"     envDefault:"true"`
+	RTMPListenAddr string `env:"RTMP_LISTEN_ADDR" envDefault:":1935"`
+	RTMPPublicHost string `env:"RTMP_PUBLIC_HOST"`
 
 	// ── Scanning (hot-reloadable via SIGHUP) ─────────────────────────────────
 	// ScanFileConcurrency defaults to runtime.NumCPU()*2 (I/O-bound).

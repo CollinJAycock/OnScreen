@@ -585,6 +585,14 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		h.throttle.ResetFailures(r.Context(), failKey)
 	}
 
+	// A 4-digit PIN must never grant admin. Admins authenticate with full
+	// credentials; PIN-switch is for non-admin household profiles only.
+	if result.IsAdmin {
+		respond.Error(w, r, http.StatusForbidden, "ADMIN_PIN_SWITCH_DISALLOWED",
+			"this profile requires full sign-in")
+		return
+	}
+
 	// Issue a new access token for the target user.
 	switchClaims := auth.Claims{
 		UserID:           result.UserID,

@@ -104,10 +104,14 @@ func CORS(allowed []string) func(http.Handler) http.Handler {
 //     where <host> is the app's installed-package identifier
 //     (com.onscreen.tv-webos, OnScreenTV.OnScreen, etc.).
 //
-// Neither can be sent by a regular browser via a hostile website —
-// browsers refuse to set these Origin values from http(s)// contexts.
-// So this auto-allow doesn't widen the attack surface for credentialed
-// cookie auth (file:// has no cookie jar anyway).
+// A hostile page CAN produce `Origin: null` (a sandboxed iframe, or a
+// data:/blob: document), so this auto-allow is NOT a security boundary. It is
+// safe only because this middleware never sets
+// `Access-Control-Allow-Credentials: true` — without that header a browser
+// won't attach the auth cookies to, nor expose the response of, a cross-origin
+// request, so a `null`-origin page gets only unauthenticated reads of public
+// endpoints. Do NOT add `Allow-Credentials: true` here without first replacing
+// this with a strict origin allowlist.
 func isTVAppOrigin(origin string) bool {
 	return origin == "null" || strings.HasPrefix(origin, "file://")
 }

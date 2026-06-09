@@ -24,6 +24,16 @@ import (
 // ErrNoProvider is returned when the service has no configured provider.
 var ErrNoProvider = errors.New("subtitle provider not configured")
 
+// langCodeRe restricts a subtitle language tag to ISO-639 alpha codes with an
+// optional region/script subtag (e.g. "en", "pt-BR", "zh-Hant"). The
+// security-critical property is that it forbids path separators and ".":
+// opts.Language is request-controlled and is interpolated into an on-disk
+// filename in Download, so an unrestricted value ("../../…") would traverse
+// out of the per-file cache directory.
+var langCodeRe = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,4})?$`)
+
+func validSubtitleLang(s string) bool { return langCodeRe.MatchString(s) }
+
 // Provider abstracts the remote subtitle source so tests can swap in a fake.
 type Provider interface {
 	Configured() bool
@@ -105,6 +115,11 @@ func (s *Service) Download(ctx context.Context, opts DownloadOpts) (gen.External
 	if opts.FileID == uuid.Nil || opts.ProviderFileID == 0 || opts.Language == "" {
 		return gen.ExternalSubtitle{}, errors.New("file_id, provider_file_id, and language are required")
 	}
+	if !validSubtitleLang(opts.Language) {
+		// Path-traversal guard: Language is interpolated into the on-disk
+		// filename below; reject anything that isn't a plain language tag.
+		return gen.ExternalSubtitle{}, fmt.Errorf("invalid language code %q", opts.Language)
+	}
 
 	info, err := s.provider.Download(ctx, opts.ProviderFileID)
 	if err != nil {
@@ -123,6 +138,11 @@ func (s *Service) Download(ctx context.Context, opts DownloadOpts) (gen.External
 	}
 	filename := fmt.Sprintf("%s_%d.vtt", opts.Language, opts.ProviderFileID)
 	path := filepath.Join(dir, filename)
+	// Defense in depth: ensure the join stayed inside the per-file cache dir
+	// even if the language allowlist above is ever loosened.
+	if !strings.HasPrefix(path, filepath.Clean(dir)+string(os.PathSeparator)) {
+		return gen.ExternalSubtitle{}, fmt.Errorf("subtitle path escapes cache dir")
+	}
 	if err := os.WriteFile(path, vtt, 0o644); err != nil {
 		return gen.ExternalSubtitle{}, fmt.Errorf("write subtitle: %w", err)
 	}

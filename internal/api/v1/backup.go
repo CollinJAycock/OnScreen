@@ -202,10 +202,15 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2 GiB upload cap — a custom-format dump of a huge library is still
-	// normally well under this.
+	// 2 GiB total upload cap — a custom-format dump of a huge library is
+	// normally well under this. This route is exempt from the global 1 MB body
+	// limit (which would otherwise truncate real dumps), so bound it here.
+	// ParseMultipartForm's argument is the in-MEMORY limit — keep it small so a
+	// large dump spills to temp files instead of buffering in RAM.
 	const maxUpload = int64(2) << 30
-	if err := r.ParseMultipartForm(maxUpload); err != nil {
+	const maxFormMemory = int64(32) << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
+	if err := r.ParseMultipartForm(maxFormMemory); err != nil {
 		respond.BadRequest(w, r, "invalid upload")
 		return
 	}

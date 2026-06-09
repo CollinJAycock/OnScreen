@@ -523,6 +523,37 @@ func (s *Service) OpenChannelStream(ctx context.Context, channelID uuid.UUID) (S
 	return stream, err
 }
 
+// AuthorizeRTMPKey reports whether streamKey matches the configured key of an
+// enabled RTMP broadcast device. It is wired into the embedded RTMP server as
+// the publish authorizer, so only known broadcasters can push. A publish is
+// rare (one per "go live"), so the per-call ListTunerDevices scan is fine;
+// keys are compared in constant time.
+func (s *Service) AuthorizeRTMPKey(streamKey string) bool {
+	if streamKey == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := s.q.ListTunerDevices(ctx)
+	if err != nil {
+		s.logger.WarnContext(ctx, "rtmp authorize: list tuners failed", "err", err)
+		return false
+	}
+	for _, t := range rows {
+		if t.Type != TunerTypeRTMP || !t.Enabled {
+			continue
+		}
+		var cfg RTMPConfig
+		if err := json.Unmarshal(t.Config, &cfg); err != nil {
+			continue
+		}
+		if cfg.StreamKey != "" && constantTimeKeyEqual(cfg.StreamKey, streamKey) {
+			return true
+		}
+	}
+	return false
+}
+
 // ── EPG sources ──────────────────────────────────────────────────────────────
 
 // ListEPGSources returns all configured EPG sources.

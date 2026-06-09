@@ -18,6 +18,33 @@ func nopLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestWorkerSegAuthOK(t *testing.T) {
+	get := func(authz string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/segments/x", nil)
+		if authz != "" {
+			r.Header.Set("Authorization", authz)
+		}
+		return r
+	}
+	// No token configured → open (preserves prior behavior / SECRET_KEY unset).
+	if !(&Worker{}).segAuthOK(get("")) {
+		t.Fatal("empty token must allow")
+	}
+	w := &Worker{segAuthToken: "tok123"}
+	if w.segAuthOK(get("")) {
+		t.Error("missing Authorization must be rejected")
+	}
+	if w.segAuthOK(get("tok123")) {
+		t.Error("non-Bearer scheme must be rejected")
+	}
+	if w.segAuthOK(get("Bearer wrong")) {
+		t.Error("wrong token must be rejected")
+	}
+	if !w.segAuthOK(get("Bearer tok123")) {
+		t.Error("correct bearer must be allowed")
+	}
+}
+
 func TestNewWorker_Defaults(t *testing.T) {
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)

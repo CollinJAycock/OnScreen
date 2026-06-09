@@ -203,6 +203,9 @@ func run() error {
 		logger,
 	)
 	transcodeWorker.SetNodeID(cfg.NodeID)
+	// Require the SECRET_KEY-derived bearer on this worker's segment server so
+	// only the API server (which derives the same token) can fetch segments.
+	transcodeWorker.SetSegmentAuthToken(transcode.SegmentProxyToken(cfg.SecretKey))
 	// Opt-in Intel QSV hardware HEVC decode (TRANSCODE_QSV_DECODE) — offloads
 	// the 4K HEVC decode from the CPU on workers with a known-good QSV stack.
 	transcodeWorker.SetQSVDecode(cfg.TranscodeQSVDecode)

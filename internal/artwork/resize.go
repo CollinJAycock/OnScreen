@@ -10,9 +10,18 @@ package artwork
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"io"
 
 	"github.com/disintegration/imaging"
+)
+
+const (
+	// maxArtworkBytes caps the encoded source we read into memory.
+	maxArtworkBytes = 64 << 20 // 64 MiB
+	// maxArtworkPixels caps the decoded resolution to reject pixel-flood /
+	// decompression bombs before imaging.Decode allocates the full bitmap.
+	maxArtworkPixels = 100_000_000 // 100 MP
 )
 
 // jpegQuality is the encode quality used for every resized variant. 90
@@ -32,7 +41,22 @@ const jpegQuality = 90
 // case with a single call. Both use Lanczos by default; Linear is the
 // speed/quality balance the prior BiLinear stand-in aimed at.
 func decodeResizeEncodeJPEG(src io.Reader, w, h, quality int) ([]byte, error) {
-	img, err := imaging.Decode(src)
+	// Buffer the (bounded) encoded source so we can size-check the header
+	// before decoding the full bitmap — a tiny file can declare enormous
+	// dimensions that decode to many GB of RGBA.
+	data, err := io.ReadAll(io.LimitReader(src, maxArtworkBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read source: %w", err)
+	}
+	if len(data) > maxArtworkBytes {
+		return nil, fmt.Errorf("source image exceeds %d bytes", maxArtworkBytes)
+	}
+	if cfg, _, derr := image.DecodeConfig(bytes.NewReader(data)); derr == nil {
+		if int64(cfg.Width)*int64(cfg.Height) > maxArtworkPixels {
+			return nil, fmt.Errorf("source dimensions too large: %dx%d", cfg.Width, cfg.Height)
+		}
+	}
+	img, err := imaging.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("decode source: %w", err)
 	}

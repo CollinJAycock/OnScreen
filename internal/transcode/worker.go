@@ -2,6 +2,7 @@ package transcode
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -119,6 +120,7 @@ type Worker struct {
 	maxSessions      atomic.Int32 // concurrent-session cap; live-adjustable via SetMaxSessions
 	mu               sync.Mutex
 	activeJobs       map[string]*os.Process // session_id → ffmpeg PID
+	segAuthToken     string                 // bearer required on the segment server (SECRET_KEY-derived); empty = open (tests / no SECRET_KEY)
 }
 
 // SetMaxSessions adjusts the worker's concurrent-session cap at runtime. Takes
@@ -161,6 +163,27 @@ func (w *Worker) SetEncoderFailover(v bool) { w.encoderFailover = v }
 // SetNodeID records this worker's NODE_ID so its registration advertises the
 // node identity its per-node config (Settings ▸ Nodes) is keyed by.
 func (w *Worker) SetNodeID(id string) { w.nodeID = id }
+
+// SetSegmentAuthToken sets the bearer the segment HTTP server requires on
+// /segments/ and /seghead/, closing the otherwise-open endpoint to
+// unauthenticated peers on the network. The API server attaches the same
+// token (derived from SECRET_KEY via SegmentProxyToken). Empty leaves the
+// server open — preserving behavior when SECRET_KEY isn't configured.
+func (w *Worker) SetSegmentAuthToken(t string) { w.segAuthToken = t }
+
+// segAuthOK reports whether a segment-server request carries the required
+// bearer. Always true when no token is configured.
+func (w *Worker) segAuthOK(r *http.Request) bool {
+	if w.segAuthToken == "" {
+		return true
+	}
+	const pfx = "Bearer "
+	h := r.Header.Get("Authorization")
+	if len(h) <= len(pfx) || h[:len(pfx)] != pfx {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(h[len(pfx):]), []byte(w.segAuthToken)) == 1
+}
 
 // NewWorker creates a transcode Worker.
 func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSessions int, encOpts EncoderOpts, logger *slog.Logger) *Worker {
@@ -939,6 +962,10 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 
 	// Serve files from /tmp/onscreen/sessions/{session_id}/
 	mux.HandleFunc("/segments/", func(rw http.ResponseWriter, r *http.Request) {
+		if !w.segAuthOK(r) {
+			http.Error(rw, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		// Path: /segments/{session_id}/{filename}
 		rel := r.URL.Path[len("/segments/"):]
 		abs := filepath.Join(segmentBaseDir, rel)
@@ -980,6 +1007,10 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 	// ABR reachability check uses this to decide wait-vs-restart for a remote
 	// worker (the local-disk scan only works for a co-located embedded worker).
 	mux.HandleFunc("/seghead/", func(rw http.ResponseWriter, r *http.Request) {
+		if !w.segAuthOK(r) {
+			http.Error(rw, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		sid := filepath.Base(r.URL.Path[len("/seghead/"):])
 		if sid == "." || sid == ".." || sid == "" {
 			http.Error(rw, "bad session", http.StatusBadRequest)

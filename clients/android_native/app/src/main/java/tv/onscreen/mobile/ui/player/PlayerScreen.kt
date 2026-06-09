@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Bookmarks
@@ -628,6 +629,22 @@ private fun PlayerHost(
     // centers the Row, which sits right on top of Media3's centered
     // play / rewind / fast-forward chevrons and steals their taps.
     if (!inPip && controlsVisible) Box(modifier = Modifier.fillMaxSize()) {
+      // Back / close — pinned top-left. Otherwise the only way out of the
+      // player is the system back gesture, which a tablet/TV in immersive
+      // fullscreen can hide entirely, leaving the viewer stuck. Auto-hides
+      // with the rest of the controls (gated on controlsVisible).
+      IconButton(
+          onClick = onClose,
+          modifier = Modifier
+              .align(Alignment.TopStart)
+              .padding(16.dp),
+      ) {
+          Icon(
+              Icons.AutoMirrored.Filled.ArrowBack,
+              contentDescription = "Back",
+              tint = Color.White,
+          )
+      }
       Row(
         modifier = Modifier
             .align(Alignment.TopEnd)

@@ -200,6 +200,12 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	if err != nil || time.Now().After(exp) {
 		return nil, fmt.Errorf("validate token: expired")
 	}
+	// The parser skips the built-in time checks, so re-enforce not-before too
+	// (every token we mint sets nbf). Prevents a future-dated token from being
+	// honored early should any issuance path ever set a forward nbf.
+	if nbf, nerr := token.GetNotBefore(); nerr == nil && time.Now().Before(nbf) {
+		return nil, fmt.Errorf("validate token: not yet valid")
+	}
 
 	userIDStr, err := token.GetString("user_id")
 	if err != nil {

@@ -114,6 +114,14 @@ type hlsStreamSource interface {
 	OpenChannelStream(ctx context.Context, channelID uuid.UUID) (Stream, error)
 }
 
+// inputFormatHinter is an optional interface a Stream may implement to force
+// a specific ffmpeg input demuxer (-f). MPEG-TS tuner streams don't implement
+// it (autodetection is reliable for TS); the RTMP broadcast reader returns
+// "flv" so ffmpeg doesn't have to probe a non-seekable live pipe.
+type inputFormatHinter interface {
+	FFmpegInputFormat() string
+}
+
 // HLSProxy multiplexes channel streams into per-channel HLS sessions with
 // reference counting. Concurrency model: one mutex protects the sessions
 // map; per-session state has its own mutex so two viewers on different
@@ -216,8 +224,19 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	// streams ffmpeg can't mux into HLS.
 	// -pix_fmt yuv420p ensures universal browser/HW decoder compatibility
 	// (some broadcasts are 4:2:2 which Chromium can't decode).
-	args := []string{
-		"-fflags", "+genpts+discardcorrupt",
+	// Optional input-format hint. Tuner sources are MPEG-TS and rely on
+	// ffmpeg's autodetection (no hint). The RTMP broadcast path returns FLV,
+	// which is more reliably demuxed with an explicit -f on a non-seekable
+	// live pipe than left to probe.
+	inputFmt := ""
+	if hinter, ok := upstream.(inputFormatHinter); ok {
+		inputFmt = hinter.FFmpegInputFormat()
+	}
+	args := []string{"-fflags", "+genpts+discardcorrupt"}
+	if inputFmt != "" {
+		args = append(args, "-f", inputFmt)
+	}
+	args = append(args,
 		"-i", "pipe:0",
 		"-map", "0:v:0", // first video stream only
 		"-map", "0:a:0?", // first audio stream if present
@@ -229,7 +248,7 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		"-color_trc", "bt709",
 		"-colorspace", "bt709",
 		"-color_range", "tv",
-	}
+	)
 	// -g and -keyint_min force a keyframe every N frames so segment
 	// boundaries always land on keyframes — required for clean HLS
 	// playback. Applied to all encoders.
@@ -239,11 +258,15 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		"-keyint_min", gop,
 		"-sc_threshold", "0", // disable scenecut keyframes (would break GOP alignment)
 	)
+	// No forced -level: NVENC hard-rejects ("Invalid Level") a level too low
+	// for the input's resolution/framerate (e.g. an RTMP broadcast pushing
+	// 1080p60 against a 4.1 cap), and browsers play any level fine since the
+	// bitrate is already capped above. Let each encoder auto-select.
 	switch p.cfg.VideoEncoder {
 	case "libx264":
 		args = append(args,
 			"-preset", "veryfast", "-tune", "zerolatency",
-			"-profile:v", "high", "-level", "4.1",
+			"-profile:v", "high",
 			"-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M",
 		)
 	case "h264_nvenc":
@@ -253,7 +276,7 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		// lookahead and B-frames so frames come out as fast as they go in.
 		args = append(args,
 			"-preset", "p4", "-tune", "ll", "-rc", "vbr",
-			"-profile:v", "high", "-level", "4.1",
+			"-profile:v", "high",
 			"-b:v", "6M", "-maxrate", "8M", "-bufsize", "8M",
 			// Force IDR at -g intervals (NVENC otherwise emits non-IDR I-frames).
 			"-forced-idr", "1",

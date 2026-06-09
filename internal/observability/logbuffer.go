@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -106,6 +107,23 @@ type logEntry struct {
 	rawAttrs []byte
 }
 
+// sensitiveLogKeySubstrings name attribute keys whose values are redacted
+// before entering the admin-readable log ring. Kept specific (api_key, not a
+// bare "key") so common non-secret keys (cache_key, request_id) aren't hit.
+var sensitiveLogKeySubstrings = []string{
+	"password", "secret", "token", "authorization", "api_key", "apikey", "credential",
+}
+
+func isSensitiveLogKey(k string) bool {
+	k = strings.ToLower(k)
+	for _, s := range sensitiveLogKeySubstrings {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // NewLogRingBuffer wraps inner with rings of the given capacity (one for all
 // records, one for WARN+).
 func NewLogRingBuffer(inner slog.Handler, capacity int) *LogRingBuffer {
@@ -145,6 +163,12 @@ func (r *LogRingBuffer) Handle(ctx context.Context, rec slog.Record) error {
 		v := a.Value.Any()
 		if e, ok := v.(error); ok {
 			v = e.Error()
+		}
+		// Belt-and-suspenders: source code already avoids logging secrets, but
+		// redact by key name so a stray attr can't leak one into the
+		// admin-readable ring.
+		if isSensitiveLogKey(a.Key) {
+			v = "[redacted]"
 		}
 		attrs[a.Key] = v
 		return true

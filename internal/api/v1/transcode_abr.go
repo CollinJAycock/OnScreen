@@ -415,6 +415,7 @@ func segHead(ctx context.Context, workerAddr, childID, ext string) int {
 		if err != nil {
 			return -1
 		}
+		authWorkerReq(req)
 		resp, err := workerClient.Do(req)
 		if err != nil {
 			return -1

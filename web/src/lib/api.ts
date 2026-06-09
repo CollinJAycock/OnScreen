@@ -1888,6 +1888,12 @@ export const liveTvApi = {
   reorderChannels: (channelIDs: string[]) =>
     api.put<void>('/tv/channels/order', { channel_ids: channelIDs }),
 
+  // Live broadcasts ("go live" / RTMP ingest). A broadcast is an rtmp tuner
+  // device; delete it with deleteTuner(tuner_id).
+  listBroadcasts: () => api.requestList<LiveTVBroadcast>('/tv/broadcasts'),
+  createBroadcast: (name: string) =>
+    api.post<LiveTVBroadcast>('/tv/broadcasts', { name }),
+
   // DVR.
   listSchedules: () => api.requestList<LiveTVSchedule>('/tv/schedules'),
   createSchedule: (body: Partial<LiveTVSchedule> & { type: string }) =>
@@ -1897,6 +1903,16 @@ export const liveTvApi = {
     api.requestList<LiveTVRecording>('/tv/recordings' + (status ? `?status=${status}` : '')),
   cancelRecording: (id: string) => api.delete(`/tv/recordings/${id}`),
 };
+
+export interface LiveTVBroadcast {
+  tuner_id: string;
+  channel_id?: string;
+  name: string;
+  stream_key: string;
+  ingest_url: string;
+  enabled: boolean;
+  is_live: boolean;
+}
 
 export interface LiveTVSchedule {
   id: string;

@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/staticabr"
@@ -77,6 +79,14 @@ func staticTestHandler(store mediastore.Store, fileID, itemID uuid.UUID) *Native
 	return h
 }
 
+// staticReq builds a request with chi params AND authenticated claims —
+// static-ABR handlers now require claims (library ACL + content-rating
+// ceiling), matching the RequiredAllowQueryToken middleware in production.
+func staticReq(method, target string, kv ...string) *http.Request {
+	req := withChiParams(httptest.NewRequest(method, target, nil), kv...)
+	return req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+}
+
 func TestStaticMaster_RewritesRungsAndChecksAvailability(t *testing.T) {
 	fileID, itemID := uuid.New(), uuid.New()
 	store := memStaticStore{files: map[string][]byte{
@@ -85,7 +95,7 @@ func TestStaticMaster_RewritesRungsAndChecksAvailability(t *testing.T) {
 	}}
 	h := staticTestHandler(store, fileID, itemID)
 
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/m?token=T", nil), "fileID", fileID.String())
+	req := staticReq(http.MethodGet, "/m?token=T", "fileID", fileID.String())
 	rec := httptest.NewRecorder()
 	h.StaticMaster(rec, req)
 
@@ -105,11 +115,25 @@ func TestStaticMaster_StaleHashIs404(t *testing.T) {
 		staticabr.HashKey(fileID):   []byte("OLD"), // file hash is h1 → stale
 	}}
 	h := staticTestHandler(store, fileID, itemID)
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/m", nil), "fileID", fileID.String())
+	req := staticReq(http.MethodGet, "/m", "fileID", fileID.String())
 	rec := httptest.NewRecorder()
 	h.StaticMaster(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("stale ladder: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestStaticMaster_RequiresClaims locks in the fail-closed behavior: with no
+// authenticated claims on the context, the static handler must 401 rather than
+// serve a ladder (previously it served when the ACL checker was nil).
+func TestStaticMaster_RequiresClaims(t *testing.T) {
+	fileID, itemID := uuid.New(), uuid.New()
+	h := staticTestHandler(memStaticStore{files: map[string][]byte{}}, fileID, itemID)
+	req := withChiParams(httptest.NewRequest(http.MethodGet, "/m", nil), "fileID", fileID.String())
+	rec := httptest.NewRecorder()
+	h.StaticMaster(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no claims: status = %d, want 401", rec.Code)
 	}
 }
 
@@ -119,8 +143,7 @@ func TestStaticRung_SegmentsToAppEndpointWhenNoOffload(t *testing.T) {
 		staticabr.RungPlaylistKey(fileID, "720p"): []byte("#EXTM3U\n#EXTINF:6.0,\nseg00000.ts\n#EXT-X-ENDLIST\n"),
 	}}
 	h := staticTestHandler(store, fileID, itemID)
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/r?token=T", nil),
-		"fileID", fileID.String(), "rung", "720p")
+	req := staticReq(http.MethodGet, "/r?token=T", "fileID", fileID.String(), "rung", "720p")
 	rec := httptest.NewRecorder()
 	h.StaticRung(rec, req)
 
@@ -139,8 +162,7 @@ func TestStaticRung_SegmentsToSignedURLWhenOffloadable(t *testing.T) {
 		signedBase: "https://cdn.example",
 	}
 	h := staticTestHandler(store, fileID, itemID)
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/r", nil),
-		"fileID", fileID.String(), "rung", "720p")
+	req := staticReq(http.MethodGet, "/r", "fileID", fileID.String(), "rung", "720p")
 	rec := httptest.NewRecorder()
 	h.StaticRung(rec, req)
 

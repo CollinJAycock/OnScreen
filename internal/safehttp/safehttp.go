@@ -83,6 +83,12 @@ func checkAddress(p DialPolicy, address string) error {
 	if ip == nil {
 		return fmt.Errorf("%w: unresolved host %q", ErrBlockedAddress, host)
 	}
+	return checkIP(p, ip)
+}
+
+// checkIP enforces the policy on a parsed IP. Split out from checkAddress so
+// it can recurse on the IPv4 embedded in a NAT64 / 6to4 IPv6 address.
+func checkIP(p DialPolicy, ip net.IP) error {
 	switch {
 	case ip.IsLoopback():
 		if p.AllowLoopback {
@@ -115,6 +121,13 @@ func checkAddress(p DialPolicy, address string) error {
 	case ip.IsMulticast():
 		return fmt.Errorf("%w: multicast address %s", ErrBlockedAddress, ip)
 	}
+	// NAT64 (64:ff9b::/96) and 6to4 (2002::/16) wrap an IPv4 address inside an
+	// IPv6 one. On a host behind such a gateway a "public-looking" IPv6 target
+	// can forward to a private/metadata IPv4 (e.g. 169.254.169.254), slipping
+	// past the checks above which only see the outer v6. Re-check the inner v4.
+	if inner := embeddedV4(ip); inner != nil {
+		return checkIP(p, inner)
+	}
 	return nil
 }
 
@@ -130,6 +143,53 @@ var cgnatNet = func() *net.IPNet {
 func isCGNAT(ip net.IP) bool {
 	v4 := ip.To4()
 	return v4 != nil && cgnatNet.Contains(v4)
+}
+
+// mustCIDR parses a CIDR at init time, panicking on a bad literal.
+func mustCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic("safehttp: bad CIDR " + s)
+	}
+	return n
+}
+
+var (
+	// nat64Net is the well-known NAT64 prefix (RFC 6052): a target here is
+	// forwarded to the IPv4 embedded in its last 32 bits.
+	nat64Net = mustCIDR("64:ff9b::/96")
+	// sixToFour is the 6to4 prefix (RFC 3056); bytes 2..5 embed the v4.
+	sixToFour = mustCIDR("2002::/16")
+)
+
+// embeddedV4 extracts the IPv4 tunneled inside a NAT64 / 6to4 IPv6 address,
+// or nil when ip carries none. IPv4 and IPv4-mapped inputs return nil — Go's
+// IsPrivate/IsLoopback already unwrap those. (Teredo 2001::/32 is not handled;
+// it's effectively dead and its embedding is obfuscated.)
+func embeddedV4(ip net.IP) net.IP {
+	if ip.To4() != nil {
+		return nil
+	}
+	v16 := ip.To16()
+	if v16 == nil {
+		return nil
+	}
+	switch {
+	case nat64Net.Contains(ip):
+		return net.IPv4(v16[12], v16[13], v16[14], v16[15])
+	case sixToFour.Contains(ip):
+		return net.IPv4(v16[2], v16[3], v16[4], v16[5])
+	}
+	return nil
+}
+
+// IsBlocked reports whether ip is denied under the default public-only policy
+// (loopback, private, CGNAT, link-local, unspecified, multicast, and IPv4
+// tunneled in NAT64/6to4). Exported so other denylists — e.g. the plugin
+// egress path — can share it instead of maintaining a parallel, drift-prone
+// copy.
+func IsBlocked(ip net.IP) bool {
+	return checkIP(DialPolicy{}, ip) != nil
 }
 
 // Default returns a client+policy appropriate for public outbound

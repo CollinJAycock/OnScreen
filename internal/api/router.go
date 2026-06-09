@@ -200,12 +200,12 @@ func NewRouter(h *Handlers) http.Handler {
 		// serves the master when the session is ABR.
 		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", h.NativeTranscode.ABRVariantPlaylist)
 		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", h.NativeTranscode.ABRVariantSegment)
-		// Static (pre-encoded) ABR: a file's ladder served from the media store /
-		// CDN instead of a live session (HA roadmap §5). Segments point at signed
-		// object-storage URLs when offloadable, else the seg endpoint below.
-		r.Get("/api/v1/transcode/static/{fileID}/master.m3u8", h.NativeTranscode.StaticMaster)
-		r.Get("/api/v1/transcode/static/{fileID}/{rung}/index.m3u8", h.NativeTranscode.StaticRung)
-		r.Get("/api/v1/transcode/static/{fileID}/{rung}/seg/{name}", h.NativeTranscode.StaticSegment)
+		// NOTE: static (pre-encoded) ABR routes are registered in the
+		// RequiredAllowQueryToken group below, NOT here. Unlike the session
+		// routes above (which self-authenticate via the segment token), the
+		// static handlers authorize per-request (library ACL + content-rating
+		// ceiling in staticFileAccess), so they need the auth middleware to
+		// populate the claims context.
 	}
 
 	// ── Artwork file server ──────────────────────────────────────────────────
@@ -351,8 +351,9 @@ func NewRouter(h *Handlers) http.Handler {
 
 	// ── OnScreen native API (/api/v1/) ────────────────────────────────────────
 	r.Route("/api/v1", func(r chi.Router) {
-		// Limit request bodies to 1 MB to prevent memory exhaustion.
-		r.Use(middleware.MaxBytesBody(1 << 20))
+		// Limit request bodies to 1 MB to prevent memory exhaustion. The DB
+		// restore endpoint is exempt — it streams a large dump and caps itself.
+		r.Use(middleware.MaxBytesBody(1<<20, "/admin/restore"))
 		// Public status endpoints — no rate limit (read-only, cheap).
 		r.Group(func(r chi.Router) {
 			r.Get("/setup/status", h.Auth.SetupStatus)
@@ -460,6 +461,14 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 			if h.Photos != nil {
 				r.Get("/items/{id}/image", h.Photos.Image)
+			}
+			// Static (pre-encoded) ABR ladder. Authorizes per-request via
+			// staticFileAccess (library ACL + content-rating ceiling), so it
+			// rides the same query-token middleware as the other asset GETs.
+			if h.NativeTranscode != nil {
+				r.Get("/transcode/static/{fileID}/master.m3u8", h.NativeTranscode.StaticMaster)
+				r.Get("/transcode/static/{fileID}/{rung}/index.m3u8", h.NativeTranscode.StaticRung)
+				r.Get("/transcode/static/{fileID}/{rung}/seg/{name}", h.NativeTranscode.StaticSegment)
 			}
 		})
 
@@ -886,6 +895,10 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/tv/epg-sources", h.LiveTV.CreateEPGSource)
 					r.Delete("/tv/epg-sources/{id}", h.LiveTV.DeleteEPGSource)
 					r.Post("/tv/epg-sources/{id}/refresh", h.LiveTV.RefreshEPGSource)
+					// Live broadcasts ("go live" / RTMP ingest). A broadcast is
+					// an rtmp tuner device; delete via DELETE /tv/tuners/{id}.
+					r.Get("/tv/broadcasts", h.LiveTV.ListBroadcasts)
+					r.Post("/tv/broadcasts", h.LiveTV.CreateBroadcast)
 				})
 			}
 

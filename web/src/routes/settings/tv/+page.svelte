@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { liveTvApi, type LiveTVTuner, type LiveTVEPGSource, type LiveTVChannel } from '$lib/api';
+  import { onMount, onDestroy } from 'svelte';
+  import { liveTvApi, type LiveTVTuner, type LiveTVEPGSource, type LiveTVChannel, type LiveTVBroadcast } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let tuners: LiveTVTuner[] = [];
@@ -41,7 +41,73 @@
   let discovering = false;
   let discovered: Array<{ device_id: string; base_url: string; tune_count: number; model?: string }> = [];
 
-  onMount(load);
+  // ── Live broadcasts ("go live" / RTMP ingest) ──
+  let broadcasts: LiveTVBroadcast[] = [];
+  let broadcastsUnavailable = false;
+  let newBroadcastName = '';
+  let creatingBroadcast = false;
+  let busyBroadcastId = '';
+  let revealedKeys: Record<string, boolean> = {};
+  let statusPoll: ReturnType<typeof setInterval> | undefined;
+
+  onMount(() => {
+    load();
+    loadBroadcasts();
+    // Poll live/offline status so the badge flips when a broadcaster connects.
+    statusPoll = setInterval(loadBroadcasts, 5000);
+  });
+  onDestroy(() => {
+    if (statusPoll) clearInterval(statusPoll);
+  });
+
+  async function loadBroadcasts() {
+    try {
+      broadcasts = (await liveTvApi.listBroadcasts()).items;
+      broadcastsUnavailable = false;
+    } catch {
+      // RTMP ingest disabled on the server (RTMP_ENABLED=false / bind failed).
+      broadcasts = [];
+      broadcastsUnavailable = true;
+    }
+  }
+
+  async function createBroadcast() {
+    const name = newBroadcastName.trim();
+    if (!name) return;
+    creatingBroadcast = true;
+    try {
+      await liveTvApi.createBroadcast(name);
+      newBroadcastName = '';
+      toast.success('Broadcast created');
+      await loadBroadcasts();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to create broadcast');
+    } finally {
+      creatingBroadcast = false;
+    }
+  }
+
+  async function removeBroadcast(b: LiveTVBroadcast) {
+    if (!confirm(`Delete broadcast "${b.name}"? Any active stream will be cut off.`)) return;
+    busyBroadcastId = b.tuner_id;
+    try {
+      await liveTvApi.deleteTuner(b.tuner_id);
+      await loadBroadcasts();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete broadcast');
+    } finally {
+      busyBroadcastId = '';
+    }
+  }
+
+  async function copyText(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error('Copy failed');
+    }
+  }
 
   async function load() {
     loading = true; error = '';
@@ -254,6 +320,80 @@
   <p class="error">{error}</p>
 {:else}
   <div class="wrap">
+    <section>
+      <header>
+        <h2>Live broadcasts</h2>
+        <p class="hint">
+          Go live from OBS, ffmpeg, or any RTMP encoder. Create a broadcast,
+          point your encoder at the ingest URL with the stream key, and it
+          appears as a Live TV channel — viewable in the browser and recordable
+          by the DVR.
+        </p>
+      </header>
+
+      {#if broadcastsUnavailable}
+        <p class="empty">
+          RTMP ingest is disabled on this server. Set <code>RTMP_ENABLED=true</code>
+          and ensure the RTMP port (default 1935) is reachable.
+        </p>
+      {:else}
+        {#if broadcasts.length === 0}
+          <p class="empty">No broadcasts yet. Create one below to go live.</p>
+        {:else}
+          <ul class="broadcast-list">
+            {#each broadcasts as b (b.tuner_id)}
+              <li class="broadcast">
+                <div class="broadcast-head">
+                  <span class="broadcast-name">{b.name}</span>
+                  {#if b.is_live}
+                    <span class="badge badge-live"><span class="live-dot"></span>LIVE</span>
+                  {:else}
+                    <span class="badge badge-off">offline</span>
+                  {/if}
+                </div>
+
+                <div class="kv">
+                  <span class="kv-label">Ingest URL</span>
+                  <code class="mono">{b.ingest_url.replace(b.stream_key, '<key>')}</code>
+                  <button class="btn btn-sm" on:click={() => copyText(b.ingest_url.slice(0, b.ingest_url.lastIndexOf('/')), 'Server URL')}>Copy URL</button>
+                </div>
+
+                <div class="kv">
+                  <span class="kv-label">Stream key</span>
+                  <code class="mono">{revealedKeys[b.tuner_id] ? b.stream_key : '••••••••••••••••'}</code>
+                  <button class="btn btn-sm" on:click={() => (revealedKeys[b.tuner_id] = !revealedKeys[b.tuner_id])}>
+                    {revealedKeys[b.tuner_id] ? 'Hide' : 'Reveal'}
+                  </button>
+                  <button class="btn btn-sm" on:click={() => copyText(b.stream_key, 'Stream key')}>Copy key</button>
+                </div>
+
+                <div class="broadcast-actions">
+                  {#if b.channel_id}
+                    <a class="btn btn-sm" href={`/tv/${b.channel_id}`}>Watch</a>
+                  {/if}
+                  <button class="btn btn-sm btn-danger" disabled={busyBroadcastId === b.tuner_id} on:click={() => removeBroadcast(b)}>
+                    Delete
+                  </button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        <div class="grid">
+          <label class="full">
+            New broadcast name
+            <input type="text" bind:value={newBroadcastName} placeholder="Studio Cam" on:keydown={(e) => e.key === 'Enter' && createBroadcast()} />
+          </label>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" disabled={creatingBroadcast || !newBroadcastName.trim()} on:click={createBroadcast}>
+            {creatingBroadcast ? 'Creating…' : 'Create broadcast'}
+          </button>
+        </div>
+      {/if}
+    </section>
+
     <section>
       <header>
         <h2>Tuners</h2>
@@ -577,6 +717,35 @@
     border-radius: 3px; font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em;
   }
   .badge-off { background: rgba(255,100,100,0.12); color: rgb(255,140,140); }
+  .badge-live {
+    background: rgba(255,60,60,0.16); color: rgb(255,90,90);
+    display: inline-flex; align-items: center; gap: 0.3rem;
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: rgb(255,60,60);
+    animation: live-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .broadcast-list { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+  .broadcast {
+    padding: 0.85rem 1rem;
+    background: var(--bg);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 6px;
+    display: flex; flex-direction: column; gap: 0.5rem;
+  }
+  .broadcast-head { display: flex; align-items: center; gap: 0.5rem; }
+  .broadcast-name { color: var(--text-primary); font-weight: 600; font-size: 0.92rem; }
+  .kv { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .kv-label { font-size: 0.72rem; color: var(--text-muted); min-width: 72px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;
+    color: var(--text-primary); background: var(--bg-elevated, rgba(255,255,255,0.04));
+    padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.06);
+  }
+  .broadcast-actions { display: flex; gap: 0.4rem; margin-top: 0.15rem; }
+  .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.74rem; text-decoration: none; display: inline-flex; align-items: center; }
 
   .discover-row { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
   .discover-hint { font-size: 0.75rem; color: var(--text-muted); }

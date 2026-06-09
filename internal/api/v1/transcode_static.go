@@ -16,6 +16,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/staticabr"
@@ -57,17 +58,31 @@ func (h *NativeTranscodeHandler) staticFileAccess(w http.ResponseWriter, r *http
 		respond.NotFound(w, r)
 		return nil, false
 	}
+	// Always require claims (these routes sit behind RequiredAllowQueryToken),
+	// then enforce the per-library ACL and the content-rating ceiling — the
+	// same gates the live StreamFile path applies. Previously this block was
+	// skipped entirely when h.access was nil (fail-open) and never checked the
+	// rating ceiling, so a restricted profile could stream a pre-encoded
+	// ladder of content above its limit.
+	claims := middleware.ClaimsFromContext(ctx)
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return nil, false
+	}
 	if h.access != nil {
-		claims := middleware.ClaimsFromContext(ctx)
-		if claims == nil {
-			respond.Unauthorized(w, r)
-			return nil, false
-		}
 		ok, aerr := h.access.CanAccessLibrary(ctx, claims.UserID, item.LibraryID, claims.IsAdmin)
 		if aerr != nil || !ok {
 			respond.NotFound(w, r) // fail-closed, indistinguishable from missing
 			return nil, false
 		}
+	}
+	cr := ""
+	if item.ContentRating != nil {
+		cr = *item.ContentRating
+	}
+	if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		respond.Forbidden(w, r)
+		return nil, false
 	}
 	return file, true
 }

@@ -458,6 +458,12 @@ func (s *stubUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUser
 func (s *stubUserDB) SetProfileInheritLibraryAccess(_ context.Context, _ gen.SetProfileInheritLibraryAccessParams) (int64, error) {
 	return 1, nil
 }
+func (s *stubUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStreamCapsParams) error {
+	return nil
+}
+func (s *stubUserDB) GetUserStreamCaps(_ context.Context, _ uuid.UUID) (gen.GetUserStreamCapsRow, error) {
+	return gen.GetUserStreamCapsRow{}, nil
+}
 
 // stubAnalyticsDB implements the analyticsQuerier used by AnalyticsHandler.
 type stubAnalyticsDB struct{}

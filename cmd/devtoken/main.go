@@ -27,7 +27,10 @@ import (
 func main() {
 	secret := os.Getenv("SECRET_KEY")
 	if secret == "" {
-		secret = "dev-secret-key-change-in-production-32b"
+		// No hardcoded fallback: a known in-repo key would mint forgeable
+		// admin tokens against any server accidentally booted with it.
+		fmt.Fprintln(os.Stderr, "devtoken: SECRET_KEY is required")
+		os.Exit(1)
 	}
 	key := auth.DeriveKey32(secret)
 	tm, err := auth.NewTokenMaker(key)

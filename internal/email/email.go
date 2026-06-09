@@ -92,25 +92,51 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 
 	// Connect to the SMTP server with a bounded deadline.
 	dialer := &net.Dialer{Timeout: 30 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("email: dial %s: %w", addr, err)
-	}
+	tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12}
 
-	c, err := smtp.NewClient(conn, cfg.Host)
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("email: smtp client: %w", err)
-	}
-	defer c.Close()
-
-	// STARTTLS if supported.
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		tlsCfg := &tls.Config{ServerName: cfg.Host}
-		if err := c.StartTLS(tlsCfg); err != nil {
-			return fmt.Errorf("email: starttls: %w", err)
+	var (
+		c   *smtp.Client
+		err error
+	)
+	if cfg.Port == 465 {
+		// Implicit TLS (SMTPS): the whole session is encrypted from the first
+		// byte — no cleartext window and no STARTTLS-strip surface.
+		conn, derr := (&tls.Dialer{NetDialer: dialer, Config: tlsCfg}).DialContext(ctx, "tcp", addr)
+		if derr != nil {
+			return fmt.Errorf("email: tls dial %s: %w", addr, derr)
+		}
+		c, err = smtp.NewClient(conn, cfg.Host)
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("email: smtp client: %w", err)
+		}
+	} else {
+		conn, derr := dialer.DialContext(ctx, "tcp", addr)
+		if derr != nil {
+			return fmt.Errorf("email: dial %s: %w", addr, derr)
+		}
+		c, err = smtp.NewClient(conn, cfg.Host)
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("email: smtp client: %w", err)
+		}
+		// Upgrade via STARTTLS. If the server advertises it, the upgrade must
+		// succeed. If it does NOT advertise STARTTLS, refuse to continue in
+		// cleartext to a non-loopback relay — otherwise an active MITM can
+		// strip the advertisement and harvest the password-reset / invite
+		// tokens carried in the message body. A loopback relay (local MTA)
+		// is exempt: there's no network path to attack.
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(tlsCfg); err != nil {
+				c.Close()
+				return fmt.Errorf("email: starttls: %w", err)
+			}
+		} else if !isLoopbackHost(cfg.Host) {
+			c.Close()
+			return fmt.Errorf("email: server %s does not offer STARTTLS; refusing to send over cleartext (use port 465 or a TLS-capable relay)", cfg.Host)
 		}
 	}
+	defer c.Close()
 
 	// Authenticate if credentials provided.
 	if cfg.Username != "" && cfg.Password != "" {
@@ -145,6 +171,18 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 	}
 
 	return c.Quit()
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP — the
+// only case where sending without TLS is acceptable (no network to MITM).
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // buildMessage constructs an RFC 2822 email with HTML content.

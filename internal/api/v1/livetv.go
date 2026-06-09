@@ -51,6 +51,12 @@ type LiveTVHandler struct {
 	proxy  LiveTVStreamProxy
 	dvr    LiveTVDVRService
 	logger *slog.Logger
+
+	// RTMP broadcast ("go live") support. rtmp is nil when the embedded RTMP
+	// ingest server isn't enabled; the broadcast endpoints then 503.
+	rtmp           RTMPStatusProvider
+	rtmpPublicHost string
+	rtmpListenAddr string
 }
 
 // NewLiveTVHandler wires the dependencies. svc may be nil — when it is,
@@ -171,8 +177,10 @@ func (h *LiveTVHandler) CreateTuner(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "name is required")
 		return
 	}
-	if body.Type != string(livetv.TunerTypeHDHomeRun) && body.Type != string(livetv.TunerTypeM3U) {
-		respond.BadRequest(w, r, "type must be 'hdhomerun' or 'm3u'")
+	if body.Type != string(livetv.TunerTypeHDHomeRun) &&
+		body.Type != string(livetv.TunerTypeM3U) &&
+		body.Type != string(livetv.TunerTypeRTMP) {
+		respond.BadRequest(w, r, "type must be 'hdhomerun', 'm3u', or 'rtmp'")
 		return
 	}
 	row, err := h.svc.CreateTuner(r.Context(), livetv.CreateTunerDeviceParams{

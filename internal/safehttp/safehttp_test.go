@@ -49,6 +49,26 @@ func TestCheckAddress_BlocksUnspecifiedAndMulticast(t *testing.T) {
 	}
 }
 
+func TestCheckAddress_BlocksNAT64And6to4EmbeddingPrivate(t *testing.T) {
+	// NAT64 (64:ff9b::/96) and 6to4 (2002::/16) tunnel an IPv4 address inside
+	// IPv6; a gateway forwards them to the embedded v4. An embedded
+	// private/metadata IP must be blocked (SSRF-to-metadata via NAT64).
+	for _, a := range []string{
+		"[64:ff9b::a9fe:a9fe]:80", // NAT64 → 169.254.169.254 (cloud metadata)
+		"[64:ff9b::a00:1]:80",     // NAT64 → 10.0.0.1 (RFC1918)
+		"[2002:a00:1::1]:80",      // 6to4 → embeds 10.0.0.1
+		"[2002:7f00:1::1]:80",     // 6to4 → embeds 127.0.0.1 (loopback)
+	} {
+		if err := checkAddress(DialPolicy{}, a); !errors.Is(err, ErrBlockedAddress) {
+			t.Errorf("%s: expected ErrBlockedAddress, got %v", a, err)
+		}
+	}
+	// A NAT64 address embedding a PUBLIC v4 (8.8.8.8) stays allowed.
+	if err := checkAddress(DialPolicy{}, "[64:ff9b::808:808]:80"); err != nil {
+		t.Errorf("NAT64 public-embedded: expected allowed, got %v", err)
+	}
+}
+
 func TestCheckAddress_AllowsPublic(t *testing.T) {
 	// 100.128.0.1 is just outside RFC 6598 (100.64.0.0/10 ends at
 	// 100.127.255.255), so it must remain a normal public address.

@@ -1167,6 +1167,7 @@ func workerReady(ctx context.Context, workerAddr, sessID, name, localPath string
 		if err != nil {
 			return false
 		}
+		authWorkerReq(req)
 		resp, err := workerClient.Do(req)
 		if err != nil {
 			return false
@@ -1183,6 +1184,22 @@ func workerReady(ctx context.Context, workerAddr, sessID, name, localPath string
 // worker from exhausting memory on the API process.
 const maxPlaylistBytes = 5 << 20 // 5 MiB
 
+// workerSegToken authenticates segment/seghead proxy requests to a worker's
+// segment HTTP server. Set once at startup from SECRET_KEY (see
+// transcode.SegmentProxyToken). Empty = no header (tests / unset key).
+var workerSegToken string
+
+// SetWorkerSegToken installs the worker segment-proxy bearer.
+func SetWorkerSegToken(t string) { workerSegToken = t }
+
+// authWorkerReq attaches the segment-proxy bearer so an unauthenticated peer
+// on the network can't fetch in-progress segments directly from a worker.
+func authWorkerReq(req *http.Request) {
+	if workerSegToken != "" {
+		req.Header.Set("Authorization", "Bearer "+workerSegToken)
+	}
+}
+
 // fetchFromWorker retrieves file content from the worker's segment server or
 // falls back to reading from the local filesystem.
 func fetchFromWorker(ctx context.Context, workerAddr, sessID, name, localPath string) ([]byte, error) {
@@ -1192,6 +1209,7 @@ func fetchFromWorker(ctx context.Context, workerAddr, sessID, name, localPath st
 		if err != nil {
 			return nil, err
 		}
+		authWorkerReq(req)
 		resp, err := workerClient.Do(req)
 		if err != nil {
 			return nil, err
@@ -1211,6 +1229,7 @@ func proxyWorkerFile(w http.ResponseWriter, r *http.Request, workerAddr, sessID,
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
 	}
+	authWorkerReq(req)
 	resp, err := workerClient.Do(req)
 	if err != nil {
 		http.Error(w, "segment unavailable", http.StatusBadGateway)

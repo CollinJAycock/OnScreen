@@ -753,6 +753,10 @@ func run() error {
 		// Per-user admin caps (concurrent streams + bitrate), read at start.
 		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)})
 
+	// Attach the SECRET_KEY-derived bearer to every API→worker segment/seghead
+	// proxy request, matching what each worker's segment server now requires.
+	v1.SetWorkerSegToken(transcode.SegmentProxyToken(cfg.SecretKey))
+
 	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
 	// rootDir holds sprite_NNN.jpg + index.vtt per item. Lives alongside the
 	// artwork resize cache; both are regenerable and safe to nuke.
@@ -849,7 +853,34 @@ func run() error {
 	liveTVRegistry := livetv.NewRegistry()
 	liveTVRegistry.Register(livetv.TunerTypeHDHomeRun, livetv.HDHomeRunFactory)
 	liveTVRegistry.Register(livetv.TunerTypeM3U, livetv.M3UFactory)
+
+	// Embedded RTMP ingest ("go live"): broadcasters push via OBS/ffmpeg to
+	// rtmp://host:1935/live/<key>; each authorized stream key surfaces as a
+	// Live TV channel through the same Driver → HLS proxy → player path (and
+	// records to the DVR for free). The factory needs the shared server
+	// instance; the authorizer needs the service, so the server is started
+	// after the service is constructed below.
+	var rtmpServer *livetv.RTMPServer
+	if cfg.RTMPEnabled {
+		rtmpServer = livetv.NewRTMPServer(cfg.RTMPListenAddr, logger)
+		liveTVRegistry.Register(livetv.TunerTypeRTMP, livetv.RTMPFactory(rtmpServer))
+	}
+
 	liveTVSvc := livetv.NewService(newLiveTVAdapter(gen.New(rwPool)), liveTVRegistry, logger)
+
+	if rtmpServer != nil {
+		rtmpServer.SetAuthorizer(liveTVSvc.AuthorizeRTMPKey)
+		if err := rtmpServer.Start(); err != nil {
+			// Non-fatal: a port conflict shouldn't take down the whole
+			// server. Live TV (tuners, DVR) still works; only push ingest
+			// is unavailable.
+			logger.Warn("rtmp ingest disabled (listen failed)",
+				"addr", cfg.RTMPListenAddr, "err", err)
+			rtmpServer = nil
+		} else {
+			defer rtmpServer.Close()
+		}
+	}
 	// Encoder selection is deferred until after the encoder detection
 	// block below — see liveTVProxy/liveTVHandler construction there.
 	var liveTVProxy *livetv.HLSProxy
@@ -889,6 +920,11 @@ func run() error {
 		VideoEncoder: liveTVEncoder,
 	}, liveTVSvc, logger)
 	liveTVHandler = v1.NewLiveTVHandler(liveTVSvc, logger).WithStreamProxy(liveTVProxy)
+	if rtmpServer != nil {
+		// Enables the broadcast ("go live") admin endpoints: ingest URL +
+		// live status for RTMP devices.
+		liveTVHandler = liveTVHandler.WithRTMP(rtmpServer, cfg.RTMPPublicHost, cfg.RTMPListenAddr)
+	}
 
 	// DVR: matcher + recording worker. Recordings land in
 	// {CachePath}/dvr by default — users should point a "dvr" library
@@ -992,6 +1028,9 @@ func run() error {
 		// that can't acquire the primary GPU retries on the next provider instead of
 		// failing. No-op when the box has a single provider.
 		embeddedWorker.SetEncoderFailover(cfg.TranscodeEncoderFailover)
+		// Require the SECRET_KEY-derived bearer on the embedded worker's segment
+		// server too — it binds loopback, but enforce uniformly with remote workers.
+		embeddedWorker.SetSegmentAuthToken(transcode.SegmentProxyToken(cfg.SecretKey))
 		// Wire embedded worker into transcode handler so Stop can kill FFmpeg immediately.
 		nativeTranscodeHandler.SetSessionKiller(embeddedWorker)
 		// Wire into settings so the fleet UI can retune its session cap live.
@@ -1335,11 +1374,12 @@ func run() error {
 
 	// ── Servers ───────────────────────────────────────────────────────────────
 	apiServer := &http.Server{
-		Addr:         cfg.ListenAddr,
-		Handler:      mainMux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              cfg.ListenAddr,
+		Handler:           mainMux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	if dbTLSConfig != nil {
 		apiServer.TLSConfig = dbTLSConfig

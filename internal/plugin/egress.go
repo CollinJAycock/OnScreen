@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // allowedHostSet is the case-folded set of hostnames a plugin is permitted
@@ -42,8 +44,9 @@ func (s allowedHostSet) allows(host string) bool {
 // RFC1918, link-local, unspecified). Exposed as a package var so tests can
 // swap it — production callers should never reassign it.
 var isNonPublicIP = func(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+	// Delegate to the central safehttp denylist so this can't drift from it —
+	// it adds RFC6598 CGNAT (100.64/10) and NAT64/6to4 the bespoke list missed.
+	return safehttp.IsBlocked(ip)
 }
 
 // clientHardTimeout is an outer safety net on top of per-call context
