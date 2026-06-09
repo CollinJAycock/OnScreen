@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // graphqlEcho is a tiny test server that returns a fixed body for any
@@ -218,6 +220,51 @@ func TestQuery_GraphQLErrorSurfaced(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Variable $search") {
 		t.Errorf("error: got %q, want GraphQL message surfaced", err.Error())
+	}
+}
+
+func TestQuery_RetriesOn429ThenSucceeds(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
+			return
+		}
+		_, _ = w.Write([]byte(cowboyBebopRespBody))
+	}))
+	defer srv.Close()
+
+	// NewWithEndpoint injects a zero-wait backoff, so the retry is instant.
+	res, err := NewWithEndpoint(srv.URL).SearchAnime(context.Background(), "Cowboy Bebop", 1998)
+	if err != nil {
+		t.Fatalf("expected the retry to succeed after one 429, got error: %v", err)
+	}
+	if res.AniListID != 1 {
+		t.Errorf("got AniListID=%d after retry, want 1", res.AniListID)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("expected exactly 2 attempts (429 then 200), got %d", n)
+	}
+}
+
+func TestRetryAfterDelay(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", "5")
+	if d := retryAfterDelay(h, 0); d != 5*time.Second {
+		t.Errorf("Retry-After=5: got %v, want 5s", d)
+	}
+	h.Set("Retry-After", "9999") // over-cap value clamps to 60s
+	if d := retryAfterDelay(h, 0); d != 60*time.Second {
+		t.Errorf("Retry-After=9999: got %v, want 60s cap", d)
+	}
+	empty := http.Header{}
+	if d := retryAfterDelay(empty, 2); d != 4*time.Second { // 1<<2 exponential fallback
+		t.Errorf("fallback attempt=2: got %v, want 4s", d)
+	}
+	if d := retryAfterDelay(empty, 10); d != 30*time.Second { // fallback caps at 30s
+		t.Errorf("fallback attempt=10: got %v, want 30s cap", d)
 	}
 }
 

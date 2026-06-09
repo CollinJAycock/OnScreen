@@ -35,8 +35,11 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/safehttp"
@@ -45,6 +48,11 @@ import (
 const (
 	defaultEndpoint = "https://graphql.anilist.co"
 	defaultUA       = "OnScreen/2.2 (https://github.com/CollinJAycock/OnScreen)"
+	// maxRequestsPerMin paces requests under AniList's published anonymous
+	// limit (90/min). A single shared limiter serializes the concurrent scan
+	// enrichers so a wide library scan stays under the limit instead of
+	// flooding into a 429 storm + retry thrash (the prior behavior).
+	maxRequestsPerMin = 90
 )
 
 // Client wraps a GraphQL HTTP client pointed at graphql.anilist.co.
@@ -52,6 +60,10 @@ type Client struct {
 	http      *http.Client
 	endpoint  string
 	userAgent string
+	limiter   *rate.Limiter // shared across all callers; paces under AniList's limit
+	// backoff returns how long to wait before retrying a 429. Production uses
+	// retryAfterDelay; the test seam injects a zero wait so the suite stays fast.
+	backoff func(h http.Header, attempt int) time.Duration
 }
 
 // New returns a Client with a 10 s timeout and the default User-Agent.
@@ -65,6 +77,8 @@ func New() *Client {
 		http:      safehttp.NewClient(safehttp.DialPolicy{}, 10*time.Second),
 		endpoint:  defaultEndpoint,
 		userAgent: defaultUA,
+		limiter:   rate.NewLimiter(rate.Every(time.Minute/maxRequestsPerMin), 1),
+		backoff:   retryAfterDelay,
 	}
 }
 
@@ -76,6 +90,11 @@ func NewWithEndpoint(endpoint string) *Client {
 		http:      &http.Client{Timeout: 10 * time.Second},
 		endpoint:  endpoint,
 		userAgent: defaultUA,
+		// Tests don't need pacing — an unlimited bucket keeps the suite fast
+		// while still exercising the limiter.Wait() call path.
+		limiter: rate.NewLimiter(rate.Inf, 1),
+		// Zero-wait retries so 429-path tests don't sleep through real backoff.
+		backoff: func(http.Header, int) time.Duration { return 0 },
 	}
 }
 
@@ -807,49 +826,93 @@ func (c *Client) query(ctx context.Context, q string, variables map[string]inter
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", c.userAgent)
+	const maxAttempts = 4
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Pace under AniList's limit and serialize the concurrent enrichers
+		// through one bucket so a wide scan doesn't flood into a 429 storm.
+		if err := c.limiter.Wait(ctx); err != nil {
+			return err
+		}
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("http: %w", err)
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.userAgent)
 
-	// Cap the response — AniList's normal GraphQL responses are well under
-	// 1 MB even for season-page queries with cours-wide includes; 5 MB
-	// matches the sibling metadata clients (Wikipedia, OpenLibrary, …) and
-	// keeps a buggy / hostile response from ballooning server memory.
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return fmt.Errorf("read body: %w", err)
-	}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("http: %w", err)
+		}
+		// Cap the response — AniList's normal GraphQL responses are well under
+		// 1 MB even for season-page queries with cours-wide includes; 5 MB
+		// matches the sibling metadata clients (Wikipedia, OpenLibrary, …) and
+		// keeps a buggy / hostile response from ballooning server memory.
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+		hdr := resp.Header
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("read body: %w", readErr)
+		}
 
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("anilist HTTP %d: %s", resp.StatusCode, truncate(string(respBody), 200))
-	}
+		// 429: honor Retry-After and retry instead of failing the title. AniList
+		// has run at a degraded limit for long stretches, and a hard failure here
+		// just leaves the item unenriched until the cooldown expires — so a brief
+		// wait is far cheaper than a re-attempt a whole scan-interval later.
+		if status == http.StatusTooManyRequests && attempt < maxAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(c.backoff(hdr, attempt)):
+			}
+			continue
+		}
 
-	// Surface GraphQL-level errors before attempting to decode into
-	// the caller's typed output, so a not-found / rate-limited /
-	// validation error doesn't get swallowed as "Media is null".
-	var gerr struct {
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := json.Unmarshal(respBody, &gerr); err == nil && len(gerr.Errors) > 0 {
-		return fmt.Errorf("anilist graphql: %s", gerr.Errors[0].Message)
-	}
+		if status >= 400 {
+			return fmt.Errorf("anilist HTTP %d: %s", status, truncate(string(respBody), 200))
+		}
 
-	if err := json.Unmarshal(respBody, out); err != nil {
-		return fmt.Errorf("decode body: %w", err)
+		// Surface GraphQL-level errors before attempting to decode into
+		// the caller's typed output, so a not-found / rate-limited /
+		// validation error doesn't get swallowed as "Media is null".
+		var gerr struct {
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(respBody, &gerr); err == nil && len(gerr.Errors) > 0 {
+			return fmt.Errorf("anilist graphql: %s", gerr.Errors[0].Message)
+		}
+
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return fmt.Errorf("decode body: %w", err)
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("anilist HTTP 429: rate-limited after %d attempts", maxAttempts)
+}
+
+// retryAfterDelay computes how long to wait before retrying a 429 — from the
+// Retry-After header (delta seconds) when present, else an exponential backoff.
+// Capped so a hostile or buggy value can't stall a scan indefinitely.
+func retryAfterDelay(h http.Header, attempt int) time.Duration {
+	const maxWait = 60 * time.Second
+	if ra := strings.TrimSpace(h.Get("Retry-After")); ra != "" {
+		if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+			if d := time.Duration(secs) * time.Second; d < maxWait {
+				return d
+			}
+			return maxWait
+		}
+	}
+	d := time.Duration(1<<uint(attempt)) * time.Second // 1s, 2s, 4s, …
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
 }
 
 // anilistMedia is the GraphQL Media type, narrowed to the fields we
