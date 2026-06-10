@@ -1567,6 +1567,15 @@ type scanEnqueuer struct {
 	// parallel — burning CPU and writing competing intro_markers
 	// rows for the same episode.
 	detectInFlight sync.Map // uuid.UUID → struct{}
+	// dirScanInFlight collapses concurrent watcher-triggered scans of the
+	// same directory. A file being copied in (sonarr import) re-fires the
+	// debounced fsnotify trigger every window for the duration of the copy;
+	// without this dedup each trigger spawns its own ScanDirectory goroutine
+	// and the same season folder gets parsed by several scans at once —
+	// wasted I/O and a duplicate-row race on item attach. Skipping is safe:
+	// writes still in progress fire the watcher again after the running scan
+	// ends, and the periodic full scan backstops anything missed.
+	dirScanInFlight sync.Map // "libraryID|dir" → struct{}
 }
 
 // InFlightScans returns the set of library IDs currently being scanned.
@@ -1681,9 +1690,14 @@ func (e *scanEnqueuer) TriggerDirectoryScan(_ context.Context, libraryID uuid.UU
 	if err != nil {
 		return fmt.Errorf("get library: %w", err)
 	}
+	inFlightKey := libraryID.String() + "|" + dirPath
+	if _, loaded := e.dirScanInFlight.LoadOrStore(inFlightKey, struct{}{}); loaded {
+		return nil // this directory is already being scanned; watcher re-fires on further writes
+	}
 	e.logger.Info("fs change detected, scanning directory",
 		"library_id", libraryID, "dir", dirPath)
 	go func() {
+		defer e.dirScanInFlight.Delete(inFlightKey)
 		scanCtx := context.WithoutCancel(e.serverCtx)
 		// ScanDirectory walks just dirPath but parses each file against
 		// the library's configured scan_paths. Calling ScanLibrary with

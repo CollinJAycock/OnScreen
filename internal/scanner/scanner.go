@@ -512,13 +512,13 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	activeFiles, _ := s.media.ListActiveFilesForLibrary(ctx, libraryID)
 	walked := filePaths
 	// A full scan whose walk came back with far fewer files than the DB knows
-	// about is almost always a transient empty/partial mount view — the media
-	// bind mount momentarily presenting an incomplete tree. (Observed only on
-	// the largest library, while db_active keeps climbing, so the mount clearly
-	// recovers between blips.) Before deciding, pause briefly and re-walk once:
-	// a transient clears and orphan detection runs against an accurate list; a
-	// genuinely unmounted volume stays empty and we still skip — so a mount blip
-	// can never turn into a false mass-delete.
+	// about suggests a transient empty/partial mount view (e.g. the media bind
+	// mount during a container restart). Before deciding, pause briefly and
+	// re-walk once: a transient clears and orphan detection runs against an
+	// accurate list; a genuinely unmounted volume stays empty and we still
+	// skip — so a mount blip can never turn into a false mass-delete. (Earlier
+	// "observed mount blips" here were actually scoped watcher scans hitting
+	// the warn branch below — see the fullScan gating in the switch.)
 	if fullScan && len(activeFiles) > 0 && len(walked) < len(activeFiles)/2 {
 		select {
 		case <-ctx.Done():
@@ -530,11 +530,22 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 			walked = rewalked
 		}
 	}
-	if fullScan && (len(activeFiles) == 0 || len(walked) >= len(activeFiles)/2) {
+	switch {
+	case fullScan && (len(activeFiles) == 0 || len(walked) >= len(activeFiles)/2):
 		s.markOrphanedFiles(ctx, libraryID, walked)
-	} else {
+	case fullScan:
 		s.logger.WarnContext(ctx, "skipping orphan detection — walk found far fewer files than expected (possible mount issue)",
 			"library_id", libraryID, "walked", len(walked), "db_active", len(activeFiles))
+	default:
+		// Scoped (watcher-triggered) directory scans skip orphan detection
+		// by design — safeguard 1 above. Don't log the mount-issue warning
+		// here: it compares one folder's file count against the whole
+		// library and reads as a false alarm. (A sonarr import burst once
+		// produced 38 of these in two minutes and sent us hunting for a
+		// phantom mount problem; the "walked 4 of 48435" sightings were the
+		// same thing — a 4-file folder event in the 48k-track Music library.)
+		s.logger.DebugContext(ctx, "scoped scan — orphan detection skipped",
+			"library_id", libraryID, "walked", len(walked))
 	}
 
 	// Clean up stale missing files from prior scans and remove items
