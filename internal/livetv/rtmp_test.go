@@ -1,15 +1,19 @@
 package livetv
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"testing"
 	"time"
+
+	rtmpmsg "github.com/yutopp/go-rtmp/message"
 )
 
 func testLogger() *slog.Logger {
@@ -113,10 +117,10 @@ func parseFLV(r io.Reader, n int) ([]parsedTag, error) {
 
 func TestClassifyVideo(t *testing.T) {
 	cases := []struct {
-		name           string
-		body           []byte
+		name            string
+		body            []byte
 		wantSeq, wantKf bool
-		wantCodec      string
+		wantCodec       string
 	}{
 		{"avc seq header", avcSeqBody(), true, false, "h264"},
 		{"avc keyframe", avcFrameBody(true), false, true, "h264"},
@@ -330,9 +334,12 @@ func TestRTMPEndToEndFFmpeg(t *testing.T) {
 
 // TestRTMPThroughFFmpegToHLS reproduces the full HLS proxy path: push with
 // ffmpeg, Subscribe, then consume the FLV with `ffmpeg -f flv -i pipe:0` →
-// HLS, asserting a playlist + segment appear. Push codec via
-// ONSCREEN_RTMP_E2E_PUSH; consumer (transcode target) via
-// ONSCREEN_RTMP_E2E_VENC. Gated by ONSCREEN_RTMP_E2E.
+// HLS, asserting a playlist + segment appear. By default it runs both H.264
+// (classic FLV) AND HEVC (enhanced-RTMP, software libx265) so the codec-
+// agnostic ingest of enhanced-RTMP stays covered against regression. Set
+// ONSCREEN_RTMP_E2E_PUSH to pin one push codec (e.g. hevc_nvenc / av1_nvenc /
+// libsvtav1); the transcode target is ONSCREEN_RTMP_E2E_VENC (default
+// libx264). Gated by ONSCREEN_RTMP_E2E.
 func TestRTMPThroughFFmpegToHLS(t *testing.T) {
 	if os.Getenv("ONSCREEN_RTMP_E2E") == "" {
 		t.Skip("set ONSCREEN_RTMP_E2E=1 to run the ffmpeg→HLS end-to-end test")
@@ -340,7 +347,19 @@ func TestRTMPThroughFFmpegToHLS(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
 	}
+	codecs := []string{"libx264", "libx265"} // classic-FLV H.264 + enhanced-RTMP HEVC
+	if c := os.Getenv("ONSCREEN_RTMP_E2E_PUSH"); c != "" {
+		codecs = []string{c}
+	}
+	for _, push := range codecs {
+		t.Run(push, func(t *testing.T) { rtmpThroughFFmpegToHLS(t, push) })
+	}
+}
 
+// rtmpThroughFFmpegToHLS pushes a clip encoded with pushVenc into a fresh RTMP
+// server, then transcodes the subscribed FLV to HLS, failing if no segment is
+// produced.
+func rtmpThroughFFmpegToHLS(t *testing.T, pushVenc string) {
 	const key = "hlskey"
 	s := NewRTMPServer("127.0.0.1:0", testLogger())
 	s.SetAuthorizer(func(k string) bool { return k == key })
@@ -351,7 +370,7 @@ func TestRTMPThroughFFmpegToHLS(t *testing.T) {
 
 	pushCtx, cancelPush := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancelPush()
-	push := exec.CommandContext(pushCtx, "ffmpeg", pushArgs(pushCodec(), "rtmp://"+s.Addr()+"/live/"+key)...)
+	push := exec.CommandContext(pushCtx, "ffmpeg", pushArgs(pushVenc, "rtmp://"+s.Addr()+"/live/"+key)...)
 	if err := push.Start(); err != nil {
 		t.Fatalf("ffmpeg push start: %v", err)
 	}
@@ -411,7 +430,7 @@ func TestRTMPThroughFFmpegToHLS(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("HLS playlist with a segment was never produced (push=%s venc=%s)", pushCodec(), venc)
+	t.Fatalf("HLS playlist with a segment was never produced (push=%s venc=%s)", pushVenc, venc)
 }
 
 func pushCodec() string {
@@ -439,11 +458,123 @@ func pushArgs(venc, dst string) []string {
 	case "libsvtav1":
 		base = append(base, "-c:v", "libsvtav1", "-preset", "8")
 	case "libx265":
-		base = append(base, "-c:v", "libx265", "-preset", "ultrafast", "-tag:v", "hvc1")
+		// No -tag:v: the FLV/enhanced-RTMP muxer assigns the HEVC FourCC
+		// itself and rejects an explicit hvc1 container tag.
+		base = append(base, "-c:v", "libx265", "-preset", "ultrafast")
 	default:
 		base = append(base, "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-bf", "2")
 	}
 	return append(base, "-c:a", "aac", "-f", "flv", dst)
+}
+
+// TestRTMPServerStartCloseAddr exercises the listener lifecycle (Start/Addr/
+// Close) without a broadcaster — covering the network-bind path that the
+// ffmpeg e2e tests otherwise gate behind ONSCREEN_RTMP_E2E.
+func TestRTMPServerStartCloseAddr(t *testing.T) {
+	s := NewRTMPServer("127.0.0.1:0", testLogger())
+	s.SetAuthorizer(func(string) bool { return true })
+	if err := s.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer s.Close()
+	if _, _, err := net.SplitHostPort(s.Addr()); err != nil {
+		t.Fatalf("Addr() = %q, not host:port: %v", s.Addr(), err)
+	}
+	if s.IsLive("anything") {
+		t.Fatal("nothing should be live on a fresh server")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+// TestRTMPHandlerPublishFlow drives the go-rtmp callback handler directly
+// (OnPublish/OnSetDataFrame/OnAudio/OnVideo/OnClose) without a real network
+// connection, so the handler glue is covered in CI rather than only by the
+// gated ffmpeg e2e. Asserts auth, registration, media fan-out, and teardown.
+func TestRTMPHandlerPublishFlow(t *testing.T) {
+	s := NewRTMPServer(":0", testLogger())
+	s.SetAuthorizer(func(k string) bool { return k == "good" })
+
+	// Unauthorized key is rejected.
+	hbad := &rtmpHandler{server: s}
+	if err := hbad.OnPublish(nil, 0, &rtmpmsg.NetStreamPublish{PublishingName: "bad"}); !errors.Is(err, errRTMPUnauthorized) {
+		t.Fatalf("OnPublish(bad): want unauthorized, got %v", err)
+	}
+
+	h := &rtmpHandler{server: s}
+	h.OnServe(nil)
+	if err := h.OnPublish(nil, 0, &rtmpmsg.NetStreamPublish{PublishingName: "good"}); err != nil {
+		t.Fatalf("OnPublish(good): %v", err)
+	}
+	if !s.IsLive("good") {
+		t.Fatal("IsLive should be true after OnPublish")
+	}
+	// A second publish on the same connection is rejected.
+	if err := h.OnPublish(nil, 0, &rtmpmsg.NetStreamPublish{PublishingName: "good"}); err == nil {
+		t.Fatal("second OnPublish on same conn should error")
+	}
+
+	// Establish the broadcast (metadata + seq headers + keyframe).
+	if err := h.OnSetDataFrame(0, &rtmpmsg.NetStreamSetDataFrame{Payload: []byte("onMetaData")}); err != nil {
+		t.Fatalf("OnSetDataFrame: %v", err)
+	}
+	if err := h.OnVideo(0, bytes.NewReader(avcSeqBody())); err != nil {
+		t.Fatalf("OnVideo seq: %v", err)
+	}
+	if err := h.OnAudio(0, bytes.NewReader(aacSeqBody())); err != nil {
+		t.Fatalf("OnAudio seq: %v", err)
+	}
+	if err := h.OnVideo(1000, bytes.NewReader(avcFrameBody(true))); err != nil {
+		t.Fatalf("OnVideo keyframe: %v", err)
+	}
+
+	rc, err := s.Subscribe("good")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer rc.Close()
+	if sr, ok := rc.(*subReader); !ok || sr.FFmpegInputFormat() != "flv" {
+		t.Fatalf("Subscribe reader should hint flv input format")
+	}
+	if err := h.OnVideo(1040, bytes.NewReader(avcFrameBody(false))); err != nil {
+		t.Fatalf("OnVideo live: %v", err)
+	}
+
+	done := make(chan []parsedTag, 1)
+	go func() { tags, _ := parseFLV(rc, 4); done <- tags }()
+	select {
+	case tags := <-done:
+		sawVideo := false
+		for _, tg := range tags {
+			if tg.tagType == flvTagVideo {
+				sawVideo = true
+			}
+		}
+		if !sawVideo {
+			t.Fatalf("no video tags flowed through the handler; got %d", len(tags))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out reading FLV from handler-fed publish")
+	}
+
+	h.OnClose()
+	if s.IsLive("good") {
+		t.Fatal("IsLive should be false after OnClose")
+	}
+}
+
+func TestRTMPDriverGetters(t *testing.T) {
+	d := NewRTMPDriver("S", RTMPConfig{StreamKey: "k"}, NewRTMPServer(":0", testLogger()))
+	if d.TuneCount() != 1 {
+		t.Fatalf("TuneCount=%d want 1", d.TuneCount())
+	}
+	if err := d.Probe(context.Background()); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if d.StreamKey() != "k" {
+		t.Fatalf("StreamKey=%q want k", d.StreamKey())
+	}
 }
 
 func TestConstantTimeKeyEqual(t *testing.T) {
