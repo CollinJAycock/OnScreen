@@ -15,7 +15,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -45,6 +44,9 @@ import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.ui.components.EmptyState
+import tv.onscreen.mobile.ui.components.ErrorState
+import tv.onscreen.mobile.ui.components.LoadingState
 import javax.inject.Inject
 
 /** Author detail screen. Mirrors the web client's /authors/{id} page:
@@ -133,9 +135,14 @@ fun AuthorScreen(
                 .padding(padding),
         ) {
             when {
-                ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                ui.error != null -> Text(ui.error!!, modifier = Modifier.align(Alignment.Center))
-                ui.detail != null -> AuthorContent(
+                ui.loading -> LoadingState()
+                ui.error != null -> ErrorState(message = ui.error, onRetry = { vm.load(authorId) })
+                ui.detail == null -> EmptyState("This author isn't available.")
+                ui.series.isEmpty() && ui.books.isEmpty() -> EmptyState(
+                    "No books by this author yet.",
+                    icon = Icons.Default.Person,
+                )
+                else -> AuthorContent(
                     ui = ui,
                     onOpenSeries = onOpenSeries,
                     onOpenBook = onOpenBook,

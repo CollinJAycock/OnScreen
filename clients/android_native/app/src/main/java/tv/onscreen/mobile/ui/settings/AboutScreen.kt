@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -107,6 +108,11 @@ private fun InfoRow(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(2.dp))
-        Text(value, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

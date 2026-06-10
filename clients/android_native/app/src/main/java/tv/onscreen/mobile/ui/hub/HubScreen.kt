@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,6 +53,8 @@ import coil.compose.AsyncImage
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.HubItem
 import tv.onscreen.mobile.data.model.Library
+import tv.onscreen.mobile.ui.components.ErrorState
+import tv.onscreen.mobile.ui.components.LoadingState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -141,14 +142,9 @@ fun HubScreen(
                 // Initial load — show the spinner above the empty
                 // grid. Pull-to-refresh's own indicator handles the
                 // refresh case (ui.loading=true with hub already set).
-                ui.loading && ui.hub == null ->
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
-                ui.error != null && ui.hub == null -> Text(
-                    "Couldn't load: ${ui.error}",
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(16.dp),
-                )
+                ui.loading && ui.hub == null -> LoadingState()
+                ui.error != null && ui.hub == null ->
+                    ErrorState(ui.error, onRetry = { vm.load() })
                 else -> HubBody(
                     ui = ui,
                     serverUrl = ui.serverUrl,

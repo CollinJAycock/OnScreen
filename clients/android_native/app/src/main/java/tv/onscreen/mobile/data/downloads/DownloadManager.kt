@@ -9,9 +9,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,9 +48,15 @@ class OnScreenDownloadManager @Inject constructor(
         container: String?,
         posterPath: String? = null,
     ) {
-        val existing = store.get(fileId)
-        if (existing == null || existing.status == "failed") {
-            store.upsert(
+        // Atomic check-then-set under the store mutex: only (re)queue when
+        // there's no entry or the prior attempt failed. Doing get()+upsert()
+        // separately let two concurrent enqueues (or an enqueue racing the
+        // worker's first write) both see "absent" and double-write / stomp an
+        // in-flight row.
+        store.update(fileId) { existing ->
+            if (existing != null && existing.status != "failed") {
+                null // already present (queued/downloading/completed) — leave it
+            } else {
                 DownloadEntry(
                     file_id = fileId,
                     item_id = itemId,
@@ -63,8 +67,8 @@ class OnScreenDownloadManager @Inject constructor(
                     downloaded_bytes = 0L,
                     status = "queued",
                     poster_path = posterPath,
-                ),
-            )
+                )
+            }
         }
         val networkType = if (prefs.getDownloadOnWifiOnly()) {
             NetworkType.UNMETERED
@@ -96,15 +100,12 @@ class OnScreenDownloadManager @Inject constructor(
     }
 
     /** Live work info for one file's download. Emits as the worker
-     *  reports progress, succeeds, or fails. */
+     *  reports progress, succeeds, or fails. Uses WorkManager's native Flow
+     *  API (2.9+) rather than a LiveData→Flow bridge — the old
+     *  `observeForever` bridge had to run on the main thread and would throw
+     *  if a collector ever ran on a background dispatcher. */
     fun observe(fileId: String): Flow<List<WorkInfo>> =
-        wm.getWorkInfosForUniqueWorkLiveData(workTag(fileId)).asFlow()
+        wm.getWorkInfosForUniqueWorkFlow(workTag(fileId))
 
     private fun workTag(fileId: String) = "download_$fileId"
-}
-
-private fun <T> androidx.lifecycle.LiveData<T>.asFlow(): Flow<T> = callbackFlow {
-    val observer = androidx.lifecycle.Observer<T> { trySend(it) }
-    observeForever(observer)
-    awaitClose { removeObserver(observer) }
 }

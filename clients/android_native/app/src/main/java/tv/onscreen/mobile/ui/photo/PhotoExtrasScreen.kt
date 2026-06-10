@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Place
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +51,8 @@ import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.PhotoMapPoint
 import tv.onscreen.mobile.data.model.PhotoTimelineBucket
+import tv.onscreen.mobile.ui.components.ErrorState
+import tv.onscreen.mobile.ui.components.LoadingState
 import javax.inject.Inject
 
 /**
@@ -149,10 +150,10 @@ fun PhotoExtrasScreen(
             }
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
-                    ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                    ui.error != null -> Text(
-                        "Couldn't load: ${ui.error}",
-                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                    ui.loading -> LoadingState()
+                    ui.error != null -> ErrorState(
+                        message = ui.error,
+                        onRetry = { vm.load(libraryId) },
                     )
                     tab == 0 -> TimelineList(ui.timeline)
                     geoAsList -> GeotaggedList(ui.map)

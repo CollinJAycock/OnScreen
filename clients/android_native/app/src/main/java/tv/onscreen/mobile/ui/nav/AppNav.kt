@@ -4,8 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.NavController
+import androidx.navigation.NavOptionsBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -40,6 +43,21 @@ import tv.onscreen.mobile.ui.settings.ScrobbleScreen
 import tv.onscreen.mobile.ui.settings.SecurityScreen
 import tv.onscreen.mobile.ui.settings.SettingsScreen
 import javax.inject.Inject
+
+/**
+ * Debounced navigation. A fast double-tap on a list row can fire two
+ * navigate() calls before the destination's back-stack entry reaches
+ * RESUMED, pushing the same destination twice. Only navigate while the
+ * current entry is RESUMED so the second tap of a double-tap is dropped.
+ */
+private fun NavController.navigateDebounced(
+    route: String,
+    builder: NavOptionsBuilder.() -> Unit = {},
+) {
+    if (currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED) {
+        navigate(route, builder)
+    }
+}
 
 @HiltViewModel
 class RootViewModel @Inject constructor(
@@ -82,15 +100,15 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         }
         composable(Routes.HUB) {
             HubScreen(
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
-                onOpenLibrary = { id -> nav.navigate(Routes.library(id)) },
-                onOpenSearch = { nav.navigate(Routes.SEARCH) },
-                onOpenFavorites = { nav.navigate(Routes.FAVORITES) },
-                onOpenHistory = { nav.navigate(Routes.HISTORY) },
-                onOpenCollections = { nav.navigate(Routes.COLLECTIONS) },
-                onOpenDownloads = { nav.navigate(Routes.DOWNLOADS) },
-                onOpenPlaylists = { nav.navigate(Routes.PLAYLISTS) },
-                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
+                onOpenLibrary = { id -> nav.navigateDebounced(Routes.library(id)) },
+                onOpenSearch = { nav.navigateDebounced(Routes.SEARCH) },
+                onOpenFavorites = { nav.navigateDebounced(Routes.FAVORITES) },
+                onOpenHistory = { nav.navigateDebounced(Routes.HISTORY) },
+                onOpenCollections = { nav.navigateDebounced(Routes.COLLECTIONS) },
+                onOpenDownloads = { nav.navigateDebounced(Routes.DOWNLOADS) },
+                onOpenPlaylists = { nav.navigateDebounced(Routes.PLAYLISTS) },
+                onOpenSettings = { nav.navigateDebounced(Routes.SETTINGS) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -119,14 +137,14 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         ) { entry ->
             PhotoExtrasScreen(
                 libraryId = entry.arguments!!.getString("libraryId")!!,
-                onOpenItem = { id -> nav.navigate(Routes.photo(id)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.photo(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.DOWNLOADS) {
             DownloadsScreen(
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
-                onPlay = { id -> nav.navigate(Routes.player(id)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
+                onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
                 onGoOnline = {
                     // From offline-mode start: replace Downloads on
                     // the back stack with Hub so Back exits the app
@@ -141,19 +159,19 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         }
         composable(Routes.FAVORITES) {
             FavoritesScreen(
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.HISTORY) {
             HistoryScreen(
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.COLLECTIONS) {
             CollectionsScreen(
-                onOpenCollection = { id -> nav.navigate(Routes.collection(id)) },
+                onOpenCollection = { id -> nav.navigateDebounced(Routes.collection(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
@@ -163,7 +181,7 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         ) { entry ->
             CollectionDetailScreen(
                 collectionId = entry.arguments!!.getString("id")!!,
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
@@ -173,9 +191,9 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         ) { entry ->
             LibraryScreen(
                 libraryId = entry.arguments!!.getString("id")!!,
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
-                onOpenPhoto = { id -> nav.navigate(Routes.photo(id)) },
-                onOpenPhotoExtras = { libId -> nav.navigate(Routes.photoExtras(libId)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
+                onOpenPhoto = { id -> nav.navigateDebounced(Routes.photo(id)) },
+                onOpenPhotoExtras = { libId -> nav.navigateDebounced(Routes.photoExtras(libId)) },
                 onBack = { nav.popBackStack() },
             )
         }
@@ -185,9 +203,9 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         ) { entry ->
             ItemDetailScreen(
                 itemId = entry.arguments!!.getString("id")!!,
-                onPlay = { id -> nav.navigate(Routes.player(id)) },
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
-                onOpenBook = { id -> nav.navigate(Routes.book(id)) },
+                onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
+                onOpenBook = { id -> nav.navigateDebounced(Routes.book(id)) },
                 // Redirect destinations for photo / book_author /
                 // book_series items pop the current item route as they
                 // push, so Back returns to the source list (library,
@@ -213,7 +231,7 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         }
         composable(Routes.SEARCH) {
             SearchScreen(
-                onOpenItem = { id -> nav.navigate(Routes.item(id)) },
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
@@ -232,8 +250,8 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         ) { entry ->
             AuthorScreen(
                 authorId = entry.arguments!!.getString("id")!!,
-                onOpenSeries = { id -> nav.navigate(Routes.series(id)) },
-                onOpenBook = { id -> nav.navigate(Routes.item(id)) },
+                onOpenSeries = { id -> nav.navigateDebounced(Routes.series(id)) },
+                onOpenBook = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )
         }
@@ -243,7 +261,7 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         ) { entry ->
             SeriesScreen(
                 seriesId = entry.arguments!!.getString("id")!!,
-                onOpenBook = { id -> nav.navigate(Routes.item(id)) },
+                onOpenBook = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )
         }

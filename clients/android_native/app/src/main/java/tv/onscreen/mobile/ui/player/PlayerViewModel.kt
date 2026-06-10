@@ -720,8 +720,12 @@ class PlayerViewModel @Inject constructor(
                     audioStreamIndex = audioStreamIndex,
                 )
                 _state.value = _state.value.copy(source = source)
-            } catch (_: Exception) {
-                // Best-effort — leave the existing session running.
+            } catch (e: Exception) {
+                // Re-issue failed. We only swap `source` on success, so the
+                // existing session keeps playing on the old audio track —
+                // benign for the user beyond the track not changing. Log it so
+                // the failure is diagnosable instead of silently swallowed.
+                android.util.Log.w("PlayerViewModel", "audio stream switch failed", e)
             }
         }
     }

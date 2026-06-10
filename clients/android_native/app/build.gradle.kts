@@ -90,6 +90,17 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // JVM unit tests run against the stubbed android.jar where every
+        // android.* method throws "not mocked" by default. Returning
+        // defaults (0/null/false) instead lets ViewModel tests exercise
+        // code that calls android.util.Log (e.g. PlayerViewModel.prepare()'s
+        // playback-decision log line) without each test mockkStatic'ing Log.
+        unitTests {
+            isReturnDefaultValues = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

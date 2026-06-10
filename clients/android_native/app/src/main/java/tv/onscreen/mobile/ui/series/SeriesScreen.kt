@@ -13,7 +13,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,7 +25,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -41,6 +40,9 @@ import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.ui.author.BookCard
+import tv.onscreen.mobile.ui.components.EmptyState
+import tv.onscreen.mobile.ui.components.ErrorState
+import tv.onscreen.mobile.ui.components.LoadingState
 import javax.inject.Inject
 
 /** Series detail screen. Lists the audiobooks in the series in
@@ -118,9 +120,14 @@ fun SeriesScreen(
                 .padding(padding),
         ) {
             when {
-                ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                ui.error != null -> Text(ui.error!!, modifier = Modifier.align(Alignment.Center))
-                ui.detail != null -> {
+                ui.loading -> LoadingState()
+                ui.error != null -> ErrorState(message = ui.error, onRetry = { vm.load(seriesId) })
+                ui.detail == null -> EmptyState("This series isn't available.")
+                ui.books.isEmpty() -> EmptyState(
+                    "No books in this series yet.",
+                    icon = Icons.Default.MenuBook,
+                )
+                else -> {
                     val detail = ui.detail!!
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(120.dp),

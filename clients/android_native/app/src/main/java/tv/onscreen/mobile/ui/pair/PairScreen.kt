@@ -6,11 +6,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -20,14 +28,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -38,6 +48,17 @@ fun PairScreen(
 ) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
+
+    // Credential field state is hoisted here (rather than inside
+    // ServerReadyChoice) so it survives the brief LoggingIn detour: a
+    // failed login flips ServerReady -> LoggingIn -> ServerReady, which
+    // tears down and rebuilds the choice screen. Holding the fields in
+    // the always-present root keeps the user's typed username/password
+    // intact so they only fix the wrong field, never retype everything.
+    var useLdap by rememberSaveable { mutableStateOf(false) }
+    var username by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state) {
         if (state is PairState.Done) onPaired()
@@ -58,6 +79,11 @@ fun PairScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // No Scaffold here, so apply the insets ourselves: keep content
+            // clear of the status/nav bars and lift it above the IME so the
+            // text fields stay visible while typing (the app is edge-to-edge).
+            .systemBarsPadding()
+            .imePadding()
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -75,10 +101,19 @@ fun PairScreen(
 
             PairState.CheckingServer -> Loading("Checking server…")
 
-            PairState.ServerReady -> {
+            is PairState.ServerReady -> {
                 val providers by vm.providers.collectAsState()
                 ServerReadyChoice(
                     providers = providers,
+                    loginError = s.loginError,
+                    useLdap = useLdap,
+                    onUseLdapChange = { useLdap = it },
+                    username = username,
+                    onUsernameChange = { username = it },
+                    password = password,
+                    onPasswordChange = { password = it },
+                    passwordVisible = passwordVisible,
+                    onPasswordVisibleChange = { passwordVisible = it },
                     onPair = vm::startPairing,
                     onPasswordLogin = vm::loginWithPassword,
                     onLdapLogin = vm::loginWithLdap,
@@ -112,7 +147,7 @@ private fun Loading(label: String) {
 
 @Composable
 private fun ServerEntry(error: String?, onSubmit: (String) -> Unit) {
-    var url by remember { mutableStateOf("") }
+    var url by rememberSaveable { mutableStateOf("") }
     Text("Connect to your server", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(16.dp))
     OutlinedTextField(
@@ -127,6 +162,11 @@ private fun ServerEntry(error: String?, onSubmit: (String) -> Unit) {
             // IP or hostname don't have to pick a scheme themselves.
             Text("No need to type http:// or https:// — we'll pick the right one.")
         },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Uri,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { onSubmit(url) }),
         modifier = Modifier.widthIn(max = 360.dp),
     )
     Spacer(Modifier.height(16.dp))
@@ -144,6 +184,15 @@ private fun ServerEntry(error: String?, onSubmit: (String) -> Unit) {
 @Composable
 private fun ServerReadyChoice(
     providers: tv.onscreen.mobile.data.model.AuthProviders?,
+    loginError: String?,
+    useLdap: Boolean,
+    onUseLdapChange: (Boolean) -> Unit,
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    passwordVisible: Boolean,
+    onPasswordVisibleChange: (Boolean) -> Unit,
     onPair: () -> Unit,
     onPasswordLogin: (String, String) -> Unit,
     onLdapLogin: (String, String) -> Unit,
@@ -184,20 +233,20 @@ private fun ServerReadyChoice(
     // useLdap toggle only renders when the server reports LDAP
     // enabled. Default: local login. Toggling routes the same
     // username/password fields to the LDAP endpoint instead.
-    var useLdap by remember { mutableStateOf(false) }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    val submit = {
+        if (useLdap) onLdapLogin(username, password) else onPasswordLogin(username, password)
+    }
 
     if (providers?.ldapEnabled == true) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { useLdap = false }) {
+            TextButton(onClick = { onUseLdapChange(false) }) {
                 Text(
                     "Local",
                     color = if (!useLdap) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TextButton(onClick = { useLdap = true }) {
+            TextButton(onClick = { onUseLdapChange(true) }) {
                 Text(
                     providers.ldap?.display_name?.takeIf { it.isNotBlank() } ?: "LDAP",
                     color = if (useLdap) MaterialTheme.colorScheme.primary
@@ -209,32 +258,54 @@ private fun ServerReadyChoice(
 
     OutlinedTextField(
         value = username,
-        onValueChange = { username = it },
+        onValueChange = onUsernameChange,
         singleLine = true,
         label = { Text("Username") },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
         modifier = Modifier.widthIn(max = 360.dp),
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
         value = password,
-        onValueChange = { password = it },
+        onValueChange = onPasswordChange,
         singleLine = true,
         label = { Text("Password") },
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        visualTransformation = if (passwordVisible) VisualTransformation.None
+            else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Password,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { submit() }),
+        trailingIcon = {
+            IconButton(onClick = { onPasswordVisibleChange(!passwordVisible) }) {
+                Icon(
+                    imageVector = if (passwordVisible) Icons.Filled.Visibility
+                        else Icons.Filled.VisibilityOff,
+                    contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                )
+            }
+        },
         modifier = Modifier.widthIn(max = 360.dp),
     )
+    if (loginError != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+            loginError,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.widthIn(max = 360.dp),
+        )
+    }
     Spacer(Modifier.height(12.dp))
-    TextButton(onClick = {
-        if (useLdap) onLdapLogin(username, password) else onPasswordLogin(username, password)
-    }) {
+    TextButton(onClick = { submit() }) {
         Text(if (useLdap) "Sign in with LDAP" else "Sign in with password")
     }
 }
 
 @Composable
 private fun TotpEntry(error: String?, onSubmit: (String) -> Unit, onCancel: () -> Unit) {
-    var code by remember { mutableStateOf("") }
+    var code by rememberSaveable { mutableStateOf("") }
     Text("Two-factor authentication", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(8.dp))
     Text(
@@ -247,7 +318,11 @@ private fun TotpEntry(error: String?, onSubmit: (String) -> Unit, onCancel: () -
         onValueChange = { code = it },
         singleLine = true,
         label = { Text("Code") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.NumberPassword,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { if (code.isNotBlank()) onSubmit(code.trim()) }),
         modifier = Modifier.widthIn(max = 360.dp),
     )
     if (error != null) {

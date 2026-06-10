@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,10 +35,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -48,6 +52,7 @@ fun SecurityScreen(
     vm: SecurityViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
+    val busy by vm.busy.collectAsState()
 
     Scaffold(
         topBar = {
@@ -82,13 +87,23 @@ fun SecurityScreen(
 
                 is SecurityUiState.Disabled -> {
                     s.error?.let { ErrorText(it) }
-                    Button(onClick = vm::startEnrol) { Text("Enable 2FA") }
+                    Button(onClick = vm::startEnrol, enabled = !busy) {
+                        if (busy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text("Enable 2FA")
+                    }
                 }
 
                 is SecurityUiState.Enrolling -> EnrollBody(
                     secret = s.secret,
                     qrPngBase64 = s.qrPngBase64,
                     error = s.error,
+                    busy = busy,
                     onConfirm = vm::confirm,
                     onCancel = vm::finishEnrol,
                 )
@@ -101,6 +116,7 @@ fun SecurityScreen(
                 is SecurityUiState.Enabled -> EnabledBody(
                     recoveryRemaining = s.recoveryRemaining,
                     error = s.error,
+                    busy = busy,
                     onDisable = vm::disable,
                 )
             }
@@ -113,10 +129,11 @@ private fun EnrollBody(
     secret: String,
     qrPngBase64: String?,
     error: String?,
+    busy: Boolean,
     onConfirm: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
-    var code by remember { mutableStateOf("") }
+    var code by rememberSaveable { mutableStateOf("") }
 
     Text(
         "1. Scan this QR in your authenticator app, or enter the key manually.",
@@ -146,15 +163,26 @@ private fun EnrollBody(
         onValueChange = { code = it },
         singleLine = true,
         label = { Text("Code") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.NumberPassword,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { if (code.isNotBlank()) onConfirm(code) }),
     )
     error?.let { Spacer(Modifier.height(8.dp)); ErrorText(it) }
     Spacer(Modifier.height(12.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = { if (code.isNotBlank()) onConfirm(code) }, enabled = code.isNotBlank()) {
+        Button(
+            onClick = { if (code.isNotBlank()) onConfirm(code) },
+            enabled = !busy && code.isNotBlank(),
+        ) {
+            if (busy) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
             Text("Confirm")
         }
-        OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        OutlinedButton(onClick = onCancel, enabled = !busy) { Text("Cancel") }
     }
 }
 
@@ -178,9 +206,10 @@ private fun RecoveryBody(codes: List<String>, onDone: () -> Unit) {
 private fun EnabledBody(
     recoveryRemaining: Int,
     error: String?,
+    busy: Boolean,
     onDisable: (String) -> Unit,
 ) {
-    var code by remember { mutableStateOf("") }
+    var code by rememberSaveable { mutableStateOf("") }
 
     Text(
         "Two-factor authentication is on. $recoveryRemaining recovery " +
@@ -193,6 +222,11 @@ private fun EnabledBody(
         onValueChange = { code = it },
         singleLine = true,
         label = { Text("Code to disable") },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.NumberPassword,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { if (code.isNotBlank()) onDisable(code) }),
         modifier = Modifier.fillMaxWidth(),
     )
     Text(
@@ -205,8 +239,14 @@ private fun EnabledBody(
     Spacer(Modifier.height(12.dp))
     Button(
         onClick = { if (code.isNotBlank()) onDisable(code) },
-        enabled = code.isNotBlank(),
-    ) { Text("Disable 2FA") }
+        enabled = !busy && code.isNotBlank(),
+    ) {
+        if (busy) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+        }
+        Text("Disable 2FA")
+    }
 }
 
 @Composable

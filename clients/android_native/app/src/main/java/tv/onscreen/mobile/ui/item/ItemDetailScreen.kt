@@ -1,19 +1,27 @@
 package tv.onscreen.mobile.ui.item
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -21,9 +29,8 @@ import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -38,7 +46,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -65,6 +75,8 @@ import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.FavoritesRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.ui.components.ErrorState
+import tv.onscreen.mobile.ui.components.LoadingState
 import javax.inject.Inject
 
 @HiltViewModel
@@ -329,10 +341,32 @@ private fun DownloadButton(
                 modifier = Modifier.width(160.dp),
             )
         }
-        DownloadButtonState.Completed -> OutlinedButton(onClick = onDelete) {
-            Icon(Icons.Default.CheckCircle, contentDescription = null)
-            Spacer(Modifier.width(6.dp))
-            Text("Downloaded")
+        DownloadButtonState.Completed -> {
+            // Tapping a completed download deletes the on-disk copy —
+            // destructive, so confirm first rather than wiping it on a
+            // stray tap of what reads as a passive "Downloaded" badge.
+            var confirmRemove by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { confirmRemove = true }) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Downloaded")
+            }
+            if (confirmRemove) {
+                AlertDialog(
+                    onDismissRequest = { confirmRemove = false },
+                    title = { Text("Remove download?") },
+                    text = { Text("This removes the offline copy from your device. You can download it again later.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmRemove = false
+                            onDelete()
+                        }) { Text("Remove") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmRemove = false }) { Text("Cancel") }
+                    },
+                )
+            }
         }
         is DownloadButtonState.Failed -> OutlinedButton(onClick = onDownload) {
             Icon(Icons.Default.Close, contentDescription = null)
@@ -421,19 +455,18 @@ fun ItemDetailScreen(
                 .padding(padding),
         ) {
             when {
-                ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                ui.error != null -> Text(ui.error!!, modifier = Modifier.align(Alignment.Center))
+                ui.loading -> LoadingState()
+                ui.error != null -> ErrorState(message = ui.error, onRetry = { vm.load(itemId) })
                 ui.detail != null -> {
                     val d = ui.detail!!
                     val downloadStates by vm.downloadState.collectAsState()
-                    Column(
-                        modifier = Modifier
-                            // Children list can run long (50-episode
-                            // anime seasons, 200-track classical
-                            // albums); without a scroll the bottom of
-                            // the page becomes unreachable.
-                            .verticalScroll(androidx.compose.foundation.rememberScrollState()),
-                    ) {
+                    val chapters = d.files.firstOrNull()?.chapters.orEmpty()
+                    val showChapters = d.type == "audiobook" && chapters.isNotEmpty()
+                    // Children list can run long (50-episode anime
+                    // seasons, 200-track classical albums) and chapter
+                    // tables likewise — render the whole page in a
+                    // LazyColumn so only the visible rows compose.
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
                         // Hero art — fanart_path (16:9 backdrop) when
                         // present, falling back to poster_path. Edge-to-
                         // edge at the top of the page; the body content
@@ -441,110 +474,129 @@ fun ItemDetailScreen(
                         // image doesn't sit framed by a thin border.
                         val heroPath = d.fanart_path ?: d.poster_path
                         if (!heroPath.isNullOrEmpty() && ui.serverUrl.isNotEmpty()) {
-                            coil.compose.AsyncImage(
-                                model = artworkUrl(ui.serverUrl, heroPath, width = 1080),
-                                contentDescription = null,
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(16f / 9f),
-                            )
-                        }
-                        Column(modifier = Modifier.padding(16.dp)) {
-                        Text(d.title, style = MaterialTheme.typography.headlineSmall)
-                        if (d.year != null) {
-                            Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Spacer(Modifier.height(16.dp))
-                        Row {
-                            // Books route to the dedicated reader (CBZ/CBR
-                            // page-flip or EPUB WebView); every other type
-                            // goes to ExoPlayer. Without this branch, Play
-                            // would hand the archive file to the video
-                            // pipeline and silently fail.
-                            val isBook = d.type == "book"
-                            Button(onClick = {
-                                if (isBook) onOpenBook(itemId) else onPlay(itemId)
-                            }) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (isBook) "Read" else "Play")
-                            }
-                            // Only the first file is downloadable from
-                            // the detail page for now — multi-file
-                            // items (audiobooks with chapters) would
-                            // need a per-file picker, scoped out for
-                            // v1 of offline.
-                            d.files.firstOrNull()?.let { file ->
-                                Spacer(Modifier.width(8.dp))
-                                DownloadButton(
-                                    state = downloadStates[file.id] ?: DownloadButtonState.NotDownloaded,
-                                    onDownload = { vm.startDownload(file.id, itemId) },
-                                    onDelete = { vm.deleteDownload(file.id) },
-                                )
-                            }
-                        }
-                        // Watching-status picker. Renders for the
-                        // types where the v2.2 anime track surfaces
-                        // mean a "where am I in this" question is
-                        // meaningful — TV show containers and seasons.
-                        // Movies have a different mental model (watched
-                        // vs not), and music / books / photos don't
-                        // belong on the queue.
-                        if (d.type == "show" || d.type == "season" || d.type == "anime") {
-                            Spacer(Modifier.height(16.dp))
-                            WatchStatusPicker(
-                                active = ui.watchStatus,
-                                onPick = vm::setWatchStatus,
-                                onClear = vm::clearWatchStatus,
-                            )
-                        }
-                        // Audio-quality badges. Hidden when the item
-                        // isn't audio-bearing (movie file, no useful
-                        // audiophile metadata) so the row doesn't sit
-                        // empty on every video page. Logic is in
-                        // AudioQualityBadges (unit-tested).
-                        val audioBadges = AudioQualityBadges.badges(d.files.firstOrNull())
-                        if (audioBadges.isNotEmpty()) {
-                            Spacer(Modifier.height(12.dp))
-                            Row {
-                                audioBadges.forEach { label ->
-                                    AssistChip(
-                                        onClick = {},
-                                        label = { Text(label) },
-                                        modifier = Modifier.padding(end = 6.dp),
+                            item(key = "hero") {
+                                // surfaceVariant placeholder so there's
+                                // no blank flash before the poster loads.
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(16f / 9f)
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                ) {
+                                    coil.compose.AsyncImage(
+                                        model = artworkUrl(ui.serverUrl, heroPath, width = 1080),
+                                        contentDescription = null,
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize(),
                                     )
                                 }
                             }
                         }
-                        if (!d.summary.isNullOrEmpty()) {
-                            Spacer(Modifier.height(16.dp))
-                            Text(d.summary, style = MaterialTheme.typography.bodyMedium)
+                        item(key = "header") {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(d.title, style = MaterialTheme.typography.headlineSmall)
+                                if (d.year != null) {
+                                    Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Spacer(Modifier.height(16.dp))
+                                Row {
+                                    // Books route to the dedicated reader
+                                    // (CBZ/CBR page-flip or EPUB WebView);
+                                    // every other type goes to ExoPlayer.
+                                    val isBook = d.type == "book"
+                                    // No playable file → no Play action.
+                                    // Books still open the reader (their
+                                    // bytes are the archive itself, not
+                                    // surfaced as a "file"); every other
+                                    // type with an empty files list would
+                                    // hand the player nothing and error,
+                                    // so show a disabled affordance + note
+                                    // instead.
+                                    val hasFile = d.files.isNotEmpty()
+                                    if (isBook || hasFile) {
+                                        Button(onClick = {
+                                            if (isBook) onOpenBook(itemId) else onPlay(itemId)
+                                        }) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(if (isBook) "Read" else "Play")
+                                        }
+                                    } else {
+                                        Button(onClick = {}, enabled = false) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Play")
+                                        }
+                                    }
+                                    // Only the first file is downloadable
+                                    // from the detail page for now —
+                                    // multi-file items (audiobooks with
+                                    // chapters) would need a per-file
+                                    // picker, scoped out for v1 of offline.
+                                    d.files.firstOrNull()?.let { file ->
+                                        Spacer(Modifier.width(8.dp))
+                                        DownloadButton(
+                                            state = downloadStates[file.id] ?: DownloadButtonState.NotDownloaded,
+                                            onDownload = { vm.startDownload(file.id, itemId) },
+                                            onDelete = { vm.deleteDownload(file.id) },
+                                        )
+                                    }
+                                }
+                                if (d.files.isEmpty() && d.type != "book") {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "No playable files for this item.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                // Watching-status picker. Renders for the
+                                // types where the v2.2 anime track surfaces
+                                // mean a "where am I in this" question is
+                                // meaningful — TV show containers and seasons.
+                                if (d.type == "show" || d.type == "season" || d.type == "anime") {
+                                    Spacer(Modifier.height(16.dp))
+                                    WatchStatusPicker(
+                                        active = ui.watchStatus,
+                                        onPick = vm::setWatchStatus,
+                                        onClear = vm::clearWatchStatus,
+                                    )
+                                }
+                                // Audio-quality badges. Hidden when the item
+                                // isn't audio-bearing. Static badges, not
+                                // chips — they're display-only, never tapped.
+                                val audioBadges = AudioQualityBadges.badges(d.files.firstOrNull())
+                                if (audioBadges.isNotEmpty()) {
+                                    Spacer(Modifier.height(12.dp))
+                                    AudioBadgeRow(audioBadges)
+                                }
+                                if (!d.summary.isNullOrEmpty()) {
+                                    Spacer(Modifier.height(16.dp))
+                                    Text(d.summary, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
                         }
 
                         // Audiobook chapters: m4b / mp3 / flac books
-                        // surface their embedded chapter table. Tapping
-                        // a chapter starts the player at that chapter's
-                        // start_ms. Movies render their chapter list the
-                        // same way today on the TV client; we keep the
-                        // phone scoped to audiobooks since movie chapter
-                        // navigation is a remote-control affordance.
-                        val chapters = d.files.firstOrNull()?.chapters.orEmpty()
-                        if (d.type == "audiobook" && chapters.isNotEmpty()) {
-                            Spacer(Modifier.height(24.dp))
-                            Text("Chapters", style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.height(8.dp))
-                            chapters.forEachIndexed { i, c ->
+                        // surface their embedded chapter table.
+                        if (showChapters) {
+                            item(key = "chapters-header") {
+                                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("Chapters", style = MaterialTheme.typography.titleMedium)
+                                    Spacer(Modifier.height(8.dp))
+                                }
+                            }
+                            itemsIndexed(chapters) { i, c ->
                                 Row(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(vertical = 6.dp),
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp),
                                 ) {
                                     Text(
                                         text = "${i + 1}. ${c.title}",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier
-                                            .padding(end = 12.dp),
+                                        modifier = Modifier.padding(end = 12.dp),
                                     )
                                     Text(
                                         text = formatDuration(c.start_ms),
@@ -560,19 +612,52 @@ fun ItemDetailScreen(
                         // The header noun adapts to the parent type so
                         // the section heading isn't always "Children".
                         if (ui.children.isNotEmpty()) {
-                            Spacer(Modifier.height(24.dp))
-                            Text(
-                                childrenSectionTitle(d.type),
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            ui.children.forEach { child ->
-                                ChildRow(child = child, onClick = { onOpenItem(child.id) })
+                            item(key = "children-header") {
+                                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                                    Spacer(Modifier.height(16.dp))
+                                    Text(
+                                        childrenSectionTitle(d.type),
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                }
+                            }
+                            items(ui.children, key = { it.id }) { child ->
+                                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                                    ChildRow(child = child, onClick = { onOpenItem(child.id) })
+                                }
                             }
                         }
-                        }
+                        item(key = "bottom-spacer") { Spacer(Modifier.height(16.dp)) }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Static, non-interactive audio-quality badges (Hi-Res / 24-96 /
+ * ReplayGain). Display-only, so rendered as Surface pills rather than
+ * AssistChips that would invite a tap. FlowRow so a long badge set wraps
+ * instead of clipping on a narrow phone.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AudioBadgeRow(labels: List<String>) {
+    FlowRow {
+        labels.forEach { label ->
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 6.dp, bottom = 6.dp),
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
             }
         }
     }
@@ -635,6 +720,7 @@ private fun ChildRow(
  * choice highlights with the primary colour; tapping the active one a
  * second time clears it (idempotent on the server side).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WatchStatusPicker(
     active: WatchStatus?,
@@ -647,12 +733,26 @@ private fun WatchStatusPicker(
             style = MaterialTheme.typography.labelLarge,
         )
         Spacer(Modifier.height(4.dp))
-        Row {
+        // FlowRow so the five options wrap on narrow phones instead of
+        // clipping the trailing ones off-screen.
+        FlowRow {
             WatchStatus.values().forEach { s ->
                 val isActive = active == s
                 TextButton(
                     onClick = { if (isActive) onClear() else onPick(s) },
                 ) {
+                    // Non-color selection cue: a leading check on the
+                    // active option so the choice reads for color-blind
+                    // users, not just by the accent tint.
+                    if (isActive) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "Selected",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
                     Text(
                         text = labelFor(s),
                         color = if (isActive) MaterialTheme.colorScheme.primary

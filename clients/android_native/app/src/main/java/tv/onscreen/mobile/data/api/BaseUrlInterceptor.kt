@@ -15,6 +15,17 @@ class BaseUrlInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
+
+        // Only rewrite the placeholder host Retrofit was built with. Absolute
+        // URLs (e.g. the external TMDB poster CDN that the Discover/"Request"
+        // row loads through the shared Coil client) must pass through untouched
+        // — otherwise their host gets rewritten to the configured server, the
+        // image 404s, and AuthInterceptor (which runs after this) attaches the
+        // Bearer to that mis-routed external request.
+        if (!original.url.host.equals(PLACEHOLDER_HOST, ignoreCase = true)) {
+            return chain.proceed(original)
+        }
+
         val serverUrl = runBlocking { prefs.getServerUrl() }
 
         if (serverUrl.isNullOrEmpty()) {
@@ -31,5 +42,10 @@ class BaseUrlInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
         val newRequest = original.newBuilder().url(newUrl).build()
         return chain.proceed(newRequest)
+    }
+
+    private companion object {
+        // The placeholder host Retrofit's baseUrl ("http://localhost/") uses.
+        const val PLACEHOLDER_HOST = "localhost"
     }
 }

@@ -47,6 +47,10 @@ class DownloadWorker @AssistedInject constructor(
 
         private const val CHANNEL_ID = "downloads"
         private const val NOTIFICATION_ID = 0xD0
+
+        /** Cap on WorkManager retry attempts before a download is abandoned,
+         *  so a permanently-failing transfer can't reschedule forever. */
+        private const val MAX_RETRY_ATTEMPTS = 5
     }
 
     override suspend fun doWork(): Result {
@@ -93,7 +97,18 @@ class DownloadWorker @AssistedInject constructor(
             status = "downloading",
             poster_path = item.poster_path,
         )
-        store.upsert(entry.copy(status = "downloading"))
+        // Atomically (re)establish the row as downloading, refreshing the
+        // metadata we just resolved — without clobbering the current row from
+        // a stale snapshot.
+        store.update(fileId) {
+            (it ?: entry).copy(
+                status = "downloading",
+                item_title = item.title,
+                item_type = item.type,
+                container = file.container,
+                poster_path = item.poster_path,
+            )
+        }
 
         val outFile = store.fileFor(entry)
         val resumeFrom = if (outFile.exists()) outFile.length() else 0L
@@ -116,11 +131,14 @@ class DownloadWorker @AssistedInject constructor(
         return runCatching {
             httpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful && resp.code != 206) {
-                    error("HTTP ${resp.code}")
+                    throw DownloadHttpException(resp.code)
                 }
+                // Log the path WITHOUT the query string — the URL carries the
+                // stream/asset token in `?token=`, which must never reach
+                // logcat (any READ_LOGS process could lift a live token).
                 android.util.Log.i(
                     "DownloadWorker",
-                    "GET $url -> ${resp.code} ${resp.header("Content-Type")} len=${resp.header("Content-Length")}",
+                    "GET ${url.substringBefore("?")} -> ${resp.code} ${resp.header("Content-Type")} len=${resp.header("Content-Length")}",
                 )
                 val body = resp.body ?: error("empty body")
                 val contentLength = body.contentLength()
@@ -170,36 +188,50 @@ class DownloadWorker @AssistedInject constructor(
                             val now = System.currentTimeMillis()
                             if (now - lastManifestWriteMs >= 1_000L) {
                                 lastManifestWriteMs = now
-                                store.upsert(
-                                    entry.copy(
-                                        size_bytes = totalSize.takeIf { it > 0 } ?: written,
-                                        downloaded_bytes = written,
+                                val bytes = written
+                                val size = totalSize.takeIf { it > 0 } ?: written
+                                store.update(fileId) {
+                                    (it ?: entry).copy(
+                                        size_bytes = size,
+                                        downloaded_bytes = bytes,
                                         status = "downloading",
-                                    ),
-                                )
+                                    )
+                                }
                             }
                         }
                     }
-                    val done = entry.copy(
-                        size_bytes = if (totalSize > 0) totalSize else written,
-                        downloaded_bytes = written,
-                        status = "completed",
-                        error = null,
-                    )
-                    store.upsert(done)
+                    val finalSize = if (totalSize > 0) totalSize else written
+                    val finalWritten = written
+                    store.update(fileId) {
+                        (it ?: entry).copy(
+                            size_bytes = finalSize,
+                            downloaded_bytes = finalWritten,
+                            status = "completed",
+                            error = null,
+                        )
+                    }
                 }
             }
             Result.success()
         }.getOrElse { e ->
             markFailed(fileId, e.message ?: "Download failed")
-            Result.retry()
+            // Retry only transient failures (network/IO/5xx) and only within
+            // the attempt cap — a permanent failure (4xx other than 408/429,
+            // disk full, un-refreshable token) must NOT reschedule forever in
+            // the background draining battery/data.
+            val code = (e as? DownloadHttpException)?.code
+            val terminal = code != null && code in 400..499 && code != 408 && code != 429
+            if (terminal || runAttemptCount >= MAX_RETRY_ATTEMPTS) Result.failure() else Result.retry()
         }
     }
 
     private suspend fun markFailed(fileId: String, message: String) {
-        val current = store.get(fileId) ?: return
-        store.upsert(current.copy(status = "failed", error = message))
+        store.update(fileId) { it?.copy(status = "failed", error = message) }
     }
+
+    /** Carries the HTTP status so the retry policy can tell a permanent 4xx
+     *  apart from a transient 5xx/IO error. */
+    private class DownloadHttpException(val code: Int) : Exception("HTTP $code")
 
     private fun makeForegroundInfo(title: String, percent: Int): ForegroundInfo {
         val ctx = applicationContext

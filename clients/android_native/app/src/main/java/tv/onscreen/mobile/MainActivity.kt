@@ -8,7 +8,9 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,6 +47,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Draw behind the system bars. Forced-dark scrims keep the status/nav
+        // icons light (the app is dark-only). Scaffold screens pick up the
+        // resulting insets via their innerPadding; full-bleed screens (player,
+        // photo, book) intentionally draw under the bars; the setup/pair screen
+        // applies systemBarsPadding() itself.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
                 this, Manifest.permission.POST_NOTIFICATIONS,

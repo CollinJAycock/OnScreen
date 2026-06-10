@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,13 +37,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -146,23 +152,37 @@ fun ScrobbleScreen(
     }
 }
 
-/** Status pill mirroring the web badge: Linked / Paused (green) when a
- *  token is set, Off (muted) otherwise. Hidden while loading. */
+/** Status pill mirroring the web badge: Linked (green) when scrobbling is
+ *  active, Paused (tertiary) when a token is set but disabled, Off (muted)
+ *  when unlinked. Paused gets its own colour so it doesn't read as active.
+ *  Hidden while loading. */
 @Composable
 private fun StatusBadge(state: ScrobbleUiState) {
-    val (label, on) = when (state) {
+    val label = when (state) {
         ScrobbleUiState.Loading -> return
-        is ScrobbleUiState.Unlinked -> "Off" to false
-        is ScrobbleUiState.Linked -> (if (state.enabled) "Linked" else "Paused") to true
+        is ScrobbleUiState.Unlinked -> "Off"
+        is ScrobbleUiState.Linked -> if (state.enabled) "Linked" else "Paused"
+    }
+    val (container, content) = when {
+        state is ScrobbleUiState.Linked && state.enabled ->
+            BadgeOnContainer to BadgeOnContent
+        state is ScrobbleUiState.Linked ->
+            // Paused: distinct from the green "active" pill and from the
+            // muted "Off" pill so the disabled state is obvious at a glance.
+            MaterialTheme.colorScheme.tertiaryContainer to
+                MaterialTheme.colorScheme.onTertiaryContainer
+        else ->
+            MaterialTheme.colorScheme.surfaceVariant to
+                MaterialTheme.colorScheme.onSurfaceVariant
     }
     Surface(
-        color = if (on) BadgeOnContainer else MaterialTheme.colorScheme.surfaceVariant,
+        color = container,
         shape = RoundedCornerShape(50),
     ) {
         Text(
             label.uppercase(),
             style = MaterialTheme.typography.labelSmall,
-            color = if (on) BadgeOnContent else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = content,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
         )
     }
@@ -175,7 +195,8 @@ private fun LinkBody(
     onCancel: (() -> Unit)?,
 ) {
     val uriHandler = LocalUriHandler.current
-    var token by remember { mutableStateOf("") }
+    var token by rememberSaveable { mutableStateOf("") }
+    var tokenVisible by rememberSaveable { mutableStateOf(false) }
 
     StepRow(1, "Open your ListenBrainz settings and copy your user token.")
     TextButton(onClick = { uriHandler.openUri(LISTENBRAINZ_SETTINGS_URL) }) {
@@ -189,8 +210,22 @@ private fun LinkBody(
         onValueChange = { token = it },
         singleLine = true,
         label = { Text("ListenBrainz user token") },
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        visualTransformation = if (tokenVisible) VisualTransformation.None
+            else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Password,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { if (token.isNotBlank()) onLink(token) }),
+        trailingIcon = {
+            IconButton(onClick = { tokenVisible = !tokenVisible }) {
+                Icon(
+                    imageVector = if (tokenVisible) Icons.Filled.Visibility
+                        else Icons.Filled.VisibilityOff,
+                    contentDescription = if (tokenVisible) "Hide token" else "Show token",
+                )
+            }
+        },
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(Modifier.height(12.dp))

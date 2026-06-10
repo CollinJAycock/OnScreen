@@ -41,7 +41,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -57,6 +56,8 @@ import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
+import tv.onscreen.mobile.ui.components.EmptyState
+import tv.onscreen.mobile.ui.components.ErrorState
 import javax.inject.Inject
 
 /** Sibling-resolved photo viewer for the phone client.
@@ -167,34 +168,43 @@ fun PhotoViewerScreen(
     ) {
         var showExif by remember { mutableStateOf(false) }
         var currentId by remember { mutableStateOf<String?>(null) }
+        // Chrome (back / info / page counter) visibility. Tapping the
+        // photo toggles it so the viewer can go fully immersive — the
+        // standard photo-viewer gesture. Starts visible so the user has
+        // a way out without guessing the gesture.
+        var chromeVisible by remember { mutableStateOf(true) }
         when {
             ui.loading -> CircularProgressIndicator(color = Color.White)
-            ui.error != null -> Text(
-                text = ui.error!!,
-                color = Color.White,
-                textAlign = TextAlign.Center,
+            ui.error != null -> ErrorState(
+                message = ui.error,
+                onRetry = { vm.load(itemId) },
             )
-            ui.siblingIds.isEmpty() -> Text(
-                text = "No photos here",
-                color = Color.White,
+            ui.siblingIds.isEmpty() -> EmptyState("No photos here.")
+            else -> PhotoPager(
+                ui = ui,
+                chromeVisible = chromeVisible,
+                onPageChanged = { currentId = it },
+                onToggleChrome = { chromeVisible = !chromeVisible },
             )
-            else -> PhotoPager(ui = ui, onPageChanged = { currentId = it })
         }
 
-        IconButton(
-            onClick = onBack,
-            modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
-        ) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = Color.White,
-            )
+        if (chromeVisible) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White,
+                )
+            }
         }
         // Info button — only renders once we have a current photo id
         // (the pager has emitted at least once). Opens an EXIF sheet
-        // for the visible image.
-        if (currentId != null) {
+        // for the visible image. Hidden along with the rest of the
+        // chrome when the user taps to go immersive.
+        if (currentId != null && chromeVisible) {
             IconButton(
                 onClick = { showExif = true },
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
@@ -218,7 +228,12 @@ fun PhotoViewerScreen(
 }
 
 @Composable
-private fun PhotoPager(ui: PhotoViewerUi, onPageChanged: (String) -> Unit) {
+private fun PhotoPager(
+    ui: PhotoViewerUi,
+    chromeVisible: Boolean,
+    onPageChanged: (String) -> Unit,
+    onToggleChrome: () -> Unit,
+) {
     val pager = rememberPagerState(initialPage = ui.startIndex) { ui.siblingIds.size }
 
     // Surface the visible page id to the parent so the Info button can
@@ -239,17 +254,20 @@ private fun PhotoPager(ui: PhotoViewerUi, onPageChanged: (String) -> Unit) {
             val url = "${ui.serverUrl}/api/v1/items/$id/image?w=1920&h=1080&fit=contain"
             AsyncImage(
                 model = url,
-                contentDescription = null,
+                // The viewer doesn't carry per-photo titles (the sibling
+                // list is ids only), so describe by position — better
+                // than a null label for TalkBack.
+                contentDescription = "Photo ${page + 1} of ${ui.siblingIds.size}",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(Unit) {
-                        detectTapGestures(onTap = { /* reserved for chrome toggle */ })
+                        detectTapGestures(onTap = { onToggleChrome() })
                     },
             )
         }
 
-        if (ui.siblingIds.size > 1) {
+        if (ui.siblingIds.size > 1 && chromeVisible) {
             Text(
                 text = "${pager.currentPage + 1} / ${ui.siblingIds.size}",
                 color = Color.White,

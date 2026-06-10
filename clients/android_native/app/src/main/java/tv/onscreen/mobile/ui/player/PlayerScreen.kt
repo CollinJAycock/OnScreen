@@ -16,6 +16,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -66,6 +68,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -129,7 +132,10 @@ fun PlayerScreen(
     }
     if (cellularPromptVisible) {
         AlertDialog(
-            onDismissRequest = onClose,
+            // No-op: a scrim tap or BACK shouldn't eject the user from
+            // playback on an accidental touch — force an explicit
+            // Continue/Cancel choice from the buttons below.
+            onDismissRequest = {},
             title = { Text("Stream over cellular?") },
             text = {
                 Text("You're on a metered connection. Streaming video may use a significant amount of data.")
@@ -187,7 +193,7 @@ private fun isOnCellular(context: android.content.Context): Boolean {
     }
 }
 
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun PlayerHost(
     itemId: String,
@@ -451,6 +457,31 @@ private fun PlayerHost(
     var showLyrics by remember { mutableStateOf(false) }
     var showChapters by remember { mutableStateOf(false) }
 
+    // Runtime playback error + buffering state. PlayerViewModel only
+    // surfaces prepare-time errors (PlayerUiState.error); a mid-stream
+    // ExoPlayer failure (network drop, bad segment) otherwise freezes on
+    // a black frame with no feedback. Track both off the player itself.
+    var playbackError by remember { mutableStateOf<PlaybackException?>(null) }
+    var isBuffering by remember { mutableStateOf(false) }
+    DisposableEffect(player) {
+        // Seed from the current state so a player that's already
+        // buffering/errored when this attaches reflects immediately.
+        isBuffering = player.playbackState == Player.STATE_BUFFERING
+        playbackError = player.playerError
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                playbackError = error
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                isBuffering = playbackState == Player.STATE_BUFFERING
+                // A successful (re)prepare clears any stale error overlay.
+                if (playbackState == Player.STATE_READY) playbackError = null
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
     // Mirror the built-in PlayerView controller's visibility. The
     // Media3 controller fades in on tap and auto-hides after a few
     // seconds — our overlay toolbar (subtitles / sleep timer / PiP /
@@ -645,7 +676,10 @@ private fun PlayerHost(
               tint = Color.White,
           )
       }
-      Row(
+      // FlowRow so a fully-loaded toolbar (audio + cast + subtitles +
+      // style + chapters + lyrics + sleep + PiP) wraps onto a second
+      // line on narrow phones instead of clipping the trailing icons.
+      FlowRow(
         modifier = Modifier
             .align(Alignment.TopEnd)
             .padding(16.dp),
@@ -909,6 +943,67 @@ private fun PlayerHost(
             onDismiss = { showUpNext = false },
         )
     }
+
+    // Buffering spinner — centered over the (possibly black) frame so a
+    // stall reads as "loading" rather than "frozen". Suppressed once an
+    // error overlay is up so we don't stack a spinner under it.
+    if (isBuffering && playbackError == null && !inPip) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Color.White)
+        }
+    }
+
+    // Runtime playback-error overlay. Replaces the frozen black frame
+    // with a message + Retry (re-prepares the player at the current
+    // position) and Close. Shown even in PiP — a dead PiP window is
+    // worse than a small error card.
+    playbackError?.let {
+        PlaybackErrorOverlay(
+            onRetry = {
+                playbackError = null
+                player.seekToDefaultPosition()
+                player.prepare()
+                player.playWhenReady = true
+            },
+            onClose = onClose,
+        )
+    }
+}
+
+@Composable
+private fun PlaybackErrorOverlay(
+    onRetry: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xCC000000))
+            .padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "Playback error",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Something went wrong playing this item. Check your connection and try again.",
+                color = Color.White.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row {
+                Button(onClick = onRetry) { Text("Retry") }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onClose) {
+                    Text("Close", color = Color.White)
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -932,9 +1027,12 @@ private fun UpNextOverlay(
                 .padding(16.dp),
         ) {
             Text("Up next", color = Color.White.copy(alpha = 0.6f))
-            Spacer(Modifier.width(0.dp))
+            // These vertical gaps were Spacer(width=0) — zero-height in a
+            // Column, so the label / title / buttons stacked flush. Give
+            // them real height.
+            Spacer(Modifier.height(4.dp))
             Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.width(0.dp))
+            Spacer(Modifier.height(12.dp))
             Row {
                 Button(onClick = onPlay) { Text("Play now") }
                 Spacer(Modifier.width(8.dp))

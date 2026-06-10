@@ -31,6 +31,11 @@ class SecurityViewModel @Inject constructor(
     private val _state = MutableStateFlow<SecurityUiState>(SecurityUiState.Loading)
     val state: StateFlow<SecurityUiState> = _state.asStateFlow()
 
+    // True while an enrol/confirm/disable request is in flight so the screen
+    // can disable its submit buttons and avoid a double-tap firing two requests.
+    private val _busy = MutableStateFlow(false)
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
     init { loadStatus() }
 
     fun loadStatus() {
@@ -46,23 +51,31 @@ class SecurityViewModel @Inject constructor(
     }
 
     fun startEnrol() {
+        if (_busy.value) return
         viewModelScope.launch {
+            _busy.value = true
             _state.value = try {
                 val s = auth.totpSetup()
                 SecurityUiState.Enrolling(secret = s.secret, qrPngBase64 = s.qr_png)
             } catch (e: Exception) {
                 SecurityUiState.Disabled(e.message ?: "Could not start setup")
+            } finally {
+                _busy.value = false
             }
         }
     }
 
     fun confirm(code: String) {
+        if (_busy.value) return
         val cur = _state.value as? SecurityUiState.Enrolling ?: return
         viewModelScope.launch {
+            _busy.value = true
             _state.value = try {
                 SecurityUiState.Recovery(auth.totpActivate(code.trim()).recovery_codes)
             } catch (e: Exception) {
                 cur.copy(error = e.message ?: "That code didn't match")
+            } finally {
+                _busy.value = false
             }
         }
     }
@@ -72,13 +85,17 @@ class SecurityViewModel @Inject constructor(
     fun finishEnrol() = loadStatus()
 
     fun disable(code: String) {
+        if (_busy.value) return
         val cur = _state.value as? SecurityUiState.Enabled ?: return
         viewModelScope.launch {
+            _busy.value = true
             try {
                 auth.totpDisable(code.trim())
                 loadStatus()
             } catch (e: Exception) {
                 _state.value = cur.copy(error = e.message ?: "That code didn't match")
+            } finally {
+                _busy.value = false
             }
         }
     }

@@ -43,7 +43,7 @@ class PairViewModel @Inject constructor(
             _state.value = PairState.CheckingServer
             when (val result = authRepo.checkServer(normalized)) {
                 is AuthRepository.CheckResult.Ok -> {
-                    _state.value = PairState.ServerReady
+                    _state.value = PairState.ServerReady()
                     // Fan out the three /enabled probes immediately —
                     // best-effort, no failure path. UI just won't show
                     // the federated rows if the providers blob doesn't
@@ -84,7 +84,10 @@ class PairViewModel @Inject constructor(
                     PairState.Done
                 }
             } catch (e: Exception) {
-                _state.value = PairState.Error(e.message ?: "login failed")
+                // Stay on the choice screen (the server is fine; the
+                // credentials were wrong) so the user keeps their typed
+                // server URL and login fields and only sees an inline error.
+                _state.value = PairState.ServerReady(e.message ?: "login failed")
             }
         }
     }
@@ -115,7 +118,9 @@ class PairViewModel @Inject constructor(
                 authRepo.loginLdap(username, password)
                 _state.value = PairState.Done
             } catch (e: Exception) {
-                _state.value = PairState.Error(e.message ?: "LDAP login failed")
+                // Keep the user on the sign-in choice screen with their
+                // entered fields intact (server reachability is unchanged).
+                _state.value = PairState.ServerReady(e.message ?: "LDAP login failed")
             }
         }
     }
@@ -235,7 +240,10 @@ sealed class PairState {
     data object NeedsServer : PairState()
     data object CheckingServer : PairState()
     data object ServerUnreachable : PairState()
-    data object ServerReady : PairState()
+    // Server reachable; showing the sign-in choice screen. `loginError`
+    // surfaces a failed password/LDAP attempt inline without dropping
+    // the user back to the server-URL prompt or clearing their fields.
+    data class ServerReady(val loginError: String? = null) : PairState()
     data object RequestingCode : PairState()
     data object LoggingIn : PairState()
     data class WaitingForClaim(val code: String) : PairState()

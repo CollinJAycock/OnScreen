@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
 import android.webkit.ConsoleMessage
-import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -365,7 +364,15 @@ private fun EpubReader(ui: BookReaderUi) {
                 // blank chapter.
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
-                addJavascriptInterface(EpubBridge(), "AndroidBridge")
+                // No addJavascriptInterface here. epub.js renders UNTRUSTED book
+                // JS same-origin (allowScriptedContent), so any registered
+                // @JavascriptInterface object would be reachable from a
+                // malicious .epub — a latent JS→native RCE surface. The
+                // viewer-side calls are guarded (`if (window.AndroidBridge…)`)
+                // and every former bridge method was a no-op stub, so leaving
+                // the bridge unregistered is functionally identical and safe.
+                // Re-add only via WebViewCompat.addWebMessageListener scoped to
+                // the trusted appassets origin if a real host callback is needed.
                 webChromeClient = object : WebChromeClient() {
                     override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
                         Log.d(
@@ -411,24 +418,6 @@ private fun EpubReader(ui: BookReaderUi) {
             }
         },
     )
-}
-
-/** Stub bridge — epub.js posts page-change events here. We don't
- *  surface EPUB spine progress in the bottom counter yet (the
- *  rendition reports it post-relocate, and the page-counter overlay
- *  isn't visible inside the WebView area today). */
-private class EpubBridge {
-    @JavascriptInterface
-    fun onPageChange(payload: String) { /* future: server progress hook */ }
-
-    @JavascriptInterface
-    fun onError(message: String) { /* future: surface to host UI */ }
-
-    @JavascriptInterface
-    fun onReady(unused: String) { /* future: hide loading overlay */ }
-
-    @JavascriptInterface
-    fun onExternalLink(href: String) { /* future: open in custom tab */ }
 }
 
 /** Serves the pre-fetched .epub at the registered path. The

@@ -1,10 +1,12 @@
 package tv.onscreen.mobile.ui.search
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +20,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -63,11 +65,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.DiscoverItem
 import tv.onscreen.mobile.data.model.SearchResult
 import tv.onscreen.mobile.data.prefs.SearchFilters
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.ui.components.EmptyState
+import tv.onscreen.mobile.ui.components.ErrorState
+import tv.onscreen.mobile.ui.components.LoadingState
 import tv.onscreen.mobile.ui.discover.DiscoverViewModel
 import javax.inject.Inject
 
@@ -79,6 +85,14 @@ class SearchViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(SearchUi())
     private val raw: StateFlow<SearchUi> = _state.asStateFlow()
+
+    init {
+        // Resolve the server URL once so result rows can build artwork
+        // URLs for their leading thumbnails.
+        viewModelScope.launch {
+            _state.value = _state.value.copy(serverUrl = prefs.getServerUrl().orEmpty())
+        }
+    }
 
     /** Persisted type-filter state. Defaults match the web client and
      *  the TV client: movie + show on, episode + track off. Album +
@@ -113,12 +127,24 @@ class SearchViewModel @Inject constructor(
         _state.value = _state.value.copy(query = q)
         job?.cancel()
         if (q.length < 2) {
-            _state.value = _state.value.copy(results = emptyList(), loading = false)
+            _state.value = _state.value.copy(results = emptyList(), loading = false, error = null)
             return
         }
+        runSearch(q, debounce = true)
+    }
+
+    /** Re-run the current query — used by the error-state Retry button. */
+    fun retry() {
+        val q = _state.value.query
+        if (q.length < 2) return
+        job?.cancel()
+        runSearch(q, debounce = false)
+    }
+
+    private fun runSearch(q: String, debounce: Boolean) {
         job = viewModelScope.launch {
-            delay(300)
-            _state.value = _state.value.copy(loading = true)
+            if (debounce) delay(300)
+            _state.value = _state.value.copy(loading = true, error = null)
             try {
                 val r = repo.search(q)
                 _state.value = _state.value.copy(loading = false, results = r)
@@ -148,6 +174,7 @@ data class SearchUi(
     val query: String = "",
     val loading: Boolean = false,
     val results: List<SearchResult> = emptyList(),
+    val serverUrl: String = "",
     val error: String? = null,
 )
 
@@ -248,6 +275,7 @@ fun SearchScreen(
                     filters = filters,
                     onToggleFilter = vm::toggleFilter,
                     onOpenItem = onOpenItem,
+                    onRetry = vm::retry,
                 )
                 else -> DiscoverTab(
                     query = query,
@@ -259,17 +287,18 @@ fun SearchScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun LibraryTab(
     ui: SearchUi,
     filters: SearchFilters,
     onToggleFilter: (SearchViewModel.FilterType) -> Unit,
     onOpenItem: (String) -> Unit,
+    onRetry: () -> Unit,
 ) {
-    Row(
+    FlowRow(
         modifier = Modifier
-            .horizontalScroll(rememberScrollState())
+            .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -295,21 +324,64 @@ private fun LibraryTab(
         )
     }
 
-    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
-        items(ui.results, key = { it.id }) { r ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpenItem(r.id) }
-                    .padding(vertical = 12.dp),
-            ) {
-                Text(r.title, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    r.type,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+    Box(modifier = Modifier.fillMaxSize()) {
+        when {
+            ui.loading && ui.results.isEmpty() -> LoadingState()
+            ui.error != null && ui.results.isEmpty() ->
+                ErrorState(ui.error, onRetry = onRetry)
+            ui.results.isEmpty() && ui.query.length >= 2 && !ui.loading ->
+                EmptyState("No results for \"${ui.query}\"")
+            ui.results.isEmpty() ->
+                EmptyState("Type to search your library.")
+            else -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+                items(ui.results, key = { it.id }) { r ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenItem(r.id) }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SearchPosterThumb(
+                            serverUrl = ui.serverUrl,
+                            path = r.poster_path ?: r.thumb_path,
+                            contentDescription = r.title,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(r.title, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                r.type,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+/** Small leading poster thumbnail for a search result row. Falls back
+ *  to a surface-variant placeholder when artwork or the server URL is
+ *  missing. */
+@Composable
+private fun SearchPosterThumb(serverUrl: String, path: String?, contentDescription: String?) {
+    Box(
+        modifier = Modifier
+            .width(40.dp)
+            .height(60.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        if (!path.isNullOrBlank() && serverUrl.isNotEmpty()) {
+            AsyncImage(
+                model = artworkUrl(serverUrl, path, width = 120),
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }

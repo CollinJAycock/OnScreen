@@ -68,6 +68,24 @@ class DownloadStore @Inject constructor(
         }
     }
 
+    /** Atomic read-modify-write of one entry under the mutex. [mutate] gets
+     *  the current entry (or null if absent) and returns the entry to persist,
+     *  or null to leave the manifest unchanged. Use this instead of
+     *  get()+upsert() so concurrent writers (e.g. a progress tick racing a
+     *  re-enqueue) can't clobber each other's field updates with a stale
+     *  snapshot. */
+    suspend fun update(fileId: String, mutate: (DownloadEntry?) -> DownloadEntry?) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = _state.value.entries.firstOrNull { it.file_id == fileId }
+            val updated = mutate(current) ?: return@withLock
+            val replaced = _state.value.entries.filterNot { it.file_id == fileId } +
+                updated.copy(updated_at = System.currentTimeMillis())
+            val next = DownloadManifest(entries = replaced)
+            persist(next)
+            _state.value = next
+        }
+    }
+
     suspend fun remove(fileId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val entry = _state.value.entries.firstOrNull { it.file_id == fileId }

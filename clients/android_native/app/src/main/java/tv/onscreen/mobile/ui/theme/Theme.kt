@@ -1,9 +1,7 @@
 package tv.onscreen.mobile.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
 private val DarkColors = darkColorScheme(
@@ -19,18 +17,19 @@ private val DarkColors = darkColorScheme(
     onSurfaceVariant = OnScreenOnSurfaceMutedDark,
 )
 
-private val LightColors = lightColorScheme(
-    primary = OnScreenAccent,
-    primaryContainer = OnScreenAccentDark,
-)
-
+// OnScreen is intentionally a dark-only product — the palette in Color.kt is
+// dark-tuned and the whole UI (overlays, scrims, badges) is designed against
+// it. We therefore force the dark scheme regardless of the system setting; a
+// half-built `lightColorScheme` (only primary defined) previously left a
+// light-mode device rendering Material-default white surfaces under
+// dark-designed copy. If a real light theme is ever wanted, build a complete
+// lightColorScheme and gate on isSystemInDarkTheme() here.
 @Composable
 fun OnScreenTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = DarkColors,
         content = content,
     )
 }

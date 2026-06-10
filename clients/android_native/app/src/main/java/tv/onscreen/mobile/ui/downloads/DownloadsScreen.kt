@@ -16,7 +16,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,6 +32,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -45,6 +50,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.downloads.DownloadEntry
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.network.ConnectivityObserver
+import tv.onscreen.mobile.ui.components.EmptyState
 import javax.inject.Inject
 
 @HiltViewModel
@@ -82,6 +88,11 @@ fun DownloadsScreen(
     val online by vm.isOnline.collectAsState()
     LaunchedEffect(Unit) { /* triggers recomposition on first frame */ }
 
+    // Delete is destructive (it removes the on-disk file), so gate it
+    // behind a confirmation. Holds the entry the user tapped Delete on;
+    // null = no dialog showing.
+    var pendingDelete by remember { mutableStateOf<DownloadEntry?>(null) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -113,29 +124,30 @@ fun DownloadsScreen(
             if (!online) OfflineBanner()
             Box(modifier = Modifier.fillMaxSize()) {
                 if (entries.isEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            "No downloads yet",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(Modifier.padding(4.dp))
-                        Text(
-                            if (online) {
-                                "Tap Download on any item to keep it for offline playback."
-                            } else {
-                                "Connect to the internet to load your library, then download items for offline use."
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    EmptyState(
+                        message = if (online) {
+                            "No downloads yet."
+                        } else {
+                            "No downloads yet. Connect to the internet to load your library, then download items for offline use."
+                        },
+                        icon = Icons.Default.Download,
+                    )
                 } else {
+                    // Total on-disk storage for completed downloads —
+                    // in-progress entries haven't fully written yet so
+                    // they don't count toward "used".
+                    val totalBytes = entries
+                        .filter { it.status == "completed" }
+                        .sumOf { it.size_bytes }
                     LazyColumn(contentPadding = PaddingValues(16.dp)) {
+                        item(key = "storage-summary") {
+                            Text(
+                                "${entries.size} ${if (entries.size == 1) "item" else "items"} · ${humanBytes(totalBytes)} used",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                        }
                         items(entries, key = { it.file_id }) { e ->
                             DownloadRow(
                                 entry = e,
@@ -151,13 +163,32 @@ fun DownloadsScreen(
                                     if (e.status == "completed") onPlay(e.item_id)
                                     else if (online) onOpenItem(e.item_id)
                                 },
-                                onDelete = { vm.delete(e.file_id) },
+                                onDelete = { pendingDelete = e },
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    pendingDelete?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Remove download?") },
+            text = {
+                Text("\"${entry.item_title}\" will be removed from this device. You can download it again later.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.delete(entry.file_id)
+                    pendingDelete = null
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 

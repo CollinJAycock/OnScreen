@@ -39,7 +39,7 @@ class PairViewModelTest {
         vm.submitServerUrl("onscreen.tv")
         advanceUntilIdle()
 
-        assertThat(vm.state.value).isEqualTo(PairState.ServerReady)
+        assertThat(vm.state.value).isEqualTo(PairState.ServerReady())
     }
 
     @Test
@@ -82,7 +82,7 @@ class PairViewModelTest {
     }
 
     @Test
-    fun `loginWithPassword failure surfaces Error with message`() = runTest(dispatcher) {
+    fun `loginWithPassword failure stays on ServerReady with inline error`() = runTest(dispatcher) {
         val auth = mockk<AuthRepository>()
         coEvery { auth.login(any(), any()) } throws RuntimeException("bad credentials")
 
@@ -90,9 +90,12 @@ class PairViewModelTest {
         vm.loginWithPassword("u", "p")
         advanceUntilIdle()
 
+        // A failed login must keep the user on the sign-in choice screen
+        // (server reachability is unchanged) so their typed credentials and
+        // server URL aren't wiped — only an inline error is surfaced.
         val s = vm.state.value
-        assertThat(s).isInstanceOf(PairState.Error::class.java)
-        assertThat((s as PairState.Error).message).isEqualTo("bad credentials")
+        assertThat(s).isInstanceOf(PairState.ServerReady::class.java)
+        assertThat((s as PairState.ServerReady).loginError).isEqualTo("bad credentials")
     }
 
     @Test
@@ -135,7 +138,7 @@ class PairViewModelTest {
         val vm = PairViewModel(auth)
         vm.submitServerUrl("https://srv")
         advanceUntilIdle()
-        assertThat(vm.state.value).isEqualTo(PairState.ServerReady)
+        assertThat(vm.state.value).isEqualTo(PairState.ServerReady())
 
         vm.reset()
         assertThat(vm.state.value).isEqualTo(PairState.NeedsServer)

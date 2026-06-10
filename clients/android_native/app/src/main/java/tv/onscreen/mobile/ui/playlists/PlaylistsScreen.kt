@@ -3,6 +3,8 @@ package tv.onscreen.mobile.ui.playlists
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,7 +20,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -33,10 +34,17 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import tv.onscreen.mobile.data.model.Playlist
+import tv.onscreen.mobile.ui.components.EmptyState
+import tv.onscreen.mobile.ui.components.ErrorState
+import tv.onscreen.mobile.ui.components.LoadingState
 
 /**
  * User-owned playlists. v1 phone parity ships:
@@ -56,6 +64,9 @@ fun PlaylistsScreen(
     vm: PlaylistsViewModel = hiltViewModel(),
 ) {
     val ui by vm.state.collectAsState()
+    // Playlist pending delete-confirmation; null when no dialog is up.
+    // Destructive deletes must be confirmed — never on first tap.
+    var pendingDelete by remember { mutableStateOf<Playlist?>(null) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -79,20 +90,10 @@ fun PlaylistsScreen(
                 .padding(padding),
         ) {
             when {
-                ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                ui.error != null -> Text(
-                    "Couldn't load: ${ui.error}",
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(16.dp),
-                )
-                ui.playlists.isEmpty() -> Text(
-                    "No playlists yet. Tap + to create a smart playlist.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(16.dp),
-                )
+                ui.loading -> LoadingState()
+                ui.error != null -> ErrorState(ui.error, onRetry = { vm.refresh() })
+                ui.playlists.isEmpty() ->
+                    EmptyState("No playlists yet. Tap + to create a smart playlist.")
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                 ) {
@@ -119,7 +120,7 @@ fun PlaylistsScreen(
                                     )
                                 }
                             }
-                            IconButton(onClick = { vm.delete(p.id) }) {
+                            IconButton(onClick = { pendingDelete = p }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Delete")
                             }
                         }
@@ -139,12 +140,31 @@ fun PlaylistsScreen(
             onCancel = vm::closeCreator,
         )
     }
+
+    val toDelete = pendingDelete
+    if (toDelete != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.delete(toDelete.id)
+                    pendingDelete = null
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+            title = { Text("Delete playlist?") },
+            text = { Text("\"${toDelete.name}\" will be permanently removed.") },
+        )
+    }
 }
 
 /** Smart playlist creator. Compact — name + type chips + genres CSV
  *  + 4 numeric fields. The full grammar (year range, rating, limit)
  *  is exposed but optional; "Plan to Watch movies rated 7+" is a
  *  3-tap-and-2-types creation. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SmartPlaylistCreator(
     draft: SmartPlaylistRulesDraft,
@@ -170,11 +190,9 @@ private fun SmartPlaylistCreator(
                 Spacer(Modifier.height(8.dp))
                 Text("Types", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
-                // FlowRow would wrap nicely; we use a plain Row +
-                // horizontal scroll-on-overflow via the chip's natural
-                // sizing for v1. 9 entries fit on a phone-portrait
-                // screen.
-                Row {
+                // Wrap the type chips so they don't overflow the dialog
+                // width on narrow screens.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     SMART_PLAYLIST_TYPES.forEach { t ->
                         val isSelected = t in draft.types
                         FilterChip(
@@ -187,7 +205,6 @@ private fun SmartPlaylistCreator(
                                 }
                             },
                             label = { Text(t) },
-                            modifier = Modifier.padding(end = 4.dp),
                         )
                     }
                 }
