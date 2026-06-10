@@ -11,7 +11,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, endpoints } from '$lib/api';
-  import { focusable } from '$lib/focus/focusable';
+  import { focusable, focusScope } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import TopNav from '$lib/components/TopNav.svelte';
   import { APP_VERSION } from '$lib/version';
@@ -253,8 +253,12 @@
   </section>
 </div>
 
+<!-- use:focusScope confines D-pad navigation to the modal — without it
+     the focus manager's spatial search still considers the action rows
+     behind the scrim, so a stray press could fire a hidden destructive
+     control. -->
 {#if confirming === 'signOut'}
-  <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title" use:focusScope>
     <div class="modal">
       <div class="modal-title" id="confirm-title">Sign out?</div>
       <div class="modal-body">
@@ -271,7 +275,7 @@
     </div>
   </div>
 {:else if confirming === 'forgetServer'}
-  <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title" use:focusScope>
     <div class="modal">
       <div class="modal-title" id="confirm-title">Forget server?</div>
       <div class="modal-body">

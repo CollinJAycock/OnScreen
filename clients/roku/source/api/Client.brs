@@ -16,6 +16,13 @@
 ' explicitly via the `auth` argument so they don't carry the
 ' previous (expired) token.
 '
+' Token expiry: the access token lives ~1 h. The synchronous helpers
+' catch HTTP 401, run one refresh-token exchange (Client_RefreshSync)
+' and replay the request once with the new pair. A refresh the server
+' definitively rejects clears the stored auth so Prefs_IsLoggedIn()
+' goes false and the UI routes back to LoginScene instead of leaving
+' the user in a dead session.
+'
 ' SSL / cert validation: roUrlTransfer's defaults are sane on RokuOS
 ' 11+ — system trust store, hostname verification on. No equivalent
 ' to the OCSP soft-fail dance the Android client needed; Roku's
@@ -96,6 +103,16 @@ function Client_GetSync(path as String, auth as Boolean) as Dynamic
 
     raw = transfer.GetToString()
     code = transfer.GetResponseCode()
+    if code = HttpUnauthorized() and auth
+        if not Client_RefreshSync() then return invalid
+        ' Rebuild so the Authorization header picks up the new token,
+        ' then replay exactly once — a second 401 falls through to the
+        ' failure return below, never another refresh (no retry loop).
+        transfer = Client_BuildTransfer(path, auth)
+        if transfer = invalid then return invalid
+        raw = transfer.GetToString()
+        code = transfer.GetResponseCode()
+    end if
     if code <> HttpOk() then return invalid
     return Json_UnwrapData(Json_Parse(raw))
 end function
@@ -107,8 +124,68 @@ function Client_PostSync(path as String, body as Object, auth as Boolean) as Dyn
 
     raw = transfer.PostFromString(FormatJson(body))
     code = transfer.GetResponseCode()
+    if code = HttpUnauthorized() and auth
+        if not Client_RefreshSync() then return invalid
+        ' Same single-replay rule as Client_GetSync.
+        transfer = Client_BuildTransfer(path, auth)
+        if transfer = invalid then return invalid
+        raw = transfer.PostFromString(FormatJson(body))
+        code = transfer.GetResponseCode()
+    end if
     if code <> HttpOk() then return invalid
     return Json_UnwrapData(Json_Parse(raw))
+end function
+
+' Exchange the stored refresh token for a fresh token pair after a
+' 401. Returns true when the caller should rebuild + replay its
+' request (new tokens persisted, or another thread already rotated
+' them). When the server definitively rejects the refresh token the
+' stored auth is cleared — Prefs_IsLoggedIn() goes false and the UI
+' lands on LoginScene at the next launch / navigation — and the
+' in-flight request surfaces to its caller as a plain failure.
+'
+' Synchronous, same rules as the other *Sync helpers: fine inside a
+' Task thread, never on the render thread.
+function Client_RefreshSync() as Boolean
+    refresh = Prefs_Get(PrefsKeyRefreshToken())
+    if not Prefs_IsNonEmptyString(refresh)
+        ' Nothing to refresh with — the session is unrecoverable.
+        Prefs_ClearAuth()
+        return false
+    end if
+
+    transfer = Client_BuildTransfer(ApiAuthRefresh(), false)
+    if transfer = invalid then return false
+    raw = transfer.PostFromString(FormatJson({ refresh_token: refresh }))
+    code = transfer.GetResponseCode()
+
+    if code <> HttpOk()
+        ' Concurrent-refresh race: several Tasks can hit their 401 at
+        ' once, and the server rotates the refresh token on first use.
+        ' If the stored token changed while ours was in flight, another
+        ' thread already won — replay with its tokens instead of
+        ' wiping the fresh session it just persisted.
+        current = Prefs_Get(PrefsKeyRefreshToken())
+        if Prefs_IsNonEmptyString(current) and current <> refresh then return true
+        ' 401 is the server's definitive "this refresh token is dead" —
+        ' end the session. Anything else (5xx, curl-level network code)
+        ' keeps the tokens so a flaky LAN doesn't log the user out.
+        if code = HttpUnauthorized() then Prefs_ClearAuth()
+        return false
+    end if
+
+    pair = Json_UnwrapData(Json_Parse(raw))
+    if pair = invalid or type(pair) <> "roAssociativeArray" then return false
+    access = pair["access_token"]
+    newRefresh = pair["refresh_token"]
+    ' Guard every value before it crosses into the typed Prefs setters
+    ' (same pattern LoginScene's persistAndGoHome uses) — a partial
+    ' response would otherwise be a Type Mismatch crash.
+    if not Prefs_IsNonEmptyString(access) or not Prefs_IsNonEmptyString(newRefresh) then return false
+    assetTok = pair["asset_token"]
+    if not Prefs_IsString(assetTok) then assetTok = ""
+    Prefs_SetTokens(access, newRefresh, assetTok)
+    return true
 end function
 
 ' Async GET. Caller provides a message port (typically the Task

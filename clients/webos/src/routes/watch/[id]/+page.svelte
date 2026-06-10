@@ -217,28 +217,40 @@
   }
 
   // Wire fatal-error recovery onto an hls.js instance — shared by the
-  // initial mount and switchAudioStream so every session is equally
-  // hardened. Standard hls.js pattern: NETWORK fatals resume the load,
-  // MEDIA fatals get one decoder recovery, and a truly unrecoverable
-  // fatal surfaces an error after one re-init attempt.
-  let hlsMediaRecovered = false;
-  let hlsReinitAttempted = false;
-  function attachHlsErrorHandling(inst: InstanceType<typeof HlsType>, Hls: typeof HlsType) {
+  // initial mount, switchAudioStream and resume re-acquire so every
+  // session is equally hardened. Standard hls.js pattern: NETWORK
+  // fatals resume the load, MEDIA fatals get one decoder recovery, and
+  // a truly unrecoverable fatal surfaces an error after one re-init
+  // attempt.
+  //
+  // The recovery budget is per-instance: each call creates (or is
+  // handed) a state object captured by that instance's error handler,
+  // so one session's spent recovery can't prematurely exhaust a later
+  // session's budget after an audio switch or resume. The re-init
+  // instance inherits reinitAttempted=true so an unrecoverable source
+  // can't loop full re-inits forever.
+  interface HlsRecovery {
+    mediaRecovered: boolean;
+    reinitAttempted: boolean;
+  }
+  function attachHlsErrorHandling(
+    inst: InstanceType<typeof HlsType>,
+    Hls: typeof HlsType,
+    recovery: HlsRecovery = { mediaRecovered: false, reinitAttempted: false }
+  ) {
     inst.on(Hls.Events.ERROR, (_event, data) => {
       console.warn('[HLS] error', data.type, data.details, data.fatal);
       if (!data.fatal) return;
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
         inst.startLoad();
-      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !hlsMediaRecovered) {
-        hlsMediaRecovered = true;
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !recovery.mediaRecovered) {
+        recovery.mediaRecovered = true;
         inst.recoverMediaError();
-      } else if (!hlsReinitAttempted && currentPlaylistUrl && video) {
+      } else if (!recovery.reinitAttempted && currentPlaylistUrl && video) {
         // Last resort: one full re-init of the same source before giving up.
-        hlsReinitAttempted = true;
-        hlsMediaRecovered = false;
         destroyHls();
         const fresh = new Hls({ lowLatencyMode: false });
-        attachHlsErrorHandling(fresh, Hls);
+        attachHlsErrorHandling(fresh, Hls, { mediaRecovered: false, reinitAttempted: true });
         fresh.loadSource(currentPlaylistUrl);
         fresh.attachMedia(video);
         hls = fresh;
@@ -477,6 +489,10 @@
     const file = item.files[0];
     if (!file) return;
     const positionMs = position;
+    // Set once the old instance is destroyed — past that point a
+    // failure leaves nothing bound to the video element, so the catch
+    // must surface an error instead of leaving a silent black screen.
+    let tornDown = false;
     try {
       const fresh = await endpoints.transcode.start({
         itemId: itemID,
@@ -490,6 +506,7 @@
       // source — fragments would otherwise keep buffering in the
       // background until destroyed.
       destroyHls();
+      tornDown = true;
       session = fresh;
 
       const Hls = await loadHls();
@@ -498,10 +515,8 @@
         : api.mediaUrl(fresh.playlist_url);
       currentPlaylistUrl = fullURL;
       if (Hls.isSupported()) {
-        // Fresh session starts with a clean recovery budget and the
-        // same error hardening as the initial mount.
-        hlsMediaRecovered = false;
-        hlsReinitAttempted = false;
+        // Fresh session starts with a clean per-instance recovery
+        // budget and the same error hardening as the initial mount.
         const inst = new Hls({ lowLatencyMode: false });
         attachHlsErrorHandling(inst, Hls);
         inst.loadSource(fullURL);
@@ -516,9 +531,16 @@
       }, { once: true });
       activeAudioIndex = pickerIndex;
     } catch (e) {
-      // Re-issue failed — keep the existing session running. The
-      // user can try again from the picker.
       console.warn('audio re-issue failed', e);
+      if (tornDown) {
+        // The old instance is already gone — show the failure rather
+        // than a black screen the user can't diagnose.
+        error = 'Could not switch audio track. Press Back and try again.';
+        loading = false;
+      }
+      // Otherwise the re-issue failed before teardown — the existing
+      // session keeps running and the user can try again from the
+      // picker.
     }
   }
 
@@ -776,11 +798,22 @@
   let wasPlayingBeforeSuspend = false;
 
   function releasePlayerForSuspend() {
-    if (suspended || loading) return;
+    if (suspended) return;
     suspended = true;
-    suspendPositionMs = position;
-    wasPlayingBeforeSuspend = !!video && !video.paused;
-    reporter?.paused(position, duration);
+    if (loading) {
+      // Backgrounded during "Starting playback…". Tear down whatever the
+      // in-flight start has acquired so far; the mount path checks
+      // `suspended` once its awaits settle and releases the rest (it may
+      // still be waiting on transcode.start / loadHls). Resume restarts
+      // from the resume offset and auto-plays — the user's original
+      // intent.
+      suspendPositionMs = pendingSeekMs ?? item?.view_offset_ms ?? 0;
+      wasPlayingBeforeSuspend = true;
+    } else {
+      suspendPositionMs = position;
+      wasPlayingBeforeSuspend = !!video && !video.paused;
+      reporter?.paused(position, duration);
+    }
     video?.pause();
     // Drop the transcode session + decoder. We re-issue on resume rather
     // than keep the server transcode running against a paused client.
@@ -795,6 +828,11 @@
   async function reacquirePlayerAfterResume() {
     if (!suspended) return;
     suspended = false;
+    // If the initial start is still in flight (backgrounded and resumed
+    // again during "Starting playback…"), let it finish — it sees
+    // `suspended` cleared and completes normally; re-issuing here would
+    // race it with a second session.
+    if (loading) return;
     if (!video || !item || error) return;
     const file = item.files[0];
     if (!file) return;
@@ -826,8 +864,6 @@
         : api.mediaUrl(fresh.playlist_url);
       currentPlaylistUrl = fullURL;
       if (Hls.isSupported()) {
-        hlsMediaRecovered = false;
-        hlsReinitAttempted = false;
         const inst = new Hls({ lowLatencyMode: false });
         attachHlsErrorHandling(inst, Hls);
         inst.loadSource(fullURL);
@@ -994,6 +1030,10 @@
         );
 
         video!.addEventListener('loadedmetadata', () => {
+          // Don't autoplay into a backgrounded app — the suspend path
+          // has already released the player; resume re-issues a session
+          // and seeks itself.
+          if (suspended) return;
           // A user seek issued before metadata arrived wins over the
           // resume offset — otherwise an early scrub during "Starting
           // playback…" silently snaps back to startMs.
@@ -1054,6 +1094,25 @@
             goto(`#/item/${itemID}`);
           }
         });
+
+        // Suspend raced the spin-up: visibilitychange fired while the
+        // awaits above were in flight, so releasePlayerForSuspend ran
+        // before the session/hls existed and had nothing to release.
+        // Release them now so the decoder + transcode aren't held while
+        // backgrounded; reacquirePlayerAfterResume re-issues a fresh
+        // session on foreground.
+        if (suspended) {
+          if (session && api.getToken()) {
+            void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
+          }
+          session = null;
+          destroyHls();
+          if (video && !isAudioItem) video.removeAttribute('src');
+          // The startup is no longer in flight — clearing `loading` lets
+          // the resume path re-issue instead of waiting on a mount that
+          // already tore itself down.
+          loading = false;
+        }
       } catch (e) {
         if (e instanceof Unauthorized) goto('#/login');
         else if (e instanceof ApiError && e.code === 'PARENTAL_LIMIT') {

@@ -83,7 +83,18 @@ sub init()
     ' item-detail re-fetch. syncInFlight gates overlapping fetches so
     ' a slow response doesn't pile up at the 5 s timer cadence.
     m.lastReportedPositionMs = -1
+    m.lastReportedState = ""
     m.syncInFlight = false
+
+    ' Progress reporting (PUT /items/{id}/progress): throttled
+    ' "playing" heartbeats off the position observer, plus discrete
+    ' reports on pause and terminal events (EOS / back / Up Next).
+    ' Fire-and-forget via the held-transfer async pattern — see
+    ' reportProgress. The port + transfer refs live here so the GC
+    ' can't reap an in-flight request.
+    m.PROGRESS_INTERVAL_MS = 10000
+    m.progressPort = invalid
+    m.progressTransfers = []
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.syncTask.observeField("state", "onSyncTaskState")
@@ -255,7 +266,18 @@ end sub
 
 sub onVideoState()
     state = m.video.state
-    if state = "finished"
+    if state = "paused"
+        ' Discrete pause report — pushes the resume offset to the
+        ' server immediately (a paused player is exactly when another
+        ' device goes looking for it).
+        reportProgress(Int(m.video.position * 1000), "paused")
+    else if state = "finished"
+        ' Terminal report at full duration so the server scrobbles
+        ' the item watched instead of leaving a dangling resume
+        ' offset just shy of the end.
+        endMs = Int(m.video.duration * 1000)
+        if endMs <= 0 then endMs = Int(m.video.position * 1000)
+        reportProgress(endMs, "stopped")
         ' Auto-advance at end-of-stream for any item type that
         ' has a meaningful "next sibling" — episodes, podcast
         ' episodes, music tracks, audiobook chapters. Movies and
@@ -289,6 +311,7 @@ sub onVideoPosition()
     posMs = Int(m.video.position * 1000)
     updateActiveMarker(posMs)
     maybeShowUpNext(posMs)
+    maybeReportProgress(posMs)
 end sub
 
 ' ── Markers ────────────────────────────────────────────────────────
@@ -308,11 +331,16 @@ sub updateActiveMarker(posMs as Integer)
     end if
     found = invalid
     for each m_ in m.markers
-        if posMs >= m_.start_ms and posMs < m_.end_ms
-            key = m_.start_ms.ToStr()
-            if not m.dismissedMarkers.DoesExist(key)
-                found = m_
-                exit for
+        ' Guard malformed records: a marker row missing start_ms /
+        ' end_ms would throw on the render thread (this runs on every
+        ' position tick) and kill playback. Skip it instead.
+        if m_ <> invalid and m_.start_ms <> invalid and m_.end_ms <> invalid
+            if posMs >= m_.start_ms and posMs < m_.end_ms
+                key = m_.start_ms.ToStr()
+                if not m.dismissedMarkers.DoesExist(key)
+                    found = m_
+                    exit for
+                end if
             end if
         end if
     end for
@@ -352,7 +380,9 @@ sub onChildrenTaskState()
     if m.item.index = invalid then return
     targetIdx = m.item.index + 1
     for each k in kids
-        if k.type = m.item.type and k.index <> invalid and k.index = targetIdx
+        ' k <> invalid guards a malformed children row; k.index is
+        ' checked before the comparison for the same reason.
+        if k <> invalid and k.type = m.item.type and k.index <> invalid and k.index = targetIdx
             m.nextSibling = k
             return
         end if
@@ -376,7 +406,12 @@ end sub
 
 ' Skip / accept Up Next from a key press. Wired in onKeyEvent.
 sub acceptUpNext()
-    if m.nextSibling <> invalid then goToNext(m.nextSibling)
+    if m.nextSibling = invalid then return
+    ' The user is abandoning the tail of the current item — record a
+    ' terminal report at the playhead so the server closes it out.
+    posMs = Int(m.video.position * 1000)
+    if posMs > 0 then reportProgress(posMs, "stopped")
+    goToNext(m.nextSibling)
 end sub
 
 sub dismissUpNext()
@@ -387,6 +422,64 @@ end sub
 sub goToNext(target as Object)
     stopTranscodeSession()
     getMainScene().callFunc("navigateToWithItem", "PlayerScene", target.id)
+end sub
+
+' ── Progress reporting ─────────────────────────────────────────────
+
+' Throttled "playing" heartbeat. The position observer fires several
+' times a second; report at most every 10 s so the server gets a
+' steady resume offset without being flooded. Abs() so a backward
+' seek (skip-marker undo, sync snap) re-anchors the throttle window
+' instead of muting it.
+sub maybeReportProgress(posMs as Integer)
+    if m.video = invalid or m.video.state <> "playing" then return
+    if m.lastReportedPositionMs >= 0 and Abs(posMs - m.lastReportedPositionMs) < m.PROGRESS_INTERVAL_MS then return
+    reportProgress(posMs, "playing")
+end sub
+
+' PUT /items/{id}/progress with { view_offset_ms, duration_ms, state,
+' client_name } — the same body the web client sends. state is
+' "playing" (periodic heartbeat), "paused", or "stopped" (terminal:
+' EOS / back / Up Next accept).
+'
+' Fire-and-forget via the held-transfer async pattern (see
+' deleteTranscodeSession): the render thread must never run the
+' synchronous client helpers, and we don't need the response body.
+' m.lastReportedPositionMs doubles as the self-loop guard the paused
+' sync fetch (onSyncTaskState) checks before snapping to a remote
+' offset.
+sub reportProgress(posMs as Integer, state as String)
+    if m.item = invalid then return
+    if m.top.itemId = invalid or m.top.itemId = "" then return
+    ' Identical position + state is noise (e.g. an EOS report followed
+    ' immediately by the bail path) — skip the duplicate.
+    if posMs = m.lastReportedPositionMs and state = m.lastReportedState then return
+
+    durationMs = 0
+    if m.video <> invalid and m.video.duration > 0 then durationMs = Int(m.video.duration * 1000)
+    if durationMs = 0 and m.item.duration_ms <> invalid then durationMs = m.item.duration_ms
+
+    transfer = Client_BuildTransfer(ApiItemProgress(m.top.itemId), true)
+    if transfer = invalid then return
+    if m.progressPort = invalid then m.progressPort = CreateObject("roMessagePort")
+    transfer.SetMessagePort(m.progressPort)
+    transfer.SetRequest("PUT")
+    transfer.AsyncPostFromString(FormatJson({
+        view_offset_ms: posMs
+        duration_ms: durationMs
+        state: state
+        client_name: "Roku"
+    }))
+    ' Hold the reference so GC doesn't reap it mid-flight; cap the
+    ' backlog (reports are >= 10 s apart with a 15 s transfer timeout,
+    ' so anything beyond the last few completed long ago).
+    m.progressTransfers.push(transfer)
+    while m.progressTransfers.Count() > 4
+        m.progressTransfers.Shift()
+    end while
+
+    m.lastReportedPositionMs = posMs
+    m.lastReportedState = state
 end sub
 
 ' ── Cross-device sync ──────────────────────────────────────────────
@@ -493,6 +586,13 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
     ' press so it never bubbles to MainScene as a channel exit — the
     ' player is mid-stack, not the root.
     if key = "back"
+        ' Terminal progress report before teardown — the resume offset
+        ' the user expects on every other device. posMs = 0 means
+        ' playback never actually started (or the user backed out at
+        ' the head); skip the write so a stopped@0 doesn't clobber an
+        ' existing resume offset.
+        posMs = Int(m.video.position * 1000)
+        if posMs > 0 then reportProgress(posMs, "stopped")
         m.video.control = "stop"
         bailToHome()
         return true

@@ -64,6 +64,13 @@ class FocusManager {
     this.focusFirst();
   }
 
+  /** Called by the focusable action's destroy so an unmounting node
+   *  doesn't linger as `current` — refocus()/onKey recovery would
+   *  otherwise keep deferring to a detached element. */
+  clearIfCurrent(el: HTMLElement) {
+    if (this.current === el) this.current = null;
+  }
+
   private candidates(): HTMLElement[] {
     if (!this.current) return [...document.querySelectorAll<HTMLElement>(`[${FOCUSABLE_ATTR}]`)];
     const scope = this.current.closest(`[${SCOPE_ATTR}]`) ?? document.body;

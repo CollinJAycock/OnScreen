@@ -193,7 +193,6 @@
         }
       }
 
-      console.debug('[photo] resolved siblings:', photos.length);
       if (photos.length < 2) return;
       siblings = photos;
       currentIndex = Math.max(0, photos.findIndex((p) => p.id === initialId));

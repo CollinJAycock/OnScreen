@@ -20,9 +20,15 @@
     <script type="text/brightscript" uri="PosterCard.brs" />
 
     <children>
+        <!-- loadWidth/loadHeight bound the bitmap decode to the
+             on-screen size; without them Roku decodes the artwork at
+             native resolution, which OOMs low-RAM models on a full
+             grid of cards. -->
         <Poster id="poster"
                 width="240"
                 height="360"
+                loadWidth="240"
+                loadHeight="360"
                 loadDisplayMode="scaleToFill"
                 failedBitmapUri="" />
 

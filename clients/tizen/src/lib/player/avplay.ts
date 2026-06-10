@@ -345,6 +345,15 @@ export class AvPlay {
     const handlers = this.suspendedHandlers;
     this.suspendedSource = null;
     this.suspendedHandlers = {};
+    // The anchor <object> may have been unmounted while suspended —
+    // routes that render it conditionally (live TV's mode==='playing'
+    // block) or that tore the page down before the foreground event
+    // leave a detached node whose offsetLeft/Width are all 0. Re-opening
+    // against it composites the video to a 0×0 rect (black screen), so
+    // bail instead; the page re-opens its own session when re-entered.
+    if (!document.body.contains(source.anchor) || source.anchor.offsetWidth === 0) {
+      return false;
+    }
     this.open(source, handlers);
     return true;
   }

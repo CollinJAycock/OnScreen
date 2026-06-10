@@ -8,6 +8,13 @@ sub init()
     m.empty = m.top.findNode("empty")
     m.task = m.top.findNode("itemsTask")
 
+    ' Re-entrancy guard (mirrors DetailScene / PhotoScene): MainScene
+    ' sets itemId before mount AND init() reads it, so both init and
+    ' the itemId observer can fire for the same id. Without this the
+    ' fetch kicks off twice and the second result re-renders the grid
+    ' and yanks focus.
+    m.kickedOff = false
+
     m.task.observeField("state", "onTaskState")
     m.rows.observeField("rowItemSelected", "onCardSelected")
     m.top.observeField("itemId", "onItemIdSet")
@@ -18,12 +25,13 @@ sub init()
 end sub
 
 sub onItemIdSet()
-    if m.top.itemId <> invalid and m.top.itemId <> ""
+    if m.top.itemId <> invalid and m.top.itemId <> "" and not m.kickedOff
         kickoff()
     end if
 end sub
 
 sub kickoff()
+    m.kickedOff = true
     m.task.path = ApiCollectionItems(m.top.itemId)
     m.task.control = "RUN"
 end sub
@@ -69,6 +77,10 @@ end sub
 sub routeCollectionSelection(itemType as String, itemId as String)
     if itemType = "photo"
         getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
+        return
+    end if
+    if itemType = "collection" or itemType = "playlist"
+        getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
         return
     end if
     if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "movie"

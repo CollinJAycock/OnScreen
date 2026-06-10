@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
+import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.data.api.AuthInterceptor
 import tv.onscreen.android.data.api.BaseUrlInterceptor
 import tv.onscreen.android.data.api.NoRevocationTrustManager
@@ -59,13 +60,18 @@ object NetworkModule {
 
     /** Logcat interceptor so we can see request paths, status codes,
      *  and rough timing of every API call. Headers + body are
-     *  intentionally skipped to keep bearer tokens out of logs.
-     *  Tighten to NONE before shipping a release build (BuildConfig.
-     *  DEBUG branching needs `buildFeatures { buildConfig = true }`
-     *  on AGP 9 — opt in when we add a release variant). */
+     *  intentionally skipped to keep bearer tokens out of logs — but
+     *  BASIC still logs the full request line, and stream/asset URLs
+     *  carry ?token=, so release builds log NONE. (BuildConfig
+     *  generation is opted in via `buildFeatures { buildConfig = true }`
+     *  in app/build.gradle.kts.) */
     private fun loggingInterceptor(): HttpLoggingInterceptor =
         HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
+            level = if (BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BASIC
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
         }
 
     /** Plain client for auth refresh calls — no authenticator, avoids circular dep. */
@@ -88,7 +94,7 @@ object NetworkModule {
     @AuthClient
     fun provideAuthRetrofit(@AuthClient client: OkHttpClient, moshi: Moshi): Retrofit {
         return Retrofit.Builder()
-            .baseUrl("http://localhost/")
+            .baseUrl(BaseUrlInterceptor.PLACEHOLDER_BASE_URL)
             .client(client)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
@@ -138,7 +144,7 @@ object NetworkModule {
     @Singleton
     fun provideRetrofit(client: OkHttpClient, moshi: Moshi): Retrofit {
         return Retrofit.Builder()
-            .baseUrl("http://localhost/")
+            .baseUrl(BaseUrlInterceptor.PLACEHOLDER_BASE_URL)
             .client(client)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()

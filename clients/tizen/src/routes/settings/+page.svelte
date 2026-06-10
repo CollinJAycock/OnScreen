@@ -146,17 +146,6 @@
     subLangOptions.find((o) => o.value === subLang)?.label ?? 'Auto / file default'
   );
 
-  onMount(() => {
-    return focusManager.pushBack(() => {
-      if (confirming) {
-        confirming = null;
-        return true;
-      }
-      goto('#/hub');
-      return true;
-    });
-  });
-
   async function doSignOut() {
     // Best-effort — the network call invalidates the refresh token
     // server-side, but `clearTokens()` runs in `finally` so the local

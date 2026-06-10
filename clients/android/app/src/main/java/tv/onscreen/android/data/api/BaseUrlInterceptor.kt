@@ -10,11 +10,22 @@ import tv.onscreen.android.data.prefs.ServerPrefs
  * Rewrites the placeholder base URL (http://localhost/) to the actual
  * server URL stored in preferences. This allows Retrofit to be created
  * at DI time before the user configures a server.
+ *
+ * Only requests still aimed at the placeholder host are rewritten.
+ * The same OkHttp client is Coil's HTTP backend, and the Discover row
+ * loads absolute TMDB CDN poster URLs — rewriting those would mis-route
+ * them to the media server (404 → placeholder tile on every external
+ * poster). Anything with a real host passes through untouched.
  */
 class BaseUrlInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
+
+        if (!original.url.host.equals(PLACEHOLDER_HOST, ignoreCase = true)) {
+            return chain.proceed(original)
+        }
+
         val serverUrl = runBlocking { prefs.getServerUrl() }
 
         if (serverUrl.isNullOrEmpty()) {
@@ -31,5 +42,11 @@ class BaseUrlInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
         val newRequest = original.newBuilder().url(newUrl).build()
         return chain.proceed(newRequest)
+    }
+
+    companion object {
+        /** Placeholder base URL Retrofit is built with at DI time — see NetworkModule. */
+        const val PLACEHOLDER_BASE_URL = "http://localhost/"
+        private const val PLACEHOLDER_HOST = "localhost"
     }
 }

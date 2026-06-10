@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { endpoints, type HubData } from '$lib/api';
   import { Unauthorized } from '$lib/api';
+  import { focusManager } from '$lib/focus/manager';
   import HubRow from '$lib/components/HubRow.svelte';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -11,6 +12,12 @@
 
   let data = $state<HubData | null>(null);
   let error = $state('');
+
+  // Minimal type for the one tizen.application call we make — same
+  // local-cast pattern keys.ts uses, avoids the @types dependency.
+  type TizenApplication = {
+    application?: { getCurrentApplication(): { exit(): void } };
+  };
 
   onMount(() => {
     (async () => {
@@ -21,6 +28,17 @@
         else error = (e as Error).message;
       }
     })();
+
+    // The hub is the app's home screen — Samsung certification requires
+    // Back here to exit the app. The focus manager preventDefaults the
+    // keypress when a back handler returns true, so it can't also fall
+    // through to the webview default. window.tizen is absent in browser
+    // dev (`vite dev`); returning true is then a handled no-op.
+    return focusManager.pushBack(() => {
+      (window as Window & { tizen?: TizenApplication })
+        .tizen?.application?.getCurrentApplication()?.exit();
+      return true;
+    });
   });
 
   function open(id: string, type: string) {

@@ -519,6 +519,13 @@
       activeAudioIndex = pickerIndex;
     } catch (e) {
       console.warn('audio re-issue failed', e);
+      // The old session is already torn down by this point — without
+      // surfacing the failure the UI keeps showing "playing" (and the
+      // heartbeat keeps reporting it) over a dead player.
+      error = (e as Error).message || 'Audio switch failed.';
+      loading = false;
+      paused = true;
+      reporter?.stop();
     }
   }
 
@@ -580,7 +587,15 @@
           // Rebuffering re-shows the loading overlay; refill hides it.
           onBufferingStart: () => { loading = true; },
           onBufferingComplete: () => { loading = false; },
-          onError: (msg) => { error = msg; loading = false; },
+          // Async open/prepare failure after the old session is gone —
+          // restore paused/reporter state so the UI doesn't show
+          // "playing" over a dead player.
+          onError: (msg) => {
+            error = msg || 'Playback failed after audio switch.';
+            loading = false;
+            paused = true;
+            reporter?.stop();
+          },
         },
       );
       paused = false;

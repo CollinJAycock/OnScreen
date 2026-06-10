@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.playback
 
+import android.net.Uri
 import tv.onscreen.android.data.model.ItemFile
 
 /**
@@ -101,6 +102,26 @@ object PlaybackHelper {
      * matters than default-off and lose the remux fast-path. */
     fun supportsAv1(): Boolean {
         return true
+    }
+
+    /**
+     * Strips the `token` query parameter from a stream/asset URL before it
+     * goes into a user-facing error dialog. The URL is shown so the user (or
+     * a tunnel log) can identify which request died — but stream URLs carry
+     * the per-session ?token=, and a credential on a TV screen ends up in
+     * support photos. Every other query param is kept so the URL stays
+     * debuggable. Non-hierarchical URIs (no query to parse) pass through.
+     */
+    fun sanitizeUriForDisplay(uri: Uri): String {
+        if (!uri.isHierarchical || "token" !in uri.queryParameterNames) {
+            return uri.toString()
+        }
+        val cleaned = uri.buildUpon().clearQuery()
+        for (name in uri.queryParameterNames) {
+            if (name == "token") continue
+            uri.getQueryParameters(name).forEach { cleaned.appendQueryParameter(name, it) }
+        }
+        return cleaned.build().toString()
     }
 
     /**

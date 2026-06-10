@@ -11,6 +11,12 @@ sub init()
     m.empty = m.top.findNode("empty")
     m.task = m.top.findNode("task")
 
+    ' Re-entrancy guard (mirrors DetailScene / PhotoScene): MainScene
+    ' sets itemId before mount AND init() reads it, so both init and
+    ' the itemId observer can fire for the same id — without this the
+    ' fetch would kick off twice.
+    m.kickedOff = false
+
     m.task.observeField("state", "onTaskState")
     m.rows.observeField("rowItemSelected", "onCardSelected")
     m.top.observeField("itemId", "onItemIdSet")
@@ -25,10 +31,12 @@ end sub
 
 sub onItemIdSet()
     if m.top.itemId = invalid or m.top.itemId = "" then return
+    if m.kickedOff then return
     startFetch(m.top.itemId)
 end sub
 
 sub startFetch(libraryId as String)
+    m.kickedOff = true
     m.task.path = ApiLibraryItems(libraryId)
     m.task.control = "RUN"
 end sub

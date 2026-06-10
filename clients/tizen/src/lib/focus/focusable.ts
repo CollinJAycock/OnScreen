@@ -24,6 +24,7 @@ export function focusable(node: HTMLElement, opts: Options = {}) {
       observer.disconnect();
       node.removeAttribute('data-focusable');
       node.removeAttribute('data-focused');
+      focusManager.clearIfCurrent(node);
     }
   };
 }

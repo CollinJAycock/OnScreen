@@ -35,8 +35,11 @@
             <!-- Fanart fills the screen behind everything; dimmer
                  rectangle on top so the title + summary render
                  readably regardless of image content. -->
+            <!-- loadWidth/loadHeight cap the decode at screen size so
+                 oversized source fanart can't OOM low-RAM devices. -->
             <Poster id="fanart"
                     width="1920" height="1080"
+                    loadWidth="1920" loadHeight="1080"
                     loadDisplayMode="scaleToFill"
                     loadingBitmapOpacity="0" />
             <Rectangle width="1920" height="1080" color="0x07070dcc" />

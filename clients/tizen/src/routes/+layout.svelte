@@ -1,11 +1,19 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
   import { focusManager } from '$lib/focus/manager';
   import { registerTizenKeys } from '$lib/focus/keys';
   import { avplay } from '$lib/player/avplay';
 
   let { children } = $props();
+
+  // Re-seat focus after every route change: if the previously-focused
+  // node unmounted (or the new page has no autofocus target), focus
+  // the first focusable so the visible ring never silently disappears.
+  // No-op when an autofocus already landed — refocus() bails if
+  // `current` is still attached.
+  afterNavigate(() => focusManager.refocus());
 
   // True when AVPlay was torn down by a background event so foreground
   // restore() only fires if we actually suspended (not for unrelated

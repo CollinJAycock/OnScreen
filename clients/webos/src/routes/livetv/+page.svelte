@@ -16,11 +16,12 @@
   // /hub. Two-stack so the user can scrub channels without
   // re-fetching the list every time.
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, endpoints, Unauthorized, type Channel, type NowNext } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import type { RemoteKey } from '$lib/focus/keys';
   import { loadHls } from '$lib/player/hls-loader';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
@@ -64,6 +65,42 @@
     }
   }
 
+  // In-player remote handling — mirrors the /watch key handler for the
+  // keys that make sense on a live stream: OK / play-pause toggles, and
+  // up/down zap to the previous / next channel in grid order. Back is
+  // left to the pushBack handler below (returns to the grid). Without
+  // this the player is inert — the grid is unmounted in playing mode,
+  // so there's nothing focusable for OK to land on.
+  function onKey(k: RemoteKey): boolean {
+    if (mode !== 'playing') return false;
+    switch (k) {
+      case 'enter':
+      case 'playpause':
+        if (!video) return true;
+        if (video.paused) void video.play();
+        else video.pause();
+        return true;
+      case 'play':
+        if (video?.paused) void video.play();
+        return true;
+      case 'pause':
+        if (!video?.paused) video?.pause();
+        return true;
+      case 'up':
+      case 'down':
+        zapChannel(k === 'up' ? -1 : 1);
+        return true;
+    }
+    return false;
+  }
+
+  function zapChannel(dir: 1 | -1) {
+    if (!activeChannel || channels.length < 2) return;
+    const i = channels.findIndex((c) => c.id === activeChannel!.id);
+    if (i < 0) return;
+    void play(channels[(i + dir + channels.length) % channels.length]);
+  }
+
   onMount(() => {
     void loadAll();
     const offBack = focusManager.pushBack(() => {
@@ -74,10 +111,12 @@
       goto('#/hub');
       return true;
     });
+    const offKey = focusManager.pushKeyHandler(onKey);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('webOSRelaunch', onVisibilityChange);
     return () => {
       offBack();
+      offKey();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('webOSRelaunch', onVisibilityChange);
     };
@@ -127,12 +166,18 @@
     if (activeChannel?.id !== channel.id) retuneAttempted = false;
     activeChannel = channel;
     mode = 'playing';
+    // A stale error from a previous tune shouldn't linger over the
+    // freshly-tuned channel.
+    error = '';
     // The HLS endpoint takes the purpose=asset token as `?token=` —
     // the <video> element + hls.js can't attach an Authorization
     // header, and the server rejects a general access token in a URL.
     const url = `${origin}/api/v1/tv/channels/${channel.id}/stream.m3u8?token=${encodeURIComponent(tok)}`;
-    // Wait one frame for the video element to mount in the new mode.
-    await Promise.resolve();
+    // Wait for Svelte to flush the DOM so bind:this={video} is applied
+    // in the new mode — a single bare microtask isn't a guaranteed
+    // flush on slow firmware, which left `video` undefined and the
+    // channel silently un-tuned on first press.
+    await tick();
     if (!video) return;
     try {
       const Hls = await loadHls();

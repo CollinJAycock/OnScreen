@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.ui.playback.PlaybackHelper
 import javax.inject.Inject
 
 /** Live-TV channel player. Standalone from PlaybackFragment because
@@ -160,10 +161,11 @@ class LiveChannelPlayerFragment : Fragment() {
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
             // Surface the failure with a Retry instead of leaving the user
             // on a silent black screen. Retry rebuilds the player from the
-            // already-resolved stream URL.
+            // already-resolved stream URL — minus its ?token= credential,
+            // which doesn't belong in a dialog on a TV screen.
             val cause = error.cause
             val urlPart = if (cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException) {
-                "\n${cause.dataSpec.uri}"
+                "\n${PlaybackHelper.sanitizeUriForDisplay(cause.dataSpec.uri)}"
             } else ""
             showError("${error.errorCodeName}: ${error.message}$urlPart")
         }

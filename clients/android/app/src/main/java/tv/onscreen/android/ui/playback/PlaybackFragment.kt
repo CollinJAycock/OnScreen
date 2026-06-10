@@ -736,10 +736,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // https://developer.android.com/reference/androidx/media3/common/PlaybackException
             // for the error code constants. For HTTP/HLS sources
             // include the failing URL so the user (or a tunnel
-            // log) can identify which request died.
+            // log) can identify which request died — with the
+            // ?token= credential stripped before it hits the screen.
             val cause = error.cause
             val urlPart = if (cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException) {
-                "\n${cause.dataSpec.uri}"
+                "\n${PlaybackHelper.sanitizeUriForDisplay(cause.dataSpec.uri)}"
             } else ""
             val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
             showErrorDialog(msg)

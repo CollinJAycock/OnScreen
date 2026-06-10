@@ -38,8 +38,8 @@ android {
         // those calls trigger.
         minSdk = 23
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.0.6"
+        versionCode = 10
+        versionName = "1.0.7"
     }
 
     signingConfigs {
@@ -77,6 +77,13 @@ android {
             signingConfig = signingConfigs.findByName("release")
                 ?: signingConfigs.getByName("debug")
         }
+    }
+
+    buildFeatures {
+        // BuildConfig generation is opt-in on modern AGP. Needed for
+        // the BuildConfig.DEBUG gate that silences the HTTP logging
+        // interceptor in release builds (NetworkModule).
+        buildConfig = true
     }
 
     compileOptions {
