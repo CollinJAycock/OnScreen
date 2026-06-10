@@ -5,29 +5,47 @@
 
   let data: AnalyticsData | null = null;
   let loading = true;
-  let error = '';
+  let error = '';        // shown full-screen only while no data has ever loaded
+  let staleError = false; // a refresh failed but earlier data is still on screen
+  let refreshing = false; // manual refresh in flight
   let sessions: ActiveSession[] = [];
   let alive = true;
   let ready = false;
 
-  async function refresh() {
-    if (!alive) return;
+  async function refresh(force = false) {
+    if (!alive || (document.hidden && !force)) return;
     try {
-      data = await analyticsApi.get();
+      data = await analyticsApi.get(force ? { refresh: true } : undefined);
       error = '';
+      staleError = false;
     } catch (e: unknown) {
       if (!alive) return;
-      error = e instanceof Error ? e.message : 'Failed to load analytics';
+      console.warn('analytics refresh failed', e);
+      // Keep showing the last good data; only blank the page when there has
+      // never been a successful load.
+      if (data) staleError = true;
+      else error = 'Couldn’t load analytics. Check that the server is reachable.';
     } finally {
       loading = false;
     }
   }
 
+  async function manualRefresh() {
+    refreshing = true;
+    try { await refresh(true); } finally { refreshing = false; }
+  }
+
   async function refreshSessions() {
-    if (!alive) return;
+    if (!alive || document.hidden) return;
     try {
       sessions = await sessionsApi.list() ?? [];
     } catch (e) { if (alive) console.warn(e); }
+  }
+
+  function onVisibility() {
+    // Catch up immediately when the tab returns to the foreground; the
+    // interval ticks themselves no-op while hidden.
+    if (!document.hidden) { refresh(); refreshSessions(); }
   }
 
   onMount(() => {
@@ -39,10 +57,12 @@
     refreshSessions();
     const slowInterval = setInterval(refresh, 30000);
     const fastInterval = setInterval(refreshSessions, 5000);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       alive = false;
       clearInterval(slowInterval);
       clearInterval(fastInterval);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   });
 
@@ -57,15 +77,31 @@
 
   function fmtDuration(ms: number): string {
     if (!ms) return '0 min';
-    const h = Math.floor(ms / 3600000);
+    const d = Math.floor(ms / 86400000);
+    const h = Math.floor((ms % 86400000) / 3600000);
     const m = Math.floor((ms % 3600000) / 60000);
+    if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
     if (h === 0) return `${m} min`;
     if (m === 0) return `${h}h`;
     return `${h}h ${m}m`;
   }
 
-  function fmtDate(iso: string): string {
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  // Player-style clock for session positions (1:02:35 / 0:45).
+  function fmtClock(ms: number): string {
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+    return `${h > 0 ? h + ':' : ''}${mm}:${String(sec).padStart(2, '0')}`;
+  }
+
+  // d is a date-only "YYYY-MM-DD" key in the viewer's timezone. Parse the
+  // parts locally — new Date("2026-06-10") would read as UTC midnight and
+  // render as the previous day for anyone west of Greenwich.
+  function fmtDate(day: string): string {
+    const [y, m, d] = day.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   function fmtTime(iso: string): string {
@@ -75,6 +111,19 @@
     });
   }
 
+  // Local-timezone "YYYY-MM-DD" — must match the server's tz-bucketed keys
+  // (toISOString would build UTC keys and misalign evening plays).
+  function localDayKey(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // Artwork paths are filesystem-derived: encode each segment (handles # ? in
+  // filenames) while keeping the / separators.
+  function artworkSrc(path: string, w: number): string {
+    const encoded = path.split('/').map(encodeURIComponent).join('/');
+    return assetUrl(`/artwork/${encoded}?w=${w}`);
+  }
+
   // Build a full 30-day array, filling missing dates with 0.
   function fillDays(raw: DayCount[]): DayCount[] {
     const map = new Map(raw.map(d => [d.date, d.count]));
@@ -82,7 +131,7 @@
     for (let i = 29; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
+      const key = localDayKey(d);
       days.push({ date: key, count: map.get(key) ?? 0 });
     }
     return days;
@@ -97,7 +146,7 @@
     for (let i = 29; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
+      const key = localDayKey(d);
       days.push({ date: key, bytes: map.get(key) ?? 0 });
     }
     return days;
@@ -126,13 +175,25 @@
 <div class="page">
   <header class="page-header">
     <h1>Analytics</h1>
+    {#if data}
+      <button class="refresh-btn" on:click={manualRefresh} disabled={refreshing}>
+        {refreshing ? 'Refreshing…' : 'Refresh'}
+      </button>
+    {/if}
   </header>
 
   {#if loading}
     <div class="empty">Loading…</div>
-  {:else if error}
-    <div class="empty error">{error}</div>
+  {:else if error && !data}
+    <div class="empty error">
+      <p>{error}</p>
+      <button class="refresh-btn" on:click={() => { loading = true; refresh(true); }}>Try again</button>
+    </div>
   {:else if data}
+
+    {#if staleError}
+      <div class="stale-banner" role="status">Couldn’t refresh — showing the last loaded data.</div>
+    {/if}
 
     <!-- ── Overview stat cards ───────────────────────────────────────────── -->
     <section class="cards">
@@ -167,8 +228,8 @@
             {@const pct = s.duration_ms && s.duration_ms > 0 ? Math.min(100, (s.position_ms / s.duration_ms) * 100) : 0}
             <div class="stream-card">
               {#if s.poster_path}
-                <img class="stream-poster" src={assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=150`)}
-                     srcset="{assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=75`)} 75w, {assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(s.poster_path)}?w=300`)} 300w"
+                <img class="stream-poster" src={artworkSrc(s.poster_path, 150)}
+                     srcset="{artworkSrc(s.poster_path, 75)} 75w, {artworkSrc(s.poster_path, 150)} 150w, {artworkSrc(s.poster_path, 300)} 300w"
                      sizes="80px"
                      alt={s.title} />
               {:else}
@@ -185,7 +246,7 @@
                   <div class="stream-progress-fill" style="width:{pct}%"></div>
                 </div>
                 <div class="stream-times muted">
-                  {fmtDuration(s.position_ms)}{#if s.duration_ms} / {fmtDuration(s.duration_ms)}{/if}
+                  {fmtClock(s.position_ms)}{#if s.duration_ms} / {fmtClock(s.duration_ms)}{/if}
                 </div>
               </div>
             </div>
@@ -199,7 +260,8 @@
       <!-- ── Play activity ─────────────────────────────────────────────── -->
       <section class="panel wide">
         <h2>Play activity <span class="muted">— last 30 days</span></h2>
-        <div class="bar-chart">
+        <div class="bar-chart" role="img"
+             aria-label="Daily play counts for the last 30 days. Peak day: {maxDay} plays.">
           {#each days as d}
             <div class="bar-col" title="{fmtDate(d.date)}: {d.count} play{d.count === 1 ? '' : 's'}">
               <div class="bar-fill" style="height:{(d.count / maxDay) * 100}%"></div>
@@ -220,8 +282,9 @@
 
       <!-- ── Bandwidth ─────────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>Bandwidth <span class="muted">— last 30 days</span></h2>
-        <div class="bar-chart">
+        <h2>Bandwidth <span class="muted">— last 30 days · estimated from source bitrate</span></h2>
+        <div class="bar-chart" role="img"
+             aria-label="Estimated daily streaming bandwidth for the last 30 days. Peak day: {fmtBytes(maxBw)}.">
           {#each bwDays as d}
             <div class="bar-col" title="{fmtDate(d.date)}: {fmtBytes(d.bytes)}">
               <div class="bar-fill bw" style="height:{(d.bytes / maxBw) * 100}%"></div>
@@ -325,16 +388,20 @@
               <div class="top-row">
                 <span class="top-rank">{i + 1}</span>
                 {#if item.poster_path}
-                  <img class="top-thumb" src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=150`)}
-                       srcset="{assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=75`)} 75w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=300`)} 300w"
+                  <img class="top-thumb" src={artworkSrc(item.poster_path, 150)}
+                       srcset="{artworkSrc(item.poster_path, 75)} 75w, {artworkSrc(item.poster_path, 150)} 150w, {artworkSrc(item.poster_path, 300)} 300w"
                        sizes="48px"
                        alt={item.title} loading="lazy" />
                 {:else}
                   <div class="top-thumb placeholder"></div>
                 {/if}
                 <div class="top-info">
-                  <div class="top-title">{item.title}</div>
-                  {#if item.year}<div class="top-year">{item.year}</div>{/if}
+                  <div class="top-title" title="{item.parent_title ? item.parent_title + ' — ' : ''}{item.title}">{item.title}</div>
+                  {#if item.parent_title}
+                    <div class="top-year">{item.parent_title}</div>
+                  {:else if item.year}
+                    <div class="top-year">{item.year}</div>
+                  {/if}
                 </div>
                 <div class="top-bar-wrap">
                   <div class="top-bar" style="width:{pct(item.play_count, maxPlayed)}%"></div>
@@ -357,6 +424,7 @@
               <tr>
                 <th>Title</th>
                 <th>Type</th>
+                <th>User</th>
                 <th>Client</th>
                 <th>Duration</th>
                 <th>Played</th>
@@ -365,8 +433,11 @@
             <tbody>
               {#each data.recent_plays as p}
                 <tr>
-                  <td class="col-title">{p.title}{#if p.year} <span class="muted">({p.year})</span>{/if}</td>
+                  <td class="col-title">
+                    {#if p.parent_title}<span class="muted">{p.parent_title} · </span>{/if}{p.title}{#if p.year} <span class="muted">({p.year})</span>{/if}
+                  </td>
                   <td><span class="badge">{p.type}</span></td>
+                  <td class="muted">{p.user_name ?? '—'}</td>
                   <td class="muted">{p.client_name ?? '—'}</td>
                   <td class="muted">{p.duration_ms ? fmtDuration(p.duration_ms) : '—'}</td>
                   <td class="muted">{fmtTime(p.occurred_at)}</td>
@@ -385,8 +456,22 @@
 <style>
   .page { padding: 2rem 2.5rem; max-width: 1400px; }
 
-  .page-header { margin-bottom: 1.8rem; }
+  .page-header { margin-bottom: 1.8rem; display: flex; align-items: center; justify-content: space-between; }
   h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+
+  .refresh-btn {
+    font-size: 0.78rem; padding: 0.4rem 0.9rem; border-radius: 6px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    color: var(--text-secondary); cursor: pointer;
+  }
+  .refresh-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+  .refresh-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .stale-banner {
+    margin-bottom: 1.2rem; padding: 0.55rem 0.9rem; border-radius: 8px;
+    font-size: 0.8rem; color: #f7c46a;
+    background: rgba(247, 196, 106, 0.08); border: 1px solid rgba(247, 196, 106, 0.25);
+  }
   h2 { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
        letter-spacing: 0.07em; margin-bottom: 1rem; }
 
@@ -542,6 +627,9 @@
     display: inline-block; width: 7px; height: 7px;
     border-radius: 50%; background: #3af7a0;
     animation: pulse 1.4s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot { animation: none; }
   }
   .stream-list { display: flex; flex-direction: column; gap: 0.75rem; }
   .stream-card {

@@ -64,14 +64,40 @@ describe('Analytics page', () => {
     });
   });
 
-  it('shows error message when analytics load fails', async () => {
+  it('shows a friendly error (not the raw exception) when the first load fails', async () => {
     mockGetUser.mockReturnValue({ user_id: 'u1', is_admin: true });
     mockAnalytics.mockRejectedValueOnce(new Error('analytics dead'));
     render(Page);
 
     await waitFor(() => {
-      expect(screen.getByText('analytics dead')).toBeTruthy();
+      expect(screen.getByText(/couldn’t load analytics/i)).toBeTruthy();
     });
+    expect(screen.queryByText('analytics dead')).toBeNull();
+    // Retry affordance is offered.
+    expect(screen.getByText('Try again')).toBeTruthy();
+  });
+
+  it('keeps showing loaded data when a later refresh fails', async () => {
+    vi.useFakeTimers();
+    try {
+      mockGetUser.mockReturnValue({ user_id: 'u1', is_admin: true });
+      render(Page);
+
+      // First load succeeds.
+      await vi.waitFor(() => {
+        expect(screen.getByText('42')).toBeTruthy();
+      });
+
+      // Next 30s poll fails — the dashboard must stay, with a stale banner.
+      mockAnalytics.mockRejectedValueOnce(new Error('blip'));
+      await vi.advanceTimersByTimeAsync(30000);
+
+      expect(screen.getByText('42')).toBeTruthy();
+      expect(screen.getByText(/couldn’t refresh/i)).toBeTruthy();
+      expect(screen.queryByText('blip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders Now Playing section when sessions are active', async () => {

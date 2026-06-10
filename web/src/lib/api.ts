@@ -1995,6 +1995,7 @@ export interface TopPlayedItem {
   year?: number;
   type: string;
   poster_path?: string;
+  parent_title?: string; // show/artist for episodes/tracks
   play_count: number;
 }
 
@@ -2002,7 +2003,9 @@ export interface RecentPlay {
   title: string;
   year?: number;
   type: string;
-  occurred_at: string;
+  parent_title?: string;
+  user_name?: string;
+  occurred_at: string; // RFC 3339, UTC
   client_name?: string;
   duration_ms?: number;
 }
@@ -2019,7 +2022,16 @@ export interface AnalyticsData {
 }
 
 export const analyticsApi = {
-  get: () => api.get<AnalyticsData>('/analytics')
+  // tz makes the server bucket the per-day charts in the viewer's local days;
+  // refresh bypasses the server-side 5-minute cache (manual refresh button).
+  get: (opts?: { refresh?: boolean }) => {
+    const params = new URLSearchParams();
+    try {
+      params.set('tz', Intl.DateTimeFormat().resolvedOptions().timeZone);
+    } catch { /* no Intl zone — server defaults to UTC */ }
+    if (opts?.refresh) params.set('refresh', 'true');
+    return api.get<AnalyticsData>(`/analytics?${params}`);
+  }
 };
 
 // ── Webhooks ──────────────────────────────────────────────────────────────────

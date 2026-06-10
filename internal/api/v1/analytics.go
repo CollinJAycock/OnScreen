@@ -8,31 +8,31 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
 // analyticsCacheTTL bounds how stale the dashboard can be. The eight aggregates
-// (five over the watch_plays window, which recomputes a lead() over all
-// stop/scrobble history) cost hundreds of ms each on a populated catalog, and
-// the page auto-refreshes every 30s — so without memoization that whole bundle
-// re-runs twice a minute per open tab. The response is server-global (not
-// per-user), so one cached value serves everyone; a short TTL keeps the numbers
-// fresh enough for a dashboard while amortizing the cost. Same posture as the
-// hub's trendingCache.
+// (five over the watch_plays window) cost hundreds of ms each on a populated
+// catalog, and the page auto-refreshes every 30s — so without memoization that
+// whole bundle re-runs twice a minute per open tab. The response is
+// server-global per display timezone, so one cached value serves everyone in
+// that zone; a short TTL keeps the numbers fresh enough for a dashboard while
+// amortizing the cost. Same posture as the hub's trendingCache.
 const analyticsCacheTTL = 5 * time.Minute
 
 // analyticsQuerier is the DB subset needed by AnalyticsHandler.
 type analyticsQuerier interface {
-	GetAnalyticsOverview(ctx context.Context) (gen.AnalyticsOverviewRow, error)
-	GetLibraryAnalytics(ctx context.Context) ([]gen.LibraryAnalyticsRow, error)
-	GetVideoCodecBreakdown(ctx context.Context) ([]gen.CodecCountRow, error)
-	GetContainerBreakdown(ctx context.Context) ([]gen.ContainerCountRow, error)
-	GetPlaysPerDay(ctx context.Context) ([]gen.DayCountRow, error)
-	GetBandwidthPerDay(ctx context.Context) ([]gen.DayBytesRow, error)
-	GetTopPlayed(ctx context.Context) ([]gen.TopPlayedRow, error)
-	GetRecentPlays(ctx context.Context) ([]gen.RecentPlayRow, error)
+	GetAnalyticsOverview(ctx context.Context) (gen.GetAnalyticsOverviewRow, error)
+	GetLibraryAnalytics(ctx context.Context) ([]gen.GetLibraryAnalyticsRow, error)
+	GetVideoCodecBreakdown(ctx context.Context) ([]gen.GetVideoCodecBreakdownRow, error)
+	GetContainerBreakdown(ctx context.Context) ([]gen.GetContainerBreakdownRow, error)
+	GetPlaysPerDay(ctx context.Context, tz string) ([]gen.GetPlaysPerDayRow, error)
+	GetBandwidthPerDay(ctx context.Context, tz string) ([]gen.GetBandwidthPerDayRow, error)
+	GetTopPlayed(ctx context.Context) ([]gen.GetTopPlayedRow, error)
+	GetRecentPlays(ctx context.Context) ([]gen.GetRecentPlaysRow, error)
 }
 
 // AnalyticsHandler handles GET /api/v1/analytics.
@@ -40,6 +40,10 @@ type AnalyticsHandler struct {
 	db     analyticsQuerier
 	logger *slog.Logger
 	cache  *analyticsCache
+	// group collapses concurrent cache misses for the same timezone into a
+	// single 8-query compute (the dashboard's 30s poll across multiple open
+	// tabs would otherwise stampede the pool every TTL expiry).
+	group singleflight.Group
 }
 
 // NewAnalyticsHandler creates an AnalyticsHandler.
@@ -47,30 +51,37 @@ func NewAnalyticsHandler(db analyticsQuerier, logger *slog.Logger) *AnalyticsHan
 	return &AnalyticsHandler{db: db, logger: logger, cache: &analyticsCache{ttl: analyticsCacheTTL}}
 }
 
-// analyticsCache memoizes the assembled (server-global) analytics response for
-// up to ttl. The dashboard's 30s auto-refresh would otherwise re-run all eight
-// aggregates twice a minute; this serves the cached bundle until it expires.
+// analyticsCache memoizes the assembled analytics response per display
+// timezone for up to ttl. Keyed by tz because the two per-day series bucket
+// days in the viewer's zone; in practice a homelab sees one or two zones.
 type analyticsCache struct {
 	mu      sync.Mutex
-	resp    *analyticsResponse
-	fetched time.Time
+	entries map[string]analyticsCacheEntry
 	ttl     time.Duration
 }
 
-func (c *analyticsCache) get() (*analyticsResponse, bool) {
+type analyticsCacheEntry struct {
+	resp    *analyticsResponse
+	fetched time.Time
+}
+
+func (c *analyticsCache) get(tz string) (*analyticsResponse, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.resp != nil && time.Since(c.fetched) < c.ttl {
-		return c.resp, true
+	e, ok := c.entries[tz]
+	if ok && time.Since(e.fetched) < c.ttl {
+		return e.resp, true
 	}
 	return nil, false
 }
 
-func (c *analyticsCache) set(r *analyticsResponse) {
+func (c *analyticsCache) set(tz string, r *analyticsResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.resp = r
-	c.fetched = time.Now()
+	if c.entries == nil {
+		c.entries = make(map[string]analyticsCacheEntry)
+	}
+	c.entries[tz] = analyticsCacheEntry{resp: r, fetched: time.Now()}
 }
 
 // ── JSON response types ───────────────────────────────────────────────────────
@@ -106,31 +117,34 @@ type containerCount struct {
 }
 
 type dayCount struct {
-	Date  string `json:"date"` // "2006-01-02"
+	Date  string `json:"date"` // "2006-01-02" in the requested display timezone
 	Count int64  `json:"count"`
 }
 
 type dayBytes struct {
-	Date  string `json:"date"` // "2006-01-02"
+	Date  string `json:"date"` // "2006-01-02" in the requested display timezone
 	Bytes int64  `json:"bytes"`
 }
 
 type topPlayedItem struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	Year       *int    `json:"year,omitempty"`
-	Type       string  `json:"type"`
-	PosterPath *string `json:"poster_path,omitempty"`
-	PlayCount  int64   `json:"play_count"`
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Year        *int    `json:"year,omitempty"`
+	Type        string  `json:"type"`
+	PosterPath  *string `json:"poster_path,omitempty"`
+	ParentTitle *string `json:"parent_title,omitempty"` // show/artist for episodes/tracks
+	PlayCount   int64   `json:"play_count"`
 }
 
 type recentPlay struct {
-	Title      string  `json:"title"`
-	Year       *int    `json:"year,omitempty"`
-	Type       string  `json:"type"`
-	OccurredAt string  `json:"occurred_at"`
-	ClientName *string `json:"client_name,omitempty"`
-	DurationMS *int64  `json:"duration_ms,omitempty"`
+	Title       string  `json:"title"`
+	Year        *int    `json:"year,omitempty"`
+	Type        string  `json:"type"`
+	ParentTitle *string `json:"parent_title,omitempty"`
+	UserName    *string `json:"user_name,omitempty"`
+	OccurredAt  string  `json:"occurred_at"` // RFC 3339, UTC
+	ClientName  *string `json:"client_name,omitempty"`
+	DurationMS  *int64  `json:"duration_ms,omitempty"`
 }
 
 type analyticsResponse struct {
@@ -144,7 +158,21 @@ type analyticsResponse struct {
 	RecentPlays    []recentPlay       `json:"recent_plays"`
 }
 
-// Get handles GET /api/v1/analytics.
+// displayTZ validates the caller-supplied IANA zone name (e.g.
+// "America/Detroit" from the browser's Intl API). Anything unloadable falls
+// back to UTC — the value is interpolated into AT TIME ZONE as a bind
+// parameter, so this is about correct bucketing, not injection.
+func displayTZ(raw string) string {
+	if raw == "" {
+		return "UTC"
+	}
+	if _, err := time.LoadLocation(raw); err != nil {
+		return "UTC"
+	}
+	return raw
+}
+
+// Get handles GET /api/v1/analytics?tz=<IANA zone>[&refresh=true].
 //
 // The eight underlying aggregates are independent, so they run in parallel
 // against the shared pgxpool. Wall time drops from the sum of query
@@ -154,24 +182,45 @@ type analyticsResponse struct {
 // compounded into ~10s page loads.
 func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	tz := displayTZ(r.URL.Query().Get("tz"))
 
 	// Serve the memoized bundle unless the caller forces a recompute (?refresh=true).
 	if r.URL.Query().Get("refresh") != "true" {
-		if cached, ok := h.cache.get(); ok {
+		if cached, ok := h.cache.get(tz); ok {
 			respond.Success(w, r, *cached)
 			return
 		}
 	}
 
+	// Collapse concurrent misses for the same tz into one compute. Detach the
+	// compute from this request's context: with singleflight, cancelling the
+	// first caller would fail every waiter sharing its flight.
+	v, err, _ := h.group.Do(tz, func() (any, error) {
+		resp, err := h.compute(context.WithoutCancel(ctx), tz)
+		if err != nil {
+			return nil, err
+		}
+		h.cache.set(tz, resp)
+		return resp, nil
+	})
+	if err != nil {
+		h.logger.ErrorContext(ctx, "analytics: query", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, *(v.(*analyticsResponse)))
+}
+
+func (h *AnalyticsHandler) compute(ctx context.Context, tz string) (*analyticsResponse, error) {
 	var (
-		overview        gen.AnalyticsOverviewRow
-		libs            []gen.LibraryAnalyticsRow
-		codecs          []gen.CodecCountRow
-		containers      []gen.ContainerCountRow
-		playsPerDay     []gen.DayCountRow
-		bandwidthPerDay []gen.DayBytesRow
-		topPlayed       []gen.TopPlayedRow
-		recentPlays     []gen.RecentPlayRow
+		overview        gen.GetAnalyticsOverviewRow
+		libs            []gen.GetLibraryAnalyticsRow
+		codecs          []gen.GetVideoCodecBreakdownRow
+		containers      []gen.GetContainerBreakdownRow
+		playsPerDay     []gen.GetPlaysPerDayRow
+		bandwidthPerDay []gen.GetBandwidthPerDayRow
+		topPlayed       []gen.GetTopPlayedRow
+		recentPlays     []gen.GetRecentPlaysRow
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -192,11 +241,11 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	g.Go(func() (err error) {
-		playsPerDay, err = h.db.GetPlaysPerDay(gctx)
+		playsPerDay, err = h.db.GetPlaysPerDay(gctx, tz)
 		return err
 	})
 	g.Go(func() (err error) {
-		bandwidthPerDay, err = h.db.GetBandwidthPerDay(gctx)
+		bandwidthPerDay, err = h.db.GetBandwidthPerDay(gctx, tz)
 		return err
 	})
 	g.Go(func() (err error) {
@@ -208,9 +257,7 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err := g.Wait(); err != nil {
-		h.logger.ErrorContext(ctx, "analytics: query", "err", err)
-		respond.InternalError(w, r)
-		return
+		return nil, err
 	}
 
 	// ── Map to response types ─────────────────────────────────────────────────
@@ -223,10 +270,10 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Type:           l.Type,
 			ItemCount:      l.ItemCount,
 			TotalSizeBytes: l.TotalSizeBytes,
-			Res4K:          l.Res4K,
+			Res4K:          l.Res4k,
 			Res1080p:       l.Res1080p,
 			Res720p:        l.Res720p,
-			ResSD:          l.ResSD,
+			ResSD:          l.ResSd,
 		}
 	}
 
@@ -242,12 +289,12 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	respDays := make([]dayCount, len(playsPerDay))
 	for i, d := range playsPerDay {
-		respDays[i] = dayCount{Date: d.Date.Format("2006-01-02"), Count: d.Count}
+		respDays[i] = dayCount{Date: d.Date.Time.Format("2006-01-02"), Count: d.Count}
 	}
 
 	respBandwidth := make([]dayBytes, len(bandwidthPerDay))
 	for i, d := range bandwidthPerDay {
-		respBandwidth[i] = dayBytes{Date: d.Date.Format("2006-01-02"), Bytes: d.Bytes}
+		respBandwidth[i] = dayBytes{Date: d.Date.Time.Format("2006-01-02"), Bytes: d.Bytes}
 	}
 
 	respTop := make([]topPlayedItem, len(topPlayed))
@@ -258,12 +305,17 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Type:      t.Type,
 			PlayCount: t.PlayCount,
 		}
-		if t.Year.Valid {
-			y := int(t.Year.Int32)
+		if t.Year != nil {
+			y := int(*t.Year)
 			item.Year = &y
 		}
-		if t.PosterPath.Valid {
-			item.PosterPath = &t.PosterPath.String
+		if t.PosterPath != "" {
+			pp := t.PosterPath
+			item.PosterPath = &pp
+		}
+		if t.ParentTitle != "" {
+			pt := t.ParentTitle
+			item.ParentTitle = &pt
 		}
 		respTop[i] = item
 	}
@@ -271,30 +323,34 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respRecent := make([]recentPlay, len(recentPlays))
 	for i, p := range recentPlays {
 		play := recentPlay{
-			Title:      p.Title,
-			Type:       p.Type,
-			OccurredAt: p.OccurredAt.Format("2006-01-02T15:04:05Z"),
+			Title: p.Title,
+			Type:  p.Type,
+			// .UTC() before formatting: pgx returns timestamptz in the server's
+			// local zone, and a literal Z on local wall-clock time shifted every
+			// displayed timestamp by the UTC offset.
+			OccurredAt: p.OccurredAt.Time.UTC().Format(time.RFC3339),
+			UserName:   p.UserName,
+			ClientName: p.ClientName,
+			DurationMS: p.DurationMs,
 		}
-		if p.Year.Valid {
-			y := int(p.Year.Int32)
+		if p.Year != nil {
+			y := int(*p.Year)
 			play.Year = &y
 		}
-		if p.ClientName.Valid {
-			play.ClientName = &p.ClientName.String
-		}
-		if p.DurationMS.Valid {
-			play.DurationMS = &p.DurationMS.Int64
+		if p.ParentTitle != "" {
+			pt := p.ParentTitle
+			play.ParentTitle = &pt
 		}
 		respRecent[i] = play
 	}
 
-	resp := analyticsResponse{
+	return &analyticsResponse{
 		Overview: analyticsOverview{
 			TotalItems:       overview.TotalItems,
 			TotalFiles:       overview.TotalFiles,
 			TotalSizeBytes:   overview.TotalSizeBytes,
 			TotalPlays:       overview.TotalPlays,
-			TotalWatchTimeMS: overview.TotalWatchTimeMS,
+			TotalWatchTimeMS: overview.TotalWatchTimeMs,
 		},
 		Libraries:      respLibs,
 		VideoCodecs:    respCodecs,
@@ -303,7 +359,5 @@ func (h *AnalyticsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		BandwidthByDay: respBandwidth,
 		TopPlayed:      respTop,
 		RecentPlays:    respRecent,
-	}
-	h.cache.set(&resp)
-	respond.Success(w, r, resp)
+	}, nil
 }
