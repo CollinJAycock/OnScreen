@@ -589,6 +589,7 @@ type WatchEvent struct {
 	ClientName *string            `json:"client_name"`
 	ClientIp   *netip.Addr        `json:"client_ip"`
 	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
+	Decision   *string            `json:"decision"`
 }
 
 type WatchEvents202603 struct {
@@ -663,6 +664,7 @@ type WatchPlay struct {
 	ClientName *string            `json:"client_name"`
 	ClientID   *string            `json:"client_id"`
 	ClientIp   *netip.Addr        `json:"client_ip"`
+	Decision   *string            `json:"decision"`
 	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
 }
 

@@ -24,6 +24,7 @@ func (a *watchEventAdapter) InsertWatchEvent(ctx context.Context, p watchevent.I
 		ClientID:   p.ClientID,
 		ClientName: p.ClientName,
 		ClientIp:   p.ClientIP,
+		Decision:   p.Decision,
 		OccurredAt: pgtype.Timestamptz{Time: p.OccurredAt, Valid: true},
 	})
 	if err != nil {

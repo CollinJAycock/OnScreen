@@ -1660,7 +1660,8 @@ export const itemApi = {
   exif: (id: string) => api.get<PhotoEXIF>(`/items/${id}/exif`),
   children: (id: string) =>
     api.requestList<ChildItem>(`/items/${id}/children`),
-  progress: (id: string, viewOffsetMs: number, durationMs: number, state: 'playing' | 'paused' | 'stopped') =>
+  progress: (id: string, viewOffsetMs: number, durationMs: number, state: 'playing' | 'paused' | 'stopped',
+             decision?: 'directPlay' | 'directStream' | 'remux' | 'transcode') =>
     api.put<void>(`/items/${id}/progress`, {
       view_offset_ms: viewOffsetMs,
       duration_ms: durationMs,
@@ -1670,6 +1671,8 @@ export const itemApi = {
       // from userAgent + a "Web —" prefix so the user can tell the
       // browser apart from native clients in the picker.
       client_name: getClientName(),
+      // decision feeds the analytics direct-vs-transcode split.
+      ...(decision ? { decision } : {}),
     }),
   searchMatch: (id: string, query: string) =>
     api.get<MatchCandidate[]>(`/items/${id}/match/search?query=${encodeURIComponent(query)}`),
@@ -2010,7 +2013,30 @@ export interface RecentPlay {
   duration_ms?: number;
 }
 
+export interface TopUser {
+  user_id: string;
+  username: string;
+  play_count: number;
+  watch_time_ms: number;
+}
+
+export interface ClientCount { client: string; count: number; }
+export interface HourCount  { hour: number;  count: number; }
+
+export interface CompletionStats {
+  plays: number;      // plays of media with a known runtime
+  completed: number;  // final position reached >= 90%
+}
+
+export interface DayStreamTypes {
+  date: string;
+  direct: number;     // directPlay + directStream + remux
+  transcode: number;
+  unknown: number;    // plays recorded before clients reported a decision
+}
+
 export interface AnalyticsData {
+  range_days: number;
   overview: AnalyticsOverview;
   libraries: LibraryAnalytics[];
   video_codecs: CodecCount[];
@@ -2019,16 +2045,23 @@ export interface AnalyticsData {
   bandwidth_by_day: DayBytes[];
   top_played: TopPlayedItem[];
   recent_plays: RecentPlay[];
+  top_users: TopUser[];
+  clients: ClientCount[];
+  plays_by_hour: HourCount[];
+  completion: CompletionStats;
+  stream_types_by_day: DayStreamTypes[];
 }
 
 export const analyticsApi = {
   // tz makes the server bucket the per-day charts in the viewer's local days;
-  // refresh bypasses the server-side 5-minute cache (manual refresh button).
-  get: (opts?: { refresh?: boolean }) => {
+  // days selects the 7/30/90 window; refresh bypasses the server-side
+  // 5-minute cache (manual refresh button).
+  get: (opts?: { refresh?: boolean; days?: number }) => {
     const params = new URLSearchParams();
     try {
       params.set('tz', Intl.DateTimeFormat().resolvedOptions().timeZone);
     } catch { /* no Intl zone — server defaults to UTC */ }
+    if (opts?.days) params.set('days', String(opts.days));
     if (opts?.refresh) params.set('refresh', 'true');
     return api.get<AnalyticsData>(`/analytics?${params}`);
   }

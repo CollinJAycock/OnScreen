@@ -62,12 +62,17 @@ LEFT JOIN LATERAL (
   WHERE media_item_id = wp.media_id AND status = 'active' AND bitrate IS NOT NULL
   ORDER BY bitrate DESC LIMIT 1
 ) mf_any ON TRUE
-WHERE wp.occurred_at >= NOW() - INTERVAL '31 days'
+WHERE wp.occurred_at >= NOW() - make_interval(days => $2::INT + 1)
   AND wp.duration_ms IS NOT NULL
   AND COALESCE(mf_direct.bitrate, mf_any.bitrate) IS NOT NULL
 GROUP BY 1
 ORDER BY 1
 `
+
+type GetBandwidthPerDayParams struct {
+	Tz   string `json:"tz"`
+	Days int32  `json:"days"`
+}
 
 type GetBandwidthPerDayRow struct {
 	Date  pgtype.Date `json:"date"`
@@ -77,8 +82,8 @@ type GetBandwidthPerDayRow struct {
 // Estimated bytes streamed: source-file bitrate × watched duration. Prefers
 // the exact file (wp.file_id), falls back to the item's highest-bitrate
 // active file. Transcoded sessions overcount (estimate is at source bitrate).
-func (q *Queries) GetBandwidthPerDay(ctx context.Context, tz string) ([]GetBandwidthPerDayRow, error) {
-	rows, err := q.db.Query(ctx, getBandwidthPerDay, tz)
+func (q *Queries) GetBandwidthPerDay(ctx context.Context, arg GetBandwidthPerDayParams) ([]GetBandwidthPerDayRow, error) {
+	rows, err := q.db.Query(ctx, getBandwidthPerDay, arg.Tz, arg.Days)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +100,68 @@ func (q *Queries) GetBandwidthPerDay(ctx context.Context, tz string) ([]GetBandw
 		return nil, err
 	}
 	return items, nil
+}
+
+const getClientBreakdown = `-- name: GetClientBreakdown :many
+SELECT COALESCE(client_name, 'Unknown')::TEXT AS client,
+       COUNT(*)::BIGINT AS count
+FROM watch_plays
+WHERE occurred_at > NOW() - make_interval(days => $1::INT)
+GROUP BY client_name
+ORDER BY count DESC
+LIMIT 10
+`
+
+type GetClientBreakdownRow struct {
+	Client string `json:"client"`
+	Count  int64  `json:"count"`
+}
+
+// Plays by client app over the selected window ("Fire TV — Amazon AFTKRT",
+// "Web — Chrome on Windows", ...). Tells the admin which client apps are
+// actually in use.
+func (q *Queries) GetClientBreakdown(ctx context.Context, days int32) ([]GetClientBreakdownRow, error) {
+	rows, err := q.db.Query(ctx, getClientBreakdown, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetClientBreakdownRow{}
+	for rows.Next() {
+		var i GetClientBreakdownRow
+		if err := rows.Scan(&i.Client, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getCompletionStats = `-- name: GetCompletionStats :one
+SELECT COUNT(*)::BIGINT AS plays_with_duration,
+       (COUNT(*) FILTER (WHERE wp.position_ms >= mi.duration_ms * 9 / 10))::BIGINT AS completed
+FROM watch_plays wp
+JOIN media_items mi ON mi.id = wp.media_id
+WHERE wp.occurred_at > NOW() - make_interval(days => $1::INT)
+  AND mi.duration_ms IS NOT NULL AND mi.duration_ms > 0
+`
+
+type GetCompletionStatsRow struct {
+	PlaysWithDuration int64 `json:"plays_with_duration"`
+	Completed         int64 `json:"completed"`
+}
+
+// Of plays whose media has a known runtime, how many reached >= 90% (the
+// watched threshold used across the product)? Position is the play's final
+// position; media duration comes from the item, not the play.
+func (q *Queries) GetCompletionStats(ctx context.Context, days int32) (GetCompletionStatsRow, error) {
+	row := q.db.QueryRow(ctx, getCompletionStats, days)
+	var i GetCompletionStatsRow
+	err := row.Scan(&i.PlaysWithDuration, &i.Completed)
+	return i, err
 }
 
 const getContainerBreakdown = `-- name: GetContainerBreakdown :many
@@ -199,14 +266,61 @@ func (q *Queries) GetLibraryAnalytics(ctx context.Context) ([]GetLibraryAnalytic
 	return items, nil
 }
 
+const getPlaysByHour = `-- name: GetPlaysByHour :many
+SELECT (EXTRACT(HOUR FROM occurred_at AT TIME ZONE $1::TEXT))::INT AS hour,
+       COUNT(*)::BIGINT AS count
+FROM watch_plays
+WHERE occurred_at > NOW() - make_interval(days => $2::INT)
+GROUP BY 1
+ORDER BY 1
+`
+
+type GetPlaysByHourParams struct {
+	Tz   string `json:"tz"`
+	Days int32  `json:"days"`
+}
+
+type GetPlaysByHourRow struct {
+	Hour  int32 `json:"hour"`
+	Count int64 `json:"count"`
+}
+
+// Plays bucketed by local hour of day (viewer timezone) over the selected
+// window — "when is the server busy". Sparse: hours with no plays are absent;
+// the client fills 0..23.
+func (q *Queries) GetPlaysByHour(ctx context.Context, arg GetPlaysByHourParams) ([]GetPlaysByHourRow, error) {
+	rows, err := q.db.Query(ctx, getPlaysByHour, arg.Tz, arg.Days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetPlaysByHourRow{}
+	for rows.Next() {
+		var i GetPlaysByHourRow
+		if err := rows.Scan(&i.Hour, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPlaysPerDay = `-- name: GetPlaysPerDay :many
 SELECT (DATE(occurred_at AT TIME ZONE $1::TEXT))::DATE AS date,
        COUNT(*)::BIGINT AS count
 FROM watch_plays
-WHERE occurred_at >= NOW() - INTERVAL '31 days'
+WHERE occurred_at >= NOW() - make_interval(days => $2::INT + 1)
 GROUP BY 1
 ORDER BY 1
 `
+
+type GetPlaysPerDayParams struct {
+	Tz   string `json:"tz"`
+	Days int32  `json:"days"`
+}
 
 type GetPlaysPerDayRow struct {
 	Date  pgtype.Date `json:"date"`
@@ -215,9 +329,9 @@ type GetPlaysPerDayRow struct {
 
 // Days bucket in the viewer's display timezone (validated IANA name passed by
 // the handler; defaults to UTC) so evening plays don't land on "tomorrow".
-// The 31-day fetch window over-covers the client's 30-local-day fill range.
-func (q *Queries) GetPlaysPerDay(ctx context.Context, tz string) ([]GetPlaysPerDayRow, error) {
-	rows, err := q.db.Query(ctx, getPlaysPerDay, tz)
+// The +1 day fetch window over-covers the client's local-day fill range.
+func (q *Queries) GetPlaysPerDay(ctx context.Context, arg GetPlaysPerDayParams) ([]GetPlaysPerDayRow, error) {
+	rows, err := q.db.Query(ctx, getPlaysPerDay, arg.Tz, arg.Days)
 	if err != nil {
 		return nil, err
 	}
@@ -294,6 +408,50 @@ func (q *Queries) GetRecentPlays(ctx context.Context) ([]GetRecentPlaysRow, erro
 	return items, nil
 }
 
+const getStreamTypesPerDay = `-- name: GetStreamTypesPerDay :many
+SELECT (DATE(occurred_at AT TIME ZONE $1::TEXT))::DATE AS date,
+       COALESCE(decision, 'unknown')::TEXT AS decision,
+       COUNT(*)::BIGINT AS count
+FROM watch_plays
+WHERE occurred_at >= NOW() - make_interval(days => $2::INT + 1)
+GROUP BY 1, 2
+ORDER BY 1, 2
+`
+
+type GetStreamTypesPerDayParams struct {
+	Tz   string `json:"tz"`
+	Days int32  `json:"days"`
+}
+
+type GetStreamTypesPerDayRow struct {
+	Date     pgtype.Date `json:"date"`
+	Decision string      `json:"decision"`
+	Count    int64       `json:"count"`
+}
+
+// Direct-vs-transcode load over time (viewer-timezone days). decision is
+// collapsed client-side; rows written before the decision column (or by
+// clients that don't send it yet) report as 'unknown'.
+func (q *Queries) GetStreamTypesPerDay(ctx context.Context, arg GetStreamTypesPerDayParams) ([]GetStreamTypesPerDayRow, error) {
+	rows, err := q.db.Query(ctx, getStreamTypesPerDay, arg.Tz, arg.Days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetStreamTypesPerDayRow{}
+	for rows.Next() {
+		var i GetStreamTypesPerDayRow
+		if err := rows.Scan(&i.Date, &i.Decision, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTopPlayed = `-- name: GetTopPlayed :many
 SELECT mi.id, mi.title, mi.year, mi.type,
        (COALESCE(gp.poster_path, p.poster_path, mi.poster_path,
@@ -303,7 +461,7 @@ SELECT mi.id, mi.title, mi.year, mi.type,
 FROM (
   SELECT media_id, COUNT(*)::BIGINT AS play_count
   FROM watch_plays
-  WHERE occurred_at > NOW() - INTERVAL '90 days'
+  WHERE occurred_at > NOW() - make_interval(days => $1::INT)
   GROUP BY media_id
 ) plays
 JOIN media_items mi ON mi.id = plays.media_id AND mi.deleted_at IS NULL
@@ -328,8 +486,8 @@ type GetTopPlayedRow struct {
 // BY. poster_path coalesces up the hierarchy — an episode inherits the show's
 // (episode→season→show), a track the album/artist's. parent_title surfaces the
 // show/artist so an episode row can read "Show — Episode" in the UI.
-func (q *Queries) GetTopPlayed(ctx context.Context) ([]GetTopPlayedRow, error) {
-	rows, err := q.db.Query(ctx, getTopPlayed)
+func (q *Queries) GetTopPlayed(ctx context.Context, days int32) ([]GetTopPlayedRow, error) {
+	rows, err := q.db.Query(ctx, getTopPlayed, days)
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +503,53 @@ func (q *Queries) GetTopPlayed(ctx context.Context) ([]GetTopPlayedRow, error) {
 			&i.PosterPath,
 			&i.ParentTitle,
 			&i.PlayCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTopUsers = `-- name: GetTopUsers :many
+SELECT wp.user_id,
+       COALESCE(u.username, '')::TEXT       AS username,
+       COUNT(*)::BIGINT                     AS play_count,
+       COALESCE(SUM(wp.duration_ms), 0)::BIGINT AS watch_time_ms
+FROM watch_plays wp
+LEFT JOIN users u ON u.id = wp.user_id
+WHERE wp.occurred_at > NOW() - make_interval(days => $1::INT)
+GROUP BY wp.user_id, u.username
+ORDER BY watch_time_ms DESC, play_count DESC
+LIMIT 10
+`
+
+type GetTopUsersRow struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Username    string    `json:"username"`
+	PlayCount   int64     `json:"play_count"`
+	WatchTimeMs int64     `json:"watch_time_ms"`
+}
+
+// Per-user leaderboard over the selected window. LEFT JOIN — a deleted user's
+// plays still count, under an empty name the handler renders as "Deleted user".
+func (q *Queries) GetTopUsers(ctx context.Context, days int32) ([]GetTopUsersRow, error) {
+	rows, err := q.db.Query(ctx, getTopUsers, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetTopUsersRow{}
+	for rows.Next() {
+		var i GetTopUsersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Username,
+			&i.PlayCount,
+			&i.WatchTimeMs,
 		); err != nil {
 			return nil, err
 		}

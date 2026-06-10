@@ -1416,6 +1416,10 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		// where the user hasn't named the device) both round-trip
 		// the same way.
 		ClientName string `json:"client_name,omitempty"`
+		// Optional playback decision the client is currently using —
+		// feeds the analytics direct-vs-transcode split. Clients that
+		// predate the field simply omit it (recorded as NULL/unknown).
+		Decision string `json:"decision,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -1437,6 +1441,14 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			body.ClientName = body.ClientName[:64]
 		}
 		clientNamePtr = &body.ClientName
+	}
+	// Allowlist the decision: anything else (typos, junk from a hostile
+	// client) records as NULL/unknown rather than polluting the analytics
+	// dimension.
+	var decisionPtr *string
+	switch body.Decision {
+	case "directPlay", "directStream", "remux", "transcode":
+		decisionPtr = &body.Decision
 	}
 
 	// Parental watch-limit gate + accounting. Only 'playing' heartbeats are
@@ -1472,6 +1484,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		PositionMS: body.ViewOffsetMS,
 		DurationMS: durPtr,
 		ClientName: clientNamePtr,
+		Decision:   decisionPtr,
 		OccurredAt: time.Now(),
 	}); err != nil {
 		h.logger.ErrorContext(r.Context(), "record progress", "id", id, "err", err)

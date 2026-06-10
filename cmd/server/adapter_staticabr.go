@@ -15,7 +15,9 @@ import (
 type staticPopularity struct{ q *gen.Queries }
 
 func (p staticPopularity) TopPlayed(ctx context.Context) ([]staticabr.Popular, error) {
-	rows, err := p.q.GetTopPlayed(ctx)
+	// 90-day popularity window — matches the query's fixed window from before
+	// the analytics range selector made it a parameter.
+	rows, err := p.q.GetTopPlayed(ctx, 90)
 	if err != nil {
 		return nil, err
 	}

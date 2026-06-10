@@ -14,6 +14,7 @@ vi.mock('$lib/api', () => ({
 }));
 
 const emptyAnalytics = {
+  range_days: 30,
   overview: {
     total_items: 42,
     total_size_bytes: 5 * 1024 * 1024 * 1024,
@@ -28,6 +29,11 @@ const emptyAnalytics = {
   libraries: [],
   top_played: [],
   recent_plays: [],
+  top_users: [],
+  clients: [],
+  plays_by_hour: [],
+  completion: { plays: 0, completed: 0 },
+  stream_types_by_day: [],
 };
 
 beforeEach(() => {

@@ -101,11 +101,11 @@ const insertWatchEvent = `-- name: InsertWatchEvent :one
 INSERT INTO watch_events (
     user_id, media_id, file_id, session_id,
     event_type, position_ms, duration_ms,
-    client_id, client_name, client_ip, occurred_at
+    client_id, client_name, client_ip, decision, occurred_at
 ) VALUES (
     $1, $2, $3, $4,
     $5, $6, $7,
-    $8, $9, $10, $11
+    $8, $9, $10, $11, $12
 ) RETURNING id, occurred_at
 `
 
@@ -120,6 +120,7 @@ type InsertWatchEventParams struct {
 	ClientID   *string            `json:"client_id"`
 	ClientName *string            `json:"client_name"`
 	ClientIp   *netip.Addr        `json:"client_ip"`
+	Decision   *string            `json:"decision"`
 	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
 }
 
@@ -141,6 +142,7 @@ func (q *Queries) InsertWatchEvent(ctx context.Context, arg InsertWatchEventPara
 		arg.ClientID,
 		arg.ClientName,
 		arg.ClientIp,
+		arg.Decision,
 		arg.OccurredAt,
 	)
 	var i InsertWatchEventRow

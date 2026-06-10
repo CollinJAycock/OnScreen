@@ -40,6 +40,9 @@ data class ProgressRequest(
     val view_offset_ms: Long,
     val duration_ms: Long,
     val state: String,
+    /** Playback decision for the analytics direct-vs-transcode split.
+     *  Null (omitted on the wire) when unknown. */
+    val decision: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

@@ -346,6 +346,13 @@ class PlayerViewModel @Inject constructor(
     private var localProgressMs: Long = 0L
 
     private var transcodeSessionId: String? = null
+
+    /** Live playback mode reported with progress beacons — feeds the
+     *  analytics direct-vs-transcode split. Updated on source selection and
+     *  on every (re)started transcode session, so mid-watch switches
+     *  (audio-stream change, quality fallback) report what is actually
+     *  happening. */
+    private var activeDecision: String? = null
     private var transcodeToken: String? = null
     var hlsOffsetMs: Long = 0L
         private set
@@ -470,11 +477,13 @@ class PlayerViewModel @Inject constructor(
                     localFile != null -> {
                         hlsOffsetMs = 0
                         lastTranscodeRequest = null
+                        activeDecision = "directPlay"
                         PlaybackSource.DirectPlay("file://${localFile.absolutePath}", startMs)
                     }
                     mode is PlaybackMode.DirectPlay -> {
                         hlsOffsetMs = 0
                         lastTranscodeRequest = null
+                        activeDecision = "directPlay"
                         PlaybackSource.DirectPlay(
                             buildDirectPlayUrl(serverUrl, file.stream_url, file.stream_token),
                             startMs,
@@ -698,6 +707,9 @@ class PlayerViewModel @Inject constructor(
         transcodeToken = session.token
         hlsOffsetMs = posMs
         lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
+        // videoCopy = remux session (original video bits, container rewrap) —
+        // the server calls that verdict directStream.
+        activeDecision = if (videoCopy) "directStream" else "transcode"
 
         return PlaybackSource.Hls("$serverUrl${session.playlist_url}", posMs)
     }
@@ -751,7 +763,7 @@ class PlayerViewModel @Inject constructor(
         localProgressMs = positionMs
         viewModelScope.launch {
             try {
-                itemRepo.updateProgress(itemId, positionMs, durationMs, state)
+                itemRepo.updateProgress(itemId, positionMs, durationMs, state, activeDecision)
             } catch (e: Exception) {
                 // A 'playing' heartbeat rejected with a parental watch-limit
                 // 403 means the cap was reached (or the allowed-hours window
@@ -777,7 +789,7 @@ class PlayerViewModel @Inject constructor(
      *  reach ListenBrainz. */
     fun reportProgressFinal(itemId: String, positionMs: Long, durationMs: Long) {
         if (durationMs <= 0) return
-        itemRepo.reportProgressDetached(itemId, positionMs, durationMs, "stopped")
+        itemRepo.reportProgressDetached(itemId, positionMs, durationMs, "stopped", activeDecision)
     }
 
     /** Cleared by the screen after it consumes the seek signal so the

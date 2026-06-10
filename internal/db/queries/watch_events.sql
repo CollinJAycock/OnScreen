@@ -4,11 +4,11 @@
 INSERT INTO watch_events (
     user_id, media_id, file_id, session_id,
     event_type, position_ms, duration_ms,
-    client_id, client_name, client_ip, occurred_at
+    client_id, client_name, client_ip, decision, occurred_at
 ) VALUES (
     @user_id, @media_id, @file_id, @session_id,
     @event_type, @position_ms, @duration_ms,
-    @client_id, @client_name, @client_ip, @occurred_at
+    @client_id, @client_name, @client_ip, @decision, @occurred_at
 ) RETURNING id, occurred_at;
 
 -- name: RefreshWatchState :exec

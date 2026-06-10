@@ -1116,6 +1116,7 @@
         view_offset_ms: Math.round((videoEl.currentTime + hlsOffsetSec) * 1000),
         duration_ms: item.duration_ms ?? 0,
         state: 'stopped',
+        decision: transcodeSessionId ? (hlsIsRemux ? 'remux' : 'transcode') : 'directPlay',
       });
     }
     stopTranscodeSession();
@@ -2170,12 +2171,21 @@
   // trip back as a sync event and re-set the same position.
   let lastSelfReportedMs = -1;
 
+  // The live playback mode for analytics — reflects what is actually
+  // happening right now (quality switches and stall fallbacks can move a
+  // direct-play start into a transcode session mid-watch), not the server's
+  // initial decision verdict.
+  function activeDecision(): 'directPlay' | 'remux' | 'transcode' {
+    if (transcodeSessionId) return hlsIsRemux ? 'remux' : 'transcode';
+    return 'directPlay';
+  }
+
   async function saveProgress(state: 'playing' | 'paused' | 'stopped') {
     if (!item || !videoEl || duration === 0) return;
     const positionMs = Math.floor(currentTime * 1000);
     lastSelfReportedMs = positionMs;
     try {
-      await itemApi.progress(item.id, positionMs, Math.floor(duration * 1000), state);
+      await itemApi.progress(item.id, positionMs, Math.floor(duration * 1000), state, activeDecision());
     } catch (e) {
       // A daily cap reached (or the allowed-hours window closing) mid-
       // session surfaces here as a 403 on the `playing` heartbeat —

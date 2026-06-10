@@ -39,8 +39,9 @@ open class ItemRepository @Inject constructor(
         offsetMs: Long,
         durationMs: Long,
         state: String,
+        decision: String? = null,
     ) {
-        api.updateProgress(itemId, ProgressRequest(offsetMs, durationMs, state))
+        api.updateProgress(itemId, ProgressRequest(offsetMs, durationMs, state, decision))
     }
 
     /** Fire-and-forget progress publish on the app-lifetime
@@ -54,10 +55,11 @@ open class ItemRepository @Inject constructor(
         offsetMs: Long,
         durationMs: Long,
         state: String,
+        decision: String? = null,
     ) {
         detachedScope.launch {
             try {
-                updateProgress(itemId, offsetMs, durationMs, state)
+                updateProgress(itemId, offsetMs, durationMs, state, decision)
             } catch (_: Exception) { }
         }
     }

@@ -40,6 +40,7 @@ type RecordParams struct {
 	ClientID   *string
 	ClientName *string
 	ClientIP   *netip.Addr
+	Decision   *string // "directPlay"|"directStream"|"remux"|"transcode" — nil for clients that predate the field
 	OccurredAt time.Time
 }
 
@@ -63,6 +64,7 @@ type InsertWatchEventParams struct {
 	ClientID   *string
 	ClientName *string
 	ClientIP   *netip.Addr
+	Decision   *string
 	OccurredAt time.Time
 }
 
@@ -121,6 +123,7 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 		ClientID:   p.ClientID,
 		ClientName: p.ClientName,
 		ClientIP:   p.ClientIP,
+		Decision:   p.Decision,
 		OccurredAt: p.OccurredAt,
 	})
 	if err != nil {

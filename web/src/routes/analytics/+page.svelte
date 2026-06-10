@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, analyticsApi, sessionsApi, assetUrl, type AnalyticsData, type DayCount, type DayBytes, type ActiveSession } from '$lib/api';
+  import { api, analyticsApi, sessionsApi, assetUrl, type AnalyticsData, type DayCount, type DayBytes, type DayStreamTypes, type ActiveSession } from '$lib/api';
 
   let data: AnalyticsData | null = null;
   let loading = true;
   let error = '';        // shown full-screen only while no data has ever loaded
   let staleError = false; // a refresh failed but earlier data is still on screen
   let refreshing = false; // manual refresh in flight
+  let rangeDays = 30;     // 7 | 30 | 90 — drives every windowed panel
   let sessions: ActiveSession[] = [];
   let alive = true;
   let ready = false;
@@ -15,7 +16,7 @@
   async function refresh(force = false) {
     if (!alive || (document.hidden && !force)) return;
     try {
-      data = await analyticsApi.get(force ? { refresh: true } : undefined);
+      data = await analyticsApi.get({ days: rangeDays, ...(force ? { refresh: true } : {}) });
       error = '';
       staleError = false;
     } catch (e: unknown) {
@@ -33,6 +34,12 @@
   async function manualRefresh() {
     refreshing = true;
     try { await refresh(true); } finally { refreshing = false; }
+  }
+
+  function setRange(days: number) {
+    if (days === rangeDays) return;
+    rangeDays = days;
+    refresh(true); // force: the user explicitly asked for a different view
   }
 
   async function refreshSessions() {
@@ -124,36 +131,67 @@
     return assetUrl(`/artwork/${encoded}?w=${w}`);
   }
 
-  // Build a full 30-day array, filling missing dates with 0.
-  function fillDays(raw: DayCount[]): DayCount[] {
-    const map = new Map(raw.map(d => [d.date, d.count]));
-    const days: DayCount[] = [];
-    for (let i = 29; i >= 0; i--) {
+  // The local-day keys for the selected window, oldest first. Use the
+  // server-confirmed range (data.range_days) so the fill width can't drift
+  // from what the response actually covers mid-range-switch.
+  function windowKeys(n: number): string[] {
+    const keys: string[] = [];
+    for (let i = n - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const key = localDayKey(d);
-      days.push({ date: key, count: map.get(key) ?? 0 });
+      keys.push(localDayKey(d));
     }
-    return days;
+    return keys;
   }
 
-  $: days = data ? fillDays(data.plays_by_day) : [];
+  // Build a full window-sized array, filling missing dates with 0.
+  function fillDays(raw: DayCount[], n: number): DayCount[] {
+    const map = new Map(raw.map(d => [d.date, d.count]));
+    return windowKeys(n).map(key => ({ date: key, count: map.get(key) ?? 0 }));
+  }
+
+  $: chartDays = data?.range_days ?? rangeDays;
+  $: days = data ? fillDays(data.plays_by_day, chartDays) : [];
   $: maxDay = days.reduce((m, d) => Math.max(m, d.count), 0) || 1;
 
-  function fillDayBytes(raw: DayBytes[]): DayBytes[] {
+  function fillDayBytes(raw: DayBytes[], n: number): DayBytes[] {
     const map = new Map(raw.map(d => [d.date, d.bytes]));
-    const days: DayBytes[] = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = localDayKey(d);
-      days.push({ date: key, bytes: map.get(key) ?? 0 });
-    }
-    return days;
+    return windowKeys(n).map(key => ({ date: key, bytes: map.get(key) ?? 0 }));
   }
 
-  $: bwDays = data ? fillDayBytes(data.bandwidth_by_day ?? []) : [];
+  $: bwDays = data ? fillDayBytes(data.bandwidth_by_day ?? [], chartDays) : [];
   $: maxBw  = bwDays.reduce((m, d) => Math.max(m, d.bytes), 0) || 1;
+
+  // Stream-type stacked series (direct / transcode / unknown per local day).
+  function fillStreamDays(raw: DayStreamTypes[], n: number): DayStreamTypes[] {
+    const map = new Map(raw.map(d => [d.date, d]));
+    return windowKeys(n).map(key =>
+      map.get(key) ?? { date: key, direct: 0, transcode: 0, unknown: 0 });
+  }
+
+  $: streamDays = data ? fillStreamDays(data.stream_types_by_day ?? [], chartDays) : [];
+  $: maxStream = streamDays.reduce((m, d) => Math.max(m, d.direct + d.transcode + d.unknown), 0) || 1;
+  $: hasDecisionData = streamDays.some(d => d.direct + d.transcode > 0);
+
+  // Hour-of-day chart: fill 0..23.
+  $: hours = (() => {
+    const map = new Map((data?.plays_by_hour ?? []).map(h => [h.hour, h.count]));
+    return Array.from({ length: 24 }, (_, h) => ({ hour: h, count: map.get(h) ?? 0 }));
+  })();
+  $: maxHour = hours.reduce((m, h) => Math.max(m, h.count), 0) || 1;
+
+  $: maxUserWatch = (data?.top_users ?? []).reduce((m, u) => Math.max(m, u.watch_time_ms), 0) || 1;
+  $: maxClient = (data?.clients ?? []).reduce((m, c) => Math.max(m, c.count), 0) || 1;
+
+  $: completionPct = data && data.completion.plays > 0
+    ? Math.round((data.completion.completed / data.completion.plays) * 100)
+    : null;
+
+  function fmtHour(h: number): string {
+    if (h === 0) return '12a';
+    if (h === 12) return '12p';
+    return h < 12 ? `${h}a` : `${h - 12}p`;
+  }
 
   function pct(val: number, total: number): number {
     return total === 0 ? 0 : Math.round((val / total) * 100);
@@ -176,9 +214,18 @@
   <header class="page-header">
     <h1>Analytics</h1>
     {#if data}
-      <button class="refresh-btn" on:click={manualRefresh} disabled={refreshing}>
-        {refreshing ? 'Refreshing…' : 'Refresh'}
-      </button>
+      <div class="header-controls">
+        <div class="range-picker" role="group" aria-label="Date range">
+          {#each [7, 30, 90] as d}
+            <button class="range-btn" class:active={rangeDays === d} on:click={() => setRange(d)}>
+              {d}d
+            </button>
+          {/each}
+        </div>
+        <button class="refresh-btn" on:click={manualRefresh} disabled={refreshing}>
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
     {/if}
   </header>
 
@@ -216,6 +263,10 @@
       <div class="card">
         <div class="card-value">{data.overview.total_files.toLocaleString()}</div>
         <div class="card-label">Files</div>
+      </div>
+      <div class="card" title="Plays whose final position reached 90% of the runtime, last {chartDays} days">
+        <div class="card-value">{completionPct === null ? '—' : completionPct + '%'}</div>
+        <div class="card-label">Completion</div>
       </div>
     </section>
 
@@ -259,9 +310,9 @@
 
       <!-- ── Play activity ─────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>Play activity <span class="muted">— last 30 days</span></h2>
+        <h2>Play activity <span class="muted">— last {chartDays} days</span></h2>
         <div class="bar-chart" role="img"
-             aria-label="Daily play counts for the last 30 days. Peak day: {maxDay} plays.">
+             aria-label="Daily play counts for the last {chartDays} days. Peak day: {maxDay} plays.">
           {#each days as d}
             <div class="bar-col" title="{fmtDate(d.date)}: {d.count} play{d.count === 1 ? '' : 's'}">
               <div class="bar-fill" style="height:{(d.count / maxDay) * 100}%"></div>
@@ -271,9 +322,9 @@
             </div>
           {/each}
         </div>
-        <div class="bar-x-labels">
+        <div class="bar-x-labels" style="grid-template-columns:repeat({days.length}, 1fr)">
           {#each days as d, i}
-            {#if i === 0 || i === 14 || i === 29}
+            {#if i === 0 || i === Math.floor((days.length - 1) / 2) || i === days.length - 1}
               <span style="grid-column:{i + 1}">{fmtDate(d.date)}</span>
             {/if}
           {/each}
@@ -282,9 +333,9 @@
 
       <!-- ── Bandwidth ─────────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>Bandwidth <span class="muted">— last 30 days · estimated from source bitrate</span></h2>
+        <h2>Bandwidth <span class="muted">— last {chartDays} days · estimated from source bitrate</span></h2>
         <div class="bar-chart" role="img"
-             aria-label="Estimated daily streaming bandwidth for the last 30 days. Peak day: {fmtBytes(maxBw)}.">
+             aria-label="Estimated daily streaming bandwidth for the last {chartDays} days. Peak day: {fmtBytes(maxBw)}.">
           {#each bwDays as d}
             <div class="bar-col" title="{fmtDate(d.date)}: {fmtBytes(d.bytes)}">
               <div class="bar-fill bw" style="height:{(d.bytes / maxBw) * 100}%"></div>
@@ -294,11 +345,111 @@
             </div>
           {/each}
         </div>
-        <div class="bar-x-labels">
+        <div class="bar-x-labels" style="grid-template-columns:repeat({bwDays.length}, 1fr)">
           {#each bwDays as d, i}
-            {#if i === 0 || i === 14 || i === 29}
+            {#if i === 0 || i === Math.floor((bwDays.length - 1) / 2) || i === bwDays.length - 1}
               <span style="grid-column:{i + 1}">{fmtDate(d.date)}</span>
             {/if}
+          {/each}
+        </div>
+      </section>
+
+      <!-- ── Stream types (direct vs transcode) ────────────────────────── -->
+      <section class="panel wide">
+        <h2>
+          Stream types <span class="muted">— last {chartDays} days</span>
+          <span class="legend">
+            <span class="legend-item"><span class="legend-dot direct"></span>Direct</span>
+            <span class="legend-item"><span class="legend-dot transcode"></span>Transcode</span>
+            <span class="legend-item"><span class="legend-dot unknown"></span>Unknown</span>
+          </span>
+        </h2>
+        {#if !hasDecisionData}
+          <p class="muted small">No stream-type data yet — plays report their decision going forward;
+            history from before this feature shows as unknown.</p>
+        {/if}
+        <div class="bar-chart" role="img"
+             aria-label="Daily plays split by stream type (direct vs transcode) for the last {chartDays} days.">
+          {#each streamDays as d}
+            {@const total = d.direct + d.transcode + d.unknown}
+            <div class="bar-col"
+                 title="{fmtDate(d.date)}: {d.direct} direct, {d.transcode} transcode{d.unknown ? `, ${d.unknown} unknown` : ''}">
+              {#if d.unknown > 0}<div class="bar-seg unknown" style="height:{(d.unknown / maxStream) * 100}%"></div>{/if}
+              {#if d.transcode > 0}<div class="bar-seg transcode" style="height:{(d.transcode / maxStream) * 100}%"></div>{/if}
+              {#if d.direct > 0}<div class="bar-seg direct" style="height:{(d.direct / maxStream) * 100}%"></div>{/if}
+              {#if total === 0}<div class="bar-fill" style="height:0"></div>{/if}
+              {#if total > 0}
+                <div class="bar-tip">{total}</div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+        <div class="bar-x-labels" style="grid-template-columns:repeat({streamDays.length}, 1fr)">
+          {#each streamDays as d, i}
+            {#if i === 0 || i === Math.floor((streamDays.length - 1) / 2) || i === streamDays.length - 1}
+              <span style="grid-column:{i + 1}">{fmtDate(d.date)}</span>
+            {/if}
+          {/each}
+        </div>
+      </section>
+
+      <!-- ── Top users ─────────────────────────────────────────────────── -->
+      <section class="panel">
+        <h2>Top users <span class="muted">— last {chartDays} days</span></h2>
+        {#if data.top_users.length === 0}
+          <p class="muted small">No plays recorded yet</p>
+        {:else}
+          <div class="hbars">
+            {#each data.top_users as u}
+              <div class="hbar-row">
+                <span class="hbar-label user" title={u.username}>{u.username}</span>
+                <div class="hbar-track">
+                  <div class="hbar-fill" style="width:{pct(u.watch_time_ms, maxUserWatch)}%; background:#7c6af7"></div>
+                </div>
+                <span class="hbar-count wide" title="{u.play_count} plays">{fmtDuration(u.watch_time_ms)}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      <!-- ── Clients ───────────────────────────────────────────────────── -->
+      <section class="panel">
+        <h2>Clients <span class="muted">— last {chartDays} days</span></h2>
+        {#if data.clients.length === 0}
+          <p class="muted small">No plays recorded yet</p>
+        {:else}
+          <div class="hbars">
+            {#each data.clients as c}
+              <div class="hbar-row">
+                <span class="hbar-label user" title={c.client}>{c.client}</span>
+                <div class="hbar-track">
+                  <div class="hbar-fill" style="width:{pct(c.count, maxClient)}%; background:#3ab8f7"></div>
+                </div>
+                <span class="hbar-count">{c.count}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      <!-- ── Plays by hour ─────────────────────────────────────────────── -->
+      <section class="panel wide">
+        <h2>Plays by hour of day <span class="muted">— last {chartDays} days</span></h2>
+        <div class="bar-chart" role="img"
+             aria-label="Plays by local hour of day for the last {chartDays} days.">
+          {#each hours as h}
+            <div class="bar-col" title="{fmtHour(h.hour)}: {h.count} play{h.count === 1 ? '' : 's'}">
+              <div class="bar-fill" style="height:{(h.count / maxHour) * 100}%"></div>
+              {#if h.count > 0}
+                <div class="bar-tip">{h.count}</div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+        <div class="bar-x-labels" style="grid-template-columns:repeat(24, 1fr)">
+          {#each [0, 6, 12, 18, 23] as h}
+            <span style="grid-column:{h + 1}">{fmtHour(h)}</span>
           {/each}
         </div>
       </section>
@@ -379,7 +530,7 @@
 
       <!-- ── Most played ────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>Most played</h2>
+        <h2>Most played <span class="muted">— last {chartDays} days</span></h2>
         {#if data.top_played.length === 0}
           <p class="muted small">No plays recorded yet</p>
         {:else}
@@ -459,6 +610,19 @@
   .page-header { margin-bottom: 1.8rem; display: flex; align-items: center; justify-content: space-between; }
   h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
 
+  .header-controls { display: flex; align-items: center; gap: 0.7rem; }
+
+  .range-picker {
+    display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  }
+  .range-btn {
+    font-size: 0.75rem; padding: 0.4rem 0.7rem; border: none; cursor: pointer;
+    background: var(--bg-secondary); color: var(--text-muted);
+  }
+  .range-btn + .range-btn { border-left: 1px solid var(--border); }
+  .range-btn:hover { color: var(--text-primary); }
+  .range-btn.active { background: var(--accent-bg); color: var(--accent-text); }
+
   .refresh-btn {
     font-size: 0.78rem; padding: 0.4rem 0.9rem; border-radius: 6px;
     background: var(--bg-secondary); border: 1px solid var(--border);
@@ -483,7 +647,7 @@
   /* ── Stat cards ──────────────────────────────────────────────────────── */
   .cards {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 1rem;
     margin-bottom: 1.8rem;
   }
@@ -555,19 +719,36 @@
   }
   .bar-x-labels {
     display: grid;
-    grid-template-columns: repeat(30, 1fr);
+    grid-template-columns: repeat(30, 1fr); /* overridden inline per chart width */
     font-size: 0.65rem;
     color: var(--text-muted);
   }
   .bar-x-labels span { grid-row: 1; white-space: nowrap; }
 
+  /* Stacked stream-type segments (bottom-up: direct, transcode, unknown). */
+  .bar-seg { width: 100%; }
+  .bar-seg.direct    { background: #3ab8f7; border-radius: 2px 2px 0 0; }
+  .bar-seg.transcode { background: #f7a03a; }
+  .bar-seg.unknown   { background: var(--border-strong); }
+
+  .legend { float: right; display: inline-flex; gap: 0.8rem; text-transform: none; letter-spacing: 0; }
+  .legend-item { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: var(--text-muted); }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .legend-dot.direct    { background: #3ab8f7; }
+  .legend-dot.transcode { background: #f7a03a; }
+  .legend-dot.unknown   { background: var(--border-strong); }
+
   /* ── Horizontal bar rows ─────────────────────────────────────────────── */
   .hbars { display: flex; flex-direction: column; gap: 0.55rem; }
   .hbar-row { display: flex; align-items: center; gap: 0.6rem; }
   .hbar-label { width: 52px; font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0; }
+  .hbar-label.user {
+    width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .hbar-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
   .hbar-fill  { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
   .hbar-count { width: 32px; text-align: right; font-size: 0.75rem; color: var(--text-muted); flex-shrink: 0; }
+  .hbar-count.wide { width: 64px; }
 
   /* ── Libraries ───────────────────────────────────────────────────────── */
   .lib-list { display: flex; flex-direction: column; gap: 0.5rem; }

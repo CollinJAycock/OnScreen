@@ -59,11 +59,11 @@ LIMIT 10;
 -- name: GetPlaysPerDay :many
 -- Days bucket in the viewer's display timezone (validated IANA name passed by
 -- the handler; defaults to UTC) so evening plays don't land on "tomorrow".
--- The 31-day fetch window over-covers the client's 30-local-day fill range.
+-- The +1 day fetch window over-covers the client's local-day fill range.
 SELECT (DATE(occurred_at AT TIME ZONE sqlc.arg(tz)::TEXT))::DATE AS date,
        COUNT(*)::BIGINT AS count
 FROM watch_plays
-WHERE occurred_at >= NOW() - INTERVAL '31 days'
+WHERE occurred_at >= NOW() - make_interval(days => sqlc.arg(days)::INT + 1)
 GROUP BY 1
 ORDER BY 1;
 
@@ -83,7 +83,7 @@ LEFT JOIN LATERAL (
   WHERE media_item_id = wp.media_id AND status = 'active' AND bitrate IS NOT NULL
   ORDER BY bitrate DESC LIMIT 1
 ) mf_any ON TRUE
-WHERE wp.occurred_at >= NOW() - INTERVAL '31 days'
+WHERE wp.occurred_at >= NOW() - make_interval(days => sqlc.arg(days)::INT + 1)
   AND wp.duration_ms IS NOT NULL
   AND COALESCE(mf_direct.bitrate, mf_any.bitrate) IS NOT NULL
 GROUP BY 1
@@ -103,7 +103,7 @@ SELECT mi.id, mi.title, mi.year, mi.type,
 FROM (
   SELECT media_id, COUNT(*)::BIGINT AS play_count
   FROM watch_plays
-  WHERE occurred_at > NOW() - INTERVAL '90 days'
+  WHERE occurred_at > NOW() - make_interval(days => sqlc.arg(days)::INT)
   GROUP BY media_id
 ) plays
 JOIN media_items mi ON mi.id = plays.media_id AND mi.deleted_at IS NULL
@@ -128,3 +128,63 @@ LEFT JOIN users u ON u.id = wp.user_id
 WHERE wp.occurred_at > NOW() - INTERVAL '30 days'
 ORDER BY wp.occurred_at DESC
 LIMIT 20;
+
+-- name: GetTopUsers :many
+-- Per-user leaderboard over the selected window. LEFT JOIN — a deleted user's
+-- plays still count, under an empty name the handler renders as "Deleted user".
+SELECT wp.user_id,
+       COALESCE(u.username, '')::TEXT       AS username,
+       COUNT(*)::BIGINT                     AS play_count,
+       COALESCE(SUM(wp.duration_ms), 0)::BIGINT AS watch_time_ms
+FROM watch_plays wp
+LEFT JOIN users u ON u.id = wp.user_id
+WHERE wp.occurred_at > NOW() - make_interval(days => sqlc.arg(days)::INT)
+GROUP BY wp.user_id, u.username
+ORDER BY watch_time_ms DESC, play_count DESC
+LIMIT 10;
+
+-- name: GetClientBreakdown :many
+-- Plays by client app over the selected window ("Fire TV — Amazon AFTKRT",
+-- "Web — Chrome on Windows", ...). Tells the admin which client apps are
+-- actually in use.
+SELECT COALESCE(client_name, 'Unknown')::TEXT AS client,
+       COUNT(*)::BIGINT AS count
+FROM watch_plays
+WHERE occurred_at > NOW() - make_interval(days => sqlc.arg(days)::INT)
+GROUP BY client_name
+ORDER BY count DESC
+LIMIT 10;
+
+-- name: GetPlaysByHour :many
+-- Plays bucketed by local hour of day (viewer timezone) over the selected
+-- window — "when is the server busy". Sparse: hours with no plays are absent;
+-- the client fills 0..23.
+SELECT (EXTRACT(HOUR FROM occurred_at AT TIME ZONE sqlc.arg(tz)::TEXT))::INT AS hour,
+       COUNT(*)::BIGINT AS count
+FROM watch_plays
+WHERE occurred_at > NOW() - make_interval(days => sqlc.arg(days)::INT)
+GROUP BY 1
+ORDER BY 1;
+
+-- name: GetCompletionStats :one
+-- Of plays whose media has a known runtime, how many reached >= 90% (the
+-- watched threshold used across the product)? Position is the play's final
+-- position; media duration comes from the item, not the play.
+SELECT COUNT(*)::BIGINT AS plays_with_duration,
+       (COUNT(*) FILTER (WHERE wp.position_ms >= mi.duration_ms * 9 / 10))::BIGINT AS completed
+FROM watch_plays wp
+JOIN media_items mi ON mi.id = wp.media_id
+WHERE wp.occurred_at > NOW() - make_interval(days => sqlc.arg(days)::INT)
+  AND mi.duration_ms IS NOT NULL AND mi.duration_ms > 0;
+
+-- name: GetStreamTypesPerDay :many
+-- Direct-vs-transcode load over time (viewer-timezone days). decision is
+-- collapsed client-side; rows written before the decision column (or by
+-- clients that don't send it yet) report as 'unknown'.
+SELECT (DATE(occurred_at AT TIME ZONE sqlc.arg(tz)::TEXT))::DATE AS date,
+       COALESCE(decision, 'unknown')::TEXT AS decision,
+       COUNT(*)::BIGINT AS count
+FROM watch_plays
+WHERE occurred_at >= NOW() - make_interval(days => sqlc.arg(days)::INT + 1)
+GROUP BY 1, 2
+ORDER BY 1, 2;
