@@ -15,6 +15,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/staticabr"
@@ -105,6 +106,32 @@ func TestStaticMaster_RewritesRungsAndChecksAvailability(t *testing.T) {
 	want := "/api/v1/transcode/static/" + fileID.String() + "/720p/index.m3u8?token=T"
 	if !strings.Contains(rec.Body.String(), want) {
 		t.Errorf("rung URI not rewritten to %q:\n%s", want, rec.Body.String())
+	}
+}
+
+// TestStaticMaster_RewritesAgainstPublicSegmentBase runs the handler with a
+// non-nil cfg — the production shape that the segBase() self-recursion bug
+// crashed on (the other static tests leave cfg nil and so took the early-return
+// branch). Asserts rung URIs are made absolute against PUBLIC_SEGMENT_BASE_URL.
+func TestStaticMaster_RewritesAgainstPublicSegmentBase(t *testing.T) {
+	fileID, itemID := uuid.New(), uuid.New()
+	store := memStaticStore{files: map[string][]byte{
+		staticabr.MasterKey(fileID): []byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\n720p/index.m3u8\n"),
+		staticabr.HashKey(fileID):   []byte("h1"),
+	}}
+	h := staticTestHandler(store, fileID, itemID)
+	h.cfg = &config.Config{PublicSegmentBaseURL: "https://segments.example.com"}
+
+	req := staticReq(http.MethodGet, "/m?token=T", "fileID", fileID.String())
+	rec := httptest.NewRecorder()
+	h.StaticMaster(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	want := "https://segments.example.com/api/v1/transcode/static/" + fileID.String() + "/720p/index.m3u8?token=T"
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("rung URI not rewritten against segment base, want %q:\n%s", want, rec.Body.String())
 	}
 }
 
