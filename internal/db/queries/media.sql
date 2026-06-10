@@ -395,7 +395,7 @@ FROM media_items
 WHERE library_id = $1
   AND type = $2
   AND deleted_at IS NULL
-ORDER BY sort_title
+ORDER BY sort_title, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByTMDBIDs :many
@@ -769,7 +769,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY sort_title ASC
+ORDER BY sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByTitleDesc :many
@@ -787,7 +787,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY sort_title DESC
+ORDER BY sort_title DESC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByYear :many
@@ -805,7 +805,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY year ASC NULLS LAST, sort_title ASC
+ORDER BY year ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByYearDesc :many
@@ -823,7 +823,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY year DESC NULLS LAST, sort_title ASC
+ORDER BY year DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByRating :many
@@ -841,7 +841,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY rating DESC NULLS LAST, sort_title ASC
+ORDER BY rating DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByRatingAsc :many
@@ -859,7 +859,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY rating ASC NULLS LAST, sort_title ASC
+ORDER BY rating ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByDateAdded :many
@@ -877,7 +877,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByDateAddedAsc :many
@@ -895,7 +895,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY created_at ASC
+ORDER BY created_at ASC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByTakenAt :many
@@ -915,7 +915,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY originally_available_at DESC NULLS LAST, created_at DESC
+ORDER BY originally_available_at DESC NULLS LAST, created_at DESC, id
 LIMIT $3 OFFSET $4;
 
 -- name: ListMediaItemsByTakenAtAsc :many
@@ -933,7 +933,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY originally_available_at ASC NULLS LAST, created_at ASC
+ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4;
 
 -- name: CountMediaItemsFiltered :one

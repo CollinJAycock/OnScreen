@@ -2079,7 +2079,7 @@ FROM media_items
 WHERE library_id = $1
   AND type = $2
   AND deleted_at IS NULL
-ORDER BY sort_title
+ORDER BY sort_title, id
 LIMIT $3 OFFSET $4
 `
 
@@ -2190,7 +2190,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -2311,7 +2311,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY created_at ASC
+ORDER BY created_at ASC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -2432,7 +2432,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY rating DESC NULLS LAST, sort_title ASC
+ORDER BY rating DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -2553,7 +2553,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY rating ASC NULLS LAST, sort_title ASC
+ORDER BY rating ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -2719,7 +2719,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY originally_available_at DESC NULLS LAST, created_at DESC
+ORDER BY originally_available_at DESC NULLS LAST, created_at DESC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -2842,7 +2842,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY originally_available_at ASC NULLS LAST, created_at ASC
+ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -2963,7 +2963,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY sort_title ASC
+ORDER BY sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -3084,7 +3084,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY sort_title DESC
+ORDER BY sort_title DESC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -3205,7 +3205,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY year ASC NULLS LAST, sort_title ASC
+ORDER BY year ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
 
@@ -3326,7 +3326,7 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-ORDER BY year DESC NULLS LAST, sort_title ASC
+ORDER BY year DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
 

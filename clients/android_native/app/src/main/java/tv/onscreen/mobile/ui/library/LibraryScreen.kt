@@ -115,10 +115,16 @@ class LibraryViewModel @Inject constructor(
             _state.value = _state.value.copy(loadingMore = true)
             try {
                 val (more, total) = repo.getItems(libraryId, limit = PAGE_SIZE, offset = s.items.size)
+                // distinctBy: server pages can overlap when the sort column
+                // ties (LIMIT/OFFSET over a non-unique ORDER BY) — a repeated
+                // id would crash the grid's stable keys. If a page adds
+                // nothing new, treat the list as complete so the scroll
+                // trigger can't refetch the same offset forever.
+                val merged = (_state.value.items + more).distinctBy { it.id }
                 _state.value = _state.value.copy(
                     loadingMore = false,
-                    items = _state.value.items + more,
-                    total = total,
+                    items = merged,
+                    total = if (merged.size == s.items.size) merged.size else total,
                 )
             } catch (_: Exception) {
                 // Leave loaded items in place; the next scroll re-attempts.
