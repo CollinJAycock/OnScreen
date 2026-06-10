@@ -87,6 +87,13 @@ func (h *NativeTranscodeHandler) staticFileAccess(w http.ResponseWriter, r *http
 	return file, true
 }
 
+// validRung guards the {rung} path param, which is interpolated into an
+// object-store key — same posture as the segment-name check: non-empty, no
+// path separators, no "..".
+func validRung(s string) bool {
+	return s != "" && !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
+}
+
 // StaticMaster serves the pre-encoded master playlist, rewriting each rung URI to
 // this server's static rung endpoint (carrying the query token so HLS.js fetches
 // authenticate). GET /transcode/static/{fileID}/master.m3u8
@@ -128,6 +135,10 @@ func (h *NativeTranscodeHandler) StaticRung(w http.ResponseWriter, r *http.Reque
 	}
 	ctx := r.Context()
 	rung := chi.URLParam(r, "rung")
+	if !validRung(rung) {
+		respond.BadRequest(w, r, "invalid rung")
+		return
+	}
 	playlist, err := h.readStaticPlaylist(ctx, staticabr.RungPlaylistKey(file.ID, rung))
 	if err != nil {
 		respond.NotFound(w, r)
@@ -154,6 +165,10 @@ func (h *NativeTranscodeHandler) StaticSegment(w http.ResponseWriter, r *http.Re
 		return
 	}
 	rung := chi.URLParam(r, "rung")
+	if !validRung(rung) {
+		respond.BadRequest(w, r, "invalid rung")
+		return
+	}
 	name := chi.URLParam(r, "name")
 	if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
 		respond.BadRequest(w, r, "invalid segment name")

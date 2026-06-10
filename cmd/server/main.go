@@ -75,6 +75,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql "pgx" driver for goose migrate
 	"github.com/pressly/goose/v3"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
 // version and buildTime are injected by the Makefile via ldflags.
@@ -243,7 +244,7 @@ func run() error {
 
 	// ── Prometheus ────────────────────────────────────────────────────────────
 	promReg := prometheus.NewRegistry()
-	promReg.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	promReg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := observability.NewMetrics(promReg)
 
 	// ── Database (rw + ro, ADR-021) ───────────────────────────────────────────

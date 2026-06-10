@@ -30,7 +30,7 @@ import (
 const (
 	defaultSearchURL = "https://openlibrary.org/search.json"
 	coverBaseURL     = "https://covers.openlibrary.org/b/id"
-	defaultUserAgent = "OnScreen/2.1 (https://github.com/onscreen/onscreen)"
+	defaultUserAgent = "OnScreen/2.2 (https://github.com/CollinJAycock/OnScreen)"
 )
 
 // testSearchURL lets tests rewrite the endpoint to point at httptest.Server.

@@ -1,5 +1,5 @@
 // Package metadata defines the Agent interface and shared types for metadata
-// providers (TMDB, TVDB, MusicBrainz).
+// providers (TMDB, TVDB, AniList).
 package metadata
 
 import (
@@ -201,7 +201,7 @@ type PosterCandidate struct {
 
 // PosterLister returns every poster variant a metadata provider has for a
 // given show or movie. Implemented by the TMDB client; kept as its own
-// interface so other agents (TVDB, MusicBrainz) can opt out.
+// interface so other agents (e.g. TVDB) can opt out.
 type PosterLister interface {
 	ListMoviePostersForID(ctx context.Context, tmdbID int) ([]PosterCandidate, error)
 	ListTVPostersForID(ctx context.Context, tmdbID int) ([]PosterCandidate, error)

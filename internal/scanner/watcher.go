@@ -85,6 +85,13 @@ func (w *Watcher) Run(ctx context.Context, libraryID uuid.UUID) {
 			return
 
 		case dir := <-debounceFired:
+			// Only scan if this dir's timer is still registered. A timer that
+			// fired and was then Reset by a racing event sends twice; the
+			// stale second send finds the entry already gone and is skipped,
+			// avoiding a redundant rescan.
+			if _, ok := debounce[dir]; !ok {
+				continue
+			}
 			delete(debounce, dir)
 			if err := w.trigger.TriggerDirectoryScan(ctx, libraryID, dir); err != nil {
 				w.logger.Warn("directory scan trigger failed",

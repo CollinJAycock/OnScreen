@@ -335,11 +335,6 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	// fatal error" footprint is rarely more than ~10KB even on weird inputs.
 	stderrBuf := newRingBuffer(64 * 1024)
 	go p.drainStderr(channelID, stderr, stderrBuf)
-	// Reaper: when the process exits (either because we killed it via
-	// cancel or because ffmpeg crashed), close the upstream and tear down
-	// the session entry. Without this an upstream-side error would leak
-	// the session map entry forever.
-	go p.reaper(channelID, cmd, stderrBuf)
 
 	s := &HLSSession{
 		channelID: channelID,
@@ -351,8 +346,33 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		stderrBuf: stderrBuf,
 	}
 	p.mu.Lock()
+	if existing, ok := p.sessions[channelID]; ok {
+		// Lost the create race: another first-viewer for this channel built a
+		// session while we were opening the upstream + starting ffmpeg. Share
+		// the winner (bump its refcount — the caller still owes a Release) and
+		// tear down our duplicate so its ffmpeg process and upstream tuner slot
+		// aren't leaked.
+		existing.mu.Lock()
+		existing.refcount++
+		if existing.closing != nil {
+			existing.closing.Stop()
+			existing.closing = nil
+		}
+		existing.mu.Unlock()
+		p.mu.Unlock()
+		cancel()
+		upstream.Close()
+		_ = os.RemoveAll(dir)
+		go func() { _ = cmd.Wait() }() // reap the ffmpeg we just killed
+		return existing, nil
+	}
 	p.sessions[channelID] = s
 	p.mu.Unlock()
+	// Reaper: when the process exits (our cancel or an ffmpeg crash), close the
+	// upstream and drop the session entry. Started only after we win the insert
+	// so the loser's teardown above can't reap the winner (the reaper is keyed
+	// by channelID).
+	go p.reaper(channelID, cmd, stderrBuf)
 	return s, nil
 }
 

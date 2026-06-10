@@ -1276,7 +1276,7 @@ func (h *NativeTranscodeHandler) segBase() string {
 	if h.cfg == nil {
 		return ""
 	}
-	return h.segBase()
+	return h.cfg.PublicSegmentBaseURL
 }
 
 // rewritePlaylist rewrites segment URIs in an HLS playlist to API paths with the

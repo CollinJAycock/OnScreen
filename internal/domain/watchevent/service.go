@@ -140,17 +140,19 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 		if at.IsZero() {
 			at = time.Now().UTC()
 		}
-		go s.scrobble(context.Background(), p.UserID, p.MediaID, p.PositionMS, p.DurationMS, at)
+		observability.SafeGo(s.logger, "watchevent.scrobble", func() {
+			s.scrobble(context.Background(), p.UserID, p.MediaID, p.PositionMS, p.DurationMS, at)
+		})
 	}
 
 	// Refresh watch_state after terminal events so subsequent metadata
 	// responses reflect the updated status immediately.
 	if p.EventType == "stop" || p.EventType == "scrobble" {
-		go func() {
+		observability.SafeGo(s.logger, "watchevent.refresh-state", func() {
 			if err := s.rw.RefreshWatchState(context.Background()); err != nil {
 				s.logger.Warn("watch_state refresh failed", "err", err)
 			}
-		}()
+		})
 	}
 	return nil
 }

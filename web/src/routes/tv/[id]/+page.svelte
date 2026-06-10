@@ -78,14 +78,21 @@
     error = '';
 
     const url = liveTvApi.streamUrl(channelId);
+    // RTMP "go live" broadcasts are a clean encoder feed (OBS/ffmpeg), so we
+    // sit close to the live edge for low latency. OTA/IPTV tuner channels keep
+    // a larger buffer to ride out signal/decoder bursts that would otherwise
+    // underrun a tight buffer. With 2s segments: broadcast ≈ 4s behind edge,
+    // tuner ≈ 8s.
+    const isBroadcast = channel?.tuner_type === 'rtmp';
     if (Hls.isSupported()) {
       hls = new Hls({
         liveDurationInfinity: true,
         lowLatencyMode: false,
-        // Sit further behind the live edge so a brief encoder stall doesn't
-        // blow the buffer. With 2s segments, 4 segments = ~8s safety margin.
-        liveSyncDurationCount: 4,
-        liveMaxLatencyDurationCount: 10,
+        liveSyncDurationCount: isBroadcast ? 2 : 4,
+        liveMaxLatencyDurationCount: isBroadcast ? 5 : 10,
+        // When latency drifts past the sync target, catch up by playing
+        // slightly faster instead of a visible seek/skip.
+        maxLiveSyncPlaybackRate: 1.5,
         // Aggressively recover from transient errors instead of giving up
         // on the first stall — broadcast TV via TS+ffmpeg has occasional
         // bursts the decoder hates, and there's no point bailing on the

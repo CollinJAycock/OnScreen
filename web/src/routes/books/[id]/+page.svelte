@@ -187,7 +187,11 @@
         height: '100%',
         flow: 'paginated',
         manager: 'default',
-        allowScriptedContent: true,
+        // Keep scripted content OFF: this maps to `sandbox="allow-scripts
+        // allow-same-origin"`, the classic sandbox-escape pair that would let
+        // a malicious .epub run same-origin JS against the OnScreen session.
+        // Standard reflowable EPUBs are static XHTML and render fine without it.
+        allowScriptedContent: false,
       });
       // Route external links to a new tab (epub.js handles internal
       // anchors automatically — fragment + chapter-relative hrefs
