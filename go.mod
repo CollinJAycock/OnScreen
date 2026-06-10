@@ -1,6 +1,6 @@
 module github.com/onscreen/onscreen
 
-go 1.26.3
+go 1.26.4
 
 require (
 	aidanwoods.dev/go-paseto v1.6.0
