@@ -353,6 +353,29 @@ func shouldForceReenrich(ctx context.Context) bool {
 	return v
 }
 
+// showCascadeKey is a context key marking that we're inside a show's
+// child-enrichment cascade (enrichShowChildren → enrichSeason →
+// enrichEpisode). enrichEpisode normally enriches the grandparent show
+// when it looks un-enriched; inside the cascade the show was JUST
+// enriched, so re-entering enrichShow would cycle show → seasons →
+// episodes → show. For a show whose provider has no poster, PosterPath
+// stays nil on every lap, the cycle never terminates, and the goroutine
+// stack grows until the process dies with a fatal (unrecoverable)
+// stack overflow.
+type showCascadeKey struct{}
+
+// withShowCascade marks the context as inside a show-children cascade.
+func withShowCascade(ctx context.Context) context.Context {
+	return context.WithValue(ctx, showCascadeKey{}, true)
+}
+
+// inShowCascade reads the cascade marker. False in any path that didn't
+// pass through enrichShowChildren.
+func inShowCascade(ctx context.Context) bool {
+	v, _ := ctx.Value(showCascadeKey{}).(bool)
+	return v
+}
+
 // Enrich implements MetadataAgent. It's called for newly discovered files.
 // Errors are logged but never propagated — a metadata failure must not abort a scan.
 func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.File) error {
@@ -1224,6 +1247,11 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 // after the show itself has been enriched. This ensures that when a show is
 // first scanned, all its seasons and episodes also get TMDB metadata.
 func (e *Enricher) enrichShowChildren(ctx context.Context, agent metadata.Agent, show *media.Item, file *media.File) {
+	// Every caller has just enriched/matched this show — mark the cascade
+	// so enrichEpisode below doesn't re-enter enrichShow on it (see
+	// showCascadeKey).
+	ctx = withShowCascade(ctx)
+
 	// Re-load the show to pick up the IDs we just saved (any of TMDB,
 	// TVDB, or AniList unlocks the cascade — enrichSeason / enrichEpisode
 	// know how to fall back across providers).
@@ -1471,16 +1499,29 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 		return fmt.Errorf("get grandparent show for episode: %w", err)
 	}
 	if (show.TMDBID == nil && show.TVDBID == nil && show.AniListID == nil) || show.PosterPath == nil {
-		// Show hasn't been enriched yet, or is missing artwork — enrich it.
-		// enrichShow will cascade down to seasons and episodes.
-		if err := e.enrichShow(ctx, agent, show, file); err != nil {
-			e.logger.WarnContext(ctx, "cascade show enrich from episode failed",
-				"show_id", show.ID, "err", err)
-		}
-		// Re-load show to pick up TMDB / TVDB / AniList IDs.
-		show, err = e.updater.GetItem(ctx, show.ID)
-		if err != nil || (show.TMDBID == nil && show.TVDBID == nil && show.AniListID == nil) {
-			return nil // show enrichment failed; no provider IDs to look up against
+		if inShowCascade(ctx) {
+			// The show was enriched at the top of this very cascade. If
+			// PosterPath is still nil the provider has no poster (or its
+			// download keeps failing) — a fact re-running enrichShow can't
+			// change. Re-entering it here recursed show → seasons →
+			// episodes → show without bound (see showCascadeKey). Proceed
+			// with whatever provider IDs the show has; with none there's
+			// nothing to look the episode up against.
+			if show.TMDBID == nil && show.TVDBID == nil && show.AniListID == nil {
+				return nil
+			}
+		} else {
+			// Show hasn't been enriched yet, or is missing artwork — enrich it.
+			// enrichShow will cascade down to seasons and episodes.
+			if err := e.enrichShow(ctx, agent, show, file); err != nil {
+				e.logger.WarnContext(ctx, "cascade show enrich from episode failed",
+					"show_id", show.ID, "err", err)
+			}
+			// Re-load show to pick up TMDB / TVDB / AniList IDs.
+			show, err = e.updater.GetItem(ctx, show.ID)
+			if err != nil || (show.TMDBID == nil && show.TVDBID == nil && show.AniListID == nil) {
+				return nil // show enrichment failed; no provider IDs to look up against
+			}
 		}
 	}
 

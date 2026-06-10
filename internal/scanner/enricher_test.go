@@ -1092,6 +1092,54 @@ func TestEnrichShowChildren_AniListOnly_Cascades(t *testing.T) {
 
 // ── enrichShowChildren ───────────────────────────────────────────────────────
 
+// TestEnrichShowChildren_NoPosterShow_DoesNotRecurse guards against the
+// cascade cycle that pinned the QA server: a show whose provider has no
+// poster keeps PosterPath nil after enrichment, so enrichEpisode's
+// "show looks un-enriched" check re-entered enrichShow from inside the
+// show's own cascade — show → seasons → episodes → show, forever,
+// growing the goroutine stack until a fatal stack overflow. Pre-fix
+// this test dies of that overflow; post-fix the cascade terminates and
+// the show row is never updated from within its own cascade.
+func TestEnrichShowChildren_NoPosterShow_DoesNotRecurse(t *testing.T) {
+	tmdbID := 1396
+	showID := uuid.New()
+	seasonID := uuid.New()
+	episodeID := uuid.New()
+	seasonIdx, epIdx := 1, 1
+
+	agent := &mockAgent{
+		// A successful match with no poster URL — were enrichShow
+		// re-entered, it would "succeed" without ever setting PosterPath,
+		// which is exactly what kept the production loop spinning.
+		searchTVResult:   &metadata.TVShowResult{TMDBID: tmdbID, Title: "Breaking Bad"},
+		getSeasonResult:  &metadata.SeasonResult{Number: 1, Name: "Season 1"},
+		getEpisodeResult: &metadata.EpisodeResult{Title: "Pilot", Summary: "Walt turns to crime."},
+	}
+	updater := newMockUpdater()
+	// Show already carries a TMDB ID but no poster — the shape every lap
+	// of the production cycle saw.
+	updater.items[showID] = &media.Item{ID: showID, Type: "show", Title: "Breaking Bad", TMDBID: &tmdbID}
+	updater.items[seasonID] = &media.Item{
+		ID: seasonID, Type: "season", Title: "Season 1",
+		ParentID: &showID, Index: &seasonIdx,
+	}
+	updater.items[episodeID] = &media.Item{
+		ID: episodeID, Type: "episode", Title: "Pilot",
+		ParentID: &seasonID, Index: &epIdx,
+	}
+	updater.children[showID] = []media.Item{*updater.items[seasonID]}
+	updater.children[seasonID] = []media.Item{*updater.items[episodeID]}
+
+	e := newTestEnricher(agent, updater, nil)
+	e.enrichShowChildren(context.Background(), agent, updater.items[showID], &media.File{FilePath: "/media/shows/BB/S01E01.mkv"})
+
+	for _, call := range updater.updateCalls {
+		if call.ID == showID {
+			t.Fatal("show was re-enriched from inside its own cascade")
+		}
+	}
+}
+
 func TestEnrichShowChildren_EnrichesSeasons(t *testing.T) {
 	tmdbID := 1396
 	showID := uuid.New()
