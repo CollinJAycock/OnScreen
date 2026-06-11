@@ -117,20 +117,34 @@ func (d *Detector) DetectSeason(ctx context.Context, seasonID uuid.UUID) error {
 	return nil
 }
 
-// DetectLibrary runs intro + credits detection for every season in a show
-// library. Errors on individual seasons are logged and skipped; this is a
-// best-effort background pass, not a transactional operation.
+// DetectLibrary runs intro + credits detection for seasons in a show library
+// that still have unmarked episodes. Errors on individual seasons are logged
+// and skipped; this is a best-effort background pass, not a transactional
+// operation.
+//
+// Scoping to seasons-needing-work matters: this fires after every full
+// library scan (periodic, or arr-webhook-triggered), and an unconditional
+// pass re-fingerprinted every episode in the library each time — days of
+// pegged CPU on a 50k-episode library, restarting from zero on the next
+// scan. With the filter the backfill is also resumable: marked seasons drop
+// out, so an interrupted pass picks up where it left off. Direct
+// DetectSeason calls (admin re-run after a file replace) stay unconditional.
 func (d *Detector) DetectLibrary(ctx context.Context, libraryID uuid.UUID) error {
-	seasons, err := d.mediaSvc.ListItems(ctx, libraryID, "season", 10000, 0)
+	seasons, err := gen.New(d.pool).ListSeasonsNeedingIntroDetection(ctx, libraryID)
 	if err != nil {
-		return fmt.Errorf("list seasons for library %s: %w", libraryID, err)
+		return fmt.Errorf("list seasons needing detection for library %s: %w", libraryID, err)
+	}
+	if len(seasons) == 0 {
+		d.logger.InfoContext(ctx, "intro detection: nothing to do",
+			"library_id", libraryID)
+		return nil
 	}
 	d.logger.InfoContext(ctx, "intro detection starting",
 		"library_id", libraryID, "seasons", len(seasons))
-	for i := range seasons {
-		if err := d.DetectSeason(ctx, seasons[i].ID); err != nil {
+	for _, id := range seasons {
+		if err := d.DetectSeason(ctx, id); err != nil {
 			d.logger.WarnContext(ctx, "detect season",
-				"season_id", seasons[i].ID, "err", err)
+				"season_id", id, "err", err)
 		}
 	}
 	d.logger.InfoContext(ctx, "intro detection finished",

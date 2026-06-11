@@ -133,6 +133,47 @@ func (q *Queries) ListIntroMarkersBySeason(ctx context.Context, parentID pgtype.
 	return items, nil
 }
 
+const listSeasonsNeedingIntroDetection = `-- name: ListSeasonsNeedingIntroDetection :many
+SELECT DISTINCT s.id
+FROM media_items s
+JOIN media_items ep ON ep.parent_id = s.id AND ep.deleted_at IS NULL
+JOIN media_files mf ON mf.media_item_id = ep.id AND mf.status = 'active'
+WHERE s.library_id = $1
+  AND s.type = 'season'
+  AND s.deleted_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM intro_markers im
+    WHERE im.media_item_id = ep.id AND im.kind = 'intro'
+  )
+ORDER BY s.id
+`
+
+// Seasons with at least one file-bearing, non-deleted episode that still
+// lacks an intro marker (any source). DetectLibrary scopes its pass to these
+// so a full-library scan doesn't re-fingerprint the tens of thousands of
+// episodes already marked. Seasons where detection legitimately found no
+// intro re-appear each pass (nothing was written for them) — a small tail
+// compared to the marked majority.
+func (q *Queries) ListSeasonsNeedingIntroDetection(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listSeasonsNeedingIntroDetection, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertIntroMarker = `-- name: UpsertIntroMarker :one
 INSERT INTO intro_markers (media_item_id, kind, start_ms, end_ms, source)
 VALUES ($1, $2, $3, $4, $5)
