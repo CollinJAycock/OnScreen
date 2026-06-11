@@ -28,6 +28,7 @@
   // time keeps the page scannable when there are dozens of items.
   let openId: string | null = null;
   let query = '';
+  let yearInput = ''; // optional release-year filter, prefilled from the item
   let searching = false;
   let searchError = '';
   let candidates: MatchCandidate[] = [];
@@ -62,9 +63,18 @@
     }
     openId = item.id;
     query = item.title;
+    // Prefill the year filter from the item — for generic titles ("The
+    // Dead") the right film often never cracks TMDB's popularity-ranked
+    // top 10 without it. Clearing the box searches all years.
+    yearInput = item.year ? String(item.year) : '';
     candidates = [];
     searchError = '';
     await runSearch(item.id);
+  }
+
+  function parsedYear(): number | undefined {
+    const y = parseInt(yearInput, 10);
+    return Number.isInteger(y) && y >= 1870 && y <= 2100 ? y : undefined;
   }
 
   async function runSearch(itemId: string) {
@@ -75,7 +85,7 @@
     searching = true;
     searchError = '';
     try {
-      candidates = await itemApi.searchMatch(itemId, query.trim());
+      candidates = await itemApi.searchMatch(itemId, query.trim(), parsedYear());
     } catch (e: unknown) {
       searchError = e instanceof Error ? e.message : 'Search failed';
       candidates = [];
@@ -145,14 +155,27 @@
 
           {#if openId === item.id}
             <div class="picker">
-              <input
-                type="text"
-                class="search"
-                placeholder="Search TMDB…"
-                bind:value={query}
-                on:input={() => onQueryInput(item.id)}
-                on:keydown={(e) => { if (e.key === 'Enter') runSearch(item.id); }}
-              />
+              <div class="search-row">
+                <input
+                  type="text"
+                  class="search"
+                  placeholder="Search TMDB…"
+                  bind:value={query}
+                  on:input={() => onQueryInput(item.id)}
+                  on:keydown={(e) => { if (e.key === 'Enter') runSearch(item.id); }}
+                />
+                <input
+                  type="text"
+                  class="search year-input"
+                  placeholder="Year"
+                  inputmode="numeric"
+                  maxlength="4"
+                  title="Release year filter — clear to search all years"
+                  bind:value={yearInput}
+                  on:input={() => onQueryInput(item.id)}
+                  on:keydown={(e) => { if (e.key === 'Enter') runSearch(item.id); }}
+                />
+              </div>
 
               {#if searching}
                 <p class="muted">Searching…</p>
@@ -250,6 +273,7 @@
   .chevron { color: var(--text-muted); flex-shrink: 0; }
 
   .picker { padding: 0.75rem 1rem 1rem; border-top: 1px solid var(--border); }
+  .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
   .search {
     width: 100%;
     padding: 0.55rem 0.75rem;
@@ -259,9 +283,9 @@
     color: var(--text-primary);
     font-size: 0.9rem;
     outline: none;
-    margin-bottom: 0.75rem;
     box-sizing: border-box;
   }
+  .year-input { width: 5.5rem; flex-shrink: 0; text-align: center; }
   .search:focus { border-color: rgba(124,106,247,0.5); box-shadow: 0 0 0 3px var(--accent-bg); }
 
   .cands { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }

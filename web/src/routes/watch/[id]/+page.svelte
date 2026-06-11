@@ -1187,6 +1187,7 @@
   // ── Fix Match modal state ──────────────────────────────────────────────────
   let showMatchModal = false;
   let matchQuery = '';
+  let matchYear = ''; // optional release-year filter, prefilled from the item
   let matchCandidates: MatchCandidate[] = [];
   let matchSearching = false;
   let matchApplying = false;
@@ -1195,6 +1196,9 @@
   async function openMatchModal() {
     showMatchModal = true;
     matchQuery = item?.title ?? '';
+    // Prefill the year filter — TMDB ranks by popularity, so generic
+    // titles need it to surface the right film. Clear to search all years.
+    matchYear = item?.year ? String(item.year) : '';
     matchCandidates = [];
     matchError = '';
     matchSearching = false;
@@ -1210,7 +1214,9 @@
     matchSearching = true;
     matchError = '';
     try {
-      matchCandidates = await itemApi.searchMatch(item.id, matchQuery.trim());
+      const y = parseInt(matchYear, 10);
+      const year = Number.isInteger(y) && y >= 1870 && y <= 2100 ? y : undefined;
+      matchCandidates = await itemApi.searchMatch(item.id, matchQuery.trim(), year);
     } catch (e: unknown) {
       matchError = e instanceof Error ? e.message : 'Search failed';
     } finally {
@@ -3954,6 +3960,15 @@
         class="match-input"
         autofocus
       />
+      <input
+        type="text"
+        bind:value={matchYear}
+        placeholder="Year"
+        inputmode="numeric"
+        maxlength="4"
+        title="Release year filter — clear to search all years"
+        class="match-input match-year-input"
+      />
       <button type="submit" class="match-search-btn" disabled={matchSearching}>
         {matchSearching ? 'Searching...' : 'Search'}
       </button>
@@ -5273,6 +5288,7 @@
     outline: none;
   }
   .match-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  .match-year-input { flex: 0 0 5rem; text-align: center; }
   .match-search-btn {
     padding: 0.45rem 0.8rem;
     background: var(--accent); border: none; border-radius: 7px;

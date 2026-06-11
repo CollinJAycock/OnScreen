@@ -15,8 +15,8 @@ type matchSearchAdapter struct {
 	enricher *scanner.Enricher
 }
 
-func (a *matchSearchAdapter) SearchTVCandidates(ctx context.Context, query string) ([]v1.MatchCandidate, error) {
-	results, err := a.enricher.SearchTVCandidates(ctx, query)
+func (a *matchSearchAdapter) SearchTVCandidates(ctx context.Context, query string, year int) ([]v1.MatchCandidate, error) {
+	results, err := a.enricher.SearchTVCandidates(ctx, query, year)
 	if err != nil {
 		return nil, err
 	}
@@ -34,8 +34,8 @@ func (a *matchSearchAdapter) SearchTVCandidates(ctx context.Context, query strin
 	return out, nil
 }
 
-func (a *matchSearchAdapter) SearchMovieCandidates(ctx context.Context, query string) ([]v1.MatchCandidate, error) {
-	results, err := a.enricher.SearchMovieCandidates(ctx, query)
+func (a *matchSearchAdapter) SearchMovieCandidates(ctx context.Context, query string, year int) ([]v1.MatchCandidate, error) {
+	results, err := a.enricher.SearchMovieCandidates(ctx, query, year)
 	if err != nil {
 		return nil, err
 	}

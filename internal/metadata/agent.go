@@ -164,12 +164,14 @@ type Agent interface {
 	// SearchTV looks up a TV show by title. year=0 means any year.
 	SearchTV(ctx context.Context, title string, year int) (*TVShowResult, error)
 	// SearchTVCandidates returns multiple TV show matches for manual selection.
-	SearchTVCandidates(ctx context.Context, query string) ([]TVShowResult, error)
+	// year > 0 narrows to shows that first aired that year; 0 means any year.
+	SearchTVCandidates(ctx context.Context, query string, year int) ([]TVShowResult, error)
 	// SearchMovieCandidates returns multiple movie matches for manual
 	// selection. Mirrors SearchTVCandidates — used by Fix Match so a
 	// query like "Blair Witch" can surface both the 1999 original and
-	// the 2016 remake instead of only TMDB's best guess.
-	SearchMovieCandidates(ctx context.Context, query string) ([]MovieResult, error)
+	// the 2016 remake instead of only TMDB's best guess. year > 0 narrows
+	// to that release year; 0 means any year.
+	SearchMovieCandidates(ctx context.Context, query string, year int) ([]MovieResult, error)
 	// GetSeason fetches season metadata for a TV show.
 	GetSeason(ctx context.Context, showTMDBID, seasonNum int) (*SeasonResult, error)
 	// GetEpisode fetches episode metadata.

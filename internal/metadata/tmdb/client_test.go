@@ -98,7 +98,7 @@ func TestSearchMovieCandidates_ReturnsAllResults(t *testing.T) {
 	defer srv.Close()
 
 	c := testClient(t, srv)
-	results, err := c.SearchMovieCandidates(context.Background(), "Blair Witch")
+	results, err := c.SearchMovieCandidates(context.Background(), "Blair Witch", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSearchMovieCandidates_CapsAt10(t *testing.T) {
 	defer srv.Close()
 
 	c := testClient(t, srv)
-	results, err := c.SearchMovieCandidates(context.Background(), "x")
+	results, err := c.SearchMovieCandidates(context.Background(), "x", 0)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

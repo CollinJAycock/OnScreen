@@ -47,10 +47,10 @@ func (m *mockAgent) SearchTV(_ context.Context, _ string, _ int) (*metadata.TVSh
 	}
 	return m.searchTVResult, nil
 }
-func (m *mockAgent) SearchTVCandidates(_ context.Context, _ string) ([]metadata.TVShowResult, error) {
+func (m *mockAgent) SearchTVCandidates(_ context.Context, _ string, _ int) ([]metadata.TVShowResult, error) {
 	return nil, nil
 }
-func (m *mockAgent) SearchMovieCandidates(_ context.Context, _ string) ([]metadata.MovieResult, error) {
+func (m *mockAgent) SearchMovieCandidates(_ context.Context, _ string, _ int) ([]metadata.MovieResult, error) {
 	return nil, nil
 }
 func (m *mockAgent) GetSeason(_ context.Context, _, _ int) (*metadata.SeasonResult, error) {

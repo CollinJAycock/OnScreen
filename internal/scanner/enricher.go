@@ -2506,12 +2506,13 @@ func (e *Enricher) findDescendantFile(ctx context.Context, parentID uuid.UUID) *
 }
 
 // SearchTVCandidates returns TMDB TV search results for manual match selection.
-func (e *Enricher) SearchTVCandidates(ctx context.Context, query string) ([]TVMatchCandidate, error) {
+// year > 0 narrows to shows that first aired that year.
+func (e *Enricher) SearchTVCandidates(ctx context.Context, query string, year int) ([]TVMatchCandidate, error) {
 	agent := e.agentFn()
 	if agent == nil {
 		return nil, fmt.Errorf("metadata agent not configured")
 	}
-	results, err := agent.SearchTVCandidates(ctx, query)
+	results, err := agent.SearchTVCandidates(ctx, query, year)
 	if err != nil {
 		return nil, err
 	}
@@ -2535,12 +2536,12 @@ func (e *Enricher) SearchTVCandidates(ctx context.Context, query string) ([]TVMa
 // SearchMovie meant Fix Match could only ever surface TMDB's top guess,
 // so a query like "Blair Witch" hid the 2016 remake behind the 1999
 // original.
-func (e *Enricher) SearchMovieCandidates(ctx context.Context, query string) ([]TVMatchCandidate, error) {
+func (e *Enricher) SearchMovieCandidates(ctx context.Context, query string, year int) ([]TVMatchCandidate, error) {
 	agent := e.agentFn()
 	if agent == nil {
 		return nil, fmt.Errorf("metadata agent not configured")
 	}
-	results, err := agent.SearchMovieCandidates(ctx, query)
+	results, err := agent.SearchMovieCandidates(ctx, query, year)
 	if err != nil {
 		return nil, err
 	}

@@ -284,11 +284,16 @@ func (c *Client) SearchMulti(ctx context.Context, query string, maxResults int) 
 // this so the operator can disambiguate cases where TMDB has multiple
 // hits for a query (e.g. "Blair Witch" → both the 1999 original and
 // the 2016 remake / sequel; "The Thing" → 1982 Carpenter and 2011
-// prequel).
-func (c *Client) SearchMovieCandidates(ctx context.Context, query string) ([]metadata.MovieResult, error) {
+// prequel). year > 0 narrows to that release year — essential for
+// generic titles ("The Dead") where the right film never cracks
+// TMDB's popularity-ranked top 10.
+func (c *Client) SearchMovieCandidates(ctx context.Context, query string, year int) ([]metadata.MovieResult, error) {
 	params := url.Values{}
 	params.Set("query", query)
 	params.Set("language", c.language)
+	if year > 0 {
+		params.Set("primary_release_year", strconv.Itoa(year))
+	}
 
 	var resp struct {
 		Results []tmdbMovie `json:"results"`
@@ -314,10 +319,14 @@ func (c *Client) SearchMovieCandidates(ctx context.Context, query string) ([]met
 
 // SearchTVCandidates implements metadata.Agent.
 // Returns up to 10 TV show results for manual match selection.
-func (c *Client) SearchTVCandidates(ctx context.Context, query string) ([]metadata.TVShowResult, error) {
+// year > 0 narrows to shows that first aired that year.
+func (c *Client) SearchTVCandidates(ctx context.Context, query string, year int) ([]metadata.TVShowResult, error) {
 	params := url.Values{}
 	params.Set("query", query)
 	params.Set("language", c.language)
+	if year > 0 {
+		params.Set("first_air_date_year", strconv.Itoa(year))
+	}
 
 	var resp struct {
 		Results []tmdbTV `json:"results"`

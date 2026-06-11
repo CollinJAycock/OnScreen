@@ -1674,8 +1674,8 @@ export const itemApi = {
       // decision feeds the analytics direct-vs-transcode split.
       ...(decision ? { decision } : {}),
     }),
-  searchMatch: (id: string, query: string) =>
-    api.get<MatchCandidate[]>(`/items/${id}/match/search?query=${encodeURIComponent(query)}`),
+  searchMatch: (id: string, query: string, year?: number) =>
+    api.get<MatchCandidate[]>(`/items/${id}/match/search?query=${encodeURIComponent(query)}${year ? `&year=${year}` : ''}`),
   applyMatch: (id: string, tmdbId: number) =>
     api.post<void>(`/items/${id}/match`, { tmdb_id: tmdbId }),
   listPosters: (id: string, tmdbId: number) =>

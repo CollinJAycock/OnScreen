@@ -88,8 +88,8 @@ type ItemCreditsRefresher interface {
 
 // ItemMatchSearcher searches for metadata candidates for manual matching.
 type ItemMatchSearcher interface {
-	SearchTVCandidates(ctx context.Context, query string) ([]MatchCandidate, error)
-	SearchMovieCandidates(ctx context.Context, query string) ([]MatchCandidate, error)
+	SearchTVCandidates(ctx context.Context, query string, year int) ([]MatchCandidate, error)
+	SearchMovieCandidates(ctx context.Context, query string, year int) ([]MatchCandidate, error)
 }
 
 // MatchCandidate is a TMDB search result shown to the user for manual selection.
@@ -1636,6 +1636,16 @@ func (h *ItemHandler) SearchMatch(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "query parameter required")
 		return
 	}
+	// Optional release-year filter (TMDB primary_release_year /
+	// first_air_date_year). Out-of-range or unparseable values are treated
+	// as absent rather than erroring — the year box is a refinement, not a
+	// required field.
+	year := 0
+	if raw := r.URL.Query().Get("year"); raw != "" {
+		if y, perr := strconv.Atoi(raw); perr == nil && y >= 1870 && y <= 2100 {
+			year = y
+		}
+	}
 
 	// Determine item type to search the right TMDB endpoint.
 	item, err := h.media.GetItem(r.Context(), id)
@@ -1652,9 +1662,9 @@ func (h *ItemHandler) SearchMatch(w http.ResponseWriter, r *http.Request) {
 	var candidates []MatchCandidate
 	switch item.Type {
 	case "show":
-		candidates, err = h.matcher.SearchTVCandidates(r.Context(), query)
+		candidates, err = h.matcher.SearchTVCandidates(r.Context(), query, year)
 	case "movie":
-		candidates, err = h.matcher.SearchMovieCandidates(r.Context(), query)
+		candidates, err = h.matcher.SearchMovieCandidates(r.Context(), query, year)
 	default:
 		respond.BadRequest(w, r, "match search only supports show and movie items")
 		return
