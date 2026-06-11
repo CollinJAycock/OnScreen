@@ -1247,22 +1247,37 @@ func (s *Scanner) persistPhotoEXIF(ctx context.Context, item *media.Item, path s
 // then finds or creates each level of the hierarchy.
 // If parsing fails, it falls back to creating a flat episode item.
 func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID, path string) (*media.Item, error) {
+	// episodeTitle stays empty for numbered episodes (the "Episode N"
+	// default applies below); date-based episodes override it with the
+	// air date, which is their identity.
+	var episodeTitle string
 	showTitle, seasonNum, episodeNum, ok := ParseTVFilename(path)
 	if !ok {
-		// No S##E## or 1x03 pattern — try the anime-absolute style
-		// ("Show - 245.mkv", "[Group] Show - 1071 [1080p].mkv").
-		// Common anime fansub layout: a single flat folder per show
-		// with absolute-numbered files. Slot the file into a
-		// synthetic Season 1 so the existing show / season / episode
-		// hierarchy works — anime users browse the flat episode list
-		// by absolute number anyway, and a single season feels
-		// natural for that.
-		if animeTitle, animeEp, animeOK := ParseAnimeAbsoluteFilename(path); animeOK {
+		// No S##E## or 1x03 pattern — date-based (daily / talk-show)
+		// naming next: "The Daily Show - 2013-10-30 - Guest.mkv".
+		// Mapped Plex-style: season = year, episode index =
+		// month*100+day (unique within the year, sorts
+		// chronologically). Sonarr numbers daily seasons by year,
+		// which can never fit S##E##.
+		if dailyTitle, y, mo, d, dailyOK := ParseDailyFilename(path); dailyOK {
+			showTitle = dailyTitle
+			seasonNum = y
+			episodeNum = mo*100 + d
+			episodeTitle = fmt.Sprintf("%04d-%02d-%02d", y, mo, d)
+		} else if animeTitle, animeEp, animeOK := ParseAnimeAbsoluteFilename(path); animeOK {
+			// Anime-absolute style ("Show - 245.mkv",
+			// "[Group] Show - 1071 [1080p].mkv"). Common anime fansub
+			// layout: a single flat folder per show with
+			// absolute-numbered files. Slot the file into a synthetic
+			// Season 1 so the existing show / season / episode
+			// hierarchy works — anime users browse the flat episode
+			// list by absolute number anyway, and a single season
+			// feels natural for that.
 			showTitle = animeTitle
 			seasonNum = 1
 			episodeNum = animeEp
 		} else {
-			// Neither parser matched — fall back to flat episode.
+			// No parser matched — fall back to flat episode.
 			title, year := parseFilename(path)
 			return s.media.FindOrCreateItem(ctx, media.CreateItemParams{
 				LibraryID: libraryID,
@@ -1336,7 +1351,9 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 	}
 
 	// 3. Find or create the "episode" item (parent_id=season.ID, index=episodeNum).
-	episodeTitle := fmt.Sprintf("Episode %d", episodeNum)
+	if episodeTitle == "" {
+		episodeTitle = fmt.Sprintf("Episode %d", episodeNum)
+	}
 	episode, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "episode",

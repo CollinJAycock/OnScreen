@@ -40,6 +40,21 @@ var tvAnimeAbsoluteRE = regexp.MustCompile(`^(?:\[[^\]]+\]\s*)?(.+?)\s+-\s+(\d{1
 // seasonFolderRE matches "Season 1", "Season 01", "season1", "S01" in folder names.
 var seasonFolderRE = regexp.MustCompile(`(?i)^(?:Season\s*(\d{1,2})|S(\d{1,2}))$`)
 
+// tvDailyRE matches date-based (daily / talk-show) episode filenames:
+//
+//   - "The Daily Show - 2013-10-30 - Guest Name WEBDL-1080p.mkv" (Sonarr daily format)
+//   - "The.Daily.Show.2024.01.15.Guest.1080p.WEB.mkv"            (scene naming)
+//   - "Conan 2019_06_03 Episode.mkv"
+//
+// Captures: 1 title, 2 year, 3 month, 4 day. The year is anchored to
+// 19xx/20xx so a stray 4-digit number can't start a false date, and the
+// month/day pairs are range-validated in code (regex alone would accept
+// "2013-99-99"). Date-based shows have no usable S##E## identity — Sonarr
+// numbers daily seasons by YEAR (4 digits), which the S##E## pattern
+// rightly refuses — so the caller maps season = year and derives a
+// deterministic episode index from the date.
+var tvDailyRE = regexp.MustCompile(`^(?:\[[^\]]+\]\s*)?(.+?)[\s._-]+((?:19|20)\d{2})[.\s_-](\d{2})[.\s_-](\d{2})(?:[\s._-]|$)`)
+
 // ParseTVFilename extracts the show title, season number, and episode number
 // from a media file path. It handles:
 //   - "Show Name S01E03.mkv" or "Show.Name.S01E03.mkv"
@@ -78,6 +93,38 @@ func ParseTVFilename(path string) (showTitle string, season int, episode int, ok
 	}
 
 	return "", 0, 0, false
+}
+
+// ParseDailyFilename extracts a show title and air date from date-based
+// (daily / talk-show) filenames. Use as a fallback after [ParseTVFilename]
+// returns ok=false — an explicit S##E## always wins over a date that might
+// also appear in the name.
+//
+// Returns (showTitle, year, month, day, ok). The caller maps these onto the
+// show hierarchy Plex-style: season = year, episode index derived from the
+// date (month*100 + day), which is unique within the year and sorts
+// chronologically.
+func ParseDailyFilename(path string) (showTitle string, year, month, day int, ok bool) {
+	path = strings.ReplaceAll(filepath.ToSlash(path), `\`, `/`)
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	stem := base[:len(base)-len(ext)]
+
+	m := tvDailyRE.FindStringSubmatchIndex(stem)
+	if m == nil {
+		return "", 0, 0, 0, false
+	}
+	y, _ := strconv.Atoi(stem[m[4]:m[5]])
+	mo, _ := strconv.Atoi(stem[m[6]:m[7]])
+	d, _ := strconv.Atoi(stem[m[8]:m[9]])
+	if mo < 1 || mo > 12 || d < 1 || d > 31 {
+		return "", 0, 0, 0, false
+	}
+	title := extractShowTitle(stem[m[2]:m[3]], path)
+	if title == "" {
+		return "", 0, 0, 0, false
+	}
+	return title, y, mo, d, true
 }
 
 // ParseAnimeAbsoluteFilename extracts a show title and absolute

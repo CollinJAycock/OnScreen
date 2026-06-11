@@ -455,3 +455,93 @@ func TestParseAnimeAbsoluteFilename(t *testing.T) {
 		})
 	}
 }
+
+func TestParseDailyFilename(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		wantTitle string
+		wantYear  int
+		wantMonth int
+		wantDay   int
+		wantOK    bool
+	}{
+		{
+			name:      "sonarr daily format",
+			path:      "/tv/The Daily Show/Season 2013/The Daily Show - 2013-10-30 - Guest Name WEBDL-1080p.mkv",
+			wantTitle: "The Daily Show",
+			wantYear:  2013, wantMonth: 10, wantDay: 30,
+			wantOK: true,
+		},
+		{
+			name:      "scene dotted date",
+			path:      "/tv/The.Daily.Show.2024.01.15.Jon.Stewart.1080p.WEB.mkv",
+			wantTitle: "The Daily Show",
+			wantYear:  2024, wantMonth: 1, wantDay: 15,
+			wantOK: true,
+		},
+		{
+			name:      "underscore date",
+			path:      "/tv/Conan 2019_06_03 Episode.mkv",
+			wantTitle: "Conan",
+			wantYear:  2019, wantMonth: 6, wantDay: 3,
+			wantOK: true,
+		},
+		{
+			name:   "invalid month rejected",
+			path:   "/tv/Show - 2013-99-10 - Title.mkv",
+			wantOK: false,
+		},
+		{
+			name:   "invalid day rejected",
+			path:   "/tv/Show - 2013-10-99 - Title.mkv",
+			wantOK: false,
+		},
+		{
+			name:   "bare year is not a date",
+			path:   "/tv/Show Name 2024.mkv",
+			wantOK: false,
+		},
+		{
+			name:   "resolution digits are not a date",
+			path:   "/tv/Show Name 1080p x265.mkv",
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title, y, mo, d, ok := ParseDailyFilename(tt.path)
+			if ok != tt.wantOK {
+				t.Fatalf("ok: got %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if title != tt.wantTitle || y != tt.wantYear || mo != tt.wantMonth || d != tt.wantDay {
+				t.Fatalf("got (%q, %d, %d, %d), want (%q, %d, %d, %d)",
+					title, y, mo, d, tt.wantTitle, tt.wantYear, tt.wantMonth, tt.wantDay)
+			}
+		})
+	}
+}
+
+// A filename carrying both S##E## and a date must keep its S##E## identity —
+// ParseTVFilename runs first in processShowHierarchy, and the date is just
+// part of the episode title there.
+func TestDailyParsing_SxxExxStillWins(t *testing.T) {
+	path := "/tv/Show/Season 1/Show - S01E05 - 2013-10-30 Recap.mkv"
+	if _, s, e, ok := ParseTVFilename(path); !ok || s != 1 || e != 5 {
+		t.Fatalf("ParseTVFilename: got (s=%d e=%d ok=%v), want S01E05", s, e, ok)
+	}
+}
+
+// Anime absolute numbering ("Show - 1030") must not be mistaken for a date,
+// and a real date must not be mistaken for an absolute episode.
+func TestDailyParsing_DisjointFromAnime(t *testing.T) {
+	if _, _, _, _, ok := ParseDailyFilename("/tv/Show - 1030 [1080p].mkv"); ok {
+		t.Fatal("bare absolute episode number parsed as a date")
+	}
+	if _, _, ok := ParseAnimeAbsoluteFilename("/tv/The Daily Show - 2013-10-30 - Guest.mkv"); ok {
+		t.Fatal("date parsed as anime absolute episode")
+	}
+}
