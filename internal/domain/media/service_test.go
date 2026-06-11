@@ -91,6 +91,9 @@ func (m *mockQuerier) CountUnmatchedTopLevelItems(_ context.Context) (int32, err
 func (m *mockQuerier) FindTopLevelItemsByTitleFlexible(_ context.Context, _ uuid.UUID, _, _ string) ([]Item, error) {
 	return nil, nil
 }
+func (m *mockQuerier) FindShowByFolderPrefix(_ context.Context, _ uuid.UUID, _ string) (*Item, error) {
+	return nil, nil
+}
 func (m *mockQuerier) ListDuplicateTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) ([]DuplicatePair, error) {
 	return nil, nil
 }

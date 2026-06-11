@@ -457,6 +457,103 @@ func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uui
 	return result.RowsAffected(), nil
 }
 
+const findShowByFolderPrefix = `-- name: FindShowByFolderPrefix :one
+SELECT show.id, show.library_id, show.type, show.title, show.sort_title, show.original_title, show.year,
+       show.summary, show.tagline, show.rating, show.audience_rating, show.content_rating, show.duration_ms,
+       show.genres, show.tags, show.tmdb_id, show.tvdb_id, show.imdb_id, show.musicbrainz_id,
+       show.parent_id, show.index, show.poster_path, show.fanart_path, show.thumb_path,
+       show.originally_available_at, show.created_at, show.updated_at, show.deleted_at
+FROM media_files mf
+JOIN media_items ep     ON ep.id = mf.media_item_id AND ep.deleted_at IS NULL
+JOIN media_items season ON season.id = ep.parent_id AND season.deleted_at IS NULL
+JOIN media_items show   ON show.id = season.parent_id AND show.deleted_at IS NULL
+WHERE mf.status = 'active'
+  AND mf.file_path LIKE $1::TEXT || '%' ESCAPE '\'
+  AND show.library_id = $2
+  AND show.type = 'show'
+LIMIT 1
+`
+
+type FindShowByFolderPrefixParams struct {
+	FolderPrefix string    `json:"folder_prefix"`
+	LibraryID    uuid.UUID `json:"library_id"`
+}
+
+type FindShowByFolderPrefixRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Resolves the canonical show row for a show folder by walking up from any
+// active file already attached under that folder (file -> episode -> season
+// -> show). This survives Fix Match renames: the folder "The Floor US"
+// keeps resolving to the row TMDB renamed to "The Floor", because that
+// row's existing episode files live in the folder. Without it, every new
+// episode imported after a rename re-created an unmatched duplicate show
+// from the folder title. folder_prefix must be LIKE-escaped by the caller
+// and end with the path separator.
+func (q *Queries) FindShowByFolderPrefix(ctx context.Context, arg FindShowByFolderPrefixParams) (FindShowByFolderPrefixRow, error) {
+	row := q.db.QueryRow(ctx, findShowByFolderPrefix, arg.FolderPrefix, arg.LibraryID)
+	var i FindShowByFolderPrefixRow
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Type,
+		&i.Title,
+		&i.SortTitle,
+		&i.OriginalTitle,
+		&i.Year,
+		&i.Summary,
+		&i.Tagline,
+		&i.Rating,
+		&i.AudienceRating,
+		&i.ContentRating,
+		&i.DurationMs,
+		&i.Genres,
+		&i.Tags,
+		&i.TmdbID,
+		&i.TvdbID,
+		&i.ImdbID,
+		&i.MusicbrainzID,
+		&i.ParentID,
+		&i.Index,
+		&i.PosterPath,
+		&i.FanartPath,
+		&i.ThumbPath,
+		&i.OriginallyAvailableAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const findTopLevelItemByTitleYear = `-- name: FindTopLevelItemByTitleYear :one
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,

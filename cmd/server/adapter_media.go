@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -156,6 +157,32 @@ func (a *mediaAdapter) FindTopLevelItemByTitleYear(ctx context.Context, libraryI
 		Type:      itemType,
 		Title:     title,
 		Year:      intPtrToInt32Ptr(year),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	item := itemFromGenFields(row.ID, row.LibraryID, row.Type, row.Title, row.SortTitle,
+		row.OriginalTitle, row.Year, row.Summary, row.Tagline,
+		row.Rating, row.AudienceRating, row.ContentRating, row.DurationMs,
+		row.Genres, row.Tags, row.TmdbID, row.TvdbID, row.ImdbID,
+		row.ParentID, row.Index, row.PosterPath, row.FanartPath, row.ThumbPath,
+		row.OriginallyAvailableAt, row.CreatedAt, row.UpdatedAt, row.DeletedAt)
+	return &item, nil
+}
+
+// likeEscape neutralizes LIKE wildcards in a literal prefix so a folder named
+// "100% Wolf" or "the_show" matches itself, not a pattern.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+func (a *mediaAdapter) FindShowByFolderPrefix(ctx context.Context, libraryID uuid.UUID, folderPrefix string) (*media.Item, error) {
+	row, err := a.q.FindShowByFolderPrefix(ctx, gen.FindShowByFolderPrefixParams{
+		FolderPrefix: likeEscape(folderPrefix),
+		LibraryID:    libraryID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

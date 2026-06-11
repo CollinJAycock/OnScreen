@@ -1286,12 +1286,19 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 	//      - a fresh insert starts with the IDs already set, so the
 	//        enricher can `RefreshTV` directly instead of falling
 	//        back to a fuzzy title search that may miss.
-	folderIDs := ParseFolderIDs(filepath.Base(showDirFromFile(path)))
+	showDir := showDirFromFile(path)
+	folderIDs := ParseFolderIDs(filepath.Base(showDir))
 	createParams := media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "show",
 		Title:     showTitle,
 		SortTitle: showTitle,
+		// Folder hint: lets the find side resolve this show through files
+		// already attached under the same folder when every title key
+		// misses (Fix Match renamed the row to TMDB's canonical title) —
+		// otherwise each newly imported episode re-creates an unmatched
+		// duplicate show from the folder title.
+		FolderPath: showDir + string(filepath.Separator),
 	}
 	if folderIDs.TMDBID > 0 {
 		t := folderIDs.TMDBID

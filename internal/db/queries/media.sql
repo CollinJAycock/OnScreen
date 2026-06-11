@@ -1554,3 +1554,27 @@ WITH RECURSIVE subtree AS (
 )
 DELETE FROM media_files
 WHERE media_files.media_item_id IN (SELECT subtree.id FROM subtree);
+
+-- name: FindShowByFolderPrefix :one
+-- Resolves the canonical show row for a show folder by walking up from any
+-- active file already attached under that folder (file -> episode -> season
+-- -> show). This survives Fix Match renames: the folder "The Floor US"
+-- keeps resolving to the row TMDB renamed to "The Floor", because that
+-- row's existing episode files live in the folder. Without it, every new
+-- episode imported after a rename re-created an unmatched duplicate show
+-- from the folder title. folder_prefix must be LIKE-escaped by the caller
+-- and end with the path separator.
+SELECT show.id, show.library_id, show.type, show.title, show.sort_title, show.original_title, show.year,
+       show.summary, show.tagline, show.rating, show.audience_rating, show.content_rating, show.duration_ms,
+       show.genres, show.tags, show.tmdb_id, show.tvdb_id, show.imdb_id, show.musicbrainz_id,
+       show.parent_id, show.index, show.poster_path, show.fanart_path, show.thumb_path,
+       show.originally_available_at, show.created_at, show.updated_at, show.deleted_at
+FROM media_files mf
+JOIN media_items ep     ON ep.id = mf.media_item_id AND ep.deleted_at IS NULL
+JOIN media_items season ON season.id = ep.parent_id AND season.deleted_at IS NULL
+JOIN media_items show   ON show.id = season.parent_id AND show.deleted_at IS NULL
+WHERE mf.status = 'active'
+  AND mf.file_path LIKE sqlc.arg(folder_prefix)::TEXT || '%' ESCAPE '\'
+  AND show.library_id = sqlc.arg(library_id)
+  AND show.type = 'show'
+LIMIT 1;

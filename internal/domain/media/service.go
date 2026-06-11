@@ -225,6 +225,7 @@ type Querier interface {
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
 	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
 	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
+	FindShowByFolderPrefix(ctx context.Context, libraryID uuid.UUID, folderPrefix string) (*Item, error)
 	ListDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ListPrefixDuplicateTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ListDuplicateChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) ([]DuplicatePair, error)
@@ -447,6 +448,14 @@ type CreateItemParams struct {
 	// search and calls GetAnimeByID directly.
 	AniListID                 *int
 	MusicBrainzID             *uuid.UUID
+	// FolderPath is a scanner-only resolution hint (not persisted): the
+	// on-disk folder this item's files live under, trailing separator
+	// included. When the title lookups miss — typically because Fix Match
+	// renamed the row to TMDB's canonical title while the folder kept the
+	// parsed name ("The Floor US" folder vs "The Floor" row) — the find
+	// side falls back to resolving the show through existing files under
+	// the same folder instead of creating a duplicate unmatched row.
+	FolderPath string
 	MusicBrainzReleaseID      *uuid.UUID
 	MusicBrainzReleaseGroupID *uuid.UUID
 	MusicBrainzArtistID       *uuid.UUID
@@ -1360,7 +1369,18 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 	if p.Title == "" {
 		return nil
 	}
-	return s.findItemByTitle(ctx, p)
+	if found := s.findItemByTitle(ctx, p); found != nil {
+		return found
+	}
+	// Folder fallback for shows: every title key can miss after a Fix Match
+	// rename, but the canonical row's existing episode files still live in
+	// this folder — resolve through them rather than creating a duplicate.
+	if p.Type == "show" && p.FolderPath != "" {
+		if found, err := s.rw.FindShowByFolderPrefix(ctx, p.LibraryID, p.FolderPath); err == nil && found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func mapNotFound(err error) error {
