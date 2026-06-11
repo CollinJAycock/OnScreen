@@ -2137,6 +2137,7 @@ export interface ActiveSession {
   year?: number;
   type?: string;
   poster_path?: string;
+  parent_title?: string; // show/artist for episodes/tracks
   duration_ms?: number;
   bitrate_kbps?: number;
 }

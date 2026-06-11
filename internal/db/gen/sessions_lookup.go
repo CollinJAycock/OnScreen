@@ -11,19 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// poster_path coalesces up the hierarchy — an episode has no poster of its
+// own, so Now Playing inherits the show's (episode→season→show); a track the
+// album/artist's. Same precedence as the analytics top-played query.
+// parent_title carries the show/artist so the card can read "Show · Episode".
 const getMediaItemsForSessions = `
-SELECT id, title, year, type, poster_path, duration_ms
-FROM media_items
-WHERE id = ANY($1) AND deleted_at IS NULL`
+SELECT mi.id, mi.title, mi.year, mi.type,
+       COALESCE(gp.poster_path, p.poster_path, mi.poster_path,
+                gp.thumb_path,  p.thumb_path,  mi.thumb_path) AS poster_path,
+       COALESCE(gp.title, p.title) AS parent_title,
+       mi.duration_ms
+FROM media_items mi
+LEFT JOIN media_items p  ON p.id  = mi.parent_id
+LEFT JOIN media_items gp ON gp.id = p.parent_id
+WHERE mi.id = ANY($1) AND mi.deleted_at IS NULL`
 
 type SessionMediaItem struct {
-	ID         uuid.UUID
-	Title      string
-	Year       pgtype.Int4
-	Type       string
-	PosterPath pgtype.Text
-	DurationMS pgtype.Int8
-	Bitrate    pgtype.Int8 // file bitrate in bits/s (only set for file-path lookups)
+	ID          uuid.UUID
+	Title       string
+	Year        pgtype.Int4
+	Type        string
+	PosterPath  pgtype.Text
+	ParentTitle pgtype.Text
+	DurationMS  pgtype.Int8
+	Bitrate     pgtype.Int8 // file bitrate in bits/s (only set for file-path lookups)
 }
 
 func (q *Queries) GetMediaItemsForSessions(ctx context.Context, ids []uuid.UUID) ([]SessionMediaItem, error) {
@@ -35,7 +46,7 @@ func (q *Queries) GetMediaItemsForSessions(ctx context.Context, ids []uuid.UUID)
 	var items []SessionMediaItem
 	for rows.Next() {
 		var i SessionMediaItem
-		if err := rows.Scan(&i.ID, &i.Title, &i.Year, &i.Type, &i.PosterPath, &i.DurationMS); err != nil {
+		if err := rows.Scan(&i.ID, &i.Title, &i.Year, &i.Type, &i.PosterPath, &i.ParentTitle, &i.DurationMS); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -44,16 +55,22 @@ func (q *Queries) GetMediaItemsForSessions(ctx context.Context, ids []uuid.UUID)
 }
 
 const getMediaItemByFilePath = `
-SELECT mi.id, mi.title, mi.year, mi.type, mi.poster_path, mi.duration_ms, mf.bitrate
+SELECT mi.id, mi.title, mi.year, mi.type,
+       COALESCE(gp.poster_path, p.poster_path, mi.poster_path,
+                gp.thumb_path,  p.thumb_path,  mi.thumb_path) AS poster_path,
+       COALESCE(gp.title, p.title) AS parent_title,
+       mi.duration_ms, mf.bitrate
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
+LEFT JOIN media_items p  ON p.id  = mi.parent_id
+LEFT JOIN media_items gp ON gp.id = p.parent_id
 WHERE mf.file_path = $1 AND mi.deleted_at IS NULL
 LIMIT 1`
 
 func (q *Queries) GetMediaItemByFilePath(ctx context.Context, filePath string) (*SessionMediaItem, error) {
 	var i SessionMediaItem
 	err := q.db.QueryRow(ctx, getMediaItemByFilePath, filePath).Scan(
-		&i.ID, &i.Title, &i.Year, &i.Type, &i.PosterPath, &i.DurationMS, &i.Bitrate,
+		&i.ID, &i.Title, &i.Year, &i.Type, &i.PosterPath, &i.ParentTitle, &i.DurationMS, &i.Bitrate,
 	)
 	if err != nil {
 		return nil, err

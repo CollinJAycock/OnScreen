@@ -52,11 +52,12 @@ type activeSession struct {
 	Decision    string  `json:"decision"`
 	PositionMS  int64   `json:"position_ms"`
 	ClientName  string  `json:"client_name,omitempty"`
-	StartedAt   string  `json:"started_at"`
+	StartedAt   string  `json:"started_at"` // RFC 3339, UTC
 	Title       string  `json:"title"`
 	Year        *int    `json:"year,omitempty"`
 	Type        string  `json:"type,omitempty"`
 	PosterPath  *string `json:"poster_path,omitempty"`
+	ParentTitle *string `json:"parent_title,omitempty"` // show/artist for episodes/tracks
 	DurationMS  *int64  `json:"duration_ms,omitempty"`
 	BitrateKbps *int    `json:"bitrate_kbps,omitempty"`
 	// SelectedRendition is the ABR rung the player's adaptive logic settled on
@@ -127,8 +128,10 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 				Decision:   s.Decision,
 				PositionMS: s.PositionMS,
 				ClientName: s.ClientName,
-				StartedAt:  s.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				Title:      filepath.Base(s.FilePath),
+				// .UTC(): a literal Z on local wall-clock time would shift the
+				// claimed instant by the server's UTC offset.
+				StartedAt: s.CreatedAt.UTC().Format(time.RFC3339),
+				Title:     filepath.Base(s.FilePath),
 			}
 			if s.BitrateKbps > 0 {
 				br := s.BitrateKbps
@@ -159,6 +162,9 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 				}
 				if mi.PosterPath.Valid {
 					as.PosterPath = &mi.PosterPath.String
+				}
+				if mi.ParentTitle.Valid {
+					as.ParentTitle = &mi.ParentTitle.String
 				}
 				if mi.DurationMS.Valid {
 					as.DurationMS = &mi.DurationMS.Int64
@@ -226,7 +232,7 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 				ID:         entry.ClientIP + "|" + entry.FilePath,
 				Decision:   "directPlay",
 				ClientName: entry.ClientName,
-				StartedAt:  entry.FirstSeen.Format("2006-01-02T15:04:05Z"),
+				StartedAt:  entry.FirstSeen.UTC().Format(time.RFC3339),
 				Title:      filepath.Base(entry.FilePath),
 			}
 			if itemID != uuid.Nil {
@@ -244,6 +250,9 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 				}
 				if mi.PosterPath.Valid {
 					as.PosterPath = &mi.PosterPath.String
+				}
+				if mi.ParentTitle.Valid {
+					as.ParentTitle = &mi.ParentTitle.String
 				}
 				if mi.DurationMS.Valid {
 					as.DurationMS = &mi.DurationMS.Int64

@@ -287,7 +287,9 @@
                 <div class="stream-poster placeholder"></div>
               {/if}
               <div class="stream-info">
-                <div class="stream-title">{s.title}{#if s.year} <span class="muted">({s.year})</span>{/if}</div>
+                <div class="stream-title">
+                  {#if s.parent_title}<span class="muted">{s.parent_title} · </span>{/if}{s.title}{#if s.year} <span class="muted">({s.year})</span>{/if}
+                </div>
                 <div class="stream-meta">
                   <span class="stream-decision" class:transcode={s.decision === 'transcode'}>{s.decision === 'directPlay' ? 'Direct Play' : s.decision === 'directStream' ? 'Direct Stream' : s.decision === 'remux' ? 'Remux' : 'Transcoding'}</span>
                   {#if s.bitrate_kbps}<span class="muted">· {(s.bitrate_kbps / 1000).toFixed(1)} Mbps</span>{/if}
