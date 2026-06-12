@@ -234,3 +234,42 @@ describe('Hub layout customization', () => {
     expect(rows.map((r: { key: string }) => r.key)).toContain('library:lib-movies');
   });
 });
+
+describe('Libraries section in hub layout', () => {
+  beforeEach(() => {
+    localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'admin' }));
+    mockListLibraries.mockResolvedValue([
+      { id: 'lib-1', name: 'Movies', type: 'movie', scan_paths: ['/media/movies'] },
+    ]);
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      trending: [{ id: 't1', title: 'Trending Thing', updated_at: '2026-01-01' }],
+    });
+  });
+
+  it('pins Libraries above other rows when the layout puts it first', async () => {
+    mockGetPreferences.mockResolvedValue({
+      hub_layout: [
+        { key: 'libraries', enabled: true },
+        { key: 'trending', enabled: true },
+      ],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Trending this week')).toBeTruthy());
+    const sections = Array.from(document.querySelectorAll('.hub-section'));
+    const libIdx = sections.findIndex((s) => s.querySelector('h1')?.textContent === 'Libraries');
+    const trendIdx = sections.findIndex((s) => s.textContent?.includes('Trending this week'));
+    expect(libIdx).toBe(0);
+    expect(trendIdx).toBeGreaterThan(libIdx);
+  });
+
+  it('hides the Libraries grid when disabled', async () => {
+    mockGetPreferences.mockResolvedValue({
+      hub_layout: [{ key: 'libraries', enabled: false }],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Trending this week')).toBeTruthy());
+    expect(screen.queryByText('New Library')).toBeNull();
+  });
+});

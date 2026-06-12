@@ -31,8 +31,9 @@
     title: string;
     items: HubItem[];
     // 'continue' rows show the progress bar; 'library' rows link their
-    // header and may render square; 'plain' is trending.
-    kind: 'continue' | 'plain' | 'library';
+    // header and may render square; 'plain' is trending; 'libraries' is
+    // the library-tile grid (default last, pinnable anywhere).
+    kind: 'continue' | 'plain' | 'library' | 'libraries';
     libraryId?: string;
     librarySquare?: boolean;
   };
@@ -51,6 +52,10 @@
       libraryId: row.library_id,
       librarySquare: isSquareLibrary(row.library_type),
     })),
+    // The library-tile grid participates in ordering too, so it can be
+    // pinned to the top. Its items live in `libraries`, not HubItems —
+    // the renderer special-cases it and it never counts as "empty".
+    { key: 'libraries', title: 'Libraries', items: [], kind: 'libraries' },
   ] as HubSection[];
 
   // Saved order first (unknown keys skipped — e.g. a deleted library),
@@ -76,7 +81,7 @@
       key: e.section.key,
       title: e.section.title,
       enabled: e.enabled,
-      empty: e.section.items.length === 0,
+      empty: e.section.kind !== 'libraries' && e.section.items.length === 0,
     }));
     editMode = true;
   }
@@ -336,7 +341,76 @@
          flight doesn't see a bare TV row). -->
     {#each orderedSections as entry (entry.section.key)}
       {@const section = entry.section}
-      {#if entry.enabled && section.items.length > 0}
+      {#if entry.enabled && section.kind === 'libraries'}
+        <section class="hub-section">
+          <div class="topbar">
+            <h1>Libraries</h1>
+            <a href="/libraries/new" class="btn-new">
+              <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                <path d="M8.75 3.75a.75.75 0 00-1.5 0v3.5h-3.5a.75.75 0 000 1.5h3.5v3.5a.75.75 0 001.5 0v-3.5h3.5a.75.75 0 000-1.5h-3.5v-3.5z"/>
+              </svg>
+              New Library
+            </a>
+          </div>
+          {#if libraries.length === 0}
+            <div class="empty">
+              <div class="empty-glyph">⬡</div>
+              <p class="empty-title">No libraries</p>
+              <p class="empty-sub">Add a library to start managing your media.</p>
+              <a href="/libraries/new" class="btn-new">New Library</a>
+            </div>
+          {:else}
+            <div class="grid">
+              {#each libraries as lib (lib.id)}
+                {@const t = types[lib.type] ?? { label: lib.type, icon: '📁', image: undefined }}
+                {@const color = colors[lib.type] ?? '#aaa'}
+                <div
+                  class="lib-tile"
+                  role="button"
+                  tabindex="0"
+                  style="--tile-accent:{color}"
+                  on:click={() => goto(`/libraries/${lib.id}`)}
+                  on:keydown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), goto(`/libraries/${lib.id}`))}
+                >
+                  <div class="tile-top">
+                    {#if t.image}
+                      <img class="tile-icon-img" src={t.image} alt={t.label} />
+                    {:else}
+                      <span class="tile-icon">{t.icon}</span>
+                    {/if}
+                    <div class="tile-actions">
+                      <button class="tile-btn" title="Scan" on:click={e => scan(lib.id, e)}>
+                        <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                          <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 01.208 1.04l-5 7.5a.75.75 0 01-1.154.114l-3-3a.75.75 0 011.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 011.04-.207z" clip-rule="evenodd"/>
+                        </svg>
+                      </button>
+                      <button class="tile-btn" title="Settings" on:click={e => { e.stopPropagation(); goto(`/libraries/${lib.id}/settings`); }}>
+                        <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                          <path d="M8 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/>
+                          <path fill-rule="evenodd" d="M8 0a.75.75 0 01.716.527l.502 1.607a5.987 5.987 0 011.29.745l1.648-.567a.75.75 0 01.879.344l1 1.732a.75.75 0 01-.14 1.022l-1.345 1.053a6.02 6.02 0 010 1.476l1.345 1.053a.75.75 0 01.14 1.022l-1 1.732a.75.75 0 01-.879.344l-1.648-.567a5.99 5.99 0 01-1.29.745l-.502 1.607a.75.75 0 01-1.432 0l-.502-1.607a5.989 5.989 0 01-1.29-.745l-1.648.567a.75.75 0 01-.879-.344l-1-1.732a.75.75 0 01.14-1.022l1.345-1.053a6.026 6.026 0 010-1.476L.75 7.511a.75.75 0 01-.14-1.022l1-1.732a.75.75 0 01.879-.344l1.648.567a5.989 5.989 0 011.29-.745L5.928.527A.75.75 0 018 0zm0 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z" clip-rule="evenodd"/>
+                        </svg>
+                      </button>
+                      <button class="tile-btn tile-btn-danger" title="Delete" on:click={e => { e.stopPropagation(); confirmDelete = lib; }}>
+                        <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                          <path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 011.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="tile-body">
+                    <div class="tile-type">{t.label}</div>
+                    <div class="tile-name">{lib.name}</div>
+                    {#if (lib.scan_paths ?? []).length > 0}
+                      <div class="tile-path">{lib.scan_paths[0]}{lib.scan_paths.length > 1 ? ` +${lib.scan_paths.length - 1}` : ''}</div>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {:else if entry.enabled && section.items.length > 0}
         <section class="hub-section">
           {#if section.kind === 'library'}
             <h2 class="hub-title">
@@ -382,74 +456,6 @@
     {/each}
   {/if}
 
-  <!-- Libraries -->
-  <div class="topbar">
-    <h1>Libraries</h1>
-    <a href="/libraries/new" class="btn-new">
-      <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-        <path d="M8.75 3.75a.75.75 0 00-1.5 0v3.5h-3.5a.75.75 0 000 1.5h3.5v3.5a.75.75 0 001.5 0v-3.5h3.5a.75.75 0 000-1.5h-3.5v-3.5z"/>
-      </svg>
-      New Library
-    </a>
-  </div>
-
-  {#if !loading && libraries.length === 0}
-    <div class="empty">
-      <div class="empty-glyph">⬡</div>
-      <p class="empty-title">No libraries</p>
-      <p class="empty-sub">Add a library to start managing your media.</p>
-      <a href="/libraries/new" class="btn-new">New Library</a>
-    </div>
-  {:else if !loading}
-    <div class="grid">
-      {#each libraries as lib (lib.id)}
-        {@const t = types[lib.type] ?? { label: lib.type, icon: '📁', image: undefined }}
-        {@const color = colors[lib.type] ?? '#aaa'}
-        <div
-          class="lib-tile"
-          role="button"
-          tabindex="0"
-          style="--tile-accent:{color}"
-          on:click={() => goto(`/libraries/${lib.id}`)}
-          on:keydown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), goto(`/libraries/${lib.id}`))}
-        >
-          <div class="tile-top">
-            {#if t.image}
-              <img class="tile-icon-img" src={t.image} alt={t.label} />
-            {:else}
-              <span class="tile-icon">{t.icon}</span>
-            {/if}
-            <div class="tile-actions">
-              <button class="tile-btn" title="Scan" on:click={e => scan(lib.id, e)}>
-                <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-                  <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 01.208 1.04l-5 7.5a.75.75 0 01-1.154.114l-3-3a.75.75 0 011.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 011.04-.207z" clip-rule="evenodd"/>
-                </svg>
-              </button>
-              <button class="tile-btn" title="Settings" on:click={e => { e.stopPropagation(); goto(`/libraries/${lib.id}/settings`); }}>
-                <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-                  <path d="M8 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/>
-                  <path fill-rule="evenodd" d="M8 0a.75.75 0 01.716.527l.502 1.607a5.987 5.987 0 011.29.745l1.648-.567a.75.75 0 01.879.344l1 1.732a.75.75 0 01-.14 1.022l-1.345 1.053a6.02 6.02 0 010 1.476l1.345 1.053a.75.75 0 01.14 1.022l-1 1.732a.75.75 0 01-.879.344l-1.648-.567a5.99 5.99 0 01-1.29.745l-.502 1.607a.75.75 0 01-1.432 0l-.502-1.607a5.989 5.989 0 01-1.29-.745l-1.648.567a.75.75 0 01-.879-.344l-1-1.732a.75.75 0 01.14-1.022l1.345-1.053a6.026 6.026 0 010-1.476L.75 7.511a.75.75 0 01-.14-1.022l1-1.732a.75.75 0 01.879-.344l1.648.567a5.989 5.989 0 011.29-.745L5.928.527A.75.75 0 018 0zm0 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z" clip-rule="evenodd"/>
-                </svg>
-              </button>
-              <button class="tile-btn tile-btn-danger" title="Delete" on:click={e => { e.stopPropagation(); confirmDelete = lib; }}>
-                <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-                  <path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 011.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div class="tile-body">
-            <div class="tile-type">{t.label}</div>
-            <div class="tile-name">{lib.name}</div>
-            {#if (lib.scan_paths ?? []).length > 0}
-              <div class="tile-path">{lib.scan_paths[0]}{lib.scan_paths.length > 1 ? ` +${lib.scan_paths.length - 1}` : ''}</div>
-            {/if}
-          </div>
-        </div>
-      {/each}
-    </div>
-  {/if}
 </div>
 
 {#if confirmDelete}
