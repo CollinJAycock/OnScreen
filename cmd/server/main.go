@@ -440,7 +440,11 @@ func run() error {
 			// request, so admin-UI changes to System ▸ TMDB Rate Limit
 			// take effect without a key rotation or server restart.
 			agentCache = tmdb.New(key, cfg.TMDBRateLimit, "").
-				WithRateProvider(func() int { return cfg.TMDBRateLimit })
+				WithRateProvider(func() int { return cfg.TMDBRateLimit }).
+				// Disk-backed response cache (tmdb subdir under the cache
+				// volume, same convention as animedb/photos). Slashes the
+				// repeat traffic that got a real key revoked — see cache.go.
+				WithCacheDir(filepath.Join(cfg.CachePath, "tmdb"))
 		}
 		return agentCache
 	}

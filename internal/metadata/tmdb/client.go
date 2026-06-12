@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -54,7 +55,18 @@ type Client struct {
 	// stays at its construction-time value (the historical posture).
 	rateSrc        func() int
 	appliedRateRPS int
+
+	// cache, when non-nil, is the disk-backed response cache (see cache.go).
+	// Sits in front of the limiter AND the circuit breaker — a cached answer
+	// is served even while the key is banned, which keeps Fix Match and the
+	// poster picker partially alive during a circuit-open hour.
+	cache *diskCache
 }
+
+// errNotFound is returned for TMDB 404s. The message is load-bearing — it
+// predates the sentinel and callers log it verbatim ("tmdb get episode found
+// no result" flows).
+var errNotFound = errors.New("not found")
 
 // New creates a TMDB client.
 // rateLimit is requests per second (default 5; TMDB tolerates ~40/s in
@@ -88,6 +100,14 @@ func New(apiKey string, rateLimit int, language string) *Client {
 // restart. Returns the client for chaining.
 func (c *Client) WithRateProvider(fn func() int) *Client {
 	c.rateSrc = fn
+	return c
+}
+
+// WithCacheDir enables the disk-backed response cache rooted at dir (see
+// cache.go for TTL semantics). Empty dir or an unwritable root disables
+// caching. Returns the client for chaining.
+func (c *Client) WithCacheDir(dir string) *Client {
+	c.cache = newDiskCache(dir)
 	return c
 }
 
@@ -308,11 +328,10 @@ func (c *Client) SearchMovieCandidates(ctx context.Context, query string, year i
 	}
 	out := make([]metadata.MovieResult, 0, limit)
 	for i := 0; i < limit; i++ {
-		mr, mErr := c.movieToResult(ctx, resp.Results[i])
-		if mErr != nil || mr == nil {
-			continue
-		}
-		out = append(out, *mr)
+		// Lite conversion: no certification fetch. Fix Match doesn't
+		// display content ratings, and converting 10 candidates with
+		// movieToResult cost 10 extra TMDB calls per search.
+		out = append(out, movieToResultLite(resp.Results[i]))
 	}
 	return out, nil
 }
@@ -341,7 +360,8 @@ func (c *Client) SearchTVCandidates(ctx context.Context, query string, year int)
 	}
 	out := make([]metadata.TVShowResult, limit)
 	for i := 0; i < limit; i++ {
-		out[i] = *c.tvToResult(ctx, resp.Results[i])
+		// Lite conversion — see SearchMovieCandidates.
+		out[i] = tvToResultLite(resp.Results[i])
 	}
 	return out, nil
 }
@@ -447,11 +467,14 @@ func (c *Client) GetEpisode(ctx context.Context, showTMDBID, seasonNum, episodeN
 }
 
 // RefreshMovie implements metadata.Agent.
+// append_to_response folds the certification lookup into the detail call —
+// one TMDB request instead of two.
 func (c *Client) RefreshMovie(ctx context.Context, tmdbID int) (*metadata.MovieResult, error) {
 	var movie tmdbMovie
 	path := fmt.Sprintf("/movie/%d", tmdbID)
 	params := url.Values{}
 	params.Set("language", c.language)
+	params.Set("append_to_response", "release_dates")
 	if err := c.get(ctx, path, params, &movie); err != nil {
 		return nil, fmt.Errorf("tmdb refresh movie %d: %w", tmdbID, err)
 	}
@@ -459,18 +482,27 @@ func (c *Client) RefreshMovie(ctx context.Context, tmdbID int) (*metadata.MovieR
 }
 
 // RefreshTV implements metadata.Agent.
+// append_to_response folds the content-rating and external-id lookups into
+// the detail call — one TMDB request instead of three.
 func (c *Client) RefreshTV(ctx context.Context, tmdbID int) (*metadata.TVShowResult, error) {
 	var tv tmdbTV
 	path := fmt.Sprintf("/tv/%d", tmdbID)
 	params := url.Values{}
 	params.Set("language", c.language)
+	params.Set("append_to_response", "content_ratings,external_ids")
 	if err := c.get(ctx, path, params, &tv); err != nil {
 		return nil, fmt.Errorf("tmdb refresh tv %d: %w", tmdbID, err)
 	}
 	result := c.tvToResult(ctx, tv)
 
-	// Fetch external IDs (TVDB) — best-effort.
-	if tvdbID, imdbID, err := c.GetTVExternalIDs(ctx, tmdbID); err == nil {
+	if tv.ExternalIDs != nil {
+		result.TVDBID = tv.ExternalIDs.TVDBID
+		if result.IMDBID == "" {
+			result.IMDBID = tv.ExternalIDs.IMDBID
+		}
+	} else if tvdbID, imdbID, err := c.GetTVExternalIDs(ctx, tmdbID); err == nil {
+		// Fallback for responses without the appended block (shouldn't
+		// happen against real TMDB; keeps old fakes/recordings working).
 		result.TVDBID = tvdbID
 		if result.IMDBID == "" {
 			result.IMDBID = imdbID
@@ -550,6 +582,28 @@ func (c *Client) listImages(ctx context.Context, path string) ([]metadata.Poster
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 func (c *Client) get(ctx context.Context, path string, params url.Values, dest any) error {
+	if params == nil {
+		params = url.Values{}
+	}
+
+	// Cache lookup runs before the circuit breaker and the rate limiter on
+	// purpose: a cached answer costs TMDB nothing and stays available while
+	// the key is banned. The key excludes api_key so a key rotation keeps
+	// the cache warm.
+	var key string
+	if c.cache != nil {
+		key = cacheKey(path + "?" + params.Encode())
+		if body, negative, ok := c.cache.lookup(key); ok {
+			if negative {
+				return errNotFound
+			}
+			if json.Unmarshal(body, dest) == nil {
+				return nil
+			}
+			// Corrupt entry — fall through to a live fetch.
+		}
+	}
+
 	if !c.circuitAllows() {
 		return ErrCircuitOpen
 	}
@@ -558,9 +612,6 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 		return fmt.Errorf("rate limiter: %w", err)
 	}
 
-	if params == nil {
-		params = url.Values{}
-	}
 	params.Set("api_key", c.apiKey)
 
 	u := baseURL + path + "?" + params.Encode()
@@ -576,7 +627,10 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not found")
+		if c.cache != nil {
+			c.cache.store(key, true, nil)
+		}
+		return errNotFound
 	}
 	// 401 = key banned/invalid, 429 = rate-limited. Both mean "stop calling us".
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusTooManyRequests {
@@ -587,7 +641,17 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	return json.NewDecoder(resp.Body).Decode(dest)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read body: %w", err)
+	}
+	if err := json.Unmarshal(body, dest); err != nil {
+		return err
+	}
+	if c.cache != nil {
+		c.cache.store(key, false, body)
+	}
+	return nil
 }
 
 func (c *Client) movieToResult(ctx context.Context, m tmdbMovie) (*metadata.MovieResult, error) {
@@ -596,7 +660,14 @@ func (c *Client) movieToResult(ctx context.Context, m tmdbMovie) (*metadata.Movi
 	for i, g := range m.Genres {
 		genres[i] = g.Name
 	}
-	cert := c.getMovieCertification(ctx, m.ID)
+	// Prefer the append_to_response block (RefreshMovie path); fall back to
+	// the standalone call for flows whose response can't append (search).
+	var cert string
+	if m.ReleaseDates != nil {
+		cert = usCertification(*m.ReleaseDates)
+	} else {
+		cert = c.getMovieCertification(ctx, m.ID)
+	}
 	return &metadata.MovieResult{
 		TMDBID:        m.ID,
 		IMDBID:        m.IMDBID,
@@ -626,7 +697,14 @@ func (c *Client) tvToResult(ctx context.Context, t tmdbTV) *metadata.TVShowResul
 			year = d.Year()
 		}
 	}
-	cert := c.getTVContentRating(ctx, t.ID)
+	// Prefer the append_to_response block (RefreshTV path); fall back to the
+	// standalone call for flows whose response can't append (search).
+	var cert string
+	if t.ContentRatings != nil {
+		cert = usContentRating(*t.ContentRatings)
+	} else {
+		cert = c.getTVContentRating(ctx, t.ID)
+	}
 	return &metadata.TVShowResult{
 		TMDBID:        t.ID,
 		Title:         t.Name,
@@ -641,26 +719,65 @@ func (c *Client) tvToResult(ctx context.Context, t tmdbTV) *metadata.TVShowResul
 	}
 }
 
-// getMovieCertification fetches the US certification (e.g. "PG-13") for a movie.
-// Best-effort: returns "" on any error.
-func (c *Client) getMovieCertification(ctx context.Context, tmdbID int) string {
-	var resp struct {
-		Results []struct {
-			Country      string `json:"iso_3166_1"`
-			ReleaseDates []struct {
-				Certification string `json:"certification"`
-			} `json:"release_dates"`
-		} `json:"results"`
+// movieToResultLite converts a search-result movie without any follow-up
+// TMDB calls (no certification). Used for candidate lists where the rating
+// isn't displayed.
+func movieToResultLite(m tmdbMovie) metadata.MovieResult {
+	release, _ := time.Parse("2006-01-02", m.ReleaseDate)
+	genres := make([]string, len(m.Genres))
+	for i, g := range m.Genres {
+		genres[i] = g.Name
 	}
-	path := fmt.Sprintf("/movie/%d/release_dates", tmdbID)
-	if err := c.get(ctx, path, nil, &resp); err != nil {
-		return ""
+	return metadata.MovieResult{
+		TMDBID:        m.ID,
+		IMDBID:        m.IMDBID,
+		Title:         m.Title,
+		OriginalTitle: m.OriginalTitle,
+		Year:          release.Year(),
+		Summary:       m.Overview,
+		Tagline:       m.Tagline,
+		Rating:        m.VoteAverage,
+		DurationMS:    int64(m.Runtime) * 60 * 1000,
+		Genres:        genres,
+		ReleaseDate:   release,
+		PosterURL:     imageURL(m.PosterPath),
+		FanartURL:     imageURL(m.BackdropPath),
 	}
-	for _, r := range resp.Results {
+}
+
+// tvToResultLite is the TV counterpart of movieToResultLite.
+func tvToResultLite(t tmdbTV) metadata.TVShowResult {
+	genres := make([]string, len(t.Genres))
+	for i, g := range t.Genres {
+		genres[i] = g.Name
+	}
+	var year int
+	if t.FirstAirDate != "" {
+		if d, err := time.Parse("2006-01-02", t.FirstAirDate); err == nil {
+			year = d.Year()
+		}
+	}
+	return metadata.TVShowResult{
+		TMDBID:        t.ID,
+		Title:         t.Name,
+		OriginalTitle: t.OriginalName,
+		FirstAirYear:  year,
+		Summary:       t.Overview,
+		Rating:        t.VoteAverage,
+		Genres:        genres,
+		PosterURL:     imageURL(t.PosterPath),
+		FanartURL:     imageURL(t.BackdropPath),
+	}
+}
+
+// usCertification extracts the US certification (e.g. "PG-13") from a
+// release-dates block.
+func usCertification(rd tmdbReleaseDates) string {
+	for _, r := range rd.Results {
 		if r.Country == "US" {
-			for _, rd := range r.ReleaseDates {
-				if rd.Certification != "" {
-					return rd.Certification
+			for _, d := range r.ReleaseDates {
+				if d.Certification != "" {
+					return d.Certification
 				}
 			}
 		}
@@ -668,25 +785,39 @@ func (c *Client) getMovieCertification(ctx context.Context, tmdbID int) string {
 	return ""
 }
 
-// getTVContentRating fetches the US content rating (e.g. "TV-14") for a TV show.
-// Best-effort: returns "" on any error.
-func (c *Client) getTVContentRating(ctx context.Context, tmdbID int) string {
-	var resp struct {
-		Results []struct {
-			Country string `json:"iso_3166_1"`
-			Rating  string `json:"rating"`
-		} `json:"results"`
-	}
-	path := fmt.Sprintf("/tv/%d/content_ratings", tmdbID)
-	if err := c.get(ctx, path, nil, &resp); err != nil {
-		return ""
-	}
-	for _, r := range resp.Results {
+// usContentRating extracts the US content rating (e.g. "TV-14") from a
+// content-ratings block.
+func usContentRating(cr tmdbContentRatings) string {
+	for _, r := range cr.Results {
 		if r.Country == "US" && r.Rating != "" {
 			return r.Rating
 		}
 	}
 	return ""
+}
+
+// getMovieCertification fetches the US certification (e.g. "PG-13") for a movie.
+// Best-effort: returns "" on any error. Only used by flows whose TMDB
+// response can't carry an append_to_response block (search results).
+func (c *Client) getMovieCertification(ctx context.Context, tmdbID int) string {
+	var resp tmdbReleaseDates
+	path := fmt.Sprintf("/movie/%d/release_dates", tmdbID)
+	if err := c.get(ctx, path, nil, &resp); err != nil {
+		return ""
+	}
+	return usCertification(resp)
+}
+
+// getTVContentRating fetches the US content rating (e.g. "TV-14") for a TV show.
+// Best-effort: returns "" on any error. Only used by flows whose TMDB
+// response can't carry an append_to_response block (search results).
+func (c *Client) getTVContentRating(ctx context.Context, tmdbID int) string {
+	var resp tmdbContentRatings
+	path := fmt.Sprintf("/tv/%d/content_ratings", tmdbID)
+	if err := c.get(ctx, path, nil, &resp); err != nil {
+		return ""
+	}
+	return usContentRating(resp)
 }
 
 func imageURL(path string) string {
@@ -716,6 +847,9 @@ type tmdbMovie struct {
 	PosterPath    string      `json:"poster_path"`
 	BackdropPath  string      `json:"backdrop_path"`
 	Genres        []tmdbGenre `json:"genres"`
+	// Present only on detail responses requested with
+	// append_to_response=release_dates.
+	ReleaseDates *tmdbReleaseDates `json:"release_dates"`
 }
 
 type tmdbTV struct {
@@ -728,6 +862,31 @@ type tmdbTV struct {
 	PosterPath   string      `json:"poster_path"`
 	BackdropPath string      `json:"backdrop_path"`
 	Genres       []tmdbGenre `json:"genres"`
+	// Present only on detail responses requested with
+	// append_to_response=content_ratings,external_ids.
+	ContentRatings *tmdbContentRatings `json:"content_ratings"`
+	ExternalIDs    *tmdbExternalIDs    `json:"external_ids"`
+}
+
+type tmdbReleaseDates struct {
+	Results []struct {
+		Country      string `json:"iso_3166_1"`
+		ReleaseDates []struct {
+			Certification string `json:"certification"`
+		} `json:"release_dates"`
+	} `json:"results"`
+}
+
+type tmdbContentRatings struct {
+	Results []struct {
+		Country string `json:"iso_3166_1"`
+		Rating  string `json:"rating"`
+	} `json:"results"`
+}
+
+type tmdbExternalIDs struct {
+	TVDBID int    `json:"tvdb_id"`
+	IMDBID string `json:"imdb_id"`
 }
 
 type tmdbSeason struct {

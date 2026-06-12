@@ -3,9 +3,11 @@ package tmdb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -462,5 +464,118 @@ func TestImageURL_WithPath(t *testing.T) {
 	got := imageURL("/abc.jpg")
 	if got != imageBaseURL+"/abc.jpg" {
 		t.Errorf("imageURL(/abc.jpg) = %q, want %q", got, imageBaseURL+"/abc.jpg")
+	}
+}
+
+// countingHandler wraps a handler and counts requests per path.
+func countingHandler(t *testing.T, h http.HandlerFunc) (*httptest.Server, *map[string]int) {
+	t.Helper()
+	counts := map[string]int{}
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		// The rewrite transport keeps the real base path ("/3/...").
+		counts[strings.TrimPrefix(r.URL.Path, "/3")]++
+		mu.Unlock()
+		h(w, r)
+	}))
+	return srv, &counts
+}
+
+func TestDiskCache_PositiveHitSkipsHTTP(t *testing.T) {
+	srv, counts := countingHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{
+			"id": 42, "title": "Cached Movie", "release_date": "2020-01-01",
+		}}})
+	})
+	defer srv.Close()
+
+	c := testClient(t, srv).WithCacheDir(t.TempDir())
+	for i := 0; i < 3; i++ {
+		if _, err := c.SearchMovie(context.Background(), "Cached Movie", 2020); err != nil {
+			t.Fatalf("search %d: %v", i, err)
+		}
+	}
+	if got := (*counts)["/search/movie"]; got != 1 {
+		t.Fatalf("HTTP calls: got %d, want 1 (subsequent calls served from disk cache)", got)
+	}
+}
+
+func TestDiskCache_NegativeCaches404(t *testing.T) {
+	srv, counts := countingHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer srv.Close()
+
+	c := testClient(t, srv).WithCacheDir(t.TempDir())
+	for i := 0; i < 3; i++ {
+		_, err := c.GetEpisode(context.Background(), 1, 2013, 1030)
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("call %d: got %v, want not-found error", i, err)
+		}
+	}
+	total := 0
+	for _, n := range *counts {
+		total += n
+	}
+	if total != 1 {
+		t.Fatalf("HTTP calls: got %d, want 1 (404 negatively cached)", total)
+	}
+}
+
+func TestRefreshTV_SingleCallViaAppendToResponse(t *testing.T) {
+	srv, counts := countingHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("append_to_response") != "content_ratings,external_ids" {
+			t.Errorf("missing append_to_response, got %q", r.URL.Query().Get("append_to_response"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20",
+			"content_ratings": map[string]any{"results": []map[string]any{{"iso_3166_1": "US", "rating": "TV-MA"}}},
+			"external_ids":    map[string]any{"tvdb_id": 81189, "imdb_id": "tt0903747"},
+		})
+	})
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	res, err := c.RefreshTV(context.Background(), 1396)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if res.ContentRating != "TV-MA" || res.TVDBID != 81189 || res.IMDBID != "tt0903747" {
+		t.Fatalf("appended fields not used: %+v", res)
+	}
+	total := 0
+	for _, n := range *counts {
+		total += n
+	}
+	if total != 1 {
+		t.Fatalf("HTTP calls: got %d, want 1 (content_ratings + external_ids appended)", total)
+	}
+}
+
+func TestSearchMovieCandidates_SingleCall(t *testing.T) {
+	srv, counts := countingHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		results := make([]map[string]any, 10)
+		for i := range results {
+			results[i] = map[string]any{"id": i + 1, "title": fmt.Sprintf("Movie %d", i+1), "release_date": "2020-01-01"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+	})
+	defer srv.Close()
+
+	c := testClient(t, srv)
+	res, err := c.SearchMovieCandidates(context.Background(), "Movie", 0)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if len(res) != 10 {
+		t.Fatalf("results: got %d, want 10", len(res))
+	}
+	total := 0
+	for _, n := range *counts {
+		total += n
+	}
+	if total != 1 {
+		t.Fatalf("HTTP calls: got %d, want 1 (candidate lists must not fan out per-result lookups)", total)
 	}
 }
