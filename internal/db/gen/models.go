@@ -528,6 +528,7 @@ type User struct {
 	TotpEnabled           bool               `json:"totp_enabled"`
 	MaxConcurrentStreams  *int32             `json:"max_concurrent_streams"`
 	MaxStreamBitrateKbps  *int32             `json:"max_stream_bitrate_kbps"`
+	HubLayout             []byte             `json:"hub_layout"`
 }
 
 type UserFavorite struct {

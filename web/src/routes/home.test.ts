@@ -6,6 +6,8 @@ const mockListLibraries = vi.hoisted(() => vi.fn());
 const mockHubGet = vi.hoisted(() => vi.fn());
 const mockScan = vi.hoisted(() => vi.fn());
 const mockDel = vi.hoisted(() => vi.fn());
+const mockGetPreferences = vi.hoisted(() => vi.fn());
+const mockSetHubLayout = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 
@@ -17,6 +19,7 @@ vi.mock('$lib/api', () => ({
     del: mockDel,
   },
   hubApi: { get: mockHubGet },
+  userApi: { getPreferences: mockGetPreferences, setHubLayout: mockSetHubLayout },
 }));
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
@@ -25,6 +28,8 @@ vi.mock('$lib/stores/toast', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  // Default: user has never customized the hub layout.
+  mockGetPreferences.mockResolvedValue({});
 });
 
 describe('Home page', () => {
@@ -170,5 +175,62 @@ describe('Home page', () => {
         expect(links.length).toBeGreaterThan(0);
       });
     });
+  });
+});
+
+describe('Hub layout customization', () => {
+  beforeEach(() => {
+    localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'admin' }));
+    mockListLibraries.mockResolvedValue([]);
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      trending: [
+        { id: 't1', title: 'Trending Thing', updated_at: '2026-01-01' },
+      ],
+      recently_added_by_library: [
+        { library_id: 'lib-movies', library_name: 'Movies', library_type: 'movie',
+          items: [{ id: 'm1', title: 'Inception', updated_at: '2026-01-01' }] },
+      ],
+    });
+  });
+
+  it('hides rows the saved layout disables', async () => {
+    mockGetPreferences.mockResolvedValue({
+      hub_layout: [{ key: 'trending', enabled: false }],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText(/Recently Added to Movies/)).toBeTruthy());
+    expect(screen.queryByText('Trending this week')).toBeNull();
+  });
+
+  it('orders rows per the saved layout', async () => {
+    mockGetPreferences.mockResolvedValue({
+      hub_layout: [
+        { key: 'library:lib-movies', enabled: true },
+        { key: 'trending', enabled: true },
+      ],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Trending this week')).toBeTruthy());
+    const titles = Array.from(document.querySelectorAll('.hub-title')).map((el) => el.textContent?.trim());
+    const libIdx = titles.findIndex((t) => t?.includes('Recently Added to Movies'));
+    const trendIdx = titles.findIndex((t) => t?.includes('Trending this week'));
+    expect(libIdx).toBeGreaterThanOrEqual(0);
+    expect(trendIdx).toBeGreaterThan(libIdx);
+  });
+
+  it('saves the edited layout', async () => {
+    mockGetPreferences.mockResolvedValue({});
+    mockSetHubLayout.mockResolvedValue(undefined);
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Customize rows')).toBeTruthy());
+    await fireEvent.click(screen.getByText('Customize rows'));
+    await waitFor(() => expect(screen.getByText('Hub rows')).toBeTruthy());
+    await fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(mockSetHubLayout).toHaveBeenCalledTimes(1));
+    const rows = mockSetHubLayout.mock.calls[0][0];
+    expect(rows.map((r: { key: string }) => r.key)).toContain('trending');
+    expect(rows.map((r: { key: string }) => r.key)).toContain('library:lib-movies');
   });
 });

@@ -530,6 +530,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Delete("/users/me/pin", h.User.ClearPIN)
 				r.Get("/users/me/preferences", h.User.GetPreferences)
 				r.Put("/users/me/preferences", h.User.SetPreferences)
+				r.Put("/users/me/hub-layout", h.User.SetHubLayout)
 				r.Put("/users/me/quality-profile", h.User.SetQualityProfile)
 				r.Get("/users/switchable", h.User.ListSwitchable)
 				// Tight per-session cap on top of the handler's per-target

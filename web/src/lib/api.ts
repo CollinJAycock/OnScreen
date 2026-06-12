@@ -750,6 +750,9 @@ export const userApi = {
     api.get<UserPreferences>('/users/me/preferences'),
   setPreferences: (prefs: UserPreferences) =>
     api.put<void>('/users/me/preferences', prefs),
+  // Full ordered hub layout; empty array resets to the default layout.
+  setHubLayout: (rows: HubRowPref[]) =>
+    api.put<void>('/users/me/hub-layout', { rows }),
   setContentRating: (userId: string, maxContentRating: string | null) =>
     api.put<void>(`/users/${userId}/content-rating`, { max_content_rating: maxContentRating }),
   getLibraries: (userId: string) =>
@@ -828,6 +831,17 @@ export interface UserPreferences {
   // setPreferences PUT body can omit it (server treats absent as
   // "leave unchanged" via SQL COALESCE).
   episode_use_show_poster?: boolean;
+  // Hub row customization — absent until the user customizes.
+  hub_layout?: HubRowPref[];
+}
+
+// One entry of the per-user hub layout. key: "continue_tv",
+// "continue_movies", "continue_other", "trending", or "library:<uuid>".
+// Hub rows not present in the saved layout render enabled, after the
+// configured rows — so new libraries appear without re-saving.
+export interface HubRowPref {
+  key: string;
+  enabled: boolean;
 }
 
 // ── Libraries ─────────────────────────────────────────────────────────────────

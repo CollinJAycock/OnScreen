@@ -69,6 +69,7 @@ type UserDB interface {
 	DeleteManagedProfileAdmin(ctx context.Context, id uuid.UUID) error
 	GetUserPreferences(ctx context.Context, id uuid.UUID) (gen.GetUserPreferencesRow, error)
 	UpdateUserPreferences(ctx context.Context, arg gen.UpdateUserPreferencesParams) error
+	UpdateUserHubLayout(ctx context.Context, arg gen.UpdateUserHubLayoutParams) error
 	UpdateUserQualityProfile(ctx context.Context, arg gen.UpdateUserQualityProfileParams) error
 	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
 	UpdateUserStreamCaps(ctx context.Context, arg gen.UpdateUserStreamCapsParams) error
@@ -905,6 +906,21 @@ type preferencesResponse struct {
 	PreferredVideoCodec   *string `json:"preferred_video_codec,omitempty"`
 	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
 	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
+	// HubLayout is the user's hub row customization (order + visibility).
+	// Omitted entirely when the user has never customized — clients render
+	// their default layout.
+	HubLayout []hubRowPref `json:"hub_layout,omitempty"`
+}
+
+// hubRowPref is one entry of the per-user hub layout. Key is a row
+// identifier shared across clients: "continue_tv", "continue_movies",
+// "continue_other", "trending", or "library:<uuid>". Rows present in the
+// hub data but absent from the layout render enabled, after the configured
+// ones, in default order — so new libraries appear without the user having
+// to re-save.
+type hubRowPref struct {
+	Key     string `json:"key"`
+	Enabled bool   `json:"enabled"`
 }
 
 // GetPreferences handles GET /api/v1/users/me/preferences.
@@ -923,7 +939,7 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.Success(w, r, preferencesResponse{
+	resp := preferencesResponse{
 		PreferredAudioLang:    row.PreferredAudioLang,
 		PreferredSubtitleLang: row.PreferredSubtitleLang,
 		MaxContentRating:      row.MaxContentRating,
@@ -933,7 +949,69 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		PreferredVideoCodec:   row.PreferredVideoCodec,
 		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
 		EpisodeUseShowPoster:  row.EpisodeUseShowPoster,
-	})
+	}
+	if len(row.HubLayout) > 0 {
+		// Tolerate a corrupt blob (manual DB edits) by omitting the field —
+		// the client falls back to its default layout.
+		_ = json.Unmarshal(row.HubLayout, &resp.HubLayout)
+	}
+	respond.Success(w, r, resp)
+}
+
+// SetHubLayout handles PUT /api/v1/users/me/hub-layout. Body is the full
+// ordered layout: {"rows": [{"key": "trending", "enabled": false}, ...]}.
+// An empty rows array resets to the default layout.
+func (h *UserHandler) SetHubLayout(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	var body struct {
+		Rows []hubRowPref `json:"rows"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	if len(body.Rows) > 200 {
+		respond.BadRequest(w, r, "too many rows")
+		return
+	}
+	seen := make(map[string]bool, len(body.Rows))
+	for _, row := range body.Rows {
+		if row.Key == "" || len(row.Key) > 64 {
+			respond.BadRequest(w, r, "invalid row key")
+			return
+		}
+		if seen[row.Key] {
+			respond.BadRequest(w, r, "duplicate row key: "+row.Key)
+			return
+		}
+		seen[row.Key] = true
+	}
+
+	var blob []byte
+	if len(body.Rows) > 0 {
+		var err error
+		if blob, err = json.Marshal(body.Rows); err != nil {
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if err := h.db.UpdateUserHubLayout(r.Context(), gen.UpdateUserHubLayoutParams{
+		ID:        claims.UserID,
+		HubLayout: blob, // nil resets to default
+	}); err != nil {
+		h.logger.ErrorContext(r.Context(), "set hub layout", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
 }
 
 // SetPreferences handles PUT /api/v1/users/me/preferences.

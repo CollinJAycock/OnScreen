@@ -189,8 +189,16 @@ RETURNING *;
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
        preferred_video_codec, forced_subtitles_only,
-       episode_use_show_poster
+       episode_use_show_poster, hub_layout
 FROM users
+WHERE id = $1;
+
+-- name: UpdateUserHubLayout :exec
+-- Hub row customization (see migration 00015). Targeted update so the
+-- preferences PUT can't clobber it and vice versa.
+UPDATE users
+SET hub_layout = $2,
+    updated_at = NOW()
 WHERE id = $1;
 
 -- name: UpdateUserPreferences :exec

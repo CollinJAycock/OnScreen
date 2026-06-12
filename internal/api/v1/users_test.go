@@ -70,6 +70,7 @@ func (f *fakeThrottle) ResetFailures(_ context.Context, _ string)               
 // ── mock user DB ────────────────────────────────────────────────────────────
 
 type mockUserDB struct {
+	hubLayout []byte
 	listUsersRows []gen.ListUsersRow
 	listUsersErr  error
 
@@ -135,6 +136,11 @@ func (m *mockUserDB) GetUserPreferences(_ context.Context, _ uuid.UUID) (gen.Get
 	return gen.GetUserPreferencesRow{}, nil
 }
 func (m *mockUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPreferencesParams) error {
+	return nil
+}
+
+func (m *mockUserDB) UpdateUserHubLayout(_ context.Context, arg gen.UpdateUserHubLayoutParams) error {
+	m.hubLayout = arg.HubLayout
 	return nil
 }
 
@@ -1150,5 +1156,44 @@ func TestUser_SetProfileLibraryInherit_ZeroRowsIs404(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", rec.Code)
+	}
+}
+
+func TestSetHubLayout(t *testing.T) {
+	db := &mockUserDB{}
+	h := NewUserHandler(&mockUserService{}).WithDB(db)
+
+	do := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/users/me/hub-layout", strings.NewReader(body))
+		req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+		h.SetHubLayout(rec, req)
+		return rec
+	}
+
+	// Valid layout persists.
+	rec := do(`{"rows":[{"key":"trending","enabled":false},{"key":"continue_tv","enabled":true}]}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(db.hubLayout), `"trending"`) {
+		t.Fatalf("layout not persisted: %s", db.hubLayout)
+	}
+
+	// Empty rows resets (nil blob).
+	if rec := do(`{"rows":[]}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("reset status: got %d, want 204", rec.Code)
+	}
+	if db.hubLayout != nil {
+		t.Fatalf("reset should store nil, got %s", db.hubLayout)
+	}
+
+	// Duplicate keys rejected.
+	if rec := do(`{"rows":[{"key":"trending"},{"key":"trending"}]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate keys: got %d, want 400", rec.Code)
+	}
+	// Empty key rejected.
+	if rec := do(`{"rows":[{"key":""}]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty key: got %d, want 400", rec.Code)
 	}
 }

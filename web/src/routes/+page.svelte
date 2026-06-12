@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { libraryApi, hubApi, assetUrl, type Library, type HubItem, type HubData, type HubLibraryRow } from '$lib/api';
+  import { libraryApi, hubApi, userApi, assetUrl, type Library, type HubItem, type HubData, type HubLibraryRow, type HubRowPref } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
 
@@ -16,6 +16,101 @@
   let confirmDelete: Library | null = null;
   let deleting = false;
   let pollTimer: ReturnType<typeof setInterval>;
+
+  // ── Per-user hub layout (row order + visibility) ─────────────────────────
+  // Saved server-side so it follows the user across devices. Rows absent
+  // from the saved layout render enabled after the configured ones, so new
+  // libraries appear without re-saving.
+  let hubLayout: HubRowPref[] = [];
+  let editMode = false;
+  let editEntries: { key: string; title: string; enabled: boolean; empty: boolean }[] = [];
+  let savingLayout = false;
+
+  type HubSection = {
+    key: string;
+    title: string;
+    items: HubItem[];
+    // 'continue' rows show the progress bar; 'library' rows link their
+    // header and may render square; 'plain' is trending.
+    kind: 'continue' | 'plain' | 'library';
+    libraryId?: string;
+    librarySquare?: boolean;
+  };
+
+  // Canonical section list in default order, derived from hub data.
+  $: availableSections = [
+    { key: 'continue_tv',     title: 'Continue Watching TV Shows', items: continueTV,     kind: 'continue' },
+    { key: 'continue_movies', title: 'Continue Watching Movies',   items: continueMovies, kind: 'continue' },
+    { key: 'continue_other',  title: 'Continue Watching',          items: continueOther,  kind: 'continue' },
+    { key: 'trending',        title: 'Trending this week',         items: trending,       kind: 'plain' },
+    ...recentlyAddedByLibrary.map((row): HubSection => ({
+      key: `library:${row.library_id}`,
+      title: `Recently Added to ${row.library_name}`,
+      items: row.items,
+      kind: 'library',
+      libraryId: row.library_id,
+      librarySquare: isSquareLibrary(row.library_type),
+    })),
+  ] as HubSection[];
+
+  // Saved order first (unknown keys skipped — e.g. a deleted library),
+  // then anything not in the saved layout in default order.
+  $: orderedSections = (() => {
+    const byKey = new Map(availableSections.map((s) => [s.key, s]));
+    const used = new Set<string>();
+    const out: { section: HubSection; enabled: boolean }[] = [];
+    for (const pref of hubLayout) {
+      const s = byKey.get(pref.key);
+      if (!s) continue;
+      used.add(pref.key);
+      out.push({ section: s, enabled: pref.enabled });
+    }
+    for (const s of availableSections) {
+      if (!used.has(s.key)) out.push({ section: s, enabled: true });
+    }
+    return out;
+  })();
+
+  function openEdit() {
+    editEntries = orderedSections.map((e) => ({
+      key: e.section.key,
+      title: e.section.title,
+      enabled: e.enabled,
+      empty: e.section.items.length === 0,
+    }));
+    editMode = true;
+  }
+
+  function moveEntry(i: number, delta: number) {
+    const j = i + delta;
+    if (j < 0 || j >= editEntries.length) return;
+    const next = [...editEntries];
+    [next[i], next[j]] = [next[j], next[i]];
+    editEntries = next;
+  }
+
+  async function saveLayout() {
+    savingLayout = true;
+    const rows = editEntries.map((e) => ({ key: e.key, enabled: e.enabled }));
+    try {
+      await userApi.setHubLayout(rows);
+      hubLayout = rows;
+      editMode = false;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save layout');
+    } finally { savingLayout = false; }
+  }
+
+  async function resetLayout() {
+    savingLayout = true;
+    try {
+      await userApi.setHubLayout([]);
+      hubLayout = [];
+      editMode = false;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to reset layout');
+    } finally { savingLayout = false; }
+  }
 
   onMount(async () => {
     // SSO/SAML/OIDC callback redirects land here with a marker query
@@ -81,11 +176,18 @@
   async function load() {
     loading = true; error = '';
     try {
-      const [libs, hub] = await Promise.all([libraryApi.list(), hubApi.get()]);
+      // Preferences are best-effort: a failure just renders the default
+      // layout rather than blocking the hub.
+      const [libs, hub, prefs] = await Promise.all([
+        libraryApi.list(),
+        hubApi.get(),
+        userApi.getPreferences().catch(() => null),
+      ]);
       libraries = libs;
       unpackContinue(hub);
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
+      hubLayout = prefs?.hub_layout ?? [];
     }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load'; }
     finally { loading = false; }
@@ -188,105 +290,95 @@
       </div>
     </div>
   {:else}
-    <!-- Continue Watching: TV first, then movies, then everything
-         else. Each row is suppressed when its bucket is empty so a
-         user with only movies in flight doesn't see an empty TV row. -->
-    {#each [
-      { title: 'Continue Watching TV Shows', items: continueTV },
-      { title: 'Continue Watching Movies',   items: continueMovies },
-      { title: 'Continue Watching',          items: continueOther },
-    ] as row}
-      {#if row.items.length > 0}
+    <div class="hub-controls">
+      <button class="customize-btn" on:click={openEdit} title="Choose which rows show and their order">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+          <path d="M3 7h12v2H3V7zm0 4h18v2H3v-2zm0 4h9v2H3v-2zM19 4l-2 2 2 2 2-2-2-2z"/>
+        </svg>
+        Customize rows
+      </button>
+    </div>
+
+    {#if editMode}
+      <div class="edit-panel">
+        <h2 class="edit-title">Hub rows</h2>
+        <p class="edit-hint">Reorder rows and toggle which ones you see. This only affects your account.</p>
+        <ul class="edit-list">
+          {#each editEntries as entry, i (entry.key)}
+            <li class="edit-row" class:disabled={!entry.enabled}>
+              <div class="edit-move">
+                <button class="edit-btn" disabled={i === 0} on:click={() => moveEntry(i, -1)} aria-label="Move {entry.title} up">↑</button>
+                <button class="edit-btn" disabled={i === editEntries.length - 1} on:click={() => moveEntry(i, 1)} aria-label="Move {entry.title} down">↓</button>
+              </div>
+              <span class="edit-name">
+                {entry.title}
+                {#if entry.empty}<span class="edit-empty">(empty right now)</span>{/if}
+              </span>
+              <label class="edit-toggle">
+                <input type="checkbox" bind:checked={entry.enabled} />
+                Show
+              </label>
+            </li>
+          {/each}
+        </ul>
+        <div class="edit-actions">
+          <button class="edit-save" on:click={saveLayout} disabled={savingLayout}>
+            {savingLayout ? 'Saving…' : 'Save'}
+          </button>
+          <button class="edit-cancel" on:click={() => (editMode = false)} disabled={savingLayout}>Cancel</button>
+          <button class="edit-reset" on:click={resetLayout} disabled={savingLayout}>Reset to default</button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Hub rows in the user's configured order. Disabled rows and
+         empty rows are suppressed (empty so a user with only movies in
+         flight doesn't see a bare TV row). -->
+    {#each orderedSections as entry (entry.section.key)}
+      {@const section = entry.section}
+      {#if entry.enabled && section.items.length > 0}
         <section class="hub-section">
-          <h2 class="hub-title">{row.title}</h2>
+          {#if section.kind === 'library'}
+            <h2 class="hub-title">
+              <a class="hub-title-link" href={`/libraries/${section.libraryId}?sort=created_at&sort_dir=desc`}>
+                {section.title}
+              </a>
+            </h2>
+          {:else}
+            <h2 class="hub-title">{section.title}</h2>
+          {/if}
           <div class="hub-scroll">
-            {#each row.items as item (item.id)}
-              {@const art = item.poster_path ?? item.thumb_path}
-              <a class="hub-card" class:square={isSquare(item)} href={hubHref(item)}>
+            {#each section.items as item (item.id)}
+              {@const art = section.kind === 'library' ? item.poster_path : (item.poster_path ?? item.thumb_path)}
+              {@const square = section.kind === 'library' ? section.librarySquare : (section.kind === 'continue' && isSquare(item))}
+              <a class="hub-card" class:square href={hubHref(item)}>
                 {#if art}
                   <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
                        srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
                        sizes="(max-width: 768px) 130px, 220px"
                        alt={item.title} loading="lazy" />
                 {:else}
-                  <div class="hub-poster-blank">
+                  <div class="hub-poster-blank" class:square>
                     <span>{item.title[0]?.toUpperCase()}</span>
                   </div>
                 {/if}
-                <div class="hub-progress">
-                  <div class="hub-progress-bar" style="width:{progressPct(item)}%"></div>
-                </div>
-                <div class="hub-label">{item.title}</div>
-                {#if item.year}<div class="hub-year">{item.year}</div>{/if}
+                {#if section.kind === 'continue'}
+                  <div class="hub-progress">
+                    <div class="hub-progress-bar" style="width:{progressPct(item)}%"></div>
+                  </div>
+                {/if}
+                {#if section.kind === 'library' && item.show_title}
+                  <div class="hub-label">{item.show_title}</div>
+                  <div class="hub-sublabel">{item.title}</div>
+                {:else}
+                  <div class="hub-label">{item.title}</div>
+                  {#if item.year}<div class="hub-year">{item.year}</div>{/if}
+                {/if}
               </a>
             {/each}
           </div>
         </section>
       {/if}
-    {/each}
-
-    <!-- Trending — what others are watching across the library this week. -->
-    {#if trending.length > 0}
-      <section class="hub-section">
-        <h2 class="hub-title">Trending this week</h2>
-        <div class="hub-scroll">
-          {#each trending as item (item.id)}
-            {@const art = item.poster_path ?? item.thumb_path}
-            <a class="hub-card" href={hubHref(item)}>
-              {#if art}
-                <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
-                     srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
-                     sizes="(max-width: 768px) 130px, 220px"
-                     alt={item.title} loading="lazy" />
-              {:else}
-                <div class="hub-poster-blank">
-                  <span>{item.title[0]?.toUpperCase()}</span>
-                </div>
-              {/if}
-              <div class="hub-label">{item.title}</div>
-              {#if item.year}<div class="hub-year">{item.year}</div>{/if}
-            </a>
-          {/each}
-        </div>
-      </section>
-    {/if}
-
-    <!-- Per-library recently added — one strip per library. The header
-         link carries the sort state so clicking lands on the library
-         page already sorted by created_at descending — same view the
-         shelf is showing, just with the full pagination + filters. -->
-    {#each recentlyAddedByLibrary as row (row.library_id)}
-      {@const square = isSquareLibrary(row.library_type)}
-      <section class="hub-section">
-        <h2 class="hub-title">
-          <a class="hub-title-link" href={`/libraries/${row.library_id}?sort=created_at&sort_dir=desc`}>
-            Recently Added to {row.library_name}
-          </a>
-        </h2>
-        <div class="hub-scroll">
-          {#each row.items as item (item.id)}
-            <a class="hub-card" class:square href={hubHref(item)}>
-              {#if item.poster_path}
-                <img src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)}
-                     srcset="{assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=450`)} 450w"
-                     sizes="(max-width: 768px) 130px, 220px"
-                     alt={item.title} loading="lazy" />
-              {:else}
-                <div class="hub-poster-blank" class:square>
-                  <span>{item.title[0]?.toUpperCase()}</span>
-                </div>
-              {/if}
-              {#if item.show_title}
-                <div class="hub-label">{item.show_title}</div>
-                <div class="hub-sublabel">{item.title}</div>
-              {:else}
-                <div class="hub-label">{item.title}</div>
-                {#if item.year}<div class="hub-year">{item.year}</div>{/if}
-              {/if}
-            </a>
-          {/each}
-        </div>
-      </section>
     {/each}
   {/if}
 
@@ -398,6 +490,55 @@
 
   /* ── Hub rows ─────────────────────────────────────────────────────────────── */
   .hub-section { margin-bottom: 2.5rem; }
+
+  /* ── Hub customization ─────────────────────────────────────────────── */
+  .hub-controls { display: flex; justify-content: flex-end; margin-bottom: 0.5rem; }
+  .customize-btn {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    font-size: 0.75rem; padding: 0.35rem 0.7rem; border-radius: 6px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); cursor: pointer;
+  }
+  .customize-btn:hover { color: var(--text-primary); border-color: var(--border-strong); }
+
+  .edit-panel {
+    background: var(--bg-elevated, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .edit-title { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.25rem; }
+  .edit-hint { font-size: 0.78rem; color: var(--text-muted); margin: 0 0 0.8rem; }
+  .edit-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .edit-row {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 7px;
+  }
+  .edit-row.disabled .edit-name { color: var(--text-muted); text-decoration: line-through; }
+  .edit-move { display: flex; gap: 0.25rem; }
+  .edit-btn {
+    width: 1.7rem; height: 1.7rem; border-radius: 5px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    color: var(--text-secondary); cursor: pointer; line-height: 1;
+  }
+  .edit-btn:disabled { opacity: 0.35; cursor: default; }
+  .edit-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+  .edit-name { flex: 1; font-size: 0.85rem; }
+  .edit-empty { color: var(--text-muted); font-size: 0.72rem; margin-left: 0.4rem; }
+  .edit-toggle { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; color: var(--text-secondary); cursor: pointer; }
+  .edit-actions { display: flex; gap: 0.6rem; margin-top: 0.9rem; }
+  .edit-save {
+    padding: 0.4rem 1rem; border-radius: 6px; border: none;
+    background: var(--accent); color: #fff; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  }
+  .edit-cancel, .edit-reset {
+    padding: 0.4rem 0.8rem; border-radius: 6px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-secondary); font-size: 0.8rem; cursor: pointer;
+  }
+  .edit-reset { margin-left: auto; }
+  .edit-save:disabled, .edit-cancel:disabled, .edit-reset:disabled { opacity: 0.6; cursor: default; }
   .hub-title {
     font-size: 1.1rem;
     font-weight: 700;
