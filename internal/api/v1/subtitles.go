@@ -15,6 +15,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/observability"
@@ -557,6 +558,20 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.checkAccess(w, r, item.LibraryID) {
 		return
+	}
+	// Content-rating ceiling: a restricted profile with library access to a
+	// mixed-rating library shouldn't pull the subtitle text of an over-ceiling
+	// item (the video bytes are already gated on StreamFile/transcode; this
+	// closes the metadata-leak gap the security scan flagged).
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.Forbidden(w, r)
+			return
+		}
 	}
 	data, err := os.ReadFile(row.StoragePath)
 	if err != nil {

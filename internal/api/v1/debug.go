@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -362,6 +361,3 @@ func (h *DebugHandler) PprofSymbol(w http.ResponseWriter, r *http.Request) {
 func (h *DebugHandler) PprofTrace(w http.ResponseWriter, r *http.Request) {
 	httppprof.Trace(w, r)
 }
-
-// Compile-time check: respond.JSON should accept the snapshot struct.
-var _ = json.Marshal

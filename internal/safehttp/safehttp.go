@@ -13,7 +13,6 @@
 package safehttp
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -207,5 +206,3 @@ func LocalDevice() *http.Client {
 }
 
 // ResolveContextKey ensures the package exports something that takes a
-// context — keeps unused-import checkers happy during refactors.
-var _ = context.Background

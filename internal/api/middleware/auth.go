@@ -240,10 +240,6 @@ func (a *Authenticator) epochValid(ctx context.Context, claims *auth.Claims) boo
 	return claims.SessionEpoch == current
 }
 
-// ensure uuid package stays imported even when only used inside the
-// interface declaration above.
-var _ uuid.UUID
-
 // AdminRequired rejects non-admin users with 403.
 func (a *Authenticator) AdminRequired(next http.Handler) http.Handler {
 	return a.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
