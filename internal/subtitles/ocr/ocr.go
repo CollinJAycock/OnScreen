@@ -146,7 +146,6 @@ func (e *Engine) Run(ctx context.Context, inputPath string, absStreamIndex int, 
 	e.logger().DebugContext(ctx, "ocr: rendered frames", "count", len(pngs), "events", len(events))
 
 	tessLang := LangToTesseract(lang)
-	cues := make([]Cue, 0, len(pngs))
 	maxN := len(pngs)
 	if len(events) < maxN {
 		// Trust event count — mpdecimate occasionally lets a small ringing
@@ -154,6 +153,31 @@ func (e *Engine) Run(ctx context.Context, inputPath string, absStreamIndex int, 
 		// after the divergence.
 		maxN = len(events)
 	}
+	usePngs := pngs[:maxN]
+	cues := make([]Cue, 0, maxN)
+
+	// Fast path: OCR the whole stream in ONE tesseract process via a list
+	// file, so the ~15 MB LSTM model is loaded once instead of once per cue.
+	// On a feature-length film that per-cue process+model-load overhead
+	// dominated the run (minutes → tens of minutes). Falls back to per-cue on
+	// any tesseract-version quirk so correctness never depends on batch mode.
+	if texts, err := e.runTesseractBatch(ctx, usePngs, tessLang, workDir); err == nil {
+		for i, raw := range texts {
+			text := cleanText(raw)
+			if text == "" {
+				continue
+			}
+			ev := events[i]
+			cues = append(cues, Cue{StartMS: ev.StartMS, EndMS: ev.EndMS, Text: text})
+		}
+		return cues, nil
+	} else if ctx.Err() != nil {
+		return nil, ctx.Err()
+	} else {
+		e.logger().WarnContext(ctx, "ocr: batch tesseract failed; falling back to per-cue", "err", err)
+	}
+
+	// Fallback: one tesseract process per cue.
 	for i := 0; i < maxN; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -271,6 +295,53 @@ func (e *Engine) runTesseract(ctx context.Context, pngPath, lang string) (string
 		return "", fmt.Errorf("%w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+// runTesseractBatch OCRs every png in a single tesseract invocation by passing
+// a list file (one image path per line). Tesseract loads the language model
+// once and emits the pages on stdout in input order, separated by a form-feed
+// (\f). Returns one raw string per input image. Returns an error — so Run can
+// fall back to per-cue — when tesseract fails or the page count doesn't line up
+// with the input (guards against tesseract-version differences in list-mode /
+// page-separator behaviour).
+func (e *Engine) runTesseractBatch(ctx context.Context, pngs []string, lang, workDir string) ([]string, error) {
+	if len(pngs) == 0 {
+		return nil, nil
+	}
+	listPath := filepath.Join(workDir, "images.txt")
+	if err := os.WriteFile(listPath, []byte(strings.Join(pngs, "\n")+"\n"), 0o644); err != nil {
+		return nil, fmt.Errorf("write image list: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, e.tesseract(), listPath, "stdout", "-l", lang)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	pages, ok := splitTesseractPages(stdout.String(), len(pngs))
+	if !ok {
+		return nil, fmt.Errorf("tesseract batch produced a page count that doesn't match %d images", len(pngs))
+	}
+	return pages, nil
+}
+
+// splitTesseractPages splits tesseract's multi-image stdout into one string
+// per input image. Pages are form-feed separated; some tesseract versions add
+// a trailing separator after the final page, so a single trailing empty page
+// is tolerated. Returns ok=false when the count can't be reconciled with want,
+// signalling the caller to fall back to per-image OCR (so a version quirk
+// never silently misaligns cue text against timings).
+func splitTesseractPages(out string, want int) ([]string, bool) {
+	pages := strings.Split(out, "\f")
+	// Tolerate one trailing empty page from a trailing form-feed.
+	if n := len(pages); n == want+1 && strings.TrimSpace(pages[n-1]) == "" {
+		pages = pages[:n-1]
+	}
+	if len(pages) != want {
+		return nil, false
+	}
+	return pages, true
 }
 
 // cleanText normalizes Tesseract output: collapse whitespace, drop empty

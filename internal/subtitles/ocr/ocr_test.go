@@ -183,3 +183,62 @@ func TestEngineDefaults(t *testing.T) {
 		t.Errorf("custom paths/canvas not honored: %+v", custom)
 	}
 }
+
+func TestSplitTesseractPages(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want int
+		ok   bool
+		exp  []string // checked when ok
+	}{
+		{
+			name: "exact pages, no trailing separator",
+			out:  "Hello\f World\f Third",
+			want: 3, ok: true,
+			exp: []string{"Hello", " World", " Third"},
+		},
+		{
+			name: "trailing form-feed adds one empty page (tolerated)",
+			out:  "A\fB\fC\f",
+			want: 3, ok: true,
+			exp: []string{"A", "B", "C"},
+		},
+		{
+			name: "empty middle page keeps alignment (blank cue)",
+			out:  "line one\f\fline three\f",
+			want: 3, ok: true,
+			exp: []string{"line one", "", "line three"},
+		},
+		{
+			name: "count mismatch → not ok (caller falls back)",
+			out:  "only\fone\fbut\ffour",
+			want: 3, ok: false,
+		},
+		{
+			name: "single image, no separator",
+			out:  "just one cue",
+			want: 1, ok: true,
+			exp: []string{"just one cue"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := splitTesseractPages(tc.out, tc.want)
+			if ok != tc.ok {
+				t.Fatalf("ok: got %v, want %v", ok, tc.ok)
+			}
+			if !tc.ok {
+				return
+			}
+			if len(got) != len(tc.exp) {
+				t.Fatalf("len: got %d, want %d (%q)", len(got), len(tc.exp), got)
+			}
+			for i := range got {
+				if got[i] != tc.exp[i] {
+					t.Fatalf("page %d: got %q, want %q", i, got[i], tc.exp[i])
+				}
+			}
+		})
+	}
+}
