@@ -12,6 +12,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/domain/people"
 )
 
@@ -55,6 +57,10 @@ type fakePeopleItems struct {
 	resolveTMDB   *int
 	resolveErr    error
 	resolveCalled bool
+
+	accessLibID    uuid.UUID
+	accessCR       string
+	accessNotFound bool // default false → ItemAccessInfo reports the item exists
 }
 
 func (f *fakePeopleItems) GetItemTypeAndTMDB(_ context.Context, _ uuid.UUID) (string, *int, error) {
@@ -63,6 +69,9 @@ func (f *fakePeopleItems) GetItemTypeAndTMDB(_ context.Context, _ uuid.UUID) (st
 func (f *fakePeopleItems) ResolveTMDBID(_ context.Context, _ uuid.UUID) (*int, error) {
 	f.resolveCalled = true
 	return f.resolveTMDB, f.resolveErr
+}
+func (f *fakePeopleItems) ItemAccessInfo(_ context.Context, _ uuid.UUID) (uuid.UUID, string, bool) {
+	return f.accessLibID, f.accessCR, !f.accessNotFound
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -234,6 +243,106 @@ func TestPeople_Filmography_ReturnsEntries(t *testing.T) {
 	}
 	if env.Data[0].Title != "The Matrix" || env.Data[0].Character != "Neo" {
 		t.Errorf("first entry = %+v", env.Data[0])
+	}
+}
+
+// fakePeopleAccess satisfies LibraryAccessChecker for the gate tests.
+type fakePeopleAccess struct{ allowed map[uuid.UUID]struct{} }
+
+func (f fakePeopleAccess) CanAccessLibrary(_ context.Context, _, libID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin || f.allowed == nil {
+		return true, nil
+	}
+	_, ok := f.allowed[libID]
+	return ok, nil
+}
+func (f fakePeopleAccess) AllowedLibraryIDs(_ context.Context, _ uuid.UUID, isAdmin bool) (map[uuid.UUID]struct{}, error) {
+	if isAdmin {
+		return nil, nil
+	}
+	return f.allowed, nil
+}
+
+func withRatingClaims(req *http.Request, c *auth.Claims) *http.Request {
+	return req.WithContext(middleware.WithClaims(req.Context(), c))
+}
+
+// TestPeople_Credits_ContentRatingDenied: a restricted profile is 404'd on an
+// over-ceiling item BEFORE GetCredits runs (no metadata leak, no lazy TMDB fetch).
+func TestPeople_Credits_ContentRatingDenied(t *testing.T) {
+	itemID := uuid.New()
+	items := &fakePeopleItems{itemType: "movie", accessCR: "R"}
+	svc := &fakePeopleService{}
+	h := NewPeopleHandler(svc, items, slog.Default())
+
+	rec := httptest.NewRecorder()
+	req := withRatingClaims(peopleReq(http.MethodGet, "/", itemID.String()),
+		&auth.Claims{UserID: uuid.New(), MaxContentRating: "TV-14"})
+	h.Credits(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.gotTMDB != nil {
+		t.Error("GetCredits must not run when the item is over the rating ceiling")
+	}
+}
+
+// TestPeople_Credits_LibraryDenied: a caller without a grant to the item's
+// library is 404'd before GetCredits.
+func TestPeople_Credits_LibraryDenied(t *testing.T) {
+	itemID := uuid.New()
+	libID := uuid.New()
+	items := &fakePeopleItems{itemType: "movie", accessLibID: libID}
+	svc := &fakePeopleService{}
+	h := NewPeopleHandler(svc, items, slog.Default()).
+		WithLibraryAccess(fakePeopleAccess{allowed: map[uuid.UUID]struct{}{}}) // grants nothing
+
+	rec := httptest.NewRecorder()
+	req := withRatingClaims(peopleReq(http.MethodGet, "/", itemID.String()), &auth.Claims{UserID: uuid.New()})
+	h.Credits(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", rec.Code)
+	}
+	if svc.gotTMDB != nil {
+		t.Error("GetCredits must not run without library access")
+	}
+}
+
+// TestPeople_Filmography_FiltersByAccessAndRating: entries outside the caller's
+// granted libraries or above the content-rating ceiling are dropped.
+func TestPeople_Filmography_FiltersByAccessAndRating(t *testing.T) {
+	libAllowed := uuid.New()
+	libDenied := uuid.New()
+	pg := "PG"
+	r := "R"
+	svc := &fakePeopleService{
+		films: []people.FilmographyEntry{
+			{ItemID: uuid.New(), LibraryID: libAllowed, Title: "Kept", Type: "movie", ContentRating: &pg, Role: "cast"},
+			{ItemID: uuid.New(), LibraryID: libDenied, Title: "OtherLibrary", Type: "movie", ContentRating: &pg, Role: "cast"},
+			{ItemID: uuid.New(), LibraryID: libAllowed, Title: "OverCeiling", Type: "movie", ContentRating: &r, Role: "cast"},
+		},
+	}
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).
+		WithLibraryAccess(fakePeopleAccess{allowed: map[uuid.UUID]struct{}{libAllowed: {}}})
+
+	rec := httptest.NewRecorder()
+	req := withRatingClaims(peopleReq(http.MethodGet, "/", uuid.New().String()),
+		&auth.Claims{UserID: uuid.New(), MaxContentRating: "PG-13"})
+	h.Filmography(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d", rec.Code)
+	}
+	var env struct {
+		Data []filmographyEntryResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data) != 1 || env.Data[0].Title != "Kept" {
+		t.Fatalf("want exactly [Kept], got %+v", env.Data)
 	}
 }
 

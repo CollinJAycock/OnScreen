@@ -19,6 +19,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
@@ -84,6 +85,20 @@ func (h *BookHandler) Page(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
+	}
+	// Content-rating ceiling. Library access alone is not enough: a restricted
+	// profile sharing a mixed-rating book library would otherwise read an
+	// over-ceiling title page-by-page via this endpoint (GET /items/{id} already
+	// blocks it). 404 (not 403) to match this handler's existence-hiding posture.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.NotFound(w, r)
+			return
+		}
 	}
 	if item.Type != "book" {
 		// Endpoint is book-specific; use the regular file streaming path

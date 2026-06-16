@@ -15,6 +15,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/trickplay"
@@ -244,6 +245,18 @@ func (h *TrickplayHandler) requireItemAccess(w http.ResponseWriter, r *http.Requ
 			return uuid.Nil, false
 		}
 		if !ok {
+			respond.NotFound(w, r)
+			return uuid.Nil, false
+		}
+		// Content-rating ceiling. Sprites are downsampled frame grabs of the
+		// real video, so library ACL alone would leak over-ceiling visual
+		// content to a restricted profile (same gap closed on the artwork
+		// server). 404 to keep the absence indistinguishable from a missing item.
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
 			respond.NotFound(w, r)
 			return uuid.Nil, false
 		}

@@ -47,7 +47,8 @@ ORDER BY
 
 -- name: ListFilmographyForPerson :many
 SELECT mc.role, mc.character, mc.job, mc.ord,
-       mi.id, mi.title, mi.type, mi.year, mi.poster_path, mi.rating, mi.library_id
+       mi.id, mi.title, mi.type, mi.year, mi.poster_path, mi.rating, mi.library_id,
+       mi.content_rating
 FROM media_credits mc
 JOIN media_items mi ON mi.id = mc.media_item_id
 WHERE mc.person_id = $1 AND mi.deleted_at IS NULL

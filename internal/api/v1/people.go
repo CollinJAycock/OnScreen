@@ -10,7 +10,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/people"
 )
 
@@ -29,16 +31,28 @@ type PeopleService interface {
 type PeopleItemLookup interface {
 	GetItemTypeAndTMDB(ctx context.Context, id uuid.UUID) (itemType string, tmdbID *int, err error)
 	ResolveTMDBID(ctx context.Context, id uuid.UUID) (*int, error)
+	// ItemAccessInfo returns the owning library and content rating so the
+	// credits endpoint can enforce the library ACL + content-rating ceiling.
+	// found=false when the item doesn't exist.
+	ItemAccessInfo(ctx context.Context, id uuid.UUID) (libraryID uuid.UUID, contentRating string, found bool)
 }
 
 type PeopleHandler struct {
 	svc    PeopleService
 	items  PeopleItemLookup
+	access LibraryAccessChecker
 	logger *slog.Logger
 }
 
 func NewPeopleHandler(svc PeopleService, items PeopleItemLookup, logger *slog.Logger) *PeopleHandler {
 	return &PeopleHandler{svc: svc, items: items, logger: logger}
+}
+
+// WithLibraryAccess wires the per-user library ACL + (via claims) content-rating
+// ceiling used to gate credits and filter filmography. nil = no gate (dev/test).
+func (h *PeopleHandler) WithLibraryAccess(a LibraryAccessChecker) *PeopleHandler {
+	h.access = a
+	return h
 }
 
 type personSummaryResponse struct {
@@ -88,6 +102,19 @@ func (h *PeopleHandler) Credits(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid id")
 		return
 	}
+	// Access gate BEFORE GetCredits — credits is an item-scoped endpoint and on a
+	// cache miss drives a lazy TMDB fetch on the operator's quota, so a caller
+	// who can't see the item must be turned away here (library ACL + rating
+	// ceiling), matching ItemHandler.Get. 404 throughout to avoid an existence
+	// oracle around the gated detail endpoint.
+	libID, contentRating, ok := h.items.ItemAccessInfo(r.Context(), id)
+	if !ok {
+		respond.NotFound(w, r)
+		return
+	}
+	if !h.allowItem(w, r, libID, contentRating) {
+		return
+	}
 	itemType, tmdbID, err := h.items.GetItemTypeAndTMDB(r.Context(), id)
 	if err != nil {
 		respond.NotFound(w, r)
@@ -120,6 +147,34 @@ func (h *PeopleHandler) Credits(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respond.Success(w, r, out)
+}
+
+// allowItem enforces the per-library ACL and the per-user content-rating ceiling
+// for a single item, writing a 404 and returning false when the caller may not
+// see it (404 not 403 so it can't be used as an existence oracle). A nil access
+// checker (dev/test) skips the ACL; an empty MaxContentRating skips the ceiling.
+func (h *PeopleHandler) allowItem(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID, contentRating string) bool {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if h.access != nil {
+		if claims == nil {
+			respond.NotFound(w, r)
+			return false
+		}
+		ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, libraryID, claims.IsAdmin)
+		if err != nil {
+			respond.InternalError(w, r)
+			return false
+		}
+		if !ok {
+			respond.NotFound(w, r)
+			return false
+		}
+	}
+	if claims != nil && !contentrating.IsAllowed(contentRating, claims.MaxContentRating) {
+		respond.NotFound(w, r)
+		return false
+	}
+	return true
 }
 
 // GetPerson handles GET /api/v1/people/{id}.
@@ -164,9 +219,40 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	out := make([]filmographyEntryResponse, len(entries))
-	for i, e := range entries {
-		out[i] = filmographyEntryResponse{
+
+	// Filter to what the caller may see. The query joins media_items across the
+	// whole library set with no per-user predicate, so without this a restricted
+	// profile could enumerate titles in libraries it can't access and items above
+	// its content-rating ceiling — every sibling listing injects both filters.
+	claims := middleware.ClaimsFromContext(r.Context())
+	maxRating := ""
+	var allowed map[uuid.UUID]struct{}
+	if claims != nil {
+		maxRating = claims.MaxContentRating
+		if h.access != nil {
+			allowed, err = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+			if err != nil {
+				respond.InternalError(w, r)
+				return
+			}
+		}
+	}
+
+	out := make([]filmographyEntryResponse, 0, len(entries))
+	for _, e := range entries {
+		if allowed != nil { // nil = admin / unrestricted; non-nil = explicit grant set
+			if _, ok := allowed[e.LibraryID]; !ok {
+				continue
+			}
+		}
+		cr := ""
+		if e.ContentRating != nil {
+			cr = *e.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, maxRating) {
+			continue
+		}
+		out = append(out, filmographyEntryResponse{
 			ItemID:     e.ItemID,
 			LibraryID:  e.LibraryID,
 			Title:      e.Title,
@@ -177,7 +263,7 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 			Role:       e.Role,
 			Character:  e.Character,
 			Job:        e.Job,
-		}
+		})
 	}
 	respond.Success(w, r, out)
 }

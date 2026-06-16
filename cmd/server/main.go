@@ -1248,7 +1248,7 @@ func run() error {
 		agentFn:  agentFn,
 		enricher: metaAgent,
 		logger:   logger,
-	}, logger)
+	}, logger).WithLibraryAccess(libSvc)
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	h := &api.Handlers{

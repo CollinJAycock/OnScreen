@@ -33,6 +33,22 @@ func (l *peopleItemLookup) GetItemTypeAndTMDB(ctx context.Context, id uuid.UUID)
 	return item.Type, item.TMDBID, nil
 }
 
+// ItemAccessInfo returns the owning library and content rating for an item so
+// the credits handler can apply the library ACL + content-rating ceiling before
+// returning cast/crew (and before driving a lazy TMDB fetch). found=false maps
+// to 404.
+func (l *peopleItemLookup) ItemAccessInfo(ctx context.Context, id uuid.UUID) (uuid.UUID, string, bool) {
+	item, err := l.svc.GetItem(ctx, id)
+	if err != nil {
+		return uuid.Nil, "", false
+	}
+	cr := ""
+	if item.ContentRating != nil {
+		cr = *item.ContentRating
+	}
+	return item.LibraryID, cr, true
+}
+
 // ResolveTMDBID auto-heals items missing a tmdb_id by searching TMDB by
 // title+year and persisting the match. Used so the lazy credit fetch can
 // work on libraries scanned before tmdb_id was reliably stored.
@@ -178,16 +194,17 @@ func (a *peopleAdapter) ListFilmographyForPerson(ctx context.Context, personID u
 			character = *r.Character
 		}
 		out[i] = people.FilmographyEntry{
-			ItemID:     r.ID,
-			LibraryID:  r.LibraryID,
-			Title:      r.Title,
-			Type:       r.Type,
-			Year:       int32PtrToIntPtr(r.Year),
-			PosterPath: r.PosterPath,
-			Rating:     numericToFloat64Ptr(r.Rating),
-			Role:       r.Role,
-			Character:  character,
-			Job:        r.Job,
+			ItemID:        r.ID,
+			LibraryID:     r.LibraryID,
+			Title:         r.Title,
+			Type:          r.Type,
+			Year:          int32PtrToIntPtr(r.Year),
+			PosterPath:    r.PosterPath,
+			Rating:        numericToFloat64Ptr(r.Rating),
+			ContentRating: r.ContentRating,
+			Role:          r.Role,
+			Character:     character,
+			Job:           r.Job,
 		}
 	}
 	return out, nil

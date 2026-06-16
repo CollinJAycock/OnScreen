@@ -1061,6 +1061,25 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Content-rating ceiling. Mirror Get for the parent, and filter the children
+	// by the caller's ceiling — every other listing (libraries.Items, hub,
+	// search, collections) injects MaxRatingRank, so a restricted profile must
+	// not be able to enumerate an over-ceiling parent's children here.
+	var maxRating string
+	var userID uuid.UUID
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		maxRating = claims.MaxContentRating
+		userID = claims.UserID
+		pcr := ""
+		if parent.ContentRating != nil {
+			pcr = *parent.ContentRating
+		}
+		if !contentrating.IsAllowed(pcr, maxRating) {
+			respond.Forbidden(w, r)
+			return
+		}
+	}
+
 	children, err := h.media.ListChildren(r.Context(), id)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list item children", "id", id, "err", err)
@@ -1068,13 +1087,15 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID uuid.UUID
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-		userID = claims.UserID
-	}
-
-	out := make([]ChildItemResponse, len(children))
-	for i, c := range children {
+	out := make([]ChildItemResponse, 0, len(children))
+	for _, c := range children {
+		cr := ""
+		if c.ContentRating != nil {
+			cr = *c.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, maxRating) {
+			continue
+		}
 		var viewOffsetMS int64
 		var watched bool
 		if userID != uuid.Nil {
@@ -1086,7 +1107,7 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 				watched = true
 			}
 		}
-		out[i] = ChildItemResponse{
+		out = append(out, ChildItemResponse{
 			ID:           c.ID.String(),
 			Title:        c.Title,
 			Type:         c.Type,
@@ -1102,7 +1123,7 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 			Watched:      watched,
 			CreatedAt:    c.CreatedAt,
 			UpdatedAt:    c.UpdatedAt.UnixMilli(),
-		}
+		})
 	}
 	respond.List(w, r, out, int64(len(out)), "")
 }

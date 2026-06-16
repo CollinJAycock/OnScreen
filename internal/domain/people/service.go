@@ -53,16 +53,17 @@ type Credit struct {
 
 // FilmographyEntry is one item a person worked on.
 type FilmographyEntry struct {
-	ItemID     uuid.UUID
-	LibraryID  uuid.UUID
-	Title      string
-	Type       string
-	Year       *int
-	PosterPath *string
-	Rating     *float64
-	Role       string
-	Character  string
-	Job        string
+	ItemID        uuid.UUID
+	LibraryID     uuid.UUID
+	Title         string
+	Type          string
+	Year          *int
+	PosterPath    *string
+	Rating        *float64
+	ContentRating *string
+	Role          string
+	Character     string
+	Job           string
 }
 
 // Querier is the subset of generated DB calls this service needs.

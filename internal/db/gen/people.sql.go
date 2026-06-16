@@ -155,7 +155,8 @@ func (q *Queries) ListCreditsForItem(ctx context.Context, mediaItemID uuid.UUID)
 
 const listFilmographyForPerson = `-- name: ListFilmographyForPerson :many
 SELECT mc.role, mc.character, mc.job, mc.ord,
-       mi.id, mi.title, mi.type, mi.year, mi.poster_path, mi.rating, mi.library_id
+       mi.id, mi.title, mi.type, mi.year, mi.poster_path, mi.rating, mi.library_id,
+       mi.content_rating
 FROM media_credits mc
 JOIN media_items mi ON mi.id = mc.media_item_id
 WHERE mc.person_id = $1 AND mi.deleted_at IS NULL
@@ -163,17 +164,18 @@ ORDER BY mi.year DESC NULLS LAST, mi.title
 `
 
 type ListFilmographyForPersonRow struct {
-	Role       string         `json:"role"`
-	Character  *string        `json:"character"`
-	Job        string         `json:"job"`
-	Ord        int32          `json:"ord"`
-	ID         uuid.UUID      `json:"id"`
-	Title      string         `json:"title"`
-	Type       string         `json:"type"`
-	Year       *int32         `json:"year"`
-	PosterPath *string        `json:"poster_path"`
-	Rating     pgtype.Numeric `json:"rating"`
-	LibraryID  uuid.UUID      `json:"library_id"`
+	Role          string         `json:"role"`
+	Character     *string        `json:"character"`
+	Job           string         `json:"job"`
+	Ord           int32          `json:"ord"`
+	ID            uuid.UUID      `json:"id"`
+	Title         string         `json:"title"`
+	Type          string         `json:"type"`
+	Year          *int32         `json:"year"`
+	PosterPath    *string        `json:"poster_path"`
+	Rating        pgtype.Numeric `json:"rating"`
+	LibraryID     uuid.UUID      `json:"library_id"`
+	ContentRating *string        `json:"content_rating"`
 }
 
 func (q *Queries) ListFilmographyForPerson(ctx context.Context, personID uuid.UUID) ([]ListFilmographyForPersonRow, error) {
@@ -197,6 +199,7 @@ func (q *Queries) ListFilmographyForPerson(ctx context.Context, personID uuid.UU
 			&i.PosterPath,
 			&i.Rating,
 			&i.LibraryID,
+			&i.ContentRating,
 		); err != nil {
 			return nil, err
 		}

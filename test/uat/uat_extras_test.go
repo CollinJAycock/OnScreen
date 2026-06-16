@@ -157,6 +157,9 @@ func (s *stubPeopleItems) GetItemTypeAndTMDB(_ context.Context, _ uuid.UUID) (st
 func (s *stubPeopleItems) ResolveTMDBID(_ context.Context, _ uuid.UUID) (*int, error) {
 	return nil, errors.New("not resolved")
 }
+func (s *stubPeopleItems) ItemAccessInfo(_ context.Context, _ uuid.UUID) (uuid.UUID, string, bool) {
+	return uuid.Nil, "", true
+}
 
 // stubFavoritesDB satisfies v1.FavoritesDB.
 type stubFavoritesDB struct{}
