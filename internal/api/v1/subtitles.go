@@ -256,6 +256,11 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if errors.Is(err, subtitles.ErrQuotaExhausted) {
+			respond.Error(w, r, http.StatusTooManyRequests, "SUBTITLE_QUOTA_EXHAUSTED",
+				"OpenSubtitles daily download quota is used up; try again after it resets (or add account credentials for a higher limit)")
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "subtitles: download", "id", itemID, "err", err)
 		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

@@ -499,3 +499,39 @@ func TestSearchErrorIsNotCached(t *testing.T) {
 		t.Fatalf("errors must not be cached: provider hit %d, want 2", p.searchCalls)
 	}
 }
+
+func TestDownloadGatesOnExhaustedQuota(t *testing.T) {
+	tmp := t.TempDir()
+	p := &fakeProvider{
+		configured:   true,
+		downloadInfo: &opensubtitles.DownloadInfo{Link: "http://x/s.srt", FileName: "s.srt", Remaining: 0},
+		fetchBody:    []byte("1\n00:00:01,000 --> 00:00:02,000\nHi\n"),
+	}
+	svc := New(p, &fakeStore{}, tmp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	base := DownloadOpts{FileID: uuid.New(), ProviderFileID: 1, Language: "en"}
+
+	// First download succeeds but reports 0 remaining → records exhaustion.
+	if _, err := svc.Download(context.Background(), base); err != nil {
+		t.Fatalf("first download: %v", err)
+	}
+	// Second download is refused pre-flight (no provider call) with the sentinel.
+	if _, err := svc.Download(context.Background(), base); !errors.Is(err, ErrQuotaExhausted) {
+		t.Fatalf("second download: got %v, want ErrQuotaExhausted", err)
+	}
+}
+
+func TestDownloadAllowedWhenQuotaRemains(t *testing.T) {
+	tmp := t.TempDir()
+	p := &fakeProvider{
+		configured:   true,
+		downloadInfo: &opensubtitles.DownloadInfo{Link: "http://x/s.srt", FileName: "s.srt", Remaining: 3},
+		fetchBody:    []byte("1\n00:00:01,000 --> 00:00:02,000\nHi\n"),
+	}
+	svc := New(p, &fakeStore{}, tmp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	base := DownloadOpts{FileID: uuid.New(), ProviderFileID: 1, Language: "en"}
+	for i := 0; i < 2; i++ {
+		if _, err := svc.Download(context.Background(), base); err != nil {
+			t.Fatalf("download %d with remaining quota: %v", i, err)
+		}
+	}
+}

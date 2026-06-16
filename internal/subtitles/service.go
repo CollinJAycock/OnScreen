@@ -35,6 +35,12 @@ const searchCacheTTL = 10 * time.Minute
 // ErrNoProvider is returned when the service has no configured provider.
 var ErrNoProvider = errors.New("subtitle provider not configured")
 
+// ErrQuotaExhausted is returned by Download when the last provider response
+// reported zero remaining downloads in the current 24h window. Refusing here
+// avoids spending a request that would 429 and open the circuit breaker for an
+// hour — a clean "try tomorrow" beats an hour of hard-blocked search+download.
+var ErrQuotaExhausted = errors.New("opensubtitles daily download quota exhausted")
+
 // langCodeRe restricts a subtitle language tag to ISO-639 alpha codes with an
 // optional region/script subtag (e.g. "en", "pt-BR", "zh-Hant"). The
 // security-critical property is that it forbids path separators and ".":
@@ -71,6 +77,12 @@ type Service struct {
 
 	searchMu    sync.Mutex
 	searchCache map[string]searchCacheEntry
+
+	// quotaMu guards lastRemaining: the downloads-remaining count from the most
+	// recent successful Download. -1 = unknown (nothing downloaded yet this
+	// process). Used to refuse a download once we know the daily quota is spent.
+	quotaMu       sync.Mutex
+	lastRemaining int
 }
 
 type searchCacheEntry struct {
@@ -82,11 +94,12 @@ type searchCacheEntry struct {
 // return ErrNoProvider, but List/Delete still work for already-stored rows.
 func New(provider Provider, store Store, cacheDir string, logger *slog.Logger) *Service {
 	return &Service{
-		provider:    provider,
-		store:       store,
-		cacheDir:    cacheDir,
-		logger:      logger,
-		searchCache: make(map[string]searchCacheEntry),
+		provider:      provider,
+		store:         store,
+		cacheDir:      cacheDir,
+		logger:        logger,
+		searchCache:   make(map[string]searchCacheEntry),
+		lastRemaining: -1, // unknown until the first download reports a count
 	}
 }
 
@@ -129,6 +142,18 @@ func (s *Service) Search(ctx context.Context, opts SearchOpts) ([]opensubtitles.
 	// An error (circuit open, network) is never cached, so it self-heals.
 	s.searchCacheSet(key, results)
 	return results, nil
+}
+
+func (s *Service) quotaExhausted() bool {
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	return s.lastRemaining == 0
+}
+
+func (s *Service) setRemaining(n int) {
+	s.quotaMu.Lock()
+	s.lastRemaining = n
+	s.quotaMu.Unlock()
 }
 
 func (s *Service) searchCacheGet(key string) ([]opensubtitles.SearchResult, bool) {
@@ -178,9 +203,23 @@ func (s *Service) Download(ctx context.Context, opts DownloadOpts) (gen.External
 		return gen.ExternalSubtitle{}, fmt.Errorf("invalid language code %q", opts.Language)
 	}
 
+	// Pre-flight quota gate: if the last download told us the 24h window is
+	// spent, don't issue another request — it would 429 and trip the circuit
+	// breaker for an hour (blocking search too). The count refreshes on the
+	// next successful download (e.g. after the window rolls over).
+	if s.quotaExhausted() {
+		return gen.ExternalSubtitle{}, ErrQuotaExhausted
+	}
+
 	info, err := s.provider.Download(ctx, opts.ProviderFileID)
 	if err != nil {
 		return gen.ExternalSubtitle{}, fmt.Errorf("request download: %w", err)
+	}
+	// Record the remaining-downloads count so the next call can pre-flight.
+	// Remaining is -1 when the provider didn't report it; leave the last known
+	// value in that case rather than overwriting with "unknown".
+	if info.Remaining >= 0 {
+		s.setRemaining(info.Remaining)
 	}
 	raw, err := s.provider.FetchFile(ctx, info.Link)
 	if err != nil {
