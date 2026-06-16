@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
@@ -183,7 +185,16 @@ type ItemHandler struct {
 	credits    ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
 	dlGate     DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
 	store      mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
-	logger     *slog.Logger
+	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
+	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
+	// disables caching (extract on every request — the old behaviour).
+	subtitleCacheDir string
+	// subtitleExtract collapses concurrent extractions of the same
+	// (file, stream) into one ffmpeg run — a 4K remux subtitle takes tens of
+	// seconds, and a player + its reverse-proxy retries would otherwise spawn
+	// several duplicate ffmpegs over the same multi-GB file.
+	subtitleExtract singleflight.Group
+	logger          *slog.Logger
 }
 
 // DownloadGate decides whether the /media/download/{id} endpoint is open
@@ -230,6 +241,15 @@ func (h *ItemHandler) LibraryAccessWired() bool { return h.access != nil }
 // alongside the embedded streams.
 func (h *ItemHandler) WithExternalSubtitles(s ExternalSubLister) *ItemHandler {
 	h.subs = s
+	return h
+}
+
+// WithSubtitleCache sets the directory under which ServeSubtitle caches
+// extracted embedded-subtitle VTTs. Without it, every request re-runs ffmpeg
+// over the whole source file — fine for small files, but a 4K UHD remux takes
+// 25–60s to demux and times out behind a reverse proxy.
+func (h *ItemHandler) WithSubtitleCache(dir string) *ItemHandler {
+	h.subtitleCacheDir = dir
 	return h
 }
 
@@ -2355,21 +2375,98 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// Uncached fallback (no cache dir wired — tests / minimal deployments):
+	// stream ffmpeg straight to the client, the original behaviour.
+	if h.subtitleCacheDir == "" {
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		cmd := exec.CommandContext(r.Context(), "ffmpeg",
+			"-i", file.FilePath, "-map", fmt.Sprintf("0:%d", streamIdx),
+			"-f", "webvtt", "-v", "quiet", "pipe:1")
+		cmd.Stdout = w
+		if err := cmd.Run(); err != nil {
+			h.logger.WarnContext(r.Context(), "subtitle extraction failed",
+				"file_id", fileID, "stream", streamIdx, "err", err)
+		}
+		return
+	}
 
-	cmd := exec.CommandContext(r.Context(), "ffmpeg",
-		"-i", file.FilePath,
-		"-map", fmt.Sprintf("0:%d", streamIdx),
-		"-f", "webvtt",
-		"-v", "quiet",
-		"pipe:1",
-	)
-	cmd.Stdout = w
-	if err := cmd.Run(); err != nil {
-		// If we haven't written headers yet, return an error.
-		// Otherwise the connection was likely closed by the client.
+	// Extracted embedded subtitles are immutable per (file, stream), so cache
+	// them. The extraction demuxes the whole source file — instant for a small
+	// file, but 25–60s for a 4K UHD remux, which times out behind a reverse
+	// proxy (Cloudflare 520) and gets the ffmpeg killed mid-run, caching
+	// nothing so the next request starts over. Cache once → every later request
+	// (and the proxy's own retry of a slow first one) is instant.
+	cachePath := filepath.Join(h.subtitleCacheDir, "embedded", fileID.String(), strconv.Itoa(streamIdx)+".vtt")
+	if data, rerr := os.ReadFile(cachePath); rerr == nil {
+		serveCachedVTT(w, data)
+		return
+	}
+
+	v, err, _ := h.subtitleExtract.Do(cachePath, func() (any, error) {
+		return extractEmbeddedSubtitleToCache(file.FilePath, streamIdx, cachePath)
+	})
+	if err != nil {
 		h.logger.WarnContext(r.Context(), "subtitle extraction failed",
 			"file_id", fileID, "stream", streamIdx, "err", err)
+		// The detached extraction keeps running/caching past a client
+		// disconnect, so a retry typically hits the cache. Tell the client to
+		// retry rather than returning a broken/empty track.
+		respond.Error(w, r, http.StatusGatewayTimeout, "SUBTITLE_PREPARING",
+			"subtitle is being prepared from the source file; retry in a moment")
+		return
 	}
+	serveCachedVTT(w, v.([]byte))
+}
+
+func serveCachedVTT(w http.ResponseWriter, data []byte) {
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
+// extractEmbeddedSubtitleToCache runs ffmpeg to convert one embedded subtitle
+// stream to WebVTT and atomically writes it to cachePath, returning the bytes.
+// The ffmpeg runs on a DETACHED context (not the HTTP request's) so a client
+// or reverse-proxy timeout doesn't kill a long 4K demux mid-flight — it
+// finishes and populates the cache for the retry. Bounded at 5 min so a
+// pathological input can't pin a process forever.
+func extractEmbeddedSubtitleToCache(srcPath string, streamIdx int, cachePath string) ([]byte, error) {
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir subtitle cache: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tmp := cachePath + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-i", srcPath, "-map", fmt.Sprintf("0:%d", streamIdx),
+		"-f", "webvtt", "-v", "quiet", "pipe:1")
+	cmd.Stdout = out
+	runErr := cmd.Run()
+	_ = out.Close()
+	if runErr != nil {
+		_ = os.Remove(tmp)
+		return nil, runErr
+	}
+	data, err := os.ReadFile(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return nil, err
+	}
+	if len(data) == 0 {
+		// Don't cache an empty extraction — it would mask a later good run.
+		_ = os.Remove(tmp)
+		return nil, fmt.Errorf("empty subtitle output")
+	}
+	if err := os.Rename(tmp, cachePath); err != nil {
+		_ = os.Remove(tmp)
+		return nil, err
+	}
+	return data, nil
 }

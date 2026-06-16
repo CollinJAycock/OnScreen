@@ -840,6 +840,7 @@ func run() error {
 		WithWatchLimit(watchLimitStore).
 		WithMarkers(intromarker.NewStore(rwPool)).
 		WithExternalSubtitles(subtitleSvc).
+		WithSubtitleCache(subtitleCacheRoot).
 		WithSyncBroker(notifBrokerEarly).
 		WithAudit(auditLogger).
 		WithStreamTokenMaker(tokenMaker).

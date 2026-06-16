@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1256,5 +1257,79 @@ func TestApplyPoster_GenericError_Returns500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want 500 for non-HTTP errors", rec.Code)
+	}
+}
+
+// TestServeSubtitle_CacheHit proves a pre-cached extracted VTT is served
+// directly (no ffmpeg), which is the fast path that makes 4K-remux subtitles
+// instant on every request after the first extraction.
+func TestServeSubtitle_CacheHit(t *testing.T) {
+	cacheDir := t.TempDir()
+	fileID := uuid.New()
+	itemID := uuid.New()
+	libID := uuid.New()
+	streamIdx := 3
+
+	// A text subtitle stream at index 3 so the image-sub guard passes.
+	subsJSON := []byte(`[{"index":3,"codec":"subrip","language":"eng","forced":false,"sdh":false}]`)
+	ms := &mockItemMedia{
+		file: &media.File{ID: fileID, Status: "active", FilePath: "/movies/300.mkv",
+			MediaItemID: itemID, SubtitleStreams: subsJSON},
+		item: &media.Item{ID: itemID, LibraryID: libID, Type: "movie"},
+	}
+	h := newItemHandler(ms).WithSubtitleCache(cacheDir)
+
+	// Pre-populate the cache exactly where ServeSubtitle looks.
+	cachePath := filepath.Join(cacheDir, "embedded", fileID.String(), "3.vtt")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nCached line\n"
+	if err := os.WriteFile(cachePath, []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("fileId", fileID.String())
+	rctx.URLParams.Add("streamIndex", strconv.Itoa(streamIdx))
+	req := httptest.NewRequest("GET", "/media/subtitles/"+fileID.String()+"/3", nil).
+		WithContext(context.WithValue(context.Background(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	h.ServeSubtitle(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (body=%q)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != want {
+		t.Fatalf("served body mismatch:\ngot  %q\nwant %q", rec.Body.String(), want)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/vtt; charset=utf-8" {
+		t.Fatalf("content-type: got %q", ct)
+	}
+}
+
+// TestServeSubtitle_ImageSubRejected proves the image-based codec guard
+// returns 415 before any extraction.
+func TestServeSubtitle_ImageSubRejected(t *testing.T) {
+	fileID := uuid.New()
+	itemID := uuid.New()
+	subsJSON := []byte(`[{"index":2,"codec":"hdmv_pgs_subtitle","language":"eng"}]`)
+	ms := &mockItemMedia{
+		file: &media.File{ID: fileID, Status: "active", FilePath: "/movies/Avatar.mkv",
+			MediaItemID: itemID, SubtitleStreams: subsJSON},
+		item: &media.Item{ID: itemID, LibraryID: uuid.New(), Type: "movie"},
+	}
+	h := newItemHandler(ms).WithSubtitleCache(t.TempDir())
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("fileId", fileID.String())
+	rctx.URLParams.Add("streamIndex", "2")
+	req := httptest.NewRequest("GET", "/x", nil).
+		WithContext(context.WithValue(context.Background(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	h.ServeSubtitle(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status: got %d, want 415", rec.Code)
 	}
 }
