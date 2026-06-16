@@ -778,12 +778,17 @@ func run() error {
 		WithLibraryAccess(libSvc)
 
 	// ── External subtitles (OpenSubtitles, etc.) ─────────────────────────────
-	// Lives next to the trickplay cache; on-disk *.vtt files keyed by file id.
+	// On-disk *.vtt files keyed by file id, plus the OCR working dirs. MUST sit
+	// UNDER the cache root (the writable CACHE_PATH volume mount), same as
+	// every other cache subdir (tmdb/, animedb/, photos/). A prior version
+	// used filepath.Dir(cfg.CachePath) here, which climbed a level up to
+	// /var/cache — root-owned and read-only in the locked-down container — so
+	// OCR and OpenSubtitle downloads failed with "mkdir … permission denied".
 	subtitleCacheRoot := cfg.CachePath
 	if subtitleCacheRoot == "" {
 		subtitleCacheRoot = filepath.Join(os.TempDir(), "onscreen-subtitles")
 	} else {
-		subtitleCacheRoot = filepath.Join(filepath.Dir(subtitleCacheRoot), "subtitles")
+		subtitleCacheRoot = filepath.Join(subtitleCacheRoot, "subtitles")
 	}
 	// Provider is dynamic: it re-reads settings on each call and rebuilds the
 	// underlying client when credentials change, so users don't need to restart

@@ -65,7 +65,7 @@ type Store interface {
 type Service struct {
 	provider Provider
 	store    Store
-	cacheDir string // root for *.vtt files, e.g. /var/cache/subtitles
+	cacheDir string // root for *.vtt files, under CACHE_PATH (e.g. /var/cache/onscreen/subtitles)
 	logger   *slog.Logger
 	ocr      OCREngine // optional; nil disables OCRStream
 
