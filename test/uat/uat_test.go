@@ -294,10 +294,10 @@ func (s *stubItemEnricher) MatchItem(_ context.Context, _ uuid.UUID, _ int) erro
 // stubMatchSearcher implements v1.ItemMatchSearcher.
 type stubMatchSearcher struct{}
 
-func (s *stubMatchSearcher) SearchTVCandidates(_ context.Context, _ string) ([]v1.MatchCandidate, error) {
+func (s *stubMatchSearcher) SearchTVCandidates(_ context.Context, _ string, _ int) ([]v1.MatchCandidate, error) {
 	return nil, nil
 }
-func (s *stubMatchSearcher) SearchMovieCandidates(_ context.Context, _ string) ([]v1.MatchCandidate, error) {
+func (s *stubMatchSearcher) SearchMovieCandidates(_ context.Context, _ string, _ int) ([]v1.MatchCandidate, error) {
 	return nil, nil
 }
 
@@ -464,32 +464,50 @@ func (s *stubUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStr
 func (s *stubUserDB) GetUserStreamCaps(_ context.Context, _ uuid.UUID) (gen.GetUserStreamCapsRow, error) {
 	return gen.GetUserStreamCapsRow{}, nil
 }
+func (s *stubUserDB) UpdateUserHubLayout(_ context.Context, _ gen.UpdateUserHubLayoutParams) error {
+	return nil
+}
 
 // stubAnalyticsDB implements the analyticsQuerier used by AnalyticsHandler.
 type stubAnalyticsDB struct{}
 
-func (s *stubAnalyticsDB) GetAnalyticsOverview(_ context.Context) (gen.AnalyticsOverviewRow, error) {
-	return gen.AnalyticsOverviewRow{}, nil
+func (s *stubAnalyticsDB) GetAnalyticsOverview(_ context.Context) (gen.GetAnalyticsOverviewRow, error) {
+	return gen.GetAnalyticsOverviewRow{}, nil
 }
-func (s *stubAnalyticsDB) GetLibraryAnalytics(_ context.Context) ([]gen.LibraryAnalyticsRow, error) {
+func (s *stubAnalyticsDB) GetLibraryAnalytics(_ context.Context) ([]gen.GetLibraryAnalyticsRow, error) {
 	return nil, nil
 }
-func (s *stubAnalyticsDB) GetVideoCodecBreakdown(_ context.Context) ([]gen.CodecCountRow, error) {
+func (s *stubAnalyticsDB) GetVideoCodecBreakdown(_ context.Context) ([]gen.GetVideoCodecBreakdownRow, error) {
 	return nil, nil
 }
-func (s *stubAnalyticsDB) GetContainerBreakdown(_ context.Context) ([]gen.ContainerCountRow, error) {
+func (s *stubAnalyticsDB) GetContainerBreakdown(_ context.Context) ([]gen.GetContainerBreakdownRow, error) {
 	return nil, nil
 }
-func (s *stubAnalyticsDB) GetPlaysPerDay(_ context.Context) ([]gen.DayCountRow, error) {
+func (s *stubAnalyticsDB) GetPlaysPerDay(_ context.Context, _ gen.GetPlaysPerDayParams) ([]gen.GetPlaysPerDayRow, error) {
 	return nil, nil
 }
-func (s *stubAnalyticsDB) GetBandwidthPerDay(_ context.Context) ([]gen.DayBytesRow, error) {
+func (s *stubAnalyticsDB) GetBandwidthPerDay(_ context.Context, _ gen.GetBandwidthPerDayParams) ([]gen.GetBandwidthPerDayRow, error) {
 	return nil, nil
 }
-func (s *stubAnalyticsDB) GetTopPlayed(_ context.Context) ([]gen.TopPlayedRow, error) {
+func (s *stubAnalyticsDB) GetTopPlayed(_ context.Context, _ int32) ([]gen.GetTopPlayedRow, error) {
 	return nil, nil
 }
-func (s *stubAnalyticsDB) GetRecentPlays(_ context.Context) ([]gen.RecentPlayRow, error) {
+func (s *stubAnalyticsDB) GetRecentPlays(_ context.Context) ([]gen.GetRecentPlaysRow, error) {
+	return nil, nil
+}
+func (s *stubAnalyticsDB) GetTopUsers(_ context.Context, _ int32) ([]gen.GetTopUsersRow, error) {
+	return nil, nil
+}
+func (s *stubAnalyticsDB) GetClientBreakdown(_ context.Context, _ int32) ([]gen.GetClientBreakdownRow, error) {
+	return nil, nil
+}
+func (s *stubAnalyticsDB) GetPlaysByHour(_ context.Context, _ gen.GetPlaysByHourParams) ([]gen.GetPlaysByHourRow, error) {
+	return nil, nil
+}
+func (s *stubAnalyticsDB) GetCompletionStats(_ context.Context, _ int32) (gen.GetCompletionStatsRow, error) {
+	return gen.GetCompletionStatsRow{}, nil
+}
+func (s *stubAnalyticsDB) GetStreamTypesPerDay(_ context.Context, _ gen.GetStreamTypesPerDayParams) ([]gen.GetStreamTypesPerDayRow, error) {
 	return nil, nil
 }
 

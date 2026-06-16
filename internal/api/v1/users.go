@@ -114,6 +114,14 @@ type UserHandler struct {
 	audit     *audit.Logger
 	libAccess UserLibraryAccessService
 	throttle  FailureThrottle
+	pinPolicy PinSwitchPolicy
+}
+
+// PinSwitchPolicy reports whether PIN-based profile switching is enabled
+// server-wide. Satisfied by *settings.Service. nil = no gate (allowed),
+// which keeps tests and minimal wirings working without a settings service.
+type PinSwitchPolicy interface {
+	PinSwitchEnabled(ctx context.Context) bool
 }
 
 // FailureThrottle is the brute-force counter the PIN-switch path uses to lock
@@ -177,6 +185,13 @@ func (h *UserHandler) WithSegmentTokenRevoker(r SegmentTokenRevoker) *UserHandle
 // WithPINThrottle attaches the brute-force throttle used by PINSwitch.
 func (h *UserHandler) WithPINThrottle(t FailureThrottle) *UserHandler {
 	h.throttle = t
+	return h
+}
+
+// WithPinSwitchPolicy attaches the server-wide PIN-switch enable toggle.
+// nil leaves switching unconditionally allowed.
+func (h *UserHandler) WithPinSwitchPolicy(p PinSwitchPolicy) *UserHandler {
+	h.pinPolicy = p
 	return h
 }
 
@@ -529,6 +544,27 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Server-wide kill switch. Operators running OnScreen as isolated
+	// per-account tenants (rather than a shared household) disable the
+	// household profile-picker entirely.
+	if h.pinPolicy != nil && !h.pinPolicy.PinSwitchEnabled(r.Context()) {
+		respond.Error(w, r, http.StatusForbidden, "PIN_SWITCH_DISABLED",
+			"profile switching is disabled on this server")
+		return
+	}
+
+	// No chaining: a token already minted via PIN-switch cannot initiate
+	// another switch. Otherwise profile A could PIN into B, then from B
+	// into C, hopping across the whole household from a single login and
+	// defeating the per-target brute-force lockout (each hop resets the
+	// attacker's vantage point). The legitimate flow always starts from a
+	// full credential login, whose token has Switched=false.
+	if cur := middleware.ClaimsFromContext(r.Context()); cur != nil && cur.Switched {
+		respond.Error(w, r, http.StatusForbidden, "PIN_SWITCH_CHAINED",
+			"sign in with your account before switching profiles")
+		return
+	}
+
 	var body struct {
 		UserID string `json:"user_id"`
 		PIN    string `json:"pin"`
@@ -594,13 +630,15 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Issue a new access token for the target user.
+	// Issue a new access token for the target user. Switched=true brands it
+	// so it can't be used to PIN-switch again (the no-chaining guard above).
 	switchClaims := auth.Claims{
 		UserID:           result.UserID,
 		Username:         result.Username,
 		IsAdmin:          result.IsAdmin,
 		MaxContentRating: result.MaxContentRating,
 		SessionEpoch:     result.SessionEpoch,
+		Switched:         true,
 	}
 	accessToken, err := h.tokens.IssueAccessToken(switchClaims)
 	if err != nil {

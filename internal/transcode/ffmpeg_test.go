@@ -407,59 +407,6 @@ func TestBuildHLS_AudioCopy_NoResampleFilter(t *testing.T) {
 	}
 }
 
-// TestBuildHLS_BurnSubtitle confirms the `subtitles` filter lands in
-// the -vf chain when BurnSubtitleStream is set, and that the input
-// path is single-quoted so colons / spaces / paths with parens
-// don't break the filter parser.
-func TestBuildHLS_BurnSubtitle(t *testing.T) {
-	si := 1
-	args := BuildHLS(BuildArgs{
-		InputPath:          "/media/Movies/Foo (2024)/Foo.mkv",
-		Encoder:            EncoderSoftware,
-		Width:              1920,
-		Height:             1080,
-		BitrateKbps:        4000,
-		AudioCodec:         "aac",
-		BurnSubtitleStream: &si,
-		SessionDir:         "/tmp/sessions/x",
-		SegmentPrefix:      "seg",
-	})
-	argStr := strings.Join(args, " ")
-	if !strings.Contains(argStr, "subtitles='/media/Movies/Foo (2024)/Foo.mkv':si=1") {
-		t.Errorf("expected single-quoted subtitles filter with si=1, got: %s", argStr)
-	}
-}
-
-// TestBuildHLS_NoBurnSubtitle_WhenNil confirms the default path
-// stays clean — a nil BurnSubtitleStream must not add any
-// subtitles filter, even when other filters (scale / tonemap) run.
-func TestBuildHLS_NoBurnSubtitle_WhenNil(t *testing.T) {
-	args := BuildHLS(BuildArgs{
-		InputPath:     "/media/movie.mkv",
-		Encoder:       EncoderSoftware,
-		Width:         1280,
-		Height:        720,
-		BitrateKbps:   2000,
-		AudioCodec:    "aac",
-		SessionDir:    "/tmp/sessions/x",
-		SegmentPrefix: "seg",
-	})
-	if strings.Contains(strings.Join(args, " "), "subtitles=") {
-		t.Errorf("subtitles filter must not appear with nil BurnSubtitleStream: %v", args)
-	}
-}
-
-// TestSubtitleBurnFilter_EscapesSingleQuote checks the rare-but-real
-// case of a path with an apostrophe in it (`/media/Bob's Movies/...`).
-// Without escape the filter parser treats the apostrophe as a string
-// terminator and the encode aborts with "Invalid argument."
-func TestSubtitleBurnFilter_EscapesSingleQuote(t *testing.T) {
-	got := subtitleBurnFilter("/media/Bob's Movies/x.mkv", 0)
-	if !strings.Contains(got, `Bob\'s Movies`) {
-		t.Errorf("expected escaped apostrophe, got: %s", got)
-	}
-}
-
 // TestBuildHLS_Software_StripsTo8Bit guards the libx264 10-bit-input
 // fix surfaced by the v2.1 libx264 live matrix run against Chainsaw Man
 // (10-bit AV1 source). Without format=yuv420p in the filter chain,
@@ -481,22 +428,6 @@ func TestBuildHLS_Software_StripsTo8Bit(t *testing.T) {
 	argStr := strings.Join(args, " ")
 	if !strings.Contains(argStr, "format=yuv420p") {
 		t.Errorf("libx264 must strip to 8-bit: %s", argStr)
-	}
-}
-
-// TestSubtitleBurnFilter_WindowsPath guards the Windows path-handling
-// fix surfaced by the v2.1 burn-in integration test against Goodfellas.
-// Backslashes get stripped by the filter parser as escape introducers
-// and the drive-letter colon (`C:`) is otherwise parsed as a filter
-// key=value separator — both paths in `C:\movies\Foo (1990)\bar.mkv`
-// would crash ffmpeg with "Unable to parse 'original_size' option
-// value 'moviesFoo (1990)bar.mkv'". The fix flips backslashes to
-// forward slashes and escapes every colon in the path.
-func TestSubtitleBurnFilter_WindowsPath(t *testing.T) {
-	got := subtitleBurnFilter(`C:\movies\Foo (1990)\bar.mkv`, 2)
-	want := `subtitles='C\:/movies/Foo (1990)/bar.mkv':si=2`
-	if got != want {
-		t.Errorf("Windows path filter: got %q, want %q", got, want)
 	}
 }
 

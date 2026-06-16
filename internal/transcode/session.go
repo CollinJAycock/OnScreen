@@ -3,6 +3,7 @@ package transcode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,11 @@ import (
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/valkey"
 )
+
+// ErrUserAtCap is returned by CreateWithUserCap when the user is already at or
+// above their concurrent-session cap at the moment of the atomic write. The
+// API layer maps it to 429.
+var ErrUserAtCap = errors.New("user at concurrent-session cap")
 
 const (
 	sessionTTL    = 4 * time.Hour
@@ -162,6 +168,56 @@ func (s *SessionStore) Create(ctx context.Context, sess Session) error {
 	s.v.Raw().SAdd(ctx, sessionIndexKey, sess.ID)
 	s.refreshActiveGauge(ctx)
 	return nil
+}
+
+// CreateWithUserCap atomically enforces the per-user concurrent-session cap at
+// write time, closing the check-then-act race in the Start handler: two Start
+// requests that each read "4 < 5" via CountByUser would both proceed and leave
+// the user with 6 sessions. Here the count + create run under a short per-user
+// lock, so only one writer occupies the (count→decide→write) window at a time.
+//
+// maxPerUser <= 0 disables the cap (plain Create). The lock is held only across
+// two fast Valkey round-trips, and is per-user, so it never serializes the
+// fleet — only a single account's simultaneous Start spam. The handler still
+// does a cheap CountByUser pre-check before the heavy planning work; this is
+// the authoritative backstop, not the first line of defense.
+//
+// Lock acquisition spins briefly. On Valkey error or (pathological) lock
+// timeout it falls open to a plain Create and logs nothing here — the caller's
+// 10/min Start rate limit is the remaining backstop, and hard-blocking a
+// legitimate near-simultaneous two-device start would be worse than a rare
+// one-over overshoot.
+func (s *SessionStore) CreateWithUserCap(ctx context.Context, sess Session, maxPerUser int) error {
+	if maxPerUser <= 0 {
+		return s.Create(ctx, sess)
+	}
+
+	lockKey := "transcode:caplock:" + sess.UserID.String()
+	acquired := false
+	// ~2s budget (40 × 50 ms). The critical section is two Valkey ops, so even
+	// a full rate-limited burst of same-user starts clears well inside this.
+	for i := 0; i < 40; i++ {
+		ok, err := s.v.SetNX(ctx, lockKey, "1", 5*time.Second)
+		if err != nil {
+			break // Valkey degraded — fall open rather than block playback.
+		}
+		if ok {
+			acquired = true
+			break
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if acquired {
+		defer func() { _ = s.v.Del(ctx, lockKey) }()
+		active, err := s.CountByUser(ctx, sess.UserID)
+		if err == nil && active >= maxPerUser {
+			return ErrUserAtCap
+		}
+	}
+	return s.Create(ctx, sess)
 }
 
 // Get retrieves a session by ID.

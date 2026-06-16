@@ -1578,3 +1578,20 @@ WHERE mf.status = 'active'
   AND show.library_id = sqlc.arg(library_id)
   AND show.type = 'show'
 LIMIT 1;
+
+-- name: GetArtworkContentRating :one
+-- Resolves the content_rating of the item that owns a given artwork file,
+-- matched by its library-relative poster/fanart/thumb path (slash-separated,
+-- the form stored at scan time). Used by the /artwork/* server to enforce the
+-- per-user content-rating ceiling so a restricted profile with library access
+-- can't pull an over-ceiling item's poster by direct URL. Scoped to the owning
+-- library so a path that collides across libraries can't cross-match.
+SELECT content_rating
+FROM media_items
+WHERE library_id = sqlc.arg(library_id)
+  AND deleted_at IS NULL
+  AND content_rating IS NOT NULL
+  AND (poster_path = sqlc.arg(art_path)
+       OR fanart_path = sqlc.arg(art_path)
+       OR thumb_path = sqlc.arg(art_path))
+LIMIT 1;

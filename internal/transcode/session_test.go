@@ -2,6 +2,7 @@ package transcode
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -178,6 +179,46 @@ func TestIntegration_SessionStore_CountByUser_ExcludesStale(t *testing.T) {
 	}
 	if n != 2 {
 		t.Errorf("CountByUser = %d, want 2 (live + brand-new counted; abandoned/stale excluded)", n)
+	}
+}
+
+// TestIntegration_SessionStore_CreateWithUserCap covers the atomic write-time
+// cap: it admits sessions up to the cap, rejects the one that would exceed it
+// with ErrUserAtCap, and ignores the cap for other users / when maxPerUser<=0.
+func TestIntegration_SessionStore_CreateWithUserCap(t *testing.T) {
+	v := testvalkey.New(t)
+	store := NewSessionStore(v)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	user := uuid.New()
+
+	mk := func(u uuid.UUID) Session {
+		return Session{ID: NewSessionID(), UserID: u, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: now, LastActivityAt: now}
+	}
+
+	// Fill to the cap of 3.
+	for i := 0; i < 3; i++ {
+		if err := store.CreateWithUserCap(ctx, mk(user), 3); err != nil {
+			t.Fatalf("CreateWithUserCap[%d]: %v", i, err)
+		}
+	}
+	// The 4th must be rejected.
+	if err := store.CreateWithUserCap(ctx, mk(user), 3); !errors.Is(err, ErrUserAtCap) {
+		t.Fatalf("4th create: got %v, want ErrUserAtCap", err)
+	}
+	if n, _ := store.CountByUser(ctx, user); n != 3 {
+		t.Errorf("count after cap hit = %d, want 3", n)
+	}
+	// A different user is unaffected.
+	if err := store.CreateWithUserCap(ctx, mk(uuid.New()), 3); err != nil {
+		t.Fatalf("other-user create: %v", err)
+	}
+	// maxPerUser <= 0 disables the cap.
+	if err := store.CreateWithUserCap(ctx, mk(user), 0); err != nil {
+		t.Fatalf("uncapped create: %v", err)
+	}
+	if n, _ := store.CountByUser(ctx, user); n != 4 {
+		t.Errorf("count after uncapped create = %d, want 4", n)
 	}
 }
 

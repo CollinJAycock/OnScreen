@@ -432,8 +432,8 @@ type AudioStreamJSON struct {
 // Index is the ABSOLUTE ffprobe stream index (e.g. stream 2 in a
 // video+audio+subtitle file), matching what /media/subtitles/{file}/{index}
 // expects (it maps `0:%d`). NOTE this differs from the transcode builder's
-// SubtitleStreams/BurnSubtitleStream, which use the RELATIVE subtitle-stream
-// index (`0:s:N` / `si=N`) — convert if ever wiring the two together.
+// SubtitleStreams, which uses the RELATIVE subtitle-stream index (`0:s:N`)
+// — convert if ever wiring the two together.
 type SubtitleStreamJSON struct {
 	Index    int    `json:"index"`
 	Codec    string `json:"codec"`

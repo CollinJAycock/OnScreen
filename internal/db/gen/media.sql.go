@@ -763,6 +763,36 @@ func (q *Queries) FindTopLevelItemsByTitleFlexible(ctx context.Context, arg Find
 	return items, nil
 }
 
+const getArtworkContentRating = `-- name: GetArtworkContentRating :one
+SELECT content_rating
+FROM media_items
+WHERE library_id = $1
+  AND deleted_at IS NULL
+  AND content_rating IS NOT NULL
+  AND (poster_path = $2
+       OR fanart_path = $2
+       OR thumb_path = $2)
+LIMIT 1
+`
+
+type GetArtworkContentRatingParams struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	ArtPath   *string   `json:"art_path"`
+}
+
+// Resolves the content_rating of the item that owns a given artwork file,
+// matched by its library-relative poster/fanart/thumb path (slash-separated,
+// the form stored at scan time). Used by the /artwork/* server to enforce the
+// per-user content-rating ceiling so a restricted profile with library access
+// can't pull an over-ceiling item's poster by direct URL. Scoped to the owning
+// library so a path that collides across libraries can't cross-match.
+func (q *Queries) GetArtworkContentRating(ctx context.Context, arg GetArtworkContentRatingParams) (*string, error) {
+	row := q.db.QueryRow(ctx, getArtworkContentRating, arg.LibraryID, arg.ArtPath)
+	var content_rating *string
+	err := row.Scan(&content_rating)
+	return content_rating, err
+}
+
 const getMediaFile = `-- name: GetMediaFile :one
 
 SELECT id, media_item_id, file_path, file_size, container, video_codec,

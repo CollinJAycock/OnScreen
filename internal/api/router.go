@@ -3,6 +3,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/artwork"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/streaming"
@@ -94,6 +96,14 @@ type Handlers struct {
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
 	LibraryAccess   v1.LibraryAccessChecker // ACL for artwork; nil = bypass (dev setups)
+	// ArtworkContentRating resolves the owning item's content rating for an
+	// artwork file, keyed by (library, library-relative slash path). Lets the
+	// artwork server apply the per-user content-rating ceiling — library ACL
+	// alone would still leak an over-ceiling poster to a restricted profile
+	// that can see the library. Returns found=false when the path maps to no
+	// rated item (music, backdrops), in which case the server fails open.
+	// nil = skip the rating gate (dev/test).
+	ArtworkContentRating func(ctx context.Context, libraryID uuid.UUID, relPath string) (rating string, found bool)
 	// PublicAssetCache reports whether to emit `Cache-Control: public` on
 	// immutable resized artwork so a CDN/shared cache in front can store it
 	// (HA roadmap §4). Default returns false (private posture). Implemented
@@ -259,6 +269,17 @@ func NewRouter(h *Handlers) http.Handler {
 						if h.LibraryAccess != nil && claims != nil {
 							ok, err := h.LibraryAccess.CanAccessLibrary(req.Context(), claims.UserID, root.LibraryID, claims.IsAdmin)
 							if err != nil || !ok {
+								http.NotFound(w, req)
+								return
+							}
+						}
+						// Content-rating ceiling. Library ACL gets the caller into
+						// the library; this stops a restricted profile from pulling
+						// the poster of an over-ceiling item by direct URL. Keyed by
+						// the library-relative slash path (the form stored at scan
+						// time). Fails open when the art maps to no rated item.
+						if h.ArtworkContentRating != nil && claims != nil && claims.MaxContentRating != "" {
+							if rating, found := h.ArtworkContentRating(req.Context(), root.LibraryID, filepath.ToSlash(clean)); found && !contentrating.IsAllowed(rating, claims.MaxContentRating) {
 								http.NotFound(w, req)
 								return
 							}

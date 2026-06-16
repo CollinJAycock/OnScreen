@@ -691,7 +691,8 @@ func run() error {
 		WithAudit(auditLogger).
 		WithLibraryAccess(&userLibraryAccessAdapter{lib: libSvc, q: gen.New(roPool)}).
 		WithSegmentTokenRevoker(segTokenMgr).
-		WithPINThrottle(rateLimiter)
+		WithPINThrottle(rateLimiter).
+		WithPinSwitchPolicy(settingsSvc)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
@@ -1306,6 +1307,20 @@ func run() error {
 		Artwork:         artworkMgr,
 		ArtworkRoots:    artworkRootsFn,
 		LibraryAccess:   libSvc,
+		// Resolves an artwork file's owning content rating so the artwork
+		// server can enforce the per-user ceiling (see router.go). Read-only
+		// pool; fails open (found=false) on miss or query error.
+		ArtworkContentRating: func(ctx context.Context, libraryID uuid.UUID, relPath string) (string, bool) {
+			rel := relPath
+			rating, err := gen.New(roPool).GetArtworkContentRating(ctx, gen.GetArtworkContentRatingParams{
+				LibraryID: libraryID,
+				ArtPath:   &rel,
+			})
+			if err != nil || rating == nil {
+				return "", false
+			}
+			return *rating, true
+		},
 		// Closure (not a static bool copy) so the artwork handler picks
 		// up admin-UI toggles of public_asset_cache without a restart —
 		// system_settings.applyToConfig mutates cfg.PublicAssetCache on
@@ -1544,6 +1559,8 @@ func run() error {
 		// Stop plugin workers after the HTTP servers so we don't drop
 		// in-flight notifications triggered by requests already in progress.
 		pluginDispatcher.Close()
+		// Release the subtitle handler's background OCR-sweep goroutine.
+		subtitleHandler.Close()
 		return nil
 	})
 

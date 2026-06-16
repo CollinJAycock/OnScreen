@@ -76,6 +76,15 @@ func (h *SubtitleHandler) WithLibraryAccess(a LibraryAccessChecker) *SubtitleHan
 	return h
 }
 
+// Close releases background resources owned by the handler — currently the
+// OCR job store's TTL-sweep goroutine. Wired into server shutdown so the
+// process tears down cleanly (and so goroutine-leak-checked tests pass).
+func (h *SubtitleHandler) Close() {
+	if h.ocrJobs != nil {
+		h.ocrJobs.Stop()
+	}
+}
+
 // SearchResultJSON is the API representation of a single search result.
 type SearchResultJSON struct {
 	ProviderFileID  int     `json:"provider_file_id"`

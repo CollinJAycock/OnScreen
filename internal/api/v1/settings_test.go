@@ -47,6 +47,7 @@ type mockSettingsService struct {
 	webDownloads   bool
 	setWebDLErr    error
 	setWebDLCalled bool
+	pinSwitch      bool
 	storage        settings.StorageConfig
 	system         settings.SystemConfig
 }
@@ -188,6 +189,11 @@ func (m *mockSettingsService) SetGeneral(_ context.Context, cfg settings.General
 	return nil
 }
 func (m *mockSettingsService) WebDownloadsEnabled(_ context.Context) bool { return m.webDownloads }
+func (m *mockSettingsService) PinSwitchEnabled(_ context.Context) bool    { return m.pinSwitch }
+func (m *mockSettingsService) SetPinSwitchEnabled(_ context.Context, enabled bool) error {
+	m.pinSwitch = enabled
+	return nil
+}
 func (m *mockSettingsService) SetWebDownloadsEnabled(_ context.Context, enabled bool) error {
 	if m.setWebDLErr != nil {
 		return m.setWebDLErr

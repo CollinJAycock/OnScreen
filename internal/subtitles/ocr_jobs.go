@@ -54,9 +54,11 @@ type OCRJob struct {
 // long-running job won't be evicted while it's still in flight; the
 // 1-hour clock starts after it transitions to a terminal state.
 type OCRJobStore struct {
-	mu   sync.Mutex
-	jobs map[string]*OCRJob
-	ttl  time.Duration
+	mu       sync.Mutex
+	jobs     map[string]*OCRJob
+	ttl      time.Duration
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewOCRJobStore returns a fresh store with a 1-hour TTL on terminal
@@ -67,6 +69,7 @@ func NewOCRJobStore() *OCRJobStore {
 	s := &OCRJobStore{
 		jobs: make(map[string]*OCRJob),
 		ttl:  time.Hour,
+		done: make(chan struct{}),
 	}
 	// Background sweep so terminal jobs evict even when nothing polls them
 	// again — the on-access GC (Create/Get) never fires if a user closes the
@@ -76,13 +79,27 @@ func NewOCRJobStore() *OCRJobStore {
 	return s
 }
 
+// Stop ends the background sweep goroutine. Idempotent and safe to call
+// from a shutdown path even if Stop was never reached (the store is a
+// process-lifetime singleton today, so the loop would otherwise run until
+// exit). Exposed mainly so embedders and goroutine-leak-checked tests can
+// reclaim the ticker deterministically.
+func (s *OCRJobStore) Stop() {
+	s.stopOnce.Do(func() { close(s.done) })
+}
+
 func (s *OCRJobStore) gcLoop() {
 	t := time.NewTicker(10 * time.Minute)
 	defer t.Stop()
-	for range t.C {
-		s.mu.Lock()
-		s.gcLocked()
-		s.mu.Unlock()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			s.mu.Lock()
+			s.gcLocked()
+			s.mu.Unlock()
+		}
 	}
 }
 

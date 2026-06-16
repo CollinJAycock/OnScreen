@@ -164,38 +164,6 @@ func TestPlayback_Branch_WebVTTExtraction(t *testing.T) {
 	}
 }
 
-// ── Subtitle burn-in ─────────────────────────────────────────────────────────
-
-// TestPlayback_Branch_SubtitleBurnIn drives the BurnSubtitleStream filter
-// path against a real text-subtitle source. The argv-level shape of the
-// filter is validated by TestBuildHLS_BurnSubtitle; this test proves the
-// filter chain composes with a real subtitle stream and produces a
-// segment without ffmpeg errors. Frame-content verification (subs visibly
-// drawn) is left to manual / browser-based testing — most movies have no
-// subtitles in the first 8 seconds anyway.
-//
-// Source choice: ffmpeg's `subtitles` filter only supports text-based
-// streams (subrip/ass/etc), not bitmap PGS — the filter aborts with
-// "Only text based subtitles are currently supported". Goodfellas' PGS
-// streams therefore can't drive this test; Forrest Gump has subrip.
-// (Bitmap subtitle burn-in would need an `overlay` filter chain instead,
-// which is a separate code path not yet implemented.)
-func TestPlayback_Branch_SubtitleBurnIn(t *testing.T) {
-	skipIfMissing(t, forrestGumpPath)
-
-	si := 0 // First subrip stream (English)
-	runHLSAny(t, BuildArgs{
-		InputPath:          forrestGumpPath,
-		Encoder:            EncoderSoftware,
-		Width:              854,
-		Height:             480,
-		BitrateKbps:        1500,
-		AudioCodec:         "aac",
-		AudioChannels:      2,
-		BurnSubtitleStream: &si,
-	})
-}
-
 // ── Software encoder fallback ────────────────────────────────────────────────
 
 // TestPlayback_Branch_Encoder_libx264 confirms the software H.264 path

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -763,7 +764,18 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 				"height":   height,
 			}, audit.ClientIP(r))
 	}
-	if err := h.sessions.Create(ctx, sess); err != nil {
+	// Authoritative cap enforcement at write time. The pre-check above is a
+	// cheap early-out; this closes the check-then-act race where concurrent
+	// Starts both pass the pre-check and overshoot the cap.
+	if err := h.sessions.CreateWithUserCap(ctx, sess, maxSessionsPerUser); err != nil {
+		if errors.Is(err, transcode.ErrUserAtCap) {
+			h.logger.WarnContext(ctx, "per-user transcode session cap reached (atomic)",
+				"user_id", claims.UserID, "cap", maxSessionsPerUser)
+			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS",
+				fmt.Sprintf("you already have %d active streams; stop one before starting another",
+					maxSessionsPerUser))
+			return
+		}
 		h.logger.WarnContext(ctx, "create transcode session", "err", err)
 		respond.InternalError(w, r)
 		return

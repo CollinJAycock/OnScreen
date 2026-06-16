@@ -189,14 +189,6 @@ type BuildArgs struct {
 	// absolute→relative first or the wrong/no track will be selected.
 	ExtractSubtitles bool
 	SubtitleStreams  []int // relative subtitle-stream indices to extract as WebVTT
-	// BurnSubtitleStream, when set, hard-burns the named subtitle
-	// stream into the video. Used by clients that can't render
-	// external WebVTT (older smart-TV browsers, some embedded
-	// devices). Forces a full re-encode — no video-copy. The value
-	// is the RELATIVE subtitle-stream index (e.g. 0 for the first
-	// subtitle track — see the convention note above), and Encoder must
-	// be a real encoder (libx264 / NVENC / etc.), not "copy".
-	BurnSubtitleStream *int
 
 	// Encoder tuning
 	EncoderOpts EncoderOpts
@@ -1038,38 +1030,7 @@ func buildVideoFilter(a BuildArgs) string {
 		filters = append(filters, "format=yuv420p")
 	}
 
-	// Subtitle burn-in. Appended last so the overlay sits on top of any
-	// scale + tonemap output. Only valid on the software path: the
-	// subtitles filter requires the frame in CPU memory (yuv420p), and
-	// inserting a hwdownload+hwupload around it on a hardware pipeline
-	// trashes the throughput win that justified picking GPU encoding
-	// in the first place. Callers that need burn-in should pick
-	// EncoderSoftware up front; the caller's job, not ours, to enforce.
-	if a.BurnSubtitleStream != nil {
-		filters = append(filters, subtitleBurnFilter(a.InputPath, *a.BurnSubtitleStream))
-	}
-
 	return strings.Join(filters, ",")
-}
-
-// subtitleBurnFilter constructs the FFmpeg `subtitles` filter expression
-// that burns stream `si` from `input` into the video. The single
-// quotes around the path let FFmpeg's filter parser handle paths
-// with colons + spaces; the backslash escape protects single quotes
-// inside the path itself.
-//
-// Windows paths (`C:\movies\...`) need an extra step: the filter parser
-// treats `:` as a key=value separator inside filter args (so `C:` is
-// otherwise parsed as a key), and backslashes are interpreted as escape
-// introducers and stripped. Convert backslashes to forward slashes
-// (ffmpeg accepts mixed separators on Windows) and escape every colon
-// in the path so the parser doesn't try to interpret `C` as a key whose
-// value is the rest of the path.
-func subtitleBurnFilter(input string, si int) string {
-	path := strings.ReplaceAll(input, `\`, `/`)
-	path = strings.ReplaceAll(path, `:`, `\:`)
-	path = strings.ReplaceAll(path, `'`, `\'`)
-	return fmt.Sprintf("subtitles='%s':si=%d", path, si)
 }
 
 // IsNVENCEncoder reports whether enc is any NVENC encoder. All three (H.264,

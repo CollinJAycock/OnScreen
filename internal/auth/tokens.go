@@ -77,6 +77,13 @@ type Claims struct {
 	// files the user has access to. Zero / nil for non-stream
 	// tokens.
 	FileID *uuid.UUID `json:"file_id,omitempty"`
+	// Switched marks a token minted via PIN-switch (one household
+	// profile assuming another's identity). The PIN-switch handler
+	// refuses to act on a token that already carries this flag, so a
+	// switched-into profile can't itself initiate further switches —
+	// no profile-hopping chains. Absent / false on a normal credential
+	// login.
+	Switched bool `json:"switched,omitempty"`
 }
 
 // TokenMaker issues and validates Paseto v4 local tokens.
@@ -111,6 +118,9 @@ func (m *TokenMaker) IssueAccessToken(claims Claims) (string, error) {
 		token.SetString("max_content_rating", claims.MaxContentRating)
 	}
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
+	if claims.Switched {
+		token.SetString("switched", "true")
+	}
 
 	return token.V4Encrypt(m.key, nil), nil
 }
@@ -168,6 +178,9 @@ func (m *TokenMaker) IssueAssetToken(claims Claims) (string, error) {
 	}
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 	token.SetString("purpose", "asset")
+	if claims.Switched {
+		token.SetString("switched", "true")
+	}
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -239,6 +252,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 			fileID = &id
 		}
 	}
+	switchedStr, _ := token.GetString("switched")
 
 	return &Claims{
 		UserID:           userID,
@@ -250,6 +264,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		ExpiresAt:        exp,
 		Purpose:          purpose,
 		FileID:           fileID,
+		Switched:         switchedStr == "true",
 	}, nil
 }
 

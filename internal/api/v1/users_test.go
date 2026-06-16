@@ -70,7 +70,7 @@ func (f *fakeThrottle) ResetFailures(_ context.Context, _ string)               
 // ── mock user DB ────────────────────────────────────────────────────────────
 
 type mockUserDB struct {
-	hubLayout []byte
+	hubLayout     []byte
 	listUsersRows []gen.ListUsersRow
 	listUsersErr  error
 
@@ -896,6 +896,87 @@ func TestUser_PINSwitch_Success(t *testing.T) {
 	}
 	if resp.Data.Username != "alice" {
 		t.Errorf("username: got %q, want %q", resp.Data.Username, "alice")
+	}
+}
+
+// pinPolicyStub satisfies PinSwitchPolicy for the toggle tests.
+type pinPolicyStub struct{ enabled bool }
+
+func (p pinPolicyStub) PinSwitchEnabled(context.Context) bool { return p.enabled }
+
+// TestUser_PINSwitch_Success_TokenIsSwitched proves the token minted by a
+// PIN-switch carries Switched=true, the brand the no-chaining guard keys on.
+func TestUser_PINSwitch_Success_TokenIsSwitched(t *testing.T) {
+	targetID := uuid.New()
+	svc := &mockUserService{verifyPINResult: &PINSwitchResult{UserID: targetID, Username: "alice"}}
+	tm := testTokenMaker(t)
+	h := NewUserHandler(svc).WithDB(&mockUserDB{}).WithTokenMaker(tm, slog.Default())
+
+	rec := httptest.NewRecorder()
+	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
+	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	h.PINSwitch(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			AccessToken string `json:"access_token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	claims, err := tm.ValidateAccessToken(resp.Data.AccessToken)
+	if err != nil {
+		t.Fatalf("validate issued token: %v", err)
+	}
+	if !claims.Switched {
+		t.Error("token minted by PIN-switch must have Switched=true")
+	}
+}
+
+// TestUser_PINSwitch_NoChaining rejects a switch initiated from a token that
+// was itself minted via PIN-switch — no profile-hopping.
+func TestUser_PINSwitch_NoChaining(t *testing.T) {
+	targetID := uuid.New()
+	svc := &mockUserService{verifyPINResult: &PINSwitchResult{UserID: targetID, Username: "bob"}}
+	tm := testTokenMaker(t)
+	h := NewUserHandler(svc).WithDB(&mockUserDB{}).WithTokenMaker(tm, slog.Default())
+
+	rec := httptest.NewRecorder()
+	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
+	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Switched: true}))
+	h.PINSwitch(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403; body: %s", rec.Code, rec.Body.String())
+	}
+	if svc.verifyPINCalled {
+		t.Error("must reject before verifying the PIN when chaining")
+	}
+}
+
+// TestUser_PINSwitch_DisabledByPolicy 403s when the server toggle is off.
+func TestUser_PINSwitch_DisabledByPolicy(t *testing.T) {
+	targetID := uuid.New()
+	svc := &mockUserService{verifyPINResult: &PINSwitchResult{UserID: targetID, Username: "carol"}}
+	tm := testTokenMaker(t)
+	h := NewUserHandler(svc).WithDB(&mockUserDB{}).WithTokenMaker(tm, slog.Default()).
+		WithPinSwitchPolicy(pinPolicyStub{enabled: false})
+
+	rec := httptest.NewRecorder()
+	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
+	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	h.PINSwitch(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403; body: %s", rec.Code, rec.Body.String())
+	}
+	if svc.verifyPINCalled {
+		t.Error("must reject before verifying the PIN when disabled")
 	}
 }
 

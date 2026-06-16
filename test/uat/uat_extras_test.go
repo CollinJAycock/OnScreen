@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -278,6 +280,8 @@ func (s *stubSettingsService) SetGeneral(_ context.Context, _ settings.GeneralCo
 }
 func (s *stubSettingsService) WebDownloadsEnabled(_ context.Context) bool             { return false }
 func (s *stubSettingsService) SetWebDownloadsEnabled(_ context.Context, _ bool) error { return nil }
+func (s *stubSettingsService) PinSwitchEnabled(_ context.Context) bool                { return true }
+func (s *stubSettingsService) SetPinSwitchEnabled(_ context.Context, _ bool) error    { return nil }
 func (s *stubSettingsService) Storage(_ context.Context) settings.StorageConfig {
 	return settings.StorageConfig{}
 }
@@ -888,6 +892,69 @@ func TestArtwork_RequiresAuth(t *testing.T) {
 	resp := ts.do("GET", "/artwork/some/path/poster.jpg", "", nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401 — artwork must require auth", resp.StatusCode)
+	}
+}
+
+// allowAllLibAccess satisfies v1.LibraryAccessChecker, granting every library.
+type allowAllLibAccess struct{}
+
+func (allowAllLibAccess) CanAccessLibrary(context.Context, uuid.UUID, uuid.UUID, bool) (bool, error) {
+	return true, nil
+}
+func (allowAllLibAccess) AllowedLibraryIDs(context.Context, uuid.UUID, bool) (map[uuid.UUID]struct{}, error) {
+	return nil, nil
+}
+
+// TestArtwork_ContentRatingGate proves the artwork server enforces the per-user
+// content-rating ceiling: an over-ceiling poster 404s even with library access,
+// a within-ceiling one serves, and art that maps to no rated item fails open.
+func TestArtwork_ContentRatingGate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "poster.jpg"), []byte("\xff\xd8\xffjpeg"), 0o644); err != nil {
+		t.Fatalf("write poster: %v", err)
+	}
+	libID := uuid.New()
+
+	var rating string
+	var found bool
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		h.ArtworkRoots = func() []api.ArtworkRoot {
+			return []api.ArtworkRoot{{LibraryID: libID, Paths: []string{dir}}}
+		}
+		h.LibraryAccess = allowAllLibAccess{}
+		h.ArtworkContentRating = func(_ context.Context, gotLib uuid.UUID, relPath string) (string, bool) {
+			if gotLib != libID || relPath != "poster.jpg" {
+				t.Errorf("lookup args: lib=%v rel=%q", gotLib, relPath)
+			}
+			return rating, found
+		}
+	})
+
+	// Ceiling = PG-13.
+	tok, err := ts.tm.IssueAccessToken(auth.Claims{UserID: uuid.New(), Username: "kid", MaxContentRating: "PG-13"})
+	if err != nil {
+		t.Fatalf("IssueAccessToken: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		rating   string
+		found    bool
+		wantCode int
+	}{
+		{"over-ceiling blocked", "R", true, http.StatusNotFound},
+		{"within-ceiling served", "PG", true, http.StatusOK},
+		{"unrated fails open", "", false, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rating, found = tc.rating, tc.found
+			resp := ts.do("GET", "/artwork/poster.jpg", tok, nil)
+			resp.Body.Close()
+			if resp.StatusCode != tc.wantCode {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantCode)
+			}
+		})
 	}
 }
 
