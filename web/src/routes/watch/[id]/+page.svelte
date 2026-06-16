@@ -33,6 +33,7 @@
     type SubtitleBackground,
     type SubtitleOutline,
   } from './subtitle-style';
+  import { pickPreferredSubtitle } from './subtitle-select';
   // Chromecast / Google Cast sender. Pure helpers (URL build, MIME
   // map, isCastable predicate) live in $lib/cast and are unit-tested
   // there; the SDK glue is local to this page.
@@ -195,6 +196,7 @@
     label: string;
     language: string;
     forced: boolean;
+    sdh: boolean;
     url: string;
     origin: 'embedded' | 'external';
   };
@@ -542,6 +544,7 @@
       label: s.title || s.language || `Track ${s.index}`,
       language: s.language || '',
       forced: s.forced,
+      sdh: s.sdh ?? false,
       url: assetUrl(`/media/subtitles/${file.id}/${s.index}`),
       origin: 'embedded',
     };
@@ -552,6 +555,7 @@
       label: ext.title || ext.language || 'External',
       language: ext.language || '',
       forced: ext.forced,
+      sdh: ext.sdh ?? false,
       // Wrap through assetUrl so the cross-origin native client gets
       // the bearer appended as `?token=` for the <track src=> /
       // bare-fetch loadSubtitleCues path. Same-origin browser builds
@@ -1600,7 +1604,15 @@
     try {
       const prefs = await userApi.getPreferences();
       if (prefs.preferred_subtitle_lang && !selectedSubtitle) {
-        const match = textSubtitles.find((s: PickedSubtitle) => s.language === prefs.preferred_subtitle_lang);
+        // Normalized matching (eng↔en↔en-US) + forced-only support, so the
+        // pref reliably matches ffprobe's 3-letter language codes and the
+        // "forced subtitles only" setting auto-shows foreign-dialogue
+        // captions without full subtitles. See subtitle-select.ts.
+        const match = pickPreferredSubtitle(
+          textSubtitles,
+          prefs.preferred_subtitle_lang,
+          prefs.forced_subtitles_only ?? false,
+        );
         if (match) selectedSubtitle = match;
       }
       if (prefs.preferred_audio_lang && item?.files?.[0]?.audio_streams?.length) {
@@ -3172,6 +3184,7 @@
                       >
                         {sub.label}
                         {#if sub.forced} (forced){/if}
+                        {#if sub.sdh} (SDH){/if}
                         {#if sub.origin === 'external'} · online{/if}
                       </button>
                     {/each}
@@ -3522,6 +3535,7 @@
               >
                 {sub.label}
                 {#if sub.forced} (forced){/if}
+                {#if sub.sdh} (SDH){/if}
                 {#if sub.origin === 'external'} · online{/if}
               </button>
             {/each}

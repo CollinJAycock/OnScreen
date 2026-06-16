@@ -827,6 +827,10 @@ export interface UserPreferences {
   preferred_audio_lang: string | null;
   preferred_subtitle_lang: string | null;
   max_content_rating: string | null;
+  // When true, auto-select only forced subtitles in the preferred language
+  // (show foreign-dialogue captions, not full subtitles). Returned by the
+  // server's preferences response.
+  forced_subtitles_only?: boolean;
   // Optional on the wire: server returns it always, but the
   // setPreferences PUT body can omit it (server treats absent as
   // "leave unchanged" via SQL COALESCE).
@@ -1367,6 +1371,7 @@ export interface SubtitleStream {
   language: string;
   title: string;
   forced: boolean;
+  sdh?: boolean;
 }
 
 export interface ExternalSubtitle {
