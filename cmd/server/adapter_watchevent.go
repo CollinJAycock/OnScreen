@@ -60,6 +60,30 @@ func (a *watchEventAdapter) GetWatchState(ctx context.Context, userID, mediaID u
 	}, nil
 }
 
+func (a *watchEventAdapter) GetWatchStatesForItems(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) ([]watchevent.WatchState, error) {
+	rows, err := a.q.GetWatchStatesForItems(ctx, gen.GetWatchStatesForItemsParams{
+		UserID:   userID,
+		MediaIds: mediaIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]watchevent.WatchState, len(rows))
+	for i, r := range rows {
+		out[i] = watchevent.WatchState{
+			UserID:         r.UserID,
+			MediaID:        r.MediaID,
+			PositionMS:     r.PositionMs,
+			DurationMS:     r.DurationMs,
+			Status:         r.Status,
+			LastWatchedAt:  r.LastWatchedAt.Time,
+			LastClientID:   r.LastClientID,
+			LastClientName: r.LastClientName,
+		}
+	}
+	return out, nil
+}
+
 func (a *watchEventAdapter) ListWatchStateForUser(ctx context.Context, userID uuid.UUID) ([]watchevent.WatchState, error) {
 	rows, err := a.q.ListWatchStateForUser(ctx, userID)
 	if err != nil {

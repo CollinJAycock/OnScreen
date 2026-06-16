@@ -33,10 +33,16 @@ import (
 // Capacity is fixed at construction; oldest entries are evicted in O(1) when a
 // ring fills. Memory ceiling is roughly 2 × capacity × line size — for
 // capacity=2000 and ~500 B per line that's ~2 MB, comfortable on the heap.
+// LogRingBuffer fields are POINTERS so that handlers derived via WithAttrs/
+// WithGroup share the same mutex and ring backing — only `inner` differs per
+// derivation. Value-copying the rings (the previous bug) gave each derived
+// handler its own mutex while sharing the same backing array, so concurrent
+// logging through a root + a `.With(...)`-derived logger raced on that array
+// under different locks.
 type LogRingBuffer struct {
-	mu    sync.Mutex
-	all   ringBuf // all levels — recent-activity view, INFO-dominated
-	warn  ringBuf // WARN/ERROR only — durable; an INFO flood can't evict it
+	mu    *sync.Mutex
+	all   *ringBuf // all levels — recent-activity view, INFO-dominated
+	warn  *ringBuf // WARN/ERROR only — durable; an INFO flood can't evict it
 	inner slog.Handler
 }
 
@@ -131,8 +137,9 @@ func NewLogRingBuffer(inner slog.Handler, capacity int) *LogRingBuffer {
 		capacity = 1000
 	}
 	return &LogRingBuffer{
-		all:   ringBuf{entries: make([]logEntry, capacity)},
-		warn:  ringBuf{entries: make([]logEntry, capacity)},
+		mu:    &sync.Mutex{},
+		all:   &ringBuf{entries: make([]logEntry, capacity)},
+		warn:  &ringBuf{entries: make([]logEntry, capacity)},
 		inner: inner,
 	}
 }
@@ -200,14 +207,15 @@ func (r *LogRingBuffer) Handle(ctx context.Context, rec slog.Record) error {
 // WithAttrs / WithGroup delegate to the inner handler. The ring captures
 // only the per-record attrs (not the bound ones) — operators reading
 // /admin/logs care about the message + immediate context; the bound
-// request_id / user_id are already in the per-record stream. The clone
-// shares the parent's ring backing arrays.
+// request_id / user_id are already in the per-record stream. The derived
+// handler shares the parent's mutex AND ring pointers, so every handler in the
+// tree funnels through one lock and one set of ring counters.
 func (r *LogRingBuffer) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &LogRingBuffer{all: r.all, warn: r.warn, inner: r.inner.WithAttrs(attrs)}
+	return &LogRingBuffer{mu: r.mu, all: r.all, warn: r.warn, inner: r.inner.WithAttrs(attrs)}
 }
 
 func (r *LogRingBuffer) WithGroup(name string) slog.Handler {
-	return &LogRingBuffer{all: r.all, warn: r.warn, inner: r.inner.WithGroup(name)}
+	return &LogRingBuffer{mu: r.mu, all: r.all, warn: r.warn, inner: r.inner.WithGroup(name)}
 }
 
 // Snapshot returns ring entries in oldest-to-newest order. Levels below

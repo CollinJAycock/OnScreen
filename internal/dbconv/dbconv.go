@@ -87,7 +87,7 @@ func numericToFloat64Ptr(n pgtype.Numeric) *float64 {
 	return &v
 }
 
-func float64PtrToNumeric(f *float64) pgtype.Numeric {
+func Float64PtrToNumeric(f *float64) pgtype.Numeric {
 	if f == nil {
 		return pgtype.Numeric{}
 	}
@@ -111,12 +111,12 @@ func int32PtrToIntPtr(i *int32) *int {
 	return &v
 }
 
-func intPtrToInt32Ptr(i *int) *int32 {
+func IntPtrToInt32Ptr(i *int) *int32 {
 	if i == nil {
 		return nil
 	}
 	if *i < math.MinInt32 || *i > math.MaxInt32 {
-		slog.Warn("intPtrToInt32Ptr: value out of int32 range, returning nil", "value", *i)
+		slog.Warn("IntPtrToInt32Ptr: value out of int32 range, returning nil", "value", *i)
 		return nil
 	}
 	v := int32(*i)
@@ -292,35 +292,35 @@ func CreateItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
 		Title:                     p.Title,
 		SortTitle:                 p.SortTitle,
 		OriginalTitle:             p.OriginalTitle,
-		Year:                      intPtrToInt32Ptr(p.Year),
+		Year:                      IntPtrToInt32Ptr(p.Year),
 		Summary:                   p.Summary,
 		Tagline:                   p.Tagline,
-		Rating:                    float64PtrToNumeric(p.Rating),
-		AudienceRating:            float64PtrToNumeric(p.AudienceRating),
+		Rating:                    Float64PtrToNumeric(p.Rating),
+		AudienceRating:            Float64PtrToNumeric(p.AudienceRating),
 		ContentRating:             p.ContentRating,
 		DurationMs:                p.DurationMS,
 		Genres:                    p.Genres,
 		Tags:                      p.Tags,
-		TmdbID:                    intPtrToInt32Ptr(p.TMDBID),
-		TvdbID:                    intPtrToInt32Ptr(p.TVDBID),
+		TmdbID:                    IntPtrToInt32Ptr(p.TMDBID),
+		TvdbID:                    IntPtrToInt32Ptr(p.TVDBID),
 		ImdbID:                    p.IMDBID,
 		MusicbrainzID:             uuidPtrToPGUUID(p.MusicBrainzID),
 		MusicbrainzReleaseID:      uuidPtrToPGUUID(p.MusicBrainzReleaseID),
 		MusicbrainzReleaseGroupID: uuidPtrToPGUUID(p.MusicBrainzReleaseGroupID),
 		MusicbrainzArtistID:       uuidPtrToPGUUID(p.MusicBrainzArtistID),
 		MusicbrainzAlbumArtistID:  uuidPtrToPGUUID(p.MusicBrainzAlbumArtistID),
-		DiscTotal:                 intPtrToInt32Ptr(p.DiscTotal),
-		TrackTotal:                intPtrToInt32Ptr(p.TrackTotal),
-		OriginalYear:              intPtrToInt32Ptr(p.OriginalYear),
+		DiscTotal:                 IntPtrToInt32Ptr(p.DiscTotal),
+		TrackTotal:                IntPtrToInt32Ptr(p.TrackTotal),
+		OriginalYear:              IntPtrToInt32Ptr(p.OriginalYear),
 		Compilation:               p.Compilation,
 		ReleaseType:               releaseType,
 		ParentID:                  uuidPtrToPGUUID(p.ParentID),
-		Index:                     intPtrToInt32Ptr(p.Index),
+		Index:                     IntPtrToInt32Ptr(p.Index),
 		PosterPath:                p.PosterPath,
 		FanartPath:                p.FanartPath,
 		ThumbPath:                 p.ThumbPath,
 		OriginallyAvailableAt:     timePtrToPGDate(p.OriginallyAvailableAt),
-		AnilistID:                 intPtrToInt32Ptr(p.AniListID),
+		AnilistID:                 IntPtrToInt32Ptr(p.AniListID),
 	}
 }
 
@@ -330,11 +330,11 @@ func UpdateItemMetadataParamsToGen(p media.UpdateItemMetadataParams) gen.UpdateM
 		Title:                 p.Title,
 		SortTitle:             p.SortTitle,
 		OriginalTitle:         p.OriginalTitle,
-		Year:                  intPtrToInt32Ptr(p.Year),
+		Year:                  IntPtrToInt32Ptr(p.Year),
 		Summary:               p.Summary,
 		Tagline:               p.Tagline,
-		Rating:                float64PtrToNumeric(p.Rating),
-		AudienceRating:        float64PtrToNumeric(p.AudienceRating),
+		Rating:                Float64PtrToNumeric(p.Rating),
+		AudienceRating:        Float64PtrToNumeric(p.AudienceRating),
 		ContentRating:         p.ContentRating,
 		DurationMs:            p.DurationMS,
 		Genres:                p.Genres,
@@ -343,12 +343,12 @@ func UpdateItemMetadataParamsToGen(p media.UpdateItemMetadataParams) gen.UpdateM
 		FanartPath:            p.FanartPath,
 		ThumbPath:             p.ThumbPath,
 		OriginallyAvailableAt: timePtrToPGDate(p.OriginallyAvailableAt),
-		TmdbID:                intPtrToInt32Ptr(p.TMDBID),
-		TvdbID:                intPtrToInt32Ptr(p.TVDBID),
-		AnilistID:             intPtrToInt32Ptr(p.AniListID),
-		MalID:                 intPtrToInt32Ptr(p.MALID),
+		TmdbID:                IntPtrToInt32Ptr(p.TMDBID),
+		TvdbID:                IntPtrToInt32Ptr(p.TVDBID),
+		AnilistID:             IntPtrToInt32Ptr(p.AniListID),
+		MalID:                 IntPtrToInt32Ptr(p.MALID),
 		ReadingDirection:      p.ReadingDirection,
-		FranchiseID:           intPtrToInt32Ptr(p.FranchiseID),
+		FranchiseID:           IntPtrToInt32Ptr(p.FranchiseID),
 	}
 }
 
@@ -402,24 +402,24 @@ func CreateFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 		Container:           p.Container,
 		VideoCodec:          p.VideoCodec,
 		AudioCodec:          p.AudioCodec,
-		ResolutionW:         intPtrToInt32Ptr(p.ResolutionW),
-		ResolutionH:         intPtrToInt32Ptr(p.ResolutionH),
+		ResolutionW:         IntPtrToInt32Ptr(p.ResolutionW),
+		ResolutionH:         IntPtrToInt32Ptr(p.ResolutionH),
 		Bitrate:             p.Bitrate,
 		HdrType:             p.HDRType,
-		FrameRate:           float64PtrToNumeric(p.FrameRate),
+		FrameRate:           Float64PtrToNumeric(p.FrameRate),
 		AudioStreams:        p.AudioStreams,
 		SubtitleStreams:     p.SubtitleStreams,
 		Chapters:            p.Chapters,
 		FileHash:            p.FileHash,
 		DurationMs:          p.DurationMS,
-		BitDepth:            intPtrToInt32Ptr(p.BitDepth),
-		VideoBitDepth:       intPtrToInt32Ptr(p.VideoBitDepth),
-		SampleRate:          intPtrToInt32Ptr(p.SampleRate),
+		BitDepth:            IntPtrToInt32Ptr(p.BitDepth),
+		VideoBitDepth:       IntPtrToInt32Ptr(p.VideoBitDepth),
+		SampleRate:          IntPtrToInt32Ptr(p.SampleRate),
 		ChannelLayout:       p.ChannelLayout,
 		Lossless:            p.Lossless,
-		ReplaygainTrackGain: float64PtrToNumeric(p.ReplayGainTrackGain),
-		ReplaygainTrackPeak: float64PtrToNumeric(p.ReplayGainTrackPeak),
-		ReplaygainAlbumGain: float64PtrToNumeric(p.ReplayGainAlbumGain),
-		ReplaygainAlbumPeak: float64PtrToNumeric(p.ReplayGainAlbumPeak),
+		ReplaygainTrackGain: Float64PtrToNumeric(p.ReplayGainTrackGain),
+		ReplaygainTrackPeak: Float64PtrToNumeric(p.ReplayGainTrackPeak),
+		ReplaygainAlbumGain: Float64PtrToNumeric(p.ReplayGainAlbumGain),
+		ReplaygainAlbumPeak: Float64PtrToNumeric(p.ReplayGainAlbumPeak),
 	}
 }

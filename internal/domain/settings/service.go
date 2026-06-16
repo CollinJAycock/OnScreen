@@ -31,6 +31,7 @@ const keyIntroDetectionMode = "intro_detection_mode"
 const keyOpenSubtitlesConfig = "opensubtitles_config"
 const keyWebDownloadsEnabled = "web_downloads_enabled"
 const keyPinSwitchEnabled = "pin_switch_enabled"
+const keyMachineID = "machine_id"
 const keyOIDCConfig = "oidc_config"
 const keySAMLConfig = "saml_config"
 const keyLDAPConfig = "ldap_config"
@@ -302,6 +303,22 @@ func (s *Service) SetWebDownloadsEnabled(ctx context.Context, enabled bool) erro
 		v = "true"
 	}
 	return s.set(ctx, keyWebDownloadsEnabled, v)
+}
+
+// MachineID returns the persisted stable server identifier, or "" if none has
+// been stored yet (first boot). Persisting it decouples the public machine_id
+// from the master SECRET_KEY — the old derivation hashed the secret directly
+// into a value exposed on the capabilities endpoint, UDP discovery, and
+// webhooks, and re-derived it every boot so a key rotation silently changed the
+// server's identity. See cmd/server resolveMachineID.
+func (s *Service) MachineID(ctx context.Context) string {
+	return s.get(ctx, keyMachineID)
+}
+
+// SetMachineID persists the stable server identifier (written once at first
+// boot by resolveMachineID).
+func (s *Service) SetMachineID(ctx context.Context, id string) error {
+	return s.set(ctx, keyMachineID, id)
 }
 
 // PinSwitchEnabled reports whether PIN-based profile switching is allowed.

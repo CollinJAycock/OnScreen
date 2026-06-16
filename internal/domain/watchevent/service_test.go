@@ -49,6 +49,16 @@ func (m *mockQuerier) GetWatchState(_ context.Context, userID, mediaID uuid.UUID
 	return s, nil
 }
 
+func (m *mockQuerier) GetWatchStatesForItems(_ context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) ([]WatchState, error) {
+	var out []WatchState
+	for _, id := range mediaIDs {
+		if s, ok := m.states[userID.String()+":"+id.String()]; ok {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
 func (m *mockQuerier) ListWatchStateForUser(_ context.Context, userID uuid.UUID) ([]WatchState, error) {
 	var out []WatchState
 	for _, s := range m.states {
@@ -335,6 +345,9 @@ func (e *errListQuerier) RefreshWatchState(ctx context.Context) error {
 }
 func (e *errListQuerier) GetWatchState(ctx context.Context, userID, mediaID uuid.UUID) (WatchState, error) {
 	return e.inner.GetWatchState(ctx, userID, mediaID)
+}
+func (e *errListQuerier) GetWatchStatesForItems(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) ([]WatchState, error) {
+	return e.inner.GetWatchStatesForItems(ctx, userID, mediaIDs)
 }
 func (e *errListQuerier) ListWatchStateForUser(_ context.Context, _ uuid.UUID) ([]WatchState, error) {
 	return nil, errors.New("list error")

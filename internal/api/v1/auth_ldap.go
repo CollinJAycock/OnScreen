@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
@@ -150,18 +151,50 @@ type ldapAuthService struct {
 	db          LDAPOAuthDB
 	issueTokens IssueTokenPairFn
 	logger      *slog.Logger
+	throttle    FailureThrottle // per-username brute-force cap; nil = no throttle
 }
+
+// ldapFailureWindow / maxLDAPFailuresPerUsername bound LDAP brute force per
+// username. The route's per-IP AuthLimit is defeated by a botnet/CGNAT pool
+// credential-stuffing one account from many IPs; this caps total failures per
+// username regardless of source, mirroring the local-login throttle.
+const (
+	maxLDAPFailuresPerUsername = 10
+	ldapFailureWindow          = 15 * time.Minute
+)
 
 // NewLDAPAuthService creates an LDAP auth service. The dialer can be the
 // default *defaultLDAPDialer or a fake for tests.
-func NewLDAPAuthService(cfgSrc LDAPSettingsReader, dialer LDAPDialer, db LDAPOAuthDB, issueTokens IssueTokenPairFn, logger *slog.Logger) LDAPAuthService {
+func NewLDAPAuthService(cfgSrc LDAPSettingsReader, dialer LDAPDialer, db LDAPOAuthDB, issueTokens IssueTokenPairFn, logger *slog.Logger) *ldapAuthService {
 	return &ldapAuthService{cfgSrc: cfgSrc, dialer: dialer, db: db, issueTokens: issueTokens, logger: logger}
+}
+
+// WithThrottle attaches the per-username brute-force throttle. Returns the
+// service for chaining. nil leaves LDAP login throttled only by the per-IP cap.
+func (s *ldapAuthService) WithThrottle(t FailureThrottle) *ldapAuthService {
+	s.throttle = t
+	return s
 }
 
 func (s *ldapAuthService) LoginLDAP(ctx context.Context, username, password string) (*TokenPair, error) {
 	cfg := s.cfgSrc.LDAP(ctx)
 	if !cfg.Enabled || cfg.Host == "" || cfg.UserSearchBase == "" || cfg.UserFilter == "" {
 		return nil, ErrLDAPDisabled
+	}
+
+	// Per-username brute-force throttle (failures only). Keyed by the attempted
+	// username so it caps guesses against one account regardless of source IP.
+	rlKey := "ratelimit:ldap_user:" + strings.ToLower(strings.TrimSpace(username))
+	if s.throttle != nil {
+		if allowed, _ := s.throttle.CheckFailures(ctx, rlKey, maxLDAPFailuresPerUsername); !allowed {
+			s.logger.WarnContext(ctx, "per-username LDAP login throttle hit")
+			return nil, ErrLDAPInvalidCredentials
+		}
+	}
+	recordFailure := func() {
+		if s.throttle != nil {
+			s.throttle.IncrFailure(ctx, rlKey, ldapFailureWindow)
+		}
 	}
 
 	conn, err := s.dialer.Dial(cfg)
@@ -197,6 +230,7 @@ func (s *ldapAuthService) LoginLDAP(ctx context.Context, username, password stri
 		return nil, fmt.Errorf("ldap search: %w", err)
 	}
 	if len(res.Entries) == 0 {
+		recordFailure()
 		return nil, ErrLDAPInvalidCredentials
 	}
 	if len(res.Entries) > 1 {
@@ -214,6 +248,7 @@ func (s *ldapAuthService) LoginLDAP(ctx context.Context, username, password stri
 		s.logger.Warn("ldap: ambiguous filter — refusing login",
 			"matches", len(res.Entries),
 			"filter_template", cfg.UserFilter)
+		recordFailure()
 		return nil, ErrLDAPInvalidCredentials
 	}
 	entry := res.Entries[0]
@@ -222,9 +257,15 @@ func (s *ldapAuthService) LoginLDAP(ctx context.Context, username, password stri
 	if err := conn.Bind(entry.DN, password); err != nil {
 		var lerr *ldap.Error
 		if errors.As(err, &lerr) && lerr.ResultCode == ldap.LDAPResultInvalidCredentials {
+			recordFailure()
 			return nil, ErrLDAPInvalidCredentials
 		}
 		return nil, fmt.Errorf("ldap user bind: %w", err)
+	}
+	// Correct password — clear the failure counter so a user who eventually
+	// got it right starts fresh next time.
+	if s.throttle != nil {
+		s.throttle.ResetFailures(ctx, rlKey)
 	}
 
 	resolvedUsername := entry.GetAttributeValue(usernameAttr)

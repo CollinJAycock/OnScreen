@@ -272,6 +272,9 @@ type stubItemWatchService struct{ recorded bool }
 func (s *stubItemWatchService) GetState(_ context.Context, _, _ uuid.UUID) (watchevent.WatchState, error) {
 	return watchevent.WatchState{}, nil
 }
+func (s *stubItemWatchService) GetStates(_ context.Context, _ uuid.UUID, _ []uuid.UUID) (map[uuid.UUID]watchevent.WatchState, error) {
+	return map[uuid.UUID]watchevent.WatchState{}, nil
+}
 func (s *stubItemWatchService) Record(_ context.Context, _ watchevent.RecordParams) error {
 	s.recorded = true
 	return nil

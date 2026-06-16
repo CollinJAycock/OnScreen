@@ -96,6 +96,84 @@ func (q *Queries) GetWatchState(ctx context.Context, arg GetWatchStateParams) (G
 	return i, err
 }
 
+const getWatchStatesForItems = `-- name: GetWatchStatesForItems :many
+SELECT DISTINCT ON (l.media_id)
+    l.user_id,
+    l.media_id,
+    l.position_ms,
+    l.duration_ms,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM watch_events ec
+            WHERE ec.user_id = l.user_id AND ec.media_id = l.media_id
+              AND ec.duration_ms IS NOT NULL AND ec.duration_ms > 0
+              AND ec.position_ms::float / NULLIF(ec.duration_ms, 0) > 0.9
+            LIMIT 1
+        )                                                       THEN 'watched'
+        WHEN l.duration_ms IS NULL OR l.duration_ms = 0         THEN 'unwatched'
+        WHEN l.position_ms::float / NULLIF(l.duration_ms, 0) > 0.9 THEN 'watched'
+        WHEN l.position_ms > 0                                  THEN 'in_progress'
+        ELSE                                                         'unwatched'
+    END AS status,
+    l.occurred_at AS last_watched_at,
+    l.client_id   AS last_client_id,
+    l.client_name AS last_client_name
+FROM watch_events l
+WHERE l.user_id = $1
+  AND l.media_id = ANY($2::uuid[])
+ORDER BY l.media_id, l.occurred_at DESC
+`
+
+type GetWatchStatesForItemsParams struct {
+	UserID   uuid.UUID   `json:"user_id"`
+	MediaIds []uuid.UUID `json:"media_ids"`
+}
+
+type GetWatchStatesForItemsRow struct {
+	UserID         uuid.UUID          `json:"user_id"`
+	MediaID        uuid.UUID          `json:"media_id"`
+	PositionMs     int64              `json:"position_ms"`
+	DurationMs     *int64             `json:"duration_ms"`
+	Status         string             `json:"status"`
+	LastWatchedAt  pgtype.Timestamptz `json:"last_watched_at"`
+	LastClientID   *string            `json:"last_client_id"`
+	LastClientName *string            `json:"last_client_name"`
+}
+
+// Batch form of GetWatchState for a set of media IDs — used by the children
+// listing to avoid an N+1 (one query per child). Same direct-from-watch_events
+// semantics as GetWatchState: DISTINCT ON picks the latest event per media, and
+// the sticky-"watched" EXISTS check is per (user, media). Media the user has no
+// events for simply don't appear; the caller treats an absent id as unwatched.
+func (q *Queries) GetWatchStatesForItems(ctx context.Context, arg GetWatchStatesForItemsParams) ([]GetWatchStatesForItemsRow, error) {
+	rows, err := q.db.Query(ctx, getWatchStatesForItems, arg.UserID, arg.MediaIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetWatchStatesForItemsRow{}
+	for rows.Next() {
+		var i GetWatchStatesForItemsRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.MediaID,
+			&i.PositionMs,
+			&i.DurationMs,
+			&i.Status,
+			&i.LastWatchedAt,
+			&i.LastClientID,
+			&i.LastClientName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertWatchEvent = `-- name: InsertWatchEvent :one
 
 INSERT INTO watch_events (

@@ -718,9 +718,11 @@ func run() error {
 	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
-	// Derive a stable machine ID from the secret key so webhook payloads
-	// identify this server consistently across restarts without a dedicated config field.
-	machineID := uuid.NewSHA1(uuid.NameSpaceDNS, []byte(cfg.SecretKey)).String()
+	// Stable per-server identifier surfaced on the public capabilities endpoint,
+	// UDP discovery, and webhook payloads. Persisted in settings rather than
+	// derived from the master SECRET_KEY (the old approach published a bare hash
+	// of the secret and re-derived it every boot). resolveMachineID seeds it once.
+	machineID := resolveMachineID(ctx, settingsSvc, gen.New(rwPool), cfg.SecretKey, logger)
 
 	// Capabilities — public describing-document for native clients that just
 	// found the server via discovery. Reads settings on each call so toggling
@@ -1114,7 +1116,8 @@ func run() error {
 	samlAuthHandler := v1.NewSAMLHandler(settingsSvc, samlSvc, baseURL, logger).
 		WithRequestTracker(v1.NewValkeySAMLRequestTracker(valkeyClient)).
 		WithAudit(auditLogger)
-	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger)
+	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger).
+		WithThrottle(rateLimiter)
 	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger).WithAudit(auditLogger)
 
 	// ── Notifications ────────────────────────────────────────────────────────
@@ -1569,6 +1572,37 @@ func run() error {
 	}
 	logger.Info("server stopped")
 	return nil
+}
+
+// resolveMachineID returns the server's stable public identifier, persisting it
+// in settings on first boot so it is decoupled from the master SECRET_KEY.
+//
+// The old code derived it as uuid.NewSHA1(NameSpaceDNS, SECRET_KEY) on every
+// boot, publishing a bare hash of the secret on the (unauthenticated)
+// capabilities endpoint, UDP discovery, and webhook payloads. To avoid breaking
+// already-deployed servers (clients, webhook consumers and discovery key off
+// the identifier), an EXISTING install — one that already has users — keeps its
+// historical derived value; a brand-new install (no users yet) gets a fresh
+// random id with no relationship to the secret. After this one-time seed the id
+// is read from storage, so a later key rotation no longer changes it.
+func resolveMachineID(ctx context.Context, settingsSvc *settings.Service, q *gen.Queries, secretKey string, logger *slog.Logger) string {
+	if id := settingsSvc.MachineID(ctx); id != "" {
+		return id
+	}
+	var id string
+	if n, err := q.CountUsers(ctx); err == nil && n > 0 {
+		// Existing install: preserve identity (paired clients / webhooks / discovery).
+		id = uuid.NewSHA1(uuid.NameSpaceDNS, []byte(secretKey)).String()
+		logger.Info("machine_id: seeding persisted value from legacy derived id (existing install)")
+	} else {
+		// Fresh install: random id, no coupling to the secret key.
+		id = uuid.NewString()
+		logger.Info("machine_id: generated fresh random id (new install)")
+	}
+	if err := settingsSvc.SetMachineID(ctx, id); err != nil {
+		logger.Warn("machine_id: persist failed; using value in-memory for this run", "err", err)
+	}
+	return id
 }
 
 // scanEnqueuer implements library.ScanEnqueuer and scanner.WatchTrigger.

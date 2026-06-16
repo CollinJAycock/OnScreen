@@ -51,6 +51,7 @@ func isStubUser(u gen.User) bool {
 	return u.PasswordHash == nil &&
 		u.OidcSubject == nil &&
 		u.LdapDn == nil &&
+		u.SamlSubject == nil &&
 		u.GoogleID == nil &&
 		u.GithubID == nil &&
 		u.DiscordID == nil

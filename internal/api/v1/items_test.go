@@ -91,6 +91,9 @@ type mockItemWatch struct {
 func (m *mockItemWatch) GetState(_ context.Context, _, _ uuid.UUID) (watchevent.WatchState, error) {
 	return m.state, m.stateErr
 }
+func (m *mockItemWatch) GetStates(_ context.Context, _ uuid.UUID, _ []uuid.UUID) (map[uuid.UUID]watchevent.WatchState, error) {
+	return map[uuid.UUID]watchevent.WatchState{}, nil
+}
 func (m *mockItemWatch) Record(_ context.Context, _ watchevent.RecordParams) error {
 	m.recorded = true
 	return m.recordErr
@@ -291,6 +294,16 @@ func (p *perChildWatch) GetState(_ context.Context, _, mediaID uuid.UUID) (watch
 		return s, nil
 	}
 	return watchevent.WatchState{Status: "unwatched"}, nil
+}
+
+func (p *perChildWatch) GetStates(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]watchevent.WatchState, error) {
+	out := make(map[uuid.UUID]watchevent.WatchState, len(ids))
+	for _, id := range ids {
+		if s, ok := p.states[id]; ok {
+			out[id] = s
+		}
+	}
+	return out, nil
 }
 
 func (p *perChildWatch) Record(_ context.Context, _ watchevent.RecordParams) error { return nil }

@@ -47,7 +47,10 @@ func (s *userService) SetPIN(ctx context.Context, userID uuid.UUID, rawPIN, pass
 		}
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(rawPIN), bcrypt.DefaultCost)
+	// Cost 12 to match every other stored credential (DefaultCost=10 was the
+	// lone outlier here). The 4-digit keyspace makes bcrypt cost only marginally
+	// helpful, but there's no reason to hash the PIN weaker than the password.
+	hash, err := bcrypt.GenerateFromPassword([]byte(rawPIN), 12)
 	if err != nil {
 		return fmt.Errorf("hash PIN: %w", err)
 	}

@@ -114,6 +114,7 @@ type ItemWebhookDispatcher interface {
 // ItemWatchService defines the watch event operations the items handler needs.
 type ItemWatchService interface {
 	GetState(ctx context.Context, userID, mediaID uuid.UUID) (watchevent.WatchState, error)
+	GetStates(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) (map[uuid.UUID]watchevent.WatchState, error)
 	Record(ctx context.Context, p watchevent.RecordParams) error
 }
 
@@ -1087,6 +1088,17 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Batch the watch-state lookup: one query for all children instead of one
+	// per child (the previous N+1). Absent ids mean unwatched.
+	var states map[uuid.UUID]watchevent.WatchState
+	if userID != uuid.Nil {
+		ids := make([]uuid.UUID, len(children))
+		for i, c := range children {
+			ids[i] = c.ID
+		}
+		states, _ = h.watch.GetStates(r.Context(), userID, ids)
+	}
+
 	out := make([]ChildItemResponse, 0, len(children))
 	for _, c := range children {
 		cr := ""
@@ -1098,8 +1110,7 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		}
 		var viewOffsetMS int64
 		var watched bool
-		if userID != uuid.Nil {
-			state, _ := h.watch.GetState(r.Context(), userID, c.ID)
+		if state, ok := states[c.ID]; ok {
 			switch state.Status {
 			case "in_progress":
 				viewOffsetMS = state.PositionMS

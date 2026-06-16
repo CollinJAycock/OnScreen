@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,11 +41,21 @@ import (
 // Server serves photo derivatives.
 type Server struct {
 	cacheDir string
+	// resizeSem bounds concurrent cache-miss decodes. A source photo decodes to
+	// a full RGBA bitmap (up to ~400 MB for a 100 MP image) plus a second buffer
+	// for the resize target, and HEIC/cover decodes shell out to ffmpeg — so an
+	// unbounded burst of cache-miss requests (an attacker varies ?w/?h/?q to miss
+	// every time) would ratchet the Go heap and saturate the CPU. Sized to
+	// GOMAXPROCS, exactly like internal/artwork.Manager.resizeSem.
+	resizeSem chan struct{}
 }
 
 // New constructs a Server. cacheDir is created lazily on first write.
 func New(cacheDir string) *Server {
-	return &Server{cacheDir: cacheDir}
+	return &Server{
+		cacheDir:  cacheDir,
+		resizeSem: make(chan struct{}, runtime.GOMAXPROCS(0)),
+	}
 }
 
 // Fit controls how Width/Height constrain the output.
@@ -80,6 +91,17 @@ func (s *Server) Serve(ctx context.Context, w io.Writer, sourcePath string, opts
 			defer cf.Close()
 			_, err := io.Copy(w, cf)
 			return err
+		}
+	}
+
+	// Cache miss → bound concurrent decodes (see Server.resizeSem). Honour the
+	// request context so a navigated-away client doesn't hold a slot.
+	if s.resizeSem != nil {
+		select {
+		case s.resizeSem <- struct{}{}:
+			defer func() { <-s.resizeSem }()
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 
@@ -187,6 +209,12 @@ func isAudiobookContainer(sourcePath string) bool {
 // cover" error path the handler 404s on.
 var noEmbeddedCover sync.Map // map[string]struct{}
 
+// ffmpegDecodeTimeout caps a single HEIC/cover decode. The request context
+// alone is insufficient: http.Server.WriteTimeout does not cancel r.Context(),
+// so a pathological container could keep ffmpeg (and a resizeSem slot) busy
+// until the client disconnects. 30s matches scanner.ProbeFile.
+const ffmpegDecodeTimeout = 30 * time.Second
+
 // decodeEmbeddedCover shells out to ffmpeg to extract the first attached
 // picture from an audio container (m4b chapter art, MP3 ID3 APIC, FLAC
 // PICTURE, etc.) and returns it decoded. Same memory cap and ffmpeg flags
@@ -200,6 +228,8 @@ func decodeEmbeddedCover(ctx context.Context, sourcePath string) (image.Image, e
 		return nil, fmt.Errorf("no embedded cover in %s (cached)", sourcePath)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, ffmpegDecodeTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner", "-loglevel", "error",
 		"-i", sourcePath,
@@ -259,6 +289,8 @@ func isHEIC(sourcePath string) bool {
 // exhausting memory. 50 MB is comfortably above any sensible single-photo
 // JPEG (24 MP at quality 95 is ~10 MB).
 func decodeHEIC(ctx context.Context, sourcePath string) (image.Image, error) {
+	ctx, cancel := context.WithTimeout(ctx, ffmpegDecodeTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner", "-loglevel", "error",
 		"-i", sourcePath,

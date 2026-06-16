@@ -9,9 +9,6 @@
 package main
 
 import (
-	"log/slog"
-	"math"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,22 +56,6 @@ func numericToFloat64Ptr(n pgtype.Numeric) *float64 {
 	return &v
 }
 
-func float64PtrToNumeric(f *float64) pgtype.Numeric {
-	if f == nil {
-		return pgtype.Numeric{}
-	}
-	var n pgtype.Numeric
-	// pgtype.Numeric.Scan rejects a raw float64 ("cannot scan float64") and
-	// leaves the value invalid → the column is written NULL. Scan the decimal
-	// string form, which it parses into its big.Int/Exp representation. Every
-	// Numeric column we populate from a float (frame_rate, replaygain_*) was
-	// silently NULL until this.
-	if err := n.Scan(strconv.FormatFloat(*f, 'f', -1, 64)); err != nil {
-		return pgtype.Numeric{}
-	}
-	return n
-}
-
 func int32PtrToIntPtr(i *int32) *int {
 	if i == nil {
 		return nil
@@ -83,17 +64,11 @@ func int32PtrToIntPtr(i *int32) *int {
 	return &v
 }
 
-func intPtrToInt32Ptr(i *int) *int32 {
-	if i == nil {
-		return nil
-	}
-	if *i < math.MinInt32 || *i > math.MaxInt32 {
-		slog.Warn("intPtrToInt32Ptr: value out of int32 range, returning nil", "value", *i)
-		return nil
-	}
-	v := int32(*i)
-	return &v
-}
+// float64PtrToNumeric / intPtrToInt32Ptr delegate to dbconv so the (guarded)
+// scalar conversions have a single home — the worker previously kept its own
+// copy of intPtrToInt32Ptr that lacked the int32 range guard. See dbconv.
+func float64PtrToNumeric(f *float64) pgtype.Numeric { return dbconv.Float64PtrToNumeric(f) }
+func intPtrToInt32Ptr(i *int) *int32                { return dbconv.IntPtrToInt32Ptr(i) }
 
 func durationToPtr(d time.Duration) *time.Duration {
 	return &d

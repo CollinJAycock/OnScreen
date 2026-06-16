@@ -70,6 +70,11 @@ type captureSession struct {
 	cmd      *exec.Cmd
 	upstream Stream
 	filePath string
+	// done is closed by the per-capture reaper goroutine once cmd.Wait()
+	// returns. The reaper MUST call Wait — only then is cmd.ProcessState
+	// populated (exec.CommandContext kills on ctx but never reaps), and
+	// without it the exited ffmpeg zombies and finalize() never runs.
+	done chan struct{}
 }
 
 // NewDVRWorker wires the worker. lib and media can be nil during tests
@@ -196,17 +201,26 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 		return fmt.Errorf("ffmpeg start: %w", err)
 	}
 
-	if err := w.q.SetRecordingStartedFile(captureCtx, r.ID, path); err != nil {
-		cancel()
-		upstream.Close()
-		_ = cmd.Process.Kill()
-		return fmt.Errorf("mark recording started: %w", err)
-	}
-
 	session := &captureSession{
 		recID: r.ID, cancel: cancel, cmd: cmd,
 		upstream: upstream, filePath: path,
+		done: make(chan struct{}),
 	}
+	// Reap the child as soon as it exits (end-of-recording deadline, failure,
+	// or cancel). This is what populates cmd.ProcessState so reapFinishedCaptures
+	// can finalize; without it the process zombies and the recording is stuck
+	// forever. Spawned right after Start so it reaps even if the steps below fail.
+	go func() {
+		_ = cmd.Wait()
+		close(session.done)
+	}()
+
+	if err := w.q.SetRecordingStartedFile(captureCtx, r.ID, path); err != nil {
+		cancel() // ffmpeg dies on ctx cancel; the reaper goroutine above Wait()s it
+		upstream.Close()
+		return fmt.Errorf("mark recording started: %w", err)
+	}
+
 	w.mu.Lock()
 	w.active[r.ID] = session
 	w.mu.Unlock()
@@ -223,8 +237,12 @@ func (w *DVRWorker) reapFinishedCaptures(ctx context.Context) {
 	w.mu.Lock()
 	candidates := make([]*captureSession, 0, len(w.active))
 	for _, s := range w.active {
-		if s.cmd.ProcessState != nil {
+		// done closed ⇒ cmd.Wait() returned ⇒ ProcessState is populated and the
+		// process is reaped. Non-blocking: still-running captures are skipped.
+		select {
+		case <-s.done:
 			candidates = append(candidates, s)
+		default:
 		}
 	}
 	w.mu.Unlock()

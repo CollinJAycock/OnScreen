@@ -1091,16 +1091,3 @@ func IsAV1Encoder(enc Encoder) bool {
 		return false
 	}
 }
-
-// HEVCVariant returns the HEVC counterpart for a given H.264 encoder.
-// Returns the encoder unchanged if no HEVC variant exists.
-func HEVCVariant(enc Encoder) Encoder {
-	switch enc {
-	case EncoderNVENC:
-		return EncoderHEVCNVENC
-	case EncoderSoftware:
-		return EncoderHEVCSoftware
-	default:
-		return enc // AMF/VAAPI/QSV: no HEVC variant implemented yet
-	}
-}

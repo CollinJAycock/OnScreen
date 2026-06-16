@@ -64,6 +64,38 @@ WHERE l.user_id = $1 AND l.media_id = $2
 ORDER BY l.occurred_at DESC
 LIMIT 1;
 
+-- name: GetWatchStatesForItems :many
+-- Batch form of GetWatchState for a set of media IDs — used by the children
+-- listing to avoid an N+1 (one query per child). Same direct-from-watch_events
+-- semantics as GetWatchState: DISTINCT ON picks the latest event per media, and
+-- the sticky-"watched" EXISTS check is per (user, media). Media the user has no
+-- events for simply don't appear; the caller treats an absent id as unwatched.
+SELECT DISTINCT ON (l.media_id)
+    l.user_id,
+    l.media_id,
+    l.position_ms,
+    l.duration_ms,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM watch_events ec
+            WHERE ec.user_id = l.user_id AND ec.media_id = l.media_id
+              AND ec.duration_ms IS NOT NULL AND ec.duration_ms > 0
+              AND ec.position_ms::float / NULLIF(ec.duration_ms, 0) > 0.9
+            LIMIT 1
+        )                                                       THEN 'watched'
+        WHEN l.duration_ms IS NULL OR l.duration_ms = 0         THEN 'unwatched'
+        WHEN l.position_ms::float / NULLIF(l.duration_ms, 0) > 0.9 THEN 'watched'
+        WHEN l.position_ms > 0                                  THEN 'in_progress'
+        ELSE                                                         'unwatched'
+    END AS status,
+    l.occurred_at AS last_watched_at,
+    l.client_id   AS last_client_id,
+    l.client_name AS last_client_name
+FROM watch_events l
+WHERE l.user_id = sqlc.arg('user_id')
+  AND l.media_id = ANY(sqlc.arg('media_ids')::uuid[])
+ORDER BY l.media_id, l.occurred_at DESC;
+
 -- name: ListWatchStateForUser :many
 SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at,
        last_client_id, last_client_name

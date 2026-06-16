@@ -49,6 +49,7 @@ type Querier interface {
 	InsertWatchEvent(ctx context.Context, p InsertWatchEventParams) (InsertWatchEventRow, error)
 	RefreshWatchState(ctx context.Context) error
 	GetWatchState(ctx context.Context, userID, mediaID uuid.UUID) (WatchState, error)
+	GetWatchStatesForItems(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) ([]WatchState, error)
 	ListWatchStateForUser(ctx context.Context, userID uuid.UUID) ([]WatchState, error)
 }
 
@@ -173,6 +174,25 @@ func (s *Service) GetState(ctx context.Context, userID, mediaID uuid.UUID) (Watc
 		}, nil
 	}
 	return state, nil
+}
+
+// GetStates returns the watch state for each of mediaIDs in one query, keyed by
+// media id. Media the user has never played are absent from the map — callers
+// treat a missing entry as unwatched (mirrors GetState's zero-value default).
+// Used to avoid an N+1 when rendering a list of children.
+func (s *Service) GetStates(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) (map[uuid.UUID]WatchState, error) {
+	out := make(map[uuid.UUID]WatchState, len(mediaIDs))
+	if len(mediaIDs) == 0 {
+		return out, nil
+	}
+	states, err := s.ro.GetWatchStatesForItems(ctx, userID, mediaIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get watch states for items: %w", err)
+	}
+	for _, st := range states {
+		out[st.MediaID] = st
+	}
+	return out, nil
 }
 
 // ListStates returns all watch states for a user.

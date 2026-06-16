@@ -87,6 +87,17 @@ const (
 	loginFailureWindow          = 15 * time.Minute
 )
 
+// MaxTOTPFailuresPerUser / totpFailureWindow cap second-factor (TOTP /
+// recovery-code) guesses per user. The per-IP AuthLimit alone is defeated by a
+// botnet/CGNAT pool, and a correct password re-mints a fresh challenge token
+// without touching the per-username login counter — so without a per-USER cap
+// on the verify step an attacker holding the password could grind the 10^6 code
+// space. Keyed by user ID so re-minting challenges can't reset it.
+const (
+	MaxTOTPFailuresPerUser = 10
+	totpFailureWindow      = 15 * time.Minute
+)
+
 func (s *authService) UserCount(ctx context.Context) (int64, error) {
 	return s.db.CountUsers(ctx)
 }
@@ -476,12 +487,32 @@ func (s *authService) VerifyTOTPLogin(ctx context.Context, challengeToken, code 
 	if !user.TotpEnabled {
 		return nil, v1.ErrInvalidTOTPChallenge
 	}
+
+	// Per-user second-factor brute-force throttle. Keyed by user ID (not
+	// username, not IP) so neither a distributed IP pool nor re-minting fresh
+	// challenge tokens lets an attacker exceed the cap on TOTP/recovery-code
+	// guesses for a single account.
+	rlKey := "ratelimit:totp_verify:" + claims.UserID.String()
+	if s.rateLimiter != nil {
+		allowed, _ := s.rateLimiter.CheckFailures(ctx, rlKey, MaxTOTPFailuresPerUser)
+		if !allowed {
+			s.logger.WarnContext(ctx, "per-user TOTP verify throttle hit", "user_id", claims.UserID)
+			return nil, v1.ErrBadTOTPCode
+		}
+	}
+
 	ok, err := s.validateSecondFactor(ctx, user, code)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
+		if s.rateLimiter != nil {
+			s.rateLimiter.IncrFailure(ctx, rlKey, totpFailureWindow)
+		}
 		return nil, v1.ErrBadTOTPCode
+	}
+	if s.rateLimiter != nil {
+		s.rateLimiter.ResetFailures(ctx, rlKey)
 	}
 	return s.issueTokenPair(ctx, user)
 }
