@@ -987,7 +987,12 @@ func NewRouter(h *Handlers) http.Handler {
 					middleware.SessionKey("ratelimit:subtitles"))
 				r.With(subRL).Get("/items/{id}/subtitles/search", h.Subtitles.Search)
 				r.With(subRL).Post("/items/{id}/subtitles/download", h.Subtitles.Download)
-				r.Post("/items/{id}/subtitles/ocr", h.Subtitles.OCR)
+				// OCR start spins up ffmpeg + tesseract over a whole stream —
+				// frequency-cap it like transcode-start (the per-user
+				// concurrency-2 cap bounds parallelism; this bounds churn).
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.TranscodeStartLimit,
+					middleware.SessionKey("ratelimit:ocr_start"))).
+					Post("/items/{id}/subtitles/ocr", h.Subtitles.OCR)
 				r.Get("/items/{id}/subtitles/ocr/{jobId}", h.Subtitles.OCRStatus)
 				r.Delete("/items/{id}/subtitles/{subId}", h.Subtitles.Delete)
 			}

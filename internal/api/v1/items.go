@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -194,7 +195,11 @@ type ItemHandler struct {
 	// seconds, and a player + its reverse-proxy retries would otherwise spawn
 	// several duplicate ffmpegs over the same multi-GB file.
 	subtitleExtract singleflight.Group
-	logger          *slog.Logger
+	// subtitleExtractSem bounds concurrent whole-file subtitle demuxes across
+	// DISTINCT (file, stream) keys (singleflight only dedupes same-key). Sized
+	// in WithSubtitleCache; nil disables caching/extraction-throttling.
+	subtitleExtractSem chan struct{}
+	logger             *slog.Logger
 }
 
 // DownloadGate decides whether the /media/download/{id} endpoint is open
@@ -250,6 +255,13 @@ func (h *ItemHandler) WithExternalSubtitles(s ExternalSubLister) *ItemHandler {
 // 25–60s to demux and times out behind a reverse proxy.
 func (h *ItemHandler) WithSubtitleCache(dir string) *ItemHandler {
 	h.subtitleCacheDir = dir
+	// Cap concurrent extractions at the CPU count (each is disk-bound demux +
+	// light CPU). Min 2 so a single-core host still makes progress.
+	n := runtime.NumCPU()
+	if n < 2 {
+		n = 2
+	}
+	h.subtitleExtractSem = make(chan struct{}, n)
 	return h
 }
 
@@ -2403,20 +2415,37 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v, err, _ := h.subtitleExtract.Do(cachePath, func() (any, error) {
+	// Miss: extract once. DoChan (not Do) so this request goroutine releases on
+	// a client/proxy disconnect — the extraction runs detached and still caches
+	// for the retry, instead of pinning the goroutine for up to the full 5-min
+	// extraction timeout. The leader acquires a slot from subtitleExtractSem
+	// before shelling ffmpeg, bounding concurrent whole-file demuxes (a 4K
+	// remux is 25–60s of disk+CPU each) so a fan of distinct-file requests
+	// can't saturate the box; deduped followers share the leader's result.
+	ch := h.subtitleExtract.DoChan(cachePath, func() (any, error) {
+		select {
+		case h.subtitleExtractSem <- struct{}{}:
+			defer func() { <-h.subtitleExtractSem }()
+		case <-time.After(2 * time.Minute):
+			return nil, fmt.Errorf("subtitle extraction queue saturated")
+		}
 		return extractEmbeddedSubtitleToCache(file.FilePath, streamIdx, cachePath)
 	})
-	if err != nil {
-		h.logger.WarnContext(r.Context(), "subtitle extraction failed",
-			"file_id", fileID, "stream", streamIdx, "err", err)
-		// The detached extraction keeps running/caching past a client
-		// disconnect, so a retry typically hits the cache. Tell the client to
-		// retry rather than returning a broken/empty track.
-		respond.Error(w, r, http.StatusGatewayTimeout, "SUBTITLE_PREPARING",
-			"subtitle is being prepared from the source file; retry in a moment")
+	select {
+	case <-r.Context().Done():
+		// Client/proxy gave up; the extraction continues and caches for the
+		// inevitable retry. Don't write — the connection is gone.
 		return
+	case res := <-ch:
+		if res.Err != nil {
+			h.logger.WarnContext(r.Context(), "subtitle extraction failed",
+				"file_id", fileID, "stream", streamIdx, "err", res.Err)
+			respond.Error(w, r, http.StatusGatewayTimeout, "SUBTITLE_PREPARING",
+				"subtitle is being prepared from the source file; retry in a moment")
+			return
+		}
+		serveCachedVTT(w, res.Val.([]byte))
 	}
-	serveCachedVTT(w, v.([]byte))
 }
 
 func serveCachedVTT(w http.ResponseWriter, data []byte) {
