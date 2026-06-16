@@ -310,6 +310,21 @@ func (c *Config) TLSEnabled() bool {
 	return c.TLSCertFile != "" && c.TLSKeyFile != ""
 }
 
+// CacheSubdir returns a named subdirectory under the cache root (CachePath).
+// Every on-disk cache — artwork, tmdb, animedb, photos, subtitles (+ OCR
+// workdirs), trickplay, livetv, dvr — MUST root through here.
+//
+// This exists to kill a recurring bug: computing a cache path with
+// filepath.Dir(CachePath) climbs a level ABOVE the writable cache-volume mount
+// (e.g. CACHE_PATH=/var/cache/onscreen → /var/cache, which is root-owned and
+// read-only in the locked-down container). That shipped twice — first nearly
+// for animedb, then for real in the subtitle/OCR cache, where it silently
+// broke every OCR job and OpenSubtitle download with "mkdir … permission
+// denied". Joining downward from CachePath can't make that mistake.
+func (c *Config) CacheSubdir(name string) string {
+	return filepath.Join(c.CachePath, name)
+}
+
 // HotReloadable holds the subset of Config values that can be reloaded via SIGHUP.
 // These fields are safe to read/write concurrently via the Atomic accessors.
 type HotReloadable struct {

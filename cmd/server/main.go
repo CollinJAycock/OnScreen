@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -399,7 +401,7 @@ func run() error {
 	// ── Photo image server ────────────────────────────────────────────────────
 	// Shares the cache root with artwork but uses a different subdirectory so
 	// the two pipelines don't collide on cache key SHA prefixes.
-	photoImageSrv := photoimage.New(filepath.Join(cfg.CachePath, "photos"))
+	photoImageSrv := photoimage.New(cfg.CacheSubdir("photos"))
 
 	// ── Metadata enricher ─────────────────────────────────────────────────────
 	// agentFn is called per newly discovered file and returns a TMDB client
@@ -444,7 +446,7 @@ func run() error {
 				// Disk-backed response cache (tmdb subdir under the cache
 				// volume, same convention as animedb/photos). Slashes the
 				// repeat traffic that got a real key revoked — see cache.go.
-				WithCacheDir(filepath.Join(cfg.CachePath, "tmdb"))
+				WithCacheDir(cfg.CacheSubdir("tmdb"))
 		}
 		return agentCache
 	}
@@ -508,7 +510,7 @@ func run() error {
 	// Open is best-effort: if even this dir is read-only it falls back
 	// to a temp dir, and a total failure logs a warning while live
 	// AniList search remains the resolution path.
-	animeDBCachePath := filepath.Join(cfg.CachePath, "animedb")
+	animeDBCachePath := cfg.CacheSubdir("animedb")
 	animeDBClient := animedb.New(animeDBCachePath, logger)
 	go func() {
 		// Run in background so a slow first-time download doesn't block
@@ -778,17 +780,12 @@ func run() error {
 		WithLibraryAccess(libSvc)
 
 	// ── External subtitles (OpenSubtitles, etc.) ─────────────────────────────
-	// On-disk *.vtt files keyed by file id, plus the OCR working dirs. MUST sit
-	// UNDER the cache root (the writable CACHE_PATH volume mount), same as
-	// every other cache subdir (tmdb/, animedb/, photos/). A prior version
-	// used filepath.Dir(cfg.CachePath) here, which climbed a level up to
-	// /var/cache — root-owned and read-only in the locked-down container — so
-	// OCR and OpenSubtitle downloads failed with "mkdir … permission denied".
-	subtitleCacheRoot := cfg.CachePath
-	if subtitleCacheRoot == "" {
+	// On-disk *.vtt files keyed by file id, plus the OCR working dirs. Roots
+	// under the writable cache volume via CacheSubdir (see its doc — this path
+	// is exactly where the filepath.Dir misuse silently broke OCR + downloads).
+	subtitleCacheRoot := cfg.CacheSubdir("subtitles")
+	if cfg.CachePath == "" {
 		subtitleCacheRoot = filepath.Join(os.TempDir(), "onscreen-subtitles")
-	} else {
-		subtitleCacheRoot = filepath.Join(subtitleCacheRoot, "subtitles")
 	}
 	// Provider is dynamic: it re-reads settings on each call and rebuilds the
 	// underlying client when credentials change, so users don't need to restart
@@ -927,7 +924,7 @@ func run() error {
 	}
 	logger.Info("live tv encoder selected", "encoder", liveTVEncoder)
 	liveTVProxy = livetv.NewHLSProxy(livetv.HLSConfig{
-		Dir:          filepath.Join(cfg.CachePath, "livetv"),
+		Dir:          cfg.CacheSubdir("livetv"),
 		VideoEncoder: liveTVEncoder,
 	}, liveTVSvc, logger)
 	liveTVHandler = v1.NewLiveTVHandler(liveTVSvc, logger).WithStreamProxy(liveTVProxy)
@@ -942,9 +939,9 @@ func run() error {
 	// at that path so the scanner surfaces finalized captures.
 	dvrQueries := newDVRAdapter(gen.New(rwPool), newLiveTVAdapter(gen.New(rwPool)))
 	dvrSvc := livetv.NewDVRService(dvrQueries, liveTVSvc,
-		filepath.Join(cfg.CachePath, "dvr"), logger)
+		cfg.CacheSubdir("dvr"), logger)
 	dvrWorker := livetv.NewDVRWorker(livetv.DVRWorkerConfig{
-		RecordDir: filepath.Join(cfg.CachePath, "dvr"),
+		RecordDir: cfg.CacheSubdir("dvr"),
 	}, dvrQueries, liveTVSvc,
 		// Library resolver: find the first enabled library of type 'dvr'.
 		func(ctx context.Context) (uuid.UUID, error) {
@@ -1341,6 +1338,18 @@ func run() error {
 	mainMux.Handle("/", router)
 	mainMux.HandleFunc("/health/live", liveH)
 	mainMux.HandleFunc("/health/ready", readyH)
+	// Build provenance — what commit + build time is actually running, plus the
+	// Go runtime. Stamped by ldflags (Makefile / Dockerfile build-args); reads
+	// "dev"/"unknown" on an un-stamped local build. Lets a deploy be verified
+	// with one curl instead of inferring the build from behaviour.
+	mainMux.HandleFunc("/health/version", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"version":    version,
+			"build_time": buildTime,
+			"go":         runtime.Version(),
+		})
+	})
 	// Multi-site DR surface: this node's site, Postgres role (primary/standby),
 	// and replication lag (HA roadmap §6). Read by operators / geo-routing.
 	mainMux.HandleFunc("/health/cluster", observability.ClusterStatusHandler(cfg.SiteID, rwPool, logger))

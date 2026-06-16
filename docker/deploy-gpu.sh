@@ -27,7 +27,17 @@ else
 fi
 
 echo "==> Building $IMAGE"
-sudo docker build -f docker/Dockerfile.gpu -t "$IMAGE" .
+# Stamp the binary with the git revision + build time so the running server can
+# report exactly what's deployed (GET /health/version, startup log). Without
+# these build-args the Dockerfile defaults to version=dev / empty build time,
+# which makes "is the new code actually live?" a guessing game.
+BUILD_VERSION="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo dev)"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "    version=$BUILD_VERSION build_time=$BUILD_TIME"
+sudo docker build -f docker/Dockerfile.gpu \
+    --build-arg "VERSION=$BUILD_VERSION" \
+    --build-arg "BUILD_TIME=$BUILD_TIME" \
+    -t "$IMAGE" .
 
 if [[ -z "$DATABASE_URL" ]]; then
     # Try: a ~/.onscreen-deploy.env file with DATABASE_URL=...
