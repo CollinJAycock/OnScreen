@@ -60,6 +60,11 @@ data class PlaybackUiState(
     val nextEpisode: ChildItem? = null,
     val preferredAudioLang: String? = null,
     val preferredSubtitleLang: String? = null,
+    /** When true (and a preferred subtitle language is set), auto-
+     *  selection enables only a FORCED subtitle track in that language;
+     *  if none exists, subtitles stay off. Mirrors the web client's
+     *  forcedOnly arg to pickPreferredSubtitle. */
+    val forcedSubtitlesOnly: Boolean = false,
     val error: String? = null,
 )
 
@@ -227,6 +232,7 @@ class PlaybackViewModel @Inject constructor(
                     markers = markers,
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
+                    forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
                 )
 
                 // Auto-advance support: episodes within a season,

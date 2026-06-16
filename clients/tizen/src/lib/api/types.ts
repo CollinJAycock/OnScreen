@@ -67,6 +67,10 @@ export interface SubtitleStream {
   language: string;
   title: string;
   forced: boolean;
+  // SDH = subtitles for the deaf / hard-of-hearing (includes sound
+  // descriptions, speaker labels). Surfaced as a "(SDH)" badge in the
+  // picker; optional so older servers that omit it just don't show it.
+  sdh?: boolean;
 }
 
 export interface Chapter {

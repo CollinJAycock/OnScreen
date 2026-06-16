@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Task that resolves /api/v1/users/me/preferences → the user's
+    language preferences. Used by PlayerScene to auto-apply the
+    preferred subtitle language (preferred_subtitle_lang +
+    forced_subtitles_only) once the firmware surfaces the track list.
+    Runs off the render thread like every other Client_GetSync caller.
+-->
+<component name="PreferencesFetchTask" extends="Task">
+
+    <interface>
+        <field id="result" type="assocArray" />
+    </interface>
+
+    <script type="text/brightscript" uri="PreferencesFetchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+</component>

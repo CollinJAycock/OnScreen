@@ -21,6 +21,7 @@
   import { ProgressReporter } from '$lib/player/progress-reporter';
   import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
   import type { OnlineSubtitle } from '$lib/api';
+  import { pickPreferredSubtitle } from '$lib/subtitleSelect';
 
   const itemID = page.params.id!;
   let video: HTMLVideoElement | undefined = $state();
@@ -74,6 +75,14 @@
   // the server emits subtitle streams as WebVTT lanes inside the HLS
   // playlist.
   let activeSubtitleIndex = $state(-1);
+  // The subtitle stream index (within subtitleStreams) the user's
+  // preferred_subtitle_lang preference resolves to, or -1 for "leave
+  // off". Computed once preferences load; applied once the textTracks
+  // are ready (loadedmetadata) so it survives the metadata-clears-tracks
+  // race. autoSubtitleApplied gates it to a single application so a
+  // later manual pick isn't clobbered by a re-fire.
+  let preferredSubtitleIndex = -1;
+  let autoSubtitleApplied = false;
 
   // Intro / credits markers fetched alongside the item — drives the
   // Skip button overlay. Empty array for non-episode types and for
@@ -557,6 +566,40 @@
     }
   }
 
+  // Fetch the user's preferences and resolve preferred_subtitle_lang to a
+  // subtitle-stream index using the same contract as the web client
+  // (subtitleSelect.ts): normalized language matching + forced_subtitles_only.
+  // Stored in preferredSubtitleIndex; applied later once textTracks exist.
+  // Best-effort — preferences unavailable just leaves subtitles off.
+  async function loadPreferredSubtitle() {
+    try {
+      const prefs = await endpoints.users.preferences();
+      if (!prefs.preferred_subtitle_lang) return;
+      const match = pickPreferredSubtitle(
+        subtitleStreams,
+        prefs.preferred_subtitle_lang,
+        prefs.forced_subtitles_only ?? false,
+      );
+      if (match) {
+        preferredSubtitleIndex = subtitleStreams.findIndex((s) => s.index === match.index);
+      }
+    } catch {
+      // Preferences unavailable — leave subtitles off.
+    }
+  }
+
+  // Apply the resolved preferred subtitle exactly once, after the player's
+  // textTracks are populated. Same selection path a manual pick takes, so
+  // AVPlay / HTML5 track wiring stays identical. A no-op when no preference
+  // resolved (preferredSubtitleIndex === -1) so playback defaults to off.
+  function maybeApplyPreferredSubtitle() {
+    if (autoSubtitleApplied) return;
+    autoSubtitleApplied = true;
+    if (preferredSubtitleIndex >= 0) {
+      applySubtitleSelection(preferredSubtitleIndex);
+    }
+  }
+
   // ── Markers ────────────────────────────────────────────────────────
 
   async function loadMarkers() {
@@ -942,6 +985,12 @@
         void loadTrickplay();
         startSyncStream();
 
+        // Resolve the preferred-subtitle pick before the player attaches so
+        // the index is ready when loadedmetadata fires and the textTracks
+        // exist. Awaited (one small GET) rather than fire-and-forget to avoid
+        // racing the first metadata event.
+        await loadPreferredSubtitle();
+
         const file = item.files[0];
         const startMs = item.view_offset_ms ?? 0;
 
@@ -1041,6 +1090,10 @@
           pendingSeekMs = null;
           if (seekTo !== null && video) video.currentTime = seekTo / 1000;
           loading = false;
+          // Auto-apply the user's preferred subtitle now that the player's
+          // textTracks are populated — same path a manual pick takes. Runs
+          // once; a no-op if no preference resolved.
+          maybeApplyPreferredSubtitle();
           void video?.play();
           showControls();
         });
@@ -1260,7 +1313,7 @@
              class:active={pickerCursor === i + 1}
              class:current={i === activeSubtitleIndex}>
           {#if i === activeSubtitleIndex}● {/if}
-          {s.language || 'und'}{#if s.forced}{' · forced'}{/if}{#if s.title}{` · ${s.title}`}{/if}
+          {s.language || 'und'}{#if s.forced}{' · forced'}{/if}{#if s.sdh}{' · SDH'}{/if}{#if s.title}{` · ${s.title}`}{/if}
         </div>
       {/each}
       <div class="picker-row picker-row-action"

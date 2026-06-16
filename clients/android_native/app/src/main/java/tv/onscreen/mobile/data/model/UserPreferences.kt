@@ -6,5 +6,6 @@ import com.squareup.moshi.JsonClass
 data class UserPreferences(
     val preferred_audio_lang: String? = null,
     val preferred_subtitle_lang: String? = null,
+    val forced_subtitles_only: Boolean = false,
     val max_content_rating: String? = null,
 )

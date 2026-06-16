@@ -19,6 +19,7 @@
   import { ProgressReporter } from '$lib/player/progress-reporter';
   import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
   import type { OnlineSubtitle } from '$lib/api';
+  import { pickPreferredSubtitle } from '$lib/subtitleSelect';
 
   const itemID = page.params.id!;
   // Fallback HTML5 video element — used only when AVPlay isn't
@@ -90,6 +91,14 @@
   let pickerCursor = $state(0);
   let activeAudioIndex = $state(0);
   let activeSubtitleIndex = $state(-1);
+  // The subtitle stream index (within subtitleStreams) the user's
+  // preferred_subtitle_lang preference resolves to, or -1 for "leave off".
+  // Computed once preferences load; applied once the player's text tracks
+  // are ready (AVPlay's first real progress tick, or the HTML5 path's
+  // loadedmetadata). autoSubtitleApplied gates it to a single application so
+  // a later manual pick isn't clobbered by a re-fire.
+  let preferredSubtitleIndex = -1;
+  let autoSubtitleApplied = false;
 
   // Intro / credits markers fetched alongside the item — drives the
   // Skip Intro / Skip Credits overlay. Empty list for non-episode
@@ -633,6 +642,42 @@
     }
   }
 
+  // Fetch the user's preferences and resolve preferred_subtitle_lang to a
+  // subtitle-stream index using the same contract as the web client
+  // (subtitleSelect.ts): normalized language matching + forced_subtitles_only.
+  // Stored in preferredSubtitleIndex; applied later once the player's text
+  // tracks are ready. Best-effort — preferences unavailable just leaves
+  // subtitles off.
+  async function loadPreferredSubtitle() {
+    try {
+      const prefs = await endpoints.users.preferences();
+      if (!prefs.preferred_subtitle_lang) return;
+      const match = pickPreferredSubtitle(
+        subtitleStreams,
+        prefs.preferred_subtitle_lang,
+        prefs.forced_subtitles_only ?? false,
+      );
+      if (match) {
+        preferredSubtitleIndex = subtitleStreams.findIndex((s) => s.index === match.index);
+      }
+    } catch {
+      // Preferences unavailable — leave subtitles off.
+    }
+  }
+
+  // Apply the resolved preferred subtitle exactly once, after the player's
+  // text tracks are populated (AVPlay's first real progress tick, or the
+  // HTML5 path's loadedmetadata). Same selection path a manual pick takes,
+  // so the AVPlay index→track mapping / HTML5 textTracks wiring stays
+  // identical. A no-op when no preference resolved so playback defaults to off.
+  function maybeApplyPreferredSubtitle() {
+    if (autoSubtitleApplied) return;
+    autoSubtitleApplied = true;
+    if (preferredSubtitleIndex >= 0) {
+      applySubtitleSelection(preferredSubtitleIndex);
+    }
+  }
+
   // ── Markers ──────────────────────────────────────────────────────
 
   async function loadMarkers() {
@@ -922,6 +967,10 @@
     v.addEventListener('loadedmetadata', () => {
       if (startMs > 0) v.currentTime = startMs / 1000;
       loading = false;
+      // Auto-apply the user's preferred subtitle now that textTracks are
+      // populated — same path a manual pick takes. Runs once; a no-op if no
+      // preference resolved (audio-only items never match).
+      maybeApplyPreferredSubtitle();
       void v.play();
       showControls();
     });
@@ -1052,6 +1101,12 @@
         void loadAudioContext();
         void loadTrickplay();
         startSyncStream();
+
+        // Resolve the preferred-subtitle pick before the player attaches so
+        // the index is ready when the player's text tracks come up (AVPlay
+        // first progress tick / HTML5 loadedmetadata). Awaited (one small
+        // GET) rather than fire-and-forget to avoid racing track readiness.
+        await loadPreferredSubtitle();
 
         const file = item.files[0];
         const startMs = item.view_offset_ms ?? 0;
@@ -1211,6 +1266,11 @@
                 if (loading && currentMs > 0) {
                   dbg(`onProgress (first real tick): ${currentMs}/${durationMs} ms`);
                   loading = false;
+                  // AVPlay has prepared the stream — its TEXT tracks are now
+                  // enumerable via getTotalTrackInfo(), so this is the moment
+                  // to auto-apply the user's preferred subtitle (same path a
+                  // manual pick takes). Runs once; a no-op if none resolved.
+                  maybeApplyPreferredSubtitle();
                   showControls();
                 }
                 // Marker + Up Next watchers ride on the same tick
@@ -1421,7 +1481,7 @@
              class:active={pickerCursor === i + 1}
              class:current={i === activeSubtitleIndex}>
           {#if i === activeSubtitleIndex}● {/if}
-          {s.language || 'und'}{#if s.forced}{' · forced'}{/if}{#if s.title}{` · ${s.title}`}{/if}
+          {s.language || 'und'}{#if s.forced}{' · forced'}{/if}{#if s.sdh}{' · SDH'}{/if}{#if s.title}{` · ${s.title}`}{/if}
         </div>
       {/each}
       <div class="picker-row picker-row-action"

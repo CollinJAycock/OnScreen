@@ -9,4 +9,5 @@ data class SubtitleStream(
     val language: String,
     val title: String,
     val forced: Boolean,
+    val sdh: Boolean = false,
 )

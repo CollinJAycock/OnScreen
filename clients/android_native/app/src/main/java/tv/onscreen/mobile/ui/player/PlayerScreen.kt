@@ -289,10 +289,29 @@ private fun PlayerHost(
                     .setPreferredAudioLanguage(lang)
                     .build()
             }
+            // Mirror the web client's pickPreferredSubtitle contract:
+            //  - forced-only ON  → only enable subtitles if a FORCED track
+            //    in the preferred language exists; otherwise leave text off
+            //    (don't auto-show full captions).
+            //  - forced-only OFF → existing behavior: hand the language to
+            //    ExoPlayer's track selector (normalized BCP-47 matching,
+            //    prefers forced when present).
+            // ExoPlayer has no clean "forced only" param, so for the
+            // forced-only case we gate on whether a forced in-language
+            // stream is actually present before setting the language at all.
             ui.preferredSubtitleLang?.let { lang ->
-                trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setPreferredTextLanguage(lang)
-                    .build()
+                // Normalized 639-2/B → 639-1 matching so a pref of "en"
+                // gates correctly against an ffprobe "eng" stream (see
+                // langMatchesSubtitle). ExoPlayer normalizes internally
+                // for the actual selection; we only need the gate to
+                // agree on which streams count as in-language.
+                val inLang = ui.subtitles.filter { langMatchesSubtitle(it.language, lang) }
+                val enable = if (ui.forcedSubtitlesOnly) inLang.any { it.forced } else inLang.isNotEmpty()
+                if (enable) {
+                    trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setPreferredTextLanguage(lang)
+                        .build()
+                }
             }
             // Manage audio focus so starting a video pauses music playing
             // in the background through PlaybackService (which also handles
@@ -1459,7 +1478,38 @@ private fun formatSubtitleLabel(s: SubtitleStream): String {
     if (s.language.isNotEmpty()) parts += s.language
     if (s.title.isNotEmpty()) parts += s.title
     if (s.forced) parts += "forced"
+    if (s.sdh) parts += "SDH"
     return parts.joinToString(" · ")
+}
+
+// Minimal ISO 639-2/B (and a couple of 639-2/T) → 639-1 map, mirroring the
+// web client's normalizeLang. ffprobe usually reports 3-letter codes ("eng",
+// "spa") while the saved subtitle preference is a 2-letter 639-1 code ("en",
+// "es"); the forced-only gate must treat those as equal. Anything not here
+// falls back to a primary-subtag comparison, so an unknown code simply won't
+// false-match.
+private val ISO6392_TO_1: Map<String, String> = mapOf(
+    "eng" to "en", "spa" to "es", "fre" to "fr", "fra" to "fr", "ger" to "de",
+    "deu" to "de", "ita" to "it", "por" to "pt", "rus" to "ru", "jpn" to "ja",
+    "chi" to "zh", "zho" to "zh", "kor" to "ko", "ara" to "ar", "dut" to "nl",
+    "nld" to "nl", "swe" to "sv", "nor" to "no", "dan" to "da", "fin" to "fi",
+    "pol" to "pl", "tur" to "tr", "heb" to "he", "hin" to "hi", "tha" to "th",
+    "vie" to "vi", "ces" to "cs", "cze" to "cs", "gre" to "el", "ell" to "el",
+    "hun" to "hu", "ron" to "ro", "rum" to "ro", "ukr" to "uk", "ind" to "id",
+)
+
+/** Reduce a language tag to a canonical 639-1 primary subtag (lowercased).
+ *  "ENG" → "en", "en-US" → "en", "xyz" → "xyz". */
+private fun normalizeSubtitleLang(code: String?): String {
+    if (code.isNullOrEmpty()) return ""
+    val primary = code.lowercase().split('-', '_').first()
+    return ISO6392_TO_1[primary] ?: primary
+}
+
+/** True when two language tags resolve to the same 639-1 primary subtag. */
+private fun langMatchesSubtitle(a: String?, b: String?): Boolean {
+    val na = normalizeSubtitleLang(a)
+    return na.isNotEmpty() && na == normalizeSubtitleLang(b)
 }
 
 /**

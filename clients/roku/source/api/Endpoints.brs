@@ -165,6 +165,15 @@ function ApiPlaybackTransfer() as String
     return "/api/v1/playback/transfer"
 end function
 
+' ── User language preferences ───────────────────────────────────────────
+' GET returns { preferred_audio_lang, preferred_subtitle_lang,
+' forced_subtitles_only, … }. PlayerScene reads preferred_subtitle_lang +
+' forced_subtitles_only on playback start to auto-apply the matching
+' subtitle track. Mirrors the web client's /users/me/preferences GET.
+function ApiPreferences() as String
+    return "/api/v1/users/me/preferences"
+end function
+
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function

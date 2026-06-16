@@ -54,6 +54,11 @@ data class PlayerUiState(
     val nextSibling: ChildItem? = null,
     val preferredAudioLang: String? = null,
     val preferredSubtitleLang: String? = null,
+    /** When true (and a preferred subtitle language is set), auto-
+     *  selection enables only a FORCED subtitle track in that language;
+     *  if none exists, subtitles stay off. Mirrors the web client's
+     *  forcedOnly arg to pickPreferredSubtitle. */
+    val forcedSubtitlesOnly: Boolean = false,
     /** Trickplay cues for this item's seekbar previews. Null while
      *  loading or if the item has no generated trickplay (e.g. a fresh
      *  scan that hasn't run the trickplay task yet). */
@@ -507,6 +512,7 @@ class PlayerViewModel @Inject constructor(
                     markers = markers,
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
+                    forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
                 )
 
                 // Trickplay cues — best-effort. If the server hasn't

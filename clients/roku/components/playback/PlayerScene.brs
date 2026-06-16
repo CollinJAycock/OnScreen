@@ -27,6 +27,7 @@ sub init()
     m.transcodeTask = m.top.findNode("transcodeTask")
     m.markersTask = m.top.findNode("markersTask")
     m.childrenTask = m.top.findNode("childrenTask")
+    m.prefsTask = m.top.findNode("prefsTask")
     m.skipMarker = m.top.findNode("skipMarker")
     m.upNext = m.top.findNode("upNext")
     m.upNextTitle = m.top.findNode("upNextTitle")
@@ -101,6 +102,7 @@ sub init()
     m.transcodeTask.observeField("state", "onTranscodeTaskState")
     m.markersTask.observeField("state", "onMarkersTaskState")
     m.childrenTask.observeField("state", "onChildrenTaskState")
+    m.prefsTask.observeField("state", "onPrefsTaskState")
     m.video.observeField("state", "onVideoState")
     m.video.observeField("position", "onVideoPosition")
     ' availableSubtitleTracks is populated by the firmware only once
@@ -110,6 +112,19 @@ sub init()
     ' the tracks surface — instead of silently dropping the pick.
     m.video.observeField("availableSubtitleTracks", "onAvailableSubtitleTracks")
     m.pendingSubtitleIndex = -1
+
+    ' Preferred-subtitle auto-apply state. Fetched once on init from
+    ' /users/me/preferences (off the render thread via prefsTask).
+    ' m.preferredSubtitleLang is "" until that lands; forcedSubtitlesOnly
+    ' gates the "foreign-dialogue only" behavior. m.userSelectedSubtitle
+    ' flips true the moment the user opens the picker and chooses a row
+    ' (a track OR Off), which suppresses any later auto-apply for this
+    ' session so we never override a deliberate manual choice.
+    m.preferredSubtitleLang = ""
+    m.forcedSubtitlesOnly = false
+    m.userSelectedSubtitle = false
+    m.prefsLoaded = false
+
     m.syncTimer.observeField("fire", "onSyncTimerFire")
     m.trackPickerList.observeField("itemSelected", "onTrackPickerSelect")
 
@@ -120,6 +135,13 @@ sub init()
 
     m.itemTask.itemId = m.top.itemId
     m.itemTask.control = "RUN"
+
+    ' Fetch the user's language preferences in parallel — independent
+    ' of the item resolve, off the render thread. The result feeds the
+    ' subtitle auto-apply once both the prefs and the firmware's
+    ' availableSubtitleTracks have landed (order doesn't matter; either
+    ' arrival re-runs maybeAutoApplyPreferredSubtitle).
+    m.prefsTask.control = "RUN"
 end sub
 
 sub onItemTaskState()
@@ -321,6 +343,24 @@ sub onMarkersTaskState()
     list = m.markersTask.result
     if list = invalid then list = []
     m.markers = list
+end sub
+
+' ── User preferences ───────────────────────────────────────────────
+
+' Preferences fetch landed (off the render thread). Stash the subtitle
+' preference + forced-only flag, then re-attempt the auto-apply: the
+' firmware's availableSubtitleTracks may already be populated (prefs
+' arrived late), in which case this is where the track gets selected.
+sub onPrefsTaskState()
+    if m.prefsTask.state <> "done" then return
+    prefs = m.prefsTask.result
+    if prefs <> invalid and type(prefs) = "roAssociativeArray"
+        lang = prefs.preferred_subtitle_lang
+        if Prefs_IsNonEmptyString(lang) then m.preferredSubtitleLang = lang
+        if prefs.forced_subtitles_only = true then m.forcedSubtitlesOnly = true
+    end if
+    m.prefsLoaded = true
+    maybeAutoApplyPreferredSubtitle()
 end sub
 
 sub updateActiveMarker(posMs as Integer)
@@ -691,6 +731,11 @@ function buildSubtitleContent() as Object
         if s.language <> invalid and s.language <> "" then lang = s.language
         parts = [lang]
         if s.forced = true then parts.push("forced")
+        ' SDH (Subtitles for the Deaf and Hard-of-hearing). The server
+        ' now flags these per stream (subtitle_streams[].sdh); mark the
+        ' row so the user can tell SDH tracks apart, mirroring the web
+        ' client's " (SDH)" badge.
+        if s.sdh = true then parts.push("sdh")
         if s.title <> invalid and s.title <> "" then parts.push(s.title)
         node.title = prefix + buildJoin(parts, " · ")
     end for
@@ -729,6 +774,10 @@ sub onTrackPickerSelect()
         end if
         closeTrackPicker()
     else if m.trackPickerMode = "subtitle"
+        ' Any deliberate subtitle pick (a track OR Off) locks out the
+        ' preferred-language auto-apply for the rest of this session, so
+        ' a late-arriving prefs/track event can't override the user.
+        m.userSelectedSubtitle = true
         if idx = 0
             m.activeSubtitleIndex = -1
             ' Roku's Video node uses globalCaptionMode + the
@@ -802,13 +851,102 @@ end sub
 ' (shortly after playback starts). If the user picked a subtitle track
 ' before it was ready, apply that deferred intent now.
 sub onAvailableSubtitleTracks()
-    if m.pendingSubtitleIndex < 0 then return
+    ' An explicit deferred user pick takes priority over any preferred-
+    ' language auto-apply: if the user chose a track before the firmware
+    ' surfaced the list, honor that and stop.
+    if m.pendingSubtitleIndex >= 0
+        avail = m.video.availableSubtitleTracks
+        if avail = invalid or avail.Count() = 0 then return
+        idx = m.pendingSubtitleIndex
+        if idx >= 0 and idx < avail.Count()
+            m.video.subtitleTrack = avail[idx].TrackName
+            m.pendingSubtitleIndex = -1
+        end if
+        return
+    end if
+    ' No pending manual pick — try the preferred-language auto-apply now
+    ' that the track list is (or may be) populated.
+    maybeAutoApplyPreferredSubtitle()
+end sub
+
+' Normalize a subtitle/audio language tag for comparison: lowercase,
+' strip any region/script subtag after "-" or "_", and fold the common
+' ISO 639-2 (3-letter) codes onto their 639-1 (2-letter) equivalents so
+' ffprobe's "eng"/"spa"/"fre" match a stored "en"/"es"/"fr" preference.
+' Unknown codes fall through as their bare primary subtag — they simply
+' won't false-match. Mirrors the web client's normalizeLang
+' (web/src/routes/watch/[id]/subtitle-select.ts).
+function normalizeSubtitleLang(code as Dynamic) as String
+    if not Prefs_IsNonEmptyString(code) then return ""
+    primary = LCase(code)
+    ' Strip region/script subtag (en-US → en, pt_BR → pt).
+    dash = Instr(1, primary, "-")
+    if dash > 0 then primary = Left(primary, dash - 1)
+    underscore = Instr(1, primary, "_")
+    if underscore > 0 then primary = Left(primary, underscore - 1)
+    map = {
+        eng: "en", spa: "es", fre: "fr", fra: "fr", ger: "de", deu: "de",
+        ita: "it", por: "pt", rus: "ru", jpn: "ja", chi: "zh", zho: "zh",
+        kor: "ko"
+    }
+    if map.DoesExist(primary) then return map[primary]
+    return primary
+end function
+
+' Auto-select the subtitle track matching the user's preferred language,
+' honoring forced_subtitles_only. Mirrors the web client's
+' pickPreferredSubtitle contract:
+'   - no preferred language → leave subtitles off
+'   - forced_subtitles_only = false → forced track in the language if one
+'     exists, else the first track in the language
+'   - forced_subtitles_only = true  → only a forced track in the language;
+'     none → leave off
+' Only runs once per session, before any manual pick, and only after both
+' the prefs and the firmware's availableSubtitleTracks have surfaced. The
+' file.subtitle_streams order matches availableSubtitleTracks order (same
+' assumption applySubtitleSelection already relies on), so we match the
+' language on the stream metadata and apply via the existing index→
+' TrackName path.
+sub maybeAutoApplyPreferredSubtitle()
+    if m.userSelectedSubtitle then return
+    if not m.prefsLoaded then return
+    if m.preferredSubtitleLang = "" then return
+    if m.file = invalid or m.file.subtitle_streams = invalid then return
     avail = m.video.availableSubtitleTracks
     if avail = invalid or avail.Count() = 0 then return
-    idx = m.pendingSubtitleIndex
-    if idx >= 0 and idx < avail.Count()
-        m.video.subtitleTrack = avail[idx].TrackName
-        m.pendingSubtitleIndex = -1
+
+    want = normalizeSubtitleLang(m.preferredSubtitleLang)
+    if want = "" then return
+
+    ' First pass: a forced track in the preferred language (the more
+    ' specific intent). Second pass: the first full track in the language
+    ' (only when not forced-only).
+    forcedIdx = -1
+    firstIdx = -1
+    for i = 0 to m.file.subtitle_streams.Count() - 1
+        s = m.file.subtitle_streams[i]
+        if s <> invalid and normalizeSubtitleLang(s.language) = want
+            if firstIdx < 0 then firstIdx = i
+            if s.forced = true and forcedIdx < 0 then forcedIdx = i
+        end if
+    end for
+
+    chosen = -1
+    if forcedIdx >= 0
+        chosen = forcedIdx
+    else if not m.forcedSubtitlesOnly
+        chosen = firstIdx
+    end if
+    if chosen < 0 then return
+
+    ' Guard the fragile index mapping: only apply if the chosen stream
+    ' index addresses a real entry in availableSubtitleTracks.
+    if chosen < avail.Count()
+        m.activeSubtitleIndex = chosen
+        m.video.subtitleTrack = avail[chosen].TrackName
+        ' Mark as applied so a second arrival (prefs vs. tracks) doesn't
+        ' re-run; a subsequent manual pick still overrides via the picker.
+        m.userSelectedSubtitle = true
     end if
 end sub
 

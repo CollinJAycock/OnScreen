@@ -120,6 +120,12 @@
         <ListFetchTask id="markersTask" />
         <ListFetchTask id="childrenTask" />
 
+        <!-- User language preferences. Fetched once on init so the
+             player can auto-apply preferred_subtitle_lang (honoring
+             forced_subtitles_only) when the firmware surfaces the
+             subtitle track list — see maybeAutoApplyPreferredSubtitle. -->
+        <PreferencesFetchTask id="prefsTask" />
+
         <!-- Cross-device resume sync. Roku has no native SSE
              primitive, so we poll /items/{id} every 5 s while
              paused and snap to view_offset_ms when it diverges

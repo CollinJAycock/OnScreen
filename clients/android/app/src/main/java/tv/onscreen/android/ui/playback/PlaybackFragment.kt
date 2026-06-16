@@ -261,7 +261,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     }
                     sourceChanged -> {
                         playSource(source)
-                        applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang)
+                        applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang, state.forcedSubtitlesOnly)
                         installProgressTracker(itemId)
                     }
                 }
@@ -1018,7 +1018,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val labels = mutableListOf(getString(R.string.off))
         labels.addAll(subtitleStreams.map { s ->
             val name = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } }
-            if (s.forced) "$name (forced)" else name
+            buildString {
+                append(name)
+                if (s.forced) append(" (forced)")
+                if (s.sdh) append(" (SDH)")
+            }
         })
         // "Find more online…" entry tacks an OpenSubtitles search on
         // the end of the picker. Index = labels.size — beyond every
@@ -1114,16 +1118,36 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
     }
 
-    private fun applyPreferredTracks(audioLang: String?, subtitleLang: String?) {
+    private fun applyPreferredTracks(audioLang: String?, subtitleLang: String?, forcedSubtitlesOnly: Boolean) {
         val exo = player ?: return
         if (audioLang.isNullOrBlank() && subtitleLang.isNullOrBlank()) return
         val params = exo.trackSelectionParameters.buildUpon().apply {
             if (!audioLang.isNullOrBlank() && audioStreams.any { it.language.equals(audioLang, ignoreCase = true) }) {
                 setPreferredAudioLanguage(audioLang)
             }
-            if (!subtitleLang.isNullOrBlank() && subtitleStreams.any { it.language.equals(subtitleLang, ignoreCase = true) }) {
-                setPreferredTextLanguage(subtitleLang)
-                setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            // Mirror the web client's pickPreferredSubtitle contract:
+            //  - forced-only ON  → only enable subtitles if a FORCED track
+            //    in the preferred language exists; otherwise leave text
+            //    disabled (no full captions auto-shown).
+            //  - forced-only OFF → existing behavior: hand the language to
+            //    ExoPlayer's track selector, which does normalized BCP-47
+            //    matching and picks the in-language track (preferring forced).
+            // ExoPlayer has no clean "forced only" param, so for the
+            // forced-only case we gate on whether a forced in-language
+            // stream is actually present before enabling text at all.
+            if (!subtitleLang.isNullOrBlank()) {
+                // Normalized 639-2/B → 639-1 matching so a pref of "en"
+                // gates correctly against an ffprobe "eng" stream (see
+                // langMatchesSubtitle). ExoPlayer normalizes internally
+                // for the actual selection; we only need the gate to
+                // agree on which streams count as in-language.
+                val inLang = subtitleStreams.filter { langMatchesSubtitle(it.language, subtitleLang) }
+                val hasForcedInLang = inLang.any { it.forced }
+                val enable = if (forcedSubtitlesOnly) hasForcedInLang else inLang.isNotEmpty()
+                if (enable) {
+                    setPreferredTextLanguage(subtitleLang)
+                    setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                }
             }
         }.build()
         exo.trackSelectionParameters = params
@@ -1570,4 +1594,34 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             false
         }
     }
+}
+
+// Minimal ISO 639-2/B (and a couple of 639-2/T) → 639-1 map, mirroring the
+// web client's normalizeLang. ffprobe usually reports 3-letter codes ("eng",
+// "spa") while the saved subtitle preference is a 2-letter 639-1 code ("en",
+// "es"); the forced-only gate must treat those as equal. Anything not here
+// falls back to a primary-subtag comparison, so an unknown code simply won't
+// false-match.
+private val ISO6392_TO_1: Map<String, String> = mapOf(
+    "eng" to "en", "spa" to "es", "fre" to "fr", "fra" to "fr", "ger" to "de",
+    "deu" to "de", "ita" to "it", "por" to "pt", "rus" to "ru", "jpn" to "ja",
+    "chi" to "zh", "zho" to "zh", "kor" to "ko", "ara" to "ar", "dut" to "nl",
+    "nld" to "nl", "swe" to "sv", "nor" to "no", "dan" to "da", "fin" to "fi",
+    "pol" to "pl", "tur" to "tr", "heb" to "he", "hin" to "hi", "tha" to "th",
+    "vie" to "vi", "ces" to "cs", "cze" to "cs", "gre" to "el", "ell" to "el",
+    "hun" to "hu", "ron" to "ro", "rum" to "ro", "ukr" to "uk", "ind" to "id",
+)
+
+/** Reduce a language tag to a canonical 639-1 primary subtag (lowercased).
+ *  "ENG" → "en", "en-US" → "en", "xyz" → "xyz". */
+private fun normalizeSubtitleLang(code: String?): String {
+    if (code.isNullOrEmpty()) return ""
+    val primary = code.lowercase().split('-', '_').first()
+    return ISO6392_TO_1[primary] ?: primary
+}
+
+/** True when two language tags resolve to the same 639-1 primary subtag. */
+private fun langMatchesSubtitle(a: String?, b: String?): Boolean {
+    val na = normalizeSubtitleLang(a)
+    return na.isNotEmpty() && na == normalizeSubtitleLang(b)
 }
