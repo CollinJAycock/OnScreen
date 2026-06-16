@@ -535,3 +535,17 @@ func TestDownloadAllowedWhenQuotaRemains(t *testing.T) {
 		}
 	}
 }
+
+func TestOCRStreamRejectsTraversalLanguage(t *testing.T) {
+	eng := &fakeOCREngine{cues: []ocr.Cue{{StartMS: 0, EndMS: 1000, Text: "hi"}}}
+	svc := New(nil, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetOCR(eng)
+	_, err := svc.OCRStream(context.Background(), OCROpts{
+		FileID:    uuid.New(),
+		InputPath: "/some/movie.mkv",
+		Language:  "../../../../tmp/evil",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid language") {
+		t.Fatalf("expected invalid-language rejection, got %v", err)
+	}
+}

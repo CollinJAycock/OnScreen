@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,6 +68,13 @@ func (s *Service) OCRStream(ctx context.Context, opts OCROpts) (gen.ExternalSubt
 	if opts.Language == "" {
 		opts.Language = "en"
 	}
+	// Path-traversal guard: Language is interpolated into the on-disk VTT
+	// filename below (ocr_stream%d_%s.vtt). It comes straight from the OCR-start
+	// request body, so an unrestricted value ("../../…") would escape the
+	// per-file cache dir on os.WriteFile. Same allowlist the Download path uses.
+	if !validSubtitleLang(opts.Language) {
+		return gen.ExternalSubtitle{}, fmt.Errorf("invalid language code %q", opts.Language)
+	}
 
 	// Hard per-stream cap. OCR runs on a server-lifetime context (so a client
 	// disconnect doesn't kill it), which means without a timeout a pathological
@@ -96,6 +104,11 @@ func (s *Service) OCRStream(ctx context.Context, opts OCROpts) (gen.ExternalSubt
 	vtt := ocr.CuesToVTT(cues)
 	filename := fmt.Sprintf("ocr_stream%d_%s.vtt", opts.AbsStreamIndex, opts.Language)
 	path := filepath.Join(dir, filename)
+	// Defense in depth: confirm the join stayed inside the per-file cache dir
+	// even if the language allowlist above is ever loosened (mirrors Download).
+	if !strings.HasPrefix(path, filepath.Clean(dir)+string(os.PathSeparator)) {
+		return gen.ExternalSubtitle{}, fmt.Errorf("ocr subtitle path escapes cache dir")
+	}
 	if err := os.WriteFile(path, vtt, 0o644); err != nil {
 		return gen.ExternalSubtitle{}, fmt.Errorf("write vtt: %w", err)
 	}
