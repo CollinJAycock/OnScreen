@@ -38,7 +38,10 @@ LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE ci.collection_id = $1
   AND mi.deleted_at IS NULL
   AND mi.type = 'photo'
-ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id;
+ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id
+-- NULLIF so a zero lim means "no limit" (the original behaviour); callers pass a
+-- positive cap to bound the result. Avoids a forgotten lim silently returning 0 rows.
+LIMIT NULLIF(sqlc.arg('lim')::int, 0) OFFSET sqlc.arg('off')::int;
 
 -- name: CountPhotoAlbumItems :one
 SELECT COUNT(*)::bigint

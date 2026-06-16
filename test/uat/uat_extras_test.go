@@ -1193,6 +1193,9 @@ type stubDiscoverRequests struct{}
 func (s *stubDiscoverRequests) FindActiveForUser(_ context.Context, _ uuid.UUID, _ string, _ int) (*gen.MediaRequest, error) {
 	return nil, nil
 }
+func (s *stubDiscoverRequests) FindActiveForUserBatch(_ context.Context, _ uuid.UUID, _ []int) ([]gen.MediaRequest, error) {
+	return nil, nil
+}
 
 func TestDiscover_RequiresAuth(t *testing.T) {
 	ts := newExtrasServer(t, func(h *api.Handlers) {
@@ -1264,6 +1267,9 @@ func (s *stubRequestsDB) GetMediaRequest(_ context.Context, _ uuid.UUID) (gen.Me
 }
 func (s *stubRequestsDB) FindActiveRequestForUser(_ context.Context, _ gen.FindActiveRequestForUserParams) (gen.MediaRequest, error) {
 	return gen.MediaRequest{}, errors.New("not found")
+}
+func (s *stubRequestsDB) FindActiveRequestsForUserByTMDB(_ context.Context, _ gen.FindActiveRequestsForUserByTMDBParams) ([]gen.MediaRequest, error) {
+	return nil, nil
 }
 func (s *stubRequestsDB) ListMediaRequestsForUser(_ context.Context, _ gen.ListMediaRequestsForUserParams) ([]gen.MediaRequest, error) {
 	return nil, nil

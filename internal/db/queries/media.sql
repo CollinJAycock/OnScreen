@@ -679,6 +679,27 @@ WHERE media_items.id = $1
       WHERE media_files.media_item_id = $1
   );
 
+-- name: HardDeleteMediaFilesByIDs :execrows
+-- Set-based form of HardDeleteMediaFile for the timed missing-file promotion
+-- (PromoteExpiredMissing), which would otherwise issue one DELETE per expired
+-- file. Same FK CASCADE/SET NULL behaviour as the single-row delete.
+DELETE FROM media_files
+WHERE id = ANY(@ids::uuid[]);
+
+-- name: SoftDeleteMediaItemsIfAllFilesDeleted :exec
+-- Set-based form of SoftDeleteMediaItemIfAllFilesDeleted: soft-delete any of the
+-- given items that no longer have any media_files rows. Used after a batch
+-- hard-delete of expired missing files so the parent-item cascade is one UPDATE
+-- instead of one per affected item.
+UPDATE media_items
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE media_items.id = ANY(@ids::uuid[])
+  AND media_items.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM media_files
+      WHERE media_files.media_item_id = media_items.id
+  );
+
 -- name: RestoreMediaItemAncestry :exec
 -- Clears deleted_at on $1 and every ancestor reachable via parent_id,
 -- resurrecting a previously soft-deleted item and the containers above it.

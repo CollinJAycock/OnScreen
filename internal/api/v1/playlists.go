@@ -287,6 +287,8 @@ func (h *PlaylistHandler) Items(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListCollectionItems(r.Context(), gen.ListCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: maxRank,
+		Lim:           respond.ParseLimit(r, collectionItemsPageDefault, collectionItemsPageDefault),
+		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list playlist items", "id", id, "err", err)

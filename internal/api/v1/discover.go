@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ type DiscoverTMDB interface {
 // handler can be tested without spinning up the full request workflow.
 type DiscoverRequestLookup interface {
 	FindActiveForUser(ctx context.Context, userID uuid.UUID, mediaType string, tmdbID int) (*gen.MediaRequest, error)
+	FindActiveForUserBatch(ctx context.Context, userID uuid.UUID, tmdbIDs []int) ([]gen.MediaRequest, error)
 }
 
 // DiscoverHandler powers the Request UI's discover surface: a single TMDB
@@ -132,6 +134,24 @@ func (h *DiscoverHandler) Search(w http.ResponseWriter, r *http.Request) {
 	movieHits := h.lookupLibrary(r.Context(), requests.TypeMovie, movieIDs)
 	showHits := h.lookupLibrary(r.Context(), requests.TypeShow, showIDs)
 
+	// Batch the active-request lookup: one query for all results instead of one
+	// per row. Keyed by (type, tmdb_id) since an id can collide across movie/show.
+	var activeReqs map[string]gen.MediaRequest
+	if h.requests != nil {
+		tmdbIDs := make([]int, len(out))
+		for i := range out {
+			tmdbIDs[i] = out[i].TMDBID
+		}
+		if reqs, lerr := h.requests.FindActiveForUserBatch(r.Context(), claims.UserID, tmdbIDs); lerr != nil {
+			h.logger.WarnContext(r.Context(), "discover: batch active requests", "err", lerr)
+		} else {
+			activeReqs = make(map[string]gen.MediaRequest, len(reqs))
+			for _, req := range reqs {
+				activeReqs[req.Type+":"+strconv.Itoa(int(req.TmdbID))] = req
+			}
+		}
+	}
+
 	for i := range out {
 		var hits map[int32]uuid.UUID
 		switch out[i].Type {
@@ -146,22 +166,12 @@ func (h *DiscoverHandler) Search(w http.ResponseWriter, r *http.Request) {
 			out[i].LibraryItem = &s
 		}
 
-		// Per-result request lookup. Discover surfaces ~20 rows so this is
-		// cheap; batching becomes worthwhile only if the row cap grows.
-		if h.requests != nil {
-			req, lerr := h.requests.FindActiveForUser(r.Context(), claims.UserID, out[i].Type, out[i].TMDBID)
-			if lerr != nil {
-				h.logger.WarnContext(r.Context(), "discover: lookup active request",
-					"tmdb_id", out[i].TMDBID, "type", out[i].Type, "err", lerr)
-				continue
-			}
-			if req != nil {
-				out[i].HasActiveRequest = true
-				id := req.ID
-				out[i].ActiveRequestID = &id
-				status := req.Status
-				out[i].ActiveStatus = &status
-			}
+		if req, ok := activeReqs[out[i].Type+":"+strconv.Itoa(out[i].TMDBID)]; ok {
+			out[i].HasActiveRequest = true
+			id := req.ID
+			out[i].ActiveRequestID = &id
+			status := req.Status
+			out[i].ActiveStatus = &status
 		}
 	}
 

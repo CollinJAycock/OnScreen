@@ -284,6 +284,64 @@ func (q *Queries) FindActiveRequestForUser(ctx context.Context, arg FindActiveRe
 	return i, err
 }
 
+const findActiveRequestsForUserByTMDB = `-- name: FindActiveRequestsForUserByTMDB :many
+SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at FROM media_requests
+WHERE user_id = $1
+  AND tmdb_id = ANY($2::int[])
+  AND status IN ('pending', 'approved', 'downloading')
+`
+
+type FindActiveRequestsForUserByTMDBParams struct {
+	UserID  uuid.UUID `json:"user_id"`
+	TmdbIds []int32   `json:"tmdb_ids"`
+}
+
+// Batch form of FindActiveRequestForUser for the Discover grid: one query for
+// all result rows instead of one per row (the N+1). The caller maps the returned
+// rows by (type, tmdb_id). tmdb_id can collide across types (a movie and a show
+// with the same id), so the type is part of the caller-side key.
+func (q *Queries) FindActiveRequestsForUserByTMDB(ctx context.Context, arg FindActiveRequestsForUserByTMDBParams) ([]MediaRequest, error) {
+	rows, err := q.db.Query(ctx, findActiveRequestsForUserByTMDB, arg.UserID, arg.TmdbIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MediaRequest{}
+	for rows.Next() {
+		var i MediaRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Type,
+			&i.TmdbID,
+			&i.Title,
+			&i.Year,
+			&i.PosterUrl,
+			&i.Overview,
+			&i.Status,
+			&i.Seasons,
+			&i.RequestedServiceID,
+			&i.QualityProfileID,
+			&i.RootFolder,
+			&i.ServiceID,
+			&i.DeclineReason,
+			&i.DecidedBy,
+			&i.DecidedAt,
+			&i.FulfilledItemID,
+			&i.FulfilledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMediaRequest = `-- name: GetMediaRequest :one
 SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at FROM media_requests WHERE id = $1
 `

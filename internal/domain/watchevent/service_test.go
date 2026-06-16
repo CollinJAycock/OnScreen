@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,14 +14,19 @@ import (
 
 // mockQuerier is a minimal in-memory Querier for unit tests.
 type mockQuerier struct {
-	insertCalled  bool
-	insertParams  InsertWatchEventParams
-	insertErr     error
-	refreshCalled bool
-	refreshErr    error
+	insertCalled bool
+	insertParams InsertWatchEventParams
+	insertErr    error
+	refreshCount atomic.Int32 // refreshes are fired from a background goroutine
+	refreshErr   error
 
 	states map[string]WatchState // key: userID+":"+mediaID
 }
+
+// refreshed reports whether ≥1 watch_state refresh has run; refreshes reports
+// how many (the coalesce test asserts a burst collapses to one).
+func (m *mockQuerier) refreshed() bool { return m.refreshCount.Load() > 0 }
+func (m *mockQuerier) refreshes() int  { return int(m.refreshCount.Load()) }
 
 func newMockQuerier() *mockQuerier {
 	return &mockQuerier{states: make(map[string]WatchState)}
@@ -36,7 +42,7 @@ func (m *mockQuerier) InsertWatchEvent(_ context.Context, p InsertWatchEventPara
 }
 
 func (m *mockQuerier) RefreshWatchState(_ context.Context) error {
-	m.refreshCalled = true
+	m.refreshCount.Add(1)
 	return m.refreshErr
 }
 
@@ -73,6 +79,8 @@ func newTestService(t *testing.T) (*Service, *mockQuerier) {
 	t.Helper()
 	q := newMockQuerier()
 	svc := NewService(q, q, slog.Default())
+	// Tiny debounce so the coalesced refresh fires quickly under test.
+	svc.refreshDebounce = time.Millisecond
 	return svc, q
 }
 
@@ -133,7 +141,7 @@ func TestRecord_StopTriggersRefresh(t *testing.T) {
 	}
 	// Give the goroutine a moment to run.
 	time.Sleep(10 * time.Millisecond)
-	if !q.refreshCalled {
+	if !q.refreshed() {
 		t.Error("expected RefreshWatchState to be called after stop event")
 	}
 }
@@ -151,8 +159,28 @@ func TestRecord_ScrobbleTriggersRefresh(t *testing.T) {
 		t.Fatalf("Record returned error: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if !q.refreshCalled {
+	if !q.refreshed() {
 		t.Error("expected RefreshWatchState to be called after scrobble event")
+	}
+}
+
+// TestRecord_RefreshesCoalesce is the regression for the O(history)-per-stop
+// fix: a burst of terminal events must collapse to a single matview refresh, not
+// one per event.
+func TestRecord_RefreshesCoalesce(t *testing.T) {
+	svc, q := newTestService(t)
+	svc.refreshDebounce = 40 * time.Millisecond // long enough to absorb the burst below
+	user, media := uuid.New(), uuid.New()
+	for i := 0; i < 10; i++ {
+		if err := svc.Record(context.Background(), RecordParams{
+			UserID: user, MediaID: media, EventType: "stop", OccurredAt: time.Now(),
+		}); err != nil {
+			t.Fatalf("Record[%d]: %v", i, err)
+		}
+	}
+	time.Sleep(120 * time.Millisecond) // > debounce + refresh slack
+	if n := q.refreshes(); n != 1 {
+		t.Errorf("burst of 10 stops should coalesce to 1 refresh, got %d", n)
 	}
 }
 
@@ -166,7 +194,7 @@ func TestRecord_PlayNoRefresh(t *testing.T) {
 		OccurredAt: time.Now(),
 	})
 	time.Sleep(10 * time.Millisecond)
-	if q.refreshCalled {
+	if q.refreshed() {
 		t.Error("did not expect RefreshWatchState for play event")
 	}
 }

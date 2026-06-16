@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,11 +90,27 @@ type Service struct {
 	logger   *slog.Logger
 	metrics  *observability.Metrics
 	scrobble ScrobbleHook
+
+	// refreshMu/refreshScheduled coalesce watch_state matview refreshes. A
+	// REFRESH ... CONCURRENTLY scans the whole watch_events history, so firing
+	// it per stop/scrobble made the cost of one playback completion O(total
+	// history) and let concurrent stops queue behind the exclusive refresh lock.
+	// See scheduleWatchStateRefresh.
+	refreshMu        sync.Mutex
+	refreshScheduled bool
+	refreshDebounce  time.Duration // defaults to watchStateRefreshDebounce; overridable in tests
 }
+
+// watchStateRefreshDebounce bounds how often the watch_state matview is rebuilt:
+// at most one refresh per window, fired within this delay of the first stop in a
+// burst. Short enough that continue-watching / recommendation rows (which read
+// the matview) stay fresh; long enough that a flurry of concurrent stops
+// collapses to a single full-history refresh instead of one each.
+const watchStateRefreshDebounce = 10 * time.Second
 
 // NewService constructs a watch event Service.
 func NewService(rw, ro Querier, logger *slog.Logger) *Service {
-	return &Service{rw: rw, ro: ro, logger: logger}
+	return &Service{rw: rw, ro: ro, logger: logger, refreshDebounce: watchStateRefreshDebounce}
 }
 
 // WithMetrics enables Prometheus instrumentation (watch events by type). nil is
@@ -149,16 +166,42 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 		})
 	}
 
-	// Refresh watch_state after terminal events so subsequent metadata
-	// responses reflect the updated status immediately.
+	// Refresh watch_state after terminal events so continue-watching /
+	// recommendation rows reflect the updated status. Coalesced (not per-event):
+	// the refresh scans the whole history, so firing it for every stop scaled
+	// with total watch history and serialized concurrent stops behind the
+	// refresh lock.
 	if p.EventType == "stop" || p.EventType == "scrobble" {
-		observability.SafeGo(s.logger, "watchevent.refresh-state", func() {
-			if err := s.rw.RefreshWatchState(context.Background()); err != nil {
-				s.logger.Warn("watch_state refresh failed", "err", err)
-			}
-		})
+		s.scheduleWatchStateRefresh()
 	}
 	return nil
+}
+
+// scheduleWatchStateRefresh ensures a single watch_state refresh runs within
+// watchStateRefreshDebounce. If one is already pending, this is a no-op — the
+// pending refresh will pick up this event too (the matview reads live data when
+// it fires). This caps refreshes at ≤1 per window regardless of stop volume,
+// turning a per-completion O(history) cost into a per-window one.
+func (s *Service) scheduleWatchStateRefresh() {
+	s.refreshMu.Lock()
+	if s.refreshScheduled {
+		s.refreshMu.Unlock()
+		return
+	}
+	s.refreshScheduled = true
+	s.refreshMu.Unlock()
+
+	observability.SafeGo(s.logger, "watchevent.refresh-state", func() {
+		time.Sleep(s.refreshDebounce)
+		// Clear the flag before the refresh so a stop arriving during the
+		// (potentially slow) refresh re-arms and is captured by the next one.
+		s.refreshMu.Lock()
+		s.refreshScheduled = false
+		s.refreshMu.Unlock()
+		if err := s.rw.RefreshWatchState(context.Background()); err != nil {
+			s.logger.Warn("watch_state refresh failed", "err", err)
+		}
+	})
 }
 
 // GetState returns the current watch state for a user+media pair.

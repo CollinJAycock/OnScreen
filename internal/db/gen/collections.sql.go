@@ -193,11 +193,14 @@ WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
 ORDER BY ci.position
+LIMIT NULLIF($4::int, 0) OFFSET $3::int
 `
 
 type ListCollectionItemsParams struct {
 	CollectionID  uuid.UUID `json:"collection_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	Off           int32     `json:"off"`
+	Lim           int32     `json:"lim"`
 }
 
 type ListCollectionItemsRow struct {
@@ -219,8 +222,15 @@ type ListCollectionItemsRow struct {
 // (no max set, no rating recorded) pass through — the same lenient
 // semantics used by every other rating-gated query so that
 // as-yet-uncategorised media isn't hidden by accident.
+// NULLIF so a zero lim means "no limit" (original behaviour); callers pass a
+// positive cap to bound the result. Avoids a forgotten lim returning 0 rows.
 func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionItemsParams) ([]ListCollectionItemsRow, error) {
-	rows, err := q.db.Query(ctx, listCollectionItems, arg.CollectionID, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listCollectionItems,
+		arg.CollectionID,
+		arg.MaxRatingRank,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

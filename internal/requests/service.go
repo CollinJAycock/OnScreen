@@ -71,6 +71,7 @@ type DB interface {
 	CreateMediaRequest(ctx context.Context, arg gen.CreateMediaRequestParams) (gen.MediaRequest, error)
 	GetMediaRequest(ctx context.Context, id uuid.UUID) (gen.MediaRequest, error)
 	FindActiveRequestForUser(ctx context.Context, arg gen.FindActiveRequestForUserParams) (gen.MediaRequest, error)
+	FindActiveRequestsForUserByTMDB(ctx context.Context, arg gen.FindActiveRequestsForUserByTMDBParams) ([]gen.MediaRequest, error)
 	ListMediaRequestsForUser(ctx context.Context, arg gen.ListMediaRequestsForUserParams) ([]gen.MediaRequest, error)
 	CountMediaRequestsForUser(ctx context.Context, arg gen.CountMediaRequestsForUserParams) (int64, error)
 	ListAllMediaRequests(ctx context.Context, arg gen.ListAllMediaRequestsParams) ([]gen.MediaRequest, error)
@@ -556,6 +557,28 @@ func (s *Service) FindActiveForUser(ctx context.Context, userID uuid.UUID, media
 		return nil, fmt.Errorf("requests: find active: %w", err)
 	}
 	return &r, nil
+}
+
+// FindActiveForUserBatch is the batched form of FindActiveForUser used by the
+// Discover grid: one query for every result row instead of N. Returns the user's
+// active requests whose tmdb_id is in tmdbIDs; the caller keys them by
+// (type, tmdb_id) since an id can collide across movie/show.
+func (s *Service) FindActiveForUserBatch(ctx context.Context, userID uuid.UUID, tmdbIDs []int) ([]gen.MediaRequest, error) {
+	if len(tmdbIDs) == 0 {
+		return nil, nil
+	}
+	ids := make([]int32, len(tmdbIDs))
+	for i, id := range tmdbIDs {
+		ids[i] = int32(id)
+	}
+	rows, err := s.db.FindActiveRequestsForUserByTMDB(ctx, gen.FindActiveRequestsForUserByTMDBParams{
+		UserID:  userID,
+		TmdbIds: ids,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("requests: find active batch: %w", err)
+	}
+	return rows, nil
 }
 
 // ── arr dispatch ──────────────────────────────────────────────────────────

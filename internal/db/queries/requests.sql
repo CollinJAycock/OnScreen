@@ -51,6 +51,16 @@ WHERE user_id = $1 AND type = $2 AND tmdb_id = $3
   AND status IN ('pending', 'approved', 'downloading')
 LIMIT 1;
 
+-- name: FindActiveRequestsForUserByTMDB :many
+-- Batch form of FindActiveRequestForUser for the Discover grid: one query for
+-- all result rows instead of one per row (the N+1). The caller maps the returned
+-- rows by (type, tmdb_id). tmdb_id can collide across types (a movie and a show
+-- with the same id), so the type is part of the caller-side key.
+SELECT * FROM media_requests
+WHERE user_id = $1
+  AND tmdb_id = ANY(@tmdb_ids::int[])
+  AND status IN ('pending', 'approved', 'downloading');
+
 -- name: ApproveMediaRequest :one
 UPDATE media_requests
 SET status      = 'approved',

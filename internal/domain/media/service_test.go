@@ -182,6 +182,14 @@ func (m *mockQuerier) SoftDeleteMediaItem(_ context.Context, id uuid.UUID) error
 func (m *mockQuerier) SoftDeleteMediaItemIfAllFilesDeleted(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
+func (m *mockQuerier) SoftDeleteMediaItemsIfAllFilesDeleted(ctx context.Context, ids []uuid.UUID) error {
+	for _, id := range ids {
+		if err := m.SoftDeleteMediaItemIfAllFilesDeleted(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func (m *mockQuerier) RestoreMediaItemAncestry(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
@@ -307,6 +315,14 @@ func (m *mockQuerier) HardDeleteMediaFile(_ context.Context, id uuid.UUID) (int6
 		}
 	}
 	return 0, nil
+}
+func (m *mockQuerier) HardDeleteMediaFilesByIDs(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	var n int64
+	for _, id := range ids {
+		c, _ := m.HardDeleteMediaFile(ctx, id)
+		n += c
+	}
+	return n, nil
 }
 func (m *mockQuerier) UpdateMediaFileHash(_ context.Context, _ uuid.UUID, _ string) error { return nil }
 func (m *mockQuerier) UpdateMediaFileItemID(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {

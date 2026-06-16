@@ -25,7 +25,7 @@ import (
 // photo-album-specific (they join photo_metadata for taken_at + dimensions).
 type PhotoAlbumDB interface {
 	ListMyPhotoAlbums(ctx context.Context, userID pgtype.UUID) ([]gen.ListMyPhotoAlbumsRow, error)
-	ListPhotoAlbumItems(ctx context.Context, collectionID uuid.UUID) ([]gen.ListPhotoAlbumItemsRow, error)
+	ListPhotoAlbumItems(ctx context.Context, arg gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error)
 	GetCollection(ctx context.Context, id uuid.UUID) (gen.Collection, error)
 	CreateCollection(ctx context.Context, arg gen.CreateCollectionParams) (gen.Collection, error)
 	UpdateCollection(ctx context.Context, arg gen.UpdateCollectionParams) (gen.Collection, error)
@@ -216,12 +216,24 @@ func (h *PhotoAlbumHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Items handles GET /api/v1/photo-albums/{id}/items.
+// photoAlbumPageDefault caps how many album items one request returns. Generous
+// enough that any realistically hand-curated album is returned whole (preserving
+// the old "return everything" behaviour), while bounding a pathological album so
+// it can't materialize unboundedly per open. Clients can page with ?limit/?offset.
+const photoAlbumPageDefault = 5000
+
 func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 	id, _, ok := h.loadOwned(w, r, "id")
 	if !ok {
 		return
 	}
-	rows, err := h.db.ListPhotoAlbumItems(r.Context(), id)
+	// Paginated with a generous default cap so a huge album doesn't materialize
+	// entirely per open; clients can page with ?limit/?offset.
+	rows, err := h.db.ListPhotoAlbumItems(r.Context(), gen.ListPhotoAlbumItemsParams{
+		CollectionID: id,
+		Lim:          respond.ParseLimit(r, photoAlbumPageDefault, photoAlbumPageDefault),
+		Off:          parseInt32(r.URL.Query().Get("offset"), 0),
+	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo album items", "id", id, "err", err)
 		respond.InternalError(w, r)

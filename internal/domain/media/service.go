@@ -216,6 +216,7 @@ type Querier interface {
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
+	SoftDeleteMediaItemsIfAllFilesDeleted(ctx context.Context, ids []uuid.UUID) error
 	RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
@@ -245,6 +246,7 @@ type Querier interface {
 	MarkMediaFileMissing(ctx context.Context, id uuid.UUID) error
 	MarkMediaFileActive(ctx context.Context, id uuid.UUID) error
 	HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (int64, error)
+	HardDeleteMediaFilesByIDs(ctx context.Context, ids []uuid.UUID) (int64, error)
 	UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
@@ -446,8 +448,8 @@ type CreateItemParams struct {
 	// users rely on to force the right anime match without depending
 	// on title parsing. The enricher then short-circuits the title
 	// search and calls GetAnimeByID directly.
-	AniListID                 *int
-	MusicBrainzID             *uuid.UUID
+	AniListID     *int
+	MusicBrainzID *uuid.UUID
 	// FolderPath is a scanner-only resolution hint (not persisted): the
 	// on-disk folder this item's files live under, trailing separator
 	// included. When the title lookups miss — typically because Fix Match
@@ -455,7 +457,7 @@ type CreateItemParams struct {
 	// parsed name ("The Floor US" folder vs "The Floor" row) — the find
 	// side falls back to resolving the show through existing files under
 	// the same folder instead of creating a duplicate unmatched row.
-	FolderPath string
+	FolderPath                string
 	MusicBrainzReleaseID      *uuid.UUID
 	MusicBrainzReleaseGroupID *uuid.UUID
 	MusicBrainzArtistID       *uuid.UUID
@@ -885,24 +887,28 @@ func (s *Service) PromoteExpiredMissing(ctx context.Context, gracePeriod time.Du
 		return 0, fmt.Errorf("list missing files: %w", err)
 	}
 
-	affected := map[uuid.UUID]struct{}{}
-	for _, f := range files {
-		if _, err := s.rw.HardDeleteMediaFile(ctx, f.ID); err != nil {
-			s.logger.WarnContext(ctx, "failed to hard-delete missing file",
-				"file_id", f.ID, "err", err)
-			continue
+	// Collect the file IDs and their distinct parent items, then do the hard-
+	// delete and the parent soft-delete cascade as two set-based statements
+	// instead of one query per file + one per affected item.
+	ids := make([]uuid.UUID, len(files))
+	affected := make([]uuid.UUID, 0, len(files))
+	seen := make(map[uuid.UUID]struct{}, len(files))
+	for i, f := range files {
+		ids[i] = f.ID
+		if _, ok := seen[f.MediaItemID]; !ok {
+			seen[f.MediaItemID] = struct{}{}
+			affected = append(affected, f.MediaItemID)
 		}
-		affected[f.MediaItemID] = struct{}{}
-		s.logger.InfoContext(ctx, "missing file hard-deleted past grace",
-			"file_id", f.ID, "path", f.FilePath)
 	}
 
-	// Cascade: soft-delete parent items with no remaining active/missing files.
-	for itemID := range affected {
-		if err := s.rw.SoftDeleteMediaItemIfAllFilesDeleted(ctx, itemID); err != nil {
-			s.logger.WarnContext(ctx, "failed to check item for soft-delete",
-				"item_id", itemID, "err", err)
-		}
+	if _, err := s.rw.HardDeleteMediaFilesByIDs(ctx, ids); err != nil {
+		return 0, fmt.Errorf("hard-delete missing files: %w", err)
+	}
+	s.logger.InfoContext(ctx, "missing files hard-deleted past grace", "count", len(ids))
+
+	// Cascade: soft-delete parent items with no remaining files.
+	if err := s.rw.SoftDeleteMediaItemsIfAllFilesDeleted(ctx, affected); err != nil {
+		s.logger.WarnContext(ctx, "failed to soft-delete items after missing-file purge", "err", err)
 	}
 
 	return len(files), nil
@@ -1348,6 +1354,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 		if err != nil {
 			return nil
 		}
+		normP := normalizeTitle(p.Title) // loop-invariant; hoist out (see findItemByTitle)
 		for i := range children {
 			c := &children[i]
 			if c.Type != p.Type {
@@ -1358,7 +1365,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 				return c
 			}
 			// Fall back to title matching (e.g. named items).
-			if p.Title != "" && normalizeTitle(c.Title) == normalizeTitle(p.Title) {
+			if p.Title != "" && normalizeTitle(c.Title) == normP {
 				return c
 			}
 		}

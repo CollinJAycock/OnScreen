@@ -255,6 +255,13 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
+// collectionItemsPageDefault caps how many items one static playlist/collection
+// listing returns. Generous enough to return any realistically hand-curated list
+// whole (one INSERT per item, human-paced), while bounding the unbounded read the
+// complexity audit flagged. Clients can page with ?limit/?offset. Shared by the
+// collection and playlist Items handlers.
+const collectionItemsPageDefault = 5000
+
 // Items handles GET /api/v1/collections/{id}/items.
 func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
@@ -353,6 +360,8 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListCollectionItems(r.Context(), gen.ListCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: collMaxRank,
+		Lim:           respond.ParseLimit(r, collectionItemsPageDefault, collectionItemsPageDefault),
+		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list collection items", "id", id, "err", err)

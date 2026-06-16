@@ -43,7 +43,10 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
-ORDER BY ci.position;
+ORDER BY ci.position
+-- NULLIF so a zero lim means "no limit" (original behaviour); callers pass a
+-- positive cap to bound the result. Avoids a forgotten lim returning 0 rows.
+LIMIT NULLIF(sqlc.arg('lim')::int, 0) OFFSET sqlc.arg('off')::int;
 
 -- name: ListItemsByGenre :many
 -- v2.1 Track G item 4: optional max_rating_rank gate. Backs the

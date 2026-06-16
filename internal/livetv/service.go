@@ -1032,21 +1032,42 @@ func (s *Service) autoMatchChannels(ctx context.Context, xmltvChans []XMLTVChann
 		return 0, nil
 	}
 
+	// Index the source channels once instead of re-scanning the whole slice (and
+	// re-lowercasing every display name) per unmapped channel. The exact-LCN pass
+	// — the common HDHomeRun/IPTV tvg-chno case — becomes an O(1) map lookup, and
+	// the substring fallbacks reuse pre-lowercased names. Turns the old
+	// O(unmapped × source × names) scan into O(unmapped + source).
+	lcnToID := make(map[string]string, len(xmltvChans))
+	type lcChannel struct {
+		id    string
+		names []string // lowercased display names
+	}
+	lcChans := make([]lcChannel, 0, len(xmltvChans))
+	for _, x := range xmltvChans {
+		if x.LCN != "" {
+			if _, ok := lcnToID[x.LCN]; !ok {
+				lcnToID[x.LCN] = x.ID // first wins, matching the original break-on-first
+			}
+		}
+		names := make([]string, len(x.DisplayNames))
+		for i, n := range x.DisplayNames {
+			names[i] = strings.ToLower(n)
+		}
+		lcChans = append(lcChans, lcChannel{id: x.ID, names: names})
+	}
+
 	matched := 0
 	for _, ch := range unmapped {
-		var found string
-		for _, x := range xmltvChans {
-			if x.LCN != "" && x.LCN == ch.Number {
-				found = x.ID
-				break
-			}
+		found := ""
+		if ch.Number != "" {
+			found = lcnToID[ch.Number] // exact LCN, O(1)
 		}
 		if found == "" && ch.Callsign != nil {
 			lcCallsign := strings.ToLower(*ch.Callsign)
-			for _, x := range xmltvChans {
-				for _, name := range x.DisplayNames {
-					if strings.Contains(strings.ToLower(name), lcCallsign) {
-						found = x.ID
+			for _, x := range lcChans {
+				for _, name := range x.names {
+					if strings.Contains(name, lcCallsign) {
+						found = x.id
 						break
 					}
 				}
@@ -1057,10 +1078,10 @@ func (s *Service) autoMatchChannels(ctx context.Context, xmltvChans []XMLTVChann
 		}
 		if found == "" {
 			lcName := strings.ToLower(ch.Name)
-			for _, x := range xmltvChans {
-				for _, name := range x.DisplayNames {
-					if strings.Contains(strings.ToLower(name), lcName) {
-						found = x.ID
+			for _, x := range lcChans {
+				for _, name := range x.names {
+					if strings.Contains(name, lcName) {
+						found = x.id
 						break
 					}
 				}

@@ -1245,6 +1245,22 @@ func (q *Queries) HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (int64,
 	return result.RowsAffected(), nil
 }
 
+const hardDeleteMediaFilesByIDs = `-- name: HardDeleteMediaFilesByIDs :execrows
+DELETE FROM media_files
+WHERE id = ANY($1::uuid[])
+`
+
+// Set-based form of HardDeleteMediaFile for the timed missing-file promotion
+// (PromoteExpiredMissing), which would otherwise issue one DELETE per expired
+// file. Same FK CASCADE/SET NULL behaviour as the single-row delete.
+func (q *Queries) HardDeleteMediaFilesByIDs(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, hardDeleteMediaFilesByIDs, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const hardDeleteMediaFilesByLibrary = `-- name: HardDeleteMediaFilesByLibrary :execrows
 DELETE FROM media_files
 WHERE media_item_id IN (
@@ -4936,6 +4952,26 @@ WHERE library_id = $1 AND deleted_at IS NULL
 
 func (q *Queries) SoftDeleteMediaItemsByLibrary(ctx context.Context, libraryID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteMediaItemsByLibrary, libraryID)
+	return err
+}
+
+const softDeleteMediaItemsIfAllFilesDeleted = `-- name: SoftDeleteMediaItemsIfAllFilesDeleted :exec
+UPDATE media_items
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE media_items.id = ANY($1::uuid[])
+  AND media_items.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM media_files
+      WHERE media_files.media_item_id = media_items.id
+  )
+`
+
+// Set-based form of SoftDeleteMediaItemIfAllFilesDeleted: soft-delete any of the
+// given items that no longer have any media_files rows. Used after a batch
+// hard-delete of expired missing files so the parent-item cascade is one UPDATE
+// instead of one per affected item.
+func (q *Queries) SoftDeleteMediaItemsIfAllFilesDeleted(ctx context.Context, ids []uuid.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteMediaItemsIfAllFilesDeleted, ids)
 	return err
 }
 
