@@ -14,12 +14,23 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/subtitles/opensubtitles"
 )
+
+// searchCacheTTL bounds how long a subtitle search result is reused. Searches
+// are user-triggered (the player's "find more online"), but the picker can
+// re-issue the same query on reopen, and OpenSubtitles' free tier has a tight
+// daily allowance — memoizing identical queries for a few minutes cuts that
+// burn (and ban risk) without making results feel stale. A NEGATIVE result
+// (no matches) is cached too, so re-opening the picker for a title
+// OpenSubtitles doesn't have doesn't re-hit the API every time.
+const searchCacheTTL = 10 * time.Minute
 
 // ErrNoProvider is returned when the service has no configured provider.
 var ErrNoProvider = errors.New("subtitle provider not configured")
@@ -57,12 +68,26 @@ type Service struct {
 	cacheDir string // root for *.vtt files, e.g. /var/cache/subtitles
 	logger   *slog.Logger
 	ocr      OCREngine // optional; nil disables OCRStream
+
+	searchMu    sync.Mutex
+	searchCache map[string]searchCacheEntry
+}
+
+type searchCacheEntry struct {
+	results []opensubtitles.SearchResult
+	fetched time.Time
 }
 
 // New constructs a Service. provider may be nil — in that case Search/Download
 // return ErrNoProvider, but List/Delete still work for already-stored rows.
 func New(provider Provider, store Store, cacheDir string, logger *slog.Logger) *Service {
-	return &Service{provider: provider, store: store, cacheDir: cacheDir, logger: logger}
+	return &Service{
+		provider:    provider,
+		store:       store,
+		cacheDir:    cacheDir,
+		logger:      logger,
+		searchCache: make(map[string]searchCacheEntry),
+	}
 }
 
 // SearchOpts is what callers pass to Search. Mirrors opensubtitles.SearchOpts
@@ -77,12 +102,18 @@ type SearchOpts struct {
 	Languages string
 }
 
-// Search proxies to the provider. Returns ErrNoProvider if no provider is wired.
+// Search proxies to the provider, memoizing identical queries for
+// searchCacheTTL. Returns ErrNoProvider if no provider is wired.
 func (s *Service) Search(ctx context.Context, opts SearchOpts) ([]opensubtitles.SearchResult, error) {
 	if s.provider == nil || !s.provider.Configured() {
 		return nil, ErrNoProvider
 	}
-	return s.provider.Search(ctx, opensubtitles.SearchOpts{
+	key := fmt.Sprintf("%s|%d|%d|%d|%s|%d|%s",
+		opts.Query, opts.Year, opts.Season, opts.Episode, opts.IMDBID, opts.TMDBID, opts.Languages)
+	if cached, ok := s.searchCacheGet(key); ok {
+		return cached, nil
+	}
+	results, err := s.provider.Search(ctx, opensubtitles.SearchOpts{
 		Query:     opts.Query,
 		Year:      opts.Year,
 		Season:    opts.Season,
@@ -91,6 +122,32 @@ func (s *Service) Search(ctx context.Context, opts SearchOpts) ([]opensubtitles.
 		TMDBID:    opts.TMDBID,
 		Languages: opts.Languages,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Cache successes only (including empty result sets — the negative case).
+	// An error (circuit open, network) is never cached, so it self-heals.
+	s.searchCacheSet(key, results)
+	return results, nil
+}
+
+func (s *Service) searchCacheGet(key string) ([]opensubtitles.SearchResult, bool) {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	e, ok := s.searchCache[key]
+	if ok && time.Since(e.fetched) < searchCacheTTL {
+		return e.results, true
+	}
+	return nil, false
+}
+
+func (s *Service) searchCacheSet(key string, results []opensubtitles.SearchResult) {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	if s.searchCache == nil {
+		s.searchCache = make(map[string]searchCacheEntry)
+	}
+	s.searchCache[key] = searchCacheEntry{results: results, fetched: time.Now()}
 }
 
 // DownloadOpts identifies a search result to fetch and which media file to

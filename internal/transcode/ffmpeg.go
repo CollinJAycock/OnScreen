@@ -177,15 +177,25 @@ type BuildArgs struct {
 	AudioStreamIndex int    // -1 = default (first); >= 0 = specific stream index
 
 	// Subtitles
+	//
+	// INDEX CONVENTION (important): these use the RELATIVE subtitle-stream
+	// index — i.e. the Nth subtitle stream in the file (0 = first subtitle
+	// track), fed to ffmpeg as `0:s:N` and `subtitles=...:si=N`. This is a
+	// DIFFERENT convention from the API's subtitle_streams[].index and the
+	// /media/subtitles/{file}/{index} endpoint, which use the ABSOLUTE
+	// ffprobe stream index (`0:%d`). If these fields are ever populated from
+	// API-supplied indices (today nothing wires them — the on-demand
+	// ServeSubtitle sidecar path delivers subtitles instead), convert
+	// absolute→relative first or the wrong/no track will be selected.
 	ExtractSubtitles bool
-	SubtitleStreams  []int // stream indices to extract as WebVTT
+	SubtitleStreams  []int // relative subtitle-stream indices to extract as WebVTT
 	// BurnSubtitleStream, when set, hard-burns the named subtitle
 	// stream into the video. Used by clients that can't render
 	// external WebVTT (older smart-TV browsers, some embedded
 	// devices). Forces a full re-encode — no video-copy. The value
-	// is the source's subtitle stream index (e.g. 0 for the first
-	// subtitle track), and Encoder must be a real encoder
-	// (libx264 / NVENC / etc.), not "copy".
+	// is the RELATIVE subtitle-stream index (e.g. 0 for the first
+	// subtitle track — see the convention note above), and Encoder must
+	// be a real encoder (libx264 / NVENC / etc.), not "copy".
 	BurnSubtitleStream *int
 
 	// Encoder tuning

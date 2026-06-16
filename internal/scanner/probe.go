@@ -270,12 +270,18 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 			lang := s.Tags["language"]
 			title := s.Tags["title"]
 			forced := s.Disposition["forced"] == 1
+			// hearing_impaired is ffprobe's SDH disposition. External
+			// subtitles already carry an sdh flag (from OpenSubtitles); this
+			// brings embedded streams to parity so clients can label/filter
+			// SDH tracks consistently regardless of source.
+			sdh := s.Disposition["hearing_impaired"] == 1
 			subtitleStreams = append(subtitleStreams, map[string]any{
 				"index":    s.Index,
 				"codec":    s.CodecName,
 				"language": lang,
 				"title":    title,
 				"forced":   forced,
+				"sdh":      sdh,
 			})
 		}
 	}

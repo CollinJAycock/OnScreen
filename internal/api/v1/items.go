@@ -36,6 +36,7 @@ import (
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
+	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 )
 
 // ItemMediaService defines the media domain operations the items handler needs.
@@ -395,12 +396,19 @@ type AudioStreamJSON struct {
 }
 
 // SubtitleStreamJSON is the API representation of a subtitle stream.
+//
+// Index is the ABSOLUTE ffprobe stream index (e.g. stream 2 in a
+// video+audio+subtitle file), matching what /media/subtitles/{file}/{index}
+// expects (it maps `0:%d`). NOTE this differs from the transcode builder's
+// SubtitleStreams/BurnSubtitleStream, which use the RELATIVE subtitle-stream
+// index (`0:s:N` / `si=N`) — convert if ever wiring the two together.
 type SubtitleStreamJSON struct {
 	Index    int    `json:"index"`
 	Codec    string `json:"codec"`
 	Language string `json:"language"`
 	Title    string `json:"title"`
 	Forced   bool   `json:"forced"`
+	SDH      bool   `json:"sdh"`
 }
 
 // ItemFileResponse is the API representation of a media file.
@@ -2237,6 +2245,7 @@ func parseJSONBSubtitleStreams(data []byte) []SubtitleStreamJSON {
 			Language: asString(s["language"]),
 			Title:    asString(s["title"]),
 			Forced:   asBool(s["forced"]),
+			SDH:      asBool(s["sdh"]),
 		})
 	}
 	return out
@@ -2319,6 +2328,31 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 			respond.Forbidden(w, r)
 			return
 		}
+	}
+
+	// Validate the requested index is an actual text-based subtitle stream
+	// before shelling out. Without this, a request for an image-based track
+	// (PGS/VOBSUB) ran `ffmpeg -map 0:N -f webvtt`, which fails the
+	// unsupported conversion and returned an empty 200 — a silently-broken
+	// track to any client. Image-based streams must go through OCR instead;
+	// say so explicitly. (The web player already routes them to OCR, but a
+	// direct/older-client request shouldn't get a misleading empty success.)
+	var found *SubtitleStreamJSON
+	for _, s := range parseJSONBSubtitleStreams(file.SubtitleStreams) {
+		if s.Index == streamIdx {
+			s := s
+			found = &s
+			break
+		}
+	}
+	if found == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if ocr.IsImageBased(found.Codec) {
+		respond.Error(w, r, http.StatusUnsupportedMediaType, "IMAGE_SUBTITLE",
+			"this is an image-based subtitle (PGS/VOBSUB/DVB); convert it with OCR instead of requesting it as text")
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")

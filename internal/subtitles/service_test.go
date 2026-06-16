@@ -40,6 +40,7 @@ type fakeProvider struct {
 	configured    bool
 	searchResults []opensubtitles.SearchResult
 	searchErr     error
+	searchCalls   int
 	downloadInfo  *opensubtitles.DownloadInfo
 	downloadErr   error
 	fetchBody     []byte
@@ -48,6 +49,7 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Configured() bool { return f.configured }
 func (f *fakeProvider) Search(_ context.Context, _ opensubtitles.SearchOpts) ([]opensubtitles.SearchResult, error) {
+	f.searchCalls++
 	return f.searchResults, f.searchErr
 }
 func (f *fakeProvider) Download(_ context.Context, _ int) (*opensubtitles.DownloadInfo, error) {
@@ -437,5 +439,63 @@ func TestOCRStream_RollsBackFileOnInsertFailure(t *testing.T) {
 	path := filepath.Join(tmp, fileID.String(), "ocr_stream7_en.vtt")
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 		t.Fatalf("expected vtt to be removed after insert failure, stat err: %v", statErr)
+	}
+}
+
+func TestSearchCachesIdenticalQueries(t *testing.T) {
+	p := &fakeProvider{
+		configured:    true,
+		searchResults: []opensubtitles.SearchResult{{FileID: 1, Language: "en"}},
+	}
+	svc := New(p, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	opts := SearchOpts{Query: "The Matrix", Year: 1999, Languages: "en"}
+	for i := 0; i < 3; i++ {
+		got, err := svc.Search(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("search %d: %v", i, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("search %d: got %d results, want 1", i, len(got))
+		}
+	}
+	if p.searchCalls != 1 {
+		t.Fatalf("provider hit %d times, want 1 (identical queries memoized)", p.searchCalls)
+	}
+
+	// A different query is a distinct cache key → a fresh provider call.
+	if _, err := svc.Search(context.Background(), SearchOpts{Query: "Inception", Languages: "en"}); err != nil {
+		t.Fatalf("distinct search: %v", err)
+	}
+	if p.searchCalls != 2 {
+		t.Fatalf("distinct query should miss cache: provider hit %d, want 2", p.searchCalls)
+	}
+}
+
+func TestSearchNegativeResultIsCached(t *testing.T) {
+	p := &fakeProvider{configured: true, searchResults: nil} // no matches
+	svc := New(p, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	opts := SearchOpts{Query: "Obscure Film Nobody Has", Languages: "en"}
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Search(context.Background(), opts); err != nil {
+			t.Fatalf("search %d: %v", i, err)
+		}
+	}
+	if p.searchCalls != 1 {
+		t.Fatalf("empty result not cached: provider hit %d, want 1", p.searchCalls)
+	}
+}
+
+func TestSearchErrorIsNotCached(t *testing.T) {
+	p := &fakeProvider{configured: true, searchErr: errors.New("circuit open")}
+	svc := New(p, &fakeStore{}, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	opts := SearchOpts{Query: "x", Languages: "en"}
+	for i := 0; i < 2; i++ {
+		if _, err := svc.Search(context.Background(), opts); err == nil {
+			t.Fatal("expected error")
+		}
+	}
+	if p.searchCalls != 2 {
+		t.Fatalf("errors must not be cached: provider hit %d, want 2", p.searchCalls)
 	}
 }
