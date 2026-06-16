@@ -64,9 +64,25 @@ type OCRJobStore struct {
 // typically observed and dropped in seconds; the hour upper bound
 // covers the case where the tab closes before the user sees the result.
 func NewOCRJobStore() *OCRJobStore {
-	return &OCRJobStore{
+	s := &OCRJobStore{
 		jobs: make(map[string]*OCRJob),
 		ttl:  time.Hour,
+	}
+	// Background sweep so terminal jobs evict even when nothing polls them
+	// again — the on-access GC (Create/Get) never fires if a user closes the
+	// tab right after a job completes, leaving the row pinned for its full TTL
+	// with no reader. Process-lifetime ticker; the store is a singleton.
+	go s.gcLoop()
+	return s
+}
+
+func (s *OCRJobStore) gcLoop() {
+	t := time.NewTicker(10 * time.Minute)
+	defer t.Stop()
+	for range t.C {
+		s.mu.Lock()
+		s.gcLocked()
+		s.mu.Unlock()
 	}
 }
 

@@ -7,12 +7,19 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 )
+
+// ocrStreamTimeout caps how long a single stream's OCR may run on the
+// server-lifetime context. Generous enough for a feature-length film even on
+// the per-cue fallback path; short enough that a pathological input can't pin
+// a process forever.
+const ocrStreamTimeout = 30 * time.Minute
 
 // OCREngine is the contract the service needs from the OCR pipeline. The
 // real implementation is *ocr.Engine; tests substitute a fake.
@@ -60,6 +67,14 @@ func (s *Service) OCRStream(ctx context.Context, opts OCROpts) (gen.ExternalSubt
 	if opts.Language == "" {
 		opts.Language = "en"
 	}
+
+	// Hard per-stream cap. OCR runs on a server-lifetime context (so a client
+	// disconnect doesn't kill it), which means without a timeout a pathological
+	// input — a corrupt PGS stream, or tens of thousands of near-identical cues
+	// — could pin ffmpeg/tesseract indefinitely. A feature-length film OCRs
+	// well within this even on the per-cue fallback path.
+	ctx, cancel := context.WithTimeout(ctx, ocrStreamTimeout)
+	defer cancel()
 
 	dir := filepath.Join(s.cacheDir, opts.FileID.String())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
