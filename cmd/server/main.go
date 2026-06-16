@@ -86,6 +86,21 @@ var (
 	buildTime = "unknown"
 )
 
+// defaultTMDBAPIKey / defaultOpenSubtitlesAPIKey are OnScreen's own registered
+// application keys, injected at release-build time via ldflags
+// (-X main.defaultTMDBAPIKey=...). They're the LAST fallback — an operator's
+// own key (Settings, then env) always wins — so a fresh install gets working
+// metadata + subtitle search without every operator registering and BYO-ing a
+// personal key (which is what got one rate-limited/banned at app scale: TMDB
+// and OpenSubtitles rate-limit per-IP for a registered application, so a shared
+// application key spread across many self-hosters behaves, the Jellyfin model).
+// Empty on an un-stamped build, in which case behaviour is unchanged
+// (operator-key-or-nothing).
+var (
+	defaultTMDBAPIKey          = ""
+	defaultOpenSubtitlesAPIKey = ""
+)
+
 func main() {
 	// `server.exe migrate` applies the embedded DB migrations and exits.
 	// By default the server does NOT auto-migrate (it only gates on schema
@@ -418,6 +433,9 @@ func run() error {
 		key := settingsSvc.TMDBAPIKey(context.WithoutCancel(ctx))
 		if key == "" {
 			key = cfg.TMDBAPIKey // fallback: env var (used before migration runs)
+		}
+		if key == "" {
+			key = defaultTMDBAPIKey // last resort: OnScreen's bundled application key
 		}
 		agentMu.Lock()
 		defer agentMu.Unlock()
@@ -791,12 +809,20 @@ func run() error {
 	// underlying client when credentials change, so users don't need to restart
 	// the server after adding or updating an OpenSubtitles key.
 	subtitleProvider := subtitles.NewDynamicProvider(func(ctx context.Context) subtitles.OpenSubtitlesCreds {
-		cfg := settingsSvc.OpenSubtitles(ctx)
+		osc := settingsSvc.OpenSubtitles(ctx)
+		apiKey := osc.APIKey
+		if apiKey == "" {
+			// Fall back to OnScreen's bundled application key so an operator who
+			// enables subtitle search doesn't also have to register their own
+			// key. Enabled stays operator-controlled — the bundled key removes
+			// the registration friction, not the opt-in.
+			apiKey = defaultOpenSubtitlesAPIKey
+		}
 		return subtitles.OpenSubtitlesCreds{
-			Enabled:  cfg.Enabled,
-			APIKey:   cfg.APIKey,
-			Username: cfg.Username,
-			Password: cfg.Password,
+			Enabled:  osc.Enabled,
+			APIKey:   apiKey,
+			Username: osc.Username,
+			Password: osc.Password,
 		}
 	}, "")
 	subtitleSvc := subtitles.New(subtitleProvider, gen.New(rwPool), subtitleCacheRoot, logger)

@@ -9,7 +9,12 @@ CMD_WORKER   := ./cmd/worker
 # Version info injected at build time
 VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS      := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)
+# OnScreen's own registered application keys, injected only on release builds so
+# a fresh install has working metadata + subtitle search without the operator
+# registering a personal key. Empty by default → operator-key-or-nothing.
+DEFAULT_TMDB_KEY          ?=
+DEFAULT_OPENSUBTITLES_KEY ?=
+LDFLAGS      := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.defaultTMDBAPIKey=$(DEFAULT_TMDB_KEY) -X main.defaultOpenSubtitlesAPIKey=$(DEFAULT_OPENSUBTITLES_KEY)
 
 .PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build installer-windows installer-windows-msi installer-linux
 

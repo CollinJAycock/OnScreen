@@ -37,11 +37,15 @@ COPY --from=frontend /app/web/dist ./internal/webui/dist
 
 ARG VERSION=dev
 ARG BUILD_TIME
+# OnScreen's bundled application keys — empty unless a release build passes
+# --build-arg DEFAULT_TMDB_KEY=... / DEFAULT_OPENSUBTITLES_KEY=...
+ARG DEFAULT_TMDB_KEY=
+ARG DEFAULT_OPENSUBTITLES_KEY=
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     set -e && \
     CGO_ENABLED=0 GOOS=linux go build \
-      -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+      -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.defaultTMDBAPIKey=${DEFAULT_TMDB_KEY} -X main.defaultOpenSubtitlesAPIKey=${DEFAULT_OPENSUBTITLES_KEY}" \
       -o /bin/server ./cmd/server && \
     CGO_ENABLED=0 GOOS=linux go build \
       -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
