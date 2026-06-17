@@ -34,7 +34,14 @@ echo "==> Building $IMAGE"
 BUILD_VERSION="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo dev)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "    version=$BUILD_VERSION build_time=$BUILD_TIME"
-sudo docker build -f docker/Dockerfile.gpu \
+# To bake in default TMDB/OpenSubtitles keys, export DEFAULT_TMDB_KEY /
+# DEFAULT_OPENSUBTITLES_KEY and add (these are optional — the Dockerfile leaves
+# the bundled key empty when the secret is absent, falling back to the
+# operator-configured key, and BuildKit secret mounts keep the key out of image
+# history, unlike a --build-arg):
+#   --secret id=default_tmdb_key,env=DEFAULT_TMDB_KEY \
+#   --secret id=default_opensubtitles_key,env=DEFAULT_OPENSUBTITLES_KEY \
+sudo DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.gpu \
     --build-arg "VERSION=$BUILD_VERSION" \
     --build-arg "BUILD_TIME=$BUILD_TIME" \
     -t "$IMAGE" .

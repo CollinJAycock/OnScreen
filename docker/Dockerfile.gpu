@@ -37,15 +37,23 @@ COPY --from=frontend /app/web/dist ./internal/webui/dist
 
 ARG VERSION=dev
 ARG BUILD_TIME
-# OnScreen's bundled application keys — empty unless a release build passes
-# --build-arg DEFAULT_TMDB_KEY=... / DEFAULT_OPENSUBTITLES_KEY=...
-ARG DEFAULT_TMDB_KEY=
-ARG DEFAULT_OPENSUBTITLES_KEY=
+# OnScreen's bundled application keys are injected via BuildKit SECRET MOUNTS, not
+# ARG/ENV — an ARG value is recorded in the image's build metadata (`docker
+# history`/inspect), so passing an API key that way is flagged by BuildKit's
+# SecretsUsedInArgOrEnv lint. The secrets are OPTIONAL: when not provided the
+# mounted file is absent, the ldflags value stays empty, and the server falls back
+# to the operator-configured key. To bake them into a release build:
+#   docker build --secret id=default_tmdb_key,env=DEFAULT_TMDB_KEY \
+#                --secret id=default_opensubtitles_key,env=DEFAULT_OPENSUBTITLES_KEY ...
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=secret,id=default_tmdb_key \
+    --mount=type=secret,id=default_opensubtitles_key \
     set -e && \
+    TMDB_KEY="$(cat /run/secrets/default_tmdb_key 2>/dev/null || true)" && \
+    OS_KEY="$(cat /run/secrets/default_opensubtitles_key 2>/dev/null || true)" && \
     CGO_ENABLED=0 GOOS=linux go build \
-      -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.defaultTMDBAPIKey=${DEFAULT_TMDB_KEY} -X main.defaultOpenSubtitlesAPIKey=${DEFAULT_OPENSUBTITLES_KEY}" \
+      -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.defaultTMDBAPIKey=${TMDB_KEY} -X main.defaultOpenSubtitlesAPIKey=${OS_KEY}" \
       -o /bin/server ./cmd/server && \
     CGO_ENABLED=0 GOOS=linux go build \
       -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
