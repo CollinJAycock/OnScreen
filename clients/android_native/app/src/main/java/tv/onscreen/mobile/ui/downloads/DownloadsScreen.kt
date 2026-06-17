@@ -30,7 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,8 +84,8 @@ fun DownloadsScreen(
     onBack: () -> Unit,
     vm: DownloadsViewModel = hiltViewModel(),
 ) {
-    val entries by vm.entries.collectAsState()
-    val online by vm.isOnline.collectAsState()
+    val entries by vm.entries.collectAsStateWithLifecycle()
+    val online by vm.isOnline.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { /* triggers recomposition on first frame */ }
 
     // Delete is destructive (it removes the on-disk file), so gate it

@@ -26,7 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -208,7 +208,7 @@ fun BookReaderScreen(
     vm: BookReaderViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.load(itemId) }
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
 
     Box(
         modifier = Modifier
@@ -417,6 +417,11 @@ private fun EpubReader(ui: BookReaderUi) {
                 )
             }
         },
+        // A WebView holds a native Chromium renderer + JS engine + the loaded
+        // book; Compose's AndroidView only detaches it on departure, so destroy()
+        // it here to reclaim those native resources on book close (mirrors the
+        // MapView/ExoPlayer teardown in OsmMap.kt / PlayerScreen.kt).
+        onRelease = { webView -> webView.destroy() },
     )
 }
 

@@ -59,13 +59,18 @@ object NetworkModule {
 
     /** Logcat interceptor so we can see request paths, status codes,
      *  and rough timing of every API call. Headers + body are
-     *  intentionally skipped to keep bearer tokens out of logs.
-     *  Tighten to NONE before shipping a release build (BuildConfig.
-     *  DEBUG branching needs `buildFeatures { buildConfig = true }`
-     *  on AGP 9 — opt in when we add a release variant). */
+     *  intentionally skipped to keep bearer tokens out of logs — but
+     *  BASIC still logs the full request line, and stream/asset URLs
+     *  (download + stopTranscode) carry ?token=, so release builds log
+     *  NONE. (BuildConfig generation is enabled via
+     *  `buildFeatures { buildConfig = true }` in app/build.gradle.kts.) */
     private fun loggingInterceptor(): HttpLoggingInterceptor =
         HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
+            level = if (tv.onscreen.mobile.BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BASIC
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
         }
 
     /** Plain client for auth refresh calls — no authenticator, avoids circular dep. */

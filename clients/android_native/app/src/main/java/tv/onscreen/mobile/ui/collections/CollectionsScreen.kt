@@ -26,7 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -133,7 +133,7 @@ fun CollectionsScreen(
     onBack: () -> Unit,
     vm: CollectionsViewModel = hiltViewModel(),
 ) {
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -198,7 +198,7 @@ fun CollectionDetailScreen(
     vm: CollectionDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(collectionId) { vm.load(collectionId) }
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
     Scaffold(
         topBar = {
             TopAppBar(

@@ -31,7 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,8 +51,8 @@ fun SecurityScreen(
     onBack: () -> Unit,
     vm: SecurityViewModel = hiltViewModel(),
 ) {
-    val state by vm.state.collectAsState()
-    val busy by vm.busy.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {

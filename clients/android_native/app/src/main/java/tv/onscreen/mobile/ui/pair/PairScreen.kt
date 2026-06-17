@@ -25,7 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -46,7 +46,7 @@ fun PairScreen(
     onPaired: () -> Unit,
     vm: PairViewModel = hiltViewModel(),
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Credential field state is hoisted here (rather than inside
@@ -68,7 +68,7 @@ fun PairScreen(
     // the browser. The polling started by startSsoBridge runs in
     // parallel and resolves the auth via the existing PairState.Done
     // path above.
-    val ssoUrl by vm.ssoLaunchUrl.collectAsState()
+    val ssoUrl by vm.ssoLaunchUrl.collectAsStateWithLifecycle()
     LaunchedEffect(ssoUrl) {
         ssoUrl?.let { url ->
             SsoLauncher.launch(context, url)
@@ -102,7 +102,7 @@ fun PairScreen(
             PairState.CheckingServer -> Loading("Checking server…")
 
             is PairState.ServerReady -> {
-                val providers by vm.providers.collectAsState()
+                val providers by vm.providers.collectAsStateWithLifecycle()
                 ServerReadyChoice(
                     providers = providers,
                     loginError = s.loginError,

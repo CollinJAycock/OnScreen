@@ -44,7 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -398,7 +398,7 @@ fun ItemDetailScreen(
     vm: ItemDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.load(itemId) }
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
 
     // Surface enqueue / delete failures from the Download button as a
     // Toast so the user gets feedback instead of a silent no-op.
@@ -459,7 +459,7 @@ fun ItemDetailScreen(
                 ui.error != null -> ErrorState(message = ui.error, onRetry = { vm.load(itemId) })
                 ui.detail != null -> {
                     val d = ui.detail!!
-                    val downloadStates by vm.downloadState.collectAsState()
+                    val downloadStates by vm.downloadState.collectAsStateWithLifecycle()
                     val chapters = d.files.firstOrNull()?.chapters.orEmpty()
                     val showChapters = d.type == "audiobook" && chapters.isNotEmpty()
                     // Children list can run long (50-episode anime

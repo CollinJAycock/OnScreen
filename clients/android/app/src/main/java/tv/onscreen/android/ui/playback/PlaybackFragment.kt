@@ -1404,6 +1404,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         progressTracker?.stop()
         progressTracker = null
 
+        // Recycle the trickplay sprite-sheet bitmaps (~30 MB for a feature film)
+        // now, rather than waiting for GC to reclaim them once the fragment graph
+        // is collected. Runs before the parked-path early-return below so it fires
+        // on both teardown paths.
+        (glue?.seekProvider as? TrickplaySeekProvider)?.release()
+
         if (parkedToService) {
             // Already handed to the service in onStop (in-app nav after
             // backgrounding, or teardown while parked) — the service

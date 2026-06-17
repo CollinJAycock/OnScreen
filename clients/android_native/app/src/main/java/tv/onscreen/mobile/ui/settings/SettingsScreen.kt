@@ -24,7 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,10 +44,10 @@ fun SettingsScreen(
     onOpenScrobble: () -> Unit,
     vm: SettingsViewModel = hiltViewModel(),
 ) {
-    val downloadOnWifiOnly by vm.downloadOnWifiOnly.collectAsState(initial = true)
-    val warnOnCellularStream by vm.warnOnCellularStream.collectAsState(initial = true)
-    val username by vm.username.collectAsState(initial = null)
-    val serverUrl by vm.serverUrl.collectAsState(initial = null)
+    val downloadOnWifiOnly by vm.downloadOnWifiOnly.collectAsStateWithLifecycle(initialValue = true)
+    val warnOnCellularStream by vm.warnOnCellularStream.collectAsStateWithLifecycle(initialValue = true)
+    val username by vm.username.collectAsStateWithLifecycle(initialValue = null)
+    val serverUrl by vm.serverUrl.collectAsStateWithLifecycle(initialValue = null)
 
     var showSignOutConfirm by remember { mutableStateOf(false) }
     var showDisconnectConfirm by remember { mutableStateOf(false) }

@@ -15,6 +15,10 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class ServerPrefs(private val context: Context) {
 
+    // Token values are encrypted at rest under an AndroidKeyStore key; see
+    // TokenCrypto. Legacy plaintext values are migrated transparently on read.
+    private val crypto = TokenCrypto()
+
     companion object {
         private val KEY_SERVER_URL = stringPreferencesKey("server_url")
         private val KEY_ACCESS_TOKEN = stringPreferencesKey("access_token")
@@ -39,9 +43,9 @@ class ServerPrefs(private val context: Context) {
     }
 
     val serverUrl: Flow<String?> = context.dataStore.data.map { it[KEY_SERVER_URL] }
-    val accessToken: Flow<String?> = context.dataStore.data.map { it[KEY_ACCESS_TOKEN] }
-    val refreshToken: Flow<String?> = context.dataStore.data.map { it[KEY_REFRESH_TOKEN] }
-    val assetToken: Flow<String?> = context.dataStore.data.map { it[KEY_ASSET_TOKEN] }
+    val accessToken: Flow<String?> = context.dataStore.data.map { it[KEY_ACCESS_TOKEN]?.let(crypto::decrypt) }
+    val refreshToken: Flow<String?> = context.dataStore.data.map { it[KEY_REFRESH_TOKEN]?.let(crypto::decrypt) }
+    val assetToken: Flow<String?> = context.dataStore.data.map { it[KEY_ASSET_TOKEN]?.let(crypto::decrypt) }
     val userId: Flow<String?> = context.dataStore.data.map { it[KEY_USER_ID] }
     val username: Flow<String?> = context.dataStore.data.map { it[KEY_USERNAME] }
 
@@ -66,12 +70,12 @@ class ServerPrefs(private val context: Context) {
      *  work omits it; we clear any stale value in that case. */
     suspend fun setTokens(accessToken: String, refreshToken: String, assetToken: String? = null) {
         context.dataStore.edit {
-            it[KEY_ACCESS_TOKEN] = accessToken
-            it[KEY_REFRESH_TOKEN] = refreshToken
+            it[KEY_ACCESS_TOKEN] = crypto.encrypt(accessToken)
+            it[KEY_REFRESH_TOKEN] = crypto.encrypt(refreshToken)
             if (assetToken.isNullOrEmpty()) {
                 it.remove(KEY_ASSET_TOKEN)
             } else {
-                it[KEY_ASSET_TOKEN] = assetToken
+                it[KEY_ASSET_TOKEN] = crypto.encrypt(assetToken)
             }
         }
     }

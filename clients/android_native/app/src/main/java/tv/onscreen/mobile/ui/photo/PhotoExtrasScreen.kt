@@ -29,7 +29,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -111,7 +111,7 @@ fun PhotoExtrasScreen(
     vm: PhotoExtrasViewModel = hiltViewModel(),
 ) {
     androidx.compose.runtime.LaunchedEffect(libraryId) { vm.load(libraryId) }
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
     var tab by remember { mutableIntStateOf(0) }
     // Geotagged tab can render as a real OSM map (default) or a flat
     // list (fallback for huge libraries where dropping thousands of

@@ -49,7 +49,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -109,7 +109,7 @@ fun PlayerScreen(
     vm: PlayerViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.prepare(itemId) }
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
     BackHandler(onBack = onClose)
 
     // Cellular gate: when the user has warn-on-cellular enabled and
@@ -382,7 +382,7 @@ private fun PlayerHost(
     // progress for this item, the VM emits a position to seek to.
     // We consume + clear so a recomposition doesn't seek twice off
     // the same emission.
-    val remoteResume by vm.remoteResumeMs.collectAsState()
+    val remoteResume by vm.remoteResumeMs.collectAsStateWithLifecycle()
     LaunchedEffect(remoteResume) {
         val target = remoteResume ?: return@LaunchedEffect
         val playerTarget = (target - vm.hlsOffsetMs).coerceAtLeast(0L)
@@ -508,8 +508,8 @@ private fun PlayerHost(
     // video frame the whole time. Wired below in the PlayerView
     // factory via setControllerVisibilityListener.
     var controlsVisible by remember { mutableStateOf(true) }
-    val sleepTimer by vm.sleepTimer.collectAsState()
-    val sleepTimerFired by vm.sleepTimerFired.collectAsState()
+    val sleepTimer by vm.sleepTimer.collectAsStateWithLifecycle()
+    val sleepTimerFired by vm.sleepTimerFired.collectAsStateWithLifecycle()
     // When the sleep-timer countdown ends, the VM raises the
     // sleepTimerFired edge. We pause the player from the UI side
     // (the VM doesn't reach into ExoPlayer), then ack so the next
@@ -538,7 +538,7 @@ private fun PlayerHost(
     // SubtitleView on every change. The PlayerView reference is held
     // in a remember so the AndroidView factory and the LaunchedEffect
     // both see the same instance.
-    val subtitleStyle by vm.subtitleStyle.collectAsState(initial = SubtitleStyle.DEFAULT)
+    val subtitleStyle by vm.subtitleStyle.collectAsStateWithLifecycle(initialValue = SubtitleStyle.DEFAULT)
     val playerViewRef = remember { mutableStateOf<PlayerView?>(null) }
     LaunchedEffect(subtitleStyle, playerViewRef.value) {
         playerViewRef.value?.applySubtitleStyle(subtitleStyle)
@@ -1200,7 +1200,7 @@ private fun OnlineSubtitleSearchDialog(
     vm: PlayerViewModel,
     onDismiss: () -> Unit,
 ) {
-    val ui by vm.onlineSubtitleSearch.collectAsState()
+    val ui by vm.onlineSubtitleSearch.collectAsStateWithLifecycle()
     var lang by remember { mutableStateOf(preferredLang ?: "en") }
     var query by remember { mutableStateOf("") }
 

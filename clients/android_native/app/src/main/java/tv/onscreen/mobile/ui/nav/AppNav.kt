@@ -1,7 +1,7 @@
 package tv.onscreen.mobile.ui.nav
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -79,7 +79,7 @@ class RootViewModel @Inject constructor(
 @Composable
 fun AppNav(vm: RootViewModel = hiltViewModel()) {
     val nav = rememberNavController()
-    val signedIn by vm.signedIn.collectAsState()
+    val signedIn by vm.signedIn.collectAsStateWithLifecycle()
     // Offline-mode routing: signed-in users with no network at cold
     // start land on Downloads instead of Hub. Hub fetches /hub which
     // would just error out, and the user's offline content is by

@@ -39,7 +39,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -199,9 +199,9 @@ fun SearchScreen(
     vm: SearchViewModel = hiltViewModel(),
     discoverVm: DiscoverViewModel = hiltViewModel(),
 ) {
-    val ui by vm.state.collectAsState()
-    val filters by vm.filters.collectAsState()
-    val discoverUi by discoverVm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
+    val filters by vm.filters.collectAsStateWithLifecycle()
+    val discoverUi by discoverVm.state.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
     var tabIndex by remember { mutableIntStateOf(0) }

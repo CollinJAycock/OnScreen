@@ -33,7 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,8 +68,8 @@ fun ScrobbleScreen(
     onBack: () -> Unit,
     vm: ScrobbleViewModel = hiltViewModel(),
 ) {
-    val state by vm.state.collectAsState()
-    val busy by vm.busy.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
 
     // Revealed when a linked user wants to swap in a new token.
     var replacing by remember { mutableStateOf(false) }

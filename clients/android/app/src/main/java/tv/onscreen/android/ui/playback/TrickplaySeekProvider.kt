@@ -78,11 +78,22 @@ class TrickplaySeekProvider(
     }
 
     override fun reset() {
-        // Cancel everything in-flight; sheet cache is cleared with
-        // the provider since fragment teardown drops the only
-        // reference. (Not nulled here so a Leanback-internal reset
-        // — e.g. seek-bar resize — doesn't force a re-download.)
+        // Cancel everything in-flight; sheet cache is deliberately KEPT here so
+        // a Leanback-internal reset (e.g. seek-bar resize) doesn't force a
+        // re-download. Bitmaps are recycled in release() on fragment teardown.
         activeJobs.values.forEach { it.cancel() }
         activeJobs.clear()
+    }
+
+    /** Cancels in-flight loads and recycles the cached sprite-sheet bitmaps
+     *  (~30 MB for a feature film) so their native pixel memory is reclaimed
+     *  immediately rather than waiting for a GC pass — important on 1 GB TV
+     *  boxes loading the next item's ExoPlayer buffers. Call from the host
+     *  fragment's onDestroyView. Mirrors the phone client's recycleSpriteCache. */
+    fun release() {
+        activeJobs.values.forEach { it.cancel() }
+        activeJobs.clear()
+        sheetCache.values.forEach { if (!it.isRecycled) it.recycle() }
+        sheetCache.clear()
     }
 }

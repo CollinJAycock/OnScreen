@@ -239,6 +239,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+    // Supplies collectAsStateWithLifecycle so Compose screens stop collecting
+    // ViewModel state while STOPPED (off-screen).
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // Coroutines

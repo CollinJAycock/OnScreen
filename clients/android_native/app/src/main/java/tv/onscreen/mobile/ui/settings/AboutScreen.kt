@@ -16,7 +16,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -32,8 +32,8 @@ fun AboutScreen(
     vm: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val username by vm.username.collectAsState(initial = null)
-    val serverUrl by vm.serverUrl.collectAsState(initial = null)
+    val username by vm.username.collectAsStateWithLifecycle(initialValue = null)
+    val serverUrl by vm.serverUrl.collectAsStateWithLifecycle(initialValue = null)
 
     // Pull versionName/versionCode from PackageManager rather than
     // BuildConfig — avoids forcing buildFeatures.buildConfig=true on

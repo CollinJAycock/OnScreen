@@ -32,7 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,7 +63,7 @@ fun PlaylistsScreen(
     onBack: () -> Unit,
     vm: PlaylistsViewModel = hiltViewModel(),
 ) {
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
     // Playlist pending delete-confirmation; null when no dialog is up.
     // Destructive deletes must be confirmed — never on first tap.
     var pendingDelete by remember { mutableStateOf<Playlist?>(null) }

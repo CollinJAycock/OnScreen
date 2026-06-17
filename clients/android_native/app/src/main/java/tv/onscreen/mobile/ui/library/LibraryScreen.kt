@@ -40,7 +40,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -160,7 +160,7 @@ fun LibraryScreen(
     vm: LibraryViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(libraryId) { vm.load(libraryId) }
-    val ui by vm.state.collectAsState()
+    val ui by vm.state.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
 
     // Infinite scroll: when the last visible cell nears the end of the loaded
