@@ -52,6 +52,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.HubItem
+import tv.onscreen.mobile.data.model.HubRowPref
 import tv.onscreen.mobile.data.model.Library
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -173,34 +174,54 @@ private fun HubBody(
     val movies = hub.continue_watching_movies ?: hub.continue_watching.filter { it.type == "movie" }
     val other = hub.continue_watching_other
         ?: hub.continue_watching.filter { it.type != "episode" && it.type != "movie" }
+
+    // Candidate rows in DEFAULT order, each keyed so the user's saved hub layout
+    // (configured on the web home, shared per-account via prefs) can reorder + hide
+    // them. The web-shared keys are continue_*, trending, library:<uuid> and
+    // libraries; recently_added (global) is phone-only and the web never emits its
+    // key, so it falls through to its default position.
+    val sections = buildList {
+        if (tv.isNotEmpty()) add(HubSection("continue_tv") { PosterRow("Continue Watching TV Shows", tv, serverUrl, onOpenItem) })
+        if (movies.isNotEmpty()) add(HubSection("continue_movies") { PosterRow("Continue Watching Movies", movies, serverUrl, onOpenItem) })
+        if (other.isNotEmpty()) add(HubSection("continue_other") { PosterRow("Continue Watching", other, serverUrl, onOpenItem) })
+        if (hub.recently_added.isNotEmpty()) add(HubSection("recently_added") { PosterRow("Recently added", hub.recently_added, serverUrl, onOpenItem) })
+        if (hub.trending.isNotEmpty()) add(HubSection("trending") { PosterRow("Trending", hub.trending, serverUrl, onOpenItem) })
+        hub.recently_added_by_library.forEach { row ->
+            if (row.items.isNotEmpty()) {
+                add(HubSection("library:${row.library_id}") { PosterRow(row.library_name, row.items, serverUrl, onOpenItem) })
+            }
+        }
+        if (ui.libraries.isNotEmpty()) add(HubSection("libraries") { LibrariesRow(ui.libraries, onOpenLibrary) })
+    }
+    val ordered = orderByLayout(sections, ui.hubLayout)
+
     LazyColumn(
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        if (tv.isNotEmpty()) {
-            item { PosterRow("Continue Watching TV Shows", tv, serverUrl, onOpenItem) }
-        }
-        if (movies.isNotEmpty()) {
-            item { PosterRow("Continue Watching Movies", movies, serverUrl, onOpenItem) }
-        }
-        if (other.isNotEmpty()) {
-            item { PosterRow("Continue Watching", other, serverUrl, onOpenItem) }
-        }
-        if (hub.recently_added.isNotEmpty()) {
-            item { PosterRow("Recently added", hub.recently_added, serverUrl, onOpenItem) }
-        }
-        if (hub.trending.isNotEmpty()) {
-            item { PosterRow("Trending", hub.trending, serverUrl, onOpenItem) }
-        }
-        hub.recently_added_by_library.forEach { row ->
-            if (row.items.isNotEmpty()) {
-                item { PosterRow(row.library_name, row.items, serverUrl, onOpenItem) }
-            }
-        }
-        if (ui.libraries.isNotEmpty()) {
-            item { LibrariesRow(ui.libraries, onOpenLibrary) }
-        }
+        items(ordered, key = { it.key }) { section -> section.content() }
     }
+}
+
+/** One home row: its [key] (for hub-layout matching) and the composable that
+ *  renders it. */
+private class HubSection(val key: String, val content: @Composable () -> Unit)
+
+/** Apply the saved layout: enabled sections first, in the saved order, skipping
+ *  keys with no matching row (e.g. a removed library); then any section not in the
+ *  saved layout, in default order. Mirrors the web home's ordering exactly. */
+private fun orderByLayout(sections: List<HubSection>, layout: List<HubRowPref>): List<HubSection> {
+    if (layout.isEmpty()) return sections
+    val byKey = sections.associateBy { it.key }
+    val used = mutableSetOf<String>()
+    val out = mutableListOf<HubSection>()
+    for (pref in layout) {
+        val s = byKey[pref.key] ?: continue
+        used.add(pref.key)
+        if (pref.enabled) out.add(s)
+    }
+    for (s in sections) if (s.key !in used) out.add(s)
+    return out
 }
 
 @Composable
