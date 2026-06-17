@@ -43,10 +43,23 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
-ORDER BY ci.position
+-- ci.media_item_id is the unique tiebreaker: ci.position is NOT unique per
+-- collection (no UNIQUE(collection_id, position); concurrent MAX(position)+1
+-- inserts and partial reorders produce ties), and without a tiebreaker OFFSET
+-- paging over tied rows skips/duplicates them.
+ORDER BY ci.position, ci.media_item_id
 -- NULLIF so a zero lim means "no limit" (original behaviour); callers pass a
 -- positive cap to bound the result. Avoids a forgotten lim returning 0 rows.
 LIMIT NULLIF(sqlc.arg('lim')::int, 0) OFFSET sqlc.arg('off')::int;
+
+-- name: CountCollectionItems :one
+-- Backs meta.total for the static collection/playlist listing so a paginating
+-- client sees the real collection size, not the current page length.
+SELECT COUNT(*) FROM collection_items ci
+JOIN media_items mi ON mi.id = ci.media_item_id
+WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int);
 
 -- name: ListItemsByGenre :many
 -- v2.1 Track G item 4: optional max_rating_rank gate. Backs the
@@ -59,17 +72,23 @@ WHERE deleted_at IS NULL
   AND type IN ('movie', 'show')
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
-ORDER BY rating DESC NULLS LAST
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
+-- , id tiebreaker: rating is highly non-unique (many ties + the NULLS-LAST
+-- bucket), so without it OFFSET paging skips/duplicates tied rows.
+ORDER BY rating DESC NULLS LAST, id
 LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 
 -- name: CountItemsByGenre :one
--- Mirrors ListItemsByGenre's filter so the paginated total matches
--- the rows the user can actually see — without the same gate the
--- pagination footer would lie ("Page 1 of 12" but only 4 visible).
+-- Mirrors ListItemsByGenre's filter — including the per-user library ACL — so
+-- the paginated total matches the rows the user can actually see. Without the
+-- same gates the pagination footer would lie ("Page 1 of 12" but only 4 visible).
 SELECT COUNT(*) FROM media_items
 WHERE deleted_at IS NULL AND sqlc.arg('genre')::text = ANY(genres) AND type IN ('movie', 'show')
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int);
+       OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR library_id = ANY(sqlc.narg('library_ids')::uuid[]));
 
 -- name: AddCollectionItem :one
 INSERT INTO collection_items (collection_id, media_item_id, position)

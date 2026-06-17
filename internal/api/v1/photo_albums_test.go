@@ -62,6 +62,10 @@ func (m *mockPhotoAlbumDB) ListMyPhotoAlbums(_ context.Context, userID pgtype.UU
 func (m *mockPhotoAlbumDB) ListPhotoAlbumItems(_ context.Context, _ gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error) {
 	return m.listItems, m.listItemsErr
 }
+
+func (m *mockPhotoAlbumDB) CountPhotoAlbumItems(_ context.Context, _ uuid.UUID) (int64, error) {
+	return int64(len(m.listItems)), nil
+}
 func (m *mockPhotoAlbumDB) GetCollection(_ context.Context, _ uuid.UUID) (gen.Collection, error) {
 	return m.getResult, m.getErr
 }

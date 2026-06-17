@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -611,6 +612,12 @@ func parseInt32(s string, def int32) int32 {
 	if err != nil || n < 0 {
 		return def
 	}
+	// On 64-bit platforms int is 64 bits, so a value like "9999999999" would
+	// silently wrap when narrowed to int32 (possibly to a negative limit/offset
+	// the SQL layer then mishandles). Clamp to the int32 ceiling instead.
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
 	return int32(n)
 }
 
@@ -665,6 +672,13 @@ func parseInt32Ptr(s string) (*int32, error) {
 	n, err := strconv.Atoi(s)
 	if err != nil {
 		return nil, err
+	}
+	// Clamp to the int32 range so an out-of-range value doesn't wrap to a
+	// bogus filter bound when narrowed (these feed iso_min/iso_max).
+	if n > math.MaxInt32 {
+		n = math.MaxInt32
+	} else if n < math.MinInt32 {
+		n = math.MinInt32
 	}
 	v := int32(n)
 	return &v, nil

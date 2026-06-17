@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -125,7 +126,15 @@ func (h *LiveTVHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 		RetentionDays:  body.RetentionDays,
 	})
 	if err != nil {
-		respond.BadRequest(w, r, err.Error())
+		// A malformed schedule request is the client's fault (400); anything
+		// else is a DB/server failure and must not surface as a 400 with the
+		// raw error text.
+		if errors.Is(err, livetv.ErrInvalidSchedule) {
+			respond.BadRequest(w, r, err.Error())
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "create schedule", "err", err)
+		respond.InternalError(w, r)
 		return
 	}
 	respond.Created(w, r, scheduleToResponse(sched))

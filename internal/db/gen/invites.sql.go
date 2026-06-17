@@ -12,6 +12,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimInviteToken = `-- name: ClaimInviteToken :execrows
+UPDATE invite_tokens SET used_at = NOW()
+WHERE id = $1 AND used_at IS NULL AND expires_at > NOW()
+`
+
+// Atomically consume a single-use invite BEFORE the account is created: only the
+// first concurrent caller to flip used_at from NULL wins (returns 1 row); a
+// racing/duplicate accept sees 0 and is rejected, so one invite mints at most one
+// account. used_by is backfilled by SetInviteTokenUsedBy after creation; a failed
+// creation releases the claim (ReleaseInviteToken) so a username collision can retry.
+func (q *Queries) ClaimInviteToken(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, claimInviteToken, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createInviteToken = `-- name: CreateInviteToken :one
 INSERT INTO invite_tokens (created_by, token_hash, email, expires_at)
 VALUES ($1, $2, $3, $4)
@@ -107,16 +125,25 @@ func (q *Queries) ListInviteTokens(ctx context.Context) ([]ListInviteTokensRow, 
 	return items, nil
 }
 
-const markInviteTokenUsed = `-- name: MarkInviteTokenUsed :exec
-UPDATE invite_tokens SET used_at = NOW(), used_by = $2 WHERE id = $1
+const releaseInviteToken = `-- name: ReleaseInviteToken :exec
+UPDATE invite_tokens SET used_at = NULL WHERE id = $1
 `
 
-type MarkInviteTokenUsedParams struct {
+func (q *Queries) ReleaseInviteToken(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, releaseInviteToken, id)
+	return err
+}
+
+const setInviteTokenUsedBy = `-- name: SetInviteTokenUsedBy :exec
+UPDATE invite_tokens SET used_by = $2 WHERE id = $1
+`
+
+type SetInviteTokenUsedByParams struct {
 	ID     uuid.UUID   `json:"id"`
 	UsedBy pgtype.UUID `json:"used_by"`
 }
 
-func (q *Queries) MarkInviteTokenUsed(ctx context.Context, arg MarkInviteTokenUsedParams) error {
-	_, err := q.db.Exec(ctx, markInviteTokenUsed, arg.ID, arg.UsedBy)
+func (q *Queries) SetInviteTokenUsedBy(ctx context.Context, arg SetInviteTokenUsedByParams) error {
+	_, err := q.db.Exec(ctx, setInviteTokenUsedBy, arg.ID, arg.UsedBy)
 	return err
 }

@@ -321,8 +321,20 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		// out — neither side can keep refreshing from this point.
 		s.logger.WarnContext(ctx, "refresh token reuse detected; invalidating session family",
 			"user_id", session.UserID, "session_id", session.ID)
-		_ = s.db.DeleteSessionsForUser(ctx, session.UserID)
-		_ = s.db.BumpSessionEpoch(ctx, session.UserID)
+		// These two steps ARE the theft response: DeleteSessionsForUser kills
+		// every refresh session, BumpSessionEpoch invalidates already-issued
+		// access tokens. If either fails the family is NOT fully revoked and a
+		// thief may retain access — that's a security incident, not a swallow-
+		// and-move-on, so log each at ERROR so monitoring can page ops. The
+		// reused token is rejected regardless via the error return below.
+		if derr := s.db.DeleteSessionsForUser(ctx, session.UserID); derr != nil {
+			s.logger.ErrorContext(ctx, "refresh reuse: failed to delete session family; thief may retain refresh access",
+				"user_id", session.UserID, "err", derr)
+		}
+		if berr := s.db.BumpSessionEpoch(ctx, session.UserID); berr != nil {
+			s.logger.ErrorContext(ctx, "refresh reuse: failed to bump session epoch; outstanding access tokens not invalidated",
+				"user_id", session.UserID, "err", berr)
+		}
 		return nil, fmt.Errorf("refresh: token already used; session invalidated")
 	}
 

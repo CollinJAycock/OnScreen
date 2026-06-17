@@ -104,6 +104,13 @@ func (w *DVRWorker) Run(ctx context.Context, tickInterval time.Duration) error {
 	if tickInterval <= 0 {
 		tickInterval = 5 * time.Second
 	}
+	// Reconcile recordings left in 'recording' by a previous process (crash, or
+	// a graceful shutdown that cancelled in-flight captures without finalizing).
+	// Without this they stay wedged in 'recording' forever — never finalized,
+	// never retried — and UpsertRecording can't re-arm the slot. ffmpeg was
+	// SIGKILLed so the partial .mp4 is likely unplayable; mark them failed (the
+	// file stays on disk for manual recovery) rather than risk a corrupt item.
+	w.reconcileInterrupted(ctx)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	for {
@@ -263,6 +270,24 @@ func (w *DVRWorker) finalize(ctx context.Context, s *captureSession) {
 		w.mu.Unlock()
 	}()
 
+	// Don't resurrect a recording the user moved out of 'recording' (cancel).
+	// honorCancellations kills the ffmpeg of a cancelled row, and the reaper
+	// still runs finalize for it — but a cancelled recording must stay
+	// cancelled: no flip to completed/failed, no library item for the partial
+	// capture. Exit 255 is identical for a deadline completion and a cancel, so
+	// we key the decision on the DB status, not the exit code.
+	rec, err := w.q.GetRecording(ctx, s.recID)
+	if err != nil {
+		w.logger.ErrorContext(ctx, "get recording for finalize",
+			"recording_id", s.recID, "err", err)
+		return
+	}
+	if rec.Status != RecordingStatusRecording {
+		w.logger.InfoContext(ctx, "dvr capture not finalized (no longer recording)",
+			"recording_id", s.recID, "status", rec.Status)
+		return
+	}
+
 	exitErr := s.cmd.ProcessState.ExitCode()
 	if exitErr != 0 && exitErr != 255 {
 		// 255 happens when ffmpeg is killed via context cancel at
@@ -299,12 +324,6 @@ func (w *DVRWorker) finalize(ctx context.Context, s *captureSession) {
 		return
 	}
 
-	rec, err := w.q.GetRecording(ctx, s.recID)
-	if err != nil {
-		w.logger.ErrorContext(ctx, "get recording for finalize",
-			"recording_id", s.recID, "err", err)
-		return
-	}
 	itemID, err := w.media.CreateDVRMediaItem(ctx, DVRMediaItemParams{
 		LibraryID:  libID,
 		Title:      rec.Title,
@@ -326,6 +345,24 @@ func (w *DVRWorker) finalize(ctx context.Context, s *captureSession) {
 	}
 	w.logger.InfoContext(ctx, "dvr capture finalized",
 		"recording_id", s.recID, "item_id", itemID, "path", s.filePath)
+}
+
+// reconcileInterrupted marks any recording still in 'recording' status at
+// startup as failed — those are orphans from a previous process that died (or
+// shut down) mid-capture, since this fresh worker holds no active captures yet.
+func (w *DVRWorker) reconcileInterrupted(ctx context.Context) {
+	active, err := w.q.ListActiveRecordings(ctx)
+	if err != nil {
+		w.logger.WarnContext(ctx, "dvr: list active recordings for startup reconcile", "err", err)
+		return
+	}
+	for _, r := range active {
+		w.logger.WarnContext(ctx, "dvr: marking interrupted recording failed (mid-capture restart)",
+			"recording_id", r.ID, "title", r.Title)
+		if err := w.q.SetRecordingFailed(ctx, r.ID, "interrupted by server restart"); err != nil {
+			w.logger.WarnContext(ctx, "dvr: reconcile set-failed", "recording_id", r.ID, "err", err)
+		}
+	}
 }
 
 // honorCancellations kills captures whose DB status has moved out of

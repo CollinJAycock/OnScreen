@@ -3,6 +3,10 @@
 package contentrating
 
 // Rank returns a numeric rank for a content rating string.
+// The values mirror the public.content_rating_rank() SQL function (migration
+// 00001, extended for anime ratings in 00016) — the two MUST stay in lockstep
+// because per-item rank is computed in SQL while the per-user ceiling is computed
+// here, and a divergence wrongly hides or shows items in the rating-gated lists.
 // Lower values are more restrictive. Empty/unrated is rank 4 (most restrictive)
 // so restricted profiles are protected until a rating is populated.
 // Unknown ratings (NR, UNRATED, X, etc.) also rank 4.

@@ -21,7 +21,7 @@ type FavoritesDB interface {
 	RemoveFavorite(ctx context.Context, arg gen.RemoveFavoriteParams) error
 	IsFavorite(ctx context.Context, arg gen.IsFavoriteParams) (bool, error)
 	ListFavorites(ctx context.Context, arg gen.ListFavoritesParams) ([]gen.ListFavoritesRow, error)
-	CountFavorites(ctx context.Context, userID uuid.UUID) (int64, error)
+	CountFavorites(ctx context.Context, arg gen.CountFavoritesParams) (int64, error)
 	GetMediaItem(ctx context.Context, id uuid.UUID) (gen.GetMediaItemRow, error)
 }
 
@@ -132,7 +132,10 @@ func (h *FavoritesHandler) List(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	total, _ := h.db.CountFavorites(r.Context(), claims.UserID)
+	total, _ := h.db.CountFavorites(r.Context(), gen.CountFavoritesParams{
+		UserID:        claims.UserID,
+		MaxRatingRank: maxRank,
+	})
 	respond.List(w, r, out, total, "")
 }
 

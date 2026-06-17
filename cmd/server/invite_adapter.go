@@ -37,8 +37,16 @@ func (a *inviteAdapter) GetInviteToken(ctx context.Context, tokenHash string) (v
 	}, nil
 }
 
-func (a *inviteAdapter) MarkInviteTokenUsed(ctx context.Context, id uuid.UUID, usedBy uuid.UUID) error {
-	return a.q.MarkInviteTokenUsed(ctx, gen.MarkInviteTokenUsedParams{
+func (a *inviteAdapter) ClaimInviteToken(ctx context.Context, id uuid.UUID) (int64, error) {
+	return a.q.ClaimInviteToken(ctx, id)
+}
+
+func (a *inviteAdapter) ReleaseInviteToken(ctx context.Context, id uuid.UUID) error {
+	return a.q.ReleaseInviteToken(ctx, id)
+}
+
+func (a *inviteAdapter) SetInviteTokenUsedBy(ctx context.Context, id uuid.UUID, usedBy uuid.UUID) error {
+	return a.q.SetInviteTokenUsedBy(ctx, gen.SetInviteTokenUsedByParams{
 		ID:     id,
 		UsedBy: pgtype.UUID{Bytes: usedBy, Valid: true},
 	})

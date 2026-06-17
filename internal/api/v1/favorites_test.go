@@ -59,7 +59,7 @@ func (m *mockFavoritesDB) ListFavorites(_ context.Context, arg gen.ListFavorites
 	m.listArg = arg
 	return m.list, m.listErr
 }
-func (m *mockFavoritesDB) CountFavorites(_ context.Context, _ uuid.UUID) (int64, error) {
+func (m *mockFavoritesDB) CountFavorites(_ context.Context, _ gen.CountFavoritesParams) (int64, error) {
 	return m.count, m.countErr
 }
 func (m *mockFavoritesDB) GetMediaItem(_ context.Context, _ uuid.UUID) (gen.GetMediaItemRow, error) {

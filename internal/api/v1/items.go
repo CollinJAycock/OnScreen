@@ -1214,7 +1214,14 @@ func (h *ItemHandler) SetRating(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ratings.Set(r.Context(), claims.UserID, id, body.Score); err != nil {
-		respond.BadRequest(w, r, err.Error())
+		// Only an out-of-range score is the client's fault (400); a failed
+		// upsert is a server error and must not leak the DB message as a 400.
+		if errors.Is(err, ratings.ErrInvalidScore) {
+			respond.BadRequest(w, r, err.Error())
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "set rating", "id", id, "err", err)
+		respond.InternalError(w, r)
 		return
 	}
 	respond.Success(w, r, map[string]any{"score": body.Score})

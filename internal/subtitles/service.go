@@ -78,12 +78,22 @@ type Service struct {
 	searchMu    sync.Mutex
 	searchCache map[string]searchCacheEntry
 
-	// quotaMu guards lastRemaining: the downloads-remaining count from the most
-	// recent successful Download. -1 = unknown (nothing downloaded yet this
-	// process). Used to refuse a download once we know the daily quota is spent.
-	quotaMu       sync.Mutex
-	lastRemaining int
+	// quotaMu guards lastRemaining + quotaExhaustedAt: the downloads-remaining
+	// count from the most recent successful Download. -1 = unknown (nothing
+	// downloaded yet this process). Used to refuse a download once we know the
+	// daily quota is spent. quotaExhaustedAt is the time we last saw it hit 0,
+	// so the gate can clear after the window rolls over (see quotaExhausted).
+	quotaMu          sync.Mutex
+	lastRemaining    int
+	quotaExhaustedAt time.Time
 }
+
+// quotaRetryAfter bounds how long the exhausted-quota gate blocks downloads
+// before letting ONE probe through. The provider reports no reset time and a
+// probe while still exhausted 429s without refreshing the count, so we slide the
+// window forward on each permitted probe — at most one probe per window while
+// exhausted, and the gate clears within this long of the daily quota reset.
+const quotaRetryAfter = time.Hour
 
 type searchCacheEntry struct {
 	results []opensubtitles.SearchResult
@@ -147,12 +157,27 @@ func (s *Service) Search(ctx context.Context, opts SearchOpts) ([]opensubtitles.
 func (s *Service) quotaExhausted() bool {
 	s.quotaMu.Lock()
 	defer s.quotaMu.Unlock()
-	return s.lastRemaining == 0
+	if s.lastRemaining != 0 {
+		return false
+	}
+	// Exhausted. Permit one probe download per quotaRetryAfter window so the
+	// gate can clear after the daily quota resets — without this, the only path
+	// that refreshes the count (a successful Download) is unreachable and the
+	// service refuses downloads for the whole process lifetime. Slide the window
+	// forward each time a probe is permitted so we don't hammer the endpoint.
+	if time.Since(s.quotaExhaustedAt) >= quotaRetryAfter {
+		s.quotaExhaustedAt = time.Now()
+		return false
+	}
+	return true
 }
 
 func (s *Service) setRemaining(n int) {
 	s.quotaMu.Lock()
 	s.lastRemaining = n
+	if n == 0 {
+		s.quotaExhaustedAt = time.Now()
+	}
 	s.quotaMu.Unlock()
 }
 

@@ -203,8 +203,11 @@ func (a *mediaAdapter) SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context,
 	return a.q.SoftDeleteMediaItemIfAllFilesDeleted(ctx, id)
 }
 
-func (a *mediaAdapter) SoftDeleteMediaItemsIfAllFilesDeleted(ctx context.Context, ids []uuid.UUID) error {
-	return a.q.SoftDeleteMediaItemsIfAllFilesDeleted(ctx, ids)
+func (a *mediaAdapter) PurgeExpiredMissingFiles(ctx context.Context, fileIDs, itemIDs []uuid.UUID) (int64, error) {
+	return a.q.PurgeExpiredMissingFiles(ctx, gen.PurgeExpiredMissingFilesParams{
+		FileIds: fileIDs,
+		ItemIds: itemIDs,
+	})
 }
 
 func (a *mediaAdapter) RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error {
@@ -488,9 +491,6 @@ func (a *mediaAdapter) HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (i
 	return a.q.HardDeleteMediaFile(ctx, id)
 }
 
-func (a *mediaAdapter) HardDeleteMediaFilesByIDs(ctx context.Context, ids []uuid.UUID) (int64, error) {
-	return a.q.HardDeleteMediaFilesByIDs(ctx, ids)
-}
 
 func (a *mediaAdapter) UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error {
 	return a.q.UpdateMediaFileHash(ctx, gen.UpdateMediaFileHashParams{ID: id, FileHash: &hash})

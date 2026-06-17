@@ -24,6 +24,7 @@ type CollectionDB interface {
 	UpdateCollection(ctx context.Context, arg gen.UpdateCollectionParams) (gen.Collection, error)
 	DeleteCollection(ctx context.Context, id uuid.UUID) error
 	ListCollectionItems(ctx context.Context, arg gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error)
+	CountCollectionItems(ctx context.Context, arg gen.CountCollectionItemsParams) (int64, error)
 	AddCollectionItem(ctx context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error)
 	RemoveCollectionItem(ctx context.Context, arg gen.RemoveCollectionItemParams) error
 	ListAutoGenreCollections(ctx context.Context) ([]gen.Collection, error)
@@ -302,6 +303,16 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 		_, ok := allowed[lid]
 		return ok
 	}
+	// Explicit slice form for SQL ACL filtering. nil = admin (no filter); a
+	// non-nil (possibly empty) slice restricts to the granted set so the SQL
+	// count and the paged rows agree for a restricted user.
+	var allowedLibIDs []uuid.UUID
+	if allowed != nil {
+		allowedLibIDs = make([]uuid.UUID, 0, len(allowed))
+		for id := range allowed {
+			allowedLibIDs = append(allowedLibIDs, id)
+		}
+	}
 
 	// Auto-genre collections query media_items directly.
 	if col.Type == "auto_genre" && col.Genre != nil {
@@ -317,15 +328,19 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Lim:           page.Limit,
 			Off:           page.Offset,
 			MaxRatingRank: maxRank,
+			LibraryIds:    allowedLibIDs,
 		})
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "list items by genre", "genre", *col.Genre, "err", err)
 			respond.InternalError(w, r)
 			return
 		}
+		// Library-filtered count so meta.total matches the paged rows for a
+		// restricted user (the SQL now applies the same ACL the rows do).
 		total, _ := h.db.CountItemsByGenre(r.Context(), gen.CountItemsByGenreParams{
 			Genre:         *col.Genre,
 			MaxRatingRank: maxRank,
+			LibraryIds:    allowedLibIDs,
 		})
 		out := make([]collectionItemResponse, 0, len(rows))
 		for _, row := range rows {
@@ -388,7 +403,11 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Position:   row.Position,
 		})
 	}
-	respond.List(w, r, out, int64(len(out)), "")
+	total, _ := h.db.CountCollectionItems(r.Context(), gen.CountCollectionItemsParams{
+		CollectionID:  id,
+		MaxRatingRank: collMaxRank,
+	})
+	respond.List(w, r, out, total, "")
 }
 
 // AddItem handles POST /api/v1/collections/{id}/items.

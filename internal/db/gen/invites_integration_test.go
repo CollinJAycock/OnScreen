@@ -84,15 +84,80 @@ func TestInvites_Integration_UsedInviteCannotBeReplayed(t *testing.T) {
 	id := createInvite(t, q, admin, hash, time.Now().Add(time.Hour), nil)
 
 	consumer := seedUser(ctx, t, q, "inv-rpl-user-"+uuid.New().String()[:8])
-	if err := q.MarkInviteTokenUsed(ctx, gen.MarkInviteTokenUsedParams{
+	rows, err := q.ClaimInviteToken(ctx, id)
+	if err != nil {
+		t.Fatalf("ClaimInviteToken: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("first claim affected %d rows, want 1", rows)
+	}
+	if err := q.SetInviteTokenUsedBy(ctx, gen.SetInviteTokenUsedByParams{
 		ID:     id,
 		UsedBy: pgtype.UUID{Bytes: consumer, Valid: true},
 	}); err != nil {
-		t.Fatalf("MarkInviteTokenUsed: %v", err)
+		t.Fatalf("SetInviteTokenUsedBy: %v", err)
 	}
 
 	if _, err := q.GetInviteToken(ctx, hash); err != pgx.ErrNoRows {
 		t.Errorf("used invite still gettable: %v — replay vector", err)
+	}
+}
+
+// TestInvites_Integration_ClaimIsSingleUse — the atomic guard that prevents two
+// concurrent accepts from both minting an account off one invite. The first
+// ClaimInviteToken flips used_at and affects 1 row; the second sees used_at
+// already set and affects 0, so the racing handler is rejected.
+func TestInvites_Integration_ClaimIsSingleUse(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	admin := seedUser(ctx, t, q, "inv-clm-admin-"+uuid.New().String()[:8])
+	hash := "claim-" + uuid.New().String()
+	id := createInvite(t, q, admin, hash, time.Now().Add(time.Hour), nil)
+
+	first, err := q.ClaimInviteToken(ctx, id)
+	if err != nil {
+		t.Fatalf("first ClaimInviteToken: %v", err)
+	}
+	if first != 1 {
+		t.Fatalf("first claim affected %d rows, want 1", first)
+	}
+
+	second, err := q.ClaimInviteToken(ctx, id)
+	if err != nil {
+		t.Fatalf("second ClaimInviteToken: %v", err)
+	}
+	if second != 0 {
+		t.Errorf("second claim affected %d rows, want 0 — double-accept race", second)
+	}
+}
+
+// TestInvites_Integration_ReleaseAllowsRetry — when account creation fails after
+// a claim, ReleaseInviteToken puts the invite back so the user can retry (e.g.
+// after a username collision) without the admin re-issuing it.
+func TestInvites_Integration_ReleaseAllowsRetry(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	admin := seedUser(ctx, t, q, "inv-rel-admin-"+uuid.New().String()[:8])
+	hash := "release-" + uuid.New().String()
+	id := createInvite(t, q, admin, hash, time.Now().Add(time.Hour), nil)
+
+	if rows, err := q.ClaimInviteToken(ctx, id); err != nil || rows != 1 {
+		t.Fatalf("ClaimInviteToken: rows=%d err=%v", rows, err)
+	}
+	if err := q.ReleaseInviteToken(ctx, id); err != nil {
+		t.Fatalf("ReleaseInviteToken: %v", err)
+	}
+
+	// After release the invite is live again and claimable.
+	if _, err := q.GetInviteToken(ctx, hash); err != nil {
+		t.Errorf("released invite not gettable: %v — retry blocked", err)
+	}
+	if rows, err := q.ClaimInviteToken(ctx, id); err != nil || rows != 1 {
+		t.Errorf("re-claim after release: rows=%d err=%v, want 1", rows, err)
 	}
 }
 

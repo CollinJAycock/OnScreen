@@ -174,7 +174,7 @@ func (s *stubFavoritesDB) IsFavorite(_ context.Context, _ gen.IsFavoriteParams) 
 func (s *stubFavoritesDB) ListFavorites(_ context.Context, _ gen.ListFavoritesParams) ([]gen.ListFavoritesRow, error) {
 	return nil, nil
 }
-func (s *stubFavoritesDB) CountFavorites(_ context.Context, _ uuid.UUID) (int64, error) {
+func (s *stubFavoritesDB) CountFavorites(_ context.Context, _ gen.CountFavoritesParams) (int64, error) {
 	return 0, nil
 }
 func (s *stubFavoritesDB) GetMediaItem(_ context.Context, _ uuid.UUID) (gen.GetMediaItemRow, error) {
@@ -319,7 +319,11 @@ func (s *stubInviteDB) CreateInviteToken(_ context.Context, _ uuid.UUID, _ strin
 func (s *stubInviteDB) GetInviteToken(_ context.Context, _ string) (v1.InviteTokenRow, error) {
 	return v1.InviteTokenRow{}, errors.New("not found")
 }
-func (s *stubInviteDB) MarkInviteTokenUsed(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+func (s *stubInviteDB) ClaimInviteToken(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 1, nil
+}
+func (s *stubInviteDB) ReleaseInviteToken(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubInviteDB) SetInviteTokenUsedBy(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
 	return nil
 }
 func (s *stubInviteDB) ListInviteTokens(_ context.Context) ([]v1.InviteTokenSummaryRow, error) {

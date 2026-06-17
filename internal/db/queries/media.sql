@@ -679,26 +679,37 @@ WHERE media_items.id = $1
       WHERE media_files.media_item_id = $1
   );
 
--- name: HardDeleteMediaFilesByIDs :execrows
--- Set-based form of HardDeleteMediaFile for the timed missing-file promotion
--- (PromoteExpiredMissing), which would otherwise issue one DELETE per expired
--- file. Same FK CASCADE/SET NULL behaviour as the single-row delete.
-DELETE FROM media_files
-WHERE id = ANY(@ids::uuid[]);
-
--- name: SoftDeleteMediaItemsIfAllFilesDeleted :exec
--- Set-based form of SoftDeleteMediaItemIfAllFilesDeleted: soft-delete any of the
--- given items that no longer have any media_files rows. Used after a batch
--- hard-delete of expired missing files so the parent-item cascade is one UPDATE
--- instead of one per affected item.
-UPDATE media_items
-SET deleted_at = NOW(), updated_at = NOW()
-WHERE media_items.id = ANY(@ids::uuid[])
-  AND media_items.deleted_at IS NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM media_files
-      WHERE media_files.media_item_id = media_items.id
-  );
+-- name: PurgeExpiredMissingFiles :one
+-- Atomic form of PromoteExpiredMissing's two writes: hard-delete the expired
+-- missing files AND, in the SAME statement, soft-delete any of their parent
+-- items left with no surviving files. One statement is one implicit transaction,
+-- so a crash can't hard-delete the files yet leave behind orphaned zero-file
+-- items (which would linger in the library until the next scan-time sweep).
+--
+-- Snapshot note: every data-modifying CTE here runs against the SAME
+-- pre-statement snapshot, so `cascaded` cannot observe `deleted`'s effect on
+-- media_files. The parent test is therefore "has no media_files EXCEPT the ones
+-- being deleted" (mf.id <> ALL(@file_ids)), NOT a bare NOT EXISTS — otherwise
+-- the about-to-be-deleted files would still look present and nothing would
+-- cascade. @item_ids is the DISTINCT parent set the caller derived from @file_ids.
+-- Returns the number of files actually deleted.
+WITH deleted AS (
+    DELETE FROM media_files
+    WHERE id = ANY(@file_ids::uuid[])
+    RETURNING id
+), cascaded AS (
+    UPDATE media_items mi
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE mi.id = ANY(@item_ids::uuid[])
+      AND mi.deleted_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM media_files mf
+          WHERE mf.media_item_id = mi.id
+            AND mf.id <> ALL(@file_ids::uuid[])
+      )
+    RETURNING mi.id
+)
+SELECT count(*) FROM deleted;
 
 -- name: RestoreMediaItemAncestry :exec
 -- Clears deleted_at on $1 and every ancestor reachable via parent_id,

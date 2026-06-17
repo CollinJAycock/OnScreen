@@ -33,6 +33,7 @@ type PlaylistDB interface {
 	UpdateCollection(ctx context.Context, arg gen.UpdateCollectionParams) (gen.Collection, error)
 	DeleteCollection(ctx context.Context, id uuid.UUID) error
 	ListCollectionItems(ctx context.Context, arg gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error)
+	CountCollectionItems(ctx context.Context, arg gen.CountCollectionItemsParams) (int64, error)
 	AddCollectionItem(ctx context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error)
 	RemoveCollectionItem(ctx context.Context, arg gen.RemoveCollectionItemParams) error
 	ReorderPlaylistItems(ctx context.Context, arg gen.ReorderPlaylistItemsParams) error
@@ -317,7 +318,11 @@ func (h *PlaylistHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Position:   row.Position,
 		})
 	}
-	respond.List(w, r, out, int64(len(out)), "")
+	total, _ := h.db.CountCollectionItems(r.Context(), gen.CountCollectionItemsParams{
+		CollectionID:  id,
+		MaxRatingRank: maxRank,
+	})
+	respond.List(w, r, out, total, "")
 }
 
 // resolveSmartPlaylist parses the rules JSON, builds a query against

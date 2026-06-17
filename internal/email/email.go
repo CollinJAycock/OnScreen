@@ -105,6 +105,10 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 		if derr != nil {
 			return fmt.Errorf("email: tls dial %s: %w", addr, derr)
 		}
+		// Bound the WHOLE SMTP exchange, not just the dial: a relay that accepts
+		// the connection then stalls (or hangs mid-DATA) would otherwise block
+		// this goroutine forever — ctx is only consulted during DialContext.
+		_ = conn.SetDeadline(sessionDeadline(ctx))
 		c, err = smtp.NewClient(conn, cfg.Host)
 		if err != nil {
 			conn.Close()
@@ -115,6 +119,9 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 		if derr != nil {
 			return fmt.Errorf("email: dial %s: %w", addr, derr)
 		}
+		// Whole-session deadline (see above). Set on the raw TCP conn so it keeps
+		// governing reads/writes after STARTTLS wraps it in a tls.Conn.
+		_ = conn.SetDeadline(sessionDeadline(ctx))
 		c, err = smtp.NewClient(conn, cfg.Host)
 		if err != nil {
 			conn.Close()
@@ -171,6 +178,17 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 	}
 
 	return c.Quit()
+}
+
+// sessionDeadline returns the absolute deadline to apply to the whole SMTP
+// connection: the smaller of ctx's deadline (if any) and a 60s ceiling, so a
+// stalled or malicious relay can't pin the sending goroutine indefinitely.
+func sessionDeadline(ctx context.Context) time.Time {
+	ceiling := time.Now().Add(60 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(ceiling) {
+		return d
+	}
+	return ceiling
 }
 
 // isLoopbackHost reports whether host is localhost or a loopback IP — the

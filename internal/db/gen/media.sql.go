@@ -1245,22 +1245,6 @@ func (q *Queries) HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (int64,
 	return result.RowsAffected(), nil
 }
 
-const hardDeleteMediaFilesByIDs = `-- name: HardDeleteMediaFilesByIDs :execrows
-DELETE FROM media_files
-WHERE id = ANY($1::uuid[])
-`
-
-// Set-based form of HardDeleteMediaFile for the timed missing-file promotion
-// (PromoteExpiredMissing), which would otherwise issue one DELETE per expired
-// file. Same FK CASCADE/SET NULL behaviour as the single-row delete.
-func (q *Queries) HardDeleteMediaFilesByIDs(ctx context.Context, ids []uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, hardDeleteMediaFilesByIDs, ids)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const hardDeleteMediaFilesByLibrary = `-- name: HardDeleteMediaFilesByLibrary :execrows
 DELETE FROM media_files
 WHERE media_item_id IN (
@@ -4523,6 +4507,51 @@ func (q *Queries) PurgeDeletedLibraryBatch(ctx context.Context, arg PurgeDeleted
 	return result.RowsAffected(), nil
 }
 
+const purgeExpiredMissingFiles = `-- name: PurgeExpiredMissingFiles :one
+WITH deleted AS (
+    DELETE FROM media_files
+    WHERE id = ANY($1::uuid[])
+    RETURNING id
+), cascaded AS (
+    UPDATE media_items mi
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE mi.id = ANY($2::uuid[])
+      AND mi.deleted_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM media_files mf
+          WHERE mf.media_item_id = mi.id
+            AND mf.id <> ALL($1::uuid[])
+      )
+    RETURNING mi.id
+)
+SELECT count(*) FROM deleted
+`
+
+type PurgeExpiredMissingFilesParams struct {
+	FileIds []uuid.UUID `json:"file_ids"`
+	ItemIds []uuid.UUID `json:"item_ids"`
+}
+
+// Atomic form of PromoteExpiredMissing's two writes: hard-delete the expired
+// missing files AND, in the SAME statement, soft-delete any of their parent
+// items left with no surviving files. One statement is one implicit transaction,
+// so a crash can't hard-delete the files yet leave behind orphaned zero-file
+// items (which would linger in the library until the next scan-time sweep).
+//
+// Snapshot note: every data-modifying CTE here runs against the SAME
+// pre-statement snapshot, so `cascaded` cannot observe `deleted`'s effect on
+// media_files. The parent test is therefore "has no media_files EXCEPT the ones
+// being deleted" (mf.id <> ALL(@file_ids)), NOT a bare NOT EXISTS — otherwise
+// the about-to-be-deleted files would still look present and nothing would
+// cascade. @item_ids is the DISTINCT parent set the caller derived from @file_ids.
+// Returns the number of files actually deleted.
+func (q *Queries) PurgeExpiredMissingFiles(ctx context.Context, arg PurgeExpiredMissingFilesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, purgeExpiredMissingFiles, arg.FileIds, arg.ItemIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const refreshHubRecentlyAdded = `-- name: RefreshHubRecentlyAdded :exec
 REFRESH MATERIALIZED VIEW CONCURRENTLY hub_recently_added
 `
@@ -4952,26 +4981,6 @@ WHERE library_id = $1 AND deleted_at IS NULL
 
 func (q *Queries) SoftDeleteMediaItemsByLibrary(ctx context.Context, libraryID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteMediaItemsByLibrary, libraryID)
-	return err
-}
-
-const softDeleteMediaItemsIfAllFilesDeleted = `-- name: SoftDeleteMediaItemsIfAllFilesDeleted :exec
-UPDATE media_items
-SET deleted_at = NOW(), updated_at = NOW()
-WHERE media_items.id = ANY($1::uuid[])
-  AND media_items.deleted_at IS NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM media_files
-      WHERE media_files.media_item_id = media_items.id
-  )
-`
-
-// Set-based form of SoftDeleteMediaItemIfAllFilesDeleted: soft-delete any of the
-// given items that no longer have any media_files rows. Used after a batch
-// hard-delete of expired missing files so the parent-item cascade is one UPDATE
-// instead of one per affected item.
-func (q *Queries) SoftDeleteMediaItemsIfAllFilesDeleted(ctx context.Context, ids []uuid.UUID) error {
-	_, err := q.db.Exec(ctx, softDeleteMediaItemsIfAllFilesDeleted, ids)
 	return err
 }
 

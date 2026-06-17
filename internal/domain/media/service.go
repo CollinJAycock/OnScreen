@@ -216,7 +216,10 @@ type Querier interface {
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
-	SoftDeleteMediaItemsIfAllFilesDeleted(ctx context.Context, ids []uuid.UUID) error
+	// PurgeExpiredMissingFiles atomically hard-deletes fileIDs and soft-deletes
+	// any of itemIDs left with no surviving files, in one statement. Returns the
+	// number of files deleted.
+	PurgeExpiredMissingFiles(ctx context.Context, fileIDs, itemIDs []uuid.UUID) (int64, error)
 	RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
@@ -246,7 +249,6 @@ type Querier interface {
 	MarkMediaFileMissing(ctx context.Context, id uuid.UUID) error
 	MarkMediaFileActive(ctx context.Context, id uuid.UUID) error
 	HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (int64, error)
-	HardDeleteMediaFilesByIDs(ctx context.Context, ids []uuid.UUID) (int64, error)
 	UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
@@ -888,8 +890,8 @@ func (s *Service) PromoteExpiredMissing(ctx context.Context, gracePeriod time.Du
 	}
 
 	// Collect the file IDs and their distinct parent items, then do the hard-
-	// delete and the parent soft-delete cascade as two set-based statements
-	// instead of one query per file + one per affected item.
+	// delete and the parent soft-delete cascade as ONE atomic statement so a
+	// crash can't hard-delete files yet leave orphaned zero-file items behind.
 	ids := make([]uuid.UUID, len(files))
 	affected := make([]uuid.UUID, 0, len(files))
 	seen := make(map[uuid.UUID]struct{}, len(files))
@@ -901,17 +903,13 @@ func (s *Service) PromoteExpiredMissing(ctx context.Context, gracePeriod time.Du
 		}
 	}
 
-	if _, err := s.rw.HardDeleteMediaFilesByIDs(ctx, ids); err != nil {
-		return 0, fmt.Errorf("hard-delete missing files: %w", err)
+	deleted, err := s.rw.PurgeExpiredMissingFiles(ctx, ids, affected)
+	if err != nil {
+		return 0, fmt.Errorf("purge expired missing files: %w", err)
 	}
-	s.logger.InfoContext(ctx, "missing files hard-deleted past grace", "count", len(ids))
+	s.logger.InfoContext(ctx, "missing files hard-deleted past grace", "count", deleted)
 
-	// Cascade: soft-delete parent items with no remaining files.
-	if err := s.rw.SoftDeleteMediaItemsIfAllFilesDeleted(ctx, affected); err != nil {
-		s.logger.WarnContext(ctx, "failed to soft-delete items after missing-file purge", "err", err)
-	}
-
-	return len(files), nil
+	return int(deleted), nil
 }
 
 // UpdateItemMetadata updates the metadata fields of an existing media item.

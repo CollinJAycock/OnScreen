@@ -26,6 +26,7 @@ import (
 type PhotoAlbumDB interface {
 	ListMyPhotoAlbums(ctx context.Context, userID pgtype.UUID) ([]gen.ListMyPhotoAlbumsRow, error)
 	ListPhotoAlbumItems(ctx context.Context, arg gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error)
+	CountPhotoAlbumItems(ctx context.Context, collectionID uuid.UUID) (int64, error)
 	GetCollection(ctx context.Context, id uuid.UUID) (gen.Collection, error)
 	CreateCollection(ctx context.Context, arg gen.CreateCollectionParams) (gen.Collection, error)
 	UpdateCollection(ctx context.Context, arg gen.UpdateCollectionParams) (gen.Collection, error)
@@ -271,7 +272,8 @@ func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 			AddedAt:     row.AddedAt.Time,
 		})
 	}
-	respond.List(w, r, out, int64(len(out)), "")
+	total, _ := h.db.CountPhotoAlbumItems(r.Context(), id)
+	respond.List(w, r, out, total, "")
 }
 
 // AddItem handles POST /api/v1/photo-albums/{id}/items. The media item

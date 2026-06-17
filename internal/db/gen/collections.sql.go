@@ -37,23 +37,48 @@ func (q *Queries) AddCollectionItem(ctx context.Context, arg AddCollectionItemPa
 	return i, err
 }
 
+const countCollectionItems = `-- name: CountCollectionItems :one
+SELECT COUNT(*) FROM collection_items ci
+JOIN media_items mi ON mi.id = ci.media_item_id
+WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
+  AND ($2::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $2::int)
+`
+
+type CountCollectionItemsParams struct {
+	CollectionID  uuid.UUID `json:"collection_id"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
+}
+
+// Backs meta.total for the static collection/playlist listing so a paginating
+// client sees the real collection size, not the current page length.
+func (q *Queries) CountCollectionItems(ctx context.Context, arg CountCollectionItemsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countCollectionItems, arg.CollectionID, arg.MaxRatingRank)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countItemsByGenre = `-- name: CountItemsByGenre :one
 SELECT COUNT(*) FROM media_items
 WHERE deleted_at IS NULL AND $1::text = ANY(genres) AND type IN ('movie', 'show')
   AND ($2::int IS NULL
        OR content_rating_rank(content_rating) <= $2::int)
+  AND ($3::uuid[] IS NULL
+       OR library_id = ANY($3::uuid[]))
 `
 
 type CountItemsByGenreParams struct {
-	Genre         string `json:"genre"`
-	MaxRatingRank *int32 `json:"max_rating_rank"`
+	Genre         string      `json:"genre"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
 }
 
-// Mirrors ListItemsByGenre's filter so the paginated total matches
-// the rows the user can actually see — without the same gate the
-// pagination footer would lie ("Page 1 of 12" but only 4 visible).
+// Mirrors ListItemsByGenre's filter — including the per-user library ACL — so
+// the paginated total matches the rows the user can actually see. Without the
+// same gates the pagination footer would lie ("Page 1 of 12" but only 4 visible).
 func (q *Queries) CountItemsByGenre(ctx context.Context, arg CountItemsByGenreParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countItemsByGenre, arg.Genre, arg.MaxRatingRank)
+	row := q.db.QueryRow(ctx, countItemsByGenre, arg.Genre, arg.MaxRatingRank, arg.LibraryIds)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -192,7 +217,7 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
-ORDER BY ci.position
+ORDER BY ci.position, ci.media_item_id
 LIMIT NULLIF($4::int, 0) OFFSET $3::int
 `
 
@@ -222,6 +247,10 @@ type ListCollectionItemsRow struct {
 // (no max set, no rating recorded) pass through — the same lenient
 // semantics used by every other rating-gated query so that
 // as-yet-uncategorised media isn't hidden by accident.
+// ci.media_item_id is the unique tiebreaker: ci.position is NOT unique per
+// collection (no UNIQUE(collection_id, position); concurrent MAX(position)+1
+// inserts and partial reorders produce ties), and without a tiebreaker OFFSET
+// paging over tied rows skips/duplicates them.
 // NULLIF so a zero lim means "no limit" (original behaviour); callers pass a
 // positive cap to bound the result. Avoids a forgotten lim returning 0 rows.
 func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionItemsParams) ([]ListCollectionItemsRow, error) {
@@ -367,15 +396,18 @@ WHERE deleted_at IS NULL
   AND type IN ('movie', 'show')
   AND ($2::int IS NULL
        OR content_rating_rank(content_rating) <= $2::int)
-ORDER BY rating DESC NULLS LAST
-LIMIT $4::int OFFSET $3::int
+  AND ($3::uuid[] IS NULL
+       OR library_id = ANY($3::uuid[]))
+ORDER BY rating DESC NULLS LAST, id
+LIMIT $5::int OFFSET $4::int
 `
 
 type ListItemsByGenreParams struct {
-	Genre         string `json:"genre"`
-	MaxRatingRank *int32 `json:"max_rating_rank"`
-	Off           int32  `json:"off"`
-	Lim           int32  `json:"lim"`
+	Genre         string      `json:"genre"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	Off           int32       `json:"off"`
+	Lim           int32       `json:"lim"`
 }
 
 type ListItemsByGenreRow struct {
@@ -394,10 +426,13 @@ type ListItemsByGenreRow struct {
 // v2.1 Track G item 4: optional max_rating_rank gate. Backs the
 // "More like /Action" auto-genre row on the home hub, which a kid
 // profile would otherwise see populated with R-rated thrillers.
+// , id tiebreaker: rating is highly non-unique (many ties + the NULLS-LAST
+// bucket), so without it OFFSET paging skips/duplicates tied rows.
 func (q *Queries) ListItemsByGenre(ctx context.Context, arg ListItemsByGenreParams) ([]ListItemsByGenreRow, error) {
 	rows, err := q.db.Query(ctx, listItemsByGenre,
 		arg.Genre,
 		arg.MaxRatingRank,
+		arg.LibraryIds,
 		arg.Off,
 		arg.Lim,
 	)

@@ -37,7 +37,7 @@ func TestFavorites_Integration_AddIsIdempotent(t *testing.T) {
 		}
 	}
 
-	if c, _ := q.CountFavorites(ctx, user); c != 1 {
+	if c, _ := q.CountFavorites(ctx, gen.CountFavoritesParams{UserID: user}); c != 1 {
 		t.Errorf("count = %d, want 1 — duplicate inserts should be no-ops", c)
 	}
 }
@@ -129,10 +129,10 @@ func TestFavorites_Integration_CountIsUserScoped(t *testing.T) {
 	_ = q.AddFavorite(ctx, gen.AddFavoriteParams{UserID: alice, MediaID: item})
 	_ = q.AddFavorite(ctx, gen.AddFavoriteParams{UserID: bob, MediaID: item})
 
-	if c, _ := q.CountFavorites(ctx, alice); c != 1 {
+	if c, _ := q.CountFavorites(ctx, gen.CountFavoritesParams{UserID: alice}); c != 1 {
 		t.Errorf("alice count = %d, want 1", c)
 	}
-	if c, _ := q.CountFavorites(ctx, bob); c != 1 {
+	if c, _ := q.CountFavorites(ctx, gen.CountFavoritesParams{UserID: bob}); c != 1 {
 		t.Errorf("bob count = %d, want 1", c)
 	}
 }

@@ -25,9 +25,16 @@ JOIN media_items m ON m.id = f.media_id
 WHERE f.user_id = $1
   AND m.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
-ORDER BY f.created_at DESC
+-- , m.id tiebreaker: favorited_at is non-unique, so OFFSET paging needs a unique
+-- key to avoid skipping/duplicating rows tied at a page boundary.
+ORDER BY f.created_at DESC, m.id
 LIMIT $2 OFFSET $3;
 
 -- name: CountFavorites :one
-SELECT COUNT(*) FROM user_favorites
-WHERE user_id = $1;
+-- Mirrors ListFavorites' filters (soft-delete + content-rating ceiling) so the
+-- pagination total matches the rows a restricted profile actually sees.
+SELECT COUNT(*) FROM user_favorites f
+JOIN media_items m ON m.id = f.media_id
+WHERE f.user_id = $1
+  AND m.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'));

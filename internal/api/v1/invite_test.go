@@ -32,8 +32,16 @@ type mockInviteDB struct {
 	getToken    InviteTokenRow
 	getTokenErr error
 
-	markUsedErr    error
-	markUsedCalled bool
+	claimErr         error
+	claimCalled      bool
+	claimReturnsZero bool // simulate a lost race / already-consumed invite
+
+	releaseErr    error
+	releaseCalled bool
+
+	setUsedByErr    error
+	setUsedByCalled bool
+	setUsedByUserID uuid.UUID
 
 	list    []InviteTokenSummaryRow
 	listErr error
@@ -70,9 +78,26 @@ func (m *mockInviteDB) GetInviteToken(_ context.Context, _ string) (InviteTokenR
 	return m.getToken, m.getTokenErr
 }
 
-func (m *mockInviteDB) MarkInviteTokenUsed(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
-	m.markUsedCalled = true
-	return m.markUsedErr
+func (m *mockInviteDB) ClaimInviteToken(_ context.Context, _ uuid.UUID) (int64, error) {
+	m.claimCalled = true
+	if m.claimErr != nil {
+		return 0, m.claimErr
+	}
+	if m.claimReturnsZero {
+		return 0, nil
+	}
+	return 1, nil
+}
+
+func (m *mockInviteDB) ReleaseInviteToken(_ context.Context, _ uuid.UUID) error {
+	m.releaseCalled = true
+	return m.releaseErr
+}
+
+func (m *mockInviteDB) SetInviteTokenUsedBy(_ context.Context, _ uuid.UUID, usedBy uuid.UUID) error {
+	m.setUsedByCalled = true
+	m.setUsedByUserID = usedBy
+	return m.setUsedByErr
 }
 
 func (m *mockInviteDB) ListInviteTokens(_ context.Context) ([]InviteTokenSummaryRow, error) {
@@ -280,8 +305,17 @@ func TestInvite_Accept_Success_MarksTokenUsed(t *testing.T) {
 	if db.createdUsername != "newuser" {
 		t.Errorf("username: got %q, want %q", db.createdUsername, "newuser")
 	}
-	if !db.markUsedCalled {
-		t.Error("expected MarkInviteTokenUsed to be called — single-use enforcement")
+	if !db.claimCalled {
+		t.Error("expected ClaimInviteToken to be called — atomic single-use enforcement")
+	}
+	if !db.setUsedByCalled {
+		t.Error("expected SetInviteTokenUsedBy to backfill the consumer after signup")
+	}
+	if db.setUsedByUserID != db.createdUserID {
+		t.Errorf("used_by target: got %s, want %s (the just-created user)", db.setUsedByUserID, db.createdUserID)
+	}
+	if db.releaseCalled {
+		t.Error("ReleaseInviteToken must NOT be called on a successful accept")
 	}
 	if !db.grantAutoCalled {
 		t.Error("expected GrantAutoLibrariesToUser to be called so accepted invites default into auto-grant libraries")
@@ -310,12 +344,12 @@ func TestInvite_Accept_AutoGrantFailureIsNonFatal(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 — auto-grant failure must be non-fatal; body=%s", rec.Code, rec.Body.String())
 	}
-	if !db.markUsedCalled {
-		t.Error("token must still be marked used even when auto-grant fails")
+	if !db.setUsedByCalled {
+		t.Error("token consumer must still be backfilled even when auto-grant fails")
 	}
 }
 
-func TestInvite_Accept_CreateUserFails_DoesNotMarkUsed(t *testing.T) {
+func TestInvite_Accept_CreateUserFails_ReleasesToken(t *testing.T) {
 	db := &mockInviteDB{
 		getToken:      InviteTokenRow{ID: uuid.New()},
 		createUserErr: errors.New("username taken"),
@@ -332,8 +366,41 @@ func TestInvite_Accept_CreateUserFails_DoesNotMarkUsed(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}
-	if db.markUsedCalled {
-		t.Error("token must not be marked used if user creation failed")
+	// The token was claimed up front, so a failed create must release it back so
+	// the user can retry (e.g. with a different username) — and must NOT backfill
+	// a consumer for an account that doesn't exist.
+	if !db.claimCalled {
+		t.Error("expected ClaimInviteToken to be called before CreateUser")
+	}
+	if !db.releaseCalled {
+		t.Error("token must be released if user creation failed, so the invite can be retried")
+	}
+	if db.setUsedByCalled {
+		t.Error("used_by must not be backfilled if user creation failed")
+	}
+}
+
+func TestInvite_Accept_LostClaimRace_Rejected(t *testing.T) {
+	// A second concurrent accept whose ClaimInviteToken loses the race (0 rows)
+	// must be rejected and must never reach CreateUser.
+	db := &mockInviteDB{
+		getToken:         InviteTokenRow{ID: uuid.New()},
+		claimReturnsZero: true,
+	}
+	h := newInviteHandler(db)
+
+	body := `{"token":"rawtokenhex","username":"racer","password":"hunter22secure"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/invites/accept", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.Accept(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400 — a lost claim must be rejected", rec.Code)
+	}
+	if db.createUserCalled {
+		t.Error("CreateUser must NOT run when the invite claim was lost — double-accept vector")
 	}
 }
 

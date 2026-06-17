@@ -30,6 +30,11 @@ const (
 // rating" (field omitted) when building the item detail response.
 var ErrNotFound = errors.New("rating not found")
 
+// ErrInvalidScore is returned by Set when the score is outside the allowed
+// range. The API layer maps it to a 400 (client error); any other Set error is
+// a DB failure and must map to 500, not be echoed back to the client.
+var ErrInvalidScore = errors.New("rating out of range")
+
 // Querier is the subset of generated queries this service needs. *gen.Queries
 // satisfies it.
 type Querier interface {
@@ -61,7 +66,7 @@ func (s *Service) Get(ctx context.Context, userID, mediaID uuid.UUID) (float64, 
 // are rejected before they reach the DB so the caller gets a clear 400.
 func (s *Service) Set(ctx context.Context, userID, mediaID uuid.UUID, score float64) error {
 	if score < ScoreMin || score > ScoreMax {
-		return fmt.Errorf("rating %.1f out of range [%.0f, %.0f]", score, ScoreMin, ScoreMax)
+		return fmt.Errorf("%w: %.1f not in [%.0f, %.0f]", ErrInvalidScore, score, ScoreMin, ScoreMax)
 	}
 	return s.q.UpsertUserRating(ctx, gen.UpsertUserRatingParams{UserID: userID, MediaItemID: mediaID, Score: score})
 }

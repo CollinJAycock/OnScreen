@@ -2,6 +2,7 @@ package livetv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,11 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrInvalidSchedule wraps every validation failure from CreateSchedule so the
+// API layer can map a malformed request to a 400 and reserve 500 for actual DB
+// failures (rather than echoing a DB error back to the client as a 400).
+var ErrInvalidSchedule = errors.New("invalid schedule")
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -506,24 +512,24 @@ func validateScheduleParams(p CreateScheduleParams) error {
 	switch p.Type {
 	case ScheduleTypeOnce:
 		if p.ProgramID == nil {
-			return fmt.Errorf("once schedule requires program_id")
+			return fmt.Errorf("%w: once schedule requires program_id", ErrInvalidSchedule)
 		}
 	case ScheduleTypeSeries:
 		if p.ChannelID == nil {
-			return fmt.Errorf("series schedule requires channel_id")
+			return fmt.Errorf("%w: series schedule requires channel_id", ErrInvalidSchedule)
 		}
 		if p.TitleMatch == nil || *p.TitleMatch == "" {
-			return fmt.Errorf("series schedule requires title_match")
+			return fmt.Errorf("%w: series schedule requires title_match", ErrInvalidSchedule)
 		}
 	case ScheduleTypeChannelBlock:
 		if p.ChannelID == nil {
-			return fmt.Errorf("channel_block schedule requires channel_id")
+			return fmt.Errorf("%w: channel_block schedule requires channel_id", ErrInvalidSchedule)
 		}
 		if p.TimeStart == nil || p.TimeEnd == nil {
-			return fmt.Errorf("channel_block schedule requires time_start + time_end")
+			return fmt.Errorf("%w: channel_block schedule requires time_start + time_end", ErrInvalidSchedule)
 		}
 	default:
-		return fmt.Errorf("unknown schedule type %q", p.Type)
+		return fmt.Errorf("%w: unknown schedule type %q", ErrInvalidSchedule, p.Type)
 	}
 	return nil
 }

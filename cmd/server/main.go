@@ -1215,7 +1215,9 @@ func run() error {
 		schedRegistry.Register("static_abr_preencode", scheduler.NewStaticABRPreencodeHandler(staticSvc))
 		// Serve pre-encoded ladders from the store on the playback path.
 		nativeTranscodeHandler.WithStaticABR(cfg.StaticABRRoot)
-		if next, err := scheduler.NextRun("17 4 * * *", time.Now().UTC()); err == nil {
+		// Local time (see seedSystemTasks): keep the seeded first fire on the same
+		// wall-clock the steady-state scheduler will use.
+		if next, err := scheduler.NextRun("17 4 * * *", time.Now()); err == nil {
 			if err := gen.New(rwPool).EnsureSystemTask(ctx, gen.EnsureSystemTaskParams{
 				Name:      "Static-ABR pre-encode",
 				TaskType:  "static_abr_preencode",
@@ -1589,8 +1591,19 @@ func resolveMachineID(ctx context.Context, settingsSvc *settings.Service, q *gen
 	if id := settingsSvc.MachineID(ctx); id != "" {
 		return id
 	}
+	n, err := q.CountUsers(ctx)
+	if err != nil {
+		// Can't tell fresh-vs-existing. Do NOT guess-and-persist: minting a fresh
+		// random id for what is actually an existing install would permanently
+		// change the machine identity and break paired clients, webhooks and
+		// discovery. Fall back to the legacy derived id for THIS run only
+		// (preserves an existing install's identity) and leave settings unwritten
+		// so the next healthy boot seeds the correct value.
+		logger.Warn("machine_id: count users failed; using legacy derived id for this run without persisting", "err", err)
+		return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(secretKey)).String()
+	}
 	var id string
-	if n, err := q.CountUsers(ctx); err == nil && n > 0 {
+	if n > 0 {
 		// Existing install: preserve identity (paired clients / webhooks / discovery).
 		id = uuid.NewSHA1(uuid.NameSpaceDNS, []byte(secretKey)).String()
 		logger.Info("machine_id: seeding persisted value from legacy derived id (existing install)")

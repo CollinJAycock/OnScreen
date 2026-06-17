@@ -24,7 +24,15 @@ import (
 type InviteDB interface {
 	CreateInviteToken(ctx context.Context, createdBy uuid.UUID, tokenHash string, email *string, expiresAt time.Time) (uuid.UUID, error)
 	GetInviteToken(ctx context.Context, tokenHash string) (InviteTokenRow, error)
-	MarkInviteTokenUsed(ctx context.Context, id uuid.UUID, usedBy uuid.UUID) error
+	// ClaimInviteToken atomically consumes a single-use invite, returning the
+	// number of rows affected (1 = won, 0 = already used/expired). Call BEFORE
+	// creating the account so two concurrent accepts can't both mint one.
+	ClaimInviteToken(ctx context.Context, id uuid.UUID) (int64, error)
+	// ReleaseInviteToken puts a claimed-but-unfulfilled invite back so the user
+	// can retry after a recoverable failure (e.g. a username collision).
+	ReleaseInviteToken(ctx context.Context, id uuid.UUID) error
+	// SetInviteTokenUsedBy backfills the consumer once the account exists.
+	SetInviteTokenUsedBy(ctx context.Context, id uuid.UUID, usedBy uuid.UUID) error
 	ListInviteTokens(ctx context.Context) ([]InviteTokenSummaryRow, error)
 	DeleteInviteToken(ctx context.Context, id uuid.UUID) error
 	CreateUser(ctx context.Context, username string, email *string, passwordHash string) (uuid.UUID, error)
@@ -169,7 +177,8 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hash the password with bcrypt.
+	// Hash the password with bcrypt before consuming the token so a hash failure
+	// doesn't burn the invite.
 	pwHash, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "invite: hash password", "err", err)
@@ -177,8 +186,29 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Atomically consume the single-use invite BEFORE creating the account.
+	// GetInviteToken's used_at IS NULL filter is a check, not a claim — two
+	// concurrent accepts can both pass it and then both CreateUser. Claiming
+	// here serializes them: only one flips used_at and gets rows==1; the loser
+	// sees rows==0 and is rejected.
+	claimed, err := h.db.ClaimInviteToken(r.Context(), token.ID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "invite: claim token", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if claimed == 0 {
+		respond.BadRequest(w, r, "Invalid or expired invite link")
+		return
+	}
+
 	userID, err := h.db.CreateUser(r.Context(), body.Username, token.Email, string(pwHash))
 	if err != nil {
+		// Release the claim so a recoverable failure (e.g. username already taken)
+		// doesn't permanently burn the invite — the user can retry the link.
+		if rerr := h.db.ReleaseInviteToken(r.Context(), token.ID); rerr != nil {
+			h.logger.ErrorContext(r.Context(), "invite: release token after failed create", "err", rerr)
+		}
 		h.logger.ErrorContext(r.Context(), "invite: create user", "err", err)
 		respond.BadRequest(w, r, "Could not create account — username may already be taken")
 		return
@@ -189,8 +219,10 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		h.logger.WarnContext(r.Context(), "invite: auto-grant libraries", "user_id", userID, "err", err)
 	}
 
-	if err := h.db.MarkInviteTokenUsed(r.Context(), token.ID, userID); err != nil {
-		h.logger.ErrorContext(r.Context(), "invite: mark used", "err", err)
+	if err := h.db.SetInviteTokenUsedBy(r.Context(), token.ID, userID); err != nil {
+		// Audit-only backfill — the token is already consumed, so a failure here
+		// just leaves used_by NULL; don't fail the otherwise-successful signup.
+		h.logger.ErrorContext(r.Context(), "invite: set used_by", "err", err)
 	}
 
 	respond.Success(w, r, map[string]string{"message": "Account created. You can now sign in."})

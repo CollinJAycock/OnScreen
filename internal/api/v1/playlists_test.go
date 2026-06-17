@@ -84,6 +84,10 @@ func (m *mockPlaylistDB) DeleteCollection(_ context.Context, id uuid.UUID) error
 func (m *mockPlaylistDB) ListCollectionItems(_ context.Context, _ gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error) {
 	return m.listItems, m.listItemsErr
 }
+
+func (m *mockPlaylistDB) CountCollectionItems(_ context.Context, _ gen.CountCollectionItemsParams) (int64, error) {
+	return int64(len(m.listItems)), nil
+}
 func (m *mockPlaylistDB) AddCollectionItem(_ context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error) {
 	m.addItemArg = arg
 	return m.addItemResult, m.addItemErr

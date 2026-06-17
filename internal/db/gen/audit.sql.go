@@ -40,7 +40,7 @@ func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) 
 const listAuditLog = `-- name: ListAuditLog :many
 SELECT id, user_id, action, target, detail, COALESCE(ip_addr::TEXT, '')::TEXT AS ip_addr, created_at
 FROM audit_log
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2
 `
 
@@ -59,6 +59,8 @@ type ListAuditLogRow struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+// , id DESC tiebreaker: created_at can tie for near-simultaneous writes, so
+// OFFSET paging over the audit trail needs a unique key to avoid skip/duplicate.
 func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]ListAuditLogRow, error) {
 	rows, err := q.db.Query(ctx, listAuditLog, arg.Limit, arg.Offset)
 	if err != nil {

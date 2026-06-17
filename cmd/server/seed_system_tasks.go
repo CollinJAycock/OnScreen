@@ -104,7 +104,11 @@ var requiredSystemTasks = []systemTask{
 // shouldn't prevent the server from starting. The next reboot will
 // retry, and the admin's Tasks UI exposes manual recreation.
 func seedSystemTasks(ctx context.Context, q *gen.Queries, logger *slog.Logger) {
-	now := time.Now().UTC()
+	// Local time, NOT UTC: the running scheduler (nextRunFor) and the task API
+	// both compute next_run_at from local time.Now(), so a cron like "0 4 * * *"
+	// means 4 AM local. Seeding with .UTC() would make the very first fire land
+	// at a different wall-clock than every subsequent one on a non-UTC host.
+	now := time.Now()
 	for _, t := range requiredSystemTasks {
 		next, err := scheduler.NextRun(t.cronExpr, now)
 		if err != nil {
