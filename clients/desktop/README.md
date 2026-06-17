@@ -1,4 +1,4 @@
-# OnScreen Desktop Client (v2.1 Track E — scaffold)
+# OnScreen Desktop Client
 
 The desktop client wrapper for OnScreen. Reuses the existing
 SvelteKit frontend (`web/`) inside a Tauri 2 webview, with native
@@ -6,10 +6,16 @@ capabilities (audio engine, system tray, notifications, secure
 credential storage) implemented as Rust commands the webview
 invokes through the Tauri IPC bridge.
 
-**Status:** scaffold only. No actual native features implemented yet
-— this commit lays the project skeleton so subsequent work can land
-features incrementally without a separate "set up the client repo"
-ritual.
+**Status:** functional — wraps the SvelteKit frontend with native audio
+(cpal + WASAPI shared/exclusive, bit-perfect/gapless), system tray,
+notifications, media-key + Windows SMTC integration, and OS-keychain
+credential storage, all driven via Tauri IPC commands.
+
+**Release integrity (read before distributing):** installers are **not yet
+code-signed / notarized**, and there is **no auto-updater**. Until signing is
+wired up, Windows SmartScreen / macOS Gatekeeper will warn on first run, and
+there is no authenticated channel to push updates — distribute over a trusted
+link and publish SHA-256 checksums. See "Build a release" below.
 
 ## Why Tauri (and not Electron / per-platform)
 

@@ -363,6 +363,13 @@ async fn download_to_file(
     use std::io::{BufWriter, Read, Write};
     use tauri_plugin_dialog::DialogExt;
 
+    // Same-origin gate as the audio engine: a download URL + bearer come from the
+    // webview, so a compromised/MITM'd frontend could otherwise drive this host
+    // HTTP client at any host with an attacker-chosen Authorization header (SSRF +
+    // token exfil). Reject anything that isn't the configured server BEFORE we
+    // prompt or fetch.
+    crate::audio::enforce_url_origin(&app, &url)?;
+
     // The dialog API is callback-based; bridge to async with a
     // oneshot so we can `await` the user's choice. Cancel arrives as
     // None. Tauri re-exports tokio's async primitives so we don't
@@ -396,7 +403,10 @@ async fn download_to_file(
     // "blocking I/O inside an async command".
     let dst_clone = dst_path.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let mut req = ureq::get(&url);
+        // No redirects: the URL was origin-checked above, but a 30x could bounce
+        // the request (and its bearer) to another host. Fail fast instead.
+        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        let mut req = agent.get(&url);
         if let Some(token) = bearer_token.as_ref() {
             if !token.is_empty() {
                 req = req.set("Authorization", &format!("Bearer {token}"));

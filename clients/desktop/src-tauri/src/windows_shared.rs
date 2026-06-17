@@ -98,6 +98,15 @@ fn run_shared_loop(
     if hr.is_err() {
         return Err(format!("audio: CoInitializeEx (MTA): {hr:?}"));
     }
+    // Balance the per-thread COM init on EVERY exit path (incl. the `?`
+    // early-returns below) so CoInitializeEx isn't left unmatched.
+    struct ComGuard;
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            wasapi::deinitialize();
+        }
+    }
+    let _com_guard = ComGuard;
 
     let device = wasapi::get_default_device(&Direction::Render)
         .map_err(|e| format!("audio: get default render device: {e:?}"))?;

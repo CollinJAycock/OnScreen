@@ -649,14 +649,20 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
 
 #[tauri::command]
 pub fn stop_audio() -> Result<(), String> {
-    let mut engine = ENGINE
-        .lock()
-        .map_err(|_| "audio: poisoned engine lock".to_string())?;
-    // Clearing both slots so an in-flight preload also stops —
-    // otherwise stop_audio would silently leave a decoder thread
-    // running for a track the user explicitly cancelled.
-    engine.current = None;
-    engine.preload = None;
+    // Clearing both slots so an in-flight preload also stops — otherwise
+    // stop_audio would leave a decoder thread running for a cancelled track.
+    // Take the slots out UNDER the lock but drop them AFTER releasing it: the
+    // ActivePlayback/PreloadSlot Drop joins the decoder thread, which can block on
+    // a stalled network read for up to the read timeout — holding the engine lock
+    // across that would wedge every other audio command for the whole stall.
+    let (old_current, old_preload) = {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        (engine.current.take(), engine.preload.take())
+    };
+    drop(old_current);
+    drop(old_preload);
     ACTIVE_BACKEND.store(BACKEND_NONE, Ordering::Release);
     OUTPUT_IS_BLUETOOTH.store(false, Ordering::Release);
     Ok(())
@@ -729,7 +735,10 @@ pub fn audio_resume() -> Result<(), String> {
 /// to play without first having a server, so this can't false-positive
 /// on a real user. Configurable-server-URL flow is the threat model
 /// here, not anonymous web users.
-fn enforce_url_origin(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+pub(crate) fn enforce_url_origin<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: &str,
+) -> Result<(), String> {
     use tauri_plugin_store::StoreExt;
     let parsed = url::Url::parse(url).map_err(|e| format!("audio: invalid URL: {e}"))?;
     let store = app
@@ -783,12 +792,14 @@ pub fn audio_play_url(
     // POV (current = None for ~ms) but the audio_state poller is
     // a UI-side scrubber tick that already tolerates a momentary
     // null state.
-    {
+    let old_current = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.current = None;
-    }
+        engine.current.take()
+    };
+    // Drop (and thus join the decoder) OUTSIDE the lock — see stop_audio.
+    drop(old_current);
 
     let active = open_active_from_prepared(prepared, &device, url, 0)?;
 
@@ -832,10 +843,14 @@ pub fn audio_preload_url(
         }
     }
     let prepared = prepare_pipeline(&url, bearer_token.as_deref(), 0)?;
-    let mut engine = ENGINE
-        .lock()
-        .map_err(|_| "audio: poisoned engine lock".to_string())?;
-    engine.preload = Some(prepared);
+    let old_preload = {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        engine.preload.replace(prepared)
+    };
+    // Join the previous preload's decoder OUTSIDE the lock — see stop_audio.
+    drop(old_preload);
     Ok(())
 }
 
@@ -885,12 +900,14 @@ pub fn audio_seek(
     // decoder thread releases its end of the ringbuf. The preload slot
     // is left alone — it points to the next queue track which the
     // seek doesn't affect.
-    {
+    let old_current = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.current = None;
-    }
+        engine.current.take()
+    };
+    // Drop (join the decoder) OUTSIDE the lock — see stop_audio.
+    drop(old_current);
 
     let prepared =
         prepare_pipeline(&url, bearer_token.as_deref(), position_ms)?;
@@ -910,23 +927,27 @@ pub fn audio_seek(
 /// preload call doesn't slip in a different track between our check
 /// and our take.
 fn take_preload_for(wanted: &str) -> Result<Option<PreloadSlot>, String> {
-    let mut engine = ENGINE
-        .lock()
-        .map_err(|_| "audio: poisoned engine lock".to_string())?;
-    if engine
-        .preload
-        .as_ref()
-        .map(|p| p.source_url == wanted)
-        .unwrap_or(false)
-    {
-        Ok(engine.preload.take())
-    } else {
-        // Stale preload (user picked a different track than we
-        // optimistically prepared). Drop it explicitly so the
-        // decoder thread cleans up before we start a fresh one.
-        engine.preload = None;
-        Ok(None)
-    }
+    let (matched, stale) = {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        if engine
+            .preload
+            .as_ref()
+            .map(|p| p.source_url == wanted)
+            .unwrap_or(false)
+        {
+            (engine.preload.take(), None)
+        } else {
+            // Stale preload (user picked a different track than we optimistically
+            // prepared). Take it out here, drop it below.
+            (None, engine.preload.take())
+        }
+    };
+    // Drop the stale preload (joining its decoder) OUTSIDE the lock — see
+    // stop_audio; a stalled decoder must not wedge the lock on the play hot path.
+    drop(stale);
+    Ok(matched)
 }
 
 /// Picks the output device by name, or the host default when None.
@@ -1750,6 +1771,12 @@ fn parse_dsf_header<R: Read>(reader: &mut R) -> Result<DsfHeader, String> {
         return Err(format!(
             "audio: unsupported DSF block_size_per_channel {block_size_per_channel} (expected 4096)"
         ));
+    }
+    // Validate sample_rate like the other fields: downstream timing math divides
+    // by it, and a malformed/hostile .dsf otherwise fails opaquely deep in cpal.
+    // Real DSD rates are multiples of 16 within the DSD64..DSD1024 range.
+    if sample_rate == 0 || sample_rate % 16 != 0 || sample_rate > 45_158_400 {
+        return Err(format!("audio: invalid DSF sample_rate {sample_rate}"));
     }
 
     let mut buf = [0u8; 12];
@@ -2668,13 +2695,16 @@ pub fn play_test_tone(
     // single-slot for `current`, last call wins. The preload slot is
     // also cleared so a tone press during a preloaded album doesn't
     // leave a stale next-track sitting around.
-    {
+    let (old_current, old_preload) = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.current = None;
-        engine.preload = None;
-    }
+        (engine.current.take(), engine.preload.take())
+    };
+    // Drop OUTSIDE the lock — a prior FLAC stream's decoder join can block (see
+    // stop_audio). The tone's own ActivePlayback has no decoder thread.
+    drop(old_current);
+    drop(old_preload);
 
     let device = pick_output_device(device_name.as_deref())?;
 
@@ -2685,6 +2715,9 @@ pub fn play_test_tone(
     let stream_config: cpal::StreamConfig = config.clone().into();
 
     let freq = frequency_hz.clamp(50.0, 5000.0);
+    // Diagnostic tone: cap the duration so a single IPC call can't pin a sleeper
+    // thread emitting a continuous tone for up to ~49 days (unclamped u32 ms).
+    let duration_ms = duration_ms.min(10_000);
     let stream = match sample_format {
         SampleFormat::F32 => build_tone_stream::<f32>(&device, &stream_config, freq),
         SampleFormat::I16 => build_tone_stream::<i16>(&device, &stream_config, freq),

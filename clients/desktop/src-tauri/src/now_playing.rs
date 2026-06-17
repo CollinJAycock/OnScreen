@@ -144,15 +144,30 @@ pub fn now_playing_set_metadata<R: Runtime>(
     let Some(controls) = slot.as_mut() else {
         return Ok(());
     };
+    // Trim empties to None and clamp lengths so a blank or absurdly long field
+    // from the webview doesn't push a blank/runaway line to the system media tile.
+    let title = clamp_meta(Some(meta.title.as_str()));
+    let artist = clamp_meta(meta.artist.as_deref());
+    let album = clamp_meta(meta.album.as_deref());
     controls
         .set_metadata(MediaMetadata {
-            title: Some(&meta.title),
-            artist: meta.artist.as_deref(),
-            album: meta.album.as_deref(),
+            title: title.as_deref(),
+            artist: artist.as_deref(),
+            album: album.as_deref(),
             cover_url: cover_uri.as_deref(),
             duration: meta.duration_ms.map(Duration::from_millis),
         })
         .map_err(|e| format!("souvlaki: set_metadata: {e:?}"))
+}
+
+/// Trim a metadata field, drop it when empty, and clamp to a sane length so the
+/// system media tile never shows a blank or runaway line.
+fn clamp_meta(s: Option<&str>) -> Option<String> {
+    let t = s?.trim();
+    if t.is_empty() {
+        return None;
+    }
+    Some(t.chars().take(512).collect())
 }
 
 /// Fetch art with bearer header, write to `<app_cache>/now-playing.jpg`,
@@ -167,6 +182,10 @@ fn cache_art_to_temp<R: Runtime>(
     bearer: Option<&str>,
 ) -> Result<String, String> {
     use std::io::{Read, Write};
+    // Same-origin gate as the audio engine + download_to_file: the art URL +
+    // bearer come from the webview, so refuse anything that isn't the configured
+    // server before fetching with the Authorization header.
+    crate::audio::enforce_url_origin(app, url)?;
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(5))
         .timeout_read(Duration::from_secs(15))
