@@ -210,75 +210,80 @@ class HomeFragment : BrowseSupportFragment() {
         val navPresenter = NavCardPresenter(requireContext())
         var headerId = 0L
 
-        // Continue Watching: TV first (one tile per show), movies,
-        // then everything else (audiobooks etc.). Empty buckets are
-        // skipped so a user with only movies in flight doesn't see
-        // an empty TV row.
-        if (state.continueWatchingTV.isNotEmpty()) {
-            val listAdapter = ArrayObjectAdapter(cardPresenter)
-            state.continueWatchingTV.forEach { listAdapter.add(it) }
-            val header = HeaderItem(headerId++, getString(R.string.continue_watching_tv))
-            rowsAdapter.add(ListRow(header, listAdapter))
-        }
-        if (state.continueWatchingMovies.isNotEmpty()) {
-            val listAdapter = ArrayObjectAdapter(cardPresenter)
-            state.continueWatchingMovies.forEach { listAdapter.add(it) }
-            val header = HeaderItem(headerId++, getString(R.string.continue_watching_movies))
-            rowsAdapter.add(ListRow(header, listAdapter))
-        }
-        if (state.continueWatchingOther.isNotEmpty()) {
-            val listAdapter = ArrayObjectAdapter(cardPresenter)
-            state.continueWatchingOther.forEach { listAdapter.add(it) }
-            val header = HeaderItem(headerId++, getString(R.string.continue_watching))
-            rowsAdapter.add(ListRow(header, listAdapter))
-        }
-
-        if (state.trending.isNotEmpty()) {
-            val listAdapter = ArrayObjectAdapter(cardPresenter)
-            state.trending.forEach { listAdapter.add(it) }
-            val header = HeaderItem(headerId++, getString(R.string.trending))
-            rowsAdapter.add(ListRow(header, listAdapter))
-        }
-
-        if (state.recentlyAdded.isNotEmpty()) {
-            val listAdapter = ArrayObjectAdapter(cardPresenter)
-            state.recentlyAdded.forEach { listAdapter.add(it) }
-            val header = HeaderItem(headerId++, getString(R.string.recently_added))
-            rowsAdapter.add(ListRow(header, listAdapter))
-        }
-
-        // ClassPresenterSelector lets a single adapter mix item types —
-        // cards for MediaItems plus a trailing "View all" tile that
-        // routes into the dedicated LibraryFragment. Without the
-        // selector, ArrayObjectAdapter falls back to the single
-        // presenter passed to its constructor and renders ViewAllCard
-        // entries with the wrong layout.
+        // ClassPresenterSelector lets a single library row mix item types — cards
+        // for MediaItems plus a trailing "View all" tile that routes into the
+        // dedicated LibraryFragment. Without the selector, ArrayObjectAdapter falls
+        // back to the single presenter and renders ViewAllCard with the wrong layout.
         val viewAllPresenter = ViewAllCardPresenter(requireContext())
         val libraryRowSelector = ClassPresenterSelector().apply {
             addClassPresenter(MediaItem::class.java, cardPresenter)
             addClassPresenter(ViewAllCard::class.java, viewAllPresenter)
         }
-        state.libraryPreviews.forEach { (library, items) ->
-            if (items.isNotEmpty()) {
-                val listAdapter = ArrayObjectAdapter(libraryRowSelector)
-                items.forEach { listAdapter.add(it) }
-                // Trailing tile that routes into the full library
-                // grid. Carries the library type so LibraryFragment
-                // can branch behaviour by type (home_video uses a
-                // newest-first sort default; movies/shows stay on
-                // the historic title-asc default).
-                listAdapter.add(ViewAllCard(library.id, library.name, library.type))
-                val header = HeaderItem(headerId++, library.name)
-                rowsAdapter.add(ListRow(header, listAdapter))
-            }
+
+        // A row whose items are HubItems (continue-watching, trending, recently
+        // added). Returns null for an empty bucket so the row is skipped.
+        fun hubRow(title: String, items: List<HubItem>): ListRow? {
+            if (items.isEmpty()) return null
+            val a = ArrayObjectAdapter(cardPresenter)
+            items.forEach { a.add(it) }
+            return ListRow(HeaderItem(headerId++, title), a)
         }
 
-        if (state.collections.isNotEmpty()) {
-            val listAdapter = ArrayObjectAdapter(cardPresenter)
-            state.collections.forEach { listAdapter.add(it) }
-            val header = HeaderItem(headerId++, getString(R.string.collections))
-            rowsAdapter.add(ListRow(header, listAdapter))
+        // Candidate home rows in DEFAULT order, each keyed so the user's saved hub
+        // layout (configured on the web home, shared per-account via prefs) can
+        // reorder + hide them. The web-shared keys are continue_*, trending and
+        // library:<uuid>; recently_added / collections are TV-only extras the web
+        // never emits, so they fall through to their default position.
+        class Section(val key: String, val build: () -> ListRow?)
+        val sections = buildList {
+            add(Section("continue_tv") { hubRow(getString(R.string.continue_watching_tv), state.continueWatchingTV) })
+            add(Section("continue_movies") { hubRow(getString(R.string.continue_watching_movies), state.continueWatchingMovies) })
+            add(Section("continue_other") { hubRow(getString(R.string.continue_watching), state.continueWatchingOther) })
+            add(Section("trending") { hubRow(getString(R.string.trending), state.trending) })
+            add(Section("recently_added") { hubRow(getString(R.string.recently_added), state.recentlyAdded) })
+            state.libraryPreviews.forEach { (library, items) ->
+                add(
+                    Section("library:${library.id}") {
+                        if (items.isEmpty()) {
+                            null
+                        } else {
+                            val a = ArrayObjectAdapter(libraryRowSelector)
+                            items.forEach { a.add(it) }
+                            // Trailing "View all" tile into the full library grid;
+                            // carries the type so LibraryFragment can pick its sort.
+                            a.add(ViewAllCard(library.id, library.name, library.type))
+                            ListRow(HeaderItem(headerId++, library.name), a)
+                        }
+                    },
+                )
+            }
+            add(
+                Section("collections") {
+                    if (state.collections.isEmpty()) {
+                        null
+                    } else {
+                        val a = ArrayObjectAdapter(cardPresenter)
+                        state.collections.forEach { a.add(it) }
+                        ListRow(HeaderItem(headerId++, getString(R.string.collections)), a)
+                    }
+                },
+            )
         }
+
+        // Apply the saved layout: enabled sections first, in the saved order,
+        // skipping keys with no matching row (a removed library, or the web-only
+        // "libraries" tile grid the TV doesn't render); then any section not in the
+        // saved layout, in default order. Mirrors the web home's ordering exactly.
+        val byKey = sections.associateBy { it.key }
+        val used = mutableSetOf<String>()
+        val ordered = mutableListOf<Section>()
+        for (pref in state.hubLayout) {
+            val s = byKey[pref.key] ?: continue
+            used.add(pref.key)
+            if (pref.enabled) ordered.add(s)
+        }
+        for (s in sections) if (s.key !in used) ordered.add(s)
+        ordered.forEach { section -> section.build()?.let { rowsAdapter.add(it) } }
 
         // Browse row: Favorites / History / Settings.
         val navAdapter = ArrayObjectAdapter(navPresenter)

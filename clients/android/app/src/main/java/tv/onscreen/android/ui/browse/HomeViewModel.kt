@@ -13,6 +13,7 @@ import tv.onscreen.android.data.model.*
 import tv.onscreen.android.data.repository.CollectionRepository
 import tv.onscreen.android.data.repository.HubRepository
 import tv.onscreen.android.data.repository.LibraryRepository
+import tv.onscreen.android.data.repository.PreferencesRepository
 import javax.inject.Inject
 
 data class HomeUiState(
@@ -24,6 +25,8 @@ data class HomeUiState(
     val trending: List<HubItem> = emptyList(),
     val libraryPreviews: List<Pair<Library, List<MediaItem>>> = emptyList(),
     val collections: List<MediaCollection> = emptyList(),
+    // User's saved hub row order + visibility (from web). Empty = default layout.
+    val hubLayout: List<HubRowPref> = emptyList(),
     val error: String? = null,
 )
 
@@ -32,6 +35,7 @@ class HomeViewModel @Inject constructor(
     private val hubRepo: HubRepository,
     private val libraryRepo: LibraryRepository,
     private val collectionRepo: CollectionRepository,
+    private val prefsRepo: PreferencesRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -52,11 +56,26 @@ class HomeViewModel @Inject constructor(
                 // structured-concurrency behaviour). Without this, a
                 // hub-fetch failure tears down libs + cols asyncs
                 // before the catch block reaches the user.
-                val (hub, libs, cols) = supervisorScope {
+                data class Loaded(
+                    val hub: HubData,
+                    val libs: List<Library>,
+                    val cols: List<MediaCollection>,
+                    val layout: List<HubRowPref>,
+                )
+                val (hub, libs, cols, layout) = supervisorScope {
                     val hubDeferred = async { hubRepo.getHub() }
                     val libsDeferred = async { libraryRepo.getLibraries() }
                     val colsDeferred = async { collectionRepo.getCollections() }
-                    Triple(hubDeferred.await(), libsDeferred.await(), colsDeferred.await())
+                    // Best-effort: a prefs failure must not blank the home screen —
+                    // fall back to the default (empty) layout.
+                    val layoutDeferred = async {
+                        try {
+                            prefsRepo.get().hub_layout ?: emptyList()
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
+                    }
+                    Loaded(hubDeferred.await(), libsDeferred.await(), colsDeferred.await(), layoutDeferred.await())
                 }
 
                 // Load first 20 items from each library in parallel.
@@ -91,6 +110,7 @@ class HomeViewModel @Inject constructor(
                     trending = hub.trending,
                     libraryPreviews = previews,
                     collections = cols,
+                    hubLayout = layout,
                 )
             } catch (e: Exception) {
                 _uiState.value = HomeUiState(isLoading = false, error = e.message)

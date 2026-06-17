@@ -15,12 +15,15 @@ import org.junit.Before
 import org.junit.Test
 import tv.onscreen.android.data.model.HubData
 import tv.onscreen.android.data.model.HubItem
+import tv.onscreen.android.data.model.HubRowPref
 import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.MediaCollection
 import tv.onscreen.android.data.model.MediaItem
+import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.repository.CollectionRepository
 import tv.onscreen.android.data.repository.HubRepository
 import tv.onscreen.android.data.repository.LibraryRepository
+import tv.onscreen.android.data.repository.PreferencesRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModelTest {
@@ -45,23 +48,27 @@ class HomeViewModelTest {
         hubData: HubData = HubData(),
         libraries: List<Library> = emptyList(),
         collections: List<MediaCollection> = emptyList(),
+        hubLayout: List<HubRowPref>? = null,
     ): Mocks {
         val hubRepo = mockk<HubRepository>()
         val libRepo = mockk<LibraryRepository>()
         val colRepo = mockk<CollectionRepository>()
+        val prefRepo = mockk<PreferencesRepository>()
         coEvery { hubRepo.getHub() } returns hubData
         coEvery { libRepo.getLibraries() } returns libraries
         coEvery { colRepo.getCollections() } returns collections
+        coEvery { prefRepo.get() } returns UserPreferences(hub_layout = hubLayout)
         libraries.forEach { l ->
             coEvery { libRepo.getItems(l.id, limit = 20) } returns (emptyList<MediaItem>() to 0)
         }
-        return Mocks(hubRepo, libRepo, colRepo)
+        return Mocks(hubRepo, libRepo, colRepo, prefRepo)
     }
 
     private data class Mocks(
         val hub: HubRepository,
         val lib: LibraryRepository,
         val col: CollectionRepository,
+        val pref: PreferencesRepository,
     )
 
     @Test
@@ -75,7 +82,7 @@ class HomeViewModelTest {
         )
         coEvery { m.lib.getItems("l1", limit = 20) } returns (listOf(item("a"), item("b")) to 2)
 
-        val vm = HomeViewModel(m.hub, m.lib, m.col)
+        val vm = HomeViewModel(m.hub, m.lib, m.col, m.pref)
         vm.load()
         advanceUntilIdle()
 
@@ -90,11 +97,40 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun `saved hub layout flows into state`() = runTest(dispatcher) {
+        val layout = listOf(
+            HubRowPref("trending", enabled = true),
+            HubRowPref("continue_tv", enabled = false),
+        )
+        val m = mocks(hubLayout = layout)
+
+        val vm = HomeViewModel(m.hub, m.lib, m.col, m.pref)
+        vm.load()
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.hubLayout).isEqualTo(layout)
+    }
+
+    @Test
+    fun `a prefs failure falls back to the default empty layout`() = runTest(dispatcher) {
+        val m = mocks()
+        coEvery { m.pref.get() } throws RuntimeException("prefs down")
+
+        val vm = HomeViewModel(m.hub, m.lib, m.col, m.pref)
+        vm.load()
+        advanceUntilIdle()
+
+        // Home still loads; layout falls back to default (empty).
+        assertThat(vm.uiState.value.error).isNull()
+        assertThat(vm.uiState.value.hubLayout).isEmpty()
+    }
+
+    @Test
     fun `load records error when hub repo throws`() = runTest(dispatcher) {
         val m = mocks()
         coEvery { m.hub.getHub() } throws RuntimeException("offline")
 
-        val vm = HomeViewModel(m.hub, m.lib, m.col)
+        val vm = HomeViewModel(m.hub, m.lib, m.col, m.pref)
         vm.load()
         advanceUntilIdle()
 
@@ -108,7 +144,7 @@ class HomeViewModelTest {
         coEvery { m.lib.getItems("l1", limit = 20) } returns (listOf(item("a")) to 1)
         coEvery { m.lib.getItems("l2", limit = 20) } throws RuntimeException("lib2 down")
 
-        val vm = HomeViewModel(m.hub, m.lib, m.col)
+        val vm = HomeViewModel(m.hub, m.lib, m.col, m.pref)
         vm.load()
         advanceUntilIdle()
 
@@ -133,7 +169,7 @@ class HomeViewModelTest {
                 continue_watching_other = listOf(hub("ab1", type = "audiobook")),
             ),
         )
-        val vm = HomeViewModel(m.hub, m.lib, m.col)
+        val vm = HomeViewModel(m.hub, m.lib, m.col, m.pref)
         vm.load()
         advanceUntilIdle()
         val state = vm.uiState.value
