@@ -1,7 +1,10 @@
 package tv.onscreen.android.ui.search
 
+import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
@@ -53,6 +56,39 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setSearchResultProvider(this)
+        // Wire the mic orb to the system speech recognizer. Using the callback +
+        // RecognizerIntent means we DON'T need the RECORD_AUDIO permission (the
+        // recognizer app owns the mic) — and where no recognizer exists (some Fire
+        // remotes), the catch falls back to the on-screen keyboard instead of a
+        // dead orb. Deprecated API, but the supported no-permission path on
+        // Leanback 1.0.0.
+        @Suppress("DEPRECATION")
+        setSpeechRecognitionCallback {
+            try {
+                startActivityForResult(
+                    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(
+                            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+                        )
+                    },
+                    REQUEST_SPEECH,
+                )
+            } catch (e: Exception) {
+                // No recognizer installed — leave the user on the keyboard.
+            }
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQUEST_SPEECH && resultCode == Activity.RESULT_OK) {
+            data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.let { setSearchQuery(it, true) }
+        }
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -213,6 +249,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     }
 
     companion object {
+        private const val REQUEST_SPEECH = 1001
         private const val SCOPE_HEADER_ID = 5L
         private const val FILTER_HEADER_ID = 0L
         private const val LIBRARY_HEADER_ID = 1L

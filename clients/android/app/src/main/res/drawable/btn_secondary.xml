@@ -2,8 +2,10 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_focused="true">
         <shape android:shape="rectangle">
-            <solid android:color="#22ffffff" />
-            <stroke android:width="1dp" android:color="@color/accent" />
+            <solid android:color="#33ffffff" />
+            <!-- 2dp white ring: the old 1dp accent stroke was barely visible from
+                 10 feet against the dim unfocused stroke. -->
+            <stroke android:width="2dp" android:color="@android:color/white" />
             <corners android:radius="6dp" />
         </shape>
     </item>

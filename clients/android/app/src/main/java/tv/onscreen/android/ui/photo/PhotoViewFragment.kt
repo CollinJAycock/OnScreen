@@ -19,10 +19,14 @@ import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import tv.onscreen.android.R
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.LibraryRepository
@@ -57,6 +61,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
     private var imageView: ImageView? = null
     private var positionLabel: TextView? = null
     private var statusLabel: TextView? = null
+    private var slideshowJob: Job? = null
 
     private var serverUrl: String = ""
     private var siblingIds: List<String> = emptyList()
@@ -225,6 +230,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         return when (event.keyCode) {
             KeyEvent.KEYCODE_BACK,
             KeyEvent.KEYCODE_ESCAPE -> {
+                stopSlideshow()
                 parentFragmentManager.popBackStack()
                 true
             }
@@ -236,8 +242,39 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
             KeyEvent.KEYCODE_MEDIA_NEXT -> {
                 advance(1); true
             }
+            // Play toggles a hands-off slideshow across the sibling photos.
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { toggleSlideshow(); true }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { startSlideshow(); true }
+            KeyEvent.KEYCODE_MEDIA_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_STOP -> { stopSlideshow(); true }
             else -> false
         }
+    }
+
+    private fun toggleSlideshow() {
+        if (slideshowJob?.isActive == true) stopSlideshow() else startSlideshow()
+    }
+
+    private fun startSlideshow() {
+        if (siblingIds.size < 2) return
+        stopSlideshow()
+        statusLabel?.apply {
+            text = getString(R.string.slideshow_on)
+            visibility = View.VISIBLE
+        }
+        slideshowJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                delay(SLIDESHOW_INTERVAL_MS)
+                if (!isActive) break
+                advance(1)
+            }
+        }
+    }
+
+    private fun stopSlideshow() {
+        slideshowJob?.cancel()
+        slideshowJob = null
+        statusLabel?.visibility = View.GONE
     }
 
     companion object {
@@ -245,6 +282,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         private const val ARG_ITEM_ID = "item_id"
         private const val ARG_SIBLING_IDS = "sibling_ids"
         private const val ARG_START_INDEX = "start_index"
+        private const val SLIDESHOW_INTERVAL_MS = 4000L
 
         fun newInstance(itemId: String): PhotoViewFragment =
             newInstance(itemId, emptyList(), 0)

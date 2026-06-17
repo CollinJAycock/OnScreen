@@ -109,6 +109,9 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
             // two-line height ⇒ uniform card height ⇒ aligned rows.
             minLines = 2
             maxLines = 2
+            // Truncate with an ellipsis instead of a hard mid-word clip on long
+            // titles ("Code Geass: Lelouch of the Rebel…").
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setTextColor(context.getColor(R.color.text_primary))
             textSize = 13f
             alpha = UNFOCUSED_TITLE_ALPHA

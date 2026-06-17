@@ -60,7 +60,7 @@
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:focusable="true"
         android:focusableInTouchMode="true"
-        android:contentDescription="Previous"
+        android:contentDescription="@string/nav_previous"
         android:visibility="gone" />
 
     <ImageView
@@ -74,7 +74,7 @@
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:focusable="true"
         android:focusableInTouchMode="true"
-        android:contentDescription="Next"
+        android:contentDescription="@string/nav_next"
         android:visibility="gone" />
 
     <!-- Hidden poster — kept in the tree because DetailFragment binds
@@ -210,7 +210,7 @@
                 android:textSize="18sp"
                 android:textStyle="bold"
                 android:visibility="gone"
-                android:text="Episodes" />
+                android:text="@string/episodes" />
 
             <HorizontalScrollView
                 android:id="@+id/season_tabs_scroll"

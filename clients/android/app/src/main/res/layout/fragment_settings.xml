@@ -189,7 +189,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:textColor="@color/text_secondary"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:visibility="gone" />
     </LinearLayout>
 </ScrollView>

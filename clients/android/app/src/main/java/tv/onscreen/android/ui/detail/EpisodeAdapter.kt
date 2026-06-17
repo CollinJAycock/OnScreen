@@ -63,7 +63,18 @@ class EpisodeAdapter(
         private val progress: ProgressBar = view.findViewById(R.id.ep_progress)
 
         fun bind(ep: ChildItem, serverUrl: String, onClick: (ChildItem) -> Unit) {
-            index.text = ep.index?.let { "EPISODE $it" } ?: ""
+            val ctx = itemView.context
+            index.text = ep.index?.let { n ->
+                // Label by the child's own type — a music album's children are
+                // "TRACK n", an audiobook's are "CHAPTER n", a book series' are
+                // "BOOK n" — not always "EPISODE n". Localised via resources.
+                when (ep.type) {
+                    "track", "music_video" -> ctx.getString(R.string.label_track_n, n)
+                    "audiobook_chapter" -> ctx.getString(R.string.label_chapter_n, n)
+                    "book" -> ctx.getString(R.string.label_book_n, n)
+                    else -> ctx.getString(R.string.label_episode_n, n)
+                }
+            } ?: ""
             index.visibility = if (ep.index != null) View.VISIBLE else View.GONE
             title.text = ep.title
             duration.text = ep.duration_ms?.let { fmtDuration(it) } ?: ""

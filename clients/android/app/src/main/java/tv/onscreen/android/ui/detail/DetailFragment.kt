@@ -222,6 +222,12 @@ class DetailFragment : Fragment() {
                     val target = inProgressEpisode() ?: firstUnwatchedEpisode() ?: firstEpisode()
                     if (target != null) {
                         playItem(target.id, target.view_offset_ms)
+                    } else {
+                        // Children haven't loaded (or there are none) — give
+                        // feedback instead of a dead click that looks broken.
+                        android.widget.Toast.makeText(
+                            requireContext(), R.string.nothing_to_play, android.widget.Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 }
                 btnFromStart.visibility = View.GONE
@@ -258,6 +264,14 @@ class DetailFragment : Fragment() {
                 // is the only affordance.
                 btnPlay.visibility = View.GONE
                 btnFromStart.visibility = View.GONE
+                // Both play buttons are hidden for these browse-only parents, so
+                // without this focus falls to the heart instead of the books list.
+                // Best-effort: hand focus to the list once it's populated.
+                if (focusPlay) {
+                    btnPlay.post {
+                        btnPlay.rootView.findViewById<RecyclerView>(R.id.episode_list)?.requestFocus()
+                    }
+                }
             }
             else -> {
                 // Leaf items (movie, episode, track, single-file

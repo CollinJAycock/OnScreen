@@ -88,7 +88,7 @@ class PairingFragment : Fragment() {
     /** Allocate a fresh PIN + start the poll loop. Re-entered when
      *  the previous PIN expires so the user never sees a stale
      *  "Code expired" terminal state — they see a new code. */
-    private fun startPairingCycle(server: String) {
+    private fun startPairingCycle(server: String, refreshed: Boolean = false) {
         pollJob?.cancel()
         pollJob = viewLifecycleOwner.lifecycleScope.launch {
             statusView.text = getString(R.string.pair_status_creating)
@@ -104,7 +104,12 @@ class PairingFragment : Fragment() {
             }
 
             pinView.text = code.pin
-            statusView.text = getString(R.string.pair_status_waiting)
+            // If we just rotated an expired code, say so loudly — otherwise the
+            // displayed PIN silently changes under a user who's mid-typing the old
+            // one on their phone, and their entry mysteriously fails.
+            statusView.text = getString(
+                if (refreshed) R.string.pair_status_refreshed else R.string.pair_status_waiting,
+            )
 
             // Server suggests a cadence; clamp tighter than the
             // server-default 2 s so the fragment dismisses within
@@ -127,8 +132,9 @@ class PairingFragment : Fragment() {
                         // Cycle a new PIN — friendlier than a
                         // dead-end "code expired" terminal state.
                         // pollJob cancellation is automatic via
-                        // the re-entrant call.
-                        startPairingCycle(server)
+                        // the re-entrant call. refreshed=true so the
+                        // new PIN is announced, not silently swapped.
+                        startPairingCycle(server, refreshed = true)
                         return@launch
                     }
                     is AuthRepository.PollResult.Failure -> {

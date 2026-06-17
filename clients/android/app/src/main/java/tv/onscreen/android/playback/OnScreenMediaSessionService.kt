@@ -109,14 +109,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // When the user swipes the app away from the recents tray
-        // we release everything — there's nothing to bring back to
-        // the foreground for, and dangling media sessions clutter
-        // the system controls.
-        val player = session?.player
-        if (player != null && (!player.playWhenReady || player.mediaItemCount == 0)) {
-            stopSelf()
-        }
+        // When the user swipes the app away from the recents tray we release
+        // everything — there's nothing to bring back to the foreground for.
+        // Stop UNCONDITIONALLY: the old guard skipped stopSelf() while actively
+        // playing, leaving a foreground MediaSession service running with no
+        // in-app UI to stop it (only the system media controls), which is the
+        // dangling-service the swipe-away was meant to clean up.
+        session?.player?.pause()
+        stopSelf()
     }
 
     /** Bind an externally-owned ExoPlayer to a MediaSession exposed

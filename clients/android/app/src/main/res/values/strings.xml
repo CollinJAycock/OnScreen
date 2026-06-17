@@ -58,6 +58,15 @@
     <string name="tracks">Tracks</string>
     <string name="albums">Albums</string>
     <string name="books">Books</string>
+    <!-- Per-child index label on the detail-screen card grid. -->
+    <string name="label_episode_n">EPISODE %1$d</string>
+    <string name="label_track_n">TRACK %1$d</string>
+    <string name="label_chapter_n">CHAPTER %1$d</string>
+    <string name="label_book_n">BOOK %1$d</string>
+    <string name="nav_previous">Previous</string>
+    <string name="nav_next">Next</string>
+    <string name="nothing_to_play">Nothing to play yet</string>
+    <string name="slideshow_on">▶ Slideshow</string>
     <string name="series">Series</string>
 
     <!-- Device pairing sign-in -->
@@ -68,6 +77,7 @@
     <string name="pair_status_creating">Generating code…</string>
     <string name="pair_status_create_failed">Couldn\'t generate code: %1$s. Retrying…</string>
     <string name="pair_status_waiting">Waiting for sign-in on the other device…</string>
+    <string name="pair_status_refreshed">The previous code expired — enter the NEW code shown above.</string>
     <string name="pair_status_retry">Couldn\'t reach server (%1$s). Retrying…</string>
     <string name="season_n">Season %d</string>
     <string name="audio">Audio</string>

@@ -94,6 +94,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private var upNextOverlay: View? = null
     private var upNextJob: Job? = null
     private var upNextShown = false
+    // Centered spinner shown during STATE_BUFFERING (the 10-30s transcode warm-up
+    // would otherwise be an unexplained black screen on cold start).
+    private var bufferingView: android.widget.ProgressBar? = null
     // The Up Next countdown. A field (not a local) so "Play Now" / dismiss /
     // teardown can cancel it — otherwise it keeps ticking and fires a SECOND
     // goToNextEpisode after the user already advanced. navigatedToNext guards
@@ -219,6 +222,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 android.view.KeyEvent.KEYCODE_MEDIA_STOP       -> { player?.pause(); true }
                 android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekRelative(SKIP_FORWARD_MS); true }
                 android.view.KeyEvent.KEYCODE_MEDIA_REWIND       -> { seekRelative(-SKIP_BACK_MS); true }
+                // Track skip for music (the NEXT/PREV keys on most remotes). NEXT
+                // advances to the resolved next sibling; PREVIOUS restarts the
+                // current track (no previous-sibling resolver yet).
+                android.view.KeyEvent.KEYCODE_MEDIA_NEXT     -> { nextEpisode?.let { goToNextEpisode(it) }; true }
+                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { player?.seekTo(0); true }
                 else -> false
             }
         }
@@ -481,6 +489,17 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 rightMargin = 60
             }
             btn.layoutParams = lp
+            btn.setOnKeyListener { _, keyCode, event ->
+                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                    // BACK dismisses the skip prompt for this window rather than
+                    // exiting playback (the button was focused, so BACK would
+                    // otherwise fall through to Leanback and pop the player).
+                    shownSkipMarkerStartMs?.let { dismissedMarkers.add(it) }
+                    hideSkipMarker(); true
+                } else {
+                    false
+                }
+            }
             rootContainer.addView(btn)
             skipMarkerOverlay = btn
             btn
@@ -506,6 +525,27 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val hadFocus = skipMarkerOverlay?.hasFocus() == true
         skipMarkerOverlay?.visibility = View.GONE
         if (hadFocus) view?.requestFocus()
+    }
+
+    /** Show/hide a centered indeterminate spinner while the player buffers — the
+     *  transcode warm-up on a cold start would otherwise be a black screen with
+     *  no sign anything is happening. */
+    private fun setBuffering(show: Boolean) {
+        if (!show) {
+            bufferingView?.visibility = View.GONE
+            return
+        }
+        val rootContainer = (view as? ViewGroup) ?: return
+        val spinner = bufferingView ?: android.widget.ProgressBar(requireContext()).also {
+            it.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { gravity = Gravity.CENTER }
+            it.isIndeterminate = true
+            rootContainer.addView(it)
+            bufferingView = it
+        }
+        spinner.visibility = View.VISIBLE
     }
 
     /**
@@ -686,6 +726,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
+            setBuffering(state == Player.STATE_BUFFERING)
             if (state == Player.STATE_ENDED) {
                 playbackEnded = true
                 progressTracker?.onStop()
@@ -930,9 +971,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun showSpeedPicker() {
         val labels = SPEED_OPTIONS.map { "%.2fx".format(it) }.toTypedArray()
+        // Check the current speed so the user can see what's active (was a plain
+        // setItems list with no indication of the current selection).
+        val checked = SPEED_OPTIONS.indexOfFirst { it == playbackSpeed }.coerceAtLeast(0)
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.speed)
-            .setItems(labels) { d, idx ->
+            .setSingleChoiceItems(labels, checked) { d, idx ->
                 val chosen = SPEED_OPTIONS[idx]
                 playbackSpeed = chosen
                 val params = androidx.media3.common.PlaybackParameters(chosen)
@@ -1251,6 +1295,18 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
         playBtn.setOnClickListener { goToNextEpisode(next) }
         cancelBtn.setOnClickListener { dismissUpNext(permanent = true) }
+
+        // BACK on the overlay = Cancel, NOT "exit playback". Without this, BACK
+        // while a button is focused falls through to Leanback and pops the player.
+        val backToCancel = View.OnKeyListener { _, keyCode, event ->
+            if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                dismissUpNext(permanent = true); true
+            } else {
+                false
+            }
+        }
+        playBtn.setOnKeyListener(backToCancel)
+        cancelBtn.setOnKeyListener(backToCancel)
 
         // Never stack countdowns: a second showUpNextOverlay (e.g. EOS firing
         // while the lead-in countdown is already running) would otherwise leave

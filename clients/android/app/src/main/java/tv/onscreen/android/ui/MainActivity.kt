@@ -12,6 +12,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -72,6 +73,22 @@ class MainActivity : FragmentActivity() {
                 // so a duplicate call from HomeFragment is a no-op.
                 capabilities.getCachedOrFetch()
                 listenForPlaybackTransfers()
+            }
+        }
+
+        // Mid-session logout watch: TokenAuthenticator clears auth when the
+        // refresh token is dead/reused, but only this onCreate routes by login
+        // state — so the user would otherwise be stranded on a broken Home until
+        // relaunch. Route back to login on a logged-in → logged-out transition.
+        lifecycleScope.launch {
+            var wasLoggedIn = prefs.isLoggedIn.first()
+            prefs.isLoggedIn.collect { loggedIn ->
+                if (wasLoggedIn && !loggedIn &&
+                    prefs.hasServer.first() && !supportFragmentManager.isStateSaved
+                ) {
+                    navigateTo(NavigationDestination.LOGIN)
+                }
+                wasLoggedIn = loggedIn
             }
         }
 
