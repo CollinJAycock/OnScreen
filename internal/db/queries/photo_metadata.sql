@@ -182,14 +182,20 @@ WHERE mi.library_id = $1
 -- sidebar — clicking "March 2024" jumps the grid to the first photo of
 -- that month. COALESCE(taken_at, created_at) keeps screenshots in the
 -- timeline at their import date.
-SELECT
-    EXTRACT(YEAR  FROM COALESCE(pm.taken_at, mi.created_at))::int AS year,
-    EXTRACT(MONTH FROM COALESCE(pm.taken_at, mi.created_at))::int AS month,
-    COUNT(*)::bigint AS count
-FROM media_items mi
-LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
-WHERE mi.library_id = $1
-  AND mi.type = 'photo'
-  AND mi.deleted_at IS NULL
-GROUP BY year, month
-ORDER BY year DESC, month DESC;
+--
+-- year/month are derived in a subquery so the outer GROUP BY references real
+-- columns. Grouping directly by the SELECT-list aliases fails on Postgres with
+-- "column pm.taken_at must appear in the GROUP BY clause" (SQLSTATE 42803).
+SELECT sub.year, sub.month, COUNT(*)::bigint AS count
+FROM (
+    SELECT
+        EXTRACT(YEAR  FROM COALESCE(pm.taken_at, mi.created_at))::int AS year,
+        EXTRACT(MONTH FROM COALESCE(pm.taken_at, mi.created_at))::int AS month
+    FROM media_items mi
+    LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
+    WHERE mi.library_id = $1
+      AND mi.type = 'photo'
+      AND mi.deleted_at IS NULL
+) sub
+GROUP BY sub.year, sub.month
+ORDER BY sub.year DESC, sub.month DESC;
