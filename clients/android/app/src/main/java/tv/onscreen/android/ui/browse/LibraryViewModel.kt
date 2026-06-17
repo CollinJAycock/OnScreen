@@ -41,6 +41,12 @@ class LibraryViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
+    // True once the first page of the current (library, sort, genre) query has
+    // finished loading, so the fragment can show an empty state for a genuinely
+    // empty library / zero-match filter instead of a blank grid.
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded
+
     private val _sort = MutableStateFlow(LibrarySort.DEFAULT)
     val sort: StateFlow<LibrarySort> = _sort
 
@@ -69,6 +75,7 @@ class LibraryViewModel @Inject constructor(
         offset = 0
         total = Int.MAX_VALUE
         _items.value = emptyList()
+        _loaded.value = false
         loadMore()
         if (_genres.value.isEmpty()) {
             viewModelScope.launch {
@@ -94,6 +101,7 @@ class LibraryViewModel @Inject constructor(
         offset = 0
         total = Int.MAX_VALUE
         _items.value = emptyList()
+        _loaded.value = false
         loadMore()
     }
 
@@ -115,6 +123,7 @@ class LibraryViewModel @Inject constructor(
                 if (_items.value.isEmpty()) _error.value = e.message ?: "Failed to load"
             } finally {
                 loading = false
+                _loaded.value = true
             }
         }
     }

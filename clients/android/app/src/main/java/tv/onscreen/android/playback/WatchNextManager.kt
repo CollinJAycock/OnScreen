@@ -56,12 +56,28 @@ class WatchNextManager @Inject constructor(
     private val resolver get() = context.contentResolver
 
     /**
+     * Fire OS (and some older Android TV builds) ship no Google-TV
+     * WatchNextPrograms provider. The per-call try/catch already keeps us
+     * crash-safe, but without this we'd still run a full provider query + insert
+     * every ~30s of playback on a device that can never honour it. Resolve the
+     * TV provider authority ONCE and short-circuit when it's absent.
+     */
+    private val watchNextAvailable: Boolean by lazy {
+        try {
+            context.packageManager.resolveContentProvider(TvContractCompat.AUTHORITY, 0) != null
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
      * Insert or update the Watch Next row for [item] at [positionMs] /
      * [durationMs]. Safe to call on every progress tick — the
      * underlying upsert short-circuits when nothing meaningful
      * changed (same position rounded to 10 s buckets).
      */
     fun publishContinueWatching(item: ItemDetail, positionMs: Long, durationMs: Long) {
+        if (!watchNextAvailable) return
         if (durationMs <= 0L || positionMs <= 0L) return
         // Don't re-publish a row we'd immediately remove.
         if (positionMs.toFloat() / durationMs > COMPLETION_THRESHOLD) {
@@ -105,6 +121,7 @@ class WatchNextManager @Inject constructor(
 
     /** Remove the Watch Next row for [itemId]. Called on completion. */
     fun remove(itemId: String) {
+        if (!watchNextAvailable) return
         try {
             val existing = lookupExistingProgramId(itemId) ?: return
             resolver.delete(

@@ -5,6 +5,13 @@
 // the firetv/ folder self-contained for sideload + Amazon
 // Appstore submission flows.
 //
+// Variant:
+//   npm run build                 → debug build (assembleDebug), for sideload
+//   npm run build -- --release     → release build (assembleRelease), for the
+//                                    Amazon Appstore. Exercises R8/proguard +
+//                                    the tuned release config in app/build.gradle.kts.
+//   FIRETV_RELEASE=1 npm run build → same as --release (CI-friendly).
+//
 // JAVA_HOME requirement matches clients/android/. Inherits whatever
 // the user has set; if missing, points at Android Studio's bundled
 // JBR as a fallback (matches the path used by the Daemon JVM
@@ -19,6 +26,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const here = resolve(__dirname, '..');
 const androidRoot = resolve(here, '..', 'android');
 const dist = join(here, 'dist');
+
+// Debug by default; release for Appstore submission. Sideloading a debug build
+// is fine, but the artifact you UPLOAD to Amazon should be the release variant
+// (minified/shrunk) — submitting the debug APK was the old footgun.
+const wantRelease =
+  process.argv.includes('--release') ||
+  /^(release|1|true)$/i.test(process.env.FIRETV_RELEASE || '');
+const variant = wantRelease ? 'release' : 'debug';
+const gradleTask = wantRelease ? 'assembleRelease' : 'assembleDebug';
 
 if (!existsSync(androidRoot)) {
   console.error(`expected Android client at ${androidRoot}`);
@@ -39,8 +55,8 @@ if (!process.env.JAVA_HOME) {
 // `gradlew.bat` from a `cwd:` directory unless it's also `.\`-
 // prefixed, which the absolute path sidesteps).
 const gradleCmd = join(androidRoot, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-console.log(`gradle assembleDebug in ${androidRoot}`);
-const r = spawnSync(gradleCmd, ['assembleDebug'], {
+console.log(`gradle ${gradleTask} in ${androidRoot}`);
+const r = spawnSync(gradleCmd, [gradleTask], {
   cwd: androidRoot,
   stdio: 'inherit',
   shell: process.platform === 'win32'
@@ -50,10 +66,10 @@ if (r.status !== 0) {
   process.exit(r.status ?? 1);
 }
 
-// Pick the most recent debug APK Gradle emitted under
-// app/build/outputs/apk/debug/. AGP names it after the
-// applicationId + variant; we copy it to a Fire-friendly name.
-const apkDir = join(androidRoot, 'app', 'build', 'outputs', 'apk', 'debug');
+// Pick the most recent APK Gradle emitted under the variant's output
+// dir. AGP names it after the applicationId + variant; we copy it to a
+// Fire-friendly name.
+const apkDir = join(androidRoot, 'app', 'build', 'outputs', 'apk', variant);
 if (!existsSync(apkDir)) {
   console.error(`no APK dir at ${apkDir} — did the Gradle build fail silently?`);
   process.exit(1);
@@ -63,11 +79,20 @@ const apks = readdirSync(apkDir)
   .map((f) => ({ f, mtime: statSync(join(apkDir, f)).mtimeMs }))
   .sort((a, b) => b.mtime - a.mtime);
 if (apks.length === 0) {
-  console.error('no .apk in app/build/outputs/apk/debug/');
+  console.error(`no .apk in app/build/outputs/apk/${variant}/`);
   process.exit(1);
 }
 
 const src = join(apkDir, apks[0].f);
-const dst = join(dist, 'onscreen-firetv-debug.apk');
+const dst = join(dist, `onscreen-firetv-${variant}.apk`);
 copyFileSync(src, dst);
 console.log(`copied ${apks[0].f} → ${dst}`);
+
+// A release build without a signing config comes out as *-unsigned.apk. Amazon
+// will reject that — flag it so it isn't uploaded by mistake.
+if (variant === 'release' && apks[0].f.includes('unsigned')) {
+  console.warn(
+    'WARNING: release APK is UNSIGNED. Configure a signingConfig in ' +
+    'clients/android/app/build.gradle.kts (or sign manually) before Appstore upload.',
+  );
+}

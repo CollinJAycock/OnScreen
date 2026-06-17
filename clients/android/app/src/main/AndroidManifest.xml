@@ -23,9 +23,15 @@
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
+    <!-- required="false", NOT true: a number of Amazon Fire TV / Fire OS devices
+         do not report android.software.leanback, so requiring it lets the Amazon
+         Appstore filter the app off those devices (and can block sideload). The
+         LEANBACK_LAUNCHER intent-filter below is what classifies us as a TV app on
+         Google TV / Android TV, so dropping the hard requirement costs nothing
+         there while widening Fire TV coverage. -->
     <uses-feature
         android:name="android.software.leanback"
-        android:required="true" />
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />

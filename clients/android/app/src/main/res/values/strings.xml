@@ -48,6 +48,8 @@
     <string name="empty_history_message">Anything you play will show up here automatically.</string>
     <string name="empty_collection_title">Empty collection</string>
     <string name="empty_collection_message">No items in this collection yet.</string>
+    <string name="empty_library_title">Nothing here yet</string>
+    <string name="empty_library_message">This library has no items, or nothing matches the current sort/filter.</string>
     <string name="empty_live_tv_title">No live channels</string>
     <string name="empty_live_tv_message">Add a tuner in the web settings to see channels here.</string>
     <string name="empty_recordings_title">No recordings yet</string>

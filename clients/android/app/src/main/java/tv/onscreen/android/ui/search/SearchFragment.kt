@@ -46,6 +46,9 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     private lateinit var viewModel: SearchViewModel
     private lateinit var rowsAdapter: ArrayObjectAdapter
     private var serverUrl: String = ""
+    // The last query the user typed, so rebuildRows can tell "nothing searched
+    // yet" from "searched and found nothing" and show a No-results state.
+    private var lastQuery: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -106,6 +109,8 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                     onDiscoverClicked(item)
                 is FilterChipPresenter.Chip ->
                     viewModel.toggleFilter(item.type)
+                is ScopeChipPresenter.ScopeChip ->
+                    showScopeMenu()
             }
         }
     }
@@ -113,11 +118,13 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     override fun getResultsAdapter(): ObjectAdapter = rowsAdapter
 
     override fun onQueryTextChange(query: String): Boolean {
+        lastQuery = query
         viewModel.search(query)
         return true
     }
 
     override fun onQueryTextSubmit(query: String): Boolean {
+        lastQuery = query
         viewModel.search(query)
         return true
     }
@@ -130,6 +137,17 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         val filters = viewModel.filters.value
 
         rowsAdapter.clear()
+
+        // Scope row first — a focusable on-screen affordance to open the library
+        // picker, so users on basic Fire TV remotes (no MENU / Y key) can still
+        // narrow the search. Only when there are libraries to scope to.
+        val libs = viewModel.libraries.value
+        if (libs.isNotEmpty()) {
+            val scopeName = viewModel.scope.value?.name ?: getString(R.string.all_libraries)
+            val scopeAdapter = ArrayObjectAdapter(ScopeChipPresenter(requireContext()))
+            scopeAdapter.add(ScopeChipPresenter.ScopeChip("${getString(R.string.search_in)}: $scopeName"))
+            rowsAdapter.add(ListRow(HeaderItem(SCOPE_HEADER_ID, getString(R.string.search_in)), scopeAdapter))
+        }
 
         // Filter chip row first — always visible so the user can
         // toggle types regardless of whether anything matched. Order
@@ -183,14 +201,25 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                 ListRow(HeaderItem(DISCOVER_ERROR_HEADER_ID, discoverError), emptyAdapter),
             )
         }
+
+        // Nothing matched anywhere after a real query — show an explicit
+        // "No results" header so the screen doesn't look idle or hung (only the
+        // filter chips would otherwise render). Suppressed before the first query.
+        val nothing = library.isEmpty() && rawCount == 0 && discover.isEmpty() && discoverError == null
+        if (nothing && lastQuery.isNotBlank()) {
+            val emptyAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
+            rowsAdapter.add(ListRow(HeaderItem(NO_RESULTS_HEADER_ID, getString(R.string.no_results)), emptyAdapter))
+        }
     }
 
     companion object {
+        private const val SCOPE_HEADER_ID = 5L
         private const val FILTER_HEADER_ID = 0L
         private const val LIBRARY_HEADER_ID = 1L
         private const val HIDDEN_HEADER_ID = 2L
         private const val DISCOVER_HEADER_ID = 3L
         private const val DISCOVER_ERROR_HEADER_ID = 4L
+        private const val NO_RESULTS_HEADER_ID = 6L
     }
 
     private fun onDiscoverClicked(item: DiscoverItem) {

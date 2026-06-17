@@ -14,6 +14,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
@@ -141,14 +142,21 @@ class LibraryFragment : VerticalGridSupportFragment() {
                 viewModel.genre.collectLatest { updateTitle() }
             }
             launch {
-                viewModel.error.collectLatest { err ->
-                    if (err != null) {
-                        // Pass libraryType so a retry keeps the per-type default
-                        // sort (e.g. home_video/photo = newest-first) instead of
-                        // silently falling back to Title A–Z.
-                        errorOverlay?.show(err) { viewModel.load(libraryId, libraryType) }
-                    } else {
-                        errorOverlay?.hide()
+                // Error wins; otherwise a loaded-but-empty library/zero-match filter
+                // shows the empty state instead of a blank grid with no feedback.
+                combine(viewModel.items, viewModel.error, viewModel.loaded) { items, err, loaded ->
+                    Triple(items, err, loaded)
+                }.collectLatest { (items, err, loaded) ->
+                    when {
+                        err != null -> {
+                            // Pass libraryType so a retry keeps the per-type default
+                            // sort (e.g. home_video/photo = newest-first) instead of
+                            // silently falling back to Title A–Z.
+                            errorOverlay?.show(err) { viewModel.load(libraryId, libraryType) }
+                        }
+                        loaded && items.isEmpty() ->
+                            errorOverlay?.showEmpty(R.string.empty_library_title, R.string.empty_library_message)
+                        else -> errorOverlay?.hide()
                     }
                 }
             }

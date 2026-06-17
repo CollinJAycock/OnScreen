@@ -58,6 +58,13 @@ class ErrorOverlay private constructor(
         retryButton.visibility = View.GONE
         changeServerButton.visibility = View.GONE
         overlay.visibility = View.VISIBLE
+        // The empty state has no buttons, and the grid behind it is empty too, so
+        // without a focus target the D-pad does nothing and the remote feels dead
+        // (Favorites/History/LiveTV/Recordings first-run). Make the overlay itself
+        // focusable and claim focus so the user always has somewhere to be; BACK
+        // still exits the screen.
+        overlay.isFocusable = true
+        overlay.requestFocus()
     }
 
     fun hide() {

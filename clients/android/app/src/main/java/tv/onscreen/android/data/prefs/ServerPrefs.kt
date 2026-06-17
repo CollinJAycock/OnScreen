@@ -67,7 +67,16 @@ class ServerPrefs(private val context: Context) {
         // refuses `Https://` URLs with "Unable to create a fetcher".
         // Canonicalising on the way in keeps every consumer (Retrofit,
         // Coil, BaseUrlInterceptor) reading the same value.
-        val trimmed = url.trim().trimEnd('/')
+        var trimmed = url.trim().trimEnd('/')
+        // On a 10-foot keyboard users naturally type a bare host/IP
+        // (192.168.1.50:7070, media.lan). Without a scheme, toHttpUrlOrNull()
+        // returns null, the request silently stays on the localhost default, and
+        // the user sees only "Could not connect" — dead-ending first-run on the
+        // exact LAN/HTTP shape this app targets. Default to http:// (LAN servers
+        // are plain HTTP) when no scheme is present; an explicit https:// is kept.
+        if (trimmed.isNotEmpty() && !trimmed.matches(Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://.*"))) {
+            trimmed = "http://$trimmed"
+        }
         val canonical = tv.onscreen.android.data.normaliseScheme(trimmed)
         context.dataStore.edit { it[KEY_SERVER_URL] = canonical }
     }

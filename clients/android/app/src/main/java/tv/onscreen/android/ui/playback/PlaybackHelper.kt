@@ -71,13 +71,53 @@ object PlaybackHelper {
         return PlaybackMode.Transcode(defaultHeight)
     }
 
-    /** Whether the device likely supports HEVC hardware decode. */
-    fun supportsHevc(): Boolean {
-        // Almost all Fire TV and Android TV devices from 2016+ support HEVC.
-        // We tell the server we support HEVC so it can use HEVC output when
-        // transcoding, saving bandwidth.
-        return true
+    // Device decoder inventory, probed once. The capabilities header is built from
+    // this so the server only picks a transcode output (HEVC, AV1, 10-bit) the
+    // device can actually decode — the old hardcoded `true`s meant a cheap/older
+    // box that can't decode the server's chosen HEVC/AV1/10-bit HLS output
+    // dead-ended on a hard error dialog (the HLS path has no further fallback).
+    private val decoderInfos: List<android.media.MediaCodecInfo> by lazy {
+        try {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                .codecInfos.filter { !it.isEncoder }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
+
+    private fun hasDecoderFor(mime: String): Boolean =
+        decoderInfos.any { info -> info.supportedTypes.any { it.equals(mime, ignoreCase = true) } }
+
+    /** Whether any video decoder reports a 10-bit (Main10 / HDR10) profile. Gates
+     *  the 10-bit + HDR claims so we don't request output the decoder/panel can't
+     *  render (garbled or green frames, or a hard decoder error). */
+    private fun supports10Bit(): Boolean {
+        val tenBitProfiles = mapOf(
+            "video/hevc" to setOf(
+                android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10,
+                android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus,
+            ),
+            "video/av01" to setOf(
+                android.media.MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10,
+                android.media.MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10,
+                android.media.MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10Plus,
+            ),
+        )
+        return decoderInfos.any { info ->
+            info.supportedTypes.any { type ->
+                val want = tenBitProfiles[type.lowercase()] ?: return@any false
+                try {
+                    info.getCapabilitiesForType(type).profileLevels.any { it.profile in want }
+                } catch (e: Exception) {
+                    false
+                }
+            }
+        }
+    }
+
+    /** Whether the device can decode HEVC (probed from the platform codec list). */
+    fun supportsHevc(): Boolean = hasDecoderFor("video/hevc")
 
     /** Whether the device likely supports AV1 hardware decode. v2.1.
      *
@@ -99,10 +139,11 @@ object PlaybackHelper {
      * fine on basically every Android TV box. The corner case is 4K
      * AV1 on a 2018-era Fire TV — uncommon enough that we'd rather
      * default-on and let users opt out via settings if it ever
-     * matters than default-off and lose the remux fast-path. */
-    fun supportsAv1(): Boolean {
-        return true
-    }
+     * matters than default-off and lose the remux fast-path.
+     *
+     * Now probed from the platform codec list rather than hardcoded, so a box
+     * with no AV1 decoder no longer advertises it and gets H.264 transcode. */
+    fun supportsAv1(): Boolean = hasDecoderFor("video/av01")
 
     /**
      * Strips the `token` query parameter from a stream/asset URL before it
@@ -138,9 +179,14 @@ object PlaybackHelper {
         val video = mutableListOf("h264", "vp9")
         if (supportsHevc()) video.add("h265")
         if (supportsAv1()) video.add("av1")
+        // DTS is probed too — claiming it unconditionally made the server pick a
+        // DTS passthrough/output a DTS-less box couldn't decode.
+        val audio = mutableListOf("aac", "mp3", "opus", "flac", "vorbis", "ac3", "eac3")
+        if (hasDecoderFor("audio/vnd.dts")) audio.add("dts")
+        val tenBit = supports10Bit()
         return listOf(
             "videoDecoder=" + video.joinToString(":"),
-            "audioDecoder=aac:mp3:opus:flac:vorbis:ac3:eac3:dts",
+            "audioDecoder=" + audio.joinToString(":"),
             // Raw-audio containers must be listed too, or the server can't
             // DirectPlay a music file (e.g. a .flac track): audioDecoder=flac
             // says we decode the codec, but the play decision also checks the
@@ -151,8 +197,9 @@ object PlaybackHelper {
             "maxWidth=3840",
             "maxHeight=2160",
             "maxAudioChannels=8",
-            "maxbitdepth=10",
-            "hdr=1",
+            // 10-bit/HDR only when a decoder actually reports a Main10/HDR profile.
+            "maxbitdepth=" + if (tenBit) "10" else "8",
+            "hdr=" + if (tenBit) "1" else "0",
         ).joinToString(",")
     }
 }

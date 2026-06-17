@@ -3,6 +3,8 @@ package tv.onscreen.android.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -67,6 +69,7 @@ class SettingsViewModel @Inject constructor(
             try {
                 val saved = prefsRepo.set(prefs)
                 _uiState.value = _uiState.value.copy(preferences = saved, saved = true, error = null)
+                scheduleSavedClear()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message ?: "save failed")
             }
@@ -81,6 +84,7 @@ class SettingsViewModel @Inject constructor(
             try {
                 scrobbleRepo.setListenBrainz(t, enabled = true)
                 _uiState.value = _uiState.value.copy(saved = true, error = null)
+                scheduleSavedClear()
                 loadScrobble()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message ?: "Could not link account")
@@ -94,6 +98,7 @@ class SettingsViewModel @Inject constructor(
             try {
                 scrobbleRepo.setListenBrainz("", enabled = false)
                 _uiState.value = _uiState.value.copy(saved = true, error = null)
+                scheduleSavedClear()
                 loadScrobble()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message ?: "Could not unlink account")
@@ -101,8 +106,27 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private var savedClearJob: Job? = null
+
+    /** Keep the "Saved" confirmation visible briefly, then clear it. The old code
+     *  cleared the flag in the same render pass that set it (the fragment called
+     *  clearSavedFlag() on observing saved=true), so the status flipped back to
+     *  GONE in one frame and the user never saw it. */
+    private fun scheduleSavedClear() {
+        savedClearJob?.cancel()
+        savedClearJob = viewModelScope.launch {
+            delay(SAVED_VISIBLE_MS)
+            if (_uiState.value.saved) _uiState.value = _uiState.value.copy(saved = false)
+        }
+    }
+
     fun clearSavedFlag() {
+        savedClearJob?.cancel()
         if (_uiState.value.saved) _uiState.value = _uiState.value.copy(saved = false)
+    }
+
+    companion object {
+        private const val SAVED_VISIBLE_MS = 2000L
     }
 
     suspend fun logout() {

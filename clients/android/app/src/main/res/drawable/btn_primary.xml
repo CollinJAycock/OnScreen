@@ -4,6 +4,10 @@
         <shape android:shape="rectangle">
             <solid android:color="@color/accent" />
             <corners android:radius="6dp" />
+            <!-- Focused vs unfocused are otherwise two near-identical purples with
+                 no scale (buttons don't zoom like cards), so add a bright high-
+                 contrast ring to make D-pad focus obvious from 10 feet. -->
+            <stroke android:width="3dp" android:color="@android:color/white" />
         </shape>
     </item>
     <item android:state_pressed="true">

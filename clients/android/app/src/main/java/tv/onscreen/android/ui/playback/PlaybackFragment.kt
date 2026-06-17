@@ -884,6 +884,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     override fun onActivityKeyEvent(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) return false
         if (isControlsOverlayVisible) return false
+        // The Skip (intro/credits) and Up Next overlays own focus while visible but
+        // are NOT the controls overlay, so without this LEFT/RIGHT would seek the
+        // video instead of moving between their buttons — RIGHT off "Play Now" would
+        // scrub +30s and "Cancel" was unreachable. Let Leanback's focus search have
+        // the keys whenever one of those overlays is up.
+        if (skipMarkerOverlay?.visibility == View.VISIBLE) return false
+        if (upNextOverlay?.visibility == View.VISIBLE) return false
         return when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT -> { seekRelative(-SKIP_BACK_MS); true }
             KeyEvent.KEYCODE_DPAD_RIGHT -> { seekRelative(SKIP_FORWARD_MS); true }

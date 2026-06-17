@@ -108,9 +108,11 @@ class SettingsFragment : Fragment() {
                         status.visibility = View.VISIBLE
                     }
                     state.saved -> {
+                        // Stays visible until the ViewModel clears `saved` after a
+                        // short delay; clearing it here would hide it in the same
+                        // frame it appears.
                         status.text = getString(R.string.saved)
                         status.visibility = View.VISIBLE
-                        viewModel.clearSavedFlag()
                     }
                     else -> status.visibility = View.GONE
                 }

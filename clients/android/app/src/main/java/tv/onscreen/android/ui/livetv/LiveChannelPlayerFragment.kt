@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.ui.common.focusableOnTv
 import tv.onscreen.android.ui.playback.PlaybackHelper
 import javax.inject.Inject
 
@@ -184,6 +185,10 @@ class LiveChannelPlayerFragment : Fragment() {
                 d.dismiss()
                 parentFragmentManager.popBackStack()
             }
+            .create()
+            // Button-only dialog: without this neither Retry nor Cancel can take
+            // focus on a TV, so Retry is unreachable and only BACK (= Cancel) works.
+            .focusableOnTv()
             .show()
     }
 

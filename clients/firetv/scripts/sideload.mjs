@@ -5,11 +5,11 @@
 // Env:
 //   FIRETV_HOST=<ip>     required — Fire TV's LAN IP
 //   FIRETV_PORT=5555     optional, default 5555
+//   ADB=<path-to-adb>    optional — explicit adb binary
 //
-// We run `adb connect` first so multiple Fire TVs on the same
-// LAN are addressable individually; then `adb -s <host:port>
-// install -r` targets only this one. If only one device is
-// connected, you can drop FIRETV_HOST and adb picks it.
+// adb is resolved from ADB, then ANDROID_SDK_ROOT/ANDROID_HOME's
+// platform-tools, then PATH — so a missing platform-tools install
+// fails with a clear message instead of an opaque ENOENT.
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -19,6 +19,42 @@ import { spawnSync } from 'node:child_process';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const here = resolve(__dirname, '..');
 const dist = join(here, 'dist');
+
+function resolveAdb() {
+  if (process.env.ADB) return process.env.ADB;
+  const sdk = process.env.ANDROID_SDK_ROOT || process.env.ANDROID_HOME;
+  const exe = process.platform === 'win32' ? 'adb.exe' : 'adb';
+  if (sdk) {
+    const p = join(sdk, 'platform-tools', exe);
+    if (existsSync(p)) return p;
+  }
+  // Fall back to PATH. Use the platform-correct name so Windows
+  // (which needs the .exe to resolve a bare name without a shell) works.
+  return exe;
+}
+
+const adb = resolveAdb();
+
+// Verify adb is actually runnable up front, so the failure is a clear
+// "install platform-tools" message rather than an opaque ENOENT mid-install.
+const probe = spawnSync(adb, ['version'], { stdio: 'ignore' });
+if (probe.error || probe.status !== 0) {
+  console.error(`adb not found or not runnable (tried "${adb}").`);
+  console.error('Fix one of:');
+  console.error('  - install Android platform-tools and add it to PATH, or');
+  console.error('  - set ANDROID_SDK_ROOT / ANDROID_HOME (adb is under platform-tools/), or');
+  console.error('  - set ADB=<full path to adb>');
+  process.exit(1);
+}
+
+function runAdb(args) {
+  const r = spawnSync(adb, args, { stdio: 'inherit' });
+  if (r.error) {
+    console.error(`failed to run adb: ${r.error.message}`);
+    process.exit(1);
+  }
+  return r;
+}
 
 const apks = existsSync(dist)
   ? readdirSync(dist)
@@ -38,7 +74,7 @@ const port = process.env.FIRETV_PORT || '5555';
 const target = host ? `${host}:${port}` : null;
 
 if (target) {
-  const c = spawnSync('adb', ['connect', target], { stdio: 'inherit', shell: process.platform === 'win32' });
+  const c = runAdb(['connect', target]);
   if (c.status !== 0) {
     console.error(`adb connect ${target} failed`);
     console.error('Common fixes:');
@@ -51,7 +87,7 @@ if (target) {
 
 const installArgs = target ? ['-s', target, 'install', '-r', apk] : ['install', '-r', apk];
 console.log(`adb ${installArgs.join(' ')}`);
-const i = spawnSync('adb', installArgs, { stdio: 'inherit', shell: process.platform === 'win32' });
+const i = runAdb(installArgs);
 
 if (i.status !== 0) {
   console.error(`adb install exited with status ${i.status}`);

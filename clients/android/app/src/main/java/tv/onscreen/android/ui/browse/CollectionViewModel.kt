@@ -18,6 +18,15 @@ class CollectionViewModel @Inject constructor(
     private val _items = MutableStateFlow<List<CollectionItem>>(emptyList())
     val items: StateFlow<List<CollectionItem>> = _items
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error
+
+    // True once the first page load has finished (success OR failure) so the
+    // fragment can distinguish "still loading" from "loaded and genuinely empty"
+    // and show the empty state instead of a blank, unfocusable grid.
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded
+
     private var collectionId: String? = null
     private var offset = 0
     private var total = Int.MAX_VALUE
@@ -29,6 +38,8 @@ class CollectionViewModel @Inject constructor(
         offset = 0
         total = Int.MAX_VALUE
         _items.value = emptyList()
+        _error.value = null
+        _loaded.value = false
         loadMore()
     }
 
@@ -43,9 +54,14 @@ class CollectionViewModel @Inject constructor(
                 total = count
                 offset += page.size
                 _items.value = _items.value + page
-            } catch (_: Exception) {
+                _error.value = null
+            } catch (e: Exception) {
+                // Only surface an error when we have nothing to show — a failed
+                // *pagination* page shouldn't blow away an already-populated grid.
+                if (_items.value.isEmpty()) _error.value = e.message ?: "Failed to load"
             } finally {
                 loading = false
+                _loaded.value = true
             }
         }
     }
