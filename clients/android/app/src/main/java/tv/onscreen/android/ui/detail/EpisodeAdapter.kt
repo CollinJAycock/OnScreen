@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.detail
 
+import android.graphics.drawable.ColorDrawable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -7,6 +8,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
@@ -16,6 +18,11 @@ import tv.onscreen.android.data.model.ChildItem
 
 class EpisodeAdapter(
     private val serverUrl: String,
+    // Artwork for the parent container (show / season / artist / album) used
+    // as a fallback when a child has no still/poster of its own — e.g. demo
+    // shows whose episodes were never given per-episode stills. Beats a blank
+    // tile; mirrors Plex/Jellyfin. Null when the parent itself has no art.
+    private val fallbackArtPath: String? = null,
     private val onClick: (ChildItem) -> Unit,
 ) : RecyclerView.Adapter<EpisodeAdapter.VH>() {
 
@@ -51,7 +58,7 @@ class EpisodeAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val ep = items[position]
-        holder.bind(ep, serverUrl, onClick)
+        holder.bind(ep, serverUrl, fallbackArtPath, onClick)
     }
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {
@@ -62,7 +69,7 @@ class EpisodeAdapter(
         private val watchedBadge: FrameLayout = view.findViewById(R.id.ep_watched_badge)
         private val progress: ProgressBar = view.findViewById(R.id.ep_progress)
 
-        fun bind(ep: ChildItem, serverUrl: String, onClick: (ChildItem) -> Unit) {
+        fun bind(ep: ChildItem, serverUrl: String, fallbackArtPath: String?, onClick: (ChildItem) -> Unit) {
             val ctx = itemView.context
             index.text = ep.index?.let { n ->
                 // Label by the child's own type — a music album's children are
@@ -80,13 +87,22 @@ class EpisodeAdapter(
             duration.text = ep.duration_ms?.let { fmtDuration(it) } ?: ""
             duration.visibility = if (ep.duration_ms != null) View.VISIBLE else View.GONE
 
-            val thumbPath = ep.thumb_path ?: ep.poster_path
-            if (!thumbPath.isNullOrEmpty() && serverUrl.isNotEmpty()) {
-                thumb.load(artworkUrl(serverUrl, thumbPath, 480)) {
+            // Coalesce on blank, not just null: the API returns "" (not null)
+            // for missing art, so a plain ?: would let an empty thumb_path
+            // shadow a present poster_path. Fall through own still → own
+            // poster → parent art; only a truly art-less item lands on the
+            // neutral elevated tile (matching the movie-card treatment).
+            val artPath = ep.thumb_path?.takeIf { it.isNotBlank() }
+                ?: ep.poster_path?.takeIf { it.isNotBlank() }
+                ?: fallbackArtPath?.takeIf { it.isNotBlank() }
+            if (artPath != null && serverUrl.isNotEmpty()) {
+                thumb.load(artworkUrl(serverUrl, artPath, 480)) {
                     crossfade(true)
+                    placeholder(R.color.bg_elevated)
+                    error(R.color.bg_elevated)
                 }
             } else {
-                thumb.setImageDrawable(null)
+                thumb.setImageDrawable(ColorDrawable(ContextCompat.getColor(ctx, R.color.bg_elevated)))
             }
 
             // Watched treatment: dim the thumbnail + dull the title row

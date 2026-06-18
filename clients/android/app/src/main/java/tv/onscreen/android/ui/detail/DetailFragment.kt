@@ -357,7 +357,7 @@ class DetailFragment : Fragment() {
             // instead of being mis-played as media. Tracks / episodes
             // / podcast episodes still hit PlaybackFragment via
             // Navigator's else branch.
-            episodeAdapter = EpisodeAdapter(serverUrl) { child ->
+            episodeAdapter = EpisodeAdapter(serverUrl, item.poster_path) { child ->
                 Navigator.open(parentFragmentManager, child.id, child.type, child.view_offset_ms)
             }
             list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
