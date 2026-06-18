@@ -109,13 +109,18 @@ firetv/
   README.md                  # you are here
   package.json               # npm scripts wrapping Gradle + adb
   scripts/
-    build.mjs                # cd ../android && gradlew assemble{Debug,Release} → copy APK here
+    build.mjs                # cd ../android && gradlew assembleFiretv{Debug,Release} → copy APK here
     sideload.mjs             # resolve adb + adb connect + adb install -r
   dist/                      # built APKs (gitignored)
 ```
 
 The Android codebase under [`../android/`](../android/) is the
-source of truth. Anything we'd want to do differently for Fire TV
-(e.g., Alexa voice integration, Fire-specific Amazon SSO) would
-live as a Gradle product flavor inside that project, not as a
-duplicate codebase here.
+source of truth. Fire TV-specific differences live as the `firetv`
+Gradle product flavor inside that project, not as a duplicate
+codebase here. Today that flavor strips the TV-provider EPG
+permissions (`WRITE_EPG_DATA` / `READ_EPG_DATA`) — requesting them
+makes the Amazon Appstore require an EPG-capable device and filter
+the app off most Fire TV hardware — via
+[`../android/app/src/firetv/AndroidManifest.xml`](../android/app/src/firetv/AndroidManifest.xml).
+Anything else (e.g., Alexa voice, Fire-specific Amazon SSO) belongs
+in that same flavor.

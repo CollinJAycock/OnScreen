@@ -96,7 +96,10 @@ class PlaybackHelperTest {
     }
 
     @Test
-    fun `supportsHevc returns true on Android TV`() {
-        assertThat(PlaybackHelper.supportsHevc()).isTrue()
+    fun `supportsHevc degrades to false without a platform codec list (JVM) and does not crash`() {
+        // supportsHevc() probes android.media.MediaCodecList, which is unavailable
+        // under plain JVM unit tests (no codecs). It must swallow that and return
+        // false rather than throw. Real on-device HEVC support is an instrumented concern.
+        assertThat(PlaybackHelper.supportsHevc()).isFalse()
     }
 }

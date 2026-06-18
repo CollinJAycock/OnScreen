@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Fire TV (Amazon Appstore) flavor overlay.
+
+    The main manifest requests the TV-provider EPG permissions
+    (WRITE_EPG_DATA / READ_EPG_DATA) so the Google TV "Watch Next" /
+    Continue-Watching row works. But the Amazon Appstore treats an app
+    requesting WRITE_EPG_DATA as requiring "a Fire TV device that supports
+    EPG integration" and filters the app off the large majority of Fire TV
+    hardware (Sticks, most Cubes, most TVs). OnScreen is a VOD library, not
+    a live-channel/TIF app, so those permissions buy nothing on Fire OS.
+
+    Strip them from the firetv flavor to restore full Fire TV device
+    coverage. The googletv flavor keeps them, so Watch Next is unaffected on
+    Google TV / Android TV. See clients/firetv/README.md and
+    app/build.gradle.kts (productFlavors) for the build wiring.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="com.android.providers.tv.permission.WRITE_EPG_DATA"
+        tools:node="remove" />
+    <uses-permission
+        android:name="com.android.providers.tv.permission.READ_EPG_DATA"
+        tools:node="remove" />
+</manifest>

@@ -9,6 +9,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -97,7 +98,9 @@ class SettingsViewModelTest {
 
         val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
         vm.savePreferences(input)
-        advanceUntilIdle()
+        // runCurrent (not advanceUntilIdle) runs the save body but does NOT advance
+        // past the 2s scheduleSavedClear() delay, so the transient saved=true is observable.
+        runCurrent()
 
         assertThat(vm.uiState.value.preferences).isEqualTo(returned)
         assertThat(vm.uiState.value.saved).isTrue()
@@ -115,7 +118,8 @@ class SettingsViewModelTest {
         assertThat(vm.uiState.value.saved).isFalse()
 
         vm.savePreferences(input)
-        advanceUntilIdle()
+        // See savePreferences test: runCurrent keeps saved=true visible (no 2s clear).
+        runCurrent()
         assertThat(vm.uiState.value.saved).isTrue()
 
         vm.clearSavedFlag()

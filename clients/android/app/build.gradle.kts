@@ -42,6 +42,25 @@ android {
         versionName = "1.0.7"
     }
 
+    // Per-store flavor split. Both stores ship the same app and code; they
+    // differ only in the Watch Next / EPG permissions. Requesting
+    // WRITE_EPG_DATA makes the Amazon Appstore require an EPG-capable Fire
+    // device and filters the app off most Fire TV hardware, so the `firetv`
+    // flavor strips those permissions (src/firetv/AndroidManifest.xml) while
+    // `googletv` keeps them for the Google TV Continue-Watching row.
+    // googletv is the default — it's the Play / direct-build variant, so
+    // unflavored habits map to it (assembleGoogletvRelease, etc.).
+    flavorDimensions += "store"
+    productFlavors {
+        create("googletv") {
+            dimension = "store"
+            isDefault = true
+        }
+        create("firetv") {
+            dimension = "store"
+        }
+    }
+
     signingConfigs {
         val storePath = keystoreProperties["release.keystore"] as String?
         if (storePath != null && rootProject.file(storePath).exists()) {

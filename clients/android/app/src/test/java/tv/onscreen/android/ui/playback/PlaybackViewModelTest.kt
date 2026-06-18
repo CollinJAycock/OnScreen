@@ -168,8 +168,9 @@ class PlaybackViewModelTest {
                 positionMs = 30_000L,
                 fileId = "f2",
                 videoCopy = false,
-                supportsHevc = true,
-                supportsAv1 = true,
+                // JVM unit tests have no MediaCodecList, so the codec probes return false.
+                supportsHevc = false,
+                supportsAv1 = false,
             )
         } returns TranscodeSession(
             session_id = "sess-1",
@@ -363,8 +364,9 @@ class PlaybackViewModelTest {
                 fileId = "f1",
                 videoCopy = false,
                 audioStreamIndex = null,
-                supportsHevc = true,
-                supportsAv1 = true,
+                // JVM unit tests have no MediaCodecList, so the codec probes return false.
+                supportsHevc = false,
+                supportsAv1 = false,
             )
         }
     }

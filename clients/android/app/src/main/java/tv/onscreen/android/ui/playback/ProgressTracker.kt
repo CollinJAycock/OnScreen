@@ -45,22 +45,32 @@ class ProgressTracker(
         job = scope.launch {
             while (isActive) {
                 delay(10_000)
-                report("playing")
+                // The heartbeat runs on the (main) lifecycle scope, so reading
+                // the player via snapshot() here is already on the right thread.
+                val snap = snapshot() ?: continue
+                report("playing", snap)
             }
         }
     }
 
     fun onPause() {
         job?.cancel()
+        // Snapshot the player position on the CURRENT (main) thread, before
+        // launching the report. ExoPlayer must be accessed on its main thread,
+        // and on the stop path the fragment releases + nulls the player
+        // synchronously right after this call — so the read must happen here,
+        // not inside the (background) terminal coroutine.
+        val snap = snapshot() ?: return
         // Launch on the survivable scope: onPause often coincides with view
         // teardown, and the final position must persist even though the view
         // scope is being cancelled.
-        terminalScope.launch { report("paused") }
+        terminalScope.launch { report("paused", snap) }
     }
 
     fun onStop() {
         job?.cancel()
-        terminalScope.launch { report("stopped") }
+        val snap = snapshot() ?: return
+        terminalScope.launch { report("stopped", snap) }
     }
 
     fun stop() {
@@ -81,10 +91,21 @@ class ProgressTracker(
     var lastReportedContentMs: Long = -1L
         private set
 
-    private suspend fun report(state: String) {
+    /**
+     * Reads the position/duration providers into a snapshot. MUST be called on
+     * the main thread — the providers touch the live ExoPlayer, which Media3
+     * requires be accessed only on its creation (main) thread. Returns null when
+     * a provider is not yet set.
+     */
+    private fun snapshot(): Pair<Long, Long>? {
+        val rawPos = positionProvider?.invoke() ?: return null
+        val dur = durationProvider?.invoke() ?: return null
+        return rawPos to dur
+    }
+
+    private suspend fun report(state: String, snapshot: Pair<Long, Long>) {
         val id = itemId ?: return
-        val rawPos = positionProvider?.invoke() ?: return
-        val dur = durationProvider?.invoke() ?: return
+        val (rawPos, dur) = snapshot
         if (dur <= 0) return
 
         val contentPos = rawPos + hlsOffsetMs

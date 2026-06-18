@@ -55,13 +55,15 @@ jobs:
         # this keeps CI green if the bit is ever lost on a Windows-authored commit.
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+          # Tests are flavor-independent (the firetv flavor only overlays a
+          # manifest); run the default googletv variant's unit tests.
+          ./gradlew :app:testGoogletvDebugUnitTest --no-daemon --console=plain
 
       - name: Upload test report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: android-tv-test-report
-          path: clients/android/app/build/reports/tests/testDebugUnitTest
+          path: clients/android/app/build/reports/tests/testGoogletvDebugUnitTest
           if-no-files-found: ignore
           retention-days: 7

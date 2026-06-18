@@ -3,6 +3,9 @@
 *.exe
 /bin/
 
+# QA sample media downloaded by test/qaseed (large, regenerable)
+qa-media/
+
 # Frontend build (never committed — built by make build or CI)
 /web/dist/
 /web/node_modules/

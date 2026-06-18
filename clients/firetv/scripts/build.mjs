@@ -6,11 +6,17 @@
 // Appstore submission flows.
 //
 // Variant:
-//   npm run build                 → debug build (assembleDebug), for sideload
-//   npm run build -- --release     → release build (assembleRelease), for the
-//                                    Amazon Appstore. Exercises R8/proguard +
+//   npm run build                 → debug build (assembleFiretvDebug), sideload
+//   npm run build -- --release     → release build (assembleFiretvRelease), for
+//                                    the Amazon Appstore. Exercises R8/proguard +
 //                                    the tuned release config in app/build.gradle.kts.
 //   FIRETV_RELEASE=1 npm run build → same as --release (CI-friendly).
+//
+// Builds the `firetv` product flavor in clients/android/, which strips the
+// TV-provider EPG permissions (WRITE_EPG_DATA/READ_EPG_DATA) so the Amazon
+// Appstore doesn't filter the app off most Fire TV devices. The googletv
+// flavor keeps them for Google TV's Watch Next row. See
+// app/src/firetv/AndroidManifest.xml.
 //
 // JAVA_HOME requirement matches clients/android/. Inherits whatever
 // the user has set; if missing, points at Android Studio's bundled
@@ -34,7 +40,7 @@ const wantRelease =
   process.argv.includes('--release') ||
   /^(release|1|true)$/i.test(process.env.FIRETV_RELEASE || '');
 const variant = wantRelease ? 'release' : 'debug';
-const gradleTask = wantRelease ? 'assembleRelease' : 'assembleDebug';
+const gradleTask = wantRelease ? 'assembleFiretvRelease' : 'assembleFiretvDebug';
 
 if (!existsSync(androidRoot)) {
   console.error(`expected Android client at ${androidRoot}`);
@@ -69,7 +75,7 @@ if (r.status !== 0) {
 // Pick the most recent APK Gradle emitted under the variant's output
 // dir. AGP names it after the applicationId + variant; we copy it to a
 // Fire-friendly name.
-const apkDir = join(androidRoot, 'app', 'build', 'outputs', 'apk', variant);
+const apkDir = join(androidRoot, 'app', 'build', 'outputs', 'apk', 'firetv', variant);
 if (!existsSync(apkDir)) {
   console.error(`no APK dir at ${apkDir} — did the Gradle build fail silently?`);
   process.exit(1);
@@ -79,7 +85,7 @@ const apks = readdirSync(apkDir)
   .map((f) => ({ f, mtime: statSync(join(apkDir, f)).mtimeMs }))
   .sort((a, b) => b.mtime - a.mtime);
 if (apks.length === 0) {
-  console.error(`no .apk in app/build/outputs/apk/${variant}/`);
+  console.error(`no .apk in app/build/outputs/apk/firetv/${variant}/`);
   process.exit(1);
 }
 

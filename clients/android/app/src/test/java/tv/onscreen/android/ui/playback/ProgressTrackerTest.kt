@@ -3,6 +3,8 @@ package tv.onscreen.android.ui.playback
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -12,6 +14,7 @@ import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.device.ClientName
 import tv.onscreen.android.data.repository.ItemRepository
 import java.lang.reflect.Proxy
+import java.util.concurrent.Executors
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProgressTrackerTest {
@@ -215,5 +218,42 @@ class ProgressTrackerTest {
         runCurrent()
 
         assertThat(repo.calls).isEmpty()
+    }
+
+    /**
+     * Regression guard for the on-device crash
+     * `IllegalStateException: Player is accessed on the wrong thread`.
+     * The position/duration providers touch the live ExoPlayer, which Media3
+     * permits only on its (main) creation thread. onPause()/onStop() must read
+     * them via a snapshot on the CALLING thread, BEFORE launching the report on
+     * the background terminalScope — never invoke the providers from the
+     * terminal IO dispatcher. (Capturing before the launch also preserves the
+     * real final position, since the fragment releases the player synchronously
+     * right after onStop().)
+     */
+    @Test
+    fun `player position is read on the caller thread, not the terminal IO thread`() {
+        val callerThread = Thread.currentThread()
+        var providerThread: Thread? = null
+
+        val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "terminal-io") }
+        try {
+            val terminal = CoroutineScope(SupervisorJob() + executor.asCoroutineDispatcher())
+            val tracker = ProgressTracker(terminal, FakeRepo(), terminal).apply {
+                positionProvider = {
+                    providerThread = Thread.currentThread()
+                    5_000L
+                }
+                durationProvider = { 60_000L }
+            }
+
+            // onPause() must snapshot the providers synchronously on this thread.
+            tracker.onPause()
+
+            assertThat(providerThread).isEqualTo(callerThread)
+            assertThat(providerThread?.name).isNotEqualTo("terminal-io")
+        } finally {
+            executor.shutdownNow()
+        }
     }
 }
