@@ -8,6 +8,13 @@
   let users: User[] = [];
   let currentUser: UserMeta | null = null;
 
+  // Per-row actions overflow menu (kebab). Holds the id of the user whose
+  // menu is open, plus fixed-position anchor coords so the dropdown escapes
+  // the table-wrap's overflow:hidden clipping and isn't cut off on the last row.
+  let menuOpen: string | null = null;
+  let menuTop = 0;
+  let menuRight = 0;
+
   // Create user form
   let showCreate = false;
   let createUsername = '';
@@ -205,6 +212,19 @@
     window.location.href = '/';
   }
 
+  function toggleRowMenu(e: MouseEvent, user: User) {
+    if (menuOpen === user.id) { menuOpen = null; return; }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menuTop = r.bottom + 6;
+    menuRight = window.innerWidth - r.right;
+    menuOpen = user.id;
+  }
+
+  function runRowAction(fn: (u: User) => void, user: User) {
+    menuOpen = null;
+    fn(user);
+  }
+
   async function openLibraries(user: User) {
     librariesTarget = user;
     librariesLoading = true;
@@ -344,6 +364,13 @@
 
 <svelte:head><title>Users — OnScreen</title></svelte:head>
 
+<svelte:window
+  on:click={() => (menuOpen = null)}
+  on:scroll={() => (menuOpen = null)}
+  on:resize={() => (menuOpen = null)}
+  on:keydown={(e) => { if (e.key === 'Escape') menuOpen = null; }}
+/>
+
 <div class="page">
   <div class="header">
     <div class="header-actions">
@@ -474,48 +501,44 @@
               </td>
               <td class="date-cell">{formatDate(user.created_at)}</td>
               <td class="actions-cell">
-                {#if !user.is_admin}
-                  <button
-                    class="btn-libraries"
-                    on:click={() => openLibraries(user)}
-                    title="Manage library access"
-                  >Libraries</button>
-                  <button
-                    class="btn-limits"
-                    on:click={() => openLimits(user)}
-                    title="Set daily watch cap and allowed hours"
-                  >Limits</button>
-                  <button
-                    class="btn-limits"
-                    on:click={() => openCaps(user)}
-                    title="Set streaming bitrate + concurrent-stream caps"
-                  >Caps</button>
-                {/if}
-                {#if !isSelf(user)}
-                  <button
-                    class="btn-view-as"
-                    on:click={() => viewAsUser(user)}
-                    title="Render the UI exactly as this user would see it (read-only)"
-                  >View as</button>
-                {/if}
                 <button
-                  class="btn-reset"
-                  on:click={() => { resetTarget = user; resetPassword = ''; }}
-                  title="Reset password"
-                >Reset PW</button>
-                {#if !isSelf(user)}
-                  <button
-                    class="btn-delete"
-                    on:click={() => deleteTarget = user}
-                    title="Delete user"
-                  >Delete</button>
-                {/if}
+                  class="kebab"
+                  class:open={menuOpen === user.id}
+                  aria-label="Actions for {user.username}"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen === user.id}
+                  on:click|stopPropagation={(e) => toggleRowMenu(e, user)}
+                >⋯</button>
               </td>
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
+  {/if}
+
+  <!-- Per-row actions menu (fixed-positioned to escape table clipping) -->
+  {#if menuOpen}
+    {@const mu = users.find((u) => u.id === menuOpen)}
+    {#if mu}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="actions-menu" role="menu" tabindex="-1" style="top:{menuTop}px; right:{menuRight}px;" on:click|stopPropagation>
+        {#if !mu.is_admin}
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLibraries, mu)}>Library access…</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLimits, mu)}>Watch limits…</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openCaps, mu)}>Streaming caps…</button>
+          <div class="menu-sep"></div>
+        {/if}
+        {#if !isSelf(mu)}
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(viewAsUser, mu)}>View as user</button>
+        {/if}
+        <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { resetTarget = u; resetPassword = ''; }, mu)}>Reset password…</button>
+        {#if !isSelf(mu)}
+          <div class="menu-sep"></div>
+          <button class="menu-item danger" role="menuitem" on:click={() => runRowAction((u) => { deleteTarget = u; }, mu)}>Delete user…</button>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   <!-- Pending invites -->
@@ -758,8 +781,6 @@
     margin-bottom: 1.75rem;
   }
 
-  h1 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; margin: 0; }
-
   .banner {
     padding: 0.6rem 0.9rem;
     border-radius: 8px;
@@ -838,8 +859,37 @@
     vertical-align: middle;
   }
   .date-cell { color: var(--text-muted); font-size: 0.8rem; }
-  .actions-col { width: 80px; }
+  .actions-col { width: 44px; }
   .actions-cell { text-align: right; }
+
+  /* Per-row overflow (kebab) menu */
+  .kebab {
+    width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: 1px solid var(--border-strong); border-radius: 7px;
+    color: var(--text-muted); font-size: 1.05rem; line-height: 1; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .kebab:hover, .kebab.open {
+    background: rgba(255,255,255,0.05); color: var(--text-primary); border-color: var(--accent);
+  }
+  .actions-menu {
+    position: fixed; z-index: 200;
+    min-width: 180px; padding: 0.35rem;
+    background: #16161f; border: 1px solid var(--border-strong);
+    border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+    display: flex; flex-direction: column; gap: 0.05rem;
+  }
+  .menu-item {
+    display: block; width: 100%; text-align: left;
+    padding: 0.5rem 0.7rem; background: none; border: none; border-radius: 6px;
+    color: #ccccd8; font-size: 0.82rem; font-family: inherit; cursor: pointer;
+    white-space: nowrap; transition: background 0.12s, color 0.12s;
+  }
+  .menu-item:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+  .menu-item.danger { color: #f87171; }
+  .menu-item.danger:hover { background: rgba(248,113,113,0.12); }
+  .menu-sep { height: 1px; background: var(--border); margin: 0.25rem 0.3rem; }
 
   /* Admin toggle */
   .admin-toggle {
@@ -879,27 +929,6 @@
   }
   .btn-save:hover { background: var(--accent-hover); }
   .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn-reset {
-    padding: 0.3rem 0.6rem; background: none;
-    border: 1px solid rgba(167,139,250,0.25); border-radius: 6px;
-    color: #a78bfa; font-size: 0.72rem; font-weight: 500;
-    cursor: pointer; transition: all 0.15s;
-  }
-  .btn-reset:hover { background: rgba(167,139,250,0.1); border-color: rgba(167,139,250,0.4); }
-  .btn-libraries {
-    padding: 0.3rem 0.6rem; background: none;
-    border: 1px solid rgba(94,189,255,0.25); border-radius: 6px;
-    color: #60a5fa; font-size: 0.72rem; font-weight: 500;
-    cursor: pointer; transition: all 0.15s;
-  }
-  .btn-libraries:hover { background: rgba(94,189,255,0.1); border-color: rgba(94,189,255,0.4); }
-  .btn-limits {
-    padding: 0.3rem 0.6rem; background: none;
-    border: 1px solid rgba(52,211,153,0.25); border-radius: 6px;
-    color: #34d399; font-size: 0.72rem; font-weight: 500;
-    cursor: pointer; transition: all 0.15s;
-  }
-  .btn-limits:hover { background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.4); }
 
   /* Watch-limit dialog */
   .usage-row {
@@ -923,13 +952,6 @@
   .limit-field input[type="time"] { width: auto; }
   .limit-field .unit { font-size: 0.78rem; color: var(--text-muted); }
   .dialog .limit-hint { font-size: 0.7rem; color: var(--text-muted); margin: 0.5rem 0 0 1.6rem; }
-  .btn-view-as {
-    padding: 0.3rem 0.6rem; background: none;
-    border: 1px solid rgba(245,158,11,0.3); border-radius: 6px;
-    color: #f59e0b; font-size: 0.72rem; font-weight: 500;
-    cursor: pointer; transition: all 0.15s;
-  }
-  .btn-view-as:hover { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.5); }
 
   .library-list {
     list-style: none; margin: 0 0 1rem; padding: 0;
