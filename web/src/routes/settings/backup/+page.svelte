@@ -247,12 +247,12 @@
 </div>
 
 <style>
-  .wrap { display: flex; flex-direction: column; gap: 2rem; }
+  .wrap { display: flex; flex-direction: column; gap: 1.5rem; }
   section {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 1.25rem 1.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
   }
   h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
   .hint { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
@@ -261,63 +261,65 @@
   .row { margin: 0.75rem 0; }
   .row label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; color: var(--text-secondary); }
   .row input[type="text"] {
-    padding: 0.45rem 0.6rem;
-    border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: var(--bg);
+    padding: 0.48rem 0.7rem;
+    border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
     max-width: 200px;
   }
+  .row input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  .row input[type="text"]::placeholder { color: var(--text-muted); }
   .picked { font-size: 0.78rem; color: var(--text-muted); }
   .picked code { color: var(--text-secondary); }
 
   .btn {
     display: inline-block;
-    padding: 0.55rem 1.1rem;
-    border-radius: 4px;
-    font-size: 0.82rem;
-    font-weight: 500;
+    padding: 0.45rem 0.9rem;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
     border: 1px solid transparent;
     cursor: pointer;
     text-decoration: none;
-    transition: background 0.12s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-primary {
     background: var(--accent);
-    color: var(--accent-text);
+    color: #fff;
   }
-  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-primary:hover { background: var(--accent-hover); }
   .btn-danger {
-    background: var(--error, #c03a3a);
-    color: white;
+    background: var(--error-bg);
+    border: 1px solid var(--error);
+    color: var(--error);
   }
-  .btn-danger:disabled {
-    background: rgba(255,255,255,0.05);
-    color: var(--text-muted);
-    cursor: not-allowed;
-  }
-  .btn-danger:not(:disabled):hover { filter: brightness(1.1); }
 
   code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     font-size: 0.85em;
-    background: rgba(255,255,255,0.05);
+    background: var(--bg-hover);
     padding: 0.05rem 0.35rem;
-    border-radius: 3px;
+    border-radius: 4px;
   }
 
   .result {
     margin-top: 1rem;
     padding: 0.75rem 1rem;
-    border-radius: 4px;
-    background: rgba(192,58,58,0.08);
-    border: 1px solid rgba(192,58,58,0.25);
+    border-radius: 7px;
+    background: var(--error-bg);
+    border: 1px solid var(--error);
     font-size: 0.78rem;
   }
   .result.ok {
-    background: rgba(56,161,105,0.08);
-    border-color: rgba(56,161,105,0.25);
+    background: var(--success-bg);
+    border-color: var(--success);
   }
   .result-head { color: var(--text-secondary); margin-bottom: 0.4rem; }
   .result pre {

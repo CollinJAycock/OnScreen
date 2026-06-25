@@ -85,7 +85,7 @@
         </p>
       </div>
       {#if view === 'linked'}
-        <span class="badge on">{enabled ? 'Linked' : 'Paused'}</span>
+        <span class="badge {enabled ? 'on' : 'paused'}">{enabled ? 'Linked' : 'Paused'}</span>
       {:else if view === 'unlinked'}
         <span class="badge off">Off</span>
       {/if}
@@ -96,7 +96,7 @@
     {/if}
 
     {#if view === 'loading'}
-      <p class="muted">Loading…</p>
+      <div class="skeleton-block"></div>
 
     {:else if view === 'unlinked' || replacing}
       <ol class="steps">
@@ -148,9 +148,9 @@
   .scrobble { max-width: 640px; }
   h1 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0 0 1.25rem; }
   .card {
-    background: var(--bg-card, #0e0e18);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 10px;
     padding: 1.25rem 1.4rem;
   }
   .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
@@ -160,6 +160,7 @@
   .sub a:hover { text-decoration: underline; }
   .badge { font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
   .badge.on { background: var(--success-bg); color: var(--success); }
+  .badge.paused { background: rgba(251,191,36,0.12); color: #fcd34d; }
   .badge.off { background: var(--bg-hover); color: var(--text-muted); }
   .muted { color: var(--text-muted); font-size: 0.85rem; }
   .hint { color: var(--text-muted); font-size: 0.74rem; margin: 0.6rem 0 0; }
@@ -169,19 +170,25 @@
   .steps a:hover { text-decoration: underline; }
   .code-row { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
   .code-row input {
-    flex: 1; padding: 0.6rem 0.7rem; background: #111120; border: 1px solid var(--border);
-    border-radius: 8px; color: var(--text-primary); font-size: 0.95rem; outline: none;
+    flex: 1; padding: 0.6rem 0.7rem; background: var(--input-bg); border: 1px solid var(--border-strong);
+    border-radius: 7px; color: var(--text-primary); font-size: 0.95rem; outline: none;
   }
-  .code-row input:focus { border-color: rgba(124,106,247,0.5); box-shadow: 0 0 0 3px var(--accent-bg); }
+  .code-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   .row-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-  .banner { border-radius: 8px; padding: 0.6rem 0.85rem; font-size: 0.82rem; margin-bottom: 1rem; line-height: 1.45; }
+  .banner { border-radius: 7px; padding: 0.6rem 0.85rem; font-size: 0.82rem; margin-bottom: 1rem; line-height: 1.45; }
   .banner.error { background: var(--error-bg); color: var(--error); }
-  .btn-primary { padding: 0.6rem 1rem; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
+  .btn-primary { padding: 0.45rem 0.9rem; background: var(--accent); color: #fff; border: none; border-radius: 7px; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn-secondary { padding: 0.6rem 1rem; background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: 8px; font-size: 0.88rem; font-weight: 500; cursor: pointer; }
+  .btn-secondary { padding: 0.45rem 0.9rem; background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: 7px; font-size: 0.88rem; font-weight: 500; cursor: pointer; }
   .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn-danger { padding: 0.6rem 1rem; background: var(--error-bg); color: var(--error); border: 1px solid var(--error); border-radius: 8px; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
+  .btn-danger { padding: 0.45rem 0.9rem; background: var(--error-bg); color: var(--error); border: 1px solid var(--error); border-radius: 7px; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
   .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
   .link { background: none; border: none; color: var(--text-muted); font-size: 0.78rem; cursor: pointer; margin-top: 0.75rem; padding: 0; }
   .link:hover { color: var(--text-primary); }
+  .skeleton-block {
+    height: 120px; border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%; animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 </style>

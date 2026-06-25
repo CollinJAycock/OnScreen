@@ -98,7 +98,7 @@
 </script>
 
 {#if loading}
-  <p class="muted">Loading…</p>
+  <div class="skeleton-block"></div>
 {:else if error}
   <p class="error">{error}</p>
 {:else}
@@ -202,11 +202,13 @@
       </div>
 
       {#if testResult}
-        <p class="status" class:ok={testResult.ok} class:bad={!testResult.ok}>
+        <p class="status">
           {#if testResult.ok}
-            ● Connected — bucket reachable with these credentials.
+            <span class="badge success">Connected</span>
+            Bucket reachable with these credentials.
           {:else}
-            ● Failed — {testResult.error}
+            <span class="badge danger">Failed</span>
+            {testResult.error}
           {/if}
         </p>
       {/if}
@@ -244,19 +246,30 @@
 {/if}
 
 <style>
-  .wrap { display: flex; flex-direction: column; gap: 2rem; }
+  .wrap { display: flex; flex-direction: column; gap: 1.5rem; }
   section {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 1.25rem 1.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
   }
   h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
   .hint { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
   .hint.sub { margin: 0.75rem 0 0; }
   .hint .opt, .opt { color: var(--text-muted); font-weight: 400; }
-  .muted { color: var(--text-muted); }
   .error { color: var(--error); }
+
+  .skeleton-block {
+    height: 120px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 
   .grid {
     display: grid;
@@ -269,19 +282,28 @@
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
-    font-size: 0.78rem;
-    color: var(--text-secondary);
+    font-size: 0.72rem;
+    color: var(--text-muted);
   }
   input[type="text"], input[type="password"], select, textarea {
-    padding: 0.45rem 0.6rem;
-    border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: var(--bg);
+    padding: 0.48rem 0.7rem;
+    border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
     font-size: 0.85rem;
+    width: 100%;
   }
-  textarea { resize: vertical; font-family: ui-monospace, monospace; }
+  input[type="text"]:focus, input[type="password"]:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  input::placeholder, textarea::placeholder { color: var(--text-muted); }
+  textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
 
   .check {
     flex-direction: row;
@@ -295,24 +317,40 @@
 
   .actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
   .btn {
-    padding: 0.55rem 1.1rem;
-    border-radius: 4px;
-    font-size: 0.82rem;
+    padding: 0.45rem 0.9rem;
+    border-radius: 7px;
+    font-size: 0.78rem;
     font-weight: 500;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid var(--border-strong);
     background: transparent;
-    color: var(--text-primary);
+    color: var(--text-secondary);
     cursor: pointer;
-    transition: background 0.12s, filter 0.12s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
-  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-  .btn-primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
-  .btn:hover:not(:disabled):not(.btn-primary) { background: rgba(255,255,255,0.04); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: transparent;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn:hover:not(:disabled):not(.btn-primary) { background: var(--bg-hover); border-color: var(--text-muted); }
 
-  .status { font-size: 0.82rem; margin: 0.9rem 0 0; }
-  .status.ok { color: var(--success, #4ade80); }
-  .status.bad { color: var(--error, #f87171); }
+  .status { font-size: 0.82rem; margin: 0.9rem 0 0; color: var(--text-secondary); }
+  .badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 0.4rem;
+  }
+  .badge.success { color: var(--success); background: var(--success-bg); }
+  .badge.danger { color: var(--error); background: var(--error-bg); }
 
   @media (max-width: 720px) {
     .grid { grid-template-columns: 1fr; }

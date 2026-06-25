@@ -429,6 +429,8 @@
       </button>
     </div>
   </section>
+  {:else}
+    <div class="skeleton-block"></div>
   {/if}
 
   <!-- ── Transcode Fleet ────────────────────────────────────────────── -->
@@ -643,6 +645,8 @@
       </p>
     </div>
   </section>
+  {:else}
+    <div class="skeleton-block"></div>
   {/if}
 
 </div>
@@ -670,20 +674,18 @@
     align-items: flex-start;
   }
 
-  label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+  label { font-size: 0.72rem; font-weight: 500; color: var(--text-muted); }
 
   input, select {
-    background: var(--bg-hover);
+    background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 7px;
     padding: 0.48rem 0.7rem;
     font-size: 0.85rem;
     color: var(--text-primary);
+    font-family: inherit;
     transition: border-color 0.15s;
     width: 100%;
-  }
-  input {
-    font-family: monospace;
   }
   input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   ::placeholder { color: var(--text-muted); }
@@ -702,7 +704,7 @@
   .section-foot { display: flex; justify-content: flex-end; }
 
   .btn-save {
-    padding: 0.42rem 0.9rem; background: var(--accent);
+    padding: 0.45rem 0.9rem; background: var(--accent);
     border: none; border-radius: 7px; color: #fff;
     font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
   }
@@ -731,9 +733,9 @@
 
   /* ── Fleet ────────────────────────────────────────────────────────────── */
   .fleet-group {
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 0.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     padding: 0.75rem 1rem;
   }
   .fleet-group-header {
@@ -783,12 +785,12 @@
     flex-shrink: 0;
   }
   .status-dot.online { background: var(--success); }
-  .status-dot.offline { background: #555; }
+  .status-dot.offline { background: var(--text-muted); }
   .text-muted { color: var(--text-muted); }
   .worker-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 0.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     padding: 0.75rem 1rem;
     margin-bottom: 0.5rem;
   }
@@ -797,11 +799,11 @@
     padding: 0.125rem 0.5rem;
     border-radius: 999px;
     background: var(--accent-bg);
-    color: var(--accent);
+    color: var(--accent-text);
   }
   .cap-tonemap {
-    background: rgba(167,139,250,0.14);
-    color: #a78bfa;
+    background: var(--accent-bg);
+    color: var(--accent-text);
     font-weight: 600;
   }
   .load-badge {
@@ -811,15 +813,15 @@
     border-radius: 999px;
     border: 1px solid transparent;
   }
-  .load-badge.load-low { background: rgba(74,222,128,0.12); color: var(--success); }
-  .load-badge.load-mid { background: rgba(250,204,21,0.12); color: #facc15; }
-  .load-badge.load-high { background: rgba(248,113,113,0.12); color: var(--error); }
+  .load-badge.load-low { background: var(--success-bg); color: var(--success); }
+  .load-badge.load-mid { background: rgba(251,191,36,0.12); color: #fcd34d; }
+  .load-badge.load-high { background: var(--error-bg); color: var(--error); }
   .btn-remove {
     flex-shrink: 0;
     background: transparent;
-    border: 1px solid rgba(248,113,113,0.25);
+    border: 1px solid var(--error);
     color: var(--error);
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 0.3rem 0.55rem;
     cursor: pointer;
     font-size: 0.75rem;
@@ -827,7 +829,7 @@
     line-height: 1;
     margin-bottom: 0.25rem;
   }
-  .btn-remove:hover { background: rgba(248,113,113,0.08); }
+  .btn-remove:hover { background: var(--error-bg); }
 
   /* ── Add-a-worker info panel ───────────────────────────────────────────── */
   .worker-info {
@@ -847,13 +849,14 @@
     font-size: 0.72rem;
     font-weight: 600;
     color: var(--text-secondary);
-    font-family: monospace;
+    font-family: ui-monospace, monospace;
   }
   .info-val {
     flex: 1;
     font-size: 0.72rem;
     color: var(--text-primary);
     word-break: break-all;
+    font-family: ui-monospace, monospace;
   }
   .info-val.muted { color: var(--text-muted); font-family: inherit; }
   .info-val code, .hint code {
@@ -867,7 +870,7 @@
     background: transparent;
     border: 1px solid var(--border-strong);
     color: var(--text-secondary);
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 0.2rem 0.5rem;
     font-size: 0.68rem;
     font-weight: 600;
@@ -875,7 +878,7 @@
     transition: background 0.12s, border-color 0.12s;
   }
   .btn-copy:hover { background: var(--bg-hover); border-color: var(--text-muted); }
-  .hint.warn { color: #d9a441; }
+  .hint.warn { color: #fcd34d; }
   .muted { color: var(--text-muted); }
 
   .reveal-form {
@@ -884,9 +887,9 @@
     gap: 0.6rem;
     margin: 0.5rem 0;
     padding: 0.75rem 0.9rem;
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 0.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
   }
   .reveal-actions { display: flex; gap: 0.5rem; align-items: center; }
   .reveal-row {
@@ -895,6 +898,20 @@
     justify-content: space-between;
     gap: 0.75rem;
     margin: 0.4rem 0;
+  }
+
+  /* ── Loading skeleton ──────────────────────────────────────────────────── */
+  .skeleton-block {
+    height: 120px;
+    border-radius: 10px;
+    margin: 1.25rem 0;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */

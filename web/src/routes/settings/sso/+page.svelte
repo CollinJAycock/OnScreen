@@ -149,7 +149,7 @@
 </script>
 
 {#if loading}
-  <p class="muted">Loading…</p>
+  <div class="skeleton-block"></div>
 {:else if error}
   <p class="error">{error}</p>
 {:else}
@@ -374,17 +374,28 @@
 {/if}
 
 <style>
-  .wrap { display: flex; flex-direction: column; gap: 2rem; }
+  .wrap { display: flex; flex-direction: column; gap: 1.5rem; }
   section {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 1.25rem 1.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
   }
   h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
   .hint { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
-  .muted { color: var(--text-muted); }
   .error { color: var(--error); }
+
+  .skeleton-block {
+    height: 120px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 
   .grid {
     display: grid;
@@ -400,15 +411,23 @@
     font-size: 0.78rem;
     color: var(--text-secondary);
   }
-  input[type="text"], input[type="url"], input[type="password"] {
-    padding: 0.45rem 0.6rem;
-    border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: var(--bg);
+  input[type="text"], input[type="url"], input[type="password"], textarea {
+    padding: 0.48rem 0.7rem;
+    border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
     font-size: 0.85rem;
+    width: 100%;
   }
+  input::placeholder, textarea::placeholder { color: var(--text-muted); }
+  input:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  input[type="checkbox"] { accent-color: var(--accent); }
 
   .checks {
     display: flex;
@@ -427,34 +446,34 @@
   .warn {
     margin-top: 0.5rem;
     padding: 0.6rem 0.8rem;
-    background: rgba(255, 168, 76, 0.08);
-    border: 1px solid rgba(255, 168, 76, 0.35);
-    border-radius: 4px;
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    border-radius: 7px;
     font-size: 0.78rem;
-    color: #ffc88a;
+    color: #fcd34d;
     line-height: 1.45;
   }
-  .warn strong { color: #ffa84c; }
+  .warn strong { color: #fcd34d; }
 
   .btn {
-    padding: 0.55rem 1.1rem;
-    border-radius: 4px;
-    font-size: 0.82rem;
-    font-weight: 500;
-    border: 1px solid transparent;
+    padding: 0.45rem 0.9rem;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: none;
     cursor: pointer;
-    transition: background 0.12s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
-  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-  .btn-primary { background: var(--accent); color: var(--accent-text); }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 
   code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     font-size: 0.85em;
-    background: rgba(255,255,255,0.05);
+    background: var(--bg-hover);
     padding: 0.05rem 0.35rem;
-    border-radius: 3px;
+    border-radius: 4px;
   }
 
   @media (max-width: 720px) {

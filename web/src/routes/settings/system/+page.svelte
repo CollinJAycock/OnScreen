@@ -46,7 +46,7 @@
 </script>
 
 {#if loading}
-  <p class="muted">Loading…</p>
+  <div class="skeleton-block"></div>
 {:else if error}
   <p class="error">{error}</p>
 {:else}
@@ -143,24 +143,35 @@
 <style>
   .wrap { display: flex; flex-direction: column; gap: 1.5rem; }
   .notice {
-    background: rgba(124,106,247,0.12);
-    border: 1px solid rgba(124,106,247,0.35);
-    border-radius: 8px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
     padding: 0.75rem 1rem;
     font-size: 0.82rem;
     color: var(--text-secondary);
     line-height: 1.5;
   }
   section {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 1.25rem 1.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
   }
   h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
   .hint { color: var(--text-muted); font-weight: 400; font-size: 0.78rem; }
-  .muted { color: var(--text-muted); }
   .error { color: var(--error); }
+
+  .skeleton-block {
+    height: 120px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 
   .grid {
     display: grid;
@@ -177,13 +188,18 @@
     color: var(--text-secondary);
   }
   input[type="text"], input[type="number"] {
-    padding: 0.45rem 0.6rem;
-    border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: var(--bg);
+    padding: 0.48rem 0.7rem;
+    border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
     font-size: 0.85rem;
+  }
+  input[type="text"]:focus, input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
   }
   .check {
     flex-direction: row;
@@ -194,23 +210,26 @@
     font-size: 0.82rem;
     cursor: pointer;
   }
-  .check input { margin-top: 0.15rem; }
+  .check input {
+    margin-top: 0.15rem;
+    accent-color: var(--accent);
+  }
 
   .actions { display: flex; gap: 0.5rem; }
   .btn {
-    padding: 0.55rem 1.1rem;
-    border-radius: 4px;
+    padding: 0.45rem 0.9rem;
+    border-radius: 7px;
     font-size: 0.82rem;
     font-weight: 500;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid var(--border-strong);
     background: transparent;
     color: var(--text-primary);
     cursor: pointer;
-    transition: background 0.12s, filter 0.12s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
   .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-  .btn-primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 
   @media (max-width: 720px) {
     .grid { grid-template-columns: 1fr; }

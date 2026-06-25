@@ -134,11 +134,11 @@
   </header>
 
   {#if loading}
-    <p class="muted">Loading…</p>
+    <div class="skeleton-block"></div>
   {:else if error}
     <p class="error">{error}</p>
   {:else if items.length === 0}
-    <p class="muted empty">All movies and shows are matched. Nothing to do here. ✅</p>
+    <div class="empty">All movies and shows are matched. Nothing to do here.</div>
   {:else}
     <p class="count">{items.length} {items.length === 1 ? 'item needs' : 'items need'} a match</p>
 
@@ -221,23 +221,44 @@
 </div>
 
 <style>
-  .page { max-width: 920px; margin: 0 auto; padding: 1.5rem; }
+  .page { max-width: 720px; }
   .head { margin-bottom: 1.5rem; }
-  h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
-  .sub { color: var(--text-muted); font-size: 0.85rem; line-height: 1.5; margin: 0; max-width: 720px; }
+  h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); margin: 0 0 0.5rem; }
+  .sub { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.5; margin: 0; max-width: 60ch; }
   .muted { color: var(--text-muted); font-size: 0.9rem; }
-  .empty { padding: 3rem 1rem; text-align: center; }
-  .error { color: var(--error, #f08080); font-size: 0.9rem; }
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+  .error { color: var(--error); font-size: 0.9rem; }
   .count { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
+
+  .skeleton-block {
+    height: 120px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 
   .rows { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
   .row {
-    background: var(--bg-surface, #14141e);
-    border: 1px solid var(--border, rgba(255,255,255,0.08));
-    border-radius: 8px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     overflow: hidden;
   }
-  .row.open { border-color: rgba(124,106,247,0.4); }
+  .row.open { border-color: var(--accent); }
 
   .row-head {
     width: 100%;
@@ -252,7 +273,7 @@
     cursor: pointer;
     font-size: 0.9rem;
   }
-  .row-head:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+  .row-head:hover { background: var(--bg-hover); }
 
   .type-pill {
     font-size: 0.7rem;
@@ -264,8 +285,9 @@
     color: var(--text-muted);
     flex-shrink: 0;
   }
-  .type-show { color: #4f8df0; }
-  .type-movie { color: #f0c14f; }
+  /* warning amber: no token — canonical literal #fcd34d */
+  .type-show { color: var(--info); }
+  .type-movie { color: #fcd34d; }
 
   .title { flex: 1; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .year { color: var(--text-muted); font-size: 0.8rem; flex-shrink: 0; }
@@ -276,17 +298,19 @@
   .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
   .search {
     width: 100%;
-    padding: 0.55rem 0.75rem;
-    background: var(--bg-primary);
+    padding: 0.48rem 0.7rem;
+    background: var(--input-bg);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: 7px;
     color: var(--text-primary);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    font-family: inherit;
     outline: none;
     box-sizing: border-box;
   }
+  .search::placeholder { color: var(--text-muted); }
   .year-input { width: 5.5rem; flex-shrink: 0; text-align: center; }
-  .search:focus { border-color: rgba(124,106,247,0.5); box-shadow: 0 0 0 3px var(--accent-bg); }
+  .search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 
   .cands { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
   .cand {
@@ -294,14 +318,14 @@
     display: flex;
     gap: 0.75rem;
     padding: 0.5rem;
-    background: var(--bg-primary);
+    background: var(--input-bg);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 7px;
     cursor: pointer;
     text-align: left;
     color: inherit;
   }
-  .cand:hover:not(:disabled) { border-color: rgba(124,106,247,0.4); }
+  .cand:hover:not(:disabled) { border-color: var(--accent); }
   .cand:disabled { opacity: 0.5; cursor: progress; }
   .cand-poster { width: 60px; height: 90px; object-fit: cover; border-radius: 4px; flex-shrink: 0; background: var(--bg-hover); }
   .cand-poster.placeholder { background: var(--bg-hover); }

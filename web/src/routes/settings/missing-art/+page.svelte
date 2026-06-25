@@ -93,21 +93,25 @@
 <svelte:head><title>Set Poster — OnScreen</title></svelte:head>
 
 <div class="page">
-  <header class="head">
-    <h1>Set Poster</h1>
-    <p class="sub">
-      Items the auto-fetcher couldn't pull a poster for. Pick a TMDB
-      variant or paste a URL pointing to any image (jpg / png / webp).
-      The image is downloaded and written next to the item's media files.
-    </p>
-  </header>
+  <p class="sub">
+    Items the auto-fetcher couldn't pull a poster for. Pick a TMDB
+    variant or paste a URL pointing to any image (jpg / png / webp).
+    The image is downloaded and written next to the item's media files.
+  </p>
 
   {#if loading}
-    <p class="muted">Loading…</p>
+    <div class="skeleton-block"></div>
   {:else if error}
     <p class="error">{error}</p>
   {:else if items.length === 0}
-    <p class="muted empty">All items have posters. Nothing to do here. ✅</p>
+    <div class="empty">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <circle cx="8.5" cy="8.5" r="1.5" />
+        <path d="m21 15-5-5L5 21" />
+      </svg>
+      <span>All items have posters. Nothing to do here.</span>
+    </div>
   {:else}
     <p class="count">{items.length} {items.length === 1 ? 'item needs' : 'items need'} a poster</p>
 
@@ -178,23 +182,42 @@
 </div>
 
 <style>
-  .page { max-width: 920px; margin: 0 auto; padding: 1.5rem; }
-  .head { margin-bottom: 1.5rem; }
-  h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
-  .sub { color: var(--text-muted); font-size: 0.85rem; line-height: 1.5; margin: 0; max-width: 720px; }
+  .page { max-width: 720px; }
+  .sub { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.5; margin: 0 0 1.5rem; max-width: 60ch; }
   .muted { color: var(--text-muted); font-size: 0.9rem; }
-  .empty { padding: 3rem 1rem; text-align: center; }
-  .error { color: var(--error, #f08080); font-size: 0.9rem; }
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+  .error { color: var(--error); font-size: 0.9rem; }
   .count { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
+
+  .skeleton-block {
+    height: 120px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 
   .rows { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
   .row {
-    background: var(--bg-surface, #14141e);
-    border: 1px solid var(--border, rgba(255,255,255,0.08));
-    border-radius: 8px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     overflow: hidden;
   }
-  .row.open { border-color: rgba(124,106,247,0.4); }
+  .row.open { border-color: var(--accent); }
 
   .row-head {
     width: 100%;
@@ -221,8 +244,8 @@
     color: var(--text-muted);
     flex-shrink: 0;
   }
-  .type-show { color: #4f8df0; }
-  .type-movie { color: #f0c14f; }
+  .type-show { color: var(--info); }
+  .type-movie { color: #fcd34d; }
 
   .title { flex: 1; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .year { color: var(--text-muted); font-size: 0.8rem; flex-shrink: 0; }
@@ -234,7 +257,7 @@
 
   .poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 0.5rem; margin-bottom: 1rem; }
   .poster-btn { padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; overflow: hidden; }
-  .poster-btn:hover:not(:disabled) { border-color: rgba(124,106,247,0.4); }
+  .poster-btn:hover:not(:disabled) { border-color: var(--accent); }
   .poster-btn:disabled { opacity: 0.5; cursor: progress; }
   .poster-btn img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
 
@@ -247,26 +270,28 @@
   .paste-form { display: flex; gap: 0.5rem; }
   .paste-input {
     flex: 1;
-    padding: 0.55rem 0.75rem;
-    background: var(--bg-primary);
+    padding: 0.48rem 0.7rem;
+    background: var(--input-bg);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: 7px;
     color: var(--text-primary);
     font-size: 0.85rem;
+    font-family: inherit;
     outline: none;
     box-sizing: border-box;
   }
-  .paste-input:focus { border-color: rgba(124,106,247,0.5); }
+  .paste-input::placeholder { color: var(--text-muted); }
+  .paste-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   .paste-btn {
-    padding: 0.55rem 1rem;
+    padding: 0.45rem 0.9rem;
     background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    font-weight: 500;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
     cursor: pointer;
   }
-  .paste-btn:hover:not(:disabled) { background: #6b5ce6; }
+  .paste-btn:hover:not(:disabled) { background: var(--accent-hover); }
   .paste-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

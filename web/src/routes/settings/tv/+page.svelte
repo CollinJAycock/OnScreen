@@ -315,7 +315,7 @@
 </script>
 
 {#if loading}
-  <p class="muted">Loading…</p>
+  <div class="skeleton-block"></div>
 {:else if error}
   <p class="error">{error}</p>
 {:else}
@@ -674,26 +674,37 @@
 {/if}
 
 <style>
-  .wrap { display: flex; flex-direction: column; gap: 2rem; }
+  .wrap { display: flex; flex-direction: column; gap: 1.5rem; }
   section {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 1.25rem 1.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
   }
   h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
   .hint { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
-  .muted { color: var(--text-muted); padding: 1rem; }
+  .muted { color: var(--text-muted); }
   .error { color: var(--error); padding: 1rem; }
   .empty { color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem 0; }
+
+  .skeleton-block {
+    height: 120px; border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 
   .tuner-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
   .tuner {
     display: flex; align-items: center; justify-content: space-between; gap: 1rem;
     padding: 0.85rem 1rem;
-    background: var(--bg);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 6px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 7px;
   }
   .tuner.disabled { opacity: 0.6; }
   .tuner-main { flex: 1; min-width: 0; }
@@ -713,14 +724,15 @@
 
   .badge {
     display: inline-block; padding: 0.05rem 0.4rem;
-    background: rgba(255,255,255,0.06); color: var(--text-secondary);
-    border-radius: 3px; font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em;
+    background: var(--bg-hover); color: var(--text-secondary);
+    border-radius: 4px; font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .badge-off { background: rgba(255,100,100,0.12); color: rgb(255,140,140); }
+  .badge-off { background: var(--error-bg); color: var(--error); }
   .badge-live {
-    background: rgba(255,60,60,0.16); color: rgb(255,90,90);
+    background: var(--error-bg); color: var(--error);
     display: inline-flex; align-items: center; gap: 0.3rem;
   }
+  /* live dot keeps a solid red literal for the pulsing on-air indicator */
   .live-dot {
     width: 6px; height: 6px; border-radius: 50%; background: rgb(255,60,60);
     animation: live-pulse 1.4s ease-in-out infinite;
@@ -730,9 +742,9 @@
   .broadcast-list { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
   .broadcast {
     padding: 0.85rem 1rem;
-    background: var(--bg);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 6px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 7px;
     display: flex; flex-direction: column; gap: 0.5rem;
   }
   .broadcast-head { display: flex; align-items: center; gap: 0.5rem; }
@@ -741,8 +753,8 @@
   .kv-label { font-size: 0.72rem; color: var(--text-muted); min-width: 72px; text-transform: uppercase; letter-spacing: 0.04em; }
   .mono {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;
-    color: var(--text-primary); background: var(--bg-elevated, rgba(255,255,255,0.04));
-    padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.06);
+    color: var(--text-primary); background: var(--input-bg);
+    padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);
   }
   .broadcast-actions { display: flex; gap: 0.4rem; margin-top: 0.15rem; }
   .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.74rem; text-decoration: none; display: inline-flex; align-items: center; }
@@ -752,8 +764,8 @@
   .discovered-list { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
   .discovered-item {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 0.55rem 0.8rem; background: var(--bg); border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 5px; font-size: 0.82rem;
+    padding: 0.55rem 0.8rem; background: var(--bg-hover); border: 1px solid var(--border);
+    border-radius: 7px; font-size: 0.82rem;
   }
   .discovered-item .muted { margin-left: 0.75rem; }
 
@@ -761,30 +773,36 @@
   .channel-row {
     display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
     padding: 0.6rem 0.85rem;
-    background: var(--bg);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 5px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 7px;
   }
   .channel-row.disabled { opacity: 0.55; }
   .channel-info { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
-  .chan-logo { width: 40px; height: 28px; object-fit: contain; background: #000; border-radius: 3px; flex-shrink: 0; }
+  /* logo sits on a pure-black plate for max contrast against any artwork */
+  .chan-logo { width: 40px; height: 28px; object-fit: contain; background: var(--bg-primary); border-radius: 4px; flex-shrink: 0; }
   .chan-logo-blank {
     width: 40px; height: 28px; display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 0.7rem; background: var(--bg-elevated); border-radius: 3px; flex-shrink: 0;
+    font-weight: 700; font-size: 0.7rem; background: var(--bg-elevated); border-radius: 4px; flex-shrink: 0;
   }
   .channel-label { font-size: 0.88rem; color: var(--text-primary); display: flex; gap: 0.4rem; align-items: center; }
   .channel-label .num { color: var(--text-muted); font-size: 0.75rem; font-weight: 600; }
   .channel-sub { font-size: 0.72rem; color: var(--text-muted); }
 
   .epg-pick {
-    padding: 0.4rem 0.5rem; border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: var(--bg); color: var(--text-primary);
+    padding: 0.48rem 0.7rem; border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg); color: var(--text-primary);
     font-size: 0.82rem; min-width: 200px;
+  }
+  .epg-pick:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
   }
 
   .type-toggle { display: flex; gap: 1.25rem; margin-bottom: 1rem; }
   .radio { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; }
+  .radio input[type="radio"] { accent-color: var(--accent); }
 
   .grid {
     display: grid;
@@ -798,22 +816,35 @@
     font-size: 0.78rem; color: var(--text-secondary);
   }
   input[type="text"], input[type="number"] {
-    padding: 0.45rem 0.6rem; border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: var(--bg); color: var(--text-primary);
+    padding: 0.48rem 0.7rem; border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg); color: var(--text-primary);
     font-family: inherit; font-size: 0.85rem;
   }
+  input[type="text"]:focus, input[type="number"]:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  input::placeholder { color: var(--text-muted); }
 
   .actions { display: flex; gap: 0.5rem; }
   .btn {
-    padding: 0.45rem 0.85rem; background: var(--bg);
-    color: var(--text-primary); border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 4px; font-size: 0.8rem; cursor: pointer;
+    padding: 0.45rem 0.9rem; background: transparent;
+    color: var(--text-secondary); border: 1px solid var(--border-strong);
+    border-radius: 7px; font-size: 0.78rem; font-weight: 500; cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
   }
-  .btn:hover:not(:disabled) { background: var(--bg-hover); }
+  .btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--text-muted); }
+  .btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
-  .btn-danger { color: var(--error); }
-  .btn-danger:hover:not(:disabled) { background: var(--error-bg); }
+  .btn-primary {
+    background: var(--accent); color: #fff; border: none;
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-danger {
+    background: var(--error-bg); border: 1px solid var(--error); color: var(--error);
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .btn-danger:hover:not(:disabled) { background: var(--error-bg); border-color: var(--error); }
 </style>

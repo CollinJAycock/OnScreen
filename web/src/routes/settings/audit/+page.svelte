@@ -134,15 +134,15 @@
 </div>
 
 <style>
-  .page { max-width: 900px; }
+  .page { max-width: 720px; }
 
   .banner {
     padding: 0.6rem 0.9rem;
-    border-radius: 8px;
+    border-radius: 7px;
     font-size: 0.8rem;
     margin-bottom: 1.25rem;
   }
-  .banner.error { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2); color: #fca5a5; }
+  .banner.error { background: var(--error-bg); border: 1px solid var(--error); color: var(--error); }
 
   .skeleton-block {
     height: 200px; border-radius: 10px;
@@ -168,7 +168,7 @@
     overflow-x: auto;
     border: 1px solid var(--border);
     border-radius: 10px;
-    background: rgba(255,255,255,0.02);
+    background: var(--bg-elevated);
   }
 
   table {
@@ -196,7 +196,7 @@
   td {
     padding: 0.6rem 0.85rem;
     color: var(--text-secondary);
-    border-bottom: 1px solid rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
     vertical-align: top;
   }
 
@@ -209,9 +209,9 @@
   }
 
   .col-target {
-    font-family: monospace;
+    font-family: ui-monospace, monospace;
     font-size: 0.72rem;
-    color: #8888a0;
+    color: var(--text-secondary);
     word-break: break-all;
     max-width: 180px;
   }
@@ -225,7 +225,7 @@
   }
 
   .col-ip {
-    font-family: monospace;
+    font-family: ui-monospace, monospace;
     font-size: 0.72rem;
     color: var(--text-muted);
     white-space: nowrap;
@@ -239,10 +239,10 @@
     font-weight: 600;
     white-space: nowrap;
   }
-  .action-success { background: rgba(52,211,153,0.1); color: #6ee7b7; }
-  .action-danger  { background: rgba(248,113,113,0.1); color: #fca5a5; }
-  .action-warn    { background: rgba(251,191,36,0.1);  color: #fcd34d; }
-  .action-neutral { background: rgba(124,106,247,0.1); color: var(--accent-text); }
+  .action-success { background: var(--success-bg); color: var(--success); }
+  .action-danger  { background: var(--error-bg); color: var(--error); }
+  .action-warn    { background: rgba(251,191,36,0.12);  color: #fcd34d; }
+  .action-neutral { background: var(--accent-bg); color: var(--accent-text); }
 
   .load-more-wrap {
     display: flex;
@@ -261,7 +261,7 @@
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s;
   }
-  .btn-load-more:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  .btn-load-more:hover { background: var(--bg-hover); border-color: var(--text-muted); }
   .btn-load-more:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */

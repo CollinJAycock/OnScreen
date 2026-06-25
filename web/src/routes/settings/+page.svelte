@@ -645,16 +645,16 @@
 
   .banner {
     padding: 0.6rem 0.9rem;
-    border-radius: 8px;
+    border-radius: 10px;
     font-size: 0.8rem;
     margin-bottom: 1.25rem;
   }
-  .banner.error { background: var(--error-bg); border: 1px solid var(--error-bg); color: var(--error); }
-  .banner.ok    { background: var(--success-bg);  border: 1px solid var(--success-bg);  color: var(--success); }
+  .banner.error { background: var(--error-bg); border: 1px solid var(--error); color: var(--error); }
+  .banner.ok    { background: var(--success-bg);  border: 1px solid var(--success);  color: var(--success); }
 
   .skeleton-block {
-    height: 100px; border-radius: 10px;
-    background: linear-gradient(90deg, var(--bg-elevated) 25%, #16161f 50%, var(--bg-elevated) 75%);
+    height: 120px; border-radius: 10px;
+    background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
   }
@@ -691,23 +691,21 @@
     accent-color: var(--accent);
   }
 
-  label, .field-heading { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+  label, .field-heading { font-size: 0.72rem; font-weight: 500; color: var(--text-muted); }
   /* .field-heading is for visual labels above read-only display
      blocks (the {service} webhook URL boxes) — they're not labelling
      a single form control, so a bare <label> would be a11y noise. */
 
   input, select {
-    background: var(--bg-hover);
+    background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 7px;
     padding: 0.48rem 0.7rem;
     font-size: 0.85rem;
     color: var(--text-primary);
+    font-family: inherit;
     transition: border-color 0.15s;
     width: 100%;
-  }
-  input {
-    font-family: monospace;
   }
   input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   ::placeholder { color: var(--text-muted); }
@@ -726,7 +724,7 @@
     padding-top: 1.5rem;
   }
   .btn-save {
-    padding: 0.42rem 0.9rem; background: var(--accent);
+    padding: 0.45rem 0.9rem; background: var(--accent);
     border: none; border-radius: 7px; color: #fff;
     font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
   }
@@ -751,7 +749,7 @@
   .toggle-label {
     display: flex; align-items: center; gap: 0.6rem;
     cursor: pointer; user-select: none;
-    font-size: 0.875rem; color: var(--text-primary);
+    font-size: 0.85rem; color: var(--text-primary);
   }
   .toggle-label input[type="checkbox"] {
     width: 1rem; height: 1rem;
@@ -781,16 +779,16 @@
   .btn-copy {
     flex-shrink: 0;
     padding: 0.3rem 0.6rem;
-    background: var(--border);
+    background: var(--bg-hover);
     border: 1px solid var(--border-strong);
-    border-radius: 5px;
+    border-radius: 7px;
     color: var(--text-secondary);
     font-size: 0.72rem;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.12s;
   }
-  .btn-copy:hover { background: var(--border-strong); }
+  .btn-copy:hover { background: var(--bg-hover); border-color: var(--text-muted); }
 
   /* Path mappings */
   .path-mapping-row {
@@ -805,16 +803,16 @@
     flex-shrink: 0;
     width: 26px; height: 26px;
     display: flex; align-items: center; justify-content: center;
-    background: rgba(248,113,113,0.08);
-    border: 1px solid var(--error-bg);
-    border-radius: 5px;
+    background: var(--error-bg);
+    border: 1px solid var(--error);
+    border-radius: 7px;
     color: var(--error);
     font-size: 1rem;
     cursor: pointer;
     transition: background 0.12s;
     line-height: 1;
   }
-  .btn-remove:hover { background: rgba(248,113,113,0.15); }
+  .btn-remove:hover { background: var(--error-bg); border-color: var(--error); }
   .btn-add-mapping {
     align-self: flex-start;
     font-size: 0.72rem;
@@ -823,7 +821,7 @@
   }
 
   code {
-    background: var(--border);
+    background: var(--input-bg);
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
     font-size: 0.72rem;
@@ -845,7 +843,7 @@
   }
   .pin-status.off { color: var(--text-muted); }
   .btn-outline {
-    padding: 0.36rem 0.75rem;
+    padding: 0.45rem 0.9rem;
     background: transparent;
     border: 1px solid var(--border-strong);
     border-radius: 7px;
@@ -856,8 +854,8 @@
     transition: background 0.12s, border-color 0.12s;
   }
   .btn-outline:hover { background: var(--bg-hover); border-color: var(--text-muted); }
-  .btn-outline.btn-danger { color: var(--error); border-color: rgba(248,113,113,0.25); }
-  .btn-outline.btn-danger:hover { background: rgba(248,113,113,0.08); }
+  .btn-outline.btn-danger { color: var(--error); border-color: var(--error); }
+  .btn-outline.btn-danger:hover { background: var(--error-bg); border-color: var(--error); }
   .pin-form {
     display: flex;
     flex-direction: column;
