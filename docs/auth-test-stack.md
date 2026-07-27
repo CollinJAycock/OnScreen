@@ -1,6 +1,6 @@
 # Auth-provider test stack (Windows / dev)
 
-Walkthrough for the "Auth providers" rows of [manual-test-plan.md](manual-test-plan.md) when you don't have a real Keycloak / AD / Google IdP on hand. Everything runs in Docker Desktop on Windows; OnScreen itself runs via `make dev` (or its own docker-compose) alongside the stack.
+Walkthrough for the "Auth providers" rows of [v2.1-release-test-plan.md](v2.1-release-test-plan.md) when you don't have a real Keycloak / AD / Google IdP on hand. Everything runs in Docker Desktop on Windows; OnScreen itself runs via `make dev` (or its own docker-compose) alongside the stack.
 
 ## Spin up
 

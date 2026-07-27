@@ -182,7 +182,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full configuration reference, and
 4. **Single binary** — `go build ./cmd/server` produces one executable with the frontend embedded.
 5. **Plain SQL** — queries authored as `.sql` files and compiled to type-safe Go via [sqlc](https://sqlc.dev).
 
-Full design: [ARCHITECTURE.md](ARCHITECTURE.md). REST reference: [API.md](API.md).
+Full design: [ARCHITECTURE.md](ARCHITECTURE.md). REST reference: [docs/api/openapi.yaml](docs/api/openapi.yaml) (error codes: [docs/api/ERROR_CODES.md](docs/api/ERROR_CODES.md)).
 
 ## Development
 

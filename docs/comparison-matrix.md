@@ -396,6 +396,6 @@ Movies / TV / music / photo scanning and metadata enrichment, embedded + disk ar
 ## See also
 
 - [v2.1-roadmap.md](v2.1-roadmap.md) — full v2.1 track list and current status
-- [API.md](../API.md) — REST surface
+- [api/openapi.yaml](api/openapi.yaml) — REST surface ([api/ERROR_CODES.md](api/ERROR_CODES.md) for error codes)
 - [ARCHITECTURE.md](../ARCHITECTURE.md) — design notes
 - [CHANGELOG.md](../CHANGELOG.md) — what shipped when

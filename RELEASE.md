@@ -10,7 +10,7 @@ The v2.0 roadmap is feature-complete. Every item in [docs/v2-roadmap.md](docs/v2
 
 From this point until v2.0 is tagged, **`release/v2.0` only accepts:**
 
-1. Bug fixes triaged out of the manual test plan ([docs/manual-test-plan.md](docs/manual-test-plan.md)) Tier 2 sweep and Tier 3 hardware validation.
+1. Bug fixes triaged out of the manual test plan (since removed from the tree; its successor is [docs/v2.1-release-test-plan.md](docs/v2.1-release-test-plan.md)) Tier 2 sweep and Tier 3 hardware validation.
 2. Critical security fixes (anything that would otherwise gate the release).
 3. Documentation corrections.
 
@@ -56,6 +56,6 @@ These are documented in the v2 roadmap as deliberate v2.1 targets, not as gaps:
 |---|---|
 | Comparison vs Plex / Emby / Jellyfin | [docs/comparison-matrix.md](docs/comparison-matrix.md) |
 | v2 roadmap (history of decisions) | [docs/v2-roadmap.md](docs/v2-roadmap.md) |
-| Manual test plan + automated-coverage map | [docs/manual-test-plan.md](docs/manual-test-plan.md) |
+| Release test plan + automated-coverage map | [docs/v2.1-release-test-plan.md](docs/v2.1-release-test-plan.md) |
 | Deployment guide | [docs/deployment.md](docs/deployment.md) |
 | Plugin authoring (MCP) | [docs/plugins.md](docs/plugins.md) |
