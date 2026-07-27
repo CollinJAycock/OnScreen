@@ -441,6 +441,300 @@ class PlaybackViewModelTest {
         assertThat(vm.uiState.value.source).isNull()
     }
 
+    // ── Audio-track switching: relative vs absolute stream index ────────────
+
+    /**
+     * The API's `AudioStream.index` is the ABSOLUTE ffprobe stream index, but
+     * the server feeds `audio_stream_index` straight to `-map 0:a:%d`, which
+     * counts audio streams ONLY (see internal/transcode/ffmpeg.go:181, which
+     * documents the two conventions as distinct). Because video occupies
+     * stream #0:0 the two can never coincide for a video file, so sending the
+     * absolute index selected the wrong track on multi-audio files and mapped
+     * a nonexistent stream — killing the session — on single-audio ones.
+     */
+    @Test
+    fun `audio switch sends the relative audio ordinal, not the absolute stream index`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        // Absolute ffprobe indices: video is #0, so audio starts at #1.
+        val file = transcodeFile().copy(
+            audio_streams = listOf(
+                AudioStream(1, "ac3", 6, "en", "English"),
+                AudioStream(2, "aac", 2, "es", "Spanish"),
+                AudioStream(3, "aac", 2, "fr", "French"),
+            ),
+        )
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        // User picks the third entry in the picker (French, absolute index 3).
+        vm.switchAudioStream(audioStreamOrdinal = 2, currentPositionMs = 10_000L)
+        advanceUntilIdle()
+
+        // The ordinal 2 must go out unchanged — NOT the absolute index 3.
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1",
+                height = any(),
+                positionMs = any(),
+                fileId = "f2",
+                videoCopy = any(),
+                audioStreamIndex = 2,
+                supportsHevc = any(),
+                supportsAv1 = any(),
+            )
+        }
+        coVerify(exactly = 0) {
+            transcodeRepo.start(
+                itemId = any(), height = any(), positionMs = any(), fileId = any(),
+                videoCopy = any(), audioStreamIndex = 3, supportsHevc = any(), supportsAv1 = any(),
+            )
+        }
+    }
+
+    /**
+     * The call site that actually regressed lives in PlaybackFragment, which
+     * is not JVM-testable — so the ViewModel range-checks the ordinal against
+     * the track list. Passing an ABSOLUTE ffprobe index (always >= 1 because
+     * video holds #0:0, and out of range for typical track counts) is now a
+     * visible no-op instead of a silently wrong `-map 0:a:N`.
+     */
+    @Test
+    fun `an out-of-range ordinal is rejected instead of selecting a bogus stream`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        // Two audio tracks at absolute ffprobe indices 1 and 2.
+        val file = transcodeFile().copy(
+            audio_streams = listOf(
+                AudioStream(1, "ac3", 6, "en", "English"),
+                AudioStream(2, "aac", 2, "es", "Spanish"),
+            ),
+        )
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        // The old bug: picking the 2nd track sent AudioStream.index == 2,
+        // which is out of range for a 2-track file (valid ordinals are 0..1).
+        vm.switchAudioStream(audioStreamOrdinal = 2, currentPositionMs = 0L)
+        advanceUntilIdle()
+
+        // Only prepare()'s own start — the bogus switch issued nothing.
+        coVerify(exactly = 1) {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        }
+        vm.switchAudioStream(audioStreamOrdinal = -1, currentPositionMs = 0L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `audio switch resumes at the current content position`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1", start_offset_sec = 60.0)
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", startMs = 60_000L, serverUrl = "http://srv")
+        advanceUntilIdle()
+        assertThat(vm.hlsOffsetMs).isEqualTo(60_000L)
+
+        // Player is 5 s into a session that opened at 60 s → content pos 65 s.
+        vm.switchAudioStream(audioStreamOrdinal = 1, currentPositionMs = 5_000L)
+        advanceUntilIdle()
+
+        coVerify {
+            transcodeRepo.start(
+                itemId = any(), height = any(), positionMs = 65_000L, fileId = any(),
+                videoCopy = any(), audioStreamIndex = 1, supportsHevc = any(), supportsAv1 = any(),
+            )
+        }
+    }
+
+    // ── Session teardown ordering ───────────────────────────────────────────
+
+    /**
+     * startTranscode used to DELETE the running session before issuing the
+     * new POST, so a failed switch (server 5xx, rate limit, network blip)
+     * left the user with nothing playing at all — while the catch block
+     * claimed it "leaves the existing session running".
+     */
+    @Test
+    fun `a failed audio switch leaves the existing session alive`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "sess-live", playlist_url = "/p.m3u8", token = "tok-live")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+        val original = vm.uiState.value.source
+
+        // The re-issue fails.
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } throws RuntimeException("503 rate limited")
+
+        vm.switchAudioStream(audioStreamOrdinal = 1, currentPositionMs = 1_000L)
+        advanceUntilIdle()
+
+        // The live session was never torn down...
+        coVerify(exactly = 0) { transcodeRepo.stop("sess-live", "tok-live") }
+        // ...and the player keeps the source it is already playing.
+        assertThat(vm.uiState.value.source).isSameInstanceAs(original)
+    }
+
+    @Test
+    fun `a successful switch retires the previous session`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "sess-old", playlist_url = "/old.m3u8", token = "tok-old")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "sess-new", playlist_url = "/new.m3u8", token = "tok-new")
+
+        vm.switchAudioStream(audioStreamOrdinal = 1, currentPositionMs = 1_000L)
+        advanceUntilIdle()
+
+        // Old session released (no server-side ffmpeg leak), new one live.
+        coVerify(exactly = 1) { transcodeRepo.stop("sess-old", "tok-old") }
+        coVerify(exactly = 0) { transcodeRepo.stop("sess-new", "tok-new") }
+        assertThat((vm.uiState.value.source as PlaybackSource.Hls).playlistUrl)
+            .isEqualTo("http://srv/new.m3u8")
+    }
+
+    // ── Subtitles ───────────────────────────────────────────────────────────
+
+    /**
+     * A server HLS session carries NO text streams — `transcodeStartRequest`
+     * has no subtitle field and the server emits subtitles as separate .vtt
+     * files. So tracks must be side-loaded from
+     * `/media/subtitles/{fileId}/{index}`, which uses the ABSOLUTE stream
+     * index (the opposite convention from audio_stream_index above).
+     */
+    @Test
+    fun `subtitle side-load sources use the absolute stream index and carry a token`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        val file = directPlayFile().copy(
+            stream_token = "file-tok",
+            subtitle_streams = listOf(
+                SubtitleStream(2, "subrip", "en", "English", false),
+                SubtitleStream(5, "subrip", "es", "Spanish", true),
+            ),
+        )
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        val sources = vm.uiState.value.subtitleSources
+        assertThat(sources).hasSize(2)
+        assertThat(sources[0].url).isEqualTo("http://srv/media/subtitles/f1/2?token=file-tok")
+        assertThat(sources[0].language).isEqualTo("en")
+        assertThat(sources[0].forced).isFalse()
+        // Absolute index 5 is preserved — not collapsed to the ordinal 1.
+        assertThat(sources[1].url).isEqualTo("http://srv/media/subtitles/f1/5?token=file-tok")
+        assertThat(sources[1].forced).isTrue()
+        // Order matches subtitle_streams so picker indices map straight across.
+        assertThat(sources.map { it.language })
+            .containsExactlyElementsIn(vm.uiState.value.subtitles.map { it.language }).inOrder()
+    }
+
+    @Test
+    fun `subtitle sources are empty when no token is available`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        // No per-file token, and serverPrefs() is a relaxed mock whose
+        // getAssetToken() returns null — ExoPlayer cannot send a Bearer, so
+        // emitting an unauthenticated URL would just 401 on every cue.
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(
+            directPlayFile().copy(
+                stream_token = null,
+                subtitle_streams = listOf(SubtitleStream(2, "subrip", "en", "English", false)),
+            ),
+        )
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.subtitleSources).isEmpty()
+    }
+
+    /**
+     * reloadSubtitles used to re-issue the whole transcode session on the
+     * premise that "a transcoded session bakes the subtitle set into its
+     * playlist" — false, so the user paid a playback interruption plus a
+     * fresh ffmpeg spin-up and still got no new track.
+     */
+    @Test
+    fun `reloadSubtitles refreshes tracks without restarting the session`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(
+            transcodeFile().copy(stream_token = "file-tok"),
+        )
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "sess-1", playlist_url = "/p.m3u8", token = "tok-1")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+        val sourceBefore = vm.uiState.value.source
+
+        // A newly downloaded OpenSubtitles track shows up on the item.
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(
+            transcodeFile().copy(
+                stream_token = "file-tok",
+                subtitle_streams = listOf(SubtitleStream(4, "subrip", "de", "Deutsch", false)),
+            ),
+        )
+
+        vm.reloadSubtitles("movie-1", currentPositionMs = 42_000L)
+        advanceUntilIdle()
+
+        // Exactly the one start() from prepare() — no re-issue.
+        coVerify(exactly = 1) {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        }
+        coVerify(exactly = 0) { transcodeRepo.stop(any(), any()) }
+        // Playback source untouched; the new track is now selectable.
+        assertThat(vm.uiState.value.source).isSameInstanceAs(sourceBefore)
+        assertThat(vm.uiState.value.subtitles.map { it.language }).containsExactly("de")
+        assertThat(vm.uiState.value.subtitleSources.single().url)
+            .isEqualTo("http://srv/media/subtitles/f2/4?token=file-tok")
+    }
+
     @Test
     fun `dolby vision source is refused even when the server decision is unavailable`() = runTest(dispatcher) {
         val itemRepo = itemRepo()

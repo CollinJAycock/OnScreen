@@ -146,6 +146,30 @@ object PlaybackHelper {
     fun supportsAv1(): Boolean = hasDecoderFor("video/av01")
 
     /**
+     * Total duration of the ITEM in content time — the only time base a
+     * progress report or completion ratio may be computed in.
+     *
+     * [playerDurationMs] is NOT that for a resumed HLS session: the session
+     * playlist starts at [hlsOffsetMs], so the player reports only the
+     * REMAINING duration. Pairing it with a position that has the offset
+     * added (which both the progress heartbeat and the Watch Next publisher
+     * do) puts the two halves in different time bases — a movie resumed an
+     * hour in reports position ≈ duration on its first heartbeat and the
+     * server marks it watched.
+     *
+     * Prefers the item's authoritative duration; otherwise re-absolutises the
+     * player's. Returns 0 when neither is known, which callers treat as
+     * "don't report".
+     */
+    fun contentDurationMs(itemDurationMs: Long?, playerDurationMs: Long, hlsOffsetMs: Long): Long {
+        if (itemDurationMs != null && itemDurationMs > 0L) return itemDurationMs
+        // C.TIME_UNSET is negative, so `<= 0` covers the unknown-duration case;
+        // MAX_VALUE guards the unbounded/live shape.
+        if (playerDurationMs <= 0L || playerDurationMs == Long.MAX_VALUE) return 0L
+        return playerDurationMs + hlsOffsetMs
+    }
+
+    /**
      * Strips the `token` query parameter from a stream/asset URL before it
      * goes into a user-facing error dialog. The URL is shown so the user (or
      * a tunnel log) can identify which request died — but stream URLs carry

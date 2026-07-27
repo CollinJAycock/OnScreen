@@ -12,6 +12,8 @@ import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import tv.onscreen.android.data.model.NotificationItem
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,13 +38,29 @@ class NotificationsStream @Inject constructor(
     private val adapter: JsonAdapter<NotificationItem> =
         moshi.adapter(NotificationItem::class.java)
 
+    /**
+     * SSE-tuned view of the shared client. An event stream is idle by
+     * design — the server sends one `: keepalive` at connect and then
+     * nothing until an event fires — so the shared client's 60 s read
+     * timeout tore the connection down every minute, and the 5 s
+     * reconnect delay left a recurring window where pushed events
+     * (cross-device progress, "play on this TV") were dropped on the
+     * floor. Zero disables the read timeout for this stream only;
+     * connection loss still surfaces via onFailure. Shares the parent's
+     * connection pool, interceptors, and TLS config.
+     */
+    private val sseClient: OkHttpClient =
+        client.newBuilder()
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+
     fun subscribe(): Flow<NotificationItem> = callbackFlow {
         val request = Request.Builder()
             .url("http://localhost/api/v1/notifications/stream")
             .header("Accept", "text/event-stream")
             .build()
 
-        val source: EventSource = EventSources.createFactory(client)
+        val source: EventSource = EventSources.createFactory(sseClient)
             .newEventSource(request, object : EventSourceListener() {
                 override fun onEvent(
                     eventSource: EventSource,
@@ -58,8 +76,16 @@ class NotificationsStream @Inject constructor(
                     }
                 }
 
+                // Both terminal callbacks MUST complete the flow
+                // EXCEPTIONALLY. NotificationsRepository reconnects via
+                // `.retry { }`, which only fires on an exception — a normal
+                // completion instead propagates through `shareIn` into a
+                // SharedFlow that never completes, so neither the retry nor
+                // the callers' own outer reconnect loops ever run again and
+                // every SSE-driven feature stays dead for the rest of the
+                // session.
                 override fun onClosed(eventSource: EventSource) {
-                    close()
+                    close(IOException("SSE stream closed by server"))
                 }
 
                 override fun onFailure(
@@ -67,7 +93,7 @@ class NotificationsStream @Inject constructor(
                     t: Throwable?,
                     response: Response?,
                 ) {
-                    close(t)
+                    close(t ?: IOException("SSE stream failed: HTTP ${response?.code ?: 0}"))
                 }
             })
 

@@ -1,7 +1,7 @@
 package tv.onscreen.android.data.api
 
-import android.net.Uri
 import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -47,6 +47,10 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
     )
 
     @Volatile private var cachedServerHost: String? = null
+    /** -1 when no server URL is configured yet. Paired with the host so the
+     *  origin check matches [TokenAuthenticator]'s — see the note there on
+     *  why a host-only match is not enough on a shared LAN host. */
+    @Volatile private var cachedServerPort: Int = -1
     @Volatile private var cachedToken: String? = null
     @Volatile private var cacheLoadedAtMs: Long = 0L
 
@@ -63,7 +67,10 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         // shows the placeholder. Match by host: anything that isn't
         // the configured server passes through unmodified.
         val serverHost = cachedServerHost
-        if (serverHost != null && !request.url.host.equals(serverHost, ignoreCase = true)) {
+        if (serverHost != null &&
+            (!request.url.host.equals(serverHost, ignoreCase = true) ||
+                request.url.port != cachedServerPort)
+        ) {
             return chain.proceed(request)
         }
 
@@ -96,12 +103,16 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         if (now - cacheLoadedAtMs < CACHE_TTL_MS) return
         synchronized(this) {
             if (now - cacheLoadedAtMs < CACHE_TTL_MS) return
-            val (host, token) = runBlocking {
-                val url = prefs.getServerUrl()
-                val parsedHost = url?.let { runCatching { Uri.parse(it).host }.getOrNull() }
-                parsedHost to prefs.getAccessToken()
+            // HttpUrl, not android.net.Uri — the host comparison below is a
+            // security boundary, and under JVM unit tests android.jar is
+            // stubbed so Uri.parse() returns null, which would quietly
+            // neutralise the check under test while it still worked in
+            // production. Same parse the rest of the OkHttp stack uses.
+            val (parsed, token) = runBlocking {
+                prefs.getServerUrl()?.toHttpUrlOrNull() to prefs.getAccessToken()
             }
-            cachedServerHost = host
+            cachedServerHost = parsed?.host
+            cachedServerPort = parsed?.port ?: -1
             cachedToken = token
             cacheLoadedAtMs = now
         }

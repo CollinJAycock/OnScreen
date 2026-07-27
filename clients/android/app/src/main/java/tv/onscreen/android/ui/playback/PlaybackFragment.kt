@@ -28,12 +28,14 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.leanback.LeanbackPlayerAdapter
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.Chapter
@@ -151,6 +153,18 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  tick fought the user for D-pad focus. */
     private var shownSkipMarkerStartMs: Long? = null
     private var markers: List<tv.onscreen.android.data.model.Marker> = emptyList()
+
+    /**
+     * Dialogs currently on screen. These are activity-window dialogs, so they
+     * survive the fragment unless dismissed — and their click handlers reach
+     * back into `parentFragmentManager` / `viewLifecycleOwner`, which throw
+     * once the fragment is detached. That became reachable when the SCREEN_OFF
+     * home-reset started replacing this fragment out from under a live dialog:
+     * the TV wakes, the user presses OK on a stale error dialog, and the app
+     * crashes with IllegalStateException. Dismissed in onDestroyView, which
+     * also prevents the handler from ever running.
+     */
+    private val openDialogs = mutableListOf<AlertDialog>()
 
     /** Most recent item detail emitted by the ViewModel. Used by the
      *  Watch Next publisher to upsert title / poster / type metadata
@@ -380,6 +394,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun installTrickplaySeekProvider(itemId: String) {
         trickplayJob?.cancel()
+        // Recycle the outgoing provider's sprite sheets (~30 MB for a feature
+        // film) before replacing it. This runs on every uiState emission, but
+        // only the provider still attached at onDestroyView time was ever
+        // released — so an audio switch or subtitle reload silently orphaned a
+        // full sheet cache's worth of native bitmap memory on a 1 GB TV box.
+        (glue?.seekProvider as? TrickplaySeekProvider)?.release()
         trickplayJob = viewLifecycleOwner.lifecycleScope.launch {
             val status = trickplayRepo.status(itemId)
             if (status.status != "done") return@launch
@@ -430,12 +450,20 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val exo = player
                 if (item != null && exo != null) {
                     val pos = exo.currentPosition + viewModel.hlsOffsetMs
-                    val dur = exo.duration.takeIf { it > 0 && it != Long.MAX_VALUE }
-                        ?: item.duration_ms
-                        ?: item.files.firstOrNull()?.duration_ms
-                        ?: 0L
+                    // Content-time duration — see contentDurationMs(). Using
+                    // the player's session-relative duration here made pos/dur
+                    // cross the manager's 0.9 "finished" threshold almost
+                    // immediately on any resumed HLS session, so the launcher's
+                    // Continue Watching row was deleted mid-movie.
+                    val dur = contentDurationMs()
                     if (dur > 0L && pos > 0L) {
-                        watchNext.publishContinueWatching(item, pos, dur)
+                        // Off the main thread: publishContinueWatching does a
+                        // full ContentResolver query plus an insert/update —
+                        // cross-process binder IPC and provider disk I/O — and
+                        // this ticks every 30 s underneath live video.
+                        withContext(Dispatchers.IO) {
+                            watchNext.publishContinueWatching(item, pos, dur)
+                        }
                     }
                 }
                 delay(30_000)
@@ -610,9 +638,35 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // run two parallel sessions for the duration of the new
         // fragment's life.
         val itemId = arguments?.getString(ARG_ITEM_ID)
+        val parkedMeta = tv.onscreen.android.playback.AudioHandoff.peekMetadata()
         val parked = itemId?.let { tv.onscreen.android.playback.AudioHandoff.take(it) }
+        if (parked == null && tv.onscreen.android.playback.AudioHandoff.peek() != null) {
+            // Something is parked, but for a DIFFERENT item — the user
+            // started new content while a track was playing in the service.
+            // Building a fresh player without stopping the service left two
+            // ExoPlayers decoding to the speakers at once: the new one never
+            // requests audio focus (Media3 only wires that up on the service
+            // side), so the old one is never told to duck or pause. Stopping
+            // the service releases the parked player via its onDestroy, which
+            // sees the handoff slot still pointing at it.
+            try {
+                requireContext().applicationContext.stopService(
+                    android.content.Intent(
+                        requireContext(),
+                        tv.onscreen.android.playback.OnScreenMediaSessionService::class.java,
+                    ),
+                )
+            } catch (_: Exception) { }
+        }
         val exo = parked ?: buildExoPlayer()
         if (parked != null) {
+            // Seed the item type from the handoff metadata NOW. It is
+            // otherwise only set on the first uiState emission, several
+            // network round-trips away, and onStop inside that window reads
+            // isAudioItem() == false and stop()+release()s this very player —
+            // killing music the user is actively listening to, then reporting
+            // position 0 over its resume point.
+            parkedMeta?.itemType?.let { currentItemType = it }
             // Reused-parked-player flag suppresses the next
             // setMediaSource/prepare on the first state emission so
             // the song doesn't restart from 0:00 when the user
@@ -735,7 +789,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // keep seeing it offered as resumable. The next
                 // episode (if any) will publish its own row when
                 // playback starts on it.
-                currentItem?.let { watchNext.remove(it.id) }
+                currentItem?.let { finished ->
+                    // Off the main thread — remove() runs an unfiltered
+                    // provider query plus a delete (cross-process binder IPC).
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        withContext(Dispatchers.IO) { watchNext.remove(finished.id) }
+                    }
+                }
                 watchNextJob?.cancel()
                 val next = nextEpisode
                 when {
@@ -802,7 +862,33 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val hlsSource = HlsMediaSource.Factory(factory)
                     .setLoadErrorHandlingPolicy(errorPolicy)
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
-                exo.setMediaSource(hlsSource)
+                // Side-load the subtitle tracks. A server HLS session carries
+                // NO text streams (it maps only video + one audio; subtitles
+                // are emitted as separate .vtt files), so without this the
+                // track selector has nothing to select and the subtitle
+                // picker is inert on every transcode / remux path.
+                //
+                // Merged explicitly rather than via
+                // MediaItem.setSubtitleConfigurations: only
+                // DefaultMediaSourceFactory honours that field, and we build
+                // the HlsMediaSource directly — HlsMediaSource.createMediaSource
+                // ignores subtitleConfigurations entirely, so setting it there
+                // would silently do nothing.
+                val subtitleSources = subtitleConfigurations().map { cfg ->
+                    androidx.media3.exoplayer.source.SingleSampleMediaSource
+                        .Factory(factory)
+                        .setTreatLoadErrorsAsEndOfStream(true)
+                        .createMediaSource(cfg, C.TIME_UNSET)
+                }
+                val mediaSource = if (subtitleSources.isEmpty()) {
+                    hlsSource
+                } else {
+                    androidx.media3.exoplayer.source.MergingMediaSource(
+                        hlsSource,
+                        *subtitleSources.toTypedArray(),
+                    )
+                }
+                exo.setMediaSource(mediaSource)
                 exo.prepare()
                 // seg0AudioGapSec compensation. After a mid-stream
                 // resume with AC3 → AAC re-encode, the first audible
@@ -820,6 +906,24 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             }
         }
     }
+
+    /**
+     * ExoPlayer side-load configs for the item's embedded subtitle streams,
+     * served as WebVTT by the server's `/media/subtitles/{fileId}/{index}`
+     * endpoint. Applied to HLS sources, where the session itself carries no
+     * text tracks; direct play leaves them off because ExoPlayer extracts the
+     * container's own subtitle streams and side-loading would duplicate every
+     * track in the picker.
+     */
+    private fun subtitleConfigurations(): List<MediaItem.SubtitleConfiguration> =
+        viewModel.uiState.value.subtitleSources.map { s ->
+            MediaItem.SubtitleConfiguration.Builder(Uri.parse(s.url))
+                .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
+                .setLanguage(s.language.ifBlank { null })
+                .setLabel(s.label)
+                .setSelectionFlags(if (s.forced) C.SELECTION_FLAG_FORCED else 0)
+                .build()
+        }
 
     /// Default DefaultHttpDataSource timeouts are 8 s connect / 8 s
     /// read. The first segment waits for the ffmpeg transcoder to
@@ -985,6 +1089,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 d.dismiss()
             }
             .show()
+            .trackOpen()
     }
 
     private fun showChapterPicker() {
@@ -1006,6 +1111,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 d.dismiss()
             }
             .show()
+            .trackOpen()
     }
 
     private fun fmtTimecode(ms: Long): String {
@@ -1014,6 +1120,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val m = (s % 3600) / 60
         val sec = s % 60
         return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+    }
+
+    /** Register a shown dialog for teardown-time dismissal. See [openDialogs]. */
+    private fun AlertDialog.trackOpen(): AlertDialog {
+        openDialogs.add(this)
+        setOnDismissListener { openDialogs.remove(this) }
+        return this
     }
 
     private fun showAudioPicker() {
@@ -1038,6 +1151,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 applyAudioSelection(idx)
             }
             .show()
+            .trackOpen()
     }
 
     /**
@@ -1054,11 +1168,20 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         if (currentSource is PlaybackSource.Hls) {
             // Transcode path (HLS) — emits a single audio track per
             // session, so a swap requires re-issuing the session with
-            // the new audio_stream_index. Server-side
-            // audio_stream_index is the FFmpeg stream index, which
-            // the API exposes via AudioStream.index.
+            // the new audio_stream_index.
+            //
+            // Send the RELATIVE audio-stream ordinal (the position within
+            // audio_streams), NOT AudioStream.index. The API's `index` is the
+            // ABSOLUTE ffprobe stream index, but the server feeds this value
+            // straight to `-map 0:a:%d`, which counts audio streams only —
+            // the two conventions are documented as distinct at
+            // internal/transcode/ffmpeg.go:181. Because video occupies #0:0
+            // they can never coincide for a video file, so passing the
+            // absolute index selected the wrong track on multi-audio files
+            // and mapped a nonexistent stream (killing the session) on
+            // single-audio ones.
             val pos = player?.currentPosition ?: 0L
-            viewModel.switchAudioStream(stream.index, pos)
+            viewModel.switchAudioStream(idx, pos)
         } else {
             // Direct play — let ExoPlayer pick the matching track.
             selectAudioByLanguage(stream.language)
@@ -1106,6 +1229,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 }
             }
             .show()
+            .trackOpen()
     }
 
     /** Two-step OpenSubtitles flow: search → pick → download → reload
@@ -1121,6 +1245,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             .setMessage(R.string.subtitles_searching_msg)
             .setCancelable(true)
             .show()
+            .trackOpen()
         viewLifecycleOwner.lifecycleScope.launch {
             val results = try {
                 onlineSubtitleRepo.search(itemId)
@@ -1166,6 +1291,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     }
                 }
                 .show()
+                .trackOpen()
         }
     }
 
@@ -1372,10 +1498,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             .setMessage(body)
             .setPositiveButton(android.R.string.ok) { d, _ ->
                 d.dismiss()
-                parentFragmentManager.popBackStack()
+                // Guard the detached case: onDestroyView dismisses tracked
+                // dialogs, but a dismiss already in flight can still deliver
+                // this callback, and popBackStack on a detached fragment
+                // throws IllegalStateException.
+                if (isAdded) parentFragmentManager.popBackStack()
             }
             .create()
             .focusableOnTv()
+            .also { it.trackOpen() }
             .show()
     }
 
@@ -1384,6 +1515,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  MediaSessionService handoff. Video is released on stop instead. */
     private fun isAudioItem(): Boolean =
         currentItemType == "track" || currentItemType == "audiobook"
+
+    /** Content-time duration for progress reports + completion ratios. The
+     *  arithmetic lives in [PlaybackHelper.contentDurationMs] so it is unit
+     *  testable; this just feeds it the live player/item state. */
+    private fun contentDurationMs(): Long = PlaybackHelper.contentDurationMs(
+        itemDurationMs = currentItem?.duration_ms ?: currentItem?.files?.firstOrNull()?.duration_ms,
+        playerDurationMs = player?.duration ?: 0L,
+        hlsOffsetMs = viewModel.hlsOffsetMs,
+    )
 
     override fun onStart() {
         super.onStart()
@@ -1450,6 +1590,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // Dismiss any dialog still on screen. These are activity-window
+        // dialogs that would otherwise outlive the fragment and fire their
+        // handlers against a detached one.
+        openDialogs.toList().forEach { runCatching { it.dismiss() } }
+        openDialogs.clear()
         // Drop the screen-on flag so navigating back to a non-player
         // screen lets the system idle-timer take over again.
         activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -1511,12 +1656,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         progressTracker?.stop()
         val tracker = ProgressTracker(viewLifecycleOwner.lifecycleScope, itemRepo)
         tracker.positionProvider = { player?.currentPosition ?: 0L }
-        tracker.durationProvider = {
-            val dur = player?.duration ?: 0L
-            if (dur <= 0 || dur == Long.MAX_VALUE) {
-                currentItem?.duration_ms ?: currentItem?.files?.firstOrNull()?.duration_ms ?: 0L
-            } else dur
-        }
+        tracker.durationProvider = { contentDurationMs() }
         tracker.updateOffset(viewModel.hlsOffsetMs)
         // Daily cap reached / allowed-hours window closed mid-session — pause
         // and surface the same block dialog the start path uses.

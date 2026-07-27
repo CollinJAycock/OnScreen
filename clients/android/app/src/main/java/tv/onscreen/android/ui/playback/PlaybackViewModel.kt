@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
+import tv.onscreen.android.data.model.ItemFile
 import tv.onscreen.android.data.model.Marker
 import retrofit2.HttpException
 import tv.onscreen.android.data.api.apiError
@@ -51,11 +52,37 @@ sealed class PlaybackSource {
     ) : PlaybackSource()
 }
 
+/**
+ * A subtitle track the player should side-load alongside the media source.
+ *
+ * Server HLS sessions carry NO text streams — `transcodeStartRequest` has no
+ * subtitle field, and the server extracts subtitles as separate `.vtt` files
+ * rather than muxing them into the session playlist. So on every transcode /
+ * remux path ExoPlayer's track selector sees zero text tracks and subtitle
+ * selection silently does nothing. Side-loading the server's WebVTT rendition
+ * as an explicit [androidx.media3.common.MediaItem.SubtitleConfiguration] is
+ * what actually makes the subtitle picker work there.
+ *
+ * @property url absolute `/media/subtitles/{fileId}/{absoluteStreamIndex}`
+ *   (or `/media/external-subtitles/{id}`) URL, already carrying `?token=`.
+ *   Note the ABSOLUTE stream index — that endpoint's convention, unlike the
+ *   ffmpeg-facing `audio_stream_index` which is relative.
+ */
+data class SubtitleTrackSource(
+    val url: String,
+    val language: String,
+    val label: String,
+    val forced: Boolean,
+)
+
 data class PlaybackUiState(
     val source: PlaybackSource? = null,
     val item: ItemDetail? = null,
     val audioStreams: List<AudioStream> = emptyList(),
     val subtitles: List<SubtitleStream> = emptyList(),
+    /** Side-load sources matching [subtitles], in the same order. Empty when
+     *  no token is available or the source can render its own text tracks. */
+    val subtitleSources: List<SubtitleTrackSource> = emptyList(),
     val markers: List<Marker> = emptyList(),
     val nextEpisode: ChildItem? = null,
     val preferredAudioLang: String? = null,
@@ -229,6 +256,7 @@ class PlaybackViewModel @Inject constructor(
                     item = item,
                     audioStreams = file.audio_streams,
                     subtitles = file.subtitle_streams,
+                    subtitleSources = buildSubtitleSources(serverUrl, file),
                     markers = markers,
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
@@ -276,6 +304,30 @@ class PlaybackViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Build the side-load list for [file]'s embedded subtitle streams, in the
+     * same order as `file.subtitle_streams` so a picker index maps straight
+     * across. Returns empty when no token is available (the endpoint is on the
+     * asset-token route group and ExoPlayer can't send a Bearer header).
+     */
+    private suspend fun buildSubtitleSources(serverUrl: String, file: ItemFile): List<SubtitleTrackSource> {
+        if (file.subtitle_streams.isEmpty()) return emptyList()
+        val token = file.stream_token?.takeIf { it.isNotEmpty() } ?: serverPrefs.getAssetToken()
+        if (token.isNullOrEmpty()) return emptyList()
+        return file.subtitle_streams.map { s ->
+            SubtitleTrackSource(
+                // ABSOLUTE stream index here — /media/subtitles/{fileId}/{index}
+                // uses the API convention, NOT the relative one ffmpeg's
+                // -map 0:s:N takes. See internal/transcode/ffmpeg.go:181.
+                url = "$serverUrl/media/subtitles/${file.id}/${s.index}" +
+                    "?token=${java.net.URLEncoder.encode(token, "UTF-8")}",
+                language = s.language,
+                label = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } },
+                forced = s.forced,
+            )
+        }
+    }
+
     private suspend fun startTranscode(
         itemId: String,
         height: Int,
@@ -285,7 +337,14 @@ class PlaybackViewModel @Inject constructor(
         serverUrl: String,
         audioStreamIndex: Int? = null,
     ): PlaybackSource {
-        stopActiveTranscode()
+        // Capture the outgoing session but DON'T tear it down yet. Stopping
+        // first meant a failed start (server 5xx, network blip, rate limit)
+        // left the caller with nothing playing at all — the catch blocks in
+        // switchAudioStream / reloadSubtitles claim they "leave the existing
+        // session running", which was untrue once the DELETE had already
+        // fired. Retire the old session only after the new one is in hand.
+        val priorSessionId = transcodeSessionId
+        val priorToken = transcodeToken
 
         val session = transcodeRepo.start(
             itemId = itemId,
@@ -323,6 +382,11 @@ class PlaybackViewModel @Inject constructor(
         hlsOffsetMs = openOffsetMs
         lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
 
+        // New session is live — now retire the one it replaces.
+        if (priorSessionId != null && priorToken != null && priorSessionId != session.session_id) {
+            viewModelScope.launch { transcodeRepo.stop(priorSessionId, priorToken) }
+        }
+
         return PlaybackSource.Hls(
             playlistUrl = "$serverUrl${session.playlist_url}",
             offsetMs = openOffsetMs,
@@ -343,8 +407,26 @@ class PlaybackViewModel @Inject constructor(
      * MediaItem. position_ms is included in the start request so
      * the new session is keyframe-snapped to where the user was.
      */
-    fun switchAudioStream(audioStreamIndex: Int, currentPositionMs: Long) {
+    fun switchAudioStream(audioStreamOrdinal: Int, currentPositionMs: Long) {
         val req = lastTranscodeRequest ?: return
+        // Range-check the ordinal against the track list. The server consumes
+        // this as `-map 0:a:N` (the Nth AUDIO stream), but the API's
+        // AudioStream.index is the ABSOLUTE ffprobe stream index — a caller
+        // that confuses the two selects the wrong track, or names a stream
+        // that doesn't exist and kills the session with no diagnostic. Since
+        // video occupies #0:0, an absolute index is always >= 1 and usually
+        // lands out of range here, so this converts the silent-wrong-track
+        // failure into a visible no-op. See internal/transcode/ffmpeg.go:181.
+        val trackCount = _uiState.value.audioStreams.size
+        if (audioStreamOrdinal < 0 || (trackCount > 0 && audioStreamOrdinal >= trackCount)) {
+            android.util.Log.w(
+                "PlaybackViewModel",
+                "ignoring audio switch: ordinal $audioStreamOrdinal out of range for " +
+                    "$trackCount track(s) — callers must pass the position within " +
+                    "audioStreams, not AudioStream.index",
+            )
+            return
+        }
         viewModelScope.launch {
             try {
                 val source = startTranscode(
@@ -354,7 +436,7 @@ class PlaybackViewModel @Inject constructor(
                     fileId = req.fileId,
                     videoCopy = req.videoCopy,
                     serverUrl = req.serverUrl,
-                    audioStreamIndex = audioStreamIndex,
+                    audioStreamIndex = audioStreamOrdinal,
                 )
                 _uiState.value = _uiState.value.copy(source = source)
             } catch (_: Exception) {
@@ -365,49 +447,41 @@ class PlaybackViewModel @Inject constructor(
 
     /**
      * Refresh the subtitle track list after an online subtitle download,
-     * without restarting playback from the stored resume point.
+     * without touching the running player.
      *
-     * The downloaded subtitle is a new server-side row, so we re-fetch
-     * the item to pick it up in `subtitle_streams` and update the picker
-     * list + item metadata in place. The source is only re-issued for
-     * HLS — a transcoded session bakes the subtitle set into its
-     * playlist, so the new track can't appear until we re-issue the
-     * session (done here at [currentPositionMs], NOT from the resume
-     * point). Direct play keeps its existing source untouched: re-
-     * preparing it would restart playback for nothing (the server-side
-     * sidecar sub isn't muxed into the direct-play container anyway —
-     * full prepare() never surfaced it either).
+     * The downloaded subtitle is a new server-side row, so we re-fetch the
+     * item to pick it up in `subtitle_streams`, then rebuild the side-load
+     * sources so the new track becomes selectable. Playback is never
+     * restarted and no transcode session is re-issued — see the body for why
+     * the previous re-issue was both disruptive and ineffective.
+     *
+     * [currentPositionMs] is retained for call-site compatibility; nothing
+     * here needs it now that the session is left alone.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun reloadSubtitles(itemId: String, currentPositionMs: Long) {
         viewModelScope.launch {
             try {
                 val item = itemRepo.getItem(itemId)
                 val file = item.files.firstOrNull() ?: return@launch
-                val req = lastTranscodeRequest
-                if (req != null) {
-                    // HLS / transcode: re-issue at the current position so
-                    // the new subtitle shows up in the session playlist.
-                    val source = startTranscode(
-                        itemId = req.itemId,
-                        height = req.height,
-                        posMs = currentPositionMs + hlsOffsetMs,
-                        fileId = req.fileId,
-                        videoCopy = req.videoCopy,
-                        serverUrl = req.serverUrl,
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        source = source,
-                        item = item,
-                        subtitles = file.subtitle_streams,
-                    )
-                } else {
-                    // Direct play: refresh the list only, leave the source
-                    // (and thus the running player) alone.
-                    _uiState.value = _uiState.value.copy(
-                        item = item,
-                        subtitles = file.subtitle_streams,
-                    )
-                }
+                // Refresh the track list + side-load sources ONLY — never
+                // re-issue the session. The old code restarted the whole
+                // transcode on the premise that "a transcoded session bakes
+                // the subtitle set into its playlist", which is false: the
+                // server maps only video + one audio into an HLS session and
+                // emits subtitles as separate .vtt files. So the restart cost
+                // the user a playback interruption and a fresh ffmpeg spin-up
+                // and still surfaced no new track. The newly-downloaded
+                // subtitle now arrives as a side-load source instead, which
+                // works on both direct-play and HLS.
+                val serverUrl = lastTranscodeRequest?.serverUrl
+                    ?: directPlayContext?.serverUrl
+                    ?: serverPrefs.getServerUrl().orEmpty()
+                _uiState.value = _uiState.value.copy(
+                    item = item,
+                    subtitles = file.subtitle_streams,
+                    subtitleSources = buildSubtitleSources(serverUrl, file),
+                )
             } catch (_: Exception) {
                 // Best-effort — the download already succeeded; a failed
                 // metadata refresh just means the new track shows up on the

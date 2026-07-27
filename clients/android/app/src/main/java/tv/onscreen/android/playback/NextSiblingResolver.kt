@@ -33,10 +33,16 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
         if (parentId == null || currentIndex == null) return null
         return try {
             val children = itemRepo.getChildren(parentId)
+            // Next-GREATER index, not exactly currentIndex + 1. A library
+            // missing one file (episode 4 of 10 absent, a track ripped out of
+            // an album) leaves a numbering gap; an exact-successor match finds
+            // nothing there and falls through to the cross-container branch,
+            // which jumps to the next season / album entirely. Taking the next
+            // greater index steps over the gap and keeps playing in place.
             val next = children
                 .filter { it.type == type && it.index != null }
                 .sortedBy { it.index }
-                .firstOrNull { (it.index ?: -1) == currentIndex + 1 }
+                .firstOrNull { (it.index ?: Int.MIN_VALUE) > currentIndex }
             if (next != null) return next
 
             // Cross-container fall-through. Same shape for tracks

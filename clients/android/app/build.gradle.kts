@@ -93,8 +93,42 @@ android {
             // working APK for testing. Play uploads require the real
             // release keystore — the fallback is a developer escape
             // hatch, never the upload artifact.
-            signingConfig = signingConfigs.findByName("release")
-                ?: signingConfigs.getByName("debug")
+            //
+            // The fallback is now OPT-IN (-PallowDebugSigning=true). It used
+            // to be silent, and a silent fallback emits a normally-named,
+            // minified, non-debuggable app-<flavor>-release.apk signed with
+            // AGP's throwaway debug key — indistinguishable from a real
+            // upload artifact by filename, and the Fire TV packaging script's
+            // only guard tests for an "unsigned" substring that never
+            // matches. Failing loudly here is the difference between a caught
+            // mistake and a rejected (or hijackable) store upload.
+            val releaseSigning = signingConfigs.findByName("release")
+            signingConfig = releaseSigning ?: signingConfigs.getByName("debug")
+            if (releaseSigning == null) {
+                val allowDebugSigning =
+                    project.findProperty("allowDebugSigning")?.toString().toBoolean()
+                tasks.matching { it.name.matches(Regex("assemble.*Release|bundle.*Release")) }
+                    .configureEach {
+                        doFirst {
+                            if (!allowDebugSigning) {
+                                throw GradleException(
+                                    "Release build has no signing config: 'release.keystore' is " +
+                                        "missing from local.properties, so this APK/AAB would be " +
+                                        "signed with the DEBUG key and is not distributable.\n" +
+                                        "  - To produce a real upload artifact: add release.keystore, " +
+                                        "release.keystorePassword, release.keyAlias and " +
+                                        "release.keyPassword to local.properties.\n" +
+                                        "  - To build a debug-signed release variant anyway (local " +
+                                        "testing only): re-run with -PallowDebugSigning=true",
+                                )
+                            }
+                            logger.warn(
+                                "WARNING: release variant is DEBUG-SIGNED (-PallowDebugSigning=true). " +
+                                    "Do not upload this artifact to any store.",
+                            )
+                        }
+                    }
+            }
         }
     }
 
@@ -185,4 +219,8 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("io.mockk:mockk:1.13.11")
     testImplementation("com.google.truth:truth:1.4.4")
+    // Drives the OkHttp stack (interceptor + authenticator + SSE) against a
+    // real local server. The token-scoping and SSE-reconnect guards are only
+    // meaningful end-to-end — mocking the client out would assert the mock.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

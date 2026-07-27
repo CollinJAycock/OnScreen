@@ -102,4 +102,85 @@ class PlaybackHelperTest {
         // false rather than throw. Real on-device HEVC support is an instrumented concern.
         assertThat(PlaybackHelper.supportsHevc()).isFalse()
     }
+
+    // ── contentDurationMs: the progress-report time base ─────────────────────
+    //
+    // A progress report pairs a position that has hlsOffsetMs ADDED with a
+    // duration. If that duration comes from the player on a resumed HLS
+    // session it is session-relative (content duration MINUS the offset), so
+    // the two halves land in different time bases and position/duration
+    // approaches 1.0 immediately. The server flips the item to watched on the
+    // first 10 s heartbeat, and the launcher's Continue Watching row is
+    // deleted mid-movie by the same ratio.
+
+    @Test
+    fun `prefers the item duration over the player's session-relative one`() {
+        // 2 h movie resumed at 1 h: the HLS session reports only the remaining
+        // hour. The item duration is authoritative and must win.
+        val dur = PlaybackHelper.contentDurationMs(
+            itemDurationMs = 7_200_000L,
+            playerDurationMs = 3_600_000L,
+            hlsOffsetMs = 3_600_000L,
+        )
+        assertThat(dur).isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `re-absolutises the player duration when the item duration is unknown`() {
+        val dur = PlaybackHelper.contentDurationMs(
+            itemDurationMs = null,
+            playerDurationMs = 3_600_000L,
+            hlsOffsetMs = 3_600_000L,
+        )
+        assertThat(dur).isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `a resumed session never reports the item as nearly finished`() {
+        // The concrete regression: resume 90 minutes into a 2 h movie. The
+        // player says 30 min remain and reports position 0 within its own
+        // session; the heartbeat sends content position 90 min. Pairing that
+        // with the player's 30 min gave a ratio of 3.0 (> the server's 0.9
+        // watched threshold and > WatchNextManager's 0.9 delete threshold).
+        val contentPositionMs = 5_400_000L // 90 min, as ProgressTracker reports it
+        val dur = PlaybackHelper.contentDurationMs(
+            itemDurationMs = null,
+            playerDurationMs = 1_800_000L, // 30 min remaining in this session
+            hlsOffsetMs = 5_400_000L,
+        )
+        assertThat(dur).isEqualTo(7_200_000L)
+        assertThat(contentPositionMs.toFloat() / dur).isWithin(0.01f).of(0.75f)
+        assertThat(contentPositionMs.toFloat() / dur).isLessThan(0.9f)
+    }
+
+    @Test
+    fun `direct play is unaffected because the offset is zero`() {
+        val dur = PlaybackHelper.contentDurationMs(
+            itemDurationMs = null,
+            playerDurationMs = 7_200_000L,
+            hlsOffsetMs = 0L,
+        )
+        assertThat(dur).isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `unknown durations resolve to zero so callers skip the report`() {
+        // ExoPlayer reports C.TIME_UNSET (negative) before the media is
+        // prepared; 0 tells ProgressTracker / WatchNextManager to stay quiet
+        // rather than publish a nonsense ratio.
+        assertThat(
+            PlaybackHelper.contentDurationMs(null, playerDurationMs = 0L, hlsOffsetMs = 0L),
+        ).isEqualTo(0L)
+        assertThat(
+            PlaybackHelper.contentDurationMs(null, playerDurationMs = -9_223_372_036_854_775_807L, hlsOffsetMs = 1_000L),
+        ).isEqualTo(0L)
+        assertThat(
+            PlaybackHelper.contentDurationMs(null, playerDurationMs = Long.MAX_VALUE, hlsOffsetMs = 0L),
+        ).isEqualTo(0L)
+        // A zero/absent item duration falls through to the player rather than
+        // being taken literally.
+        assertThat(
+            PlaybackHelper.contentDurationMs(0L, playerDurationMs = 60_000L, hlsOffsetMs = 5_000L),
+        ).isEqualTo(65_000L)
+    }
 }

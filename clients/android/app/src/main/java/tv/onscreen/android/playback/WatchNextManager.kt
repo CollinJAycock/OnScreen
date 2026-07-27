@@ -165,8 +165,17 @@ class WatchNextManager @Inject constructor(
         // android.resource:// URIs are readable by other system
         // components without permission grants — the launcher's
         // image loader resolves them by package name.
+        //
+        // Addressed by resource NAME, not the numeric id: these URIs are
+        // persisted in the system WatchNextPrograms table and outlive app
+        // updates, but AAPT/R8 reassign numeric ids on essentially every
+        // release — so a numeric URI written by an older build resolves to a
+        // different drawable (or nothing) after an update, leaving broken
+        // artwork in the launcher's Continue Watching row. The name form is
+        // stable across builds.
         return Uri.parse(
-            "android.resource://${context.packageName}/${R.drawable.ic_logo}",
+            "android.resource://${context.packageName}/drawable/" +
+                context.resources.getResourceEntryName(R.drawable.ic_logo),
         )
     }
 

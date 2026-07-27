@@ -14,6 +14,12 @@
          on Android 14+ TVs. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- API 33+ gates notifications behind a runtime permission. The media
+         notification Media3 posts for OnScreenMediaSessionService is the ONLY
+         control surface for audio that deliberately keeps playing after the
+         player screen is gone, so without this the user has no way to pause
+         backgrounded music. MainActivity requests it at startup on API 33+. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Lets WatchNextManager publish + remove rows in the system's
          WatchNextPrograms content provider so resumable items show
          up in Google TV's "Continue Watching" row across launchers
