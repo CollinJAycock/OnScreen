@@ -58,10 +58,24 @@ func (m *MasterLock) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			if m.held.Load() {
-				// Best-effort release so another instance takes over immediately.
-				_ = m.v.Del(context.Background(), masterKey)
+				// Release only if we STILL hold it. An unconditional Del
+				// evicted whoever owned the key at that moment: our lease can
+				// expire during shutdown (or a stall), another instance
+				// acquires it, and our delete then hands mastership to nobody
+				// — with two instances briefly running singleton work as the
+				// next election races.
+				relCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				released, err := m.v.CompareAndDelete(relCtx, masterKey, m.id)
+				cancel()
 				m.held.Store(false)
-				m.logger.Info("master lock released", "id", m.id)
+				switch {
+				case err != nil:
+					m.logger.Warn("master lock release error", "id", m.id, "err", err)
+				case released:
+					m.logger.Info("master lock released", "id", m.id)
+				default:
+					m.logger.Info("master lock already taken over; nothing to release", "id", m.id)
+				}
 			}
 			return
 		case <-ticker.C:
@@ -151,16 +165,24 @@ func (m *MasterLock) tryAcquire(ctx context.Context) {
 }
 
 // tryRefresh extends the TTL only if we still hold the key.
+//
+// Atomic compare-and-expire, not GET-then-EXPIRE. The two-step version was a
+// read-modify-write race: the key could expire between the GET and the EXPIRE
+// and be re-acquired by another instance, whereupon our EXPIRE extended the NEW
+// owner's lease — leaving both instances believing they were master, which is
+// precisely the split-brain the ownership check exists to prevent.
 func (m *MasterLock) tryRefresh(ctx context.Context) {
-	// Verify we still own it before refreshing to guard against split-brain.
-	val, err := m.v.Get(ctx, masterKey)
-	if err != nil || val != m.id {
-		m.held.Store(false)
-		m.logger.Warn("master lock lost", "id", m.id)
-		return
-	}
-	if err := m.v.Expire(ctx, masterKey, masterTTL); err != nil {
+	ok, err := m.v.CompareAndExpire(ctx, masterKey, m.id, masterTTL)
+	if err != nil {
+		// Transient Valkey error: drop our claim rather than assume we still
+		// hold it. The lease TTL bounds how long the key survives without us,
+		// so another instance takes over shortly.
 		m.logger.Warn("master lock refresh error", "err", err)
 		m.held.Store(false)
+		return
+	}
+	if !ok {
+		m.held.Store(false)
+		m.logger.Warn("master lock lost", "id", m.id)
 	}
 }

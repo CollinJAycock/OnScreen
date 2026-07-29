@@ -733,19 +733,23 @@ For automated backups, use a cron job or a tool like [pgBackRest](https://pgback
 - File changes are detected during library scans. After adding or removing media, trigger a scan from the web UI or wait for the next scheduled scan.
 - The artwork cache (`CACHE_PATH`) can be safely deleted; it will be regenerated on demand.
 
-### Hot-reload configuration
+### Configuration changes require a restart
 
-Several settings can be updated without restarting the server by sending `SIGHUP`:
+**Nothing is hot-reloadable.** `SIGHUP` is still handled, but it applies no
+setting — it logs a warning saying so. Earlier revisions of this page listed
+`LOG_LEVEL`, `TRANSCODE_MAX_SESSIONS` and the NVENC knobs as reloadable; none of
+them were still wired to a live reader, so an operator sending `SIGHUP` was told
+"config reloaded" while the running values never changed.
 
-```bash
-kill -HUP $(pidof server)
-```
+Settings now flow one of two ways, and both take effect on the next restart:
 
-Hot-reloadable values: `LOG_LEVEL`, `TRANSCODE_MAX_SESSIONS`, `TRANSCODE_NVENC_PRESET`, `TRANSCODE_NVENC_TUNE`, `TRANSCODE_NVENC_RC`, `TRANSCODE_MAXRATE_RATIO`.
+- **Admin UI** (Settings ▸ System / ▸ Transcode / ▸ Nodes) — stored in the
+  database; the matching env var is only the initial default.
+- **Environment** — the bootstrap set that must be readable before the settings
+  tables are (`DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, `NODE_ID`), plus bind
+  addresses and paths.
 
-Scan concurrency and the transcode output ceilings moved into the admin UI (Settings ▸ System / Settings ▸ Transcode) and are now **restart-required** — SIGHUP no longer touches them, so a UI-set value isn't silently reverted by a reload.
-
-Changes to `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, or `LISTEN_ADDR` require a full restart.
+Restart the process after any change.
 
 ### Watch history retention
 

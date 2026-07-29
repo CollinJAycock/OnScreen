@@ -207,6 +207,15 @@ func (d *M3UDriver) fetchPlaylist(ctx context.Context) (io.ReadCloser, error) {
 	return f, nil
 }
 
+// maxM3UBytes caps the playlist document. Even a very large IPTV lineup
+// (100k channels) is only tens of MB; 256 MiB is generous headroom.
+const maxM3UBytes int64 = 256 << 20
+
+// maxM3UEntries caps how many channels a single playlist may declare, so a
+// crafted playlist cannot grow the entry slice without bound within the byte
+// budget.
+const maxM3UEntries = 200_000
+
 // extInfRe matches an EXTINF line's attribute=value pairs. M3U attributes
 // are quoted with double quotes and separated by spaces. The trailing
 // `,Display Name` lives outside the regex because it has different
@@ -223,6 +232,11 @@ var extInfAttrRe = regexp.MustCompile(`(\w[\w-]*)="([^"]*)"`)
 // Channel number falls back to a sequence counter when tvg-chno is absent
 // because the upsert key has to be stable across re-fetches.
 func parseM3U(r io.Reader) ([]m3uEntry, error) {
+	// Bound the whole document and the entry count. Per-line length was already
+	// capped, but nothing capped total input, so a hostile or compromised IPTV
+	// provider could stream indefinitely and grow `entries` until the process
+	// died — the sibling XMLTV path caps at 1 GiB for exactly this reason.
+	r = io.LimitReader(r, maxM3UBytes)
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024) // tolerate very long lines
 
@@ -285,6 +299,9 @@ func parseM3U(r io.Reader) ([]m3uEntry, error) {
 		}
 		entries = append(entries, pending)
 		havePending = false
+		if len(entries) >= maxM3UEntries {
+			break
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err

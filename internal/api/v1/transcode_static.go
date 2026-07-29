@@ -220,8 +220,13 @@ func tokenQuery(token string) string {
 
 func writeM3U8(w http.ResponseWriter, body string) {
 	w.Header().Set("Content-Type", "application/x-mpegURL")
-	// Static ladders are immutable for a given source hash, so they're cacheable.
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// Immutable for a given source hash, but `private`, not `public`: these
+	// responses are authorization-dependent (staticFileAccess applies the
+	// per-library ACL and the caller's content-rating ceiling) AND the rewritten
+	// URIs inside carry the caller's own asset token. A shared cache would
+	// store one user's authorized playlist — token and all — and hand it to the
+	// next requester.
+	w.Header().Set("Cache-Control", "private, max-age=86400")
 	_, _ = w.Write([]byte(body))
 }
 

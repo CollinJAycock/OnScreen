@@ -434,8 +434,20 @@ func (h *HotReloadable) TranscodeMaxrateRatio() float64 {
 	return h.transcodeMaxrateRatio
 }
 
-// Reload re-parses the environment and updates all hot-reloadable values.
+// Reload re-parses the environment and updates the HotReloadable fields.
 // Non-reloadable fields that have changed are logged as WARN.
+//
+// NOTE: this is effectively INERT today, and deliberately says so rather than
+// pretending otherwise. Every value it refreshes below (transcode session cap,
+// NVENC preset/tune/rc, maxrate ratio) has zero production readers — the
+// transcode planner takes its values from the merged startup config, and the
+// knobs that were once read here moved to the admin UI as restart-required
+// settings (ARCHITECTURE.md records the hot-reload removal in v2.1). It also
+// does NOT touch LOG_LEVEL, which docs/deployment.md used to claim.
+//
+// The machinery is kept because the accessors are the natural seam if a knob
+// is ever made live again; the log line is honest so an operator who sends
+// SIGHUP is not told a change took effect that did not.
 func (h *HotReloadable) Reload(logger *slog.Logger, current *Config) {
 	next := &Config{}
 	if err := env.Parse(next); err != nil {
@@ -471,7 +483,9 @@ func (h *HotReloadable) Reload(logger *slog.Logger, current *Config) {
 	h.transcodeMaxrateRatio = next.TranscodeMaxrateRatio
 	h.mu.Unlock()
 
-	logger.Info("config reloaded")
+	logger.Warn("SIGHUP received: no runtime setting is currently hot-reloadable. " +
+		"Transcode and scan settings live in the admin UI and are restart-required; " +
+		"connection strings, SECRET_KEY and bind addresses always require a restart.")
 }
 
 // validateSecretKey checks that the SECRET_KEY yields at least 32 bytes

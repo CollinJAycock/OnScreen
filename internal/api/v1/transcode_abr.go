@@ -574,6 +574,13 @@ func (h *NativeTranscodeHandler) cleanupRungChildren(ctx context.Context, parent
 			h.killer.KillSession(childID)
 		}
 		_ = h.sessions.Delete(ctx, childID)
+		// Drop the per-child mutex. abrChildLocks is a process-lifetime
+		// sync.Map that was only ever inserted into — one entry per playback
+		// session per ladder rung, never removed — so a long-running server
+		// accumulated a mutex for every rung of every stream it had ever
+		// served. This is the natural reap point: the child session is being
+		// torn down, so nothing can be waiting on its lock.
+		abrChildLocks.Delete(childID)
 		dir := transcode.SessionDir(childID)
 		go func() { time.Sleep(30 * time.Second); _ = os.RemoveAll(dir) }()
 	}

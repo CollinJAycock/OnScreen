@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/observability"
 )
@@ -87,11 +88,11 @@ func (a *Authenticator) RequiredAllowQueryToken(next http.Handler) http.Handler 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := a.extractClaimsAllowQuery(r)
 		if err != nil || claims == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			respond.Unauthorized(w, r)
 			return
 		}
 		if !a.epochValid(r.Context(), claims) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			respond.Unauthorized(w, r)
 			return
 		}
 		ctx := context.WithValue(r.Context(), claimsKey{}, claims)
@@ -177,11 +178,11 @@ func (a *Authenticator) Required(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := a.extractClaims(r)
 		if err != nil || claims == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			respond.Unauthorized(w, r)
 			return
 		}
 		if !a.epochValid(r.Context(), claims) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			respond.Unauthorized(w, r)
 			return
 		}
 		ctx := context.WithValue(r.Context(), claimsKey{}, claims)
@@ -241,7 +242,7 @@ func (a *Authenticator) AdminRequired(next http.Handler) http.Handler {
 	return a.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims := ClaimsFromContext(r.Context())
 		if claims == nil || !claims.IsAdmin {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			respond.Forbidden(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -307,17 +308,17 @@ func (a *Authenticator) ViewAs(lookup ImpersonationLookup, auditor ViewAsAuditor
 			// Block on non-GET so a client that adds the param to every
 			// request can't accidentally mutate state as the target.
 			if r.Method != http.MethodGet {
-				http.Error(w, "view_as is only supported on GET requests", http.StatusForbidden)
+				respond.Error(w, r, http.StatusForbidden, "FORBIDDEN", "view_as is only supported on GET requests")
 				return
 			}
 			caller := ClaimsFromContext(r.Context())
 			if caller == nil || !caller.IsAdmin {
-				http.Error(w, "view_as requires admin", http.StatusForbidden)
+				respond.Error(w, r, http.StatusForbidden, "FORBIDDEN", "view_as requires admin")
 				return
 			}
 			targetID, err := uuid.Parse(raw)
 			if err != nil {
-				http.Error(w, "view_as: invalid uuid", http.StatusBadRequest)
+				respond.Error(w, r, http.StatusBadRequest, "BAD_REQUEST", "view_as: invalid uuid")
 				return
 			}
 			target, err := lookup.GetUserForImpersonation(r.Context(), targetID)
@@ -326,7 +327,7 @@ func (a *Authenticator) ViewAs(lookup ImpersonationLookup, auditor ViewAsAuditor
 					http.NotFound(w, r)
 					return
 				}
-				http.Error(w, "view_as: lookup failed", http.StatusInternalServerError)
+				respond.InternalError(w, r)
 				return
 			}
 			// Stamp the audit trail before context swap so the actor is

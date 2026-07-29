@@ -86,6 +86,18 @@ func (h *BackupHandler) WithAudit(a *audit.Logger) *BackupHandler {
 // pg_dump must exist on PATH. The Docker runtime installs it via
 // postgresql-client; for local dev, install the Postgres client tools.
 func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
+	// Clear the per-request read/write deadlines. The API server sets
+	// ReadTimeout 30s / WriteTimeout 60s to bound ordinary JSON handlers, but a
+	// pg_dump of a real library legitimately takes minutes to produce and
+	// stream — the listener would cut the response mid-download (and the upload
+	// mid-read on restore), producing a truncated dump or a failed restore with
+	// no useful error. Every other long-running response in the tree clears
+	// these explicitly; these two did not.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+		_ = rc.SetReadDeadline(time.Time{})
+	}
+
 	if h.databaseURL == "" {
 		h.logger.Error("backup: DATABASE_URL not configured")
 		respond.InternalError(w, r)
@@ -189,6 +201,18 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 // captured stderr so the operator can judge whether the restore
 // succeeded materially.
 func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	// Clear the per-request read/write deadlines. The API server sets
+	// ReadTimeout 30s / WriteTimeout 60s to bound ordinary JSON handlers, but a
+	// pg_dump of a real library legitimately takes minutes to produce and
+	// stream — the listener would cut the response mid-download (and the upload
+	// mid-read on restore), producing a truncated dump or a failed restore with
+	// no useful error. Every other long-running response in the tree clears
+	// these explicitly; these two did not.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+		_ = rc.SetReadDeadline(time.Time{})
+	}
+
 	if h.databaseURL == "" {
 		h.logger.Error("restore: DATABASE_URL not configured")
 		respond.InternalError(w, r)

@@ -120,6 +120,52 @@ func (c *Client) Expire(ctx context.Context, key string, ttl time.Duration) erro
 	return c.rdb.Expire(ctx, key, ttl).Err()
 }
 
+// casDelete deletes key only if its current value equals expected.
+var casDelete = redis.NewScript(`
+	if redis.call("GET", KEYS[1]) == ARGV[1] then
+		return redis.call("DEL", KEYS[1])
+	end
+	return 0
+`)
+
+// casExpire resets key's TTL only if its current value equals expected.
+var casExpire = redis.NewScript(`
+	if redis.call("GET", KEYS[1]) == ARGV[1] then
+		return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+	end
+	return 0
+`)
+
+// CompareAndDelete deletes key only if it currently holds expected, and reports
+// whether it did.
+//
+// A plain Del on a lease key is unsafe: between deciding to release and issuing
+// the delete, the lease can expire and be re-acquired by another instance, and
+// the delete then evicts THAT holder's lease. The check and the delete must be
+// one atomic step, which is what the script gives us.
+func (c *Client) CompareAndDelete(ctx context.Context, key, expected string) (bool, error) {
+	n, err := casDelete.Run(ctx, c.rdb, []string{key}, expected).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// CompareAndExpire extends key's TTL only if it currently holds expected, and
+// reports whether it did.
+//
+// The GET-then-EXPIRE pair it replaces was a read-modify-write race: the key
+// could expire and be re-acquired between the two calls, and the EXPIRE would
+// then extend the NEW owner's lease on the old owner's behalf — both instances
+// believing they hold it.
+func (c *Client) CompareAndExpire(ctx context.Context, key, expected string, ttl time.Duration) (bool, error) {
+	n, err := casExpire.Run(ctx, c.rdb, []string{key}, expected, ttl.Milliseconds()).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // SAdd adds members to a set. Used by the segment-token manager to maintain a
 // user → tokens index so revocation on password reset / admin demote can wipe
 // every outstanding token for a user.

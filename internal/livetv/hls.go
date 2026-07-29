@@ -169,6 +169,12 @@ func (p *HLSProxy) Lookup(channelID uuid.UUID) (*HLSSession, bool) {
 		return nil, false
 	}
 	s.mu.Lock()
+	// Same corpse window Acquire guards against — a closed session's directory
+	// is already gone, so report a miss rather than hand one out.
+	if s.closed {
+		s.mu.Unlock()
+		return nil, false
+	}
 	s.refcount++
 	if s.closing != nil {
 		s.closing.Stop()
@@ -186,18 +192,31 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	p.mu.Lock()
 	if s, ok := p.sessions[channelID]; ok {
 		s.mu.Lock()
-		s.refcount++
-		// Cancel any pending close timer — a new viewer arrived during the
-		// grace period.
-		if s.closing != nil {
-			s.closing.Stop()
-			s.closing = nil
+		// Skip a session that teardown has already closed. teardown sets
+		// closed=true and releases every resource (ffmpeg killed, upstream
+		// closed, directory removed) BEFORE removing the map entry, so there is
+		// a window where the map still holds a corpse. Handing it out returned
+		// a session whose directory no longer exists — the caller then served
+		// 404s for a channel that looked live. Fall through and build a fresh
+		// one instead.
+		if s.closed {
+			s.mu.Unlock()
+			p.mu.Unlock()
+		} else {
+			s.refcount++
+			// Cancel any pending close timer — a new viewer arrived during the
+			// grace period.
+			if s.closing != nil {
+				s.closing.Stop()
+				s.closing = nil
+			}
+			s.mu.Unlock()
+			p.mu.Unlock()
+			return s, nil
 		}
-		s.mu.Unlock()
+	} else {
 		p.mu.Unlock()
-		return s, nil
 	}
-	p.mu.Unlock()
 
 	// Session lifetime is decoupled from the request context: the
 	// playlist GET that triggers Acquire returns in seconds, but the
@@ -396,10 +415,9 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	p.sessions[channelID] = s
 	p.mu.Unlock()
 	// Reaper: when the process exits (our cancel or an ffmpeg crash), close the
-	// upstream and drop the session entry. Started only after we win the insert
-	// so the loser's teardown above can't reap the winner (the reaper is keyed
-	// by channelID).
-	go p.reaper(channelID, cmd, stderrBuf)
+	// upstream and drop the session entry. Bound to THIS session, not just the
+	// channel id — see reaper.
+	go p.reaper(s, cmd, stderrBuf)
 	return s, nil
 }
 
@@ -461,23 +479,27 @@ func (p *HLSProxy) teardown(s *HLSSession) {
 // happy path teardown via Release/grace-period also calls cancel which
 // reaches us. On crash, dumps the captured stderr ring so we can see why
 // ffmpeg actually died (codec mismatches, missing PMT, signal loss, etc.).
-func (p *HLSProxy) reaper(channelID uuid.UUID, cmd *exec.Cmd, stderr *ringBuffer) {
+func (p *HLSProxy) reaper(own *HLSSession, cmd *exec.Cmd, stderr *ringBuffer) {
 	err := cmd.Wait()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		p.logger.WarnContext(context.Background(), "hls ffmpeg exited",
-			"channel_id", channelID, "err", err, "stderr", stderr.String())
+			"channel_id", own.channelID, "err", err, "stderr", stderr.String())
 	}
-	// Force-teardown: even if there are still refs, the upstream is gone
-	// so the session is dead. Reset refcount to 0 so teardown proceeds.
-	p.mu.Lock()
-	s, ok := p.sessions[channelID]
-	p.mu.Unlock()
-	if ok {
-		s.mu.Lock()
-		s.refcount = 0
-		s.mu.Unlock()
-		p.teardown(s)
-	}
+	// Tear down OUR session, not whatever currently occupies the channel slot.
+	//
+	// This used to re-look-up p.sessions[channelID] after cmd.Wait() returned.
+	// If our session had already been removed and a viewer had since started a
+	// NEW session for the same channel, the stale reaper force-reset that
+	// session's refcount to 0 and tore it down — killing a live stream out from
+	// under its viewers, with the cause several seconds and one process exit
+	// away from the symptom.
+	//
+	// Force-teardown is still right for our own session: even with refs
+	// outstanding the upstream is gone, so it is dead either way.
+	own.mu.Lock()
+	own.refcount = 0
+	own.mu.Unlock()
+	p.teardown(own)
 }
 
 // drainStderr forwards ffmpeg stderr into the session's ring buffer (so

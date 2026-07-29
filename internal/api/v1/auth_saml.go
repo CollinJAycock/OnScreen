@@ -339,10 +339,22 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 		return nil, nil, fmt.Errorf("saml: fetch IdP metadata: %w", err)
 	}
 
+	// The SP keypair comes from admin-supplied settings and is parsed by
+	// tls.X509KeyPair, which happily returns ECDSA or Ed25519 keys. A
+	// single-value type assertion therefore PANICS on an unauthenticated
+	// request whenever an admin uploads a non-RSA keypair — crewjam/saml needs
+	// RSA, so the right answer is a clean configuration error, not a 500 from
+	// the recover middleware on every SSO attempt.
+	rsaKey, ok := keyPair.PrivateKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("saml: SP private key must be RSA, got %T "+
+			"(re-upload an RSA keypair under Settings > SSO > SAML)", keyPair.PrivateKey)
+	}
+
 	mw, err := samlsp.New(samlsp.Options{
 		EntityID:    coalesceString(cfg.EntityID, baseURL+"/api/v1/auth/saml/metadata"),
 		URL:         *rootURL,
-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
+		Key:         rsaKey,
 		Certificate: leaf,
 		IDPMetadata: idpMeta,
 		// Sign the AuthnRequest so IdPs that require it (Keycloak's

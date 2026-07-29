@@ -58,7 +58,14 @@ func HealthHandler(db Pinger, valkey Pinger, migrationStatus MigrationStatusFn, 
 
 		for _, c := range checks {
 			if err := c.pinger.Ping(ctx); err != nil {
-				res.Checks[c.name] = "unhealthy: " + err.Error()
+				// Report only that the component is unhealthy — never the
+				// driver's error text. /health/ready is mounted on the bare
+				// ServeMux in front of the chi router, so it is
+				// UNAUTHENTICATED, and a pgx dial failure embeds the DSN:
+				// host, port, database, and username all leak to anyone who
+				// can reach the port. The operator gets the detail from the
+				// log line below, which is where it belongs.
+				res.Checks[c.name] = "unhealthy"
 				res.Status = "degraded"
 				httpStatus = http.StatusServiceUnavailable
 				logger.Warn("health check failed", "component", c.name, "err", err)
