@@ -208,6 +208,18 @@ func loadDBTLSConfig(ctx context.Context, svc *settings.Service, cfg *config.Con
 	}
 	tc := svc.TLS(ctx)
 	if tc.CertPEM == "" || tc.KeyPEM == "" {
+		// Distinguish "no cert configured" (normal) from "a cert IS configured
+		// but we could not read it" (a silent security downgrade). Both used to
+		// return nil identically, so an unreadable cert dropped the server to
+		// plain HTTP with nothing in the log tying that to TLS.
+		if svc.TLSStored(ctx) {
+			logger.Error("a UI-managed TLS certificate is configured but could not be " +
+				"read (decrypt or parse failed — most often SECRET_KEY was changed " +
+				"without running cmd/rotate-key). SERVING PLAIN HTTP: auth cookies " +
+				"will be issued without Secure and HSTS will not be sent. Re-upload " +
+				"the certificate under Settings ▸ Security, or set TLS_CERT_FILE and " +
+				"TLS_KEY_FILE.")
+		}
 		return nil
 	}
 	cert, err := tls.X509KeyPair([]byte(tc.CertPEM), []byte(tc.KeyPEM))

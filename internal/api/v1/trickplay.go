@@ -81,6 +81,12 @@ func (h *TrickplayHandler) WithLibraryAccess(a LibraryAccessChecker) *TrickplayH
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired.
+// A nil checker fails OPEN (serves every library), so api.Handlers.
+// ValidateLibraryAccess asserts this at startup and refuses to boot
+// without it.
+func (h *TrickplayHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // TrickplayStatusJSON is the response body for GET /items/{id}/trickplay.
 type TrickplayStatusJSON struct {
 	Status      string `json:"status"` // "not_started" | "pending" | "done" | "failed" | "skipped"

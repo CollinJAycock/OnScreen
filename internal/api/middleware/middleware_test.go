@@ -923,3 +923,72 @@ func TestViewAs_UnknownTargetIs404(t *testing.T) {
 		t.Errorf("unknown target: got %d, want 404 — admins must not be able to probe live user IDs", rec.Code)
 	}
 }
+
+// TestRequiredAllowQueryToken_StreamTokenBindsRegardlessOfParamCase is the
+// regression guard for the static-ABR binding failure.
+//
+// chi URL params are case-sensitive. The binding used to look up only "id"
+// and "fileId", but the three /transcode/static routes declare {fileID}
+// (capital D) — so both lookups returned "", the check fell through to
+// "presented on non-file-scoped route", and EVERY purpose=stream token was
+// rejected there. Invisible in a browser, which authenticates via the cookie
+// instead; broken for every native client.
+func TestRequiredAllowQueryToken_StreamTokenBindsRegardlessOfParamCase(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	fileID := uuid.New()
+	token, err := tm.IssueStreamToken(auth.Claims{
+		UserID:   uuid.New(),
+		Username: "streamuser",
+	}, fileID)
+	if err != nil {
+		t.Fatalf("IssueStreamToken: %v", err)
+	}
+
+	// Every spelling a route in this tree actually uses for the file param.
+	for _, param := range []string{"id", "fileId", "fileID"} {
+		t.Run(param, func(t *testing.T) {
+			handler := a.RequiredAllowQueryToken(http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add(param, fileID.String())
+			req := httptest.NewRequest("GET", "/transcode/static/"+fileID.String()+"/master.m3u8?token="+token, nil)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("stream token rejected on a route using {%s}: got %d, want 200", param, rec.Code)
+			}
+		})
+	}
+}
+
+// A stream token must still be refused when the route's file param names a
+// DIFFERENT file — the case-insensitive lookup must not have weakened binding.
+func TestRequiredAllowQueryToken_StreamTokenStillBoundToItsFile(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	token, err := tm.IssueStreamToken(auth.Claims{
+		UserID:   uuid.New(),
+		Username: "streamuser",
+	}, uuid.New())
+	if err != nil {
+		t.Fatalf("IssueStreamToken: %v", err)
+	}
+
+	handler := a.RequiredAllowQueryToken(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("fileID", uuid.New().String()) // some other file
+	req := httptest.NewRequest("GET", "/transcode/static/x/master.m3u8?token="+token, nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("stream token accepted for a different file: got %d, want 401", rec.Code)
+	}
+}

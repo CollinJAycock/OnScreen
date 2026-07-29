@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -179,19 +180,42 @@ func TestLog_UnmarshallableDetailDropsDetail(t *testing.T) {
 	}
 }
 
-func TestClientIP_PrefersXForwardedFor(t *testing.T) {
+// ClientIP must NOT read X-Forwarded-For itself. Trusting it unconditionally
+// let any client forge its own audit-log IP — including on failed-login
+// records, which is precisely where the log has to be trustworthy. The
+// trusted-peer decision belongs to middleware.TrustedRealIP, which has already
+// rewritten RemoteAddr from the header when (and only when) the peer is an
+// allowed proxy.
+//
+// (The previous test asserted the opposite and so locked the bug in.)
+func TestClientIP_IgnoresForgedXForwardedFor(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.1:1234"
 	r.Header.Set("X-Forwarded-For", "203.0.113.5")
-	if got := ClientIP(r); got != "203.0.113.5" {
-		t.Errorf("ClientIP: got %q, want 203.0.113.5", got)
+	if got := ClientIP(r); got != "10.0.0.1" {
+		t.Errorf("ClientIP: got %q, want 10.0.0.1 (the real peer, not the header)", got)
 	}
 }
 
-func TestClientIP_FallsBackToRemoteAddr(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.RemoteAddr = "10.0.0.1:1234"
-	if got := ClientIP(r); got != "10.0.0.1:1234" {
-		t.Errorf("ClientIP: got %q, want 10.0.0.1:1234", got)
+// The returned value must be parseable by netip.ParseAddr, which Logger.Log
+// uses to populate audit_log.ip_addr. Returning "host:port" meant that parse
+// failed on every non-proxied request and the column was silently left NULL —
+// the audit log recorded no IP at all.
+func TestClientIP_StripsPortSoItParsesAsAnAddress(t *testing.T) {
+	for _, tc := range []struct{ remote, want string }{
+		{"10.0.0.1:1234", "10.0.0.1"},
+		{"[2001:db8::1]:443", "2001:db8::1"},
+		{"192.0.2.7", "192.0.2.7"}, // already portless
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = tc.remote
+		got := ClientIP(r)
+		if got != tc.want {
+			t.Errorf("ClientIP(%q): got %q, want %q", tc.remote, got, tc.want)
+		}
+		if _, err := netip.ParseAddr(got); err != nil {
+			t.Errorf("ClientIP(%q) = %q is not a parseable address: %v — "+
+				"audit_log.ip_addr would be NULL", tc.remote, got, err)
+		}
 	}
 }

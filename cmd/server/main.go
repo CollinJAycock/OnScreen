@@ -1347,6 +1347,19 @@ func run() error {
 		logger.Error("startup: per-library access wiring check failed", "err", err)
 		os.Exit(1)
 	}
+	// Trusted-proxy allowlist for X-Forwarded-*. A typo must fail startup
+	// rather than silently trust nothing (breaking a proxied deployment)
+	// or fall back to trusting everything.
+	if err := middleware.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		logger.Error("startup: TRUSTED_PROXIES is invalid", "err", err)
+		os.Exit(1)
+	}
+	if !middleware.TrustedProxiesConfigured() {
+		logger.Warn("TRUSTED_PROXIES is unset: X-Forwarded-* is accepted from ANY " +
+			"loopback or private-range peer. On a LAN install that is every client, " +
+			"which lets one forge X-Forwarded-For to rotate its rate-limit key or the " +
+			"audit-log IP. Set TRUSTED_PROXIES to your reverse proxy address.")
+	}
 	router := api.NewRouter(h)
 
 	// ── Health endpoints ──────────────────────────────────────────────────────

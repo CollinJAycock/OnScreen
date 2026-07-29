@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"time"
@@ -144,12 +145,27 @@ func (l *Logger) Log(ctx context.Context, userID *uuid.UUID, action string, targ
 	}()
 }
 
-// ClientIP extracts the client IP address from an HTTP request.
-// It prefers X-Forwarded-For (already validated by chi's RealIP middleware)
-// and falls back to r.RemoteAddr.
+// ClientIP extracts the client IP address for the audit log.
+//
+// It returns r.RemoteAddr with any port stripped, and does NOT read
+// X-Forwarded-For itself. Two bugs are fixed here:
+//
+//  1. It used to return the raw X-Forwarded-For header whenever present, with
+//     no trusted-peer gate — so any client could forge its own audit-log IP,
+//     including on failed-login records. Its comment claimed the header was
+//     "already validated by chi's RealIP middleware", but this codebase
+//     deliberately removed chi's RealIP (which honours the header
+//     unconditionally) in favour of middleware.TrustedRealIP. That middleware
+//     has already rewritten RemoteAddr from X-Forwarded-For when — and only
+//     when — the peer is a trusted proxy, so reading the header again here
+//     both duplicated and undermined the check.
+//
+//  2. It returned "host:port", which netip.ParseAddr rejects, so Logger.Log
+//     silently stored NULL for ip_addr on every non-proxied deployment. The
+//     audit log's IP column was effectively always empty.
 func ClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
 	return r.RemoteAddr
 }

@@ -133,6 +133,12 @@ func (h *NativeTranscodeHandler) WithLibraryAccess(a LibraryAccessChecker) *Nati
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired.
+// A nil checker fails OPEN (serves every library), so api.Handlers.
+// ValidateLibraryAccess asserts this at startup and refuses to boot
+// without it.
+func (h *NativeTranscodeHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // WithUserCaps attaches the per-user streaming-cap reader. When nil, Start uses
 // only the server-wide concurrent + bitrate limits.
 func (h *NativeTranscodeHandler) WithUserCaps(c UserStreamCapsReader) *NativeTranscodeHandler {
@@ -733,7 +739,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		ladderCap := abrLadderCap(body.Height, h.cfg.TranscodeABRAutoMaxHeight, h.cfg.TranscodeABRMaxHeight)
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap)
 		if len(ladder) > 1 {
-			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS)
+			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser)
 			return
 		}
 	}

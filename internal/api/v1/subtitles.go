@@ -76,6 +76,12 @@ func (h *SubtitleHandler) WithLibraryAccess(a LibraryAccessChecker) *SubtitleHan
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired.
+// A nil checker fails OPEN (serves every library), so api.Handlers.
+// ValidateLibraryAccess asserts this at startup and refuses to boot
+// without it.
+func (h *SubtitleHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // Close releases background resources owned by the handler — currently the
 // OCR job store's TTL-sweep goroutine. Wired into server shutdown so the
 // process tears down cleanly (and so goroutine-leak-checked tests pass).

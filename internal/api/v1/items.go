@@ -2061,6 +2061,17 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parental watch limit. A download hands over the whole file, so a
+	// restricted profile outside its allowed hours could otherwise take the
+	// bytes and watch them locally — a permanent bypass, not just a
+	// time-shifted one. Unconditional here (no isPlaybackStart carve-out):
+	// a download is a single request, so the policy lookup is not on a hot path.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
+			return
+		}
+	}
+
 	// Build a friendly filename from the item title — falls back to
 	// the on-disk basename when the title is empty so the user always
 	// gets a non-empty name. Sanitised so a malicious title can't
@@ -2184,6 +2195,20 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		}
 		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
 			respond.Forbidden(w, r)
+			return
+		}
+	}
+
+	// Parental watch limit. Direct play serves the same bytes a transcode
+	// session would, so it needs the same gate — without it a restricted
+	// profile just had to pick a direct-playable title to watch outside its
+	// allowed hours indefinitely. Checked after the ACL/rating gates (cheapest
+	// rejections first) and only on a playback-initiating request: a Range
+	// continuation mid-file is the same session the first request already
+	// authorized, and re-querying the policy on every range read would put a
+	// DB round-trip in the byte-serving path.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && isPlaybackStart(r) {
+		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
 			return
 		}
 	}
@@ -2543,4 +2568,61 @@ func extractEmbeddedSubtitleToCache(srcPath string, streamIdx int, cachePath str
 		return nil, err
 	}
 	return data, nil
+}
+
+// watchLimitBlocks reports whether the caller is currently barred from
+// starting playback by their parental watch policy, writing a
+// 403 PARENTAL_LIMIT when so.
+//
+// Extracted so every playback ENTRY POINT shares one implementation. The
+// policy used to be checked in exactly two places — transcode Start and the
+// client-supplied progress heartbeat — so direct play, download and the
+// static-ABR ladder served the same bytes with no gate at all. A restricted
+// profile only had to pick a direct-playable title (or stop sending progress
+// beacons) to watch indefinitely outside its allowed hours.
+//
+// Fail-open on a store error, matching Start: this is a household cap, not a
+// paywall, and a DB blip must not stop the whole family watching.
+func watchLimitBlocks(
+	w http.ResponseWriter, r *http.Request,
+	wl ItemWatchLimit, logger *slog.Logger, userID uuid.UUID,
+) bool {
+	if wl == nil {
+		return false
+	}
+	now := time.Now()
+	policy, err := wl.GetPolicy(r.Context(), userID)
+	if err != nil {
+		if logger != nil {
+			logger.WarnContext(r.Context(), "watch-limit: get policy", "err", err)
+		}
+		return false
+	}
+	if !policy.Restricted() {
+		return false
+	}
+	used, _ := wl.TodayUsageSeconds(r.Context(), userID, watchlimit.LocalDay(now))
+	if allowed, reason := watchlimit.Evaluate(policy, used, now); !allowed {
+		respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", reason)
+		return true
+	}
+	return false
+}
+
+// isPlaybackStart reports whether a media-serving request looks like the
+// START of playback rather than a continuation of one already in progress.
+//
+// A request with no Range header, or one whose Range begins at byte 0, is a
+// fresh open. Anything else is a seek or a continuation within a session the
+// first request already authorized. This keeps the parental-limit policy
+// lookup off the per-range byte-serving path while still gating every new
+// playback. A client that deliberately starts at a non-zero offset to dodge
+// the check still gets caught by the progress heartbeat, which enforces the
+// same policy during playback.
+func isPlaybackStart(r *http.Request) bool {
+	rng := r.Header.Get("Range")
+	if rng == "" {
+		return true
+	}
+	return strings.HasPrefix(rng, "bytes=0-")
 }

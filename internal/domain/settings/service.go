@@ -843,6 +843,23 @@ func (s *Service) TLS(ctx context.Context) TLSConfig {
 	return cfg
 }
 
+// TLSStored reports whether a UI-managed TLS certificate row EXISTS, without
+// attempting to decrypt or parse it.
+//
+// [TLS] collapses "nothing configured" and "configured but unreadable" into
+// the same zero value, which made a decrypt failure (typically a SECRET_KEY
+// rotated without running cmd/rotate-key) indistinguishable from "no cert" —
+// so the server quietly bound plain HTTP, issuing auth cookies without Secure
+// and sending no HSTS, on a deployment the admin had explicitly configured for
+// HTTPS. Callers use this to tell the two apart and say so loudly.
+func (s *Service) TLSStored(ctx context.Context) bool {
+	var val string
+	err := s.db.QueryRow(ctx,
+		`SELECT value FROM server_settings WHERE key = $1`, keyTLSConfig,
+	).Scan(&val)
+	return err == nil && val != ""
+}
+
 // SetTLS persists the TLS config (encrypted at rest). An empty cfg clears it.
 func (s *Service) SetTLS(ctx context.Context, cfg TLSConfig) error {
 	if cfg.CertPEM == "" && cfg.KeyPEM == "" {

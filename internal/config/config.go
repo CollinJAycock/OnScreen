@@ -61,6 +61,22 @@ type Config struct {
 	MetricsAddr  string `env:"METRICS_ADDR"  envDefault:"127.0.0.1:7071"`
 	RetainMonths int    `env:"RETAIN_MONTHS" envDefault:"24"`
 
+	// TrustedProxies is the allowlist of peers permitted to set X-Forwarded-*
+	// (comma-separated CIDRs or bare IPs, e.g. "127.0.0.1,172.18.0.0/16").
+	//
+	// Unset means "any loopback or RFC1918 / unique-local peer", which on a
+	// typical self-hosted install trusts EVERY client on the LAN — letting one
+	// forge X-Forwarded-For to rotate its per-IP rate-limit key (defeating
+	// login brute-force protection) or to forge the audit-log IP. Set this to
+	// your reverse proxy's address to close that.
+	//
+	// Left permissive by default on purpose: the proxy is frequently a sibling
+	// container on a private address, and refusing it would make the server
+	// ignore its own proxy's X-Forwarded-Proto — dropping HSTS and the Secure
+	// flag on auth cookies. Tightening the default needs a deployment audit,
+	// not a flag flip.
+	TrustedProxies []string `env:"TRUSTED_PROXIES" envSeparator:","`
+
 	// TLS — when both files are set the API server serves HTTPS via
 	// ListenAndServeTLS instead of plain HTTP. Files must be in the
 	// formats Go's crypto/tls accepts (PEM-encoded cert chain + PEM-

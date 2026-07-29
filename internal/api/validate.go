@@ -37,6 +37,20 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("photo_albums", h.PhotoAlbums != nil, h.PhotoAlbums)
 	check("photos", h.Photos != nil, h.Photos)
 	check("books", h.Books != nil, h.Books)
+	// These five also take a .WithLibraryAccess checker and also fail open
+	// without it, but were missing from the assertion — so the guarantee this
+	// function exists to provide did not actually cover them. `transcode` is
+	// the sharpest omission: an unwired checker there means any authenticated
+	// user can start a stream from ANY library.
+	//
+	// (UserHandler also has a WithLibraryAccess method, but it takes a
+	// UserLibraryAccessService for admin grant management, not a content ACL,
+	// so it is deliberately not asserted here.)
+	check("lyrics", h.Lyrics != nil, h.Lyrics)
+	check("people", h.People != nil, h.People)
+	check("subtitles", h.Subtitles != nil, h.Subtitles)
+	check("transcode", h.NativeTranscode != nil, h.NativeTranscode)
+	check("trickplay", h.Trickplay != nil, h.Trickplay)
 
 	if len(missing) > 0 {
 		sort.Strings(missing)

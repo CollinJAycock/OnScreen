@@ -2,8 +2,10 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 )
 
@@ -57,8 +59,59 @@ func PeerIsTrustedProxy(r *http.Request) bool {
 	return RemoteAddrIsTrusted(r)
 }
 
-// RemoteAddrIsTrusted reports whether the request's RemoteAddr is loopback or
-// in an RFC1918 / unique-local range.
+// trustedProxyNets, when non-empty, is the AUTHORITATIVE allowlist of peers
+// permitted to set X-Forwarded-*. Configured from TRUSTED_PROXIES.
+//
+// Default (empty) keeps the historical behaviour: any loopback or RFC1918 /
+// unique-local peer is trusted. That is too broad on the ordinary self-hosted
+// deployment, where every client is on the LAN and can therefore forge
+// X-Forwarded-For to rotate its per-IP rate-limit key and defeat login
+// brute-force protection, or forge the audit-log IP.
+//
+// It is deliberately NOT tightened to loopback-only by default: the proxy is
+// commonly a sibling CONTAINER (docker compose, a cloudflared tunnel, a
+// TrueNAS app) reaching us from a private, non-loopback address. Refusing
+// those by default would make the server ignore X-Forwarded-Proto from its own
+// reverse proxy, which drops HSTS and strips Secure from auth cookies — the
+// exact defect fixed above, reintroduced by a "hardening" default. Operators
+// who know their proxy's address should set TRUSTED_PROXIES.
+var trustedProxyNets []netip.Prefix
+
+// SetTrustedProxies installs the allowlist. Each entry is a CIDR ("10.0.0.0/8")
+// or a bare IP ("172.18.0.2", treated as a /32 or /128). Invalid entries are
+// returned as an error and the allowlist is left unchanged, so a typo fails
+// startup loudly rather than silently trusting nothing (which would break
+// proxied deployments) or everything.
+//
+// Call once during startup, before serving.
+func SetTrustedProxies(entries []string) error {
+	var nets []netip.Prefix
+	for _, raw := range entries {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(s); err == nil {
+			nets = append(nets, p)
+			continue
+		}
+		addr, err := netip.ParseAddr(s)
+		if err != nil {
+			return fmt.Errorf("trusted proxy %q: not an IP or CIDR", s)
+		}
+		nets = append(nets, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	trustedProxyNets = nets
+	return nil
+}
+
+// TrustedProxiesConfigured reports whether an explicit allowlist is in force.
+// Startup logs a warning when it is not, so the broad default is visible.
+func TrustedProxiesConfigured() bool { return len(trustedProxyNets) > 0 }
+
+// RemoteAddrIsTrusted reports whether the request's RemoteAddr is a peer we
+// accept X-Forwarded-* from: a member of the configured allowlist, or — when
+// none is configured — any loopback / RFC1918 / unique-local address.
 //
 // Prefer [PeerIsTrustedProxy] for authorization-shaped decisions: downstream of
 // TrustedRealIP this field holds the forwarded CLIENT address, not the peer.
@@ -66,6 +119,19 @@ func RemoteAddrIsTrusted(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
+	}
+	if len(trustedProxyNets) > 0 {
+		addr, perr := netip.ParseAddr(host)
+		if perr != nil {
+			return false
+		}
+		addr = addr.Unmap() // an IPv4-mapped IPv6 peer must match an IPv4 prefix
+		for _, p := range trustedProxyNets {
+			if p.Contains(addr) {
+				return true
+			}
+		}
+		return false
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {

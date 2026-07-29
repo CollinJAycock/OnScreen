@@ -56,6 +56,12 @@ func (h *LyricsHandler) WithLibraryAccess(a LibraryAccessChecker) *LyricsHandler
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired.
+// A nil checker fails OPEN (serves every library), so api.Handlers.
+// ValidateLibraryAccess asserts this at startup and refuses to boot
+// without it.
+func (h *LyricsHandler) LibraryAccessWired() bool { return h.access != nil }
+
 // LyricsResponse is the JSON shape. Plain and Synced may each be
 // empty — clients prefer synced when present and fall back to plain.
 type LyricsResponse struct {

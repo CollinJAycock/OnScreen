@@ -147,14 +147,10 @@ func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, 
 	}
 	switch claims.Purpose {
 	case "stream":
-		// Bind enforcement: the token's file_id must match the
-		// {id} / {fileId} path param. If neither chi param is
-		// present, the token is out of scope here — a file-bound
-		// token shouldn't be honoured on a non-file route.
-		want := chi.URLParam(r, "id")
-		if want == "" {
-			want = chi.URLParam(r, "fileId")
-		}
+		// Bind enforcement: the token's file_id must match the file-scoped
+		// path param. If no such param is present, the token is out of scope
+		// here — a file-bound token shouldn't be honoured on a non-file route.
+		want := fileScopedParam(r)
 		if want == "" {
 			return nil, fmt.Errorf("validate token: stream token presented on non-file-scoped route")
 		}
@@ -406,4 +402,34 @@ func (a *Authenticator) validateGeneralPurposeToken(token string) (*auth.Claims,
 // userIDFromContext retrieves the user ID string from context (set by auth middleware).
 func userIDFromContext(ctx context.Context) string {
 	return observability.UserIDFromContext(ctx)
+}
+
+// fileScopedParam returns the value of the route's file-id path parameter,
+// matching the parameter NAME case-insensitively.
+//
+// chi's URLParam is case-sensitive. This lookup used to check only "id" and
+// "fileId", but the static-ABR routes declare {fileID} (capital D) — so both
+// lookups missed, the binding fell through to "presented on non-file-scoped
+// route", and every purpose=stream token was rejected on those routes. The
+// failure was invisible in a browser, which carries the auth cookie instead.
+//
+// Scanning the route's actual parameters means a future route that picks yet
+// another spelling can't silently re-break the binding.
+func fileScopedParam(r *http.Request) string {
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil {
+		return ""
+	}
+	for i, k := range rctx.URLParams.Keys {
+		if i >= len(rctx.URLParams.Values) {
+			break
+		}
+		switch strings.ToLower(k) {
+		case "id", "fileid":
+			if v := rctx.URLParams.Values[i]; v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }

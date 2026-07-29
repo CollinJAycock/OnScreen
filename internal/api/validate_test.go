@@ -41,3 +41,41 @@ func TestValidateLibraryAccess(t *testing.T) {
 		t.Errorf("empty Handlers should pass (all features disabled), got: %v", err)
 	}
 }
+
+// TestValidateLibraryAccess_CoversEveryFailOpenHandler pins the assertion's
+// COVERAGE, not just its mechanism.
+//
+// The guarantee this function exists to provide is "no content handler can
+// boot with a nil ACL checker, because a nil checker serves every library".
+// That guarantee silently did not hold for five handlers — lyrics, people,
+// subtitles, transcode and trickplay all take a .WithLibraryAccess checker
+// and all fail open without one, but none were listed here, so the assertion
+// looked comprehensive while leaving the transcode start path (any user can
+// stream from any library) unguarded.
+//
+// Each subtest builds ONLY that handler, unwired, and requires the validator
+// to name it. If someone adds a new fail-open handler and forgets the check(),
+// this test won't catch it — but it does stop the five known ones from
+// regressing, and the table makes the omission visible to a reviewer.
+func TestValidateLibraryAccess_CoversEveryFailOpenHandler(t *testing.T) {
+	cases := []struct {
+		name string
+		h    Handlers
+	}{
+		{"lyrics", Handlers{Lyrics: v1.NewLyricsHandler(nil, nil, nil, nil)}},
+		{"people", Handlers{People: v1.NewPeopleHandler(nil, nil, nil)}},
+		{"subtitles", Handlers{Subtitles: v1.NewSubtitleHandler(nil, nil, nil)}},
+		{"trickplay", Handlers{Trickplay: v1.NewTrickplayHandler(nil, nil, nil)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.h.ValidateLibraryAccess()
+			if err == nil {
+				t.Fatalf("unwired %s handler must fail validation — a nil checker serves every library", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.name) {
+				t.Errorf("error should name %q, got: %v", tc.name, err)
+			}
+		})
+	}
+}

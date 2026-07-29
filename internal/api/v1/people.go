@@ -55,6 +55,12 @@ func (h *PeopleHandler) WithLibraryAccess(a LibraryAccessChecker) *PeopleHandler
 	return h
 }
 
+// LibraryAccessWired reports whether the library-ACL checker is wired.
+// A nil checker fails OPEN (serves every library), so api.Handlers.
+// ValidateLibraryAccess asserts this at startup and refuses to boot
+// without it.
+func (h *PeopleHandler) LibraryAccessWired() bool { return h.access != nil }
+
 type personSummaryResponse struct {
 	ID          uuid.UUID `json:"id"`
 	TMDBID      *int      `json:"tmdb_id,omitempty"`

@@ -102,6 +102,18 @@ func (h *NativeTranscodeHandler) StaticMaster(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	// Parental watch limit. ADR-035 introduced this path specifically to serve
+	// playback "instead of a live session", so it must carry the same gate
+	// Start does — otherwise any title with a pre-encoded ladder (by
+	// construction, the most-played ones) was watchable outside allowed hours.
+	// The master is fetched once per playback, which is the right place: rung
+	// playlists and segments are hot and are covered by this plus the progress
+	// heartbeat.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
+			return
+		}
+	}
 	ctx := r.Context()
 	hash := ""
 	if file.FileHash != nil {

@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -55,6 +56,7 @@ func (h *NativeTranscodeHandler) startABR(
 	sessionID, segTok, sourceURL string, userID, itemID uuid.UUID,
 	file *media.File, ladder []transcode.Rendition,
 	audioStreamIndex, audioChannels int, needsToneMap bool, codec string, positionMS int64,
+	maxSessionsPerUser int,
 ) {
 	ctx := r.Context()
 	sess := transcode.Session{
@@ -108,7 +110,21 @@ func (h *NativeTranscodeHandler) startABR(
 			"rungs":   len(ladder),
 		}, audit.ClientIP(r))
 	}
-	if err := h.sessions.Create(ctx, sess); err != nil {
+	// Authoritative cap enforcement at write time, same as the single-rendition
+	// path. This used to be a plain Create, so the per-user concurrent-stream
+	// cap (including an admin-set per-user limit) had NO atomic backstop on the
+	// ABR path — only Start's cheap pre-check, which is a check-then-act race
+	// that concurrent Starts both pass. Since ABR is the default for a full
+	// re-encode, that was the common path.
+	if err := h.sessions.CreateWithUserCap(ctx, sess, maxSessionsPerUser); err != nil {
+		if errors.Is(err, transcode.ErrUserAtCap) {
+			h.logger.WarnContext(ctx, "per-user transcode session cap reached (atomic, abr)",
+				"user_id", userID, "cap", maxSessionsPerUser)
+			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS",
+				fmt.Sprintf("you already have %d active streams; stop one before starting another",
+					maxSessionsPerUser))
+			return
+		}
 		h.logger.ErrorContext(ctx, "create ABR session", "err", err)
 		respond.InternalError(w, r)
 		return
