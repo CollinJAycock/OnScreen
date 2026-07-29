@@ -6,6 +6,7 @@ package scanner
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/jpeg"
 	_ "image/png" // register PNG decoder
@@ -672,8 +673,32 @@ var readTagFrom = func(r io.ReadSeeker) (tag.Metadata, error) {
 	return tag.ReadFrom(r)
 }
 
+// maxDecodePixels caps the DECODED resolution of a scanner image decode.
+//
+// Go's image/png and image/jpeg allocate the full bitmap from the header
+// before reading pixel data, so a few-hundred-byte file declaring
+// 60000x60000 immediately demands ~14 GB. Every sibling decode path already
+// enforces this ceiling (internal/artwork/resize.go, internal/photoimage);
+// the scanner's did not, and it is fed by embedded tags and on-disk files
+// that arrive with the media — i.e. attacker-influenced input.
+//
+// 100 MP matches internal/photoimage.maxImagePixels; real cover art is
+// orders of magnitude below it.
+const maxDecodePixels = 100_000_000 // 100 MP
+
 // decodeImageBytes decodes raw image bytes (JPEG or PNG) into an image.Image.
+//
+// The dimension guard lives HERE rather than at the call sites so all five
+// callers inherit it. Every caller already treats a decode error as "fall
+// through to the raw bytes", so rejecting an oversized image is
+// behaviour-preserving.
 func decodeImageBytes(data []byte) (image.Image, error) {
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		if int64(cfg.Width)*int64(cfg.Height) > maxDecodePixels {
+			return nil, fmt.Errorf("image dimensions too large: %dx%d exceeds %d px",
+				cfg.Width, cfg.Height, maxDecodePixels)
+		}
+	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
 }

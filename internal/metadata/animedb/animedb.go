@@ -51,6 +51,13 @@ const ManamiURL = "https://raw.githubusercontent.com/manami-project/anime-offlin
 // without churn.
 const CacheTTL = 7 * 24 * time.Hour
 
+// maxAnimeDBBytes caps the downloaded dataset. The real manami database is
+// ~30 MB; 256 MB leaves room for years of growth while still bounding a
+// hostile or compromised upstream, which would otherwise be free to fill the
+// disk (and, because the atomic rename would still succeed, leave a poisoned
+// cache that loads on every boot).
+const maxAnimeDBBytes = 256 << 20
+
 // Entry is one normalized record from the manami dataset, exposing
 // only the fields the enricher consumes. Other manami columns
 // (status, animeSeason, picture, …) are dropped on parse to keep
@@ -287,10 +294,23 @@ func (db *DB) fetchToCache(ctx context.Context) error {
 		return fmt.Errorf("create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	// Bound the copy. This was the one outbound fetch in the tree with no
+	// LimitReader, against a clear convention (every other client caps).
+	// Unbounded, a hostile or compromised upstream could write until the disk
+	// filled — and because the rename would still succeed and stamp a fresh
+	// mtime, the poisoned file then loaded on every subsequent boot without
+	// re-fetching. Treat hitting the cap as a fetch error so the temp file is
+	// removed and Open falls back to the previous good cache.
+	n, err := io.Copy(tmp, io.LimitReader(resp.Body, maxAnimeDBBytes+1))
+	if err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("copy body: %w", err)
+	}
+	if n > maxAnimeDBBytes {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("fetch %s: response exceeds %d bytes", db.source, maxAnimeDBBytes)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)

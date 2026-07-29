@@ -22,16 +22,21 @@ const (
 	ActionUserCreate     = "user.create"
 	ActionUserDelete     = "user.delete"
 	ActionUserRoleChange = "user.role_change"
-	ActionPasswordReset  = "user.password_reset"
-	ActionLibraryCreate  = "library.create"
-	ActionLibraryDelete  = "library.delete"
-	ActionLibraryScan    = "library.scan"
-	ActionSettingsUpdate = "settings.update"
-	ActionInviteCreate   = "invite.create"
-	ActionLoginSuccess   = "auth.login_success"
-	ActionLoginFailed    = "auth.login_failed"
-	ActionItemEnrich     = "item.enrich"
-	ActionItemMatchApply = "item.match_apply"
+	// ActionUserRatingChange records a change to a user's or managed
+	// profile's parental content-rating ceiling. Distinct from
+	// role_change so an operator can audit parental-control edits —
+	// loosening a child's ceiling is exactly the action worth reviewing.
+	ActionUserRatingChange = "user.rating_change"
+	ActionPasswordReset    = "user.password_reset"
+	ActionLibraryCreate    = "library.create"
+	ActionLibraryDelete    = "library.delete"
+	ActionLibraryScan      = "library.scan"
+	ActionSettingsUpdate   = "settings.update"
+	ActionInviteCreate     = "invite.create"
+	ActionLoginSuccess     = "auth.login_success"
+	ActionLoginFailed      = "auth.login_failed"
+	ActionItemEnrich       = "item.enrich"
+	ActionItemMatchApply   = "item.match_apply"
 	// ActionItemDelete is the soft-delete-subtree admin action on
 	// /items/{id}. Earlier code labelled this as item.match_apply, which
 	// is the wrong action — match_apply is the metadata re-match action

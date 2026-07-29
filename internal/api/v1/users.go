@@ -1291,6 +1291,48 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
+	// Revoke the target's outstanding credentials, mirroring SetAdmin.
+	//
+	// The ceiling is baked into the PASETO claims at issue time, so the DB
+	// update alone changes nothing for tokens already in the wild: the access
+	// token rides out its TTL and the 24 h asset/stream tokens keep carrying
+	// the OLD, looser ceiling for up to a day. An admin tightening a child's
+	// parental control reasonably expects it to bite immediately, and had no
+	// override available. Fail the request on error — leaving the ceiling
+	// changed but the old tokens live is the worst state to be in.
+	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "bump session epoch after content-rating change",
+				"target_id", targetID, "err", err)
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "delete sessions after content-rating change",
+				"target_id", targetID, "err", err)
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	// Segment tokens are a query-string capability with their own Valkey TTL
+	// and no session_epoch participation, so they need an explicit revoke or a
+	// restricted profile keeps streaming over-ceiling content for hours.
+	if h.segTokens != nil {
+		if err := h.segTokens.RevokeAllForUser(r.Context(), targetID); err != nil && h.logger != nil {
+			h.logger.WarnContext(r.Context(), "revoke segment tokens after content-rating change",
+				"target_id", targetID, "err", err)
+		}
+	}
+	if h.audit != nil {
+		rating := "none"
+		if body.MaxContentRating != nil {
+			rating = *body.MaxContentRating
+		}
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRatingChange, targetID.String(),
+			map[string]any{"max_content_rating": rating}, audit.ClientIP(r))
+	}
 	respond.NoContent(w)
 }
 

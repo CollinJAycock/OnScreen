@@ -18,7 +18,12 @@ import (
 // LiveTVStreamProxy is the slice of HLSProxy the stream handlers use.
 // Kept narrow so the handler can be tested with a stub.
 type LiveTVStreamProxy interface {
+	// Acquire is create-if-missing — it can tune a tuner and start ffmpeg.
+	// Only the playlist handler may call it.
 	Acquire(ctx context.Context, channelID uuid.UUID) (*livetv.HLSSession, error)
+	// Lookup finds an already-running session without ever creating one.
+	// Segment handlers use this so a cheap GET can't spawn a tune.
+	Lookup(channelID uuid.UUID) (*livetv.HLSSession, bool)
 	Release(s *livetv.HLSSession)
 }
 
@@ -139,11 +144,15 @@ func (h *LiveTVHandler) StreamSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Acquire+release the session so we don't serve a segment from a
-	// directory the proxy is concurrently tearing down. Cheap because the
-	// session almost certainly already exists — playlist fetch came first.
-	session, err := h.proxy.Acquire(r.Context(), id)
-	if err != nil {
+	// Look up (never create) the session, so we don't serve a segment from a
+	// directory the proxy is concurrently tearing down. Lookup, not Acquire:
+	// Acquire is create-if-missing, so a segment GET for a channel with no
+	// live session used to tune a real tuner and spawn an ffmpeg transcode —
+	// held for the full grace period — before 404ing anyway because the
+	// segment file doesn't exist. A segment can only be legitimately fetched
+	// after a playlist created the session, so a miss here is a genuine 404.
+	session, ok := h.proxy.Lookup(id)
+	if !ok {
 		respond.NotFound(w, r)
 		return
 	}

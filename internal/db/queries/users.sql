@@ -54,8 +54,18 @@ WHERE parent_user_id = $1
 ORDER BY username;
 
 -- name: CreateManagedProfile :one
-INSERT INTO users (username, parent_user_id, avatar_url, pin, is_admin)
-VALUES ($1, $2, $3, $4, false)
+-- The new profile INHERITS its owner's parental content-rating ceiling.
+--
+-- Creating a profile is open to every authenticated user, and a profile is a
+-- real users row that can be entered with a 4-digit PIN via /auth/pin-switch.
+-- Defaulting max_content_rating to NULL (unrestricted) therefore handed any
+-- rating-restricted household account a two-request escape from its own
+-- ceiling, with no admin involvement. Inheriting at INSERT time closes it
+-- atomically — there is no window in which the child exists unrestricted —
+-- and an admin can still loosen the child afterwards via
+-- PUT /users/{id}/content-rating, which is the intended way to grant it.
+INSERT INTO users (username, parent_user_id, avatar_url, pin, is_admin, max_content_rating)
+VALUES ($1, $2, $3, $4, false, (SELECT max_content_rating FROM users WHERE id = $2))
 RETURNING id, username, avatar_url, created_at;
 
 -- name: DeleteManagedProfile :exec

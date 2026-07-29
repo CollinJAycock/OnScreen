@@ -133,10 +133,25 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 	// Without this cap, a mass-event burst (5000 item.added during
 	// a library import) would spawn 5000 outer goroutines holding
 	// 30 s contexts each — bounded by inner sem at delivery time
-	// but unbounded at fan-out time. dispatchSem briefly blocks the
-	// producer (scanner / API) when too many dispatches are in
-	// flight, applying backpressure where it belongs.
-	d.dispatchSem <- struct{}{}
+	// but unbounded at fan-out time.
+	//
+	// SHED rather than block. This used to be a bare send, which parked the
+	// CALLER — and Dispatch is called from the request path, including
+	// PUT /items/{id}/progress on every playback heartbeat. Because the
+	// fan-out goroutine below then blocks on the delivery semaphore while
+	// still holding its dispatch slot, one unreachable endpoint drains both
+	// pools and every subsequent progress report stalls in the handler, with
+	// no context to honour and no deadline. Webhooks are fire-and-forget
+	// best-effort; dropping an event under saturation is strictly better than
+	// converting a webhook outage into an API outage. Same posture as
+	// internal/plugin/dispatcher.go.
+	select {
+	case d.dispatchSem <- struct{}{}:
+	default:
+		d.logger.Warn("webhook dispatch: fan-out saturated, dropping event",
+			"event", eventType)
+		return
+	}
 	d.wg.Add(1)
 	// SafeGo at both levels — a JSON-marshal or DB-call panic in the
 	// dispatcher fan-out, or a panic mid-delivery (per-endpoint HTTP /
@@ -168,9 +183,17 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 				continue
 			}
 			ep := ep // capture loop var
-			// Acquire semaphore slot — blocks if maxConcurrentDeliveries are in-flight.
+			// Shed here too. Blocking on the delivery semaphore while
+			// holding a dispatch slot is what coupled the two pools and let
+			// a single dead endpoint exhaust both.
+			select {
+			case d.sem <- struct{}{}:
+			default:
+				d.logger.Warn("webhook dispatch: delivery pool saturated, dropping",
+					"event", evt, "url", ep.Url)
+				continue
+			}
 			d.wg.Add(1)
-			d.sem <- struct{}{}
 			observability.SafeGo(d.logger, "webhook-dispatcher:deliver", func() {
 				defer d.wg.Done()
 				defer func() { <-d.sem }()

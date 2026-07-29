@@ -2430,7 +2430,10 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 	// stream ffmpeg straight to the client, the original behaviour.
 	if h.subtitleCacheDir == "" {
 		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		// `private`: embedded-subtitle extraction is ACL + rating gated per
+		// request on a token-free same-origin URL, so a shared cache must not
+		// serve one user's authorized cues to another.
+		w.Header().Set("Cache-Control", "private, max-age=86400")
 		cmd := exec.CommandContext(r.Context(), "ffmpeg",
 			"-i", file.FilePath, "-map", fmt.Sprintf("0:%d", streamIdx),
 			"-f", "webvtt", "-v", "quiet", "pipe:1")
@@ -2489,7 +2492,10 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 
 func serveCachedVTT(w http.ResponseWriter, data []byte) {
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// `private`: embedded-subtitle extraction is ACL + rating gated per
+	// request on a token-free same-origin URL, so a shared cache must not
+	// serve one user's authorized cues to another.
+	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
 }

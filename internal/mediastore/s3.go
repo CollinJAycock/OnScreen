@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -192,7 +193,17 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 func (s *S3) SignedURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	objKey := s.objectKey(key)
 	if s.cdnBase != "" {
-		return s.cdnBase + "/" + objKey, nil
+		// Percent-escape each path segment. Raw concatenation let key bytes
+		// with URL meaning (#, ?, %, space) change the STRUCTURE of a URL
+		// that is then handed straight to a 302 Location — a '?' turned the
+		// rest of the key into a query string, a '#' truncated it at a
+		// fragment. Escaping per segment keeps '/' as the separator so the
+		// object hierarchy is preserved.
+		segs := strings.Split(objKey, "/")
+		for i, seg := range segs {
+			segs[i] = url.PathEscape(seg)
+		}
+		return strings.TrimSuffix(s.cdnBase, "/") + "/" + strings.Join(segs, "/"), nil
 	}
 	u, err := s.client.PresignedGetObject(ctx, s.bucket, objKey, ttl, nil)
 	if err != nil {

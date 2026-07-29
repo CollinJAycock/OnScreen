@@ -201,6 +201,21 @@ func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
+	// A PIN-switched session must not authorise a device.
+	//
+	// /auth/pin-switch deliberately mints an EPHEMERAL credential: Switched=true
+	// and no refresh token, so entering a household profile with a 4-digit PIN
+	// grants no durable access. Pairing bypassed that entirely — Claim accepted
+	// the switched token, and Poll then issued a full pair through
+	// issueTokenPair, which never sets Switched and does create a 30-day refresh
+	// session. Two requests turned a deliberately-weak profile session into a
+	// stronger credential than the switch itself was ever allowed to produce.
+	// Pair from the account you actually signed in as.
+	if claims.Switched {
+		respond.Error(w, r, http.StatusForbidden, "PAIR_SWITCHED",
+			"sign in with your account password before pairing a device")
+		return
+	}
 
 	var body struct {
 		PIN        string `json:"pin"`

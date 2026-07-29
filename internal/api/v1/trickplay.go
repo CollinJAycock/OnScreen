@@ -209,7 +209,15 @@ func (h *TrickplayHandler) ServeFile(w http.ResponseWriter, r *http.Request) {
 	if filepath.Ext(name) == ".vtt" {
 		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	}
-	w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
+	// `private`, not `public`: this response is authorized per request (per-
+	// library ACL plus the caller's content-rating ceiling) but the browser
+	// URL carries no token or user identity and there is no Vary, so a shared
+	// cache in front of the app would store one user's authorized sprite and
+	// replay it to everyone — including restricted profiles. Matches every
+	// sibling ACL-gated asset (subtitles.go, photos.go, books.go). CDN offload
+	// for these should go through the PublicAssetCache admin opt-in the
+	// artwork path uses, not a hardcoded `public`.
+	w.Header().Set("Cache-Control", "private, max-age=86400, must-revalidate")
 	http.ServeFile(w, r, full)
 }
 

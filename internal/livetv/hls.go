@@ -151,6 +151,33 @@ func NewHLSProxy(cfg HLSConfig, svc *Service, logger *slog.Logger) *HLSProxy {
 	return &HLSProxy{cfg: cfg, svc: svc, logger: logger, sessions: make(map[uuid.UUID]*HLSSession)}
 }
 
+// Lookup returns the ALREADY-RUNNING session for a channel, incrementing its
+// refcount and cancelling any pending close timer exactly as Acquire does. It
+// never opens an upstream or starts ffmpeg. Callers MUST call Release exactly
+// once when ok is true.
+//
+// This exists because Acquire is create-if-missing, which is the wrong
+// semantics for a segment request: a segment GET for a channel with no live
+// session would tune a real tuner and spawn an ffmpeg transcode, hold it for
+// the grace period, and then 404 anyway because the segment file doesn't
+// exist. One cheap authenticated request per tuner-tune is a poor trade.
+func (p *HLSProxy) Lookup(channelID uuid.UUID) (*HLSSession, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.sessions[channelID]
+	if !ok {
+		return nil, false
+	}
+	s.mu.Lock()
+	s.refcount++
+	if s.closing != nil {
+		s.closing.Stop()
+		s.closing = nil
+	}
+	s.mu.Unlock()
+	return s, true
+}
+
 // Acquire returns the active session for a channel, creating + starting
 // it if none exists. Refcount is incremented; caller MUST call Release
 // exactly once. Returns ErrAllTunersBusy verbatim from the driver so the

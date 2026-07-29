@@ -140,11 +140,11 @@ var errBookPageNotFound = errors.New("book: page not found")
 // "page N" is 1-indexed and resolved against the alphabetical sort of
 // image entries, the convention every comic reader follows. Out-of-
 // range yields errBookPageNotFound which the caller maps to 404.
-func (h *BookHandler) servePage(_ context.Context, w http.ResponseWriter, file media.File, pageNum int) error {
+func (h *BookHandler) servePage(ctx context.Context, w http.ResponseWriter, file media.File, pageNum int) error {
 	ext := strings.ToLower(filepath.Ext(file.FilePath))
 	switch ext {
 	case ".cbr":
-		return servePageFromCBR(w, file.FilePath, pageNum)
+		return servePageFromCBR(ctx, w, file.FilePath, pageNum)
 	case ".epub":
 		// EPUB pages aren't image-extracted server-side; the client
 		// renders chapters via epub.js. Return 404 so a client that
@@ -189,66 +189,116 @@ func (h *BookHandler) servePage(_ context.Context, w http.ResponseWriter, file m
 }
 
 // servePageFromCBR mirrors servePage's CBZ branch but for RAR
-// archives. rardecode v2 is streaming-only (no random access) so we
-// walk the archive once collecting (name, body) pairs for every image
-// entry and pick the requested one after sorting. Modest peak memory
-// — comic pages are typically a few MB; an N-page CBR holds N pages
-// in RAM during the request. Acceptable for personal libraries; if
-// this ever needs to handle 500-page omnibus CBRs we can switch to
-// a name-only first pass + targeted re-open for the chosen page.
-func servePageFromCBR(w http.ResponseWriter, cbrPath string, pageNum int) error {
+// archives. rardecode v2 is streaming-only (no random access), so this makes
+// TWO passes: the first reads only entry NAMES to work out which one the
+// sorted page index refers to, the second re-opens and buffers just that one.
+//
+// It used to buffer every image entry in the archive and then serve one of
+// them. With only a 100 MB per-entry limit and no aggregate cap, a 300-page
+// omnibus — or a crafted archive of many large entries — meant one cheap
+// authenticated GET could pin gigabytes, and concurrent requests multiplied
+// it. The name-only pass costs a second decompression walk but bounds peak
+// memory at a single page. maxCBRPageEntries additionally stops an archive
+// with an absurd entry count from ballooning the name slice.
+//
+// ctx is honoured between entries so a client disconnect aborts the walk
+// instead of decompressing the remainder for nobody.
+func servePageFromCBR(ctx context.Context, w http.ResponseWriter, cbrPath string, pageNum int) error {
+	if pageNum < 1 {
+		return errBookPageNotFound
+	}
+
+	names, err := cbrPageNames(ctx, cbrPath)
+	if err != nil {
+		return err
+	}
+	if pageNum > len(names) {
+		return errBookPageNotFound
+	}
+	sort.Strings(names)
+	want := names[pageNum-1]
+
+	// Second pass: re-open and buffer ONLY the requested entry.
 	f, err := os.Open(cbrPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-
 	rr, err := rardecode.NewReader(f)
 	if err != nil {
 		return err
 	}
-
-	type cbrEntry struct {
-		name string
-		data []byte
-	}
-	var entries []cbrEntry
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		header, err := rr.Next()
-		if err == io.EOF {
+		if err == io.EOF || header == nil {
 			break
 		}
 		if err != nil {
 			return err
 		}
-		if header == nil {
+		if header.Name != want {
+			continue
+		}
+		// 100 MB for the single entry we actually serve — generous for any
+		// legitimate page scan (most are well under 5 MB) while keeping a
+		// decompression-bomb entry from ballooning server memory.
+		data, rerr := io.ReadAll(io.LimitReader(rr, maxBookPageBytes))
+		if rerr != nil {
+			return rerr
+		}
+		w.Header().Set("Content-Type", contentTypeForBookPage(header.Name))
+		w.Header().Set("Cache-Control", "private, max-age=3600, immutable")
+		_, err = w.Write(data)
+		return err
+	}
+	return errBookPageNotFound
+}
+
+const (
+	// maxBookPageBytes caps a single decompressed page.
+	maxBookPageBytes = 100 << 20
+	// maxCBRPageEntries caps how many image entries we will enumerate, so a
+	// crafted archive declaring millions of tiny entries can't grow the name
+	// slice without bound. No real comic approaches this.
+	maxCBRPageEntries = 10_000
+)
+
+// cbrPageNames walks the archive reading entry names only, never buffering
+// entry bodies.
+func cbrPageNames(ctx context.Context, cbrPath string) ([]string, error) {
+	f, err := os.Open(cbrPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	rr, err := rardecode.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		header, err := rr.Next()
+		if err == io.EOF || header == nil {
 			break
+		}
+		if err != nil {
+			return nil, err
 		}
 		if !isCBZPageEntryAPI(header.Name) {
 			continue
 		}
-		// 100 MB per archive entry — generous for any legitimate page
-		// scan (most are well under 5 MB) while keeping a zip-bomb
-		// entry (small compressed size, huge decompressed) from
-		// ballooning server memory while we materialize every page
-		// just to serve one.
-		data, rerr := io.ReadAll(io.LimitReader(rr, 100<<20))
-		if rerr != nil {
-			continue
+		names = append(names, header.Name)
+		if len(names) >= maxCBRPageEntries {
+			break
 		}
-		entries = append(entries, cbrEntry{name: header.Name, data: data})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
-
-	if pageNum < 1 || pageNum > len(entries) {
-		return errBookPageNotFound
-	}
-
-	entry := entries[pageNum-1]
-	w.Header().Set("Content-Type", contentTypeForBookPage(entry.name))
-	w.Header().Set("Cache-Control", "private, max-age=3600, immutable")
-	_, err = w.Write(entry.data)
-	return err
+	return names, nil
 }
 
 // isCBZPageEntryAPI mirrors the scanner's isCBZPageEntry — duplicated

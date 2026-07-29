@@ -29,6 +29,7 @@ type stubStreamProxy struct {
 	segments   map[string][]byte
 	acquireErr error
 	acquires   atomic.Int32
+	lookups    atomic.Int32
 	releases   atomic.Int32
 }
 
@@ -77,6 +78,16 @@ func (s *stubStreamProxy) Acquire(_ context.Context, id uuid.UUID) (*livetv.HLSS
 	sess := livetv.NewSessionForTest(id, subdir)
 	s.sessions[id] = sess
 	return sess, nil
+}
+
+// Lookup is create-NEVER: it returns only a session a prior Acquire built.
+// The segment handler uses this so a segment GET can't spawn a tuner tune.
+func (s *stubStreamProxy) Lookup(id uuid.UUID) (*livetv.HLSSession, bool) {
+	s.lookups.Add(1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	return sess, ok
 }
 
 func (s *stubStreamProxy) Release(_ *livetv.HLSSession) {
@@ -208,6 +219,12 @@ func TestLiveTVStream_Segment_ServesTSContent(t *testing.T) {
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 
 	id := uuid.New()
+	// A segment is only fetchable once a playlist request has created the
+	// session — the segment handler now looks up, never creates. Establish
+	// the session first, as a real player does.
+	if _, err := proxy.Acquire(context.Background(), id); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
 	req := httptest.NewRequest("GET",
 		"/api/v1/tv/channels/"+id.String()+"/segments/seg-00000.ts", nil)
 	req = withChiParams(req, "id", id.String(), "name", "seg-00000.ts")
@@ -250,5 +267,35 @@ func TestLiveTVStream_Segment_NoProxyIs503(t *testing.T) {
 	h.StreamSegment(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("got %d, want 503", rec.Code)
+	}
+}
+
+// TestLiveTVStream_Segment_DoesNotCreateSession is the regression guard for the
+// "1 segment GET = 1 tuner tune + 1 ffmpeg" defect. StreamSegment used to call
+// Acquire, which is create-if-missing: a segment request for a channel with no
+// live session opened a real upstream and spawned a transcode, held it for the
+// grace period, and then 404'd anyway because the file didn't exist. Any
+// authenticated user could tie up every tuner with cheap GETs.
+func TestLiveTVStream_Segment_DoesNotCreateSession(t *testing.T) {
+	svc := newMockLiveTVService()
+	proxy := newStubStreamProxy(t)
+	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
+
+	id := uuid.New()
+	req := httptest.NewRequest("GET",
+		"/api/v1/tv/channels/"+id.String()+"/segments/seg-00000.ts", nil)
+	req = withChiParams(req, "id", id.String(), "name", "seg-00000.ts")
+	rec := httptest.NewRecorder()
+	h.StreamSegment(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404 for a segment with no live session", rec.Code)
+	}
+	if got := proxy.acquires.Load(); got != 0 {
+		t.Errorf("Acquire called %d times; a segment GET must never create a session "+
+			"(each one tunes a tuner and starts ffmpeg)", got)
+	}
+	if got := proxy.lookups.Load(); got != 1 {
+		t.Errorf("Lookup called %d times, want 1", got)
 	}
 }

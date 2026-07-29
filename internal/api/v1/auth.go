@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -283,35 +282,15 @@ const (
 
 // isSecure returns true if the request arrived over HTTPS.
 //
-// We accept X-Forwarded-Proto only when the request reached us from a
-// loopback or RFC1918 private address — i.e., a reverse proxy on the same
-// host or the same private network. Internet-facing clients can't influence
-// the cookie's Secure flag this way; if you front OnScreen with a proxy on a
-// public IP, the proxy must terminate TLS itself or the auth cookies will be
-// issued without Secure (which is the safer failure mode).
+// Delegates to middleware.IsSecure — there is exactly ONE implementation of
+// this decision on purpose. This package used to carry a byte-identical copy,
+// and when the middleware's notion of "trusted peer" was corrected (it now
+// reads the trust decision TrustedRealIP recorded, rather than re-deriving it
+// from an r.RemoteAddr that TrustedRealIP has already overwritten), the copy
+// would have silently kept the old, wrong behaviour for the cookie Secure flag
+// while HSTS got the right one.
 func isSecure(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
-	}
-	if r.Header.Get("X-Forwarded-Proto") == "https" && remoteAddrIsTrusted(r) {
-		return true
-	}
-	return false
-}
-
-// remoteAddrIsTrusted reports whether the request's RemoteAddr is loopback or
-// in an RFC1918 / unique-local address range — the proxies we trust to set
-// X-Forwarded-Proto. Anything else (public IPs) is rejected.
-func remoteAddrIsTrusted(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback() || ip.IsPrivate()
+	return middleware.IsSecure(r)
 }
 
 // setAuthCookies writes httpOnly cookies for both tokens.

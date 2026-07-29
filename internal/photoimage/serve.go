@@ -148,6 +148,53 @@ func (o Options) withDefaults() Options {
 // tens of GB of RGBA; reject anything over this before Decode allocates.
 const maxImagePixels = 100_000_000 // 100 MP
 
+// maxFFmpegOutputBytes caps the JPEG ffmpeg may emit on stdout for the HEIC
+// and embedded-cover paths. 50 MB is comfortably above any sensible
+// single-photo JPEG (24 MP at quality 95 is ~10 MB).
+const maxFFmpegOutputBytes = 50 * 1024 * 1024
+
+// cappedBuffer is an io.Writer that refuses to accumulate more than limit
+// bytes. os/exec's copy goroutine stops on the write error and Run returns it,
+// so ffmpeg is torn down instead of being allowed to fill memory first.
+//
+// This replaces a post-hoc `out.Len() > 50MB` check, which only ever fired
+// AFTER the bytes were already resident — the cap was documented as "a sized
+// cap on the JPEG stdout pipe" but was nothing of the kind.
+type cappedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if c.buf.Len()+len(p) > c.limit {
+		return 0, fmt.Errorf("ffmpeg output exceeds %d bytes", c.limit)
+	}
+	return c.buf.Write(p)
+}
+
+// decodeBoundedJPEG applies the same pixel ceiling to an ffmpeg-produced JPEG
+// that decodeSource applies to an in-process decode.
+//
+// Without it the HEIC and embedded-cover branches returned from decodeSource
+// BEFORE reaching the maxImagePixels check, so those two paths decoded with no
+// dimension bound at all — and ffmpeg will happily transcode a HEIC declaring
+// enormous dimensions into an equally enormous JPEG.
+func decodeBoundedJPEG(out *bytes.Buffer, what string) (image.Image, error) {
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(out.Bytes()))
+	if err != nil {
+		return nil, fmt.Errorf("decode %s config: %w", what, err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > maxImagePixels {
+		return nil, fmt.Errorf("%s too large: %dx%d exceeds %d px",
+			what, cfg.Width, cfg.Height, maxImagePixels)
+	}
+	img, err := jpeg.Decode(out)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", what, err)
+	}
+	return img, nil
+}
+
 // decodeSource opens sourcePath and returns the decoded image plus whether
 // EXIF orientation was already applied during decode (true for HEIC and
 // audiobook covers, both of which are decoded by ffmpeg with -autorotate).
@@ -243,8 +290,8 @@ func decodeEmbeddedCover(ctx context.Context, sourcePath string) (image.Image, e
 		"-q:v", "2",
 		"pipe:1",
 	)
-	var out bytes.Buffer
-	cmd.Stdout = &out
+	out := &cappedBuffer{limit: maxFFmpegOutputBytes}
+	cmd.Stdout = out
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -259,18 +306,11 @@ func decodeEmbeddedCover(ctx context.Context, sourcePath string) (image.Image, e
 		}
 		return nil, fmt.Errorf("ffmpeg cover extract: %w (stderr=%s)", err, strings.TrimSpace(stderrText))
 	}
-	if out.Len() == 0 {
+	if out.buf.Len() == 0 {
 		noEmbeddedCover.Store(sourcePath, struct{}{})
 		return nil, fmt.Errorf("no embedded cover in %s", sourcePath)
 	}
-	if out.Len() > 50*1024*1024 {
-		return nil, fmt.Errorf("ffmpeg cover extract: output exceeds 50 MB")
-	}
-	img, err := jpeg.Decode(&out)
-	if err != nil {
-		return nil, fmt.Errorf("decode ffmpeg cover: %w", err)
-	}
-	return img, nil
+	return decodeBoundedJPEG(&out.buf, "ffmpeg cover")
 }
 
 // isHEIC returns true when sourcePath has a HEIC/HEIF extension. Detection
@@ -299,21 +339,14 @@ func decodeHEIC(ctx context.Context, sourcePath string) (image.Image, error) {
 		"-q:v", "2",
 		"pipe:1",
 	)
-	var out bytes.Buffer
-	cmd.Stdout = &out
+	out := &cappedBuffer{limit: maxFFmpegOutputBytes}
+	cmd.Stdout = out
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("ffmpeg heic decode: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
 	}
-	if out.Len() > 50*1024*1024 {
-		return nil, fmt.Errorf("ffmpeg heic decode: output exceeds 50 MB")
-	}
-	img, err := jpeg.Decode(&out)
-	if err != nil {
-		return nil, fmt.Errorf("decode ffmpeg jpeg: %w", err)
-	}
-	return img, nil
+	return decodeBoundedJPEG(&out.buf, "ffmpeg jpeg")
 }
 
 // readOrientation reads the EXIF Orientation tag from sourcePath. Returns 1
