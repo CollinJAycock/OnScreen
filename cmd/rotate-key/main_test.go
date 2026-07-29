@@ -39,9 +39,10 @@ func TestReEncrypt_RawRoundTrips(t *testing.T) {
 	}
 }
 
-// An encv1:-prefixed secret — server_settings shape — round-trips and keeps its
-// prefix.
-func TestReEncrypt_PrefixedRoundTrips(t *testing.T) {
+// A legacy encv1: settings value re-keys AND upgrades to the v2 envelope.
+// Rotation is the upgrade path: a rotated row must come out in the current
+// format, bound to its key name, not be rewritten in the weaker one.
+func TestReEncryptSetting_UpgradesV1ToV2(t *testing.T) {
 	old := mustEnc(t, strings.Repeat("a", 32))
 	nw := mustEnc(t, strings.Repeat("b", 32))
 
@@ -49,16 +50,51 @@ func TestReEncrypt_PrefixedRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-	out, ok := reEncrypt(old, nw, encPrefix+ct)
+	out, ok := reEncryptSetting(old, nw, "oidc_config", encPrefix+ct)
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if !strings.HasPrefix(out, encPrefix) {
-		t.Error("prefixed value must keep its prefix")
+	if !strings.HasPrefix(out, encPrefixV2) {
+		t.Fatalf("rotated settings row must be upgraded to %s, got %q", encPrefixV2, out[:12])
 	}
-	got, err := nw.Decrypt(strings.TrimPrefix(out, encPrefix))
+	got, err := nw.DecryptContext(strings.TrimPrefix(out, encPrefixV2), "oidc_config")
 	if err != nil || got != `{"client_secret":"x"}` {
 		t.Errorf("decrypt: got %q err %v", got, err)
+	}
+	// The upgraded value must be pinned to its key.
+	if _, err := nw.DecryptContext(strings.TrimPrefix(out, encPrefixV2), "tmdb_api_key"); err == nil {
+		t.Error("upgraded value still decrypts under a foreign settings key")
+	}
+}
+
+// An already-v2 value re-keys and stays v2, decrypting only under its own key.
+func TestReEncryptSetting_V2RoundTrips(t *testing.T) {
+	old := mustEnc(t, strings.Repeat("a", 32))
+	nw := mustEnc(t, strings.Repeat("b", 32))
+
+	ct, err := old.EncryptContext("tok", "tmdb_api_key")
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	out, ok := reEncryptSetting(old, nw, "tmdb_api_key", encPrefixV2+ct)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	got, err := nw.DecryptContext(strings.TrimPrefix(out, encPrefixV2), "tmdb_api_key")
+	if err != nil || got != "tok" {
+		t.Errorf("decrypt: got %q err %v", got, err)
+	}
+}
+
+// A v2 value whose stored key does not match must be skipped, never clobbered
+// — the same safety property TestReEncrypt_WrongOldKeySkips guards for keys.
+func TestReEncryptSetting_WrongKeyContextSkips(t *testing.T) {
+	old := mustEnc(t, strings.Repeat("a", 32))
+	nw := mustEnc(t, strings.Repeat("b", 32))
+
+	ct, _ := old.EncryptContext("tok", "tmdb_api_key")
+	if _, ok := reEncryptSetting(old, nw, "tvdb_api_key", encPrefixV2+ct); ok {
+		t.Fatal("a context mismatch must skip, not rotate")
 	}
 }
 

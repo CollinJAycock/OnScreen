@@ -43,6 +43,12 @@ import (
 // marker, so it only changes alongside a migration.
 const encPrefix = "encv1:"
 
+// encPrefixV2 is the current settings envelope: AES-GCM with the settings KEY
+// NAME as associated data, so a ciphertext only decrypts in the row it was
+// written for. Rotation is also the upgrade path — every settings row this
+// tool rewrites comes out as v2 regardless of which envelope it went in as.
+const encPrefixV2 = "encv2:"
+
 func main() {
 	var apply bool
 	var oldKey, newKey, dsn string
@@ -94,6 +100,7 @@ func main() {
 		{"server_settings", rotateSettings},
 		{"webhook_endpoints.secret", rotateWebhookSecrets},
 		{"users.totp_secret", rotateTOTPSecrets},
+		{"user_scrobble.listenbrainz_token", rotateScrobbleTokens},
 	}
 
 	var totalRot, totalSkip int
@@ -123,12 +130,12 @@ func main() {
 	}
 }
 
-// reEncrypt decrypts stored with oldEnc and re-encrypts with newEnc, preserving
-// the encv1: prefix when present. ok=false means the old key couldn't decrypt
-// it (wrong key, already rotated, or plaintext) — the caller skips it.
+// reEncrypt decrypts stored with oldEnc and re-encrypts with newEnc. Used for
+// the raw, prefix-less columns (webhook secrets, TOTP secrets, scrobble
+// tokens). ok=false means the old key couldn't decrypt it (wrong key, already
+// rotated, or plaintext) — the caller skips it.
 func reEncrypt(oldEnc, newEnc *auth.Encryptor, stored string) (out string, ok bool) {
-	hadPrefix := strings.HasPrefix(stored, encPrefix)
-	plain, err := oldEnc.Decrypt(strings.TrimPrefix(stored, encPrefix))
+	plain, err := oldEnc.Decrypt(stored)
 	if err != nil {
 		return "", false
 	}
@@ -136,10 +143,34 @@ func reEncrypt(oldEnc, newEnc *auth.Encryptor, stored string) (out string, ok bo
 	if err != nil {
 		return "", false
 	}
-	if hadPrefix {
-		reEnc = encPrefix + reEnc
-	}
 	return reEnc, true
+}
+
+// reEncryptSetting decrypts a server_settings value under whichever envelope it
+// carries and re-encrypts it as v2, binding the key name as associated data.
+// This is what upgrades a legacy v1 row: rotation rewrites it in the current
+// format rather than preserving the weaker one.
+func reEncryptSetting(oldEnc, newEnc *auth.Encryptor, key, stored string) (out string, ok bool) {
+	var (
+		plain string
+		err   error
+	)
+	switch {
+	case strings.HasPrefix(stored, encPrefixV2):
+		plain, err = oldEnc.DecryptContext(strings.TrimPrefix(stored, encPrefixV2), key)
+	case strings.HasPrefix(stored, encPrefix):
+		plain, err = oldEnc.Decrypt(strings.TrimPrefix(stored, encPrefix))
+	default:
+		return "", false
+	}
+	if err != nil {
+		return "", false
+	}
+	reEnc, err := newEnc.EncryptContext(plain, key)
+	if err != nil {
+		return "", false
+	}
+	return encPrefixV2 + reEnc, true
 }
 
 // rotateSettings re-encrypts every encv1:-prefixed server_settings value. Keyed
@@ -148,7 +179,9 @@ func reEncrypt(oldEnc, newEnc *auth.Encryptor, stored string) (out string, ok bo
 func rotateSettings(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encryptor) (int, int, error) {
 	type row struct{ key, value string }
 	var rows []row
-	q, err := tx.Query(ctx, `SELECT key, value FROM server_settings WHERE value LIKE $1`, encPrefix+"%")
+	q, err := tx.Query(ctx,
+		`SELECT key, value FROM server_settings WHERE value LIKE $1 OR value LIKE $2`,
+		encPrefix+"%", encPrefixV2+"%")
 	if err != nil {
 		return 0, 0, fmt.Errorf("select: %w", err)
 	}
@@ -167,7 +200,7 @@ func rotateSettings(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encrypt
 
 	var rotated, skipped int
 	for _, r := range rows {
-		out, ok := reEncrypt(oldEnc, newEnc, r.value)
+		out, ok := reEncryptSetting(oldEnc, newEnc, r.key, r.value)
 		if !ok {
 			skipped++
 			continue
@@ -193,6 +226,19 @@ func rotateTOTPSecrets(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encr
 	return rotateRawColumn(ctx, tx, oldEnc, newEnc,
 		`SELECT id::text, totp_secret FROM users WHERE totp_secret IS NOT NULL AND totp_secret <> ''`,
 		`UPDATE users SET totp_secret = $1 WHERE id = $2::uuid`)
+}
+
+// rotateScrobbleTokens re-encrypts user_scrobble.listenbrainz_token (raw
+// base64, no prefix).
+//
+// This sink was MISSING from the job list. Every other at-rest secret was
+// rotated, so a documented SECRET_KEY rotation looked completely successful
+// while silently orphaning every user's ListenBrainz token — undecryptable
+// afterwards, with no error surfaced until scrobbling quietly stopped working.
+func rotateScrobbleTokens(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encryptor) (int, int, error) {
+	return rotateRawColumn(ctx, tx, oldEnc, newEnc,
+		`SELECT user_id::text, listenbrainz_token FROM user_scrobble WHERE listenbrainz_token IS NOT NULL AND listenbrainz_token <> ''`,
+		`UPDATE user_scrobble SET listenbrainz_token = $1 WHERE user_id = $2::uuid`)
 }
 
 // rotateRawColumn rotates a (id, secret) result set where secret is a raw

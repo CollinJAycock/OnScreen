@@ -35,19 +35,53 @@ func NewEncryptor(key []byte) (*Encryptor, error) {
 	return &Encryptor{gcm: gcm}, nil
 }
 
-// Encrypt encrypts plaintext and returns a base64-encoded ciphertext string.
-// The nonce is prepended to the ciphertext before encoding.
+// Encrypt encrypts plaintext with NO associated data and returns a
+// base64-encoded ciphertext string. The nonce is prepended before encoding.
+//
+// Prefer [Encryptor.EncryptContext]. Without associated data a ciphertext is
+// interchangeable between storage slots: it decrypts successfully wherever it
+// is pasted, so anyone able to write the store can move a secret into a field
+// that is echoed back and read it out. Retained for reading and re-writing
+// legacy `encv1:` values.
 func (e *Encryptor) Encrypt(plaintext string) (string, error) {
+	return e.seal(plaintext, nil)
+}
+
+// Decrypt decrypts a base64-encoded ciphertext produced by [Encryptor.Encrypt]
+// (no associated data).
+func (e *Encryptor) Decrypt(encoded string) (string, error) {
+	return e.open(encoded, nil)
+}
+
+// EncryptContext encrypts plaintext bound to context, which is authenticated
+// but not encrypted. Decryption succeeds only when the SAME context is
+// supplied, so the ciphertext is cryptographically pinned to the slot it was
+// written for — moving it to another row, key, or user makes it undecryptable
+// rather than a working copy of the secret.
+//
+// context must be a stable identifier available at both encrypt and decrypt
+// time: the settings key name, a user id, a row id. It is not secret.
+func (e *Encryptor) EncryptContext(plaintext, context string) (string, error) {
+	return e.seal(plaintext, []byte(context))
+}
+
+// DecryptContext decrypts a value produced by [Encryptor.EncryptContext].
+// A context mismatch fails as an authentication error, indistinguishable from
+// a corrupted ciphertext — which is the point.
+func (e *Encryptor) DecryptContext(encoded, context string) (string, error) {
+	return e.open(encoded, []byte(context))
+}
+
+func (e *Encryptor) seal(plaintext string, aad []byte) (string, error) {
 	nonce := make([]byte, e.gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", fmt.Errorf("generate nonce: %w", err)
 	}
-	ciphertext := e.gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	ciphertext := e.gcm.Seal(nonce, nonce, []byte(plaintext), aad)
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// Decrypt decrypts a base64-encoded ciphertext produced by Encrypt.
-func (e *Encryptor) Decrypt(encoded string) (string, error) {
+func (e *Encryptor) open(encoded string, aad []byte) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return "", fmt.Errorf("decode ciphertext: %w", err)
@@ -57,7 +91,7 @@ func (e *Encryptor) Decrypt(encoded string) (string, error) {
 		return "", fmt.Errorf("ciphertext too short")
 	}
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := e.gcm.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := e.gcm.Open(nil, nonce, ciphertext, aad)
 	if err != nil {
 		return "", fmt.Errorf("decrypt: %w", err)
 	}

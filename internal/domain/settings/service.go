@@ -80,11 +80,25 @@ func (s *Service) WithEncryptor(enc *auth.Encryptor) *Service {
 	return s
 }
 
-// encPrefix marks a value as AES-GCM-encrypted-with-the-server-key. The
-// version suffix (`v1`) lets a future cipher swap migrate cleanly:
-// new writes get the new prefix, old reads dispatch on the prefix
-// string to pick the right Decrypt path.
+// encPrefix marks a value encrypted WITHOUT associated data. Legacy: read-only
+// for rows written before the v2 envelope. See [encPrefixV2].
 const encPrefix = "encv1:"
+
+// encPrefixV2 marks a value encrypted with the settings KEY NAME as AES-GCM
+// associated data. All new writes use this.
+//
+// v1 sealed with nil AAD, so a ciphertext was interchangeable between rows:
+// because the read path decrypts anything carrying the sentinel "regardless of
+// allowlist", pasting the ciphertext of a genuinely secret row (say
+// tmdb_api_key) into a row whose plaintext is echoed back through an admin API
+// turned the settings table into a decryption oracle. Binding the key name in
+// means a moved ciphertext fails to authenticate instead of decrypting
+// cleanly.
+//
+// v1 rows are still readable — this is a format migration, not a break. A row
+// upgrades to v2 the next time it is written, and `rotate-key` rewrites every
+// row it touches as v2.
+const encPrefixV2 = "encv2:"
 
 // secretKeys lists the settings keys whose stored values must be
 // encrypted at rest. Keys not in this set stay as plaintext (paths,
@@ -939,13 +953,23 @@ func (s *Service) get(ctx context.Context, key string) string {
 	// secretKeys later doesn't strand previously-encrypted rows. Decrypt
 	// failure (wrong key, corrupted ciphertext) returns "" + a logged
 	// error rather than handing the cipher back to the caller.
-	if strings.HasPrefix(val, encPrefix) {
+	if strings.HasPrefix(val, encPrefixV2) || strings.HasPrefix(val, encPrefix) {
 		if s.enc == nil {
 			s.logger.ErrorContext(ctx, "settings get: encrypted value but no encryptor wired",
 				"key", key)
 			return ""
 		}
-		plain, err := s.enc.Decrypt(strings.TrimPrefix(val, encPrefix))
+		var (
+			plain string
+			err   error
+		)
+		if strings.HasPrefix(val, encPrefixV2) {
+			// v2 authenticates the key name, so a ciphertext relocated from
+			// another row fails here instead of decrypting.
+			plain, err = s.enc.DecryptContext(strings.TrimPrefix(val, encPrefixV2), key)
+		} else {
+			plain, err = s.enc.Decrypt(strings.TrimPrefix(val, encPrefix))
+		}
 		if err != nil {
 			s.logger.ErrorContext(ctx, "settings get: decrypt failed",
 				"key", key, "err", err)
@@ -969,13 +993,15 @@ func (s *Service) set(ctx context.Context, key, value string) error {
 	// wired. Empty value → store empty (lets the admin clear a secret
 	// without leaving a ciphertext blob).
 	if value != "" && s.isSecretKey(key) && s.enc != nil {
-		ct, err := s.enc.Encrypt(value)
+		// Bind the key name so the ciphertext only decrypts in the row it was
+		// written for.
+		ct, err := s.enc.EncryptContext(value, key)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "settings set: encrypt failed",
 				"key", key, "err", err)
 			return err
 		}
-		stored = encPrefix + ct
+		stored = encPrefixV2 + ct
 	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO server_settings (key, value, updated_at)
