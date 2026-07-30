@@ -1346,3 +1346,198 @@ func TestServeSubtitle_ImageSubRejected(t *testing.T) {
 		t.Fatalf("status: got %d, want 415", rec.Code)
 	}
 }
+
+// ── watch-limit bypass regressions (audit round 2) ──────────────────────────
+
+// StreamFile used to gate the parental limit only on isPlaybackStart(r) — no
+// Range header, or one beginning at byte 0. `Range: bytes=1-` is trivially
+// settable and never satisfied it, so the whole file streamed outside allowed
+// hours. Direct play is the default path for compatible media.
+func TestStreamFile_WatchLimitBlocksNonZeroRange(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "movie.mp4")
+	if err := os.WriteFile(tmp, bytes.Repeat([]byte("x"), 1000), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	ranges := []string{"", "bytes=0-", "bytes=1-", "bytes=500-999", "bytes=999-"}
+	for _, rng := range ranges {
+		name := rng
+		if name == "" {
+			name = "(no Range)"
+		}
+		t.Run(name, func(t *testing.T) {
+			ms := &mockItemMedia{
+				file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+				item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "Test"},
+			}
+			wl := &mockItemWatchLimit{
+				policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(60)},
+				used:   120 * 60, // double the cap — must block
+			}
+			h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil,
+				streaming.NewTracker(), slog.Default()).WithWatchLimit(wl)
+
+			rec := httptest.NewRecorder()
+			req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+			if rng != "" {
+				req.Header.Set("Range", rng)
+			}
+			req = req.WithContext(middleware.WithClaims(req.Context(),
+				&auth.Claims{UserID: uuid.New(), Username: "kid"}))
+			h.StreamFile(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("Range %q: got %d, want 403 — a range request that skips the "+
+					"gate streams the whole file past the daily cap", rng, rec.Code)
+			}
+		})
+	}
+}
+
+// An unrestricted user must still stream on every range shape — the fix must
+// gate more requests, not break playback.
+func TestStreamFile_UnrestrictedUserUnaffectedByGate(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "movie.mp4")
+	if err := os.WriteFile(tmp, bytes.Repeat([]byte("y"), 1000), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "Test"},
+	}
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil,
+		streaming.NewTracker(), slog.Default()).
+		WithWatchLimit(&mockItemWatchLimit{}) // zero policy = unrestricted
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req.Header.Set("Range", "bytes=100-199")
+	req = req.WithContext(middleware.WithClaims(req.Context(),
+		&auth.Claims{UserID: uuid.New(), Username: "adult"}))
+	h.StreamFile(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Errorf("unrestricted user: got %d, want 206", rec.Code)
+	}
+}
+
+// ── rating endpoints authz (audit round 2) ─────────────────────────────────
+
+type stubRatings struct {
+	setCalls   int
+	clearCalls int
+	getCalls   int
+}
+
+func (s *stubRatings) Get(_ context.Context, _, _ uuid.UUID) (float64, error) {
+	s.getCalls++
+	return 7, nil
+}
+func (s *stubRatings) Set(_ context.Context, _, _ uuid.UUID, _ float64) error {
+	s.setCalls++
+	return nil
+}
+func (s *stubRatings) Clear(_ context.Context, _, _ uuid.UUID) error {
+	s.clearCalls++
+	return nil
+}
+func (s *stubRatings) CommunityAverage(_ context.Context, _ uuid.UUID) (float64, int, error) {
+	return 0, 0, nil
+}
+
+type denyAllAccess struct{}
+
+func (denyAllAccess) CanAccessLibrary(_ context.Context, _, _ uuid.UUID, isAdmin bool) (bool, error) {
+	return isAdmin, nil
+}
+func (denyAllAccess) AllowedLibraryIDs(_ context.Context, _ uuid.UUID, _ bool) (map[uuid.UUID]struct{}, error) {
+	return map[uuid.UUID]struct{}{}, nil
+}
+
+// 72d06ac routed GET/PUT/DELETE /items/{id}/rating for the first time. The
+// handlers never loaded the item, so any authenticated caller could rate an
+// item in a library it cannot see — and the score feeds the community average
+// other users read. Routing dormant handlers is what made this reachable.
+func TestRating_RejectsItemInInvisibleLibrary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(*ItemHandler, http.ResponseWriter, *http.Request)
+		body string
+	}{
+		{"get", (*ItemHandler).GetRating, ""},
+		{"set", (*ItemHandler).SetRating, `{"score":9}`},
+		{"delete", (*ItemHandler).DeleteRating, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := &mockItemMedia{
+				item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "Hidden"},
+			}
+			rs := &stubRatings{}
+			h := newItemHandler(ms).WithRatings(rs).WithLibraryAccess(denyAllAccess{})
+
+			req := withChiParam(
+				httptest.NewRequest("PUT", "/", strings.NewReader(tc.body)), "id", uuid.New().String())
+			req = req.WithContext(middleware.WithClaims(req.Context(),
+				&auth.Claims{UserID: uuid.New(), Username: "outsider"}))
+			rec := httptest.NewRecorder()
+			tc.call(h, rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("got %d, want 404 (fail-closed, not an existence oracle)", rec.Code)
+			}
+			if rs.setCalls+rs.clearCalls+rs.getCalls != 0 {
+				t.Errorf("ratings store was reached for an item in an invisible library")
+			}
+		})
+	}
+}
+
+// The ceiling must gate ratings too: an R-rated item is not rateable by a
+// PG-restricted profile.
+func TestRating_RejectsItemAboveRatingCeiling(t *testing.T) {
+	rating := "R"
+	ms := &mockItemMedia{
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie",
+			Title: "Adult", ContentRating: &rating},
+	}
+	rs := &stubRatings{}
+	h := newItemHandler(ms).WithRatings(rs)
+
+	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(`{"score":10}`)),
+		"id", uuid.New().String())
+	req = req.WithContext(middleware.WithClaims(req.Context(),
+		&auth.Claims{UserID: uuid.New(), Username: "kid", MaxContentRating: "PG"}))
+	rec := httptest.NewRecorder()
+	h.SetRating(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("got %d, want 404", rec.Code)
+	}
+	if rs.setCalls != 0 {
+		t.Error("an R-rated item was rated by a PG-restricted profile")
+	}
+}
+
+// A permitted rating must still go through.
+func TestRating_AllowsVisibleInCeilingItem(t *testing.T) {
+	rating := "G"
+	ms := &mockItemMedia{
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie",
+			Title: "Kids", ContentRating: &rating},
+	}
+	rs := &stubRatings{}
+	h := newItemHandler(ms).WithRatings(rs)
+
+	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(`{"score":8}`)),
+		"id", uuid.New().String())
+	req = req.WithContext(middleware.WithClaims(req.Context(),
+		&auth.Claims{UserID: uuid.New(), Username: "kid", MaxContentRating: "PG"}))
+	rec := httptest.NewRecorder()
+	h.SetRating(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rs.setCalls != 1 {
+		t.Error("a permitted rating was not stored")
+	}
+}

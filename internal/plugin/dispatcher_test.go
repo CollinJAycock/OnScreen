@@ -354,3 +354,66 @@ func TestPluginWorker_RunClosesClientOnExit(t *testing.T) {
 			"connection pool leak for the life of the process")
 	}
 }
+
+// Dispatch checks d.closed, then releases d.mu for the registry query and the
+// per-plugin loop. Close sets d.workers = nil. A Dispatch that passed the check
+// just before Close ran therefore reaches workerFor's insert against a nil map
+// — "assignment to entry in nil map" — in whatever goroutine called Dispatch,
+// which on the playback path is a request handler, not necessarily under a
+// recover.
+func TestDispatcher_WorkerForAfterCloseDoesNotPanic(t *testing.T) {
+	allowPrivateIPs(t)
+	stub := newStubMCP(t, true)
+	db := newMockRegistryDB()
+	reg := NewRegistry(db)
+	created, err := reg.Create(context.Background(), CreateInput{
+		Name: "stub", Role: RoleNotification,
+		EndpointURL: stub.endpoint(), Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	d := NewNotificationDispatcher(reg, discardLogger(), nil)
+	d.Close() // nils the worker map
+
+	// Exactly what an in-flight Dispatch does after Close lands.
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("workerFor panicked after Close: %v", rec)
+		}
+	}()
+	w, werr := d.workerFor(Plugin{
+		ID: created.ID, Name: "stub", Role: RoleNotification,
+		EndpointURL: stub.endpoint(), Enabled: true,
+	})
+	if werr == nil {
+		t.Error("workerFor returned no error after Close; the event should be dropped")
+	}
+	if w != nil {
+		t.Error("workerFor handed back a worker from a closed dispatcher")
+	}
+}
+
+// Dispatch itself must stay safe when it races Close.
+func TestDispatcher_DispatchAfterCloseIsSafe(t *testing.T) {
+	allowPrivateIPs(t)
+	stub := newStubMCP(t, true)
+	db := newMockRegistryDB()
+	reg := NewRegistry(db)
+	if _, err := reg.Create(context.Background(), CreateInput{
+		Name: "stub", Role: RoleNotification,
+		EndpointURL: stub.endpoint(), Enabled: true,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	d := NewNotificationDispatcher(reg, discardLogger(), nil)
+	d.Close()
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("Dispatch panicked after Close: %v", rec)
+		}
+	}()
+	d.Dispatch(NotificationEvent{Event: "after-close"})
+}

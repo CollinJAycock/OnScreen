@@ -84,6 +84,27 @@ func (h *NativeTranscodeHandler) staticFileAccess(w http.ResponseWriter, r *http
 		respond.Forbidden(w, r)
 		return nil, false
 	}
+	// Parental watch limit. ADR-035 introduced this path specifically to serve
+	// playback "instead of a live session", so it must carry the same gate
+	// Start does — otherwise any title with a pre-encoded ladder (by
+	// construction, the most-played ones) was watchable outside allowed hours.
+	//
+	// It lives HERE, in the shared accessor, not in StaticMaster alone. Gating
+	// only the master assumed playback begins by fetching it; nothing enforces
+	// that. The rung playlist and segment URLs are derivable from the fileID
+	// and are served by the same asset token, so a client that skips the master
+	// — or replays URLs from an earlier session — streamed the whole ladder
+	// ungated. StaticMaster, StaticRung and StaticSegment all route through
+	// this function, so there is now no static entry point without the gate,
+	// and a fourth one cannot be added without inheriting it.
+	//
+	// Rung playlists and segments are hot, which is what the master-only
+	// placement was trying to protect. That cost is handled by the short-TTL
+	// read memo the store is wrapped in (see newWatchLimitMemo), not by leaving
+	// routes ungated.
+	if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
+		return nil, false
+	}
 	return file, true
 }
 
@@ -101,18 +122,6 @@ func (h *NativeTranscodeHandler) StaticMaster(w http.ResponseWriter, r *http.Req
 	file, ok := h.staticFileAccess(w, r)
 	if !ok {
 		return
-	}
-	// Parental watch limit. ADR-035 introduced this path specifically to serve
-	// playback "instead of a live session", so it must carry the same gate
-	// Start does — otherwise any title with a pre-encoded ladder (by
-	// construction, the most-played ones) was watchable outside allowed hours.
-	// The master is fetched once per playback, which is the right place: rung
-	// playlists and segments are hot and are covered by this plus the progress
-	// heartbeat.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
-			return
-		}
 	}
 	ctx := r.Context()
 	hash := ""

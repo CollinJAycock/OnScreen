@@ -270,8 +270,11 @@ func (h *ItemHandler) WithSubtitleCache(dir string) *ItemHandler {
 // Progress handler blocks playing-state reports that fall outside the user's
 // allowed hours or past their daily cap (403 PARENTAL_LIMIT) and accrues active
 // watch time. nil = no enforcement.
+// The store is wrapped in a short-TTL read memo: the byte-serving gates run on
+// every request (see StreamFile), and without it each range read would be a DB
+// round trip.
 func (h *ItemHandler) WithWatchLimit(wl ItemWatchLimit) *ItemHandler {
-	h.watchLimit = wl
+	h.watchLimit = newWatchLimitMemo(wl)
 	return h
 }
 
@@ -1159,6 +1162,55 @@ type PhotoEXIFResponse struct {
 	GPSAlt        *float64   `json:"gps_alt,omitempty"`
 }
 
+// ratingItemVisible loads the item behind a /items/{id}/rating call and applies
+// the same per-library ACL and content-rating ceiling every other item path
+// applies, returning false once a response has been written.
+//
+// The three rating handlers were written but never routed; 72d06ac registered
+// them, which made them reachable for the first time — and they take the {id}
+// path param straight to the ratings store without ever loading the item. So
+// any authenticated caller could write, read back, and influence the community
+// average for an item in a library it cannot see, or one above its ceiling.
+// Reachability is what turned dormant handlers into a live hole, which is the
+// hazard in routing code you did not also audit.
+//
+// Fails closed with 404 rather than 403 so this cannot be used to probe which
+// item ids exist — the same posture as itemAddAllowed and the ACL check above.
+func (h *ItemHandler) ratingItemVisible(w http.ResponseWriter, r *http.Request, id uuid.UUID) bool {
+	item, err := h.media.GetItem(r.Context(), id)
+	if err != nil {
+		respond.NotFound(w, r)
+		return false
+	}
+	if h.access != nil {
+		claims := middleware.ClaimsFromContext(r.Context())
+		if claims == nil {
+			respond.Unauthorized(w, r)
+			return false
+		}
+		ok, aerr := h.access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
+		if aerr != nil {
+			h.logger.ErrorContext(r.Context(), "rating: library access", "item_id", id, "err", aerr)
+			respond.InternalError(w, r)
+			return false
+		}
+		if !ok {
+			respond.NotFound(w, r)
+			return false
+		}
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	cr := ""
+	if item.ContentRating != nil {
+		cr = *item.ContentRating
+	}
+	if claims != nil && !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		respond.NotFound(w, r)
+		return false
+	}
+	return true
+}
+
 // GetRating returns the authenticated user's own rating for the item.
 // GET /items/{id}/rating → {"score": 8}. 404 when the user hasn't rated it.
 func (h *ItemHandler) GetRating(w http.ResponseWriter, r *http.Request) {
@@ -1174,6 +1226,9 @@ func (h *ItemHandler) GetRating(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Unauthorized(w, r)
+		return
+	}
+	if !h.ratingItemVisible(w, r, id) {
 		return
 	}
 	score, err := h.ratings.Get(r.Context(), claims.UserID, id)
@@ -1213,6 +1268,9 @@ func (h *ItemHandler) SetRating(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid body")
 		return
 	}
+	if !h.ratingItemVisible(w, r, id) {
+		return
+	}
 	if err := h.ratings.Set(r.Context(), claims.UserID, id, body.Score); err != nil {
 		// Only an out-of-range score is the client's fault (400); a failed
 		// upsert is a server error and must not leak the DB message as a 400.
@@ -1242,6 +1300,9 @@ func (h *ItemHandler) DeleteRating(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Unauthorized(w, r)
+		return
+	}
+	if !h.ratingItemVisible(w, r, id) {
 		return
 	}
 	if err := h.ratings.Clear(r.Context(), claims.UserID, id); err != nil {
@@ -2203,11 +2264,22 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 	// session would, so it needs the same gate — without it a restricted
 	// profile just had to pick a direct-playable title to watch outside its
 	// allowed hours indefinitely. Checked after the ACL/rating gates (cheapest
-	// rejections first) and only on a playback-initiating request: a Range
-	// continuation mid-file is the same session the first request already
-	// authorized, and re-querying the policy on every range read would put a
-	// DB round-trip in the byte-serving path.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && isPlaybackStart(r) {
+	// rejections first).
+	//
+	// EVERY request, not just byte-0 opens. This used to be gated on
+	// isPlaybackStart(r), on the theory that a Range continuation belonged to a
+	// session the first request already authorized. It doesn't hold: `Range:
+	// bytes=1-` is trivially settable, never satisfies the predicate, and
+	// streams the whole file ungated. The rationale also claimed the progress
+	// heartbeat would catch the dodge — but the heartbeat is client-driven, and
+	// "stop sending progress beacons" is listed in watchLimitBlocks' own doc as
+	// one of the bypasses this gate exists to close. A control a client can
+	// decline to trigger is not a control.
+	//
+	// The DB cost that motivated the carve-out is handled where it belongs, by
+	// the short-TTL memo in front of the policy lookup (see watchLimitMemo), so
+	// range-heavy playback costs a map read rather than a round trip.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
 			return
 		}
@@ -2607,22 +2679,4 @@ func watchLimitBlocks(
 		return true
 	}
 	return false
-}
-
-// isPlaybackStart reports whether a media-serving request looks like the
-// START of playback rather than a continuation of one already in progress.
-//
-// A request with no Range header, or one whose Range begins at byte 0, is a
-// fresh open. Anything else is a seek or a continuation within a session the
-// first request already authorized. This keeps the parental-limit policy
-// lookup off the per-range byte-serving path while still gating every new
-// playback. A client that deliberately starts at a non-zero offset to dodge
-// the check still gets caught by the progress heartbeat, which enforces the
-// same policy during playback.
-func isPlaybackStart(r *http.Request) bool {
-	rng := r.Header.Get("Range")
-	if rng == "" {
-		return true
-	}
-	return strings.HasPrefix(rng, "bytes=0-")
 }

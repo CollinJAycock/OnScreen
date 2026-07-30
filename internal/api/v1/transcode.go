@@ -155,8 +155,10 @@ func (h *NativeTranscodeHandler) WithAudit(a *audit.Logger) *NativeTranscodeHand
 // WithWatchLimit attaches the parental watch-limit store so Start refuses to
 // spin up a session when the user is outside their allowed hours or past their
 // daily cap. nil = no enforcement.
+// Memo-wrapped for the same reason as ItemHandler.WithWatchLimit: the static-ABR
+// gate now runs on rung playlists and segments, which are hot.
 func (h *NativeTranscodeHandler) WithWatchLimit(wl ItemWatchLimit) *NativeTranscodeHandler {
-	h.watchLimit = wl
+	h.watchLimit = newWatchLimitMemo(wl)
 	return h
 }
 

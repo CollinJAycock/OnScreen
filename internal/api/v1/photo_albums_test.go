@@ -555,3 +555,73 @@ func (m *mockAlbumLibraryAccess) CanAccessLibrary(_ context.Context, _ uuid.UUID
 func (m *mockAlbumLibraryAccess) AllowedLibraryIDs(_ context.Context, _ uuid.UUID, _ bool) (map[uuid.UUID]struct{}, error) {
 	return m.allowed, nil
 }
+
+// The gate answers 404 so a caller cannot distinguish an item it may not see
+// from one that does not exist. Running the type check first leaked exactly
+// that: a non-photo item in an invisible library returned a 400 naming its
+// type, while a nonexistent id returned 404 — an existence-and-type oracle over
+// the whole media table. Both cases must now be indistinguishable.
+func TestPhotoAlbums_AddItem_InvisibleLibraryIsIndistinguishableFromMissing(t *testing.T) {
+	uid := uuid.New()
+	albumID := uuid.New()
+	hidden := uuid.New()
+
+	// A non-photo item the caller cannot see.
+	mediaID := uuid.New()
+	m := &mockPhotoAlbumDB{
+		getResult:    ownedAlbum(uid, albumID),
+		getMediaItem: gen.GetMediaItemRow{ID: mediaID, Type: "movie", LibraryID: hidden},
+	}
+	h := NewPhotoAlbumHandler(m, slog.Default()).
+		WithLibraryAccess(&fakeAlbumAccess{allowed: map[uuid.UUID]struct{}{}})
+	req := withChiParam(withUser(httptest.NewRequest("POST", "/",
+		bytes.NewReader([]byte(`{"media_item_id":"`+mediaID.String()+`"}`))), uid),
+		"id", albumID.String())
+	rec := httptest.NewRecorder()
+	h.AddItem(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("non-photo item in an invisible library: got %d, want 404 — a 400 "+
+			"naming the type tells the caller the item exists and what it is", rec.Code)
+	}
+	if m.addItemArg.MediaItemID == mediaID {
+		t.Error("item was added despite failing the visibility gate")
+	}
+}
+
+// A visible non-photo item must still get the helpful 400 — the reorder must
+// not turn a legitimate usage error into a mystery 404.
+func TestPhotoAlbums_AddItem_VisibleNonPhotoStill400(t *testing.T) {
+	uid := uuid.New()
+	albumID := uuid.New()
+	lib := uuid.New()
+	mediaID := uuid.New()
+	m := &mockPhotoAlbumDB{
+		getResult:    ownedAlbum(uid, albumID),
+		getMediaItem: gen.GetMediaItemRow{ID: mediaID, Type: "movie", LibraryID: lib},
+	}
+	h := NewPhotoAlbumHandler(m, slog.Default()).
+		WithLibraryAccess(&fakeAlbumAccess{allowed: map[uuid.UUID]struct{}{lib: {}}})
+	req := withChiParam(withUser(httptest.NewRequest("POST", "/",
+		bytes.NewReader([]byte(`{"media_item_id":"`+mediaID.String()+`"}`))), uid),
+		"id", albumID.String())
+	rec := httptest.NewRecorder()
+	h.AddItem(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("visible non-photo: got %d, want 400", rec.Code)
+	}
+}
+
+type fakeAlbumAccess struct{ allowed map[uuid.UUID]struct{} }
+
+func (f *fakeAlbumAccess) CanAccessLibrary(_ context.Context, _, libID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin {
+		return true, nil
+	}
+	_, ok := f.allowed[libID]
+	return ok, nil
+}
+func (f *fakeAlbumAccess) AllowedLibraryIDs(_ context.Context, _ uuid.UUID, _ bool) (map[uuid.UUID]struct{}, error) {
+	return f.allowed, nil
+}

@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/staticabr"
 )
@@ -196,5 +197,72 @@ func TestStaticRung_SegmentsToSignedURLWhenOffloadable(t *testing.T) {
 	want := "https://cdn.example/" + staticabr.SegmentKey(fileID, "720p", "seg00000.ts")
 	if !strings.Contains(rec.Body.String(), want) {
 		t.Errorf("segment not rewritten to signed URL %q:\n%s", want, rec.Body.String())
+	}
+}
+
+// The parental watch limit used to be checked only in StaticMaster, on the
+// assumption that playback begins by fetching the master. Nothing enforces
+// that: the rung and segment URLs are derivable from the fileID and are served
+// by the same asset token, so a client that skips the master — or replays URLs
+// from an earlier session — streamed the whole pre-encoded ladder outside its
+// allowed hours. All three entry points route through staticFileAccess, which
+// is where the gate now lives.
+func TestStaticABR_WatchLimitGatesEveryEntryPoint(t *testing.T) {
+	fileID, itemID := uuid.New(), uuid.New()
+	store := memStaticStore{files: map[string][]byte{
+		staticabr.MasterKey(fileID):                         []byte("#EXTM3U\n720p/index.m3u8\n"),
+		staticabr.HashKey(fileID):                           []byte("h1"),
+		staticabr.RungPlaylistKey(fileID, "720p"):           []byte("#EXTM3U\nseg00000.ts\n"),
+		staticabr.SegmentKey(fileID, "720p", "seg00000.ts"): []byte("TSDATA"),
+	}}
+
+	entries := []struct {
+		name string
+		call func(*NativeTranscodeHandler, http.ResponseWriter, *http.Request)
+		req  func() *http.Request
+	}{
+		{"master", (*NativeTranscodeHandler).StaticMaster, func() *http.Request {
+			return staticReq(http.MethodGet, "/m", "fileID", fileID.String())
+		}},
+		{"rung", (*NativeTranscodeHandler).StaticRung, func() *http.Request {
+			return staticReq(http.MethodGet, "/r", "fileID", fileID.String(), "rung", "720p")
+		}},
+		{"segment", (*NativeTranscodeHandler).StaticSegment, func() *http.Request {
+			return staticReq(http.MethodGet, "/s", "fileID", fileID.String(),
+				"rung", "720p", "name", "seg00000.ts")
+		}},
+	}
+	for _, e := range entries {
+		t.Run(e.name, func(t *testing.T) {
+			h := staticTestHandler(store, fileID, itemID)
+			h.WithWatchLimit(&mockItemWatchLimit{
+				policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(60)},
+				used:   120 * 60, // double the cap
+			})
+			rec := httptest.NewRecorder()
+			e.call(h, rec, e.req())
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("%s: got %d, want 403 — this entry point streams the ladder "+
+					"past the daily cap", e.name, rec.Code)
+			}
+		})
+	}
+}
+
+// An unrestricted user must still be served on every entry point.
+func TestStaticABR_UnrestrictedUserUnaffected(t *testing.T) {
+	fileID, itemID := uuid.New(), uuid.New()
+	store := memStaticStore{files: map[string][]byte{
+		staticabr.MasterKey(fileID): []byte("#EXTM3U\n720p/index.m3u8\n"),
+		staticabr.HashKey(fileID):   []byte("h1"),
+	}}
+	h := staticTestHandler(store, fileID, itemID)
+	h.WithWatchLimit(&mockItemWatchLimit{}) // zero policy = unrestricted
+
+	rec := httptest.NewRecorder()
+	h.StaticMaster(rec, staticReq(http.MethodGet, "/m", "fileID", fileID.String()))
+	if rec.Code != http.StatusOK {
+		t.Errorf("unrestricted user: got %d, want 200", rec.Code)
 	}
 }

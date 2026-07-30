@@ -350,3 +350,65 @@ func TestHLSProxy_ActiveSessionsReportsLiveCount(t *testing.T) {
 		t.Errorf("after newTestSession: got %d", p.ActiveSessions())
 	}
 }
+
+// bcabf0d guarded the FIRST map lookup in Acquire against a torn-down session,
+// but Acquire releases p.mu for the whole create and re-takes it afterwards.
+// The second lookup had no such guard, so a create that landed while teardown
+// was still releasing resources took the "lost the create race" branch, bumped
+// the CORPSE's refcount, destroyed the working session it had just built —
+// burning a tuner tune — and returned a session whose directory was gone.
+func TestHLSProxy_AcquireReplacesCorpseInsteadOfSharingIt(t *testing.T) {
+	svc := &stubProxyService{stream: &stubChannelStream{Reader: strings.NewReader("MPEGTS-PAYLOAD")}}
+	p, _ := newTestProxy(t, svc)
+	ch := uuid.New()
+
+	// A session in exactly the state teardown leaves behind between marking
+	// itself closed and dropping its own map entry.
+	corpse := &HLSSession{channelID: ch, dir: filepath.Join(t.TempDir(), "gone"), closed: true}
+	p.mu.Lock()
+	p.sessions[ch] = corpse
+	p.mu.Unlock()
+
+	got, err := p.Acquire(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	t.Cleanup(func() { p.Release(got) })
+
+	if got == corpse {
+		t.Fatal("Acquire returned the torn-down session; its dir is gone, so the " +
+			"viewer gets a dead stream for a channel that looked live")
+	}
+	if _, statErr := os.Stat(got.dir); statErr != nil {
+		t.Errorf("returned session's dir does not exist: %v", statErr)
+	}
+	p.mu.Lock()
+	inMap := p.sessions[ch]
+	p.mu.Unlock()
+	if inMap != got {
+		t.Error("the fresh session did not take the map slot")
+	}
+}
+
+// A LIVE existing session must still be shared, not replaced — the fix must
+// only change the closed case, or every second viewer starts a duplicate
+// ffmpeg and burns a second tuner.
+func TestHLSProxy_AcquireStillSharesLiveSession(t *testing.T) {
+	svc := &stubProxyService{stream: &stubChannelStream{Reader: strings.NewReader("MPEGTS-PAYLOAD")}}
+	p, _ := newTestProxy(t, svc)
+	ch := uuid.New()
+
+	first, err := p.Acquire(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	second, err := p.Acquire(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	if first != second {
+		t.Error("a live session was not shared between two viewers")
+	}
+	p.Release(first)
+	p.Release(second)
+}

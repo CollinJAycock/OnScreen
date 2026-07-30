@@ -56,6 +56,10 @@ type NotificationDispatcher struct {
 	closed bool
 }
 
+// errDispatcherClosed is returned by workerFor once Close has run, so a
+// Dispatch racing shutdown drops the event instead of panicking.
+var errDispatcherClosed = errors.New("plugin dispatcher closed")
+
 // NewNotificationDispatcher constructs a dispatcher. audit may be nil in tests.
 func NewNotificationDispatcher(reg *Registry, logger *slog.Logger, auditLog *audit.Logger) *NotificationDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -163,6 +167,15 @@ func (d *NotificationDispatcher) Close() {
 func (d *NotificationDispatcher) workerFor(p Plugin) (*pluginWorker, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// Re-check under the lock. Dispatch tests d.closed, then RELEASES d.mu for
+	// the registry query and the per-plugin loop, so a Dispatch that passed
+	// that check can arrive here after Close has run — and Close sets
+	// d.workers = nil. The insert below would then panic with "assignment to
+	// entry in nil map", in whatever goroutine called Dispatch (a request
+	// handler on the playback path, not necessarily under a recover).
+	if d.closed {
+		return nil, errDispatcherClosed
+	}
 	if w, ok := d.workers[p.ID]; ok && w.matches(p) {
 		return w, nil
 	}

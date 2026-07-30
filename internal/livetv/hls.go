@@ -393,24 +393,42 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	}
 	p.mu.Lock()
 	if existing, ok := p.sessions[channelID]; ok {
-		// Lost the create race: another first-viewer for this channel built a
-		// session while we were opening the upstream + starting ffmpeg. Share
-		// the winner (bump its refcount — the caller still owes a Release) and
-		// tear down our duplicate so its ffmpeg process and upstream tuner slot
-		// aren't leaked.
 		existing.mu.Lock()
-		existing.refcount++
-		if existing.closing != nil {
-			existing.closing.Stop()
-			existing.closing = nil
+		alive := !existing.closed
+		if alive {
+			// Lost the create race: another first-viewer for this channel built
+			// a session while we were opening the upstream + starting ffmpeg.
+			// Share the winner (bump its refcount — the caller still owes a
+			// Release) and tear down our duplicate so its ffmpeg process and
+			// upstream tuner slot aren't leaked.
+			existing.refcount++
+			if existing.closing != nil {
+				existing.closing.Stop()
+				existing.closing = nil
+			}
 		}
 		existing.mu.Unlock()
-		p.mu.Unlock()
-		cancel()
-		upstream.Close()
-		_ = os.RemoveAll(dir)
-		go func() { _ = cmd.Wait() }() // reap the ffmpeg we just killed
-		return existing, nil
+		if alive {
+			p.mu.Unlock()
+			cancel()
+			upstream.Close()
+			_ = os.RemoveAll(dir)
+			go func() { _ = cmd.Wait() }() // reap the ffmpeg we just killed
+			return existing, nil
+		}
+		// Not a race — a CORPSE. teardown has committed (closed=true) and is
+		// still releasing resources before it drops its own map entry, so the
+		// map holds a session whose directory is already gone. Handing it back
+		// would serve playlists out of a deleted dir AND throw away the working
+		// session we just built, burning a tuner tune for nothing.
+		//
+		// The first lookup already guards this (see the top of Acquire); this
+		// is the same window reached from the other side, because we released
+		// p.mu for the whole create. Falling through to the plain insert is
+		// safe: teardown's delete is identity-guarded (`existing == s`), so
+		// once our pointer occupies the slot the corpse cannot remove it.
+		p.logger.DebugContext(ctx, "hls acquire: replacing torn-down session",
+			"channel_id", channelID)
 	}
 	p.sessions[channelID] = s
 	p.mu.Unlock()

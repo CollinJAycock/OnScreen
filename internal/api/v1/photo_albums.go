@@ -306,11 +306,17 @@ func (h *PhotoAlbumHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if mi.Type != "photo" {
-		respond.BadRequest(w, r, "only photo items can be added to a photo album")
+	// Visibility BEFORE type. The gate answers 404 precisely so a caller cannot
+	// distinguish an item it may not see from one that does not exist; running
+	// the type check first leaked that distinction straight back, because a
+	// non-photo item in an invisible library returned a 400 naming its type
+	// while a nonexistent id returned 404. That is an existence-and-type oracle
+	// over the whole media table — the exact thing the 404 was chosen to deny.
+	if !itemAddAllowed(w, r, h.access, h.logger, mi) {
 		return
 	}
-	if !itemAddAllowed(w, r, h.access, h.logger, mi) {
+	if mi.Type != "photo" {
+		respond.BadRequest(w, r, "only photo items can be added to a photo album")
 		return
 	}
 	if _, err := h.db.AddCollectionItem(r.Context(), gen.AddCollectionItemParams{
