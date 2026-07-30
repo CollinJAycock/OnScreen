@@ -243,7 +243,18 @@ func run() error {
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/health/live", liveH)
 	healthMux.HandleFunc("/health/ready", readyH)
-	healthSrv := &http.Server{Addr: cfg.WorkerHealthAddr, Handler: healthMux}
+	// Timeouts match the server's metrics listener. Without them a half-open
+	// or slow-loris connection to the health port holds a goroutine and a conn
+	// for as long as it likes; both handlers here answer in milliseconds, so
+	// there is no long-response case to accommodate.
+	healthSrv := &http.Server{
+		Addr:              cfg.WorkerHealthAddr,
+		Handler:           healthMux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 
 	// ── Run all workers ───────────────────────────────────────────────────────
 	g, gCtx := errgroup.WithContext(ctx)

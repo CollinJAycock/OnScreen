@@ -91,8 +91,8 @@ type MediaItemLister interface {
 	CountItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
-	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.GenreCount, error)
-	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error)
+	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.GenreCount, error)
+	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.YearCount, error)
 	ListEventCollectionsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.EventCollection, error)
 }
 
@@ -701,7 +701,9 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	rows, err := h.media.ListGenresWithCounts(r.Context(), id, rootItemType(lib.Type))
+	// Apply the caller's ceiling to the facet counts — see the query comment.
+	rows, err := h.media.ListGenresWithCounts(r.Context(), id, rootItemType(lib.Type),
+		callerRatingRank(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list genres", "library_id", id, "err", err)
 		respond.InternalError(w, r)
@@ -814,7 +816,8 @@ func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	rows, err := h.media.ListYearsWithCounts(r.Context(), id, rootItemType(lib.Type))
+	rows, err := h.media.ListYearsWithCounts(r.Context(), id, rootItemType(lib.Type),
+		callerRatingRank(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list years", "library_id", id, "err", err)
 		respond.InternalError(w, r)
@@ -903,4 +906,15 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 		return itemType == "dvr"
 	}
 	return false
+}
+
+// callerRatingRank returns the caller's content-rating ceiling as a rank, or
+// nil when unrestricted. Shared by the facet endpoints so their counts respect
+// the same ceiling the item listings do.
+func callerRatingRank(r *http.Request) *int {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || claims.MaxContentRating == "" {
+		return nil
+	}
+	return contentrating.MaxRatingRank(claims.MaxContentRating)
 }

@@ -1,11 +1,14 @@
 -- name: CreateArrService :one
+-- id is supplied by the caller rather than defaulted, because api_key is
+-- encrypted with the row id as AES-GCM associated data and the caller must
+-- therefore know the id before it can seal the key.
 INSERT INTO arr_services (
-    name, kind, base_url, api_key,
+    id, name, kind, base_url, api_key,
     default_quality_profile_id, default_root_folder, default_tags,
     minimum_availability, series_type, season_folder, language_profile_id,
     is_default, enabled
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
 -- name: GetArrService :one

@@ -661,11 +661,11 @@ func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UU
 	return nil, nil
 }
 
-func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.GenreCount, error) {
+func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int) ([]media.GenreCount, error) {
 	return nil, nil
 }
 
-func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error) {
+func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int) ([]media.YearCount, error) {
 	return nil, nil
 }
 

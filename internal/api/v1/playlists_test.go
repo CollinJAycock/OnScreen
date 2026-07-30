@@ -18,12 +18,15 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
 // ── mock PlaylistDB ──────────────────────────────────────────────────────────
 
 type mockPlaylistDB struct {
+	mediaItem *gen.GetMediaItemRow // optional override for the AddItem ACL gate
+
 	listMine    []gen.Collection
 	listMineErr error
 	listMineArg pgtype.UUID
@@ -88,6 +91,17 @@ func (m *mockPlaylistDB) ListCollectionItems(_ context.Context, _ gen.ListCollec
 func (m *mockPlaylistDB) CountCollectionItems(_ context.Context, _ gen.CountCollectionItemsParams) (int64, error) {
 	return int64(len(m.listItems)), nil
 }
+
+// GetMediaItem backs the library-ACL + content-rating gate AddItem now applies
+// to the item being written. Returns a permissive default row; tests that care
+// about the gate can set mediaItem.
+func (m *mockPlaylistDB) GetMediaItem(_ context.Context, id uuid.UUID) (gen.GetMediaItemRow, error) {
+	if m.mediaItem != nil {
+		return *m.mediaItem, nil
+	}
+	return gen.GetMediaItemRow{ID: id}, nil
+}
+
 func (m *mockPlaylistDB) AddCollectionItem(_ context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error) {
 	m.addItemArg = arg
 	return m.addItemResult, m.addItemErr
@@ -640,5 +654,124 @@ func TestPlaylists_Create_ResponseFields(t *testing.T) {
 	}
 	if out.Data.ID == "" || out.Data.Name == "" {
 		t.Errorf("response missing fields: %+v", out.Data)
+	}
+}
+
+// ── AddItem access gate ──────────────────────────────────────────────────────
+
+// plRatedReq is plReq with a content-rating ceiling on the claims.
+func plRatedReq(body string, uid uuid.UUID, idParam, maxRating string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r = r.WithContext(middleware.WithClaims(r.Context(),
+		&auth.Claims{UserID: uid, MaxContentRating: maxRating}))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", idParam)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+// The read path filters a playlist by library ACL, but the write path used to
+// accept any item id at all. A restricted profile could add an item from a
+// library it cannot see to its own playlist and read the title, poster and
+// metadata straight back out of its own list.
+func TestPlaylists_AddItem_RejectsItemFromInvisibleLibrary(t *testing.T) {
+	uid := uuid.New()
+	col := ownedPlaylist(uid)
+	hiddenLib := uuid.New()
+	db := &mockPlaylistDB{
+		getResult: col,
+		mediaItem: &gen.GetMediaItemRow{ID: uuid.New(), LibraryID: hiddenLib},
+	}
+	access := &fakePlaylistAccess{allowed: map[uuid.UUID]struct{}{uuid.New(): {}}}
+	h := newPlaylistHandler(db).WithLibraryAccess(access)
+
+	rec := httptest.NewRecorder()
+	h.AddItem(rec, plReq(http.MethodPost,
+		`{"media_item_id":"`+uuid.NewString()+`"}`, uid, col.ID.String(), ""))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("got %d, want 404 (fail-closed, not an existence oracle)", rec.Code)
+	}
+	if db.addItemArg.MediaItemID != uuid.Nil {
+		t.Error("item from an invisible library was written to the playlist")
+	}
+}
+
+// Same gate, content-rating axis: a ceiling must block the write, not just the
+// read.
+func TestPlaylists_AddItem_RejectsItemAboveRatingCeiling(t *testing.T) {
+	uid := uuid.New()
+	col := ownedPlaylist(uid)
+	lib := uuid.New()
+	rating := "R"
+	db := &mockPlaylistDB{
+		getResult: col,
+		mediaItem: &gen.GetMediaItemRow{ID: uuid.New(), LibraryID: lib, ContentRating: &rating},
+	}
+	access := &fakePlaylistAccess{allowed: map[uuid.UUID]struct{}{lib: {}}}
+	h := newPlaylistHandler(db).WithLibraryAccess(access)
+
+	rec := httptest.NewRecorder()
+	h.AddItem(rec, plRatedReq(
+		`{"media_item_id":"`+uuid.NewString()+`"}`, uid, col.ID.String(), "PG"))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("got %d, want 404", rec.Code)
+	}
+	if db.addItemArg.MediaItemID != uuid.Nil {
+		t.Error("an R-rated item was added to a PG-restricted profile's playlist")
+	}
+}
+
+// An unrated item must be gated the same way the streaming path gates it:
+// contentrating ranks an absent rating as 4, so a PG ceiling blocks it. An
+// open-coded "no rating means unrestricted" check would let it through here and
+// then refuse to play it.
+func TestPlaylists_AddItem_UnratedItemFollowsIsAllowed(t *testing.T) {
+	uid := uuid.New()
+	col := ownedPlaylist(uid)
+	lib := uuid.New()
+	db := &mockPlaylistDB{
+		getResult: col,
+		mediaItem: &gen.GetMediaItemRow{ID: uuid.New(), LibraryID: lib}, // ContentRating nil
+	}
+	access := &fakePlaylistAccess{allowed: map[uuid.UUID]struct{}{lib: {}}}
+	h := newPlaylistHandler(db).WithLibraryAccess(access)
+
+	rec := httptest.NewRecorder()
+	h.AddItem(rec, plRatedReq(
+		`{"media_item_id":"`+uuid.NewString()+`"}`, uid, col.ID.String(), "PG"))
+
+	allowedByStreamPath := contentrating.IsAllowed("", "PG")
+	added := db.addItemArg.MediaItemID != uuid.Nil
+	if added != allowedByStreamPath {
+		t.Errorf("unrated item added=%v but the streaming path allows=%v — "+
+			"the list-add gate and the play gate disagree", added, allowedByStreamPath)
+	}
+}
+
+// A permitted item must still go through.
+func TestPlaylists_AddItem_AllowsVisibleInCeilingItem(t *testing.T) {
+	uid := uuid.New()
+	col := ownedPlaylist(uid)
+	lib := uuid.New()
+	rating := "G"
+	itemID := uuid.New()
+	db := &mockPlaylistDB{
+		getResult: col,
+		mediaItem: &gen.GetMediaItemRow{ID: itemID, LibraryID: lib, ContentRating: &rating},
+	}
+	access := &fakePlaylistAccess{allowed: map[uuid.UUID]struct{}{lib: {}}}
+	h := newPlaylistHandler(db).WithLibraryAccess(access)
+
+	rec := httptest.NewRecorder()
+	h.AddItem(rec, plRatedReq(
+		`{"media_item_id":"`+itemID.String()+`"}`, uid, col.ID.String(), "PG"))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("got %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if db.addItemArg.MediaItemID != itemID {
+		t.Error("a permitted item was not added")
 	}
 }

@@ -55,6 +55,13 @@ type HDHomeRunDriver struct {
 	cfg       HDHomeRunConfig
 	tuneCount int // resolved at construction time from /discover.json or override
 	http      *http.Client
+	// stream is the timeout-free client used for tune sessions, built once.
+	// OpenStream used to construct one per call, and an http.Client owns an
+	// http.Transport with its own connection pool that nothing here ever
+	// closes — so every channel change leaked a pool holding idle sockets for
+	// its 90s IdleConnTimeout. Channel surfing on a TV remote is a burst of
+	// tunes, which is exactly the pattern that piled them up.
+	stream *http.Client
 
 	// Per-channel stream URLs, populated by Discover from each lineup
 	// entry's URL field. Constructing /auto/v{number} works on most
@@ -77,7 +84,13 @@ func NewHDHomeRunDriver(name string, cfg HDHomeRunConfig) *HDHomeRunDriver {
 		// endpoint uses a separate stream-aware request, so this is fine for
 		// the small JSON endpoints. LocalDevice policy allows RFC1918 —
 		// HDHomeRuns live on the LAN.
-		http:       safehttp.LocalDevice(),
+		http: safehttp.LocalDevice(),
+		// No timeout: the body IS the tune session, so a Client.Timeout would
+		// cut the stream off mid-watch. Cancellation comes from the request
+		// context instead.
+		stream: safehttp.NewClient(safehttp.DialPolicy{
+			AllowPrivate: true, AllowLoopback: true, AllowLinkLocal: true,
+		}, 0),
 		streamURLs: make(map[string]string),
 	}
 }
@@ -184,13 +197,9 @@ func (d *HDHomeRunDriver) OpenStream(ctx context.Context, channelNumber string) 
 	if err != nil {
 		return nil, err
 	}
-	// IMPORTANT: do not set a timeout on the streaming client — the body is
-	// the entire tune session. The upstream context cancellation is what
-	// closes the stream.
-	streamClient := safehttp.NewClient(safehttp.DialPolicy{
-		AllowPrivate: true, AllowLoopback: true, AllowLinkLocal: true,
-	}, 0)
-	resp, err := streamClient.Do(req)
+	// d.stream is timeout-free by construction — the body is the entire tune
+	// session, and the request context is what closes it.
+	resp, err := d.stream.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("hdhomerun open stream: %w", err)
 	}

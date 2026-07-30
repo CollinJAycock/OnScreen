@@ -35,6 +35,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/auth"
 )
 
@@ -101,6 +104,7 @@ func main() {
 		{"webhook_endpoints.secret", rotateWebhookSecrets},
 		{"users.totp_secret", rotateTOTPSecrets},
 		{"user_scrobble.listenbrainz_token", rotateScrobbleTokens},
+		{"arr_services.api_key", rotateArrAPIKeys},
 	}
 
 	var totalRot, totalSkip int
@@ -239,6 +243,66 @@ func rotateScrobbleTokens(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.E
 	return rotateRawColumn(ctx, tx, oldEnc, newEnc,
 		`SELECT user_id::text, listenbrainz_token FROM user_scrobble WHERE listenbrainz_token IS NOT NULL AND listenbrainz_token <> ''`,
 		`UPDATE user_scrobble SET listenbrainz_token = $1 WHERE user_id = $2::uuid`)
+}
+
+// rotateArrAPIKeys re-seals arr_services.api_key. Unlike the raw columns this
+// one is prefixed AND bound to its row id as associated data, so it needs its
+// own pass: the id is both the AAD and the WHERE key.
+//
+// This is also the upgrade path for rows predating at-rest encryption. Those
+// are stored as plaintext with no sentinel, so there is nothing to decrypt —
+// arrcrypt.Open hands them back unchanged and we seal them with the new key.
+// That means a rotation run converts a legacy database in one pass, and a row
+// already sealed with the new key is a no-op rather than a double-encrypt.
+func rotateArrAPIKeys(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encryptor) (int, int, error) {
+	type row struct {
+		id     uuid.UUID
+		apiKey string
+	}
+	var rows []row
+	q, err := tx.Query(ctx,
+		`SELECT id, api_key FROM arr_services WHERE api_key <> ''`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("select: %w", err)
+	}
+	for q.Next() {
+		var r row
+		if err := q.Scan(&r.id, &r.apiKey); err != nil {
+			q.Close()
+			return 0, 0, fmt.Errorf("scan: %w", err)
+		}
+		rows = append(rows, r)
+	}
+	q.Close()
+	if err := q.Err(); err != nil {
+		return 0, 0, fmt.Errorf("iterate: %w", err)
+	}
+
+	var rotated, skipped int
+	for _, r := range rows {
+		plain, oerr := arrcrypt.Open(oldEnc, r.id, r.apiKey)
+		if oerr != nil {
+			// Wrong old key or a corrupted ciphertext. Leave it alone and
+			// report, so a mistyped -old-key shows up as skips instead of
+			// destroying credentials.
+			skipped++
+			continue
+		}
+		sealed, serr := arrcrypt.Seal(newEnc, r.id, plain)
+		if serr != nil {
+			return rotated, skipped, fmt.Errorf("seal %s: %w", r.id, serr)
+		}
+		if sealed == r.apiKey {
+			skipped++
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE arr_services SET api_key = $1 WHERE id = $2`, sealed, r.id); err != nil {
+			return rotated, skipped, fmt.Errorf("update %s: %w", r.id, err)
+		}
+		rotated++
+	}
+	return rotated, skipped, nil
 }
 
 // rotateRawColumn rotates a (id, secret) result set where secret is a raw

@@ -9,6 +9,7 @@ package respond
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -90,7 +91,7 @@ func Forbidden(w http.ResponseWriter, r *http.Request) {
 // ServiceUnavailable writes a 503 — the node can't serve the request right now
 // (e.g. a write reached a read-only standby during a failover; a dependency is
 // down). Distinct from a 500 so clients/proxies know to retry, possibly against
-// another site.
+// another site. No production caller yet — see [IsReadOnlyError].
 func ServiceUnavailable(w http.ResponseWriter, r *http.Request, message string) {
 	if message == "" {
 		message = "service temporarily unavailable"
@@ -99,9 +100,15 @@ func ServiceUnavailable(w http.ResponseWriter, r *http.Request, message string) 
 }
 
 // IsReadOnlyError reports whether err is a PostgreSQL "read-only transaction"
-// error (SQLSTATE 25006) — a write that reached a read-only standby. In a
-// multi-site / failover deployment, callers map this to a 503 so the client
-// retries against the writable primary rather than seeing an opaque 500.
+// error (SQLSTATE 25006) — a write that reached a read-only standby.
+//
+// NOTHING CALLS THIS YET. It is the intended building block for the HA story:
+// a handler whose write fails this way maps it to [ServiceUnavailable] so the
+// client retries against the writable primary. Until a caller exists, a write
+// to a standby surfaces as an opaque 500, so don't read the presence of this
+// helper as evidence the behaviour is in place. Wiring it means routing write
+// failures through a shared "write error" responder rather than the bare
+// InternalError calls scattered across the handlers today.
 func IsReadOnlyError(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "25006"
@@ -141,6 +148,14 @@ func ParsePagination(r *http.Request, defaultLimit, maxLimit int) Pagination {
 	var offset int32
 	if raw := q.Get("offset"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			// Clamp before narrowing. On 64-bit, Atoi accepts values far past
+			// int32, and the conversion wraps: ?offset=2147483648 became
+			// -2147483648, which reaches Postgres as a negative OFFSET and
+			// errors the whole query into a 500. Clamping keeps an absurd
+			// offset behaving like what it is — a page past the end.
+			if n > math.MaxInt32 {
+				n = math.MaxInt32
+			}
 			offset = int32(n)
 		}
 	}

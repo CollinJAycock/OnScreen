@@ -74,9 +74,8 @@ type BuildArgs struct {
 	// preferred HDR path on NVIDIA hosts where libplacebo can't init (TrueNAS).
 	// The worker sets it from a startup probe (NeedsToneMap + NVENC + HEVC/H.264)
 	// and falls back to libplacebo / scale_cuda+zscale / software on failure.
-	CudaTonemap      bool
-	HasTonemapOpenCL bool // tonemap_opencl filter available in FFmpeg
-	HasZscale        bool // zscale filter available (libzimg) for software tonemap
+	CudaTonemap bool
+	HasZscale   bool // zscale filter available (libzimg) for software tonemap
 	// HasLibfdkAAC selects the libfdk_aac encoder over the native aac encoder for
 	// AAC output. libfdk is higher quality and — critically — far faster to start
 	// on multichannel audio: a 7.1 TrueHD source's first HLS segment took ~15s
@@ -89,15 +88,8 @@ type BuildArgs struct {
 	// faster than software zscale on 4K HDR (it also does the downscale). When
 	// set, the tonemap runs on the GPU and the zscale chain is skipped.
 	HasLibplacebo bool
-	// OpenCL platform.device index for `-init_hw_device opencl=ocl:N.M`.
-	// Empty falls back to `0.0`. Probed once per worker startup so we
-	// pick the platform that matches the active encoder's vendor —
-	// hardcoded `0.0` is wrong on hosts where the iGPU registers an
-	// OpenCL platform before the dGPU (Intel + NVIDIA on a Windows
-	// laptop, AMD APP + Intel iGPU on a Ryzen workstation, etc.).
-	OpenCLDevice string
-	IsVAAPI      bool // VAAPI needs hwupload filter
-	IsHEVC       bool // source is HEVC (informational, NVDEC auto-selects decoder)
+	IsVAAPI       bool // VAAPI needs hwupload filter
+	IsHEVC        bool // source is HEVC (informational, NVDEC auto-selects decoder)
 	// QSVDecode opts into Intel QSV hardware HEVC decode (-hwaccel qsv -c:v
 	// hevc_qsv) on the input, offloading the 4K HEVC decode from the CPU.
 	// Only honored for HEVC sources on a re-encode; the worker sets it from

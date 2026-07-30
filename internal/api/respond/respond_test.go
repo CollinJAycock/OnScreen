@@ -243,3 +243,40 @@ func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, code string) 
 		t.Errorf("error.code: got %v, want %q", errObj["code"], code)
 	}
 }
+
+// ParsePagination narrows offset to int32 for the sqlc params. Atoi accepts
+// values far beyond int32 on a 64-bit build, and the conversion wraps: an
+// offset just past MaxInt32 came out NEGATIVE and reached Postgres as a
+// negative OFFSET, turning a junk query param into a 500.
+func TestParsePagination_OffsetBeyondInt32(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"one past MaxInt32", "2147483648"},
+		{"wraps to zero", "4294967296"},
+		{"absurd", "999999999999999"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/?offset="+c.raw, nil)
+			got := ParsePagination(req, 50, 200)
+			if got.Offset < 0 {
+				t.Errorf("offset %s produced %d — a negative OFFSET errors the query",
+					c.raw, got.Offset)
+			}
+		})
+	}
+}
+
+// Ordinary offsets must survive untouched.
+func TestParsePagination_OffsetInRange(t *testing.T) {
+	req := httptest.NewRequest("GET", "/?offset=250&limit=25", nil)
+	got := ParsePagination(req, 50, 200)
+	if got.Offset != 250 {
+		t.Errorf("offset: got %d, want 250", got.Offset)
+	}
+	if got.Limit != 25 {
+		t.Errorf("limit: got %d, want 25", got.Limit)
+	}
+}

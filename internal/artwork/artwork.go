@@ -375,6 +375,41 @@ func (m *Manager) Resize(ctx context.Context, w io.Writer, sourcePath string, wi
 	return err
 }
 
+// artworkDims is the ladder SnapDim rounds up to. It contains every width and
+// height the web and TV clients actually ask for, so real traffic maps to
+// itself and no image is served at a different size than before.
+var artworkDims = [...]int{120, 150, 200, 240, 300, 320, 400, 450, 480, 500,
+	600, 640, 720, 960, 1080, 1280, 1920}
+
+// SnapDim rounds a requested pixel dimension UP to the next ladder value.
+//
+// Resize caches by source path + WxH and never evicts, so any surface that
+// feeds it caller-supplied dimensions makes that key space caller-controlled:
+// walking ?w=1..1920 crossed with ?h=1..1920 against a single poster would have
+// the server encode and store a distinct JPEG for each, filling the cache
+// volume. Snapping first caps it at len(artworkDims)+1 squared entries per
+// source image (the +1 being 0, "unconstrained on this axis").
+//
+// This is deliberately NOT applied inside Resize: that is a library call whose
+// contract is to honour the dimensions it is given. Callers that accept
+// untrusted input — today only the /artwork/* route — snap before calling.
+//
+// Rounding up rather than down means a client never receives fewer pixels than
+// it asked for, so nothing turns blurry; it may receive slightly more, which
+// the browser scales down. Zero (unconstrained on this axis) and negatives pass
+// through as 0, and anything above the ladder clamps to its top.
+func SnapDim(v int) int {
+	if v <= 0 {
+		return 0
+	}
+	for _, d := range artworkDims {
+		if v <= d {
+			return d
+		}
+	}
+	return artworkDims[len(artworkDims)-1]
+}
+
 func cacheKeyFor(path string, w, h int) string {
 	h256 := sha256.Sum256([]byte(path + "|" + strconv.Itoa(w) + "x" + strconv.Itoa(h)))
 	return hex.EncodeToString(h256[:16])

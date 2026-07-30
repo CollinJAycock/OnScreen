@@ -35,6 +35,7 @@ type PlaylistDB interface {
 	ListCollectionItems(ctx context.Context, arg gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error)
 	CountCollectionItems(ctx context.Context, arg gen.CountCollectionItemsParams) (int64, error)
 	AddCollectionItem(ctx context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error)
+	GetMediaItem(ctx context.Context, id uuid.UUID) (gen.GetMediaItemRow, error)
 	RemoveCollectionItem(ctx context.Context, arg gen.RemoveCollectionItemParams) error
 	ReorderPlaylistItems(ctx context.Context, arg gen.ReorderPlaylistItemsParams) error
 	ListMediaItemsForSmartPlaylist(ctx context.Context, arg gen.ListMediaItemsForSmartPlaylistParams) ([]gen.ListMediaItemsForSmartPlaylistRow, error)
@@ -459,6 +460,19 @@ func (h *PlaylistHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	itemID, err := uuid.Parse(body.MediaItemID)
 	if err != nil {
 		respond.BadRequest(w, r, "invalid media_item_id")
+		return
+	}
+	mi, err := h.db.GetMediaItem(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "playlist add: get media item", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !itemAddAllowed(w, r, h.access, h.logger, mi) {
 		return
 	}
 	if _, err := h.db.AddCollectionItem(r.Context(), gen.AddCollectionItemParams{

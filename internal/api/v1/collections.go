@@ -3,16 +3,19 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -26,6 +29,7 @@ type CollectionDB interface {
 	ListCollectionItems(ctx context.Context, arg gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error)
 	CountCollectionItems(ctx context.Context, arg gen.CountCollectionItemsParams) (int64, error)
 	AddCollectionItem(ctx context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error)
+	GetMediaItem(ctx context.Context, id uuid.UUID) (gen.GetMediaItemRow, error)
 	RemoveCollectionItem(ctx context.Context, arg gen.RemoveCollectionItemParams) error
 	ListAutoGenreCollections(ctx context.Context) ([]gen.Collection, error)
 	ListItemsByGenre(ctx context.Context, arg gen.ListItemsByGenreParams) ([]gen.ListItemsByGenreRow, error)
@@ -437,6 +441,19 @@ func (h *CollectionHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid media_item_id")
 		return
 	}
+	mi, err := h.db.GetMediaItem(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "collection add: get media item", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if !itemAddAllowed(w, r, h.access, h.logger, mi) {
+		return
+	}
 	_, err = h.db.AddCollectionItem(r.Context(), gen.AddCollectionItemParams{
 		CollectionID: id,
 		MediaItemID:  itemID,
@@ -477,4 +494,55 @@ func (h *CollectionHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.NoContent(w)
+}
+
+// itemAddAllowed enforces the per-library ACL and the caller's content-rating
+// ceiling on the item being written into a user-owned list.
+//
+// The read paths already filter these lists, but the WRITE paths did not check
+// the target item at all — so a restricted profile could add an item from a
+// library it cannot see (or one above its ceiling) to its own collection,
+// playlist or photo album and then read the title, poster and metadata back out
+// of its own list. Favorites gained this check; its three siblings did not, and
+// that divergence is the defect.
+//
+// Fails closed with 404 (never 403) so this cannot be used as an existence
+// oracle for restricted content — matching the Favorites posture.
+func itemAddAllowed(
+	w http.ResponseWriter, r *http.Request,
+	access LibraryAccessChecker, logger *slog.Logger,
+	item gen.GetMediaItemRow,
+) bool {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return false
+	}
+	if access != nil {
+		ok, err := access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
+		if err != nil {
+			if logger != nil {
+				logger.ErrorContext(r.Context(), "list add: library access", "item_id", item.ID, "err", err)
+			}
+			respond.InternalError(w, r)
+			return false
+		}
+		if !ok {
+			respond.NotFound(w, r)
+			return false
+		}
+	}
+	// contentrating.IsAllowed, not an open-coded rank comparison: it ranks an
+	// absent rating as 4 rather than treating it as unrestricted, so an unrated
+	// item is gated the same way here as on the streaming path. Enforcing it
+	// differently in one place is how a title becomes addable-but-unplayable.
+	cr := ""
+	if item.ContentRating != nil {
+		cr = *item.ContentRating
+	}
+	if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		respond.NotFound(w, r)
+		return false
+	}
+	return true
 }

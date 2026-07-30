@@ -1142,9 +1142,12 @@ func run() error {
 	// 1080p one, etc.). The TMDB agent is consulted both for the title
 	// snapshot at create time and to resolve TVDB ids for Sonarr lookups.
 	requestsTMDB := &requestsTMDBAdapter{agentFn: agentFn}
-	requestsSvc := requests.NewService(gen.New(rwPool), requestsTMDB, notifServiceEarly, logger)
+	requestsSvc := requests.NewService(gen.New(rwPool), requestsTMDB, notifServiceEarly, logger).
+		WithEncryptor(encryptor)
 	requestsHandler := v1.NewRequestHandler(requestsSvc, logger).WithAudit(auditLogger)
-	arrServicesHandler := v1.NewArrServicesHandler(gen.New(rwPool), logger).WithAudit(auditLogger)
+	arrServicesHandler := v1.NewArrServicesHandler(gen.New(rwPool), logger).
+		WithAudit(auditLogger).
+		WithEncryptor(encryptor)
 	// Discover reuses the same adapter so admins toggling the TMDB key
 	// flow through to search results without a server restart.
 	discoverHandler := v1.NewDiscoverHandler(gen.New(roPool), requestsTMDB, requestsSvc, logger)

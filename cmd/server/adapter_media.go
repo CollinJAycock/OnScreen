@@ -425,7 +425,6 @@ func (a *mediaAdapter) HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (i
 	return a.q.HardDeleteMediaFile(ctx, id)
 }
 
-
 func (a *mediaAdapter) UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error {
 	return a.q.UpdateMediaFileHash(ctx, gen.UpdateMediaFileHashParams{ID: id, FileHash: &hash})
 }
@@ -999,8 +998,10 @@ func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UU
 	return a.q.ListDistinctGenres(ctx, libraryID)
 }
 
-func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.GenreCount, error) {
-	rows, err := a.q.ListGenresWithCounts(ctx, gen.ListGenresWithCountsParams{LibraryID: libraryID, Type: itemType})
+func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.GenreCount, error) {
+	rows, err := a.q.ListGenresWithCounts(ctx, gen.ListGenresWithCountsParams{
+		LibraryID: libraryID, Type: itemType, MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1011,8 +1012,10 @@ func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.
 	return out, nil
 }
 
-func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]media.YearCount, error) {
-	rows, err := a.q.ListYearsWithCounts(ctx, gen.ListYearsWithCountsParams{LibraryID: libraryID, Type: itemType})
+func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.YearCount, error) {
+	rows, err := a.q.ListYearsWithCounts(ctx, gen.ListYearsWithCountsParams{
+		LibraryID: libraryID, Type: itemType, MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+	})
 	if err != nil {
 		return nil, err
 	}

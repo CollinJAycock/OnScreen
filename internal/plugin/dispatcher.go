@@ -238,14 +238,27 @@ func (w *pluginWorker) enqueue(evt NotificationEvent) {
 	}
 }
 
+// stop signals the worker to exit and returns immediately. It deliberately
+// does NOT close the client: pluginClient.close takes the same mutex callTool
+// holds for the whole of a call, so closing here blocks for up to
+// defaultCallTimeout whenever a delivery is in flight.
+//
+// That block was the problem, because of WHERE stop is called from. workerFor
+// invokes it while holding d.mu — the dispatcher-wide lock every Dispatch must
+// take for every plugin — so an admin editing one plugin's endpoint while that
+// plugin had a notification in flight stalled dispatch to ALL plugins behind
+// one slow HTTP call. Close had the matching shape: it stops workers in
+// sequence, serializing one call-timeout per plugin into shutdown.
+//
+// run owns the close instead (see its defer), so the transport still outlives
+// the last delivery — Close's wg.Wait is what makes that ordering observable —
+// but no caller waits on it.
 func (w *pluginWorker) stop() {
-	w.stopOnce.Do(func() {
-		close(w.stopCh)
-		w.client.close()
-	})
+	w.stopOnce.Do(func() { close(w.stopCh) })
 }
 
 func (w *pluginWorker) run(ctx context.Context) {
+	defer w.client.close()
 	for {
 		select {
 		case <-ctx.Done():

@@ -24,6 +24,9 @@ import (
 	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
+// maxTMDBBody caps a single JSON response. See the ReadAll call site.
+const maxTMDBBody = 32 << 20
+
 const baseURL = "https://api.themoviedb.org/3"
 const imageBaseURL = "https://image.tmdb.org/t/p/original"
 
@@ -641,9 +644,17 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// Bound the read. TMDB's largest documented payload (a full credits list
+	// on a long-running series) is a few hundred KB, so 32 MiB is generous —
+	// but the body is remote input buffered whole into memory and then into
+	// the response cache, and an unbounded ReadAll there is an OOM waiting on
+	// a compromised or misbehaving upstream.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTMDBBody))
 	if err != nil {
 		return fmt.Errorf("read body: %w", err)
+	}
+	if len(body) >= maxTMDBBody {
+		return fmt.Errorf("tmdb response exceeds %d bytes", maxTMDBBody)
 	}
 	if err := json.Unmarshal(body, dest); err != nil {
 		return err

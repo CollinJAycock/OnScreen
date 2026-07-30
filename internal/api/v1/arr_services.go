@@ -14,7 +14,9 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/arr"
+	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -38,6 +40,7 @@ type ArrServicesHandler struct {
 	arrClient func(baseURL, apiKey string) *arr.Client
 	logger    *slog.Logger
 	audit     *audit.Logger
+	enc       *auth.Encryptor // optional; nil stores api_key in cleartext
 }
 
 // NewArrServicesHandler builds the handler. arrClient is overridable for
@@ -48,6 +51,15 @@ func NewArrServicesHandler(db ArrServicesDB, logger *slog.Logger) *ArrServicesHa
 		arrClient: arr.New,
 		logger:    logger,
 	}
+}
+
+// WithEncryptor enables at-rest encryption for api_key. Nil (the default)
+// preserves the previous cleartext behaviour, and reads stay prefix-dispatched
+// either way, so turning it on is safe on an existing database: old rows are
+// read as-is and re-sealed the next time they are written.
+func (h *ArrServicesHandler) WithEncryptor(e *auth.Encryptor) *ArrServicesHandler {
+	h.enc = e
+	return h
 }
 
 // WithAudit attaches an audit logger.
@@ -208,11 +220,23 @@ func (h *ArrServicesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The row id is the ciphertext's associated data, so it must exist before
+	// the key is sealed — hence a client-side UUID rather than the column
+	// default.
+	newID := uuid.New()
+	sealedKey, err := arrcrypt.Seal(h.enc, newID, body.APIKey)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "seal arr api key", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+
 	created, err := h.db.CreateArrService(r.Context(), gen.CreateArrServiceParams{
+		ID:                      newID,
 		Name:                    body.Name,
 		Kind:                    body.Kind,
 		BaseUrl:                 body.BaseURL,
-		ApiKey:                  body.APIKey,
+		ApiKey:                  sealedKey,
 		DefaultQualityProfileID: body.DefaultQualityProfileID,
 		DefaultRootFolder:       body.DefaultRootFolder,
 		DefaultTags:             tagsJSON,
@@ -314,7 +338,13 @@ func (h *ArrServicesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		params.BaseUrl = trimmed
 	}
 	if body.APIKey != nil && strings.TrimSpace(*body.APIKey) != "" {
-		params.ApiKey = strings.TrimSpace(*body.APIKey)
+		sealed, serr := arrcrypt.Seal(h.enc, id, strings.TrimSpace(*body.APIKey))
+		if serr != nil {
+			h.logger.ErrorContext(r.Context(), "seal arr api key", "id", id, "err", serr)
+			respond.InternalError(w, r)
+			return
+		}
+		params.ApiKey = sealed
 	}
 	if body.DefaultQualityProfileID != nil {
 		params.DefaultQualityProfileID = body.DefaultQualityProfileID
@@ -484,7 +514,14 @@ func (h *ArrServicesHandler) Probe(w http.ResponseWriter, r *http.Request) {
 			body.BaseURL = existing.BaseUrl
 		}
 		if body.APIKey == "" {
-			body.APIKey = existing.ApiKey
+			// Stored form, not usable as a credential until opened.
+			plain, derr := arrcrypt.Open(h.enc, existing.ID, existing.ApiKey)
+			if derr != nil {
+				h.logger.ErrorContext(r.Context(), "open arr api key", "id", existing.ID, "err", derr)
+				respond.InternalError(w, r)
+				return
+			}
+			body.APIKey = plain
 		}
 		if body.Kind == "" {
 			body.Kind = existing.Kind

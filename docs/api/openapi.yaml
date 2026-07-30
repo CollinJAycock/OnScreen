@@ -1038,6 +1038,66 @@ paths:
       responses:
         '204': { description: Cleared. }
 
+  /api/v1/items/{id}/rating:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: The caller's own star rating for an item
+      description: |
+        Per-user rating on a 0-10 scale, independent of the community
+        average (which is returned inline on the item payload as
+        `community_rating`). 404 when the caller has not rated the item —
+        distinct from a score of 0, which is a real rating.
+
+        Returns 404 rather than an empty value when the ratings service is
+        not wired, so a deployment with the feature off looks like a
+        deployment where nothing is rated.
+      tags: [Items]
+      responses:
+        '200':
+          description: The caller's rating.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      score: { type: number, format: float, minimum: 0, maximum: 10 }
+        '404': { description: Caller has not rated this item, or ratings are disabled. }
+    put:
+      summary: Set the caller's rating
+      description: Upserts, so re-rating an already-rated item replaces the score.
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score: { type: number, format: float, minimum: 0, maximum: 10 }
+      responses:
+        '200':
+          description: Saved; echoes the stored score.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      score: { type: number, format: float }
+        '400': { description: Score outside 0-10, or a malformed body. }
+    delete:
+      summary: Clear the caller's rating ("un-rate")
+      description: Clearing a rating that was never set is a no-op and still returns 204.
+      tags: [Items]
+      responses:
+        '204': { description: Cleared. }
+
   /api/v1/items/{id}/lyrics:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:

@@ -66,6 +66,18 @@ func RenderTOTPQRPNG(otpauthURL string) ([]byte, error) {
 // ValidateTOTPCode reports whether code is valid for secret right now.
 // totp.Validate applies a ±1 step (±30 s) skew window, covering ordinary
 // clock drift between the server and the user's phone.
+//
+// NOT single-use: nothing records which time step a user already consumed, so
+// the same six digits authenticate repeatedly for up to ~90 s (the step plus
+// the ±1 skew). An attacker who observes a code — shoulder-surfing, a shared
+// screen, a phishing relay — can replay it inside that window.
+//
+// Making it single-use needs per-user state (last-consumed step in the users
+// row, or a short-lived Valkey key) checked and written atomically on the
+// verify path; see ValidateTOTPForUser in the auth service for where that
+// belongs. Deliberately not bolted on here: this function is pure and used by
+// enrolment as well as login, and a partial implementation that only covers one
+// caller is worse than a documented gap.
 func ValidateTOTPCode(code, secret string) bool {
 	return totp.Validate(strings.TrimSpace(code), secret)
 }

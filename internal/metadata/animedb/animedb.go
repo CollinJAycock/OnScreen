@@ -40,6 +40,8 @@ import (
 	"unicode"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
 // ManamiURL is the upstream JSON the cache fetches from. Tests
@@ -98,9 +100,13 @@ func New(cacheDir string, logger *slog.Logger) *DB {
 		logger = slog.Default()
 	}
 	return &DB{
-		cacheDir:   cacheDir,
-		source:     ManamiURL,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		cacheDir: cacheDir,
+		source:   ManamiURL,
+		// Route through the shared SSRF guard like every other production
+		// egress. This was the only one using a stock client, so an
+		// admin-changed source URL (or a hijacked one) could reach the LAN or
+		// a cloud-metadata endpoint that every sibling client already refuses.
+		httpClient: safehttp.NewClient(safehttp.DialPolicy{}, 60*time.Second),
 		logger:     logger,
 	}
 }

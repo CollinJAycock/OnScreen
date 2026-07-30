@@ -53,6 +53,12 @@ type OCRJob struct {
 // TTL applies from job completion (or failure), not creation. A
 // long-running job won't be evicted while it's still in flight; the
 // 1-hour clock starts after it transitions to a terminal state.
+// maxRunTime bounds how long a job may sit in Running before the sweep
+// reclaims it as stalled. Set far above any real OCR pass — a feature-length
+// PGS track is tens of minutes — so it only ever catches a job whose goroutine
+// died without reaching a terminal state.
+const maxRunTime = 6 * time.Hour
+
 type OCRJobStore struct {
 	mu       sync.Mutex
 	jobs     map[string]*OCRJob
@@ -118,7 +124,7 @@ func (s *OCRJobStore) Create(fileID uuid.UUID, streamIndex int) (*OCRJob, error)
 		FileID:      fileID,
 		StreamIndex: streamIndex,
 		StartedAt:   now,
-		expiresAt:   now.Add(s.ttl), // refreshed on terminal-state transition
+		expiresAt:   now.Add(s.ttl), // ignored while Running; refreshed on terminal transition
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,9 +186,31 @@ func (s *OCRJobStore) Fail(id string, err error) {
 // gcLocked must be called with the mutex held. Drops jobs whose TTL has
 // elapsed. O(n) per call, n is bounded by concurrent OCR jobs in the
 // last hour — typically <10 even for a busy library.
+//
+// A running job is held until maxRunTime, not until its creation-time TTL. That
+// is what makes this type's documented contract ("TTL applies from job
+// completion, not creation") actually true: Create seeds expiresAt one TTL out,
+// and without the status check that seed doubled as a hard deadline, so an OCR
+// pass still running an hour in was evicted mid-flight. Complete then found no
+// row and dropped the finished result on the floor, and the polling client got
+// "job not found" after waiting the entire time. Feature-length PGS tracks are
+// both the workload this store was built for and the ones long enough to hit
+// it.
+//
+// The maxRunTime backstop covers the other direction: runOCRJob runs under
+// SafeGo, so a panic is recovered without ever reaching Fail, leaving a row
+// pinned in Running with no goroutine behind it. Reclaiming those keeps the map
+// bounded — an exempt-forever rule would leak one entry per panic for the life
+// of the process.
 func (s *OCRJobStore) gcLocked() {
 	now := time.Now()
 	for id, j := range s.jobs {
+		if j.Status == OCRJobRunning {
+			if now.Sub(j.StartedAt) > maxRunTime {
+				delete(s.jobs, id)
+			}
+			continue
+		}
 		if now.After(j.expiresAt) {
 			delete(s.jobs, id)
 		}

@@ -1873,13 +1873,15 @@ const listGenresWithCounts = `-- name: ListGenresWithCounts :many
 SELECT g::text AS genre, COUNT(*)::bigint AS count
 FROM media_items, unnest(genres) AS g
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
+  AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
 GROUP BY g
 ORDER BY g
 `
 
 type ListGenresWithCountsParams struct {
-	LibraryID uuid.UUID `json:"library_id"`
-	Type      string    `json:"type"`
+	LibraryID     uuid.UUID `json:"library_id"`
+	Type          string    `json:"type"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
 }
 
 type ListGenresWithCountsRow struct {
@@ -1889,8 +1891,12 @@ type ListGenresWithCountsRow struct {
 
 // Returns each distinct genre and the number of root-type items that carry it.
 // Filtering by type avoids inflating counts when episodes inherit show genres.
+// The rating predicate lives INSIDE the query, like every other listing:
+// facet counts that ignore the caller's ceiling disclose the existence (and
+// the number) of over-ceiling titles to a restricted profile, which is exactly
+// what the ceiling is for.
 func (q *Queries) ListGenresWithCounts(ctx context.Context, arg ListGenresWithCountsParams) ([]ListGenresWithCountsRow, error) {
-	rows, err := q.db.Query(ctx, listGenresWithCounts, arg.LibraryID, arg.Type)
+	rows, err := q.db.Query(ctx, listGenresWithCounts, arg.LibraryID, arg.Type, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}
@@ -4397,13 +4403,15 @@ const listYearsWithCounts = `-- name: ListYearsWithCounts :many
 SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
+  AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
 GROUP BY year
 ORDER BY year DESC
 `
 
 type ListYearsWithCountsParams struct {
-	LibraryID uuid.UUID `json:"library_id"`
-	Type      string    `json:"type"`
+	LibraryID     uuid.UUID `json:"library_id"`
+	Type          string    `json:"type"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
 }
 
 type ListYearsWithCountsRow struct {
@@ -4413,8 +4421,9 @@ type ListYearsWithCountsRow struct {
 
 // Returns distinct release years and item counts for the given library/type.
 // NULL years are excluded so the browse UI doesn't show an empty bucket.
+// Rating-filtered for the same reason as ListGenresWithCounts above.
 func (q *Queries) ListYearsWithCounts(ctx context.Context, arg ListYearsWithCountsParams) ([]ListYearsWithCountsRow, error) {
-	rows, err := q.db.Query(ctx, listYearsWithCounts, arg.LibraryID, arg.Type)
+	rows, err := q.db.Query(ctx, listYearsWithCounts, arg.LibraryID, arg.Type, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}

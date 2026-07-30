@@ -25,33 +25,38 @@ func (q *Queries) ClearArrServiceDefault(ctx context.Context, kind string) error
 
 const createArrService = `-- name: CreateArrService :one
 INSERT INTO arr_services (
-    name, kind, base_url, api_key,
+    id, name, kind, base_url, api_key,
     default_quality_profile_id, default_root_folder, default_tags,
     minimum_availability, series_type, season_folder, language_profile_id,
     is_default, enabled
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING id, name, kind, base_url, api_key, default_quality_profile_id, default_root_folder, default_tags, minimum_availability, series_type, season_folder, language_profile_id, is_default, enabled, created_at, updated_at
 `
 
 type CreateArrServiceParams struct {
-	Name                    string  `json:"name"`
-	Kind                    string  `json:"kind"`
-	BaseUrl                 string  `json:"base_url"`
-	ApiKey                  string  `json:"api_key"`
-	DefaultQualityProfileID *int32  `json:"default_quality_profile_id"`
-	DefaultRootFolder       *string `json:"default_root_folder"`
-	DefaultTags             []byte  `json:"default_tags"`
-	MinimumAvailability     *string `json:"minimum_availability"`
-	SeriesType              *string `json:"series_type"`
-	SeasonFolder            *bool   `json:"season_folder"`
-	LanguageProfileID       *int32  `json:"language_profile_id"`
-	IsDefault               bool    `json:"is_default"`
-	Enabled                 bool    `json:"enabled"`
+	ID                      uuid.UUID `json:"id"`
+	Name                    string    `json:"name"`
+	Kind                    string    `json:"kind"`
+	BaseUrl                 string    `json:"base_url"`
+	ApiKey                  string    `json:"api_key"`
+	DefaultQualityProfileID *int32    `json:"default_quality_profile_id"`
+	DefaultRootFolder       *string   `json:"default_root_folder"`
+	DefaultTags             []byte    `json:"default_tags"`
+	MinimumAvailability     *string   `json:"minimum_availability"`
+	SeriesType              *string   `json:"series_type"`
+	SeasonFolder            *bool     `json:"season_folder"`
+	LanguageProfileID       *int32    `json:"language_profile_id"`
+	IsDefault               bool      `json:"is_default"`
+	Enabled                 bool      `json:"enabled"`
 }
 
+// id is supplied by the caller rather than defaulted, because api_key is
+// encrypted with the row id as AES-GCM associated data and the caller must
+// therefore know the id before it can seal the key.
 func (q *Queries) CreateArrService(ctx context.Context, arg CreateArrServiceParams) (ArrService, error) {
 	row := q.db.QueryRow(ctx, createArrService,
+		arg.ID,
 		arg.Name,
 		arg.Kind,
 		arg.BaseUrl,

@@ -286,3 +286,71 @@ func waitForDrain(t *testing.T, d *NotificationDispatcher) {
 	}
 	t.Fatal("queues did not drain within timeout")
 }
+
+// stop must not wait on the plugin client. pluginClient.close takes the same
+// mutex callTool holds for the whole of a call, and workerFor calls stop while
+// holding d.mu — the dispatcher-wide lock every Dispatch needs for every
+// plugin. So a blocking stop meant one plugin being reconfigured mid-delivery
+// stalled dispatch to all the others for up to defaultCallTimeout.
+func TestPluginWorker_StopDoesNotWaitOnInFlightCall(t *testing.T) {
+	allowPrivateIPs(t)
+	stub := newStubMCP(t, true)
+	pc, err := newPluginClient(Plugin{
+		Name: "stub", Role: RoleNotification, EndpointURL: stub.endpoint(), Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	w := &pluginWorker{client: pc, stopCh: make(chan struct{}), logger: discardLogger()}
+
+	// Hold the client mutex exactly as an in-flight callTool would.
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { w.stop(); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop() blocked on a client with a call in flight; workerFor " +
+			"calls it under d.mu, so this stalls dispatch to every other plugin")
+	}
+}
+
+// The client must still be closed, just by run rather than by stop — otherwise
+// the non-blocking stop would trade a stall for a leaked transport per worker.
+func TestPluginWorker_RunClosesClientOnExit(t *testing.T) {
+	allowPrivateIPs(t)
+	stub := newStubMCP(t, true)
+	pc, err := newPluginClient(Plugin{
+		Name: "stub", Role: RoleNotification, EndpointURL: stub.endpoint(), Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	w := &pluginWorker{
+		client: pc,
+		queue:  make(chan NotificationEvent, 1),
+		stopCh: make(chan struct{}),
+		logger: discardLogger(),
+	}
+
+	exited := make(chan struct{})
+	go func() { w.run(context.Background()); close(exited) }()
+
+	w.stop()
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not exit after stop")
+	}
+
+	pc.mu.Lock()
+	closed := pc.closed
+	pc.mu.Unlock()
+	if !closed {
+		t.Error("run exited without closing its client — the transport and its " +
+			"connection pool leak for the life of the process")
+	}
+}

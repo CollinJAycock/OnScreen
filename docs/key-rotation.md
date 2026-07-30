@@ -9,7 +9,15 @@ tokens **and** it's the AES-256-GCM key for the secrets OnScreen stores at rest:
   legacy `encv1:` rows are still read and are upgraded on rotation);
 - **webhook signing secrets** (`webhook_endpoints.secret`);
 - per-user **TOTP secrets** (`users.totp_secret`);
-- per-user **ListenBrainz scrobble tokens** (`user_scrobble.listenbrainz_token`).
+- per-user **ListenBrainz scrobble tokens** (`user_scrobble.listenbrainz_token`);
+- per-service **Radarr / Sonarr API keys** (`arr_services.api_key`, stored with
+  an `arrenc1:` prefix and bound to the row id, so a ciphertext moved between
+  service rows fails to decrypt rather than silently working).
+
+  Rows written before this column was encrypted are plain text with no prefix.
+  They keep working — the read path passes an unprefixed value straight
+  through — and a `rotate-key` run seals them, so rotation doubles as the
+  one-time migration. There is no separate schema change to apply.
 
 So you can't just swap `SECRET_KEY` and restart — the new key can't decrypt the
 old ciphertext, webhook delivery refuses to send unsigned, and 2FA logins break.

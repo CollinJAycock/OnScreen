@@ -474,7 +474,7 @@ type OpenCLDevice struct {
 // ListOpenCLDevices runs ffmpeg's OpenCL platform listing and parses
 // the output. The listing is probed once per worker startup; the
 // process is fast (<100 ms) and the result is cached for the worker's
-// lifetime via PickOpenCLDevice.
+// lifetime; surfaced in the worker's startup log.
 //
 // Output shape (one of many examples):
 //
@@ -529,49 +529,6 @@ func ListOpenCLDevices(ctx context.Context) []OpenCLDevice {
 		})
 	}
 	return devices
-}
-
-// PickOpenCLDevice returns the platform.device index whose vendor
-// matches the active encoder. Falls back to "0.0" when no device is
-// found or no good match exists — works on single-vendor hosts where
-// 0.0 is by definition correct, and is the safest default elsewhere.
-//
-// Returns the index alone (e.g. "0.0") so callers can drop it into
-// `opencl=ocl:N.M` directly.
-func PickOpenCLDevice(devices []OpenCLDevice, enc Encoder) string {
-	if len(devices) == 0 {
-		return "0.0"
-	}
-	// Vendor keyword to look for in the OpenCL platform name. Picked
-	// to match the strings ffmpeg actually prints on Windows + Linux
-	// builds. NVIDIA's CUDA-OpenCL ICD reports as "NVIDIA CUDA";
-	// AMD APP reports as "AMD Accelerated Parallel Processing";
-	// Intel reports as "Intel(R) OpenCL" (or "Intel(R) OpenCL HD
-	// Graphics" on iGPUs).
-	var vendor string
-	switch enc {
-	case EncoderNVENC, EncoderHEVCNVENC, EncoderAV1NVENC:
-		vendor = "nvidia"
-	case EncoderAMF, EncoderHEVCAMF:
-		vendor = "amd"
-	case EncoderQSV, EncoderHEVCQSV, EncoderAV1QSV, EncoderVAAPI, EncoderHEVCVAAPI:
-		vendor = "intel"
-	default:
-		// Software / AV1-VAAPI / AV1-AMF: no OpenCL-vendor pinning needed;
-		// fall through to the first-device path below.
-	}
-	if vendor == "" {
-		return devices[0].Index
-	}
-	for _, d := range devices {
-		hay := strings.ToLower(d.PlatformName + " " + d.DeviceName)
-		if strings.Contains(hay, vendor) {
-			return d.Index
-		}
-	}
-	// No vendor match — fall through to first device, which is the
-	// platform ffmpeg would have picked anyway if there were only one.
-	return devices[0].Index
 }
 
 // ProbeFilter returns true if the named FFmpeg filter is available.

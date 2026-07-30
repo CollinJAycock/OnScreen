@@ -234,12 +234,10 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	// probe, gated so an older build never receives the unknown flag (which
 	// would abort every transcode).
 	readrateCatchup := ProbeReadrateCatchup(ctx)
-	// Probe OpenCL platforms once at worker startup. Result is cached
-	// for the worker's lifetime; ffmpeg arg-builder reads
-	// PickOpenCLDevice(this list, encoder) at session-start to avoid
-	// the bare-`opencl=ocl` auto-picker that fails (-19) when more
-	// than one platform is visible. Only meaningful if tonemap_opencl
-	// is in the available filters — otherwise the field stays nil.
+	// Probe OpenCL platforms once at worker startup. Diagnostic only now that
+	// the tonemap_opencl pipeline is retired — it lands in the "worker ready"
+	// log so an operator can see what OpenCL the host exposes. Skipped
+	// entirely when the filter isn't built in, since there is nothing to say.
 	var openclDevices []OpenCLDevice
 	if hasTonemapOCL {
 		openclDevices = ListOpenCLDevices(ctx)
@@ -355,8 +353,13 @@ func (w *Worker) register(ctx context.Context) error {
 		MaxSessions:     int(w.maxSessions.Load()),
 		ActiveSessions:  int(w.activeSessions.Load()),
 		ActiveCostCenti: int(w.activeCostCenti.Load()),
-		HasGPUTonemap:   w.hasLibplacebo || w.cudaTonemap.Load() || w.hasTonemapOpenCL || w.vaapiTonemap,
-		RegisteredAt:    time.Now(),
+		// hasTonemapOpenCL is deliberately absent: BuildHLS retired the
+		// tonemap_opencl path, so a worker that has only that filter does its
+		// HDR→SDR on the CPU via zscale. Advertising GPU tonemap on the
+		// strength of it told the scheduler this node could take an HDR job
+		// cheaply when it could not.
+		HasGPUTonemap: w.hasLibplacebo || w.cudaTonemap.Load() || w.vaapiTonemap,
+		RegisteredAt:  time.Now(),
 	})
 }
 
@@ -626,11 +629,9 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				BitrateKbps:          bitrate,
 				NeedsToneMap:         job.NeedsToneMap,
 				CudaTonemap:          cudaTonemapUsable,
-				HasTonemapOpenCL:     w.hasTonemapOpenCL,
 				HasZscale:            w.hasZscale,
 				HasLibfdkAAC:         w.hasLibfdkAAC,
 				HasLibplacebo:        w.hasLibplacebo,
-				OpenCLDevice:         PickOpenCLDevice(w.openclDevices, enc),
 				AudioCodec:           job.AudioCodec,
 				AudioChannels:        job.AudioChannels,
 				AudioStreamIndex:     job.AudioStreamIndex,

@@ -178,7 +178,7 @@ type completionStats struct {
 }
 
 type dayStreamTypes struct {
-	Date      string `json:"date"` // "2006-01-02" in the requested display timezone
+	Date      string `json:"date"`   // "2006-01-02" in the requested display timezone
 	Direct    int64  `json:"direct"` // directPlay + directStream + remux
 	Transcode int64  `json:"transcode"`
 	Unknown   int64  `json:"unknown"` // rows from clients that don't report a decision

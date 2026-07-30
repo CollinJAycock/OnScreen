@@ -54,7 +54,15 @@ func NewDialer(p DialPolicy) *net.Dialer {
 // 0 for streaming responses (HLS segment fetches, long-lived SSE).
 func NewClient(p DialPolicy, timeout time.Duration) *http.Client {
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		// Proxy is deliberately nil, NOT http.ProxyFromEnvironment.
+		//
+		// With HTTP_PROXY/HTTPS_PROXY set, Go dials the PROXY instead of the
+		// target, so the Control hook below only ever validates the proxy's
+		// address — the real destination is resolved and connected by the
+		// proxy, entirely outside our checks. That silently voids the whole
+		// point of this package: an operator-set (or inherited) proxy env var
+		// would turn every SSRF-guarded fetch into an unguarded one.
+		Proxy:                 nil,
 		DialContext:           NewDialer(p).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          20,

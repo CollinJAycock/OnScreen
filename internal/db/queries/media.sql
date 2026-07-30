@@ -986,18 +986,25 @@ ORDER BY genre;
 -- name: ListGenresWithCounts :many
 -- Returns each distinct genre and the number of root-type items that carry it.
 -- Filtering by type avoids inflating counts when episodes inherit show genres.
+-- The rating predicate lives INSIDE the query, like every other listing:
+-- facet counts that ignore the caller's ceiling disclose the existence (and
+-- the number) of over-ceiling titles to a restricted profile, which is exactly
+-- what the ceiling is for.
 SELECT g::text AS genre, COUNT(*)::bigint AS count
 FROM media_items, unnest(genres) AS g
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 GROUP BY g
 ORDER BY g;
 
 -- name: ListYearsWithCounts :many
 -- Returns distinct release years and item counts for the given library/type.
 -- NULL years are excluded so the browse UI doesn't show an empty bucket.
+-- Rating-filtered for the same reason as ListGenresWithCounts above.
 SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 GROUP BY year
 ORDER BY year DESC;
 

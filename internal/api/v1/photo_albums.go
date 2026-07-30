@@ -310,6 +310,9 @@ func (h *PhotoAlbumHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "only photo items can be added to a photo album")
 		return
 	}
+	if !itemAddAllowed(w, r, h.access, h.logger, mi) {
+		return
+	}
 	if _, err := h.db.AddCollectionItem(r.Context(), gen.AddCollectionItemParams{
 		CollectionID: id,
 		MediaItemID:  itemID,

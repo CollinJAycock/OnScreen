@@ -224,8 +224,8 @@ type Querier interface {
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
-	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]GenreCount, error)
-	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]YearCount, error)
+	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]GenreCount, error)
+	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]YearCount, error)
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
 	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
 	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
@@ -667,8 +667,8 @@ func (s *Service) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 
 // ListGenresWithCounts returns each genre and the number of root-type items
 // carrying it, suitable for a browse page.
-func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]GenreCount, error) {
-	rows, err := s.ro.ListGenresWithCounts(ctx, libraryID, itemType)
+func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]GenreCount, error) {
+	rows, err := s.ro.ListGenresWithCounts(ctx, libraryID, itemType, maxRatingRank)
 	if err != nil {
 		return nil, fmt.Errorf("list genres with counts: %w", err)
 	}
@@ -676,8 +676,8 @@ func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID,
 }
 
 // ListYearsWithCounts returns each release year and item count for a library.
-func (s *Service) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string) ([]YearCount, error) {
-	rows, err := s.ro.ListYearsWithCounts(ctx, libraryID, itemType)
+func (s *Service) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]YearCount, error) {
+	rows, err := s.ro.ListYearsWithCounts(ctx, libraryID, itemType, maxRatingRank)
 	if err != nil {
 		return nil, fmt.Errorf("list years with counts: %w", err)
 	}

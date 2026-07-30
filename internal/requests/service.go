@@ -21,6 +21,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/arr"
+	"github.com/onscreen/onscreen/internal/arrcrypt"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/metadata"
 )
@@ -113,6 +115,7 @@ type Service struct {
 	tmdb      TMDB
 	notify    Notifier
 	arrClient ArrClientFactory
+	enc       *auth.Encryptor // optional; opens sealed arr_services.api_key
 	logger    *slog.Logger
 }
 
@@ -127,6 +130,15 @@ func NewService(db DB, tmdb TMDB, notify Notifier, logger *slog.Logger) *Service
 		arrClient: arr.New,
 		logger:    logger,
 	}
+}
+
+// WithEncryptor supplies the key needed to open sealed arr api_keys. Nil is
+// valid on a deployment that has never encrypted them; a row written by an
+// encryptor-equipped server would then fail to dispatch rather than silently
+// sending ciphertext as a credential.
+func (s *Service) WithEncryptor(e *auth.Encryptor) *Service {
+	s.enc = e
+	return s
 }
 
 // SetArrClientFactory overrides the constructor used to build arr transport
@@ -627,7 +639,13 @@ func (s *Service) dispatchToArr(ctx context.Context, req gen.MediaRequest, svc g
 		return fmt.Errorf("%w: missing root folder", ErrArrAddFailed)
 	}
 
-	client := s.arrClient(svc.BaseUrl, svc.ApiKey)
+	// svc.ApiKey is the stored form; sealed rows must be opened before the key
+	// can be used as a credential.
+	apiKey, err := arrcrypt.Open(s.enc, svc.ID, svc.ApiKey)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrArrAddFailed, err)
+	}
+	client := s.arrClient(svc.BaseUrl, apiKey)
 
 	switch req.Type {
 	case TypeMovie:

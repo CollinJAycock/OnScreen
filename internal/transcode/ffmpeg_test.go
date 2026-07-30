@@ -991,17 +991,16 @@ func TestBuildHLS_NVENC_HDRSourceUsesZscale(t *testing.T) {
 	// filters is gone — input frames are now in CPU memory. zscale
 	// is the only HDR→SDR path that fits a software-decode pipeline.
 	args := BuildHLS(BuildArgs{
-		InputPath:        "/media/hdr_movie.mkv",
-		Encoder:          EncoderNVENC,
-		Width:            1920,
-		Height:           1080,
-		BitrateKbps:      8000,
-		NeedsToneMap:     true,
-		HasTonemapOpenCL: true, // same
-		HasZscale:        true,
-		AudioCodec:       "aac",
-		SessionDir:       "/tmp/sessions/x",
-		SegmentPrefix:    "seg",
+		InputPath:     "/media/hdr_movie.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
 
@@ -1032,17 +1031,16 @@ func TestBuildHLS_NVENC_HDRSourceUsesZscale(t *testing.T) {
 func TestBuildHLS_NVENC_NoTonemapAvailable(t *testing.T) {
 	// No tonemap_cuda, no tonemap_opencl, no zscale — should skip tonemapping entirely.
 	args := BuildHLS(BuildArgs{
-		InputPath:        "/media/hdr_movie.mkv",
-		Encoder:          EncoderNVENC,
-		Width:            1920,
-		Height:           1080,
-		BitrateKbps:      8000,
-		NeedsToneMap:     true,
-		HasTonemapOpenCL: false,
-		HasZscale:        false,
-		AudioCodec:       "aac",
-		SessionDir:       "/tmp/sessions/x",
-		SegmentPrefix:    "seg",
+		InputPath:     "/media/hdr_movie.mkv",
+		Encoder:       EncoderNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   8000,
+		NeedsToneMap:  true,
+		HasZscale:     false,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
 
@@ -1750,17 +1748,16 @@ func TestBuildHLS_HEVC_NVENC_HDRSourceUsesZscale(t *testing.T) {
 	// was retired; HEVC NVENC follows the same software-decode +
 	// zscale + GPU-encode shape as H.264 NVENC.
 	args := BuildHLS(BuildArgs{
-		InputPath:        "/media/4k_hdr_movie.mkv",
-		Encoder:          EncoderHEVCNVENC,
-		Width:            3840,
-		Height:           2160,
-		BitrateKbps:      24000,
-		NeedsToneMap:     true,
-		HasTonemapOpenCL: true, // same
-		HasZscale:        true,
-		AudioCodec:       "aac",
-		SessionDir:       "/tmp/sessions/x",
-		SegmentPrefix:    "seg",
+		InputPath:     "/media/4k_hdr_movie.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		Width:         3840,
+		Height:        2160,
+		BitrateKbps:   24000,
+		NeedsToneMap:  true,
+		HasZscale:     true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
 	})
 	argStr := strings.Join(args, " ")
 

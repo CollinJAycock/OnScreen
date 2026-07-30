@@ -530,3 +530,84 @@ func TestDownload_SetsUserAgent(t *testing.T) {
 		t.Errorf("User-Agent looks like Go default %q — Wikimedia rejects this", seen)
 	}
 }
+
+// The resize cache is keyed by source path + WxH and is never evicted, so the
+// key space must not be caller-controlled. Before snapping, any authenticated
+// user could walk ?w=1..1920 × ?h=1..1920 against one poster and have the
+// server encode and store a distinct JPEG for each, filling the cache volume.
+func TestSnapDim_BoundsTheCacheKeySpace(t *testing.T) {
+	distinct := make(map[int]struct{})
+	for v := 0; v <= 4000; v++ {
+		distinct[SnapDim(v)] = struct{}{}
+	}
+	// len(artworkDims) buckets plus 0 for "unconstrained on this axis".
+	if want := len(artworkDims) + 1; len(distinct) != want {
+		t.Errorf("distinct snapped values: got %d, want %d", len(distinct), want)
+	}
+	if len(distinct) > 32 {
+		t.Errorf("ladder has %d buckets; squared, that is too many cache entries "+
+			"per source image", len(distinct))
+	}
+}
+
+// Every dimension the shipped clients actually request must map to itself, so
+// snapping changes no served image.
+func TestSnapDim_ClientSizesAreExact(t *testing.T) {
+	// Harvested from web/src and clients/: every ?w= and ?h= literal in use.
+	for _, v := range []int{120, 150, 200, 300, 320, 400, 450, 480, 500, 600,
+		640, 720, 1080, 1280, 1920} {
+		if got := SnapDim(v); got != v {
+			t.Errorf("client-requested %d snapped to %d — that size would be "+
+				"re-encoded at different dimensions than before", v, got)
+		}
+	}
+}
+
+func TestSnapDim_RoundsUpAndClamps(t *testing.T) {
+	cases := []struct{ in, want int }{
+		{0, 0},     // unconstrained on this axis
+		{-5, 0},    // negative is not a size
+		{1, 120},   // never below the smallest bucket...
+		{121, 150}, // ...and always UP, so nothing is upscaled from too few pixels
+		{301, 320},
+		{1921, 1920}, // clamped to the top of the ladder
+		{999999, 1920},
+	}
+	for _, c := range cases {
+		if got := SnapDim(c.in); got != c.want {
+			t.Errorf("SnapDim(%d) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// Snapping must happen before the cache key is formed, or it bounds nothing.
+// Widths that snap to the same bucket must therefore share one cache entry —
+// this drives Resize the way the /artwork/* route does, snapping first.
+func TestResize_SnappedWidthsShareOneCacheEntry(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "poster.jpg")
+	if err := os.WriteFile(src, makeJPEG(t, 800, 1200), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	m := New(cache)
+	for _, w := range []int{301, 310, 320} {
+		var buf bytes.Buffer
+		if err := m.Resize(context.Background(), &buf, src, SnapDim(w), 0); err != nil {
+			t.Fatalf("resize w=%d: %v", w, err)
+		}
+	}
+
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	var jpegs int
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".jpg") {
+			jpegs++
+		}
+	}
+	if jpegs != 1 {
+		t.Errorf("three widths snapping to 320 wrote %d cache entries, want 1", jpegs)
+	}
+}

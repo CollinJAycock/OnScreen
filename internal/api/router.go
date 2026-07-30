@@ -238,15 +238,7 @@ func NewRouter(h *Handlers) http.Handler {
 					return
 				}
 
-				// Parse optional resize query params (?w=300&h=450).
-				wParam, _ := strconv.Atoi(req.URL.Query().Get("w"))
-				hParam, _ := strconv.Atoi(req.URL.Query().Get("h"))
-				if wParam > 1920 {
-					wParam = 1920
-				}
-				if hParam > 1920 {
-					hParam = 1920
-				}
+				wParam, hParam := artworkResizeDims(req)
 
 				claims := middleware.ClaimsFromContext(req.Context())
 				// Read artwork through the same backend Resize uses so artwork
@@ -948,6 +940,14 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/items/{id}/markers/{kind}", h.Items.UpsertMarker)
 				r.Delete("/items/{id}/markers/{kind}", h.Items.DeleteMarker)
 				r.Get("/items/{id}/exif", h.Items.GetEXIF)
+				// Per-user star rating. The handlers and the ratings service
+				// were both wired but these three lines were missing, so the
+				// watch page's rating widget (itemApi.setRating / clearRating)
+				// 404'd on every click while the item payload happily reported
+				// a user_rating that nothing could set.
+				r.Get("/items/{id}/rating", h.Items.GetRating)
+				r.Put("/items/{id}/rating", h.Items.SetRating)
+				r.Delete("/items/{id}/rating", h.Items.DeleteRating)
 			}
 
 			// Per-user watching-status mirror — Plan to Watch /
@@ -1113,4 +1113,18 @@ func NewRouter(h *Handlers) http.Handler {
 	})
 
 	return r
+}
+
+// artworkResizeDims reads the optional ?w= / ?h= resize params and snaps each
+// to the artwork bucket ladder. 0 means unconstrained on that axis.
+//
+// This is the only path by which caller-supplied dimensions reach the resize
+// cache, which is keyed by source path + WxH and is never evicted, so the snap
+// is what bounds that key space — see artwork.SnapDim. It also subsumes the
+// bare 1920 clamp it replaced, since the ladder tops out there.
+func artworkResizeDims(req *http.Request) (width, height int) {
+	q := req.URL.Query()
+	w, _ := strconv.Atoi(q.Get("w"))
+	h, _ := strconv.Atoi(q.Get("h"))
+	return artwork.SnapDim(w), artwork.SnapDim(h)
 }

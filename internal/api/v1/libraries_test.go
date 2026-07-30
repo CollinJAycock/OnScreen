@@ -13,6 +13,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
@@ -101,6 +104,11 @@ type mockMediaLister struct {
 	// ListItemsFiltered so tests can assert the handler's `?type=`
 	// override actually flowed through to the data layer.
 	gotType string
+	// gotFacetRank captures the rating rank passed to the genre/year facet
+	// queries, and gotFacetRankSet records that a call happened at all — so a
+	// test can distinguish "passed nil" from "never called".
+	gotFacetRank    *int
+	gotFacetRankSet bool
 }
 
 func (m *mockMediaLister) ListItems(_ context.Context, _ uuid.UUID, t string, _, _ int32) ([]media.Item, error) {
@@ -126,10 +134,12 @@ func (m *mockMediaLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ s
 func (m *mockMediaLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
 }
-func (m *mockMediaLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]media.GenreCount, error) {
+func (m *mockMediaLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, rank *int) ([]media.GenreCount, error) {
+	m.gotFacetRank, m.gotFacetRankSet = rank, true
 	return nil, nil
 }
-func (m *mockMediaLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string) ([]media.YearCount, error) {
+func (m *mockMediaLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, rank *int) ([]media.YearCount, error) {
+	m.gotFacetRank, m.gotFacetRankSet = rank, true
 	return nil, nil
 }
 func (m *mockMediaLister) ListEventCollectionsForLibrary(_ context.Context, _ uuid.UUID) ([]media.EventCollection, error) {
@@ -640,5 +650,71 @@ func TestToLibraryResponse_WithScanInterval(t *testing.T) {
 	}
 	if *resp.ScanIntervalMinutes != 120 {
 		t.Errorf("ScanIntervalMinutes: got %d, want 120", *resp.ScanIntervalMinutes)
+	}
+}
+
+// ── facet rating ceiling ─────────────────────────────────────────────────────
+
+// withRatedClaims attaches claims carrying a content-rating ceiling.
+func withRatedClaims(r *http.Request, maxRating string) *http.Request {
+	return r.WithContext(middleware.WithClaims(r.Context(), &auth.Claims{
+		UserID:           uuid.New(),
+		MaxContentRating: maxRating,
+	}))
+}
+
+// The genre and year facets are listings like any other, so they must carry the
+// caller's rating ceiling into the query. A facet count computed over the whole
+// library tells a restricted profile that titles it may not open exist, and how
+// many — the ceiling is there precisely to withhold that.
+func TestLibrary_Facets_PassCallerRatingCeiling(t *testing.T) {
+	facets := map[string]func(*LibraryHandler, http.ResponseWriter, *http.Request){
+		"genres": (*LibraryHandler).Genres,
+		"years":  (*LibraryHandler).Years,
+	}
+	for name, call := range facets {
+		t.Run(name, func(t *testing.T) {
+			libID := uuid.New()
+			svc := &mockLibraryService{lib: &library.Library{ID: libID, Type: "movie"}}
+			ml := &mockMediaLister{}
+			h := newLibHandler(svc)
+			h.WithMedia(ml)
+
+			req := withRatedClaims(
+				withChiParam(httptest.NewRequest("GET", "/", nil), "id", libID.String()), "PG")
+			call(h, httptest.NewRecorder(), req)
+
+			if !ml.gotFacetRankSet {
+				t.Fatal("facet query was never called")
+			}
+			if ml.gotFacetRank == nil {
+				t.Fatal("facet query got a nil rating rank for a PG-restricted caller: " +
+					"the ceiling never reached the query, so counts span the whole library")
+			}
+			if want := *contentrating.MaxRatingRank("PG"); *ml.gotFacetRank != want {
+				t.Errorf("rating rank: got %d, want %d (PG)", *ml.gotFacetRank, want)
+			}
+		})
+	}
+}
+
+// An unrestricted caller must pass nil, not a rank — otherwise every admin
+// facet count would silently acquire a ceiling.
+func TestLibrary_Facets_UnrestrictedCallerPassesNil(t *testing.T) {
+	libID := uuid.New()
+	svc := &mockLibraryService{lib: &library.Library{ID: libID, Type: "movie"}}
+	ml := &mockMediaLister{}
+	h := newLibHandler(svc)
+	h.WithMedia(ml)
+
+	req := withRatedClaims(
+		withChiParam(httptest.NewRequest("GET", "/", nil), "id", libID.String()), "")
+	h.Genres(httptest.NewRecorder(), req)
+
+	if !ml.gotFacetRankSet {
+		t.Fatal("facet query was never called")
+	}
+	if ml.gotFacetRank != nil {
+		t.Errorf("unrestricted caller got rank %d, want nil", *ml.gotFacetRank)
 	}
 }
