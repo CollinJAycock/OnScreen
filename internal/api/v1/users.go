@@ -348,6 +348,10 @@ func (h *UserHandler) DeleteSelf(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
+	// A 4-digit PIN must not be able to destroy the account it switched into.
+	if blockSwitchedSession(w, r, "delete your account") {
+		return
+	}
 	if claims.IsAdmin {
 		count, err := h.db.CountAdmins(r.Context())
 		if err != nil {

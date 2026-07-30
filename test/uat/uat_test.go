@@ -283,10 +283,10 @@ func (s *stubItemWatchService) Record(_ context.Context, _ watchevent.RecordPara
 // stubSessionCleaner implements v1.ItemSessionCleaner.
 type stubSessionCleaner struct{}
 
-func (s *stubSessionCleaner) UpdatePositionByMedia(_ context.Context, _ uuid.UUID, _ int64) error {
+func (s *stubSessionCleaner) UpdatePositionByMedia(_ context.Context, _, _ uuid.UUID, _ int64) error {
 	return nil
 }
-func (s *stubSessionCleaner) DeleteByMedia(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubSessionCleaner) DeleteByMedia(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 // stubItemEnricher implements v1.ItemEnricher.
 type stubItemEnricher struct{}

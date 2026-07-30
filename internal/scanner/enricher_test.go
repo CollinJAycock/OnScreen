@@ -2289,3 +2289,85 @@ func TestMergeIsSafe(t *testing.T) {
 		})
 	}
 }
+
+// AniList's streamingEpisodes list — the fallback used for anime libraries with
+// no TMDB/TVDB key, i.e. exactly when this path runs — labels most shows as a
+// bare "Episode 13" with no dash or colon. parseStreamingEpisodeTitle correctly
+// returns an EMPTY title for those, and enrichEpisode wrote it verbatim with no
+// `!= ""` guard (unlike applyEpisodeNFO / applyMovieNFO / applyShowNFO), wiping
+// the filename-derived episode name across the library.
+func TestEnrichEpisode_EmptyProviderTitleKeepsExisting(t *testing.T) {
+	anilistID := 158927
+	seasonNum, episodeNum := 1, 13
+	showID, seasonID, episodeID := uuid.New(), uuid.New(), uuid.New()
+
+	anilistStub := &stubAniListAgent{
+		episodes: []metadata.EpisodeResult{
+			// What "Episode 13" parses to: a real index, no title.
+			{EpisodeNum: 13, Title: "", ThumbURL: "http://x/13.jpg"},
+		},
+	}
+	updater := newMockUpdater()
+	updater.items[showID] = &media.Item{
+		ID: showID, Type: "show", Title: "Solo Leveling", AniListID: &anilistID,
+	}
+	updater.items[seasonID] = &media.Item{
+		ID: seasonID, Type: "season", ParentID: &showID, Index: &seasonNum,
+	}
+	updater.items[episodeID] = &media.Item{
+		ID: episodeID, Type: "episode", ParentID: &seasonID, Index: &episodeNum,
+		Title: "Arise", // filename-derived, and the only name we have
+	}
+	e := newTestEnricher(&mockAgent{}, updater, nil)
+	e.SetTVDBFallbackFn(func() TVDBFallback { return &mockTVDB{} })
+	e.SetAniListFn(func() AniListAgent { return anilistStub })
+
+	if err := e.enrichEpisode(context.Background(), &mockAgent{}, updater.items[episodeID],
+		&media.File{FilePath: "/anime/show/13.mkv"}, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("expected 1 update call, got %d", len(updater.updateCalls))
+	}
+	got := updater.updateCalls[0]
+	if got.Title != "Arise" {
+		t.Errorf("title: got %q, want %q — a provider with no name to offer must "+
+			"not erase the one we have", got.Title, "Arise")
+	}
+	if got.SortTitle != "Arise" {
+		t.Errorf("sort title: got %q, want %q", got.SortTitle, "Arise")
+	}
+}
+
+// A provider that DOES supply a title must still win.
+func TestEnrichEpisode_NonEmptyProviderTitleStillWins(t *testing.T) {
+	anilistID := 158927
+	seasonNum, episodeNum := 1, 5
+	showID, seasonID, episodeID := uuid.New(), uuid.New(), uuid.New()
+
+	anilistStub := &stubAniListAgent{
+		episodes: []metadata.EpisodeResult{{EpisodeNum: 5, Title: "Real Hunter"}},
+	}
+	updater := newMockUpdater()
+	updater.items[showID] = &media.Item{
+		ID: showID, Type: "show", Title: "Solo Leveling", AniListID: &anilistID,
+	}
+	updater.items[seasonID] = &media.Item{
+		ID: seasonID, Type: "season", ParentID: &showID, Index: &seasonNum,
+	}
+	updater.items[episodeID] = &media.Item{
+		ID: episodeID, Type: "episode", ParentID: &seasonID, Index: &episodeNum,
+		Title: "Episode 5",
+	}
+	e := newTestEnricher(&mockAgent{}, updater, nil)
+	e.SetTVDBFallbackFn(func() TVDBFallback { return &mockTVDB{} })
+	e.SetAniListFn(func() AniListAgent { return anilistStub })
+
+	if err := e.enrichEpisode(context.Background(), &mockAgent{}, updater.items[episodeID],
+		&media.File{FilePath: "/anime/show/05.mkv"}, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updater.updateCalls[0].Title != "Real Hunter" {
+		t.Errorf("title: got %q, want %q", updater.updateCalls[0].Title, "Real Hunter")
+	}
+}

@@ -2087,3 +2087,78 @@ func TestBuildHLS_HEVC_NVENC_NoTonemap(t *testing.T) {
 		t.Errorf("expected fMP4 for HEVC output: %s", argStr)
 	}
 }
+
+// The segment container used to be derived from the encoder actually selected,
+// while the playlist the client already holds was written from the codec the
+// API PREDICTED. Those disagree on every worker fallback — no HEVC encoder on
+// the node, or a rotated source forcing libx264 — and the client then waits for
+// seg00000.m4s while ffmpeg writes seg00000.ts, so every segment 503s and
+// playback never starts. ForceFMP4 pins the promised container.
+func TestBuildHLS_ForceFMP4HonouredOnH264Fallback(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/rotated_phone_clip.mp4",
+		Encoder:       EncoderSoftware, // the fallback the worker lands on
+		Width:         1280,
+		Height:        720,
+		BitrateKbps:   4000,
+		ForceFMP4:     true, // ladder is HEVC; playlist already promised .m4s
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("expected fmp4 segment type, got mpegts — the client is waiting "+
+			"for .m4s files ffmpeg will never write:\n%s", argStr)
+	}
+	if !strings.Contains(argStr, ".m4s") {
+		t.Errorf("expected .m4s segment pattern:\n%s", argStr)
+	}
+	if !strings.Contains(argStr, "-hls_fmp4_init_filename init.mp4") {
+		t.Errorf("expected the init segment the playlist's EXT-X-MAP references:\n%s", argStr)
+	}
+	// The codec really is H.264 — only the container was pinned.
+	if !strings.Contains(argStr, "-c:v libx264") {
+		t.Errorf("expected libx264:\n%s", argStr)
+	}
+}
+
+// Without the flag, an H.264 job stays MPEG-TS — the flag must not change the
+// default single-rendition shape.
+func TestBuildHLS_NoForceFMP4KeepsMpegTS(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderSoftware,
+		Width:         1280,
+		Height:        720,
+		BitrateKbps:   4000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-hls_segment_type mpegts") {
+		t.Errorf("expected mpegts by default:\n%s", argStr)
+	}
+	if strings.Contains(argStr, ".m4s") {
+		t.Errorf("unexpected .m4s without ForceFMP4:\n%s", argStr)
+	}
+}
+
+// An HEVC encoder still selects fMP4 on its own — ForceFMP4 is additive.
+func TestBuildHLS_HEVCStillFMP4WithoutTheFlag(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderHEVCNVENC,
+		Width:         1920,
+		Height:        1080,
+		BitrateKbps:   6000,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	if !strings.Contains(strings.Join(args, " "), "-hls_segment_type fmp4") {
+		t.Error("HEVC output should still pick fmp4 on its own")
+	}
+}

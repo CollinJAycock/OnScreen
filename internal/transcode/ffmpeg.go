@@ -76,6 +76,10 @@ type BuildArgs struct {
 	// and falls back to libplacebo / scale_cuda+zscale / software on failure.
 	CudaTonemap bool
 	HasZscale   bool // zscale filter available (libzimg) for software tonemap
+	// ForceFMP4 pins the segment container to fMP4 regardless of which
+	// encoder was actually selected — see Job.ForceFMP4. Set when the
+	// client is already holding a playlist that promised .m4s.
+	ForceFMP4 bool
 	// HasLibfdkAAC selects the libfdk_aac encoder over the native aac encoder for
 	// AAC output. libfdk is higher quality and — critically — far faster to start
 	// on multichannel audio: a 7.1 TrueHD source's first HLS segment took ~15s
@@ -683,7 +687,11 @@ func BuildHLS(a BuildArgs) []string {
 	isHEVCOutput := IsHEVCEncoder(a.Encoder) && !videoCopy
 	isAV1Output := IsAV1Encoder(a.Encoder) && !videoCopy
 	isAV1Remux := videoCopy && a.IsAV1
-	needsFMP4 := isHEVCOutput || isAV1Output || isAV1Remux
+	// ForceFMP4 wins: the client is already holding a playlist that names .m4s
+	// URIs and an EXT-X-MAP init segment, written before we knew which encoder
+	// this node would land on. Deriving the container from the encoder alone
+	// breaks that contract on every fallback path.
+	needsFMP4 := isHEVCOutput || isAV1Output || isAV1Remux || (a.ForceFMP4 && !videoCopy)
 	segExt := ".ts"
 	segType := "mpegts"
 	if needsFMP4 {

@@ -542,6 +542,12 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		Encoder:    "",
 		PreferHEVC: parent.HEVCOutput,
 		PreferAV1:  parent.AV1Output,
+		// The variant playlist was already served with .m4s URIs and an
+		// EXT-X-MAP init segment whenever the ladder is HEVC/AV1. Pin the
+		// container so a worker that falls back to H.264 — no HEVC encoder on
+		// the node, or a rotated source forcing libx264 — still writes the
+		// files the client is asking for.
+		ForceFMP4: abrIsFMP4(parent),
 		// Source codec — drives hardware decode on the worker (AV1 NVDEC,
 		// opt-in QSV HEVC). Distinct from Prefer* (the output codec).
 		IsHEVC:           parent.SourceIsHEVC,

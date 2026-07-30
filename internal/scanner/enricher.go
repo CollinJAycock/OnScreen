@@ -1630,8 +1630,23 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 
 	p := media.UpdateItemMetadataParams{
 		ID:        item.ID,
-		Title:     result.Title,
-		SortTitle: result.Title,
+		Title:     item.Title,
+		SortTitle: item.Title,
+	}
+	// Only overwrite the title when the provider actually gave us one. Every
+	// sibling applier already guards this (applyEpisodeNFO, applyMovieNFO,
+	// applyShowNFO); this path did not, and wrote result.Title unconditionally.
+	//
+	// AniList's streamingEpisodes list — the fallback used for anime libraries
+	// with no TMDB/TVDB key, which is exactly when this path runs — labels most
+	// shows as a bare "Episode 13" with no dash or colon. The parser's optional
+	// title group then doesn't participate and it returns ("", 13), so
+	// enrichment REPLACED the filename-derived episode name with an empty
+	// string across the library. Falling back to the existing title means a
+	// provider with no name to offer leaves the current one alone.
+	if result.Title != "" {
+		p.Title = result.Title
+		p.SortTitle = result.Title
 	}
 	if result.Summary != "" {
 		p.Summary = &result.Summary

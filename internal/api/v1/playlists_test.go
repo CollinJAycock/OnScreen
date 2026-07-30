@@ -775,3 +775,58 @@ func TestPlaylists_AddItem_AllowsVisibleInCeilingItem(t *testing.T) {
 		t.Error("a permitted item was not added")
 	}
 }
+
+// ── smart playlists ─────────────────────────────────────────────────────────
+
+// Create stores type='smart_playlist' as soon as a `rules` body is supplied,
+// and ListMyPlaylists selects both types — but loadOwned only accepted
+// "playlist", so a smart playlist appeared in the list and then 404'd on every
+// sub-route. It could be created and seen and nothing else.
+func TestPlaylists_SmartPlaylistIsReachable(t *testing.T) {
+	uid := uuid.New()
+	col := ownedPlaylist(uid)
+	col.Type = "smart_playlist"
+	db := &mockPlaylistDB{getResult: col}
+	h := newPlaylistHandler(db)
+
+	rec := httptest.NewRecorder()
+	h.Items(rec, plReq(http.MethodGet, "", uid, col.ID.String(), ""))
+
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("a smart playlist 404s on its own items route; every sub-route " +
+			"(rename, delete, add/remove item, reorder) is unreachable")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Collection types this handler does NOT own must still be hidden — the fix
+// widens the set by exactly one type, it does not open the door.
+func TestPlaylists_ForeignCollectionTypesStill404(t *testing.T) {
+	for _, typ := range []string{"collection", "photo_album", "", "smart_collection"} {
+		t.Run(typ, func(t *testing.T) {
+			uid := uuid.New()
+			col := ownedPlaylist(uid)
+			col.Type = typ
+			h := newPlaylistHandler(&mockPlaylistDB{getResult: col})
+			rec := httptest.NewRecorder()
+			h.Items(rec, plReq(http.MethodGet, "", uid, col.ID.String(), ""))
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("type %q: got %d, want 404", typ, rec.Code)
+			}
+		})
+	}
+}
+
+// Ownership still governs both types.
+func TestPlaylists_SmartPlaylistStillOwnerScoped(t *testing.T) {
+	col := ownedPlaylist(uuid.New()) // owned by someone else
+	col.Type = "smart_playlist"
+	h := newPlaylistHandler(&mockPlaylistDB{getResult: col})
+	rec := httptest.NewRecorder()
+	h.Items(rec, plReq(http.MethodGet, "", uuid.New(), col.ID.String(), ""))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("got %d, want 404 for a foreign-owned smart playlist", rec.Code)
+	}
+}

@@ -181,19 +181,24 @@ func (f *fakeLDAPDialer) Dial(_ settings.LDAPConfig) (LDAPConn, error) {
 }
 
 type mockLDAPDB struct {
-	dnUser    gen.User
-	dnErr     error
-	emailUser gen.User
-	emailErr  error
-	unameUser gen.User
-	unameErr  error
-	linkErr   error
-	linkCalls int
-	createOut gen.User
-	createErr error
-	count     int64
-	countErr  error
-	adminSets []gen.SetUserAdminParams
+	// wired for the admin-desync guard: syncAdminFromIdP revokes credentials
+	// and re-reads the user, so tests assert on all three.
+	epochBumps      []uuid.UUID
+	sessionsDeleted []uuid.UUID
+	users           map[uuid.UUID]gen.User
+	dnUser          gen.User
+	dnErr           error
+	emailUser       gen.User
+	emailErr        error
+	unameUser       gen.User
+	unameErr        error
+	linkErr         error
+	linkCalls       int
+	createOut       gen.User
+	createErr       error
+	count           int64
+	countErr        error
+	adminSets       []gen.SetUserAdminParams
 }
 
 func (m *mockLDAPDB) GetUserByLDAPDN(_ context.Context, _ *string) (gen.User, error) {
@@ -534,4 +539,19 @@ func TestLDAPLogin_AccountConflict_Returns409(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Errorf("status: got %d, want 409", rec.Code)
 	}
+}
+
+func (m *mockLDAPDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
+	m.epochBumps = append(m.epochBumps, id)
+	return nil
+}
+func (m *mockLDAPDB) DeleteSessionsForUser(_ context.Context, id uuid.UUID) error {
+	m.sessionsDeleted = append(m.sessionsDeleted, id)
+	return nil
+}
+func (m *mockLDAPDB) GetUser(_ context.Context, id uuid.UUID) (gen.User, error) {
+	if u, ok := m.users[id]; ok {
+		return u, nil
+	}
+	return gen.User{}, pgx.ErrNoRows
 }

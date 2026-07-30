@@ -726,11 +726,17 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// round-trip to H.264/HEVC). Else HEVC when the client can decode it
 		// AND it pays off — an HEVC source or 4K. Else H.264 .ts, the
 		// universally-decodable default. HEVC/AV1 ladders are fMP4 (.m4s).
+		// Client capability is necessary but NOT sufficient: the ladder's codec
+		// decides the advertised CODECS and the .m4s/.ts segment names, and a
+		// fleet with no HEVC/AV1 encoder silently falls back to H.264 — so
+		// advertising it made every segment 503. Confirm a node can deliver
+		// before promising it.
 		abrCodec := transcode.LadderH264
 		switch {
-		case caps.SupportsAV1 && isSourceAV1:
+		case caps.SupportsAV1 && isSourceAV1 && h.sessions.FleetCanEncode(ctx, "av1"):
 			abrCodec = transcode.LadderAV1
-		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160):
+		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160) &&
+			h.sessions.FleetCanEncode(ctx, "hevc"):
 			abrCodec = transcode.LadderHEVC
 		}
 		// Resolve the ladder height ceiling. An explicit quality pick wins;
@@ -739,7 +745,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// rung switch restarts ffmpeg + re-probes the source over HTTP on a
 		// fleet worker); the hard TranscodeABRMaxHeight cap applies on top.
 		ladderCap := abrLadderCap(body.Height, h.cfg.TranscodeABRAutoMaxHeight, h.cfg.TranscodeABRMaxHeight)
-		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap)
+		// Same ceiling the single-rendition path applies below: the per-user
+		// stream cap wins over the server-wide default when it is lower. The
+		// ladder used to ignore both and take its bitrates straight from the
+		// fixed tier table, so an administered 2000 kbps user pressing Play at
+		// Auto — which IS the ABR trigger — got a 1080p@8000 rung.
+		abrMaxBitrate := h.cfg.TranscodeMaxBitrate
+		if streamCaps.BitrateKbps > 0 && (abrMaxBitrate <= 0 || streamCaps.BitrateKbps < abrMaxBitrate) {
+			abrMaxBitrate = streamCaps.BitrateKbps
+		}
+		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap, abrMaxBitrate)
 		if len(ladder) > 1 {
 			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser)
 			return

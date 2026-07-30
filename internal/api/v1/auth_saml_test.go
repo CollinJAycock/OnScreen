@@ -142,6 +142,11 @@ func TestBuildSAMLProfile_AdminGroupAbsent(t *testing.T) {
 // ── Auth service: provisioning paths ──────────────────────────────────────
 
 type fakeSAMLDB struct {
+	// wired for the admin-desync guard: syncAdminFromIdP revokes credentials
+	// and re-reads the user, so tests assert on all three.
+	epochBumps      []uuid.UUID
+	sessionsDeleted []uuid.UUID
+
 	users          map[uuid.UUID]gen.User
 	bySAML         map[string]gen.User // key: issuer|subject
 	byEmail        map[string]gen.User
@@ -330,4 +335,99 @@ func strPtrVal(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+func (f *fakeSAMLDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
+	f.epochBumps = append(f.epochBumps, id)
+	if u, ok := f.users[id]; ok {
+		u.SessionEpoch++
+		f.users[id] = u
+	}
+	return nil
+}
+func (f *fakeSAMLDB) DeleteSessionsForUser(_ context.Context, id uuid.UUID) error {
+	f.sessionsDeleted = append(f.sessionsDeleted, id)
+	return nil
+}
+func (f *fakeSAMLDB) GetUser(_ context.Context, id uuid.UUID) (gen.User, error) {
+	if u, ok := f.users[id]; ok {
+		return u, nil
+	}
+	return gen.User{}, pgx.ErrNoRows
+}
+
+// ── admin demotion via group removal ────────────────────────────────────────
+
+// GroupSync used to be set inside the attribute loop, so it only became true
+// when the groups attribute was present AND carried at least one value. Both
+// wire encodings of "member of no groups" therefore left it false, and
+// maybeSyncAdmin returned early — removing someone from the admin group never
+// demoted them, which is the one operation an operator most needs to work.
+func TestBuildSAMLProfile_GroupSyncSetFromConfigNotAssertion(t *testing.T) {
+	cfg := settings.SAMLConfig{GroupsAttribute: "groups", AdminGroup: "onscreen-admins"}
+
+	cases := []struct {
+		name  string
+		attrs []saml.Attribute
+	}{
+		{
+			// Okta/ADFS/Entra drop a claim whose value set is empty.
+			name:  "groups attribute omitted entirely",
+			attrs: []saml.Attribute{{Name: "mail", Values: []saml.AttributeValue{{Value: "a@b.c"}}}},
+		},
+		{
+			// The other encoding: present but with no usable values.
+			name: "groups attribute present but empty",
+			attrs: []saml.Attribute{
+				{Name: "groups", Values: []saml.AttributeValue{{Value: ""}}},
+			},
+		},
+		{
+			name: "groups present, user not in admin group",
+			attrs: []saml.Attribute{
+				{Name: "groups", Values: []saml.AttributeValue{{Value: "everyone"}}},
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := buildSAMLProfile(&saml.Assertion{
+				Issuer:              saml.Issuer{Value: "https://idp.example.com"},
+				Subject:             &saml.Subject{NameID: &saml.NameID{Value: "u1"}},
+				AttributeStatements: []saml.AttributeStatement{{Attributes: c.attrs}},
+			}, cfg)
+
+			if !p.GroupSync {
+				t.Error("GroupSync=false, so maybeSyncAdmin returns early and an " +
+					"admin removed from the group is never demoted")
+			}
+			if p.IsAdmin {
+				t.Error("IsAdmin=true for a user in no admin group")
+			}
+		})
+	}
+}
+
+// With no group mapping configured, admin must be left alone so the UI can
+// promote people without an IdP edit.
+func TestBuildSAMLProfile_NoGroupConfigLeavesAdminAlone(t *testing.T) {
+	for _, cfg := range []settings.SAMLConfig{
+		{},
+		{GroupsAttribute: "groups"},     // no AdminGroup
+		{AdminGroup: "onscreen-admins"}, // no GroupsAttribute
+	} {
+		p := buildSAMLProfile(&saml.Assertion{
+			Issuer:  saml.Issuer{Value: "https://idp.example.com"},
+			Subject: &saml.Subject{NameID: &saml.NameID{Value: "u1"}},
+			AttributeStatements: []saml.AttributeStatement{
+				{Attributes: []saml.Attribute{
+					{Name: "groups", Values: []saml.AttributeValue{{Value: "onscreen-admins"}}},
+				}},
+			},
+		}, cfg)
+		if p.GroupSync {
+			t.Errorf("GroupSync=true with incomplete config %+v — admin state would "+
+				"be overwritten from an IdP that was never configured to drive it", cfg)
+		}
+	}
 }

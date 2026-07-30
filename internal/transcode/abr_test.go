@@ -15,7 +15,7 @@ func heights(rends []Rendition) []int {
 
 func TestBuildLadder_CapsAtSourceHeight(t *testing.T) {
 	// 1080p source → no 2160/1440 rungs; top rung is 1080.
-	rends := BuildLadder(1920, 1080, 0, "h264", 0)
+	rends := BuildLadder(1920, 1080, 0, "h264", 0, 0)
 	got := heights(rends)
 	want := []int{1080, 720, 480, 360}
 	if len(got) != len(want) {
@@ -35,7 +35,7 @@ func TestBuildLadder_CapsAtSourceHeight(t *testing.T) {
 }
 
 func TestBuildLadder_4KIncludesTopRungs(t *testing.T) {
-	rends := BuildLadder(3840, 2160, 0, "h264", 0)
+	rends := BuildLadder(3840, 2160, 0, "h264", 0, 0)
 	if rends[0].Height != 2160 {
 		t.Errorf("4K source top rung = %dp, want 2160p", rends[0].Height)
 	}
@@ -46,7 +46,7 @@ func TestBuildLadder_4KIncludesTopRungs(t *testing.T) {
 
 func TestBuildLadder_OperatorCap(t *testing.T) {
 	// Operator pins the ceiling at 720p on a 4K source.
-	rends := BuildLadder(3840, 2160, 0, "h264", 720)
+	rends := BuildLadder(3840, 2160, 0, "h264", 720, 0)
 	if rends[0].Height != 720 {
 		t.Errorf("with cap=720, top rung = %dp, want 720p", rends[0].Height)
 	}
@@ -58,8 +58,8 @@ func TestBuildLadder_OperatorCap(t *testing.T) {
 }
 
 func TestBuildLadder_HEVCScalesBitrate(t *testing.T) {
-	h264 := BuildLadder(1920, 1080, 0, "h264", 0)
-	hevc := BuildLadder(1920, 1080, 0, "hevc", 0)
+	h264 := BuildLadder(1920, 1080, 0, "h264", 0, 0)
+	hevc := BuildLadder(1920, 1080, 0, "hevc", 0, 0)
 	if hevc[0].BitrateKbps >= h264[0].BitrateKbps {
 		t.Errorf("HEVC 1080p bitrate %d should be below H.264 %d", hevc[0].BitrateKbps, h264[0].BitrateKbps)
 	}
@@ -70,7 +70,7 @@ func TestBuildLadder_HEVCScalesBitrate(t *testing.T) {
 
 func TestBuildLadder_NeverExceedsSourceBitrate(t *testing.T) {
 	// A low-bitrate 1080p source (3 Mbps) shouldn't advertise an 8 Mbps rung.
-	rends := BuildLadder(1920, 1080, 3000, "h264", 0)
+	rends := BuildLadder(1920, 1080, 3000, "h264", 0, 0)
 	for _, r := range rends {
 		if r.BitrateKbps > 3000 {
 			t.Errorf("rung %s bitrate %d exceeds source 3000", r.Label, r.BitrateKbps)
@@ -80,7 +80,7 @@ func TestBuildLadder_NeverExceedsSourceBitrate(t *testing.T) {
 
 func TestBuildLadder_TinySourceCollapsesToOne(t *testing.T) {
 	// 240p source: below every standard rung → single source-res rendition.
-	rends := BuildLadder(426, 240, 0, "h264", 0)
+	rends := BuildLadder(426, 240, 0, "h264", 0, 0)
 	if len(rends) != 1 {
 		t.Fatalf("tiny source produced %d rungs, want 1: %v", len(rends), heights(rends))
 	}
@@ -91,7 +91,7 @@ func TestBuildLadder_TinySourceCollapsesToOne(t *testing.T) {
 
 func TestBuildLadder_WidthEvenAndAspectPreserved(t *testing.T) {
 	// 2.39:1 cinemascope 1080p (2560x1072-ish) — widths must stay even.
-	rends := BuildLadder(2560, 1072, 0, "h264", 0)
+	rends := BuildLadder(2560, 1072, 0, "h264", 0, 0)
 	for _, r := range rends {
 		if r.Width%2 != 0 {
 			t.Errorf("rung %s width %d is odd", r.Label, r.Width)
@@ -100,7 +100,7 @@ func TestBuildLadder_WidthEvenAndAspectPreserved(t *testing.T) {
 }
 
 func TestBuildMasterPlaylist(t *testing.T) {
-	rends := BuildLadder(1920, 1080, 0, "h264", 0)
+	rends := BuildLadder(1920, 1080, 0, "h264", 0, 0)
 	master := BuildMasterPlaylist(rends, "", func(r Rendition) string {
 		return r.Label + "/playlist.m3u8"
 	})
@@ -130,7 +130,7 @@ func TestBuildMasterPlaylist(t *testing.T) {
 }
 
 func TestBuildMasterPlaylist_HEVCCodecs(t *testing.T) {
-	rends := BuildLadder(3840, 2160, 0, "hevc", 0)
+	rends := BuildLadder(3840, 2160, 0, "hevc", 0, 0)
 	codecs := HEVCMasterCodecs(rends[0].Height)
 	master := BuildMasterPlaylist(rends, codecs, func(r Rendition) string {
 		return r.Label + "/index.m3u8"
@@ -151,9 +151,9 @@ func TestBuildMasterPlaylist_HEVCCodecs(t *testing.T) {
 }
 
 func TestBuildLadder_AV1ScalesBelowHEVC(t *testing.T) {
-	h264 := BuildLadder(1920, 1080, 0, "h264", 0)
-	hevc := BuildLadder(1920, 1080, 0, "hevc", 0)
-	av1 := BuildLadder(1920, 1080, 0, "av1", 0)
+	h264 := BuildLadder(1920, 1080, 0, "h264", 0, 0)
+	hevc := BuildLadder(1920, 1080, 0, "hevc", 0, 0)
+	av1 := BuildLadder(1920, 1080, 0, "av1", 0, 0)
 	if av1[0].BitrateKbps != ScaleBitrateForAV1(8000) {
 		t.Errorf("AV1 1080p bitrate = %d, want %d", av1[0].BitrateKbps, ScaleBitrateForAV1(8000))
 	}
@@ -164,7 +164,7 @@ func TestBuildLadder_AV1ScalesBelowHEVC(t *testing.T) {
 }
 
 func TestBuildMasterPlaylist_AV1Codecs(t *testing.T) {
-	rends := BuildLadder(3840, 2160, 0, "av1", 0)
+	rends := BuildLadder(3840, 2160, 0, "av1", 0, 0)
 	codecs := AV1MasterCodecs(rends[0].Height)
 	master := BuildMasterPlaylist(rends, codecs, func(r Rendition) string {
 		return r.Label + "/index.m3u8"
@@ -195,4 +195,66 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// The ladder took its bitrates straight from the fixed tier table, clamped only
+// by the source. The administered ceiling — per-user stream cap, or the
+// server-wide TRANSCODE_MAX_BITRATE — was applied on the single-rendition path
+// and silently discarded here, so a 2000 kbps user pressing Play at Auto (which
+// IS the ABR trigger) got a 1080p@8000 rung: 4x their cap.
+func TestBuildLadder_RespectsBitrateCeiling(t *testing.T) {
+	const cap = 2000
+	rends := BuildLadder(1920, 1080, 0, "h264", 0, cap)
+	if len(rends) == 0 {
+		t.Fatal("empty ladder — a low cap must clamp, never eliminate")
+	}
+	for _, r := range rends {
+		if r.BitrateKbps > cap {
+			t.Errorf("%s rung at %d kbps exceeds the %d kbps ceiling",
+				r.Label, r.BitrateKbps, cap)
+		}
+	}
+}
+
+// Clamping must not collapse the ladder into N identical-bandwidth variants —
+// the player would have nothing to adapt across.
+func TestBuildLadder_CeilingKeepsDistinctBitrates(t *testing.T) {
+	rends := BuildLadder(1920, 1080, 0, "h264", 0, 2000)
+	seen := map[int]string{}
+	for _, r := range rends {
+		if prev, dup := seen[r.BitrateKbps]; dup {
+			t.Errorf("%s and %s both at %d kbps", prev, r.Label, r.BitrateKbps)
+		}
+		seen[r.BitrateKbps] = r.Label
+	}
+	// The top rung should sit AT the ceiling — the operator's cap is the budget,
+	// not a reason to serve less than it.
+	if rends[0].BitrateKbps != 2000 {
+		t.Errorf("top rung = %d kbps, want the full 2000 budget", rends[0].BitrateKbps)
+	}
+}
+
+// A cap below even the lowest tier must still yield a playable ladder.
+func TestBuildLadder_VeryLowCeilingStillPlayable(t *testing.T) {
+	rends := BuildLadder(1920, 1080, 0, "h264", 0, 200)
+	if len(rends) == 0 {
+		t.Fatal("empty ladder at a very low cap")
+	}
+	for _, r := range rends {
+		if r.BitrateKbps > 200 {
+			t.Errorf("%s rung at %d kbps exceeds 200", r.Label, r.BitrateKbps)
+		}
+	}
+}
+
+// 0 means unrestricted — the pre-existing behaviour must be untouched.
+func TestBuildLadder_ZeroCeilingIsUnrestricted(t *testing.T) {
+	capped := BuildLadder(1920, 1080, 0, "h264", 0, 0)
+	if len(capped) < 2 {
+		t.Fatalf("unrestricted ladder collapsed to %d rungs", len(capped))
+	}
+	if capped[0].BitrateKbps <= 2000 {
+		t.Errorf("top rung = %d kbps; an unrestricted 1080p ladder should exceed that",
+			capped[0].BitrateKbps)
+	}
 }

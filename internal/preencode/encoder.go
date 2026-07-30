@@ -73,7 +73,9 @@ func (e *Encoder) Encode(ctx context.Context, src staticabr.Source) error {
 		input = u
 	}
 
-	rungs := transcode.BuildLadder(src.Width, src.Height, src.BitrateKbps, src.Codec, e.maxHeight)
+	rungs := // Pre-encode is an operator-driven batch job with no requesting user, so
+		// there is no per-user cap to apply; 0 = unrestricted.
+		transcode.BuildLadder(src.Width, src.Height, src.BitrateKbps, src.Codec, e.maxHeight, 0)
 	if len(rungs) == 0 {
 		return fmt.Errorf("preencode: no ladder rungs for %s", src.FileID)
 	}

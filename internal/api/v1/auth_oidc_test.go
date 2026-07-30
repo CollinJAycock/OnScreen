@@ -205,17 +205,22 @@ func TestOIDCEnabled_Configured(t *testing.T) {
 // ── oidcAuthService ─────────────────────────────────────────────────────────
 
 type mockOIDCDB struct {
-	subjUser  gen.User
-	subjErr   error
-	emailUser gen.User
-	emailErr  error
-	linkErr   error
-	linkCalls int
-	createOut gen.User
-	createErr error
-	count     int64
-	countErr  error
-	adminSets []gen.SetUserAdminParams
+	// wired for the admin-desync guard: syncAdminFromIdP revokes credentials
+	// and re-reads the user, so tests assert on all three.
+	epochBumps      []uuid.UUID
+	sessionsDeleted []uuid.UUID
+	users           map[uuid.UUID]gen.User
+	subjUser        gen.User
+	subjErr         error
+	emailUser       gen.User
+	emailErr        error
+	linkErr         error
+	linkCalls       int
+	createOut       gen.User
+	createErr       error
+	count           int64
+	countErr        error
+	adminSets       []gen.SetUserAdminParams
 }
 
 func (m *mockOIDCDB) GetUserByOIDCSubject(_ context.Context, _ gen.GetUserByOIDCSubjectParams) (gen.User, error) {
@@ -497,4 +502,19 @@ func TestConfigKey_StableForCosmeticChanges(t *testing.T) {
 	if configKey(a) != configKey(b) {
 		t.Error("display-name/admin-group changes should NOT invalidate key")
 	}
+}
+
+func (m *mockOIDCDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
+	m.epochBumps = append(m.epochBumps, id)
+	return nil
+}
+func (m *mockOIDCDB) DeleteSessionsForUser(_ context.Context, id uuid.UUID) error {
+	m.sessionsDeleted = append(m.sessionsDeleted, id)
+	return nil
+}
+func (m *mockOIDCDB) GetUser(_ context.Context, id uuid.UUID) (gen.User, error) {
+	if u, ok := m.users[id]; ok {
+		return u, nil
+	}
+	return gen.User{}, pgx.ErrNoRows
 }

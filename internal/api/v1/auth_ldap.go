@@ -53,6 +53,11 @@ type LDAPOAuthDB interface {
 	CreateLDAPUser(ctx context.Context, arg gen.CreateLDAPUserParams) (gen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	// Needed by syncAdminFromIdP to revoke credentials issued under the old
+	// role and to re-read the user the token is minted from.
+	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
+	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
+	GetUser(ctx context.Context, id uuid.UUID) (gen.User, error)
 	// GrantAutoLibrariesToUser inserts library_access rows for every
 	// library flagged auto_grant_new_users — called after auto-provisioning
 	// an LDAP user so they don't land on a barren home page on all-private
@@ -302,7 +307,7 @@ func (s *ldapAuthService) loginOrCreate(ctx context.Context, dn, username, email
 	dnPtr := dn
 	user, err := s.db.GetUserByLDAPDN(ctx, &dnPtr)
 	if err == nil {
-		s.maybeSyncAdmin(ctx, user, isAdmin, groupSync)
+		user = s.maybeSyncAdmin(ctx, user, isAdmin, groupSync)
 		return s.issueTokens(ctx, user)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -322,7 +327,7 @@ func (s *ldapAuthService) loginOrCreate(ctx context.Context, dn, username, email
 			}); linkErr != nil {
 				s.logger.Warn("ldap: link existing account", "user_id", user.ID, "err", linkErr)
 			}
-			s.maybeSyncAdmin(ctx, user, isAdmin, groupSync)
+			user = s.maybeSyncAdmin(ctx, user, isAdmin, groupSync)
 			return s.issueTokens(ctx, user)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -347,7 +352,7 @@ func (s *ldapAuthService) loginOrCreate(ctx context.Context, dn, username, email
 		}); linkErr != nil {
 			s.logger.Warn("ldap: link by username", "user_id", user.ID, "err", linkErr)
 		}
-		s.maybeSyncAdmin(ctx, user, isAdmin, groupSync)
+		user = s.maybeSyncAdmin(ctx, user, isAdmin, groupSync)
 		return s.issueTokens(ctx, user)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -384,13 +389,10 @@ func (s *ldapAuthService) loginOrCreate(ctx context.Context, dn, username, email
 	return s.issueTokens(ctx, user)
 }
 
-func (s *ldapAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, isAdmin, groupSync bool) {
-	if !groupSync || user.IsAdmin == isAdmin {
-		return
-	}
-	if err := s.db.SetUserAdmin(ctx, gen.SetUserAdminParams{ID: user.ID, IsAdmin: isAdmin}); err != nil {
-		s.logger.Warn("ldap: sync admin", "user_id", user.ID, "err", err)
-	}
+// maybeSyncAdmin returns the user the caller must mint tokens from — see
+// syncAdminFromIdP.
+func (s *ldapAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, isAdmin, groupSync bool) gen.User {
+	return syncAdminFromIdP(ctx, s.db, s.logger, user, isAdmin, groupSync, "ldap")
 }
 
 // ── default dialer ──────────────────────────────────────────────────────────

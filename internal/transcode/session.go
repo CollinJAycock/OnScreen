@@ -300,6 +300,72 @@ func (s *SessionStore) ListByUserItem(ctx context.Context, userID, mediaItemID u
 	return out, nil
 }
 
+// errSkipSessionMutation tells mutateSession the caller decided not to write.
+var errSkipSessionMutation = errors.New("skip session mutation")
+
+// mutateSession applies fn to a session under an optimistic lock, retrying if
+// another writer changed the key in between.
+//
+// The session is one JSON blob, and four call sites used to read it, mutate one
+// field, and write the whole thing back with no synchronisation at all — so any
+// two overlapping writers silently discarded one of the two updates. The
+// damaging pairing is TouchActivity (every ~150ms while a rung child starts)
+// racing SetWorkerInfo (once, ~1s in, from the worker that claimed the job): a
+// touch that read the blob before the stamp and wrote after it reset
+// WorkerAddr to "". The API then has no worker to proxy segments to, so on a
+// multi-worker deployment every segment for that session 404s until the client
+// gives up — from a race that leaves no error behind.
+//
+// WATCH/MULTI/EXEC is the right tool: EXEC aborts if the key changed after the
+// WATCH, so the loser re-reads and re-applies rather than clobbering. fn may
+// return errSkipSessionMutation to abort the write cleanly (used by
+// SetSelectedRendition's no-op fast path).
+func (s *SessionStore) mutateSession(ctx context.Context, sessionID string, fn func(*Session) error) error {
+	key := sessionKey(sessionID)
+	const maxAttempts = 5
+
+	txn := func(tx *redis.Tx) error {
+		raw, err := tx.Get(ctx, key).Result()
+		if err != nil {
+			return err
+		}
+		var sess Session
+		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+			return fmt.Errorf("unmarshal session: %w", err)
+		}
+		if err := fn(&sess); err != nil {
+			return err
+		}
+		b, err := json.Marshal(sess)
+		if err != nil {
+			return fmt.Errorf("marshal session: %w", err)
+		}
+		ttl := tx.TTL(ctx, key).Val()
+		if ttl <= 0 {
+			ttl = sessionTTL
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, key, string(b), ttl)
+			return nil
+		})
+		return err
+	}
+
+	// go-redis surfaces a lost optimistic lock as redis.TxFailedErr: another
+	// writer touched the key between our WATCH and EXEC, so nothing was
+	// written and we re-read and re-apply. Bounded and iterative — these
+	// writers all complete in microseconds, so sustained contention means
+	// something is wrong rather than that we should keep spinning.
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err = s.v.Raw().Watch(ctx, txn, key)
+		if !errors.Is(err, redis.TxFailedErr) {
+			return err
+		}
+	}
+	return err
+}
+
 // TouchActivity stamps LastActivityAt = now on the session, signalling
 // that the client is still actively consuming. Called by the segment-
 // fetch endpoint so the worker's idle-kill path can distinguish "client
@@ -312,24 +378,10 @@ func (s *SessionStore) ListByUserItem(ctx context.Context, userID, mediaItemID u
 // reliable (segments fetch every ~4s; progress beacons every ~5s, but
 // progress also fires from non-watching tabs).
 func (s *SessionStore) TouchActivity(ctx context.Context, sessionID string) {
-	raw, err := s.v.Get(ctx, sessionKey(sessionID))
-	if err != nil {
-		return
-	}
-	var sess Session
-	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-		return
-	}
-	sess.LastActivityAt = time.Now()
-	b, err := json.Marshal(sess)
-	if err != nil {
-		return
-	}
-	ttl := s.v.Raw().TTL(ctx, sessionKey(sessionID)).Val()
-	if ttl <= 0 {
-		ttl = sessionTTL
-	}
-	_ = s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
+	_ = s.mutateSession(ctx, sessionID, func(sess *Session) error {
+		sess.LastActivityAt = time.Now()
+		return nil
+	})
 }
 
 // ActiveSessionWindow is how long since the last segment-fetch / progress
@@ -376,10 +428,20 @@ func (s *SessionStore) CountByUser(ctx context.Context, userID uuid.UUID) (int, 
 	return n, nil
 }
 
-// DeleteByMedia removes all sessions for the given media item.
+// DeleteByMedia removes the given USER's sessions for a media item.
+//
+// The userID is not decoration. This is reached from the progress beacon
+// (PUT /items/{id}/progress with state=stopped), whose only authorization is
+// that the caller can READ the item — and libraries are shared by default.
+// Scoped on the item alone, any household profile stopping playback deleted
+// every other viewer's session for the same title; the worker's heartbeat then
+// saw the key gone and killed their ffmpeg within ~2s. The dedicated Stop
+// endpoint already refuses this with a 403 when sess.UserID != claims.UserID,
+// and transcode_handler_test.go asserts "other user's session must NOT be
+// superseded" — the invariant was enforced one route over and skipped here.
 // Called by the progress endpoint on "stopped" to clean up even if the client
 // never explicitly hits the Stop endpoint (e.g. tab closed after playback ends).
-func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID) error {
+func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uuid.UUID) error {
 	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
 	if err != nil || len(ids) == 0 {
 		return err
@@ -406,7 +468,7 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID)
 		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
 			continue
 		}
-		if sess.MediaItemID == mediaItemID {
+		if sess.MediaItemID == mediaItemID && sess.UserID == userID {
 			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
 			_ = s.v.Del(ctx, keys[i])
 		}
@@ -419,7 +481,7 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID)
 //
 // NOTE: concurrent position updates for the same session may race (lost update).
 // A Valkey WATCH/MULTI/EXEC or Lua script would provide atomicity.
-func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uuid.UUID, positionMS int64) error {
+func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, userID, mediaItemID uuid.UUID, positionMS int64) error {
 	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
 	if err != nil || len(ids) == 0 {
 		return err
@@ -446,7 +508,10 @@ func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uu
 		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
 			continue
 		}
-		if sess.MediaItemID != mediaItemID {
+		// Owner-scoped for the same reason as DeleteByMedia: without it one
+		// viewer's beacon rewrote another viewer's reported position and
+		// refreshed their LastActivityAt, which anchors the idle-kill timer.
+		if sess.MediaItemID != mediaItemID || sess.UserID != userID {
 			continue
 		}
 		sess.PositionMS = positionMS
@@ -469,27 +534,13 @@ func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, mediaItemID uu
 // the job. The API uses WorkerAddr to proxy segment requests to the correct
 // worker in multi-instance deployments.
 func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, workerAddr string, hevcOutput, av1Output bool) error {
-	raw, err := s.v.Get(ctx, sessionKey(sessionID))
-	if err != nil {
-		return fmt.Errorf("get session for worker stamp: %w", err)
-	}
-	var sess Session
-	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-		return fmt.Errorf("unmarshal session: %w", err)
-	}
-	sess.WorkerID = workerID
-	sess.WorkerAddr = workerAddr
-	sess.HEVCOutput = hevcOutput
-	sess.AV1Output = av1Output
-	b, err := json.Marshal(sess)
-	if err != nil {
-		return fmt.Errorf("marshal session: %w", err)
-	}
-	ttl := s.v.Raw().TTL(ctx, sessionKey(sessionID)).Val()
-	if ttl <= 0 {
-		ttl = sessionTTL
-	}
-	return s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
+	return s.mutateSession(ctx, sessionID, func(sess *Session) error {
+		sess.WorkerID = workerID
+		sess.WorkerAddr = workerAddr
+		sess.HEVCOutput = hevcOutput
+		sess.AV1Output = av1Output
+		return nil
+	})
 }
 
 // SetSelectedRendition records on an ABR PARENT session which rung the client
@@ -498,28 +549,14 @@ func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, w
 // when the rung is unchanged and the activity stamp is recent, to skip a Valkey
 // write on the common steady-state segment-by-segment case.
 func (s *SessionStore) SetSelectedRendition(ctx context.Context, sessionID, rungLabel string) {
-	raw, err := s.v.Get(ctx, sessionKey(sessionID))
-	if err != nil {
-		return
-	}
-	var sess Session
-	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-		return
-	}
-	if sess.SelectedRendition == rungLabel && time.Since(sess.LastActivityAt) < 2*time.Second {
-		return
-	}
-	sess.SelectedRendition = rungLabel
-	sess.LastActivityAt = time.Now()
-	b, err := json.Marshal(sess)
-	if err != nil {
-		return
-	}
-	ttl := s.v.Raw().TTL(ctx, sessionKey(sessionID)).Val()
-	if ttl <= 0 {
-		ttl = sessionTTL
-	}
-	_ = s.v.Set(ctx, sessionKey(sessionID), string(b), ttl)
+	_ = s.mutateSession(ctx, sessionID, func(sess *Session) error {
+		if sess.SelectedRendition == rungLabel && time.Since(sess.LastActivityAt) < 2*time.Second {
+			return errSkipSessionMutation
+		}
+		sess.SelectedRendition = rungLabel
+		sess.LastActivityAt = time.Now()
+		return nil
+	})
 }
 
 // SetHeartbeat writes/refreshes the session heartbeat key (2s TTL reset to 10s).
@@ -747,6 +784,34 @@ const (
 
 // hasEncoderPrefix reports whether the worker advertises an encoder of the given
 // codec family ("av1" → av1_nvenc/av1_qsv/av1_amf/av1_vaapi, "hevc" → hevc_*).
+// FleetCanEncode reports whether any registered worker advertises an encoder
+// for the given codec family ("hevc", "av1").
+//
+// The ABR ladder picks its codec from CLIENT capability alone, then the master
+// playlist advertises CODECS and the variant playlist names .m4s segments. If
+// no node can actually encode that family the worker silently falls back to
+// H.264 and the advertisement was a lie. Asking the fleet first makes the
+// common case — a CPU-only worker, whose encoder list is just [libx264] —
+// correct at the point of decision rather than papered over downstream.
+//
+// A registry read error, or an empty fleet, reports false: refusing to promise
+// what we cannot confirm degrades to an H.264 ladder, which every node can
+// serve. Note this is a point-in-time answer; the ForceFMP4 container contract
+// is what covers a fleet that changes mid-session, or a per-file fallback like
+// a rotated source that no capability check can predict.
+func (s *SessionStore) FleetCanEncode(ctx context.Context, codec string) bool {
+	workers, err := s.ListWorkers(ctx)
+	if err != nil || len(workers) == 0 {
+		return false
+	}
+	for _, w := range workers {
+		if hasEncoderPrefix(w.Capabilities, codec) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasEncoderPrefix(caps []string, codec string) bool {
 	p := codec + "_"
 	for _, c := range caps {
@@ -861,8 +926,20 @@ type TranscodeJob struct {
 	IsAV1            bool    `json:"is_av1"`      // source is AV1; remux must use fMP4 (mpegts has no AV1 stream type)
 	IsH264           bool    `json:"is_h264"`     // source is H.264; pins h264_cuvid on the full-VRAM scale_cuda path
 	PreferHEVC       bool    `json:"prefer_hevc"` // request HEVC output (4K + client supports it)
-	PreferAV1        bool    `json:"prefer_av1"`  // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
-	SubtitleStreams  []int   `json:"subtitle_streams,omitempty"`
+	// ForceFMP4 pins the SEGMENT CONTAINER independently of which encoder the
+	// worker ends up using.
+	//
+	// The container used to be inferred from the actual encoder, while the
+	// playlist the client is already holding was written from the codec the API
+	// PREDICTED. Those disagree whenever the worker falls back — no HEVC
+	// encoder on the node, or a rotated source forcing libx264 — and the client
+	// then waits for seg00000.m4s while the worker writes seg00000.ts, so every
+	// segment 503s and playback never starts. fMP4 carries H.264 perfectly
+	// well, so honouring the promised container costs nothing and makes the
+	// mismatch impossible.
+	ForceFMP4       bool  `json:"force_fmp4,omitempty"`
+	PreferAV1       bool  `json:"prefer_av1"` // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
+	SubtitleStreams []int `json:"subtitle_streams,omitempty"`
 	// CostCenti is the job's weighted cost (see JobCostCenti), stamped by
 	// DispatchJob so the worker can decrement the right amount on Ack.
 	CostCenti  int       `json:"cost_centi,omitempty"`

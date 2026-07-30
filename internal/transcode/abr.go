@@ -63,7 +63,14 @@ const (
 //
 // Returned highest-first, matching how players and the master playlist
 // conventionally list variants.
-func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, codec string, maxHeightCap int) []Rendition {
+// maxBitrateKbps applies the administered bitrate ceiling (per-user stream cap,
+// or the server-wide TRANSCODE_MAX_BITRATE). 0 means unrestricted.
+//
+// Rungs are CLAMPED to the ceiling, not dropped, so a low cap can never produce
+// an empty ladder; rungs that collapse onto the same bitrate are then deduped
+// keeping the highest resolution, which preserves something for the player to
+// adapt across instead of N identical-bandwidth variants.
+func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, codec string, maxHeightCap, maxBitrateKbps int) []Rendition {
 	if sourceH <= 0 {
 		sourceH = 1080
 	}
@@ -80,7 +87,7 @@ func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, codec string, maxHeigh
 		if maxHeightCap > 0 && t.Height > maxHeightCap {
 			continue // operator pinned the ceiling lower
 		}
-		out = append(out, renditionAt(t.Height, t.BitrateKbps, aspect, codec, sourceBitrateKbps))
+		out = append(out, renditionAt(t.Height, t.BitrateKbps, aspect, codec, sourceBitrateKbps, maxBitrateKbps))
 	}
 
 	// Source smaller than the lowest standard rung (e.g. a 240p clip):
@@ -88,7 +95,27 @@ func BuildLadder(sourceW, sourceH, sourceBitrateKbps int, codec string, maxHeigh
 	// works rather than returning an empty ladder.
 	if len(out) == 0 {
 		br := ladderTiers[len(ladderTiers)-1].BitrateKbps
-		out = append(out, renditionAt(sourceH, br, aspect, codec, sourceBitrateKbps))
+		out = append(out, renditionAt(sourceH, br, aspect, codec, sourceBitrateKbps, maxBitrateKbps))
+	}
+	return dedupeByBitrate(out)
+}
+
+// dedupeByBitrate drops rungs that clamped onto a bitrate an earlier (taller)
+// rung already occupies. Input is highest-first, so the first occurrence is the
+// highest resolution at that bitrate — the one worth keeping, since at equal
+// bandwidth more pixels is strictly better.
+func dedupeByBitrate(in []Rendition) []Rendition {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[int]struct{}, len(in))
+	out := in[:0:0]
+	for _, r := range in {
+		if _, dup := seen[r.BitrateKbps]; dup {
+			continue
+		}
+		seen[r.BitrateKbps] = struct{}{}
+		out = append(out, r)
 	}
 	return out
 }
@@ -105,10 +132,17 @@ func scaleBitrateForCodec(h264Bitrate int, codec string) int {
 	}
 }
 
-func renditionAt(height, refBitrateKbps int, aspect float64, codec string, sourceBitrateKbps int) Rendition {
+func renditionAt(height, refBitrateKbps int, aspect float64, codec string, sourceBitrateKbps, maxBitrateKbps int) Rendition {
 	br := scaleBitrateForCodec(refBitrateKbps, codec)
 	if sourceBitrateKbps > 0 && br > sourceBitrateKbps {
 		br = sourceBitrateKbps
+	}
+	// The administered ceiling. The single-rendition path has always honoured
+	// it via SelectQuality; the ladder took its bitrates straight from the
+	// fixed tier table, so switching a user to Auto quality on an ABR server
+	// silently voided their cap — a 2000 kbps user got a 1080p@8000 rung.
+	if maxBitrateKbps > 0 && br > maxBitrateKbps {
+		br = maxBitrateKbps
 	}
 	w := int(math.Round(float64(height) * aspect))
 	if w%2 != 0 {

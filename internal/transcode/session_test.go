@@ -18,50 +18,109 @@ func TestIntegration_SessionStore_DeleteByMedia(t *testing.T) {
 	store := NewSessionStore(v)
 	ctx := context.Background()
 
+	owner := uuid.New()
+	other := uuid.New()
 	mediaID := uuid.New()
 	otherMediaID := uuid.New()
 
-	// Create 2 sessions for mediaID and 1 for otherMediaID.
+	// Two of the owner's sessions on the target item.
 	for i := 0; i < 2; i++ {
-		sess := Session{
-			ID:          NewSessionID(),
-			UserID:      uuid.New(),
-			MediaItemID: mediaID,
-			FileID:      uuid.New(),
-			Decision:    "transcode",
-			CreatedAt:   time.Now().UTC(),
-		}
-		if err := store.Create(ctx, sess); err != nil {
+		if err := store.Create(ctx, Session{
+			ID: NewSessionID(), UserID: owner, MediaItemID: mediaID,
+			FileID: uuid.New(), Decision: "transcode", CreatedAt: time.Now().UTC(),
+		}); err != nil {
 			t.Fatalf("Create session %d: %v", i, err)
 		}
 	}
-	otherSess := Session{
-		ID:          NewSessionID(),
-		UserID:      uuid.New(),
-		MediaItemID: otherMediaID,
-		FileID:      uuid.New(),
-		Decision:    "directPlay",
-		CreatedAt:   time.Now().UTC(),
+	// The owner's session on a DIFFERENT item — must survive (item scoping).
+	if err := store.Create(ctx, Session{
+		ID: NewSessionID(), UserID: owner, MediaItemID: otherMediaID,
+		FileID: uuid.New(), Decision: "directPlay", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Create other-item session: %v", err)
 	}
-	if err := store.Create(ctx, otherSess); err != nil {
-		t.Fatalf("Create other session: %v", err)
+	// ANOTHER USER's session on the SAME item — must also survive. This is the
+	// household case: the progress beacon that reaches DeleteByMedia is
+	// authorized only by "can the caller read this item", and libraries are
+	// shared by default, so scoping on the item alone let one profile stopping
+	// playback kill every other viewer's ffmpeg within a heartbeat tick.
+	if err := store.Create(ctx, Session{
+		ID: NewSessionID(), UserID: other, MediaItemID: mediaID,
+		FileID: uuid.New(), Decision: "transcode", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Create other-user session: %v", err)
 	}
 
-	// Delete sessions for mediaID.
-	if err := store.DeleteByMedia(ctx, mediaID); err != nil {
+	if err := store.DeleteByMedia(ctx, owner, mediaID); err != nil {
 		t.Fatalf("DeleteByMedia: %v", err)
 	}
 
-	// Only the other session should remain.
 	sessions, err := store.List(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("want 1 session remaining, got %d", len(sessions))
+	if len(sessions) != 2 {
+		t.Fatalf("want 2 sessions remaining, got %d", len(sessions))
 	}
-	if sessions[0].MediaItemID != otherMediaID {
-		t.Errorf("remaining session should be for otherMediaID, got %s", sessions[0].MediaItemID)
+	var keptOtherUser, keptOtherItem bool
+	for _, sess := range sessions {
+		switch {
+		case sess.UserID == other && sess.MediaItemID == mediaID:
+			keptOtherUser = true
+		case sess.UserID == owner && sess.MediaItemID == otherMediaID:
+			keptOtherItem = true
+		default:
+			t.Errorf("unexpected surviving session: user=%s item=%s", sess.UserID, sess.MediaItemID)
+		}
+	}
+	if !keptOtherUser {
+		t.Error("another user's session for the same item was deleted — one viewer " +
+			"stopping playback tears down everyone else's stream")
+	}
+	if !keptOtherItem {
+		t.Error("the owner's session for a different item was deleted")
+	}
+}
+
+// UpdatePositionByMedia carries the same scoping, for the same reason: without
+// it one viewer's beacon rewrote another viewer's reported position and
+// refreshed the LastActivityAt that anchors the idle-kill timer.
+func TestIntegration_SessionStore_UpdatePositionByMedia_OwnerScoped(t *testing.T) {
+	v := testvalkey.New(t)
+	store := NewSessionStore(v)
+	ctx := context.Background()
+
+	owner, other := uuid.New(), uuid.New()
+	mediaID := uuid.New()
+	otherID := NewSessionID()
+	if err := store.Create(ctx, Session{
+		ID: NewSessionID(), UserID: owner, MediaItemID: mediaID,
+		FileID: uuid.New(), CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Create owner session: %v", err)
+	}
+	if err := store.Create(ctx, Session{
+		ID: otherID, UserID: other, MediaItemID: mediaID,
+		FileID: uuid.New(), PositionMS: 1234, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Create other session: %v", err)
+	}
+
+	if err := store.UpdatePositionByMedia(ctx, owner, mediaID, 99999); err != nil {
+		t.Fatalf("UpdatePositionByMedia: %v", err)
+	}
+
+	sessions, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, sess := range sessions {
+		if sess.UserID == other && sess.PositionMS != 1234 {
+			t.Errorf("another user's position was rewritten: got %d, want 1234", sess.PositionMS)
+		}
+		if sess.UserID == owner && sess.PositionMS != 99999 {
+			t.Errorf("the owner's own position was not updated: got %d", sess.PositionMS)
+		}
 	}
 }
 
@@ -81,8 +140,8 @@ func TestIntegration_SessionStore_DeleteByMedia_NoMatch(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Delete for a non-existent media ID — should be a no-op.
-	if err := store.DeleteByMedia(ctx, uuid.New()); err != nil {
+	// Delete for a non-existent (user, media) pair — should be a no-op.
+	if err := store.DeleteByMedia(ctx, uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("DeleteByMedia: %v", err)
 	}
 
@@ -266,7 +325,7 @@ func TestIntegration_SessionStore_UpdatePositionByMedia(t *testing.T) {
 	}
 
 	// Update position.
-	if err := store.UpdatePositionByMedia(ctx, mediaID, 42000); err != nil {
+	if err := store.UpdatePositionByMedia(ctx, sess.UserID, mediaID, 42000); err != nil {
 		t.Fatalf("UpdatePositionByMedia: %v", err)
 	}
 
@@ -299,8 +358,8 @@ func TestIntegration_SessionStore_UpdatePositionByMedia_NoMatch(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Update for non-matching media ID — original should be unchanged.
-	if err := store.UpdatePositionByMedia(ctx, uuid.New(), 99999); err != nil {
+	// Update for a non-matching (user, media) pair — original unchanged.
+	if err := store.UpdatePositionByMedia(ctx, uuid.New(), uuid.New(), 99999); err != nil {
 		t.Fatalf("UpdatePositionByMedia: %v", err)
 	}
 

@@ -103,10 +103,10 @@ func (m *mockItemWatch) Record(_ context.Context, _ watchevent.RecordParams) err
 
 type mockSessionCleaner struct{}
 
-func (m *mockSessionCleaner) UpdatePositionByMedia(_ context.Context, _ uuid.UUID, _ int64) error {
+func (m *mockSessionCleaner) UpdatePositionByMedia(_ context.Context, _, _ uuid.UUID, _ int64) error {
 	return nil
 }
-func (m *mockSessionCleaner) DeleteByMedia(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockSessionCleaner) DeleteByMedia(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 // ── mock enricher ────────────────────────────────────────────────────────────
 

@@ -630,6 +630,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				NeedsToneMap:         job.NeedsToneMap,
 				CudaTonemap:          cudaTonemapUsable,
 				HasZscale:            w.hasZscale,
+				ForceFMP4:            job.ForceFMP4,
 				HasLibfdkAAC:         w.hasLibfdkAAC,
 				HasLibplacebo:        w.hasLibplacebo,
 				AudioCodec:           job.AudioCodec,

@@ -120,8 +120,8 @@ type ItemWatchService interface {
 
 // ItemSessionCleaner manages transcode sessions on behalf of the items handler.
 type ItemSessionCleaner interface {
-	UpdatePositionByMedia(ctx context.Context, mediaItemID uuid.UUID, positionMS int64) error
-	DeleteByMedia(ctx context.Context, mediaItemID uuid.UUID) error
+	UpdatePositionByMedia(ctx context.Context, userID, mediaItemID uuid.UUID, positionMS int64) error
+	DeleteByMedia(ctx context.Context, userID, mediaItemID uuid.UUID) error
 }
 
 // ItemFavoriteChecker reports whether a media item is favorited by a given user.
@@ -1661,12 +1661,12 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	if h.sessions != nil {
 		if body.State == "stopped" {
 			// Remove session immediately so it leaves "Now Playing" right away.
-			if err := h.sessions.DeleteByMedia(r.Context(), id); err != nil {
+			if err := h.sessions.DeleteByMedia(r.Context(), claims.UserID, id); err != nil {
 				h.logger.WarnContext(r.Context(), "delete sessions on stop", "id", id, "err", err)
 			}
 		} else {
 			// Keep position and last-activity timestamp fresh in Valkey.
-			if err := h.sessions.UpdatePositionByMedia(r.Context(), id, body.ViewOffsetMS); err != nil {
+			if err := h.sessions.UpdatePositionByMedia(r.Context(), claims.UserID, id, body.ViewOffsetMS); err != nil {
 				h.logger.WarnContext(r.Context(), "update session position", "id", id, "err", err)
 			}
 		}

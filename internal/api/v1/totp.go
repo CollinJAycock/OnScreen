@@ -108,6 +108,12 @@ func (h *TOTPHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
+	// 2FA enrolment decides how the account authenticates from here on. A
+	// PIN-switched session could otherwise enrol its own authenticator on
+	// someone else's profile and lock the real owner out.
+	if blockSwitchedSession(w, r, "set up two-factor auth") {
+		return
+	}
 	url, secret, err := h.svc.SetupTOTP(r.Context(), claims.UserID, claims.Username)
 	if err != nil {
 		if errors.Is(err, ErrTOTPAlreadyEnabled) {
@@ -145,6 +151,12 @@ func (h *TOTPHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
+	// 2FA enrolment decides how the account authenticates from here on. A
+	// PIN-switched session could otherwise enrol its own authenticator on
+	// someone else's profile and lock the real owner out.
+	if blockSwitchedSession(w, r, "activate two-factor auth") {
+		return
+	}
 	var body struct {
 		Code string `json:"code"`
 	}
@@ -174,6 +186,12 @@ func (h *TOTPHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Unauthorized(w, r)
+		return
+	}
+	// 2FA enrolment decides how the account authenticates from here on. A
+	// PIN-switched session could otherwise enrol its own authenticator on
+	// someone else's profile and lock the real owner out.
+	if blockSwitchedSession(w, r, "change two-factor auth") {
 		return
 	}
 	var body struct {

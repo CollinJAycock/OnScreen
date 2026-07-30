@@ -77,6 +77,11 @@ type OIDCOAuthDB interface {
 	CreateOIDCUser(ctx context.Context, arg gen.CreateOIDCUserParams) (gen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	// Needed by syncAdminFromIdP to revoke credentials issued under the old
+	// role and to re-read the user the token is minted from.
+	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
+	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
+	GetUser(ctx context.Context, id uuid.UUID) (gen.User, error)
 	// GrantAutoLibrariesToUser inserts library_access rows for every
 	// library flagged auto_grant_new_users — called after auto-provisioning
 	// an OIDC user so they don't land on a barren home page on all-private
@@ -476,7 +481,7 @@ func (s *oidcAuthService) LoginOrCreateOIDCUser(ctx context.Context, p OIDCProfi
 		OidcIssuer: &issuer, OidcSubject: &subject,
 	})
 	if err == nil {
-		s.maybeSyncAdmin(ctx, user, p)
+		user = s.maybeSyncAdmin(ctx, user, p)
 		return s.issueTokens(ctx, user)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -498,7 +503,7 @@ func (s *oidcAuthService) LoginOrCreateOIDCUser(ctx context.Context, p OIDCProfi
 			}); linkErr != nil {
 				s.logger.Warn("oidc: link existing account", "user_id", user.ID, "err", linkErr)
 			}
-			s.maybeSyncAdmin(ctx, user, p)
+			user = s.maybeSyncAdmin(ctx, user, p)
 			return s.issueTokens(ctx, user)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -540,11 +545,8 @@ func (s *oidcAuthService) LoginOrCreateOIDCUser(ctx context.Context, p OIDCProfi
 // maybeSyncAdmin updates is_admin to match the current group membership when
 // an AdminGroup is configured. Without group sync we leave is_admin alone so
 // admins can be promoted via the UI without an IdP edit.
-func (s *oidcAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, p OIDCProfile) {
-	if !p.GroupSync || user.IsAdmin == p.IsAdmin {
-		return
-	}
-	if err := s.db.SetUserAdmin(ctx, gen.SetUserAdminParams{ID: user.ID, IsAdmin: p.IsAdmin}); err != nil {
-		s.logger.Warn("oidc: sync admin", "user_id", user.ID, "err", err)
-	}
+// maybeSyncAdmin returns the user the caller must mint tokens from — see
+// syncAdminFromIdP. Ignoring the return value reintroduces the desync.
+func (s *oidcAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, p OIDCProfile) gen.User {
+	return syncAdminFromIdP(ctx, s.db, s.logger, user, p.IsAdmin, p.GroupSync, "oidc")
 }

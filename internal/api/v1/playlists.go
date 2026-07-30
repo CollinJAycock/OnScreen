@@ -571,13 +571,28 @@ func (h *PlaylistHandler) loadOwned(w http.ResponseWriter, r *http.Request, para
 		respond.InternalError(w, r)
 		return uuid.Nil, gen.Collection{}, false
 	}
-	// Obfuscate non-playlists and foreign-owned rows as 404 — don't leak existence.
-	if col.Type != "playlist" || !col.UserID.Valid ||
+	// Obfuscate foreign-owned rows and non-playlist collection types as 404 —
+	// don't leak existence.
+	//
+	// Both playlist types belong here. Create stores type='smart_playlist' the
+	// moment a `rules` body is supplied, and ListMyPlaylists selects
+	// `type IN ('playlist','smart_playlist')` — so a smart playlist appeared in
+	// the list and then 404'd on EVERY sub-route: items, rename, delete,
+	// add/remove item, reorder. It could be created and seen and nothing else,
+	// which is why the feature looked broken rather than absent.
+	if !isPlaylistType(col.Type) || !col.UserID.Valid ||
 		uuid.UUID(col.UserID.Bytes) != claims.UserID {
 		respond.NotFound(w, r)
 		return uuid.Nil, gen.Collection{}, false
 	}
 	return id, col, true
+}
+
+// isPlaylistType reports whether a collections row is one of the two shapes
+// this handler owns. Kept next to loadOwned so the set cannot drift from the
+// `type IN (...)` predicate in playlists.sql.
+func isPlaylistType(t string) bool {
+	return t == "playlist" || t == "smart_playlist"
 }
 
 // allowedLibraries returns nil when no filtering should be applied (no ACL

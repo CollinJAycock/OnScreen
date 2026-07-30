@@ -66,6 +66,11 @@ type SAMLOAuthDB interface {
 	CreateSAMLUser(ctx context.Context, arg gen.CreateSAMLUserParams) (gen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	// Needed by syncAdminFromIdP to revoke credentials issued under the old
+	// role and to re-read the user the token is minted from.
+	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
+	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
+	GetUser(ctx context.Context, id uuid.UUID) (gen.User, error)
 	// GrantAutoLibrariesToUser inserts library_access rows for every
 	// library flagged auto_grant_new_users — called after auto-provisioning
 	// a SAML user so they don't land on a barren home page on all-private
@@ -447,6 +452,21 @@ func buildSAMLProfile(assertion *saml.Assertion, cfg settings.SAMLConfig) SAMLPr
 	usernameKey := coalesceString(cfg.UsernameAttribute,
 		"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name")
 
+	// GroupSync means "this deployment derives admin from IdP groups", which is
+	// a property of the CONFIG, not of the assertion in front of us. It used to
+	// be set inside the loop below, only when the groups attribute was present
+	// with at least one value — so the two wire encodings of "member of no
+	// groups" both left it false and maybeSyncAdmin returned early, silently
+	// declining to demote. Removing someone from the admin group therefore had
+	// no effect, which is precisely the operation an operator most needs to
+	// work. Okta/ADFS/Entra drop a claim whose value set is empty, and the
+	// alternative encoding (an empty <AttributeValue/>) is filtered by
+	// samlAttrValues, so BOTH normal representations hit the bug.
+	//
+	// Set from config: an assertion carrying no groups now correctly means "in
+	// no groups", which for an admin means demotion.
+	p.GroupSync = cfg.GroupsAttribute != "" && cfg.AdminGroup != ""
+
 	for _, stmt := range assertion.AttributeStatements {
 		for _, attr := range stmt.Attributes {
 			vals := samlAttrValues(attr)
@@ -464,7 +484,6 @@ func buildSAMLProfile(assertion *saml.Assertion, cfg settings.SAMLConfig) SAMLPr
 				}
 			}
 			if cfg.GroupsAttribute != "" && cfg.AdminGroup != "" && attr.Name == cfg.GroupsAttribute {
-				p.GroupSync = true
 				for _, g := range vals {
 					if g == cfg.AdminGroup {
 						p.IsAdmin = true
@@ -535,7 +554,7 @@ func (s *samlAuthService) LoginOrCreateSAMLUser(ctx context.Context, p SAMLProfi
 		SamlIssuer: &issuer, SamlSubject: &subject,
 	})
 	if err == nil {
-		s.maybeSyncAdmin(ctx, user, p)
+		user = s.maybeSyncAdmin(ctx, user, p)
 		return s.issueTokens(ctx, user)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -558,7 +577,7 @@ func (s *samlAuthService) LoginOrCreateSAMLUser(ctx context.Context, p SAMLProfi
 			}); linkErr != nil {
 				s.logger.Warn("saml: link existing account", "user_id", user.ID, "err", linkErr)
 			}
-			s.maybeSyncAdmin(ctx, user, p)
+			user = s.maybeSyncAdmin(ctx, user, p)
 			return s.issueTokens(ctx, user)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -597,13 +616,10 @@ func (s *samlAuthService) LoginOrCreateSAMLUser(ctx context.Context, p SAMLProfi
 	return s.issueTokens(ctx, user)
 }
 
-func (s *samlAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, p SAMLProfile) {
-	if !p.GroupSync || user.IsAdmin == p.IsAdmin {
-		return
-	}
-	if err := s.db.SetUserAdmin(ctx, gen.SetUserAdminParams{ID: user.ID, IsAdmin: p.IsAdmin}); err != nil {
-		s.logger.Warn("saml: sync admin", "user_id", user.ID, "err", err)
-	}
+// maybeSyncAdmin returns the user the caller must mint tokens from — see
+// syncAdminFromIdP.
+func (s *samlAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, p SAMLProfile) gen.User {
+	return syncAdminFromIdP(ctx, s.db, s.logger, user, p.IsAdmin, p.GroupSync, "saml")
 }
 
 // ── SP keypair generation ───────────────────────────────────────────────────
