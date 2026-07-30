@@ -7,6 +7,9 @@ import tv.onscreen.android.data.model.PairCodeResponse
 import tv.onscreen.android.data.model.TokenPair
 import tv.onscreen.android.data.model.TotpVerifyRequest
 import tv.onscreen.android.data.prefs.ServerPrefs
+import kotlinx.coroutines.flow.first
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,7 +17,20 @@ import javax.inject.Singleton
 class AuthRepository @Inject constructor(
     private val api: OnScreenApi,
     private val prefs: ServerPrefs,
+    // Process-lifetime @Singleton caches that are keyed to nothing. Every
+    // identity transition below has to clear them, or the next user on a shared
+    // TV inherits the previous one's state. Neither depends on AuthRepository,
+    // so there is no Hilt cycle.
+    private val preferences: PreferencesRepository,
+    private val capabilities: CapabilitiesRepository,
 ) {
+    /** Clear per-identity caches. Called from every sign-in, sign-out and
+     *  pairing completion — the four points where "who is signed in" changes. */
+    private fun invalidateIdentityCaches() {
+        preferences.invalidate()
+        capabilities.invalidate()
+    }
+
     suspend fun login(username: String, password: String): TokenPair {
         val pair = api.login(LoginRequest(username, password)).data
         persistIfComplete(pair)
@@ -33,6 +49,7 @@ class AuthRepository @Inject constructor(
      *  persist empties; the caller drives the second factor. */
     private suspend fun persistIfComplete(pair: TokenPair) {
         if (pair.totp_required) return
+        invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }
@@ -46,18 +63,49 @@ class AuthRepository @Inject constructor(
         } catch (_: Exception) {
             // Best-effort — server may be unreachable.
         }
+        invalidateIdentityCaches()
         prefs.clearAuth()
     }
 
-    /** Check server reachability by hitting the health endpoint. */
+    /** Check server reachability by hitting the health endpoint.
+     *
+     *  Adopts the origin the server actually ANSWERED on, which matters when
+     *  the user typed a bare hostname. Typing `https://` on a D-pad is painful,
+     *  so people enter `media.example.com`; ServerPrefs prefixes `http://`
+     *  because a LAN server on plain HTTP is the dominant deployment. A
+     *  TLS-serving host then 301s to https, OkHttp follows it transparently,
+     *  and this check reported success — while the PERSISTED origin stayed
+     *  cleartext. Every later call started in the clear, including the login
+     *  POST carrying the password, before the redirect upgraded it.
+     *
+     *  Re-persisting the final URL means a redirect to TLS sticks. Only an
+     *  upgrade is honoured: a hostile redirect from https down to http is
+     *  ignored, so this cannot be used to strip TLS from a URL the user
+     *  explicitly typed as https.
+     */
     suspend fun checkServer(url: String): Boolean {
         prefs.setServerUrl(url)
         return try {
-            api.healthCheck().isSuccessful
+            val resp = api.healthCheck()
+            if (resp.isSuccessful) {
+                adoptRedirectedOrigin(prefs.serverUrl.first(), resp.raw().request.url)
+            }
+            resp.isSuccessful
         } catch (_: Exception) {
             false
         }
     }
+
+    /** Persist [finalUrl]'s origin when the health check was upgraded to TLS. */
+    private suspend fun adoptRedirectedOrigin(requested: String?, finalUrl: HttpUrl) {
+        val asked = requested?.toHttpUrlOrNull() ?: return
+        if (asked.isHttps || !finalUrl.isHttps) return
+        if (!asked.host.equals(finalUrl.host, ignoreCase = true)) return
+        prefs.setServerUrl("https://" + finalUrl.host + portSuffix(finalUrl))
+    }
+
+    private fun portSuffix(u: HttpUrl): String =
+        if (u.port == HttpUrl.defaultPort(u.scheme)) "" else ":" + u.port
 
     // ── Device pairing ────────────────────────────────────────────────────────
 
@@ -88,6 +136,7 @@ class AuthRepository @Inject constructor(
                 if (pair == null) PollResult.Failure("empty body")
                 else PollResult.Done(pair)
             }
+            // 202 carries no `data` — see PairPollResponse.
             202 -> PollResult.Pending
             410 -> PollResult.Expired
             else -> PollResult.Failure("HTTP ${resp.code()}")
@@ -98,6 +147,7 @@ class AuthRepository @Inject constructor(
      *  side effect so the pairing UI lands the user in the same
      *  signed-in state a password login would. */
     suspend fun completePairing(pair: TokenPair) {
+        invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }

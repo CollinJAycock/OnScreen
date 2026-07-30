@@ -25,6 +25,13 @@ object Navigator {
         type: String,
         resumeMs: Long = 0L,
     ) {
+        // Callers reach this from click handlers AND from coroutines that
+        // resume after a network round-trip, so the activity may already have
+        // saved state by the time we get here (user pressed HOME, or the TV
+        // switched input, mid-request). commit() after onSaveInstanceState is
+        // an IllegalStateException; the navigation is worthless at that point
+        // anyway, because MainActivity resets to Home on the way back in.
+        if (fm.isStateSaved) return
         val destination = destinationFor(itemId, type, resumeMs)
         fm.beginTransaction()
             .replace(R.id.main_container, destination)

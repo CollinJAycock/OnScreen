@@ -52,6 +52,13 @@ class NotificationsStream @Inject constructor(
     private val sseClient: OkHttpClient =
         client.newBuilder()
             .readTimeout(0, TimeUnit.MILLISECONDS)
+            // callTimeout MUST be cleared too. newBuilder() inherits every
+            // setting from the parent, and the parent now carries a whole-call
+            // ceiling — which for a deliberately long-lived server-sent-events
+            // connection is a hard kill at that deadline, not a safety net.
+            // readTimeout(0) alone would not save it: callTimeout bounds the
+            // entire call including the streaming body.
+            .callTimeout(0, TimeUnit.MILLISECONDS)
             .build()
 
     fun subscribe(): Flow<NotificationItem> = callbackFlow {

@@ -2,6 +2,8 @@ package tv.onscreen.android.data.repository
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import tv.onscreen.android.data.api.OnScreenApi
@@ -42,14 +44,19 @@ open class TrickplayRepository @Inject constructor(
     /** Fetches /trickplay/{id}/index.vtt and parses out the cues.
      *  Returns null on any failure (network, parse) so the caller
      *  silently falls back to no-preview seek. */
-    open suspend fun fetchCues(itemId: String): List<TrickplayCue>? {
-        return try {
+    open suspend fun fetchCues(itemId: String): List<TrickplayCue>? = withContext(Dispatchers.IO) {
+        // execute() is BLOCKING. A suspend function does not move work off the
+        // caller's dispatcher by itself, so without this the call ran wherever
+        // the caller happened to be — on Dispatchers.Main that is a
+        // NetworkOnMainThreadException, and on any other it stalls a thread the
+        // caller expected to keep.
+        try {
             val req = Request.Builder()
                 .url("http://localhost/trickplay/$itemId/index.vtt")
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val body = resp.body?.string() ?: return null
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body?.string() ?: return@withContext null
                 parseVtt(body)
             }
         } catch (_: Exception) { null }
@@ -58,14 +65,17 @@ open class TrickplayRepository @Inject constructor(
     /** Fetches /trickplay/{id}/{file} and decodes to a Bitmap. The
      *  caller crops to the cue's x/y/w/h via Bitmap.createBitmap.
      *  Returns null on any failure. */
-    open suspend fun fetchSprite(itemId: String, file: String): Bitmap? {
-        return try {
+    open suspend fun fetchSprite(itemId: String, file: String): Bitmap? = withContext(Dispatchers.IO) {
+        // Blocking fetch AND a bitmap decode — see the note on fetchCues. This
+        // one matters more: sprite sheets are large, so decoding on the main
+        // thread janks the scrub bar the preview exists to serve.
+        try {
             val req = Request.Builder()
                 .url("http://localhost/trickplay/$itemId/$file")
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val bytes = resp.body?.bytes() ?: return null
+                if (!resp.isSuccessful) return@withContext null
+                val bytes = resp.body?.bytes() ?: return@withContext null
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }
         } catch (_: Exception) { null }

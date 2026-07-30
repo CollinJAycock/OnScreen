@@ -55,7 +55,16 @@ class TotpLoginFragment : GuidedStepSupportFragment() {
                 .id(ACTION_CODE)
                 .title(getString(R.string.totp_code))
                 .descriptionEditable(true)
-                .descriptionEditInputType(android.text.InputType.TYPE_CLASS_TEXT)
+                // Masked in BOTH modes — see the note in LoginFragment. This
+                // field also accepts a recovery code, which unlike a 30-second
+                // TOTP is a long-lived secret, so leaving it rendered on the TV
+                // is the same exposure as the password.
+                .descriptionEditInputType(
+                    android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                )
+                .descriptionInputType(
+                    android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                )
                 .build()
         )
         actions.add(

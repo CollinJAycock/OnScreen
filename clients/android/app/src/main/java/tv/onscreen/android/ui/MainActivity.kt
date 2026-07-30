@@ -120,7 +120,17 @@ class MainActivity : FragmentActivity() {
         // of the activity (fragments come and go around them).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                if (!prefs.isLoggedIn.first()) return@repeatOnLifecycle
+                // WAIT for a signed-in state; don't sample it once.
+                //
+                // This used to `return@repeatOnLifecycle` when not yet logged
+                // in, which only re-runs on the next STOPPED -> STARTED
+                // transition. On first run the activity never stops — setup,
+                // login and Home are all fragment swaps inside it — so the
+                // block sampled `false` at launch and never ran again. Neither
+                // the capabilities prefetch nor cross-device "play to this
+                // device" came up until the user happened to background and
+                // foreground the app.
+                prefs.isLoggedIn.first { it }
                 // Capabilities prefetch — single-flight via the repo,
                 // so a duplicate call from HomeFragment is a no-op.
                 capabilities.getCachedOrFetch()
@@ -448,6 +458,11 @@ class MainActivity : FragmentActivity() {
 
     /** Navigate to a destination, replacing the current fragment. */
     fun navigateTo(destination: NavigationDestination) {
+        // Most callers are coroutines resuming after a network call (login,
+        // logout, pairing poll), so the activity can already have saved state
+        // — commit() then throws. Nothing is lost by dropping the navigation:
+        // the SCREEN_ON / onStart path re-routes on the way back in.
+        if (supportFragmentManager.isStateSaved) return
         val fragment = when (destination) {
             NavigationDestination.SERVER_SETUP -> ServerSetupFragment()
             NavigationDestination.LOGIN -> LoginFragment()
@@ -468,10 +483,27 @@ class MainActivity : FragmentActivity() {
             )
         }
 
+        // LOGIN and SERVER_SETUP are the roots of the signed-out flow, not
+        // steps within it. Sign-out reached them via addToBackStack, so BACK
+        // from the login screen walked the user back INTO the signed-out app —
+        // and a second sign-out stacked a second copy. Clearing first makes
+        // them terminal in the same way HOME is.
+        if (destination == NavigationDestination.LOGIN ||
+            destination == NavigationDestination.SERVER_SETUP
+        ) {
+            supportFragmentManager.popBackStack(
+                null,
+                androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
+            )
+        }
+
         supportFragmentManager.beginTransaction()
             .replace(R.id.main_container, fragment)
             .apply {
-                if (destination != NavigationDestination.HOME) {
+                if (destination != NavigationDestination.HOME &&
+                    destination != NavigationDestination.LOGIN &&
+                    destination != NavigationDestination.SERVER_SETUP
+                ) {
                     addToBackStack(null)
                 }
             }

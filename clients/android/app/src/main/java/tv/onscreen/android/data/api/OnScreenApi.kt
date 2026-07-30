@@ -38,7 +38,7 @@ interface OnScreenApi {
     @GET("api/v1/auth/pair/poll")
     suspend fun pollPairCode(
         @Header("Authorization") deviceTokenHeader: String,
-    ): Response<ApiResponse<TokenPair>>
+    ): Response<PairPollResponse>
 
     // ── System (v2.2) ───────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ interface OnScreenApi {
     suspend fun getLibraries(): ApiResponse<List<Library>>
 
     @GET("api/v1/libraries/{id}/genres")
-    suspend fun getLibraryGenres(@Path("id") libraryId: String): ApiResponse<List<String>>
+    suspend fun getLibraryGenres(@Path("id") libraryId: String): ApiResponse<List<GenreCount>>
 
     @GET("api/v1/libraries/{id}/items")
     suspend fun getLibraryItems(
@@ -193,8 +193,12 @@ interface OnScreenApi {
     @GET("api/v1/users/me/preferences")
     suspend fun getPreferences(): ApiResponse<UserPreferences>
 
+    // 204 No Content — declaring a body made Retrofit's await() reject the null
+    // body with a KotlinNullPointerException, so every settings save reported a
+    // raw exception in the UI even though the write had succeeded. Same shape as
+    // logout / addFavorite / setListenBrainz above.
     @PUT("api/v1/users/me/preferences")
-    suspend fun setPreferences(@Body body: UserPreferences): ApiResponse<UserPreferences>
+    suspend fun setPreferences(@Body body: UserPreferences)
 
     // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
 

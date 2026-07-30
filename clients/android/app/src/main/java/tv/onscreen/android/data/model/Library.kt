@@ -23,3 +23,14 @@ data class Library(
      *  can ignore it. */
     val auto_grant_new_users: Boolean = false,
 )
+
+/** One entry of GET /libraries/{id}/genres. The server returns
+ *  `[{"name":"Action","count":42}]`; decoding that into a plain
+ *  List<String> threw, and LibraryRepository's catch-all turned the throw
+ *  into an empty list — so the genre filter was permanently empty with no
+ *  error anywhere. */
+@JsonClass(generateAdapter = true)
+data class GenreCount(
+    val name: String,
+    val count: Long = 0,
+)

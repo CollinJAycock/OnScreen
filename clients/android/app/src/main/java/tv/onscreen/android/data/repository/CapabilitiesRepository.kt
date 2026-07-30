@@ -63,6 +63,16 @@ open class CapabilitiesRepository @Inject constructor(
         mutex.withLock { return fetch() }
     }
 
+    /** Drop the cached capabilities. Called when the signed-in identity or the
+     *  target server changes: this is a @Singleton keyed to nothing, so after
+     *  Settings -> Change server (or a sign-out and sign-in against a different
+     *  host) every feature gate would otherwise still reflect the PREVIOUS
+     *  server's probes — Live TV / DVR / Requests tabs shown or hidden for a
+     *  server that is no longer the one we are talking to. */
+    open fun invalidate() {
+        state.value = null
+    }
+
     private suspend fun fetch(): Capabilities? = try {
         val resp = api.getCapabilities().data
         state.value = resp

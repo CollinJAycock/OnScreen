@@ -281,6 +281,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                         playerWasReused = false
                         installProgressTracker(itemId)
                     }
+                    // A source that arrives AFTER onStop released the player.
+                    // prepare() is several server round-trips (item -> watch
+                    // limit -> decision -> transcode start, tens of seconds on a
+                    // cold ffmpeg spin-up) and this collector is not
+                    // lifecycle-gated, so pressing HOME during that window lands
+                    // the emission on a null player: playSource no-ops but the
+                    // progress tracker still installs and then reports position
+                    // 0 every 10s, overwriting real resume progress with the
+                    // start of the episode.
+                    sourceChanged && player == null -> Unit
                     sourceChanged -> {
                         playSource(source)
                         applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang, state.forcedSubtitlesOnly)
@@ -1464,13 +1474,37 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // Guard against a double advance — "Play Now" and the countdown elapsing
         // (or the lead-in + EOS overlays) can both call this; only the first wins.
         if (navigatedToNext) return
+
+        // The countdown keeps ticking while the app is backgrounded: onStop
+        // releases the player but does not cancel countdownJob, and
+        // viewLifecycleOwner's scope only dies at view destroy. So this can be
+        // reached ~10s after the user pressed HOME, when the FragmentManager
+        // has already saved state — and commit() after that is an
+        // IllegalStateException, i.e. a crash from putting the TV to sleep near
+        // the end of an episode. Bail instead; nothing is lost, because
+        // MainActivity's SCREEN_ON path resets to Home on the way back in.
+        //
+        // This is the single choke point for every advance (countdown, Play
+        // Now, end-of-stream, MEDIA_NEXT), so guarding here covers them all.
+        val fm = parentFragmentManager
+        if (fm.isStateSaved || !isAdded) return
+
         navigatedToNext = true
         countdownJob?.cancel()
         upNextJob?.cancel()
         progressTracker?.onStop()
-        val newFrag = newInstance(ep.id, 0)
-        parentFragmentManager.beginTransaction()
-            .replace(R.id.main_container, newFrag)
+
+        // Pop this fragment's own back-stack entry before pushing the next
+        // episode's, so the container keeps exactly one recorded owner.
+        // Previously the advance replaced the fragment WITHOUT adding to the
+        // back stack, while the entry that brought us here still recorded
+        // "remove DetailFragment, add PlaybackFragment#1" — so BACK from
+        // episode 2 re-added the detail screen over a still-playing episode 2
+        // rather than leaving playback.
+        fm.popBackStack()
+        fm.beginTransaction()
+            .replace(R.id.main_container, newInstance(ep.id, 0))
+            .addToBackStack(null)
             .commit()
     }
 

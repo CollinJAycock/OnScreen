@@ -37,6 +37,20 @@ class SettingsViewModelTest {
     private fun scrobbleRepo(status: ScrobbleStatusResponse = ScrobbleStatusResponse()) =
         mockk<ScrobbleRepository>().also { coEvery { it.status() } returns status }
 
+    /** Constructs the ViewModel with the two device-facing collaborators
+     *  stubbed. logout() drives them (Watch Next clear + background-audio stop),
+     *  so they are relaxed mocks rather than real objects. */
+    private fun newViewModel(
+        prefsRepo: PreferencesRepository,
+        authRepo: AuthRepository,
+    ) = SettingsViewModel(
+        prefsRepo,
+        authRepo,
+        scrobbleRepo(),
+        mockk(relaxed = true),
+        mockk(relaxed = true),
+    )
+
     @Test
     fun `load fetches preferences and stores identity`() = runTest(dispatcher) {
         val prefsRepo = mockk<PreferencesRepository>()
@@ -44,7 +58,7 @@ class SettingsViewModelTest {
         val saved = UserPreferences(preferred_audio_lang = "en")
         coEvery { prefsRepo.get() } returns saved
 
-        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
+        val vm = newViewModel(prefsRepo, authRepo)
         vm.load(username = "alice", serverUrl = "http://server")
         advanceUntilIdle()
 
@@ -66,6 +80,8 @@ class SettingsViewModelTest {
             prefsRepo,
             authRepo,
             scrobbleRepo(ScrobbleStatusResponse(listenbrainz_linked = true, listenbrainz_enabled = true)),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
         )
         vm.load(null, null)
         advanceUntilIdle()
@@ -80,7 +96,7 @@ class SettingsViewModelTest {
         val authRepo = mockk<AuthRepository>()
         coEvery { prefsRepo.get() } throws RuntimeException("boom")
 
-        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
+        val vm = newViewModel(prefsRepo, authRepo)
         vm.load(null, null)
         advanceUntilIdle()
 
@@ -96,7 +112,7 @@ class SettingsViewModelTest {
         val returned = UserPreferences(preferred_audio_lang = "ja", max_content_rating = "PG-13")
         coEvery { prefsRepo.set(input) } returns returned
 
-        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
+        val vm = newViewModel(prefsRepo, authRepo)
         vm.savePreferences(input)
         // runCurrent (not advanceUntilIdle) runs the save body but does NOT advance
         // past the 2s scheduleSavedClear() delay, so the transient saved=true is observable.
@@ -113,7 +129,7 @@ class SettingsViewModelTest {
         val input = UserPreferences()
         coEvery { prefsRepo.set(input) } returns input
 
-        val vm = SettingsViewModel(prefsRepo, authRepo, scrobbleRepo())
+        val vm = newViewModel(prefsRepo, authRepo)
         vm.clearSavedFlag()
         assertThat(vm.uiState.value.saved).isFalse()
 
@@ -135,7 +151,7 @@ class SettingsViewModelTest {
         coEvery { scrobble.status() } returns
             ScrobbleStatusResponse(listenbrainz_linked = true, listenbrainz_enabled = true)
 
-        val vm = SettingsViewModel(prefsRepo, authRepo, scrobble)
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobble, mockk(relaxed = true), mockk(relaxed = true))
         vm.linkListenBrainz("  tok123  ")
         advanceUntilIdle()
 
@@ -151,7 +167,9 @@ class SettingsViewModelTest {
         coEvery { scrobble.setListenBrainz(any(), any()) } returns Unit
         coEvery { scrobble.status() } returns ScrobbleStatusResponse()
 
-        val vm = SettingsViewModel(prefsRepo, authRepo, scrobble)
+        val vm = SettingsViewModel(
+            prefsRepo, authRepo, scrobble, mockk(relaxed = true), mockk(relaxed = true),
+        )
         vm.unlinkListenBrainz()
         advanceUntilIdle()
 

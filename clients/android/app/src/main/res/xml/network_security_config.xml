@@ -17,10 +17,30 @@
 <network-security-config xmlns:tools="http://schemas.android.com/tools">
     <base-config cleartextTrafficPermitted="true"
         tools:ignore="InsecureBaseConfiguration">
+        <!--
+          SYSTEM CAs ONLY. `<certificates src="user" />` used to be here; it is
+          deliberately gone.
+
+          Android stopped trusting the user CA store by default in API 24
+          precisely because it is the easiest MITM foothold on the platform: a
+          sideloaded "helper" app that walks the owner through installing a
+          profile, an MDM enrolment, or a few minutes of ADB access is enough to
+          plant one. Sideloading is routine on Fire TV. With that anchor in
+          place every HTTPS call to the server was interceptable, which means
+          the login password and the PASETO access / stream / asset tokens were
+          all readable by whoever planted the CA.
+
+          It also contradicted the paragraph above: operators serving over TLS
+          were told they "get certificate validation on the client
+          automatically", and that was not true while any user-installed CA
+          could sign for the server's hostname.
+
+          The cleartext allowance above is a considered trade for the LAN
+          deployment model. This was not — it had no rationale, and it silently
+          voided the protection the TLS path exists to provide.
+        -->
         <trust-anchors>
             <certificates src="system" />
-            <!-- Also trust user-installed CAs (disabled by default since Android 7) -->
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
 </network-security-config>

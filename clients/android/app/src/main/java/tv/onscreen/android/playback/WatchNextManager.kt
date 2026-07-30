@@ -134,6 +134,38 @@ class WatchNextManager @Inject constructor(
     }
 
     /**
+     * Remove every Watch Next row this app owns.
+     *
+     * Called on sign-out. The launcher's Continue Watching strip is a
+     * SYSTEM-wide surface that outlives the app's own state, so without this a
+     * signed-out user's in-progress titles stayed on the home screen of a
+     * shared or handed-on TV — with working deep links into them, since the
+     * rows carry an onscreen:// URI and a position. Clearing local tokens does
+     * not touch the launcher's database.
+     *
+     * The query is already scoped to this package: the provider only returns
+     * rows the calling app wrote.
+     */
+    fun removeAll() {
+        if (!watchNextAvailable) return
+        try {
+            val ids = mutableListOf<Long>()
+            resolver.query(
+                TvContractCompat.WatchNextPrograms.CONTENT_URI,
+                arrayOf(TvContractCompat.WatchNextPrograms._ID),
+                null, null, null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) ids.add(cursor.getLong(0))
+            }
+            for (id in ids) {
+                resolver.delete(TvContractCompat.buildWatchNextProgramUri(id), null, null)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "WatchNext clear-all failed", e)
+        }
+    }
+
+    /**
      * Find the existing WatchNextPrograms row id (if any) for
      * [itemId] using the internal_provider_id we wrote earlier.
      * Returns null when no matching row exists (yet).

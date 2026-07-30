@@ -53,6 +53,18 @@ class LoginFragment : GuidedStepSupportFragment() {
                 .descriptionEditInputType(
                     android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
                 )
+                // descriptionInputType governs the row OUT of edit mode, and
+                // Leanback defaults it to plain text. Setting only the Edit
+                // variant masked the field while the IME was up and then
+                // repainted the password in cleartext, in TV-sized type, the
+                // moment the field was committed or escaped — where it stayed
+                // until the fragment was replaced, i.e. through a failed-login
+                // toast and through the 2FA push. A TV is a shared display;
+                // anyone in the room, any screen recorder and `adb screencap`
+                // all captured it.
+                .descriptionInputType(
+                    android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                )
                 .build()
         )
         actions.add(

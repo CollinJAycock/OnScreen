@@ -83,6 +83,11 @@ object NetworkModule {
         return OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            // Whole-call ceiling. read/connect timeouts only bound a single
+            // socket operation, so a peer that dribbles a byte inside every
+            // window keeps the call alive indefinitely — on a TV that is a
+            // spinner with no way out but the remote's BACK button.
+            .callTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(loggingInterceptor())
             .sslSocketFactory(tls.socketFactory, tls.trustManager)
@@ -130,6 +135,11 @@ object NetworkModule {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            // See the note on the other client. Generous here because this one
+            // carries library listings and artwork on a cold server, but still
+            // bounded — the SSE stream uses its own no-read-timeout client and
+            // is unaffected.
+            .callTimeout(120, TimeUnit.SECONDS)
             .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(AuthInterceptor(prefs))

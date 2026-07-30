@@ -48,6 +48,10 @@ class LiveChannelPlayerFragment : Fragment() {
 
     private var player: ExoPlayer? = null
     private var playerView: PlayerView? = null
+    /** The stream-error dialog while showing. Held so the fragment can take it
+     *  down: it is attached to the ACTIVITY window and therefore outlives this
+     *  fragment unless dismissed explicitly. */
+    private var errorDialog: android.app.AlertDialog? = null
     /** Resolved stream URL — built once on first start, reused when the
      *  player is rebuilt after an onStop release so we don't re-resolve
      *  the server URL / token on every foreground cycle. */
@@ -174,22 +178,33 @@ class LiveChannelPlayerFragment : Fragment() {
 
     private fun showError(message: String) {
         if (!isAdded) return
-        AlertDialog.Builder(requireContext())
+        errorDialog?.dismiss()
+        errorDialog = AlertDialog.Builder(requireContext())
             .setTitle(R.string.live_channel_error)
             .setMessage(message)
             .setPositiveButton(R.string.retry) { d, _ ->
                 d.dismiss()
-                startPlayer()
+                // The dialog belongs to the ACTIVITY window, so it outlives this
+                // fragment. MainActivity's SCREEN_ON home-reset replaces us with
+                // HomeFragment without touching it, leaving the dialog on screen
+                // over Home — and Retry then ran ExoPlayer.Builder(requireContext())
+                // on a detached fragment, which throws.
+                if (isAdded) startPlayer()
             }
             .setNegativeButton(android.R.string.cancel) { d, _ ->
                 d.dismiss()
-                parentFragmentManager.popBackStack()
+                if (isAdded) parentFragmentManager.popBackStack()
             }
             .create()
             // Button-only dialog: without this neither Retry nor Cancel can take
             // focus on a TV, so Retry is unreachable and only BACK (= Cancel) works.
             .focusableOnTv()
-            .show()
+            .also { it.show() }
+    }
+
+    private fun dismissErrorDialog() {
+        errorDialog?.dismiss()
+        errorDialog = null
     }
 
     private fun releasePlayer() {
@@ -217,6 +232,9 @@ class LiveChannelPlayerFragment : Fragment() {
 
     override fun onStop() {
         super.onStop()
+        // Take the dialog down with us. It is an activity-window dialog, so
+        // nothing else does.
+        dismissErrorDialog()
         // Release the decoder / tuner the moment the activity stops
         // (HOME / app backgrounded) instead of holding them until
         // onDestroyView — a live tuner is a scarce resource and the
@@ -227,6 +245,7 @@ class LiveChannelPlayerFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        dismissErrorDialog()
         releasePlayer()
         playerView = null
         super.onDestroyView()

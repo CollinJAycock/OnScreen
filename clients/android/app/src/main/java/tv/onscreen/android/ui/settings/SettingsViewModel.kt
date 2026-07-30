@@ -1,5 +1,11 @@
 package tv.onscreen.android.ui.settings
 
+import android.content.Context
+import android.content.Intent
+import dagger.hilt.android.qualifiers.ApplicationContext
+import tv.onscreen.android.playback.AudioHandoff
+import tv.onscreen.android.playback.OnScreenMediaSessionService
+import tv.onscreen.android.playback.WatchNextManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -32,6 +38,8 @@ class SettingsViewModel @Inject constructor(
     private val prefsRepo: PreferencesRepository,
     private val authRepo: AuthRepository,
     private val scrobbleRepo: ScrobbleRepository,
+    private val watchNext: WatchNextManager,
+    @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -129,7 +137,38 @@ class SettingsViewModel @Inject constructor(
         private const val SAVED_VISIBLE_MS = 2000L
     }
 
+    /** Sign out and scrub the device-level traces of the session.
+     *
+     *  Clearing tokens is not enough on a TV. Two surfaces outlive the app's
+     *  own state and are both visible to whoever picks up the remote next:
+     *
+     *   - The launcher's Continue Watching strip. Those rows live in the SYSTEM
+     *     TV provider, carry the titles and posters the previous user was
+     *     watching, and deep-link straight back into them.
+     *   - A parked audio player. Backgrounded music keeps playing after sign-out
+     *     — streaming on the now-signed-out user's stream token — because the
+     *     MediaSession service holds the player independently of the UI.
+     */
     suspend fun logout() {
+        watchNext.removeAll()
+        stopBackgroundAudio()
         authRepo.logout()
+    }
+
+    private fun stopBackgroundAudio() {
+        // Release the parked player first so the service's own teardown has
+        // nothing left to hand back, then stop the service.
+        AudioHandoff.peek()?.let { player ->
+            runCatching {
+                player.stop()
+                player.release()
+            }
+        }
+        AudioHandoff.clear()
+        runCatching {
+            appContext.stopService(
+                Intent(appContext, OnScreenMediaSessionService::class.java)
+            )
+        }
     }
 }

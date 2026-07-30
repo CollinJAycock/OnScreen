@@ -199,7 +199,18 @@ object PlaybackHelper {
      * is 8 (the AAC transcode fallback still caps at 5.1 server-side). See
      * docs/capability-profiles.md for the grammar.
      */
-    fun clientCapabilitiesHeader(): String {
+    /** The capabilities header, built once.
+     *
+     *  AuthInterceptor attaches this to EVERY authenticated request, and the
+     *  value is device-static — the decoder inventory behind it cannot change
+     *  while the process is alive. Rebuilding it per request meant several list
+     *  allocations plus a codec-profile scan on every API call. The underlying
+     *  MediaCodecList probe was already cached; the assembly was not. */
+    private val capabilitiesHeader: String by lazy { buildClientCapabilitiesHeader() }
+
+    fun clientCapabilitiesHeader(): String = capabilitiesHeader
+
+    private fun buildClientCapabilitiesHeader(): String {
         val video = mutableListOf("h264", "vp9")
         if (supportsHevc()) video.add("h265")
         if (supportsAv1()) video.add("av1")

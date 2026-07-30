@@ -113,6 +113,29 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         positionLabel = label
         frame.addView(label)
 
+        // "Slideshow on" indicator, bottom-LEFT so it can't collide with the
+        // position counter. statusLabel was declared and read by
+        // start/stopSlideshow but never created, so pressing PLAY started a
+        // silent 4-second slideshow with no on-screen acknowledgement at all
+        // and R.string.slideshow_on never rendered.
+        val status = TextView(requireContext()).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.BOTTOM or Gravity.START
+                marginStart = 60
+                bottomMargin = 60
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0x88000000.toInt())
+            setPadding(28, 14, 28, 14)
+            visibility = View.GONE
+        }
+        statusLabel = status
+        frame.addView(status)
+
         return frame
     }
 
@@ -181,19 +204,31 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
                             .filter { it.type == "photo" }.map { it.id }
 
                         if (total > pageSize) {
+                            // Bounded fan-out. This used to launch one async per
+                            // page with no limit: a 20k-photo library meant 100
+                            // concurrent getItems calls and 100 pages of full
+                            // item objects live at once, which on a 1 GB Fire TV
+                            // stick is a real burst — and it fires just from
+                            // opening a photo from Search or Home, where
+                            // siblings aren't supplied. Batching keeps the
+                            // parallelism that made this fast without the spike:
+                            // only PAGE_FANOUT pages are in flight or in memory
+                            // at a time, and each is reduced to ids immediately.
                             val remainingOffsets = (pageSize until total step pageSize).toList()
-                            val deferred = remainingOffsets.map { off ->
-                                async {
-                                    val (page, _) = libraryRepo.getItems(
-                                        detail.library_id,
-                                        limit = pageSize,
-                                        offset = off,
-                                    )
-                                    off to page.filter { it.type == "photo" }.map { it.id }
+                            for (batch in remainingOffsets.chunked(PAGE_FANOUT)) {
+                                val deferred = batch.map { off ->
+                                    async {
+                                        val (page, _) = libraryRepo.getItems(
+                                            detail.library_id,
+                                            limit = pageSize,
+                                            offset = off,
+                                        )
+                                        off to page.filter { it.type == "photo" }.map { it.id }
+                                    }
                                 }
-                            }
-                            for ((off, ids) in deferred.awaitAll()) {
-                                pagesByOffset[off] = ids
+                                for ((off, ids) in deferred.awaitAll()) {
+                                    pagesByOffset[off] = ids
+                                }
                             }
                         }
                         for (ids in pagesByOffset.values) photos += ids
@@ -284,6 +319,12 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         private const val ARG_START_INDEX = "start_index"
         private const val SLIDESHOW_INTERVAL_MS = 4000L
 
+        /** How many sibling pages to resolve concurrently. Enough to keep the
+         *  resolve fast on a large library, low enough that a 20k-photo
+         *  library does not open 100 sockets and hold 100 pages of items at
+         *  once on a 1 GB TV stick. */
+        private const val PAGE_FANOUT = 4
+
         fun newInstance(itemId: String): PhotoViewFragment =
             newInstance(itemId, emptyList(), 0)
 
@@ -337,9 +378,21 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         }
     }
 
+    override fun onStop() {
+        super.onStop()
+        // Stop advancing while backgrounded. slideshowJob lives on
+        // viewLifecycleOwner's scope, which survives until the view is
+        // DESTROYED, not until the activity stops — so pressing HOME left the
+        // slideshow ticking every 4s, fetching and decoding a full-resolution
+        // photo each time behind the launcher. The user can restart it with
+        // PLAY when they come back.
+        stopSlideshow()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         imageView = null
         positionLabel = null
+        statusLabel = null
     }
 }

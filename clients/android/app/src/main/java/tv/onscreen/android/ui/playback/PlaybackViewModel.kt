@@ -529,15 +529,22 @@ class PlaybackViewModel @Inject constructor(
     /**
      * Tell the server to tear down the active transcode session.
      *
-     * [scope] defaults to [viewModelScope] for the in-session calls
-     * (onStop, audio-switch, fallback). The onCleared safety-net passes
-     * [appScope] instead: viewModelScope is *already cancelled* by the
-     * time onCleared runs, so a DELETE launched on it would be cancelled
-     * before the request leaves the device — leaking the server-side
-     * ffmpeg process. appScope outlives the ViewModel so the DELETE
-     * actually fires.
+     * ALWAYS launched on [appScope], never on viewModelScope, because this is
+     * fire-and-forget teardown that has to outlive whatever is being torn down.
+     *
+     * viewModelScope used to be the default for the "in-session" callers
+     * (onStop, audio switch, fallback). That looks safe — onDestroyView runs
+     * while the ViewModel is still alive — but it loses the DELETE on the exact
+     * path that matters most. The fragment's teardown call NULLS the session
+     * ids and launches on viewModelScope; onCleared then cancels that scope,
+     * usually before the request has left the device, AND its own safety net
+     * finds the ids already nulled so it does nothing. The result is a
+     * server-side ffmpeg process left running until it idle-times out —
+     * precisely the leak the onCleared net was added to prevent.
+     *
+     * [scope] is retained so tests can inject a scope they control.
      */
-    fun stopActiveTranscode(scope: kotlinx.coroutines.CoroutineScope = viewModelScope) {
+    fun stopActiveTranscode(scope: kotlinx.coroutines.CoroutineScope = appScope) {
         val sid = transcodeSessionId ?: return
         val tok = transcodeToken ?: return
         transcodeSessionId = null
@@ -572,11 +579,10 @@ class PlaybackViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        // viewModelScope is cancelled by super.onCleared(), so launch the
-        // safety-net DELETE on the application-scoped survivor instead —
-        // otherwise it's cancelled before the request goes out and the
-        // server-side ffmpeg session leaks.
-        stopActiveTranscode(appScope)
+        // Safety net for the case where nothing tore the session down earlier.
+        // stopActiveTranscode is appScope-backed by default now, so this
+        // survives super.onCleared() cancelling viewModelScope.
+        stopActiveTranscode()
     }
 
     companion object {
