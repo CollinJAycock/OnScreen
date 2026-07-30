@@ -88,9 +88,29 @@ test-int:
 	$(GO) test -tags 'dev integration' -count=1 -run Integration ./cmd/... ./internal/... ./test/...
 
 ## test-e2e: run full stack tests via docker-compose (<5min)
+##
+## Runs under its OWN compose project (onscreen-e2e) on non-default host
+## ports, so it never collides with -- or tears down -- a dev stack started
+## by `make docker-up`, or a native Postgres/Valkey on 5432/6379.
+##
+## Volumes are dropped before AND after. The suite needs a virgin database:
+## TestE2E_SetupAndAuth asserts setup_required=true and registers the first
+## admin, so a second run against a used volume 403s on register and every
+## later test cascades from having no admin token. `down` without -v left
+## that volume behind, which made this target single-use per machine.
+## Dropping Valkey too resets the 10 req/min auth rate limiter that a
+## back-to-back run otherwise trips.
+##
+## SECRET_KEY is ephemeral: the stack is destroyed at the end, so nothing
+## encrypted under it outlives the run.
+E2E_SECRET  := $(shell openssl rand -hex 32)
+E2E_PROJECT ?= onscreen-e2e
+E2E_COMPOSE := docker compose -p $(E2E_PROJECT) -f docker/docker-compose.yml
+E2E_ENV     := PG_PORT=55432 VALKEY_PORT=56379 SERVER_PORT=7090 DEBUG_PORT=7091 ONSCREEN_IMAGE=$(E2E_PROJECT)-server SECRET_KEY=$(E2E_SECRET)
 test-e2e:
-	docker compose -f docker/docker-compose.yml up -d --wait
-	$(GO) test -tags e2e -count=1 -run E2E ./test/e2e/... ; ret=$$?; docker compose -f docker/docker-compose.yml down; exit $$ret
+	@$(E2E_ENV) $(E2E_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(E2E_ENV) $(E2E_COMPOSE) up -d --build --wait
+	ONSCREEN_BASE_URL=http://localhost:7090 $(GO) test -tags e2e -count=1 -run E2E ./test/e2e/... ; ret=$$?; $(E2E_ENV) $(E2E_COMPOSE) down -v; exit $$ret
 
 ## test-browser: run Playwright browser-driven specs from web/tests/e2e
 ## Requires a running OnScreen server reachable at $$BASE_URL (default

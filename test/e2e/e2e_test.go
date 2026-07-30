@@ -515,8 +515,22 @@ func TestE2E_FrontendServed(t *testing.T) {
 
 // ── public feature flags ────────────────────────────────────────────────────
 
-func TestE2E_OAuthFlags(t *testing.T) {
-	for _, provider := range []string{"google", "github", "discord"} {
+// TestE2E_SSOFlags checks the public "is this login method configured?" flags
+// the login page reads before it decides which buttons to draw. On a stack with
+// no IdP configured every one must answer 200 with enabled=false — a 404 or a
+// 500 here blanks the login page rather than degrading to password-only.
+//
+// This replaces TestE2E_OAuthFlags, which probed /auth/{google,github,discord}
+// /enabled. a15c016 ("Replace OAuth with self-hosted SSO") deleted those routes
+// on 2026-04-22 without updating this file, so the test had been failing for
+// three months against endpoints that no longer exist.
+//
+// Note the users table still carries google_id / github_id / discord_id. Those
+// are NOT dead: isStubUser reads them so a row left over from the OAuth era is
+// not mistaken for a stub and auto-linked by email, which would be an account
+// takeover. Schema outliving its routes is deliberate here.
+func TestE2E_SSOFlags(t *testing.T) {
+	for _, provider := range []string{"oidc", "saml", "ldap"} {
 		t.Run(provider, func(t *testing.T) {
 			resp := doJSON(t, "GET", fmt.Sprintf("/api/v1/auth/%s/enabled", provider), "", nil)
 			assertStatus(t, resp, http.StatusOK)
@@ -526,6 +540,14 @@ func TestE2E_OAuthFlags(t *testing.T) {
 			}
 		})
 	}
+	t.Run("forgot-password", func(t *testing.T) {
+		resp := doJSON(t, "GET", "/api/v1/auth/forgot-password/enabled", "", nil)
+		assertStatus(t, resp, http.StatusOK)
+		data := decodeData(t, resp)
+		if data["enabled"] != false {
+			t.Errorf("forgot-password enabled: got %v, want false", data["enabled"])
+		}
+	})
 }
 
 func TestE2E_EmailEnabled(t *testing.T) {
