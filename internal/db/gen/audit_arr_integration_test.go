@@ -99,6 +99,11 @@ func TestAudit_Integration_ListIsNewestFirst(t *testing.T) {
 
 func newArrService(name, kind string, isDefault, enabled bool) gen.CreateArrServiceParams {
 	return gen.CreateArrServiceParams{
+		// The id is caller-supplied rather than defaulted by the column,
+		// because api_key is sealed with it as AES-GCM associated data and so
+		// must be known before the insert. Leaving it zero inserts uuid.Nil
+		// for every row, which collides on the second one.
+		ID:      uuid.New(),
 		Name:    name,
 		Kind:    kind,
 		BaseUrl: "https://" + kind + ".example.com",
