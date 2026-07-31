@@ -38,8 +38,8 @@ android {
         // those calls trigger.
         minSdk = 23
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.0.8"
+        versionCode = 12
+        versionName = "1.0.9"
     }
 
     // Per-store flavor split. Both stores ship the same app and code; they
