@@ -1272,6 +1272,17 @@ func proxyWorkerFile(w http.ResponseWriter, r *http.Request, workerAddr, sessID,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// Pass the worker's status through with an HONEST message. Everything
+		// used to be labelled "segment not found" regardless, so a transient
+		// "still encoding" was indistinguishable from a genuinely missing
+		// segment both to the player and to whoever was reading the logs.
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				w.Header().Set("Retry-After", ra)
+			}
+			http.Error(w, "segment not ready", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "segment not found", resp.StatusCode)
 		return
 	}

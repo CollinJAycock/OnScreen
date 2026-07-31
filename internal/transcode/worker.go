@@ -28,6 +28,12 @@ var tracer = otel.Tracer("onscreen/transcode")
 
 var segmentBaseDir = filepath.Join(os.TempDir(), "onscreen", "sessions")
 
+// segmentWaitTimeout is how long the segment server blocks waiting for ffmpeg
+// to produce a requested segment before telling the client to retry. Holding
+// the request open keeps the player on its buffer instead of showing a spinner
+// — the same strategy Jellyfin uses. A var so tests can shorten it.
+var segmentWaitTimeout = 10 * time.Second
+
 // sourceProbe carries what the worker needs to decide how to re-encode a
 // rotated source: the display rotation (degrees) and the source's overall
 // bitrate (kbps, 0 if unknown).
@@ -957,13 +963,11 @@ func (w *Worker) KillSession(sessionID string) {
 	}
 }
 
-// startSegmentServer runs a minimal HTTP server to serve HLS segments.
-// The API proxy forwards segment requests to this server.
-func (w *Worker) startSegmentServer(ctx context.Context) {
-	mux := http.NewServeMux()
-
-	// Serve files from /tmp/onscreen/sessions/{session_id}/
-	mux.HandleFunc("/segments/", func(rw http.ResponseWriter, r *http.Request) {
+// segmentHandler serves files from segmentBaseDir/{session_id}/{filename}.
+// Extracted from startSegmentServer so the not-ready status can be tested
+// without standing up a listener.
+func (w *Worker) segmentHandler() http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
 		if !w.segAuthOK(r) {
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
@@ -985,13 +989,27 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 		// before FFmpeg has produced it. Blocking here keeps the HTTP request
 		// pending while the player continues from its buffer — the same
 		// strategy Jellyfin uses to avoid buffering spinners.
-		deadline := time.Now().Add(10 * time.Second)
+		deadline := time.Now().Add(segmentWaitTimeout)
 		for {
 			if _, err := os.Stat(clean); err == nil {
 				break
 			}
 			if time.Now().After(deadline) {
-				http.Error(rw, "segment not ready", http.StatusNotFound)
+				// 503, NOT 404. A segment that ffmpeg has not reached yet is
+				// TRANSIENT, and every other not-ready path in the tree says so
+				// with 503 (playlist not ready, ABR init not ready, ABR segment
+				// unavailable). This one said 404, which to an HLS player means
+				// "this will never exist" — so instead of retrying, the player
+				// skips the segment and leaves a gap. The visible result is a
+				// stream that alternates picture and black as ready and
+				// not-yet-ready segments interleave, with nothing in the logs to
+				// suggest anything is wrong.
+				//
+				// Retry-After tells the player how long to back off; the
+				// transcode produces roughly one segment per segment-duration,
+				// so a short retry is right.
+				rw.Header().Set("Retry-After", "1")
+				http.Error(rw, "segment not ready", http.StatusServiceUnavailable)
 				return
 			}
 			select {
@@ -1002,7 +1020,16 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 		}
 
 		http.ServeFile(rw, r, clean)
-	})
+	}
+}
+
+// startSegmentServer runs a minimal HTTP server to serve HLS segments.
+// The API proxy forwards segment requests to this server.
+func (w *Worker) startSegmentServer(ctx context.Context) {
+	mux := http.NewServeMux()
+
+	// Serve files from /tmp/onscreen/sessions/{session_id}/
+	mux.HandleFunc("/segments/", w.segmentHandler())
 
 	// /seghead/{session_id}?ext=.ts — non-blocking; returns the highest
 	// segment index produced so far (the encoder head), -1 if none. The API's
