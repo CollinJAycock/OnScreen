@@ -277,13 +277,48 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
             KeyEvent.KEYCODE_MEDIA_NEXT -> {
                 advance(1); true
             }
-            // Play toggles a hands-off slideshow across the sibling photos.
+            // OK/CENTER: retry a failed photo, else toggle the slideshow.
+            //
+            // The slideshow used to be reachable ONLY by a media transport key.
+            // The fragment's view is a bare FrameLayout with no focusable
+            // control, so there was no D-pad path to it and nothing on screen
+            // said it existed — and Fire TV remotes do not all carry a
+            // dedicated PLAY/PAUSE key, so on some of them the feature was
+            // unreachable outright.
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                val failed = lastFailedItemId
+                if (failed != null) renderCurrent(failed) else toggleSlideshow()
+                true
+            }
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { toggleSlideshow(); true }
             KeyEvent.KEYCODE_MEDIA_PLAY -> { startSlideshow(); true }
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_STOP -> { stopSlideshow(); true }
             else -> false
         }
+    }
+
+    /** The item whose load failed, so OK can retry it. Null when the current
+     *  photo is fine. */
+    private var lastFailedItemId: String? = null
+
+    private fun showStatus(text: String) {
+        statusLabel?.apply {
+            this.text = text
+            visibility = View.VISIBLE
+        }
+    }
+
+    /** Clear the status line — unless a slideshow is running, whose indicator
+     *  shares this label and must survive a successful photo load. */
+    private fun hideStatus() {
+        if (slideshowJob?.isActive == true) {
+            showStatus(getString(R.string.slideshow_on))
+            return
+        }
+        statusLabel?.visibility = View.GONE
     }
 
     private fun toggleSlideshow() {
@@ -363,9 +398,29 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         val img = imageView ?: return
         if (serverUrl.isEmpty()) return
         val url = "$serverUrl/api/v1/items/$itemId/image?w=1920&h=1080&fit=contain"
+        // Without these the viewer had NO loading and NO error state: a fetch in
+        // progress and a fetch that failed both rendered as the same black
+        // screen, forever, with only the "3 / 47" counter in the corner. The
+        // user could not tell whether the app was broken, the photo was broken,
+        // or it was still working — and had no way to retry.
+        lastFailedItemId = null
+        showStatus(getString(R.string.photo_loading))
         val request = ImageRequest.Builder(requireContext())
             .data(url)
-            .target(img)
+            .target(
+                onStart = { showStatus(getString(R.string.photo_loading)) },
+                onSuccess = { result ->
+                    lastFailedItemId = null
+                    img.setImageDrawable(result)
+                    hideStatus()
+                },
+                onError = {
+                    // Remembered so OK can retry THIS photo.
+                    lastFailedItemId = itemId
+                    img.setImageDrawable(null)
+                    showStatus(getString(R.string.photo_load_failed))
+                },
+            )
             .build()
         requireContext().imageLoader.enqueue(request)
 

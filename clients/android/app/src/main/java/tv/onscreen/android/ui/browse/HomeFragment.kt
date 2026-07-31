@@ -107,6 +107,18 @@ class HomeFragment : BrowseSupportFragment() {
                             }
                         },
                     )
+                } else if (!hasContent && state.error == null) {
+                    // Home was the ONE list screen with no empty state. On a
+                    // freshly-installed server with no libraries yet, every hub
+                    // row returns null and the user was left staring at a single
+                    // "Browse" strip of five icons with nothing telling them
+                    // there is nothing to watch or what to do about it. The
+                    // other five list screens already call showEmpty.
+                    errorOverlay?.showEmpty(
+                        R.string.empty_home_title,
+                        R.string.empty_home_message,
+                    )
+                    lastBuiltState = null
                 } else {
                     errorOverlay?.hide()
                     if (state != lastBuiltState) {

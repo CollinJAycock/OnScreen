@@ -96,9 +96,24 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private var upNextOverlay: View? = null
     private var upNextJob: Job? = null
     private var upNextShown = false
+    // The user pressed Cancel (or BACK) on the Up Next card. Sticky for the rest
+    // of the item: dismissing only cancelled the pre-roll WATCHER, while the
+    // end-of-stream branch called showUpNextOverlay(immediate = true) directly
+    // and started a fresh countdown — so an explicit "no, stop after this one"
+    // was silently overruled and the next episode played anyway. On a shared TV
+    // that means the show keeps rolling after everyone thought it had stopped.
+    private var upNextDeclined = false
     // Centered spinner shown during STATE_BUFFERING (the 10-30s transcode warm-up
     // would otherwise be an unexplained black screen on cold start).
     private var bufferingView: android.widget.ProgressBar? = null
+    // Renders subtitle cues. Leanback's VideoSupportFragment draws into a bare
+    // SurfaceView and LeanbackPlayerAdapter only bridges transport state, so —
+    // unlike media3's PlayerView, which Live TV uses and which contains one of
+    // these for free — NOTHING here consumed the player's text output. Tracks
+    // side-loaded correctly, the picker listed them, selection set the
+    // preferred language, and every cue was decoded and thrown away. Subtitles
+    // could be chosen but never appeared.
+    private var subtitleView: androidx.media3.ui.SubtitleView? = null
     // The Up Next countdown. A field (not a local) so "Play Now" / dismiss /
     // teardown can cancel it — otherwise it keeps ticking and fires a SECOND
     // goToNextEpisode after the user already advanced. navigatedToNext guards
@@ -183,6 +198,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         private const val ARG_ITEM_ID = "item_id"
         private const val ARG_START_MS = "start_ms"
         private const val UPDATE_PERIOD_MS = 1000
+
+        /** Fraction of view height to keep clear beneath subtitle cues.
+         *  Covers the TV overscan region plus the transport bar that slides up
+         *  from the bottom, so cues are never cut off by the panel or hidden
+         *  behind the controls. */
+        private const val SUBTITLE_BOTTOM_PADDING_FRACTION = 0.08f
         private const val ACTION_AUDIO_ID = 100L
         private const val ACTION_SUBTITLE_ID = 101L
         private const val ACTION_CHAPTERS_ID = 102L
@@ -557,17 +578,81 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun hideSkipMarker() {
         shownSkipMarkerStartMs = null
-        // If the skip button currently holds focus and we hide it (the marker
-        // window elapsed without a tap), hand focus back to the player — else
-        // it's stranded on the GONE button and the next D-pad press does nothing.
         val hadFocus = skipMarkerOverlay?.hasFocus() == true
         skipMarkerOverlay?.visibility = View.GONE
-        if (hadFocus) view?.requestFocus()
+        if (hadFocus) restoreFocusFromOverlay()
+    }
+
+    /**
+     * Hand focus back to Leanback after one of our own overlays (Skip
+     * intro/credits, Up Next) gives it up.
+     *
+     * `view?.requestFocus()` is not enough and was the bug: the fragment root is
+     * a container Leanback does not treat as a focus target, so once the overlay
+     * button went GONE focus was stranded on nothing. LEFT/RIGHT kept working
+     * because those are intercepted at the ACTIVITY level (see
+     * onActivityKeyEvent), which masked it — but UP, DOWN and CENTER all route
+     * through view focus, so the transport bar, seek bar and the audio /
+     * subtitle / chapter / speed buttons could not be opened again for the rest
+     * of the item. Pressing Skip Intro effectively disabled the player's UI.
+     *
+     * showControlsOverlay puts focus somewhere Leanback owns and understands.
+     * It does mean the transport bar appears for a moment after a skip; that is
+     * the deliberate trade, and the bar auto-hides on its usual timer.
+     */
+    private fun restoreFocusFromOverlay() {
+        if (!isAdded) return
+        showControlsOverlay(true)
     }
 
     /** Show/hide a centered indeterminate spinner while the player buffers — the
      *  transcode warm-up on a cold start would otherwise be a black screen with
      *  no sign anything is happening. */
+    // NOTE — the transport bar shows SESSION time, not content time.
+    //
+    // A transcode/HLS session started at a resume point begins its own timeline
+    // at zero, so resuming a 2-hour film at 0:45:00 shows "0:00 / 1:15:00": the
+    // position looks like the start of the movie and the runtime has become the
+    // leftover 75 minutes. viewModel.hlsOffsetMs is applied to progress
+    // reporting, markers and trickplay, but NOT here.
+    //
+    // This is not fixable behind the Leanback API. LeanbackPlayerAdapter is
+    // final, and on PlaybackTransportControlGlue getDuration(),
+    // getBufferedPosition() and seekTo() are all final (verified against
+    // leanback-1.0.0 with javap) — only getCurrentPosition() is overridable.
+    // Offsetting the position alone would leave the bar disagreeing with its
+    // own scrub: a seek to the right-hand end would render past the stated
+    // duration. That is worse than the current consistent-but-wrong display.
+    //
+    // The real fix is a product decision, not a patch: either the server emits
+    // a full-timeline playlist for a resumed session (correct bar, more
+    // transcoding), or the client starts the session at 0 and seeks after
+    // prepare (correct bar, transcode from the top). Left as-is deliberately
+    // rather than shipping a half-translation.
+
+    /** Lazily attach the cue renderer above the video surface. */
+    private fun ensureSubtitleView(): androidx.media3.ui.SubtitleView? {
+        subtitleView?.let { return it }
+        val rootContainer = (view as? ViewGroup) ?: return null
+        val sv = androidx.media3.ui.SubtitleView(requireContext()).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+            // Platform captioning preferences (size and style set by the user in
+            // Android TV / Fire TV accessibility settings) — respecting these is
+            // the whole point of the system captions UI.
+            setUserDefaultStyle()
+            setUserDefaultTextSize()
+            // Keep cues clear of the TV's overscan region and of the transport
+            // bar that slides up from the bottom edge.
+            setBottomPaddingFraction(SUBTITLE_BOTTOM_PADDING_FRACTION)
+        }
+        rootContainer.addView(sv)
+        subtitleView = sv
+        return sv
+    }
+
     private fun setBuffering(show: Boolean) {
         if (!show) {
             bufferingView?.visibility = View.GONE
@@ -772,6 +857,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  listener is removed at park time, so reclaim has to add a fresh
      *  one. */
     private fun createPlayerListener(): Player.Listener = object : Player.Listener {
+        override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+            ensureSubtitleView()?.setCues(cueGroup.cues)
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             // Screen-on flag tracks active playback so the Fire TV
             // / Android TV screensaver doesn't kick in mid-show.
@@ -815,6 +904,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     // sense between episodes — between tracks
                     // it's just chrome the user doesn't want.
                     currentItemType == "track" -> goToNextEpisode(next)
+                    // The user already declined. Leave playback rather than
+                    // re-offering — this is the whole point of Cancel.
+                    upNextDeclined -> parentFragmentManager.popBackStack()
                     else -> showUpNextOverlay(immediate = true)
                 }
             }
@@ -1398,6 +1490,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun showUpNextOverlay(immediate: Boolean) {
+        // Honoured even on the immediate (end-of-stream) path, which is exactly
+        // the one that used to ignore it.
+        if (upNextDeclined) return
         if (upNextShown && !immediate) return
         val next = nextEpisode ?: return
         val rootContainer = (view as? ViewGroup) ?: return
@@ -1463,11 +1558,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun dismissUpNext(permanent: Boolean) {
         countdownJob?.cancel()
+        val hadFocus = upNextOverlay?.hasFocus() == true
         upNextOverlay?.visibility = View.GONE
         if (permanent) {
+            upNextDeclined = true
             upNextJob?.cancel()
             upNextJob = null
         }
+        // Same stranding as the skip button — the card owns focus while visible.
+        if (hadFocus) restoreFocusFromOverlay()
     }
 
     private fun goToNextEpisode(ep: ChildItem) {
@@ -1623,6 +1722,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     override fun onDestroyView() {
+        subtitleView = null
         super.onDestroyView()
         // Dismiss any dialog still on screen. These are activity-window
         // dialogs that would otherwise outlive the fragment and fire their

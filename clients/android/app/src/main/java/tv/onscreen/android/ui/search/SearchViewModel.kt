@@ -84,6 +84,15 @@ class SearchViewModel @Inject constructor(
     private val _discoverError = MutableStateFlow<String?>(null)
     val discoverError: StateFlow<String?> = _discoverError
 
+    /** Why the LIBRARY search failed, or null. Without this a failed search was
+     *  indistinguishable from an empty one: the exception was swallowed, an
+     *  empty list was published, and the screen said "No results found" — the
+     *  app asserting the user does not own a title that is sitting in their
+     *  library, with no error and no retry. Worst on a library-scoped search,
+     *  where discover is skipped entirely so there was no other signal at all. */
+    private val _searchError = MutableStateFlow<String?>(null)
+    val searchError: StateFlow<String?> = _searchError
+
     private val _libraries = MutableStateFlow<List<Library>>(emptyList())
     val libraries: StateFlow<List<Library>> = _libraries
 
@@ -130,6 +139,7 @@ class SearchViewModel @Inject constructor(
             _results.value = emptyList()
             _discover.value = emptyList()
             _discoverError.value = null
+            _searchError.value = null
             return
         }
 
@@ -138,10 +148,11 @@ class SearchViewModel @Inject constructor(
             delay(300) // Debounce — wait for user to stop typing.
 
             val libraryDeferred = async {
-                try { itemRepo.search(query, libraryId = libraryId) }
-                catch (e: Exception) {
+                try {
+                    LibraryResult(itemRepo.search(query, libraryId = libraryId), null)
+                } catch (e: Exception) {
                     Log.w(TAG, "library search failed", e)
-                    emptyList()
+                    LibraryResult(emptyList(), explainSearchFailure(e))
                 }
             }
 
@@ -165,14 +176,25 @@ class SearchViewModel @Inject constructor(
                     }
                 }
             }
-            val (lib, disc) = awaitAll(libraryDeferred, discoverDeferred)
-            @Suppress("UNCHECKED_CAST")
-            _results.value = lib as List<SearchResult>
-            val discoverResult = disc as DiscoverResult
+            val libResult = libraryDeferred.await()
+            val discoverResult = discoverDeferred.await()
+            // On failure keep whatever was on screen. Every keystroke re-fires
+            // the search, so blanking on a transient blip replaced a good result
+            // list with a false "No results found" that stuck until the user
+            // edited the query again.
+            if (libResult.error == null) {
+                _results.value = libResult.items
+            }
+            _searchError.value = libResult.error
             _discover.value = discoverResult.items.filter { !it.in_library }
             _discoverError.value = discoverResult.errorReason
         }
     }
+
+    private data class LibraryResult(
+        val items: List<SearchResult>,
+        val error: String?,
+    )
 
     private data class DiscoverResult(
         val items: List<DiscoverItem>,
@@ -183,6 +205,20 @@ class SearchViewModel @Inject constructor(
      *  reason. The most common cases are TMDB-not-configured (404
      *  / 503 from the server) — for those we use a friendlier
      *  message; otherwise return the raw exception text. */
+    /** Human-readable reason a LIBRARY search failed. Deliberately phrased
+     *  about the user's own library — the discover copy ("TMDB not configured")
+     *  is about a different subsystem and, shown here, misleads the user into
+     *  concluding their search legitimately found nothing. */
+    private fun explainSearchFailure(e: Exception): String {
+        if (e is HttpException) {
+            return when (e.code()) {
+                401, 403 -> "Sign in again to search your library"
+                else -> "Couldn't search your library (HTTP ${e.code()})"
+            }
+        }
+        return "Couldn't reach the server to search your library"
+    }
+
     private fun explainDiscoverFailure(e: Exception): String {
         if (e is HttpException) {
             return when (e.code()) {

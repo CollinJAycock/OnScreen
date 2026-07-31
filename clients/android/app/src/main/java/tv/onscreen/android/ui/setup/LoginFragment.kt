@@ -1,6 +1,7 @@
 package tv.onscreen.android.ui.setup
 
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.leanback.app.GuidedStepSupportFragment
 import androidx.leanback.widget.GuidanceStylist
@@ -119,6 +120,7 @@ class LoginFragment : GuidedStepSupportFragment() {
             return
         }
         if (action.id != ACTION_SIGN_IN) return
+        if (signingIn) return
 
         val username = fieldText(ACTION_USERNAME)
         val password = fieldText(ACTION_PASSWORD)
@@ -132,9 +134,11 @@ class LoginFragment : GuidedStepSupportFragment() {
             return
         }
 
+        setSigningIn(true)
         lifecycleScope.launch {
             try {
                 val pair = authRepo.login(username, password)
+                setSigningIn(false)
                 if (pair.totp_required) {
                     // Password OK, second factor owed — push the code step.
                     GuidedStepSupportFragment.add(
@@ -145,12 +149,33 @@ class LoginFragment : GuidedStepSupportFragment() {
                 }
                 (activity as? MainActivity)?.navigateTo(NavigationDestination.HOME)
             } catch (e: Exception) {
+                setSigningIn(false)
+                // The raw exception text used to be appended here — an OkHttp
+                // stack message read at ten feet tells a user nothing they can
+                // act on. Kept in logcat for support, off the TV.
+                Log.w("LoginFragment", "login failed", e)
                 Toast.makeText(
                     requireContext(),
-                    getString(R.string.error_login) + ": " + (e.message ?: "Unknown error"),
+                    getString(R.string.error_login),
                     Toast.LENGTH_LONG,
                 ).show()
             }
         }
     }
+
+    /** True while a sign-in is in flight. Nothing on screen used to change when
+     *  the user pressed Sign In, so the natural "did that register?" second
+     *  press fired a duplicate login. */
+    private var signingIn = false
+
+    private fun setSigningIn(busy: Boolean) {
+        signingIn = busy
+        if (!isAdded) return
+        val a = findActionById(ACTION_SIGN_IN) ?: return
+        a.title = getString(if (busy) R.string.signing_in else R.string.sign_in)
+        a.isEnabled = !busy
+        a.isFocusable = !busy
+        notifyActionChanged(findActionPositionById(ACTION_SIGN_IN))
+    }
+
 }

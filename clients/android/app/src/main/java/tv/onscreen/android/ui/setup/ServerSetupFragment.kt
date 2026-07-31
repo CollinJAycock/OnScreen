@@ -66,14 +66,22 @@ class ServerSetupFragment : GuidedStepSupportFragment() {
         )
     }
 
+    /** True while a connect probe is in flight. Guards against the second press
+     *  a user makes when nothing on screen acknowledged the first. */
+    private var connecting = false
+
     override fun onGuidedActionClicked(action: GuidedAction) {
         if (action.id != ACTION_CONNECT) return
+        if (connecting) return
 
         val urlAction = findActionById(ACTION_URL) ?: return
         val url = urlAction.description?.toString()?.trim() ?: return
 
+        // These are INPUT problems, not connection problems. Both used to show
+        // "Could not connect to server", which sent the user off checking their
+        // network for a mistake that was in the text field.
         if (url.isEmpty()) {
-            Toast.makeText(requireContext(), getString(R.string.error_connection), Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.error_url_required), Toast.LENGTH_LONG).show()
             return
         }
         // Guard against the previous-behaviour artifact: if a user
@@ -81,17 +89,32 @@ class ServerSetupFragment : GuidedStepSupportFragment() {
         // refuse to save it. The example points at a private LAN
         // address that won't resolve over Cloudflare / public DNS.
         if (url == getString(R.string.server_url_hint)) {
-            Toast.makeText(requireContext(), getString(R.string.error_connection), Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.error_url_is_example), Toast.LENGTH_LONG).show()
             return
         }
 
+        // The probe can take up to the OkHttp connect timeout on a typo'd LAN
+        // address, and nothing on screen used to change for the whole of it —
+        // the single most likely moment a first-time user concludes the app or
+        // their remote is broken.
+        setConnecting(true)
         lifecycleScope.launch {
             val reachable = authRepo.checkServer(url)
+            setConnecting(false)
             if (reachable) {
                 (activity as? MainActivity)?.navigateTo(NavigationDestination.LOGIN)
             } else {
-                Toast.makeText(requireContext(), getString(R.string.error_connection), Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), getString(R.string.error_connection), Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    private fun setConnecting(busy: Boolean) {
+        connecting = busy
+        val a = findActionById(ACTION_CONNECT) ?: return
+        a.title = getString(if (busy) R.string.connecting else R.string.connect)
+        a.isEnabled = !busy
+        a.isFocusable = !busy
+        notifyActionChanged(findActionPositionById(ACTION_CONNECT))
     }
 }

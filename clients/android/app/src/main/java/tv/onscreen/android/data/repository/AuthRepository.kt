@@ -84,8 +84,18 @@ class AuthRepository @Inject constructor(
      *  explicitly typed as https.
      */
     suspend fun checkServer(url: String): Boolean {
+        // The URL has to be written before the probe — BaseUrlInterceptor reads
+        // it to route the request — but it must NOT survive a failed probe.
+        //
+        // It used to. hasServer is just "the string is non-empty", so a typo'd
+        // address (near-certain when every character costs several D-pad
+        // presses) was saved anyway, and the next foreground routed the user to
+        // the LOGIN screen rather than back here. They then typed a username and
+        // password against a server that does not exist. Restoring the previous
+        // value keeps first-run recoverable.
+        val previous = prefs.serverUrl.first()
         prefs.setServerUrl(url)
-        return try {
+        val ok = try {
             val resp = api.healthCheck()
             if (resp.isSuccessful) {
                 adoptRedirectedOrigin(prefs.serverUrl.first(), resp.raw().request.url)
@@ -94,6 +104,10 @@ class AuthRepository @Inject constructor(
         } catch (_: Exception) {
             false
         }
+        if (!ok) {
+            prefs.setServerUrl(previous ?: "")
+        }
+        return ok
     }
 
     /** Persist [finalUrl]'s origin when the health check was upgraded to TLS. */

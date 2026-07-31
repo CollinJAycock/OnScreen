@@ -1,6 +1,7 @@
 package tv.onscreen.android.ui.setup
 
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.leanback.app.GuidedStepSupportFragment
 import androidx.leanback.widget.GuidanceStylist
@@ -88,24 +89,45 @@ class TotpLoginFragment : GuidedStepSupportFragment() {
         return a.editDescription?.toString()?.trim().orEmpty()
     }
 
+    /** True while a verify is in flight — see LoginFragment.signingIn. A second
+     *  press here is especially likely, because a TOTP code is time-boxed and a
+     *  user with no feedback assumes the press was missed. */
+    private var verifying = false
+
     override fun onGuidedActionClicked(action: GuidedAction) {
         if (action.id != ACTION_VERIFY) return
+        if (verifying) return
         val code = codeText()
         if (code.isEmpty()) {
             Toast.makeText(requireContext(), "Enter your code", Toast.LENGTH_SHORT).show()
             return
         }
+        setVerifying(true)
         lifecycleScope.launch {
             try {
                 authRepo.verifyTotp(challengeToken, code)
+                setVerifying(false)
                 (activity as? MainActivity)?.navigateTo(NavigationDestination.HOME)
             } catch (e: Exception) {
+                setVerifying(false)
+                // Raw exception text off the TV — see LoginFragment.
+                Log.w("TotpLoginFragment", "totp verify failed", e)
                 Toast.makeText(
                     requireContext(),
-                    getString(R.string.error_login) + ": " + (e.message ?: "Unknown error"),
+                    getString(R.string.error_login),
                     Toast.LENGTH_LONG,
                 ).show()
             }
         }
+    }
+
+    private fun setVerifying(busy: Boolean) {
+        verifying = busy
+        if (!isAdded) return
+        val a = findActionById(ACTION_VERIFY) ?: return
+        a.title = getString(if (busy) R.string.verifying else R.string.verify)
+        a.isEnabled = !busy
+        a.isFocusable = !busy
+        notifyActionChanged(findActionPositionById(ACTION_VERIFY))
     }
 }

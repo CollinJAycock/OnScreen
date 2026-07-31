@@ -119,6 +119,9 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             viewModel.discoverError.collectLatest { rebuildRows() }
         }
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.searchError.collectLatest { rebuildRows() }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.scope.collectLatest { rebuildRows() }
         }
         // Filter changes flow through visibleResults too, but binding
@@ -170,6 +173,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         val rawCount = viewModel.results.value.size
         val discover = viewModel.discover.value
         val discoverError = viewModel.discoverError.value
+        val searchError = viewModel.searchError.value
         val filters = viewModel.filters.value
 
         rowsAdapter.clear()
@@ -238,10 +242,23 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             )
         }
 
+        // The library search itself failed — say so, in the row label, rather
+        // than letting the "No results" header below claim the user's library
+        // does not contain what they asked for.
+        if (searchError != null) {
+            val emptyAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
+            rowsAdapter.add(
+                ListRow(HeaderItem(SEARCH_ERROR_HEADER_ID, searchError), emptyAdapter),
+            )
+        }
+
         // Nothing matched anywhere after a real query — show an explicit
         // "No results" header so the screen doesn't look idle or hung (only the
         // filter chips would otherwise render). Suppressed before the first query.
-        val nothing = library.isEmpty() && rawCount == 0 && discover.isEmpty() && discoverError == null
+        // searchError included: saying "No results found" when the search
+        // actually FAILED asserts something false about the user's own library.
+        val nothing = library.isEmpty() && rawCount == 0 && discover.isEmpty() &&
+            discoverError == null && searchError == null
         if (nothing && lastQuery.isNotBlank()) {
             val emptyAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             rowsAdapter.add(ListRow(HeaderItem(NO_RESULTS_HEADER_ID, getString(R.string.no_results)), emptyAdapter))
@@ -251,6 +268,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     companion object {
         private const val REQUEST_SPEECH = 1001
         private const val SCOPE_HEADER_ID = 5L
+        private const val SEARCH_ERROR_HEADER_ID = 6L
         private const val FILTER_HEADER_ID = 0L
         private const val LIBRARY_HEADER_ID = 1L
         private const val HIDDEN_HEADER_ID = 2L
