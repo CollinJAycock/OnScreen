@@ -107,19 +107,24 @@ class HomeFragment : BrowseSupportFragment() {
                             }
                         },
                     )
-                } else if (!hasContent && state.error == null) {
-                    // Home was the ONE list screen with no empty state. On a
-                    // freshly-installed server with no libraries yet, every hub
-                    // row returns null and the user was left staring at a single
-                    // "Browse" strip of five icons with nothing telling them
-                    // there is nothing to watch or what to do about it. The
-                    // other five list screens already call showEmpty.
-                    errorOverlay?.showEmpty(
-                        R.string.empty_home_title,
-                        R.string.empty_home_message,
-                    )
-                    lastBuiltState = null
                 } else {
+                    // NOTE: Home must NOT use ErrorOverlay.showEmpty.
+                    //
+                    // It did briefly, and that was a trap. showEmpty hides both
+                    // of the overlay's buttons and the overlay is opaque and
+                    // takes focus — and because it replaced the buildRows call
+                    // rather than accompanying it, the Browse strip never got
+                    // built. That strip is the ONLY place SettingsFragment is
+                    // instantiated in the whole app, so Settings, Sign out and
+                    // Change server all became unreachable; BACK on Home exits
+                    // to the launcher and relaunching lands in the same state.
+                    // Recovery was Clear Data.
+                    //
+                    // The other six screens can use showEmpty safely because
+                    // they are pushed with addToBackStack and BACK returns to
+                    // Home. Home is the root — it has no "back" — so its empty
+                    // state is a ROW inside the normal row set (see buildRows),
+                    // leaving every navigation affordance on screen.
                     errorOverlay?.hide()
                     if (state != lastBuiltState) {
                         lastBuiltState = state
@@ -296,6 +301,24 @@ class HomeFragment : BrowseSupportFragment() {
         }
         for (s in sections) if (s.key !in used) ordered.add(s)
         ordered.forEach { section -> section.build()?.let { rowsAdapter.add(it) } }
+
+        // Empty-state row, FIRST so it reads as the page's message — but as a
+        // row, not an overlay, so everything below stays reachable.
+        val hasContent = state.continueWatchingTV.isNotEmpty() ||
+            state.continueWatchingMovies.isNotEmpty() ||
+            state.continueWatchingOther.isNotEmpty() ||
+            state.recentlyAdded.isNotEmpty() ||
+            state.trending.isNotEmpty() ||
+            state.libraryPreviews.any { it.second.isNotEmpty() } ||
+            state.collections.isNotEmpty()
+        if (!hasContent) {
+            rowsAdapter.add(
+                ListRow(
+                    HeaderItem(headerId++, getString(R.string.empty_home_title)),
+                    ArrayObjectAdapter(cardPresenter),
+                ),
+            )
+        }
 
         // Browse row: Favorites / History / Settings.
         val navAdapter = ArrayObjectAdapter(navPresenter)

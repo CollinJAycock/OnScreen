@@ -304,6 +304,9 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
      *  photo is fine. */
     private var lastFailedItemId: String? = null
 
+    /** The "press OK for a slideshow" hint is shown once per visit. */
+    private var slideshowHintShown = false
+
     private fun showStatus(text: String) {
         statusLabel?.apply {
             this.text = text
@@ -360,6 +363,9 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
          *  once on a 1 GB TV stick. */
         private const val PAGE_FANOUT = 4
 
+        /** How long the one-time slideshow hint stays on screen. */
+        private const val SLIDESHOW_HINT_MS = 4000L
+
         fun newInstance(itemId: String): PhotoViewFragment =
             newInstance(itemId, emptyList(), 0)
 
@@ -404,17 +410,33 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         // user could not tell whether the app was broken, the photo was broken,
         // or it was still working — and had no way to retry.
         lastFailedItemId = null
-        showStatus(getString(R.string.photo_loading))
+        // Only announce loading when a slideshow ISN'T running. Otherwise the
+        // shared label flickered "▶ Slideshow" -> "Loading…" -> "▶ Slideshow"
+        // on every 4-second advance, which reads as a fault rather than progress.
+        if (slideshowJob?.isActive != true) showStatus(getString(R.string.photo_loading))
         val request = ImageRequest.Builder(requireContext())
             .data(url)
-            .target(
-                onStart = { showStatus(getString(R.string.photo_loading)) },
-                onSuccess = { result ->
+            // target(ImageView) + listener(...), NOT the lambda target overload.
+            //
+            // Coil only wires per-view request management for a ViewTarget: the
+            // ImageView overload builds one, and that is what disposes the
+            // view's PREVIOUS in-flight request. The three-lambda overload
+            // builds a plain Target, which skips that entirely — so arrowing
+            // quickly through a photo library left every earlier request alive,
+            // and whichever finished last won the ImageView regardless of which
+            // photo the user was actually on.
+            .target(img)
+            .listener(
+                onStart = {
+                    if (slideshowJob?.isActive != true) {
+                        showStatus(getString(R.string.photo_loading))
+                    }
+                },
+                onSuccess = { _, _ ->
                     lastFailedItemId = null
-                    img.setImageDrawable(result)
                     hideStatus()
                 },
-                onError = {
+                onError = { _, _ ->
                     // Remembered so OK can retry THIS photo.
                     lastFailedItemId = itemId
                     img.setImageDrawable(null)
@@ -423,6 +445,26 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
             )
             .build()
         requireContext().imageLoader.enqueue(request)
+
+        // Show the slideshow affordance once, on arrival. The key binding
+        // shipped last time but this string never rendered, so "press OK" was
+        // still undiscoverable — the exact complaint the change was meant to
+        // answer. Only when there is more than one photo (a slideshow of one is
+        // meaningless) and only while nothing else owns the status line.
+        if (!slideshowHintShown && siblingIds.size >= 2 && slideshowJob?.isActive != true) {
+            slideshowHintShown = true
+            statusLabel?.let { lbl ->
+                lbl.text = getString(R.string.photo_slideshow_hint)
+                lbl.visibility = View.VISIBLE
+                lbl.postDelayed({
+                    if (isAdded && slideshowJob?.isActive != true &&
+                        lbl.text == getString(R.string.photo_slideshow_hint)
+                    ) {
+                        lbl.visibility = View.GONE
+                    }
+                }, SLIDESHOW_HINT_MS)
+            }
+        }
 
         val label = positionLabel ?: return
         if (siblingIds.size >= 2) {

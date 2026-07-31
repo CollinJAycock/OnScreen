@@ -46,8 +46,17 @@ object Navigator {
             // book_author + book_series are the audiobook hierarchy
             // parents above an audiobook row; same shape as artist /
             // album, drilling renders the children list.
+            // "audiobook" belongs here. It used to fall to the catch-all and go
+            // straight to the player, which for a multi-file book — a container
+            // with chapter children and no files of its own — died instantly
+            // with "No playable file". The whole chapter screen was written and
+            // unreachable: DetailViewModel loads children for "audiobook",
+            // DetailFragment has a multi-file branch, and EpisodeAdapter already
+            // labels the children "Chapter n". Single-file books are better off
+            // here too — they get Resume / Play From Start, and the Chapters
+            // section stays hidden because the child list comes back empty.
             "show", "season", "artist", "album", "podcast",
-            "book_author", "book_series" ->
+            "book_author", "book_series", "audiobook" ->
                 DetailFragment.newInstance(itemId)
 
             // Movies route to detail too. The detail page already
@@ -75,7 +84,7 @@ object Navigator {
                 CollectionFragment.newInstance(itemId, "")
 
             // Default: anything ExoPlayer can play. Episodes, music
-            // tracks, audiobooks (single-file MVP), podcast episodes
+            // tracks, audiobook chapters, podcast episodes
             // — all leaf items the user has already drilled to via
             // the parent container's detail page, so a second detail
             // hop would be friction.

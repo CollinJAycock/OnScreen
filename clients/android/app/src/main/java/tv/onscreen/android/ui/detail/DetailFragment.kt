@@ -198,8 +198,15 @@ class DetailFragment : Fragment() {
             summaryView.visibility = View.GONE
         }
 
-        configurePlayButtons(item, btnPlay, btnFromStart)
+        // configureEpisodes FIRST: it is what assigns seasonMap, and
+        // configurePlayButtons reads seasonMap to tell a multi-file audiobook
+        // (a container with chapters) from a single-file one (a leaf). Run the
+        // other way round, seasonMap was still its emptyMap() initialiser on
+        // every first bind, so a multi-file book always took the leaf branch and
+        // Play called playItem() with the CONTAINER id — which has no files, so
+        // playback died with "No playable file".
         configureEpisodes(root, item, seasons)
+        configurePlayButtons(item, btnPlay, btnFromStart)
     }
 
     private fun configurePlayButtons(item: ItemDetail, btnPlay: Button, btnFromStart: Button, focusPlay: Boolean = true) {
@@ -208,6 +215,8 @@ class DetailFragment : Fragment() {
         // book has audiobook_chapter children and behaves like an
         // album. Pick the right branch at runtime by checking whether
         // the children load returned anything.
+        // Read the freshly-loaded children, not the stale field — see the
+        // ordering note in bindDetail.
         val isMultiFileAudiobook = item.type == "audiobook" &&
             seasonMap.values.any { it.isNotEmpty() }
         when {

@@ -113,8 +113,15 @@ class ServerSetupFragment : GuidedStepSupportFragment() {
         connecting = busy
         val a = findActionById(ACTION_CONNECT) ?: return
         a.title = getString(if (busy) R.string.connecting else R.string.connect)
+        // isEnabled alone. Do NOT also clear isFocusable: the stylist maps
+        // that to setFocusable(false) on the row that currently HOLDS focus,
+        // and View.setFlags then calls clearFocus(refocus = false) — the
+        // parent is explicitly told not to hand focus anywhere. The whole
+        // screen lost its focus ring for the duration of the request, and a
+        // user pressing UP/DOWN mid-request got nothing. isEnabled already
+        // dims the row and already blocks a re-press, and the busy flag
+        // guards the handler regardless.
         a.isEnabled = !busy
-        a.isFocusable = !busy
         notifyActionChanged(findActionPositionById(ACTION_CONNECT))
     }
 }

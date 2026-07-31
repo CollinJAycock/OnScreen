@@ -554,7 +554,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     // exiting playback (the button was focused, so BACK would
                     // otherwise fall through to Leanback and pop the player).
                     shownSkipMarkerStartMs?.let { dismissedMarkers.add(it) }
-                    hideSkipMarker(); true
+                    hideSkipMarker(userAction = true); true
                 } else {
                     false
                 }
@@ -569,18 +569,25 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             dismissedMarkers.add(marker.start_ms)
             val targetPlayerMs = (marker.end_ms - viewModel.hlsOffsetMs).coerceAtLeast(0)
             player?.seekTo(targetPlayerMs)
-            hideSkipMarker()
+            hideSkipMarker(userAction = true)
         }
         overlay.visibility = View.VISIBLE
         overlay.requestFocus()
         shownSkipMarkerStartMs = marker.start_ms
     }
 
-    private fun hideSkipMarker() {
+    /**
+     * @param userAction true when the user dismissed the prompt themselves
+     *   (pressed Skip, or BACK). False when the window merely elapsed or
+     *   playback paused — in that case the user never asked for anything, so
+     *   putting the transport bar on screen would be an unprompted interruption
+     *   on every episode that has an intro marker.
+     */
+    private fun hideSkipMarker(userAction: Boolean = false) {
         shownSkipMarkerStartMs = null
         val hadFocus = skipMarkerOverlay?.hasFocus() == true
         skipMarkerOverlay?.visibility = View.GONE
-        if (hadFocus) restoreFocusFromOverlay()
+        if (hadFocus) restoreFocusFromOverlay(showBar = userAction)
     }
 
     /**
@@ -596,13 +603,27 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      * subtitle / chapter / speed buttons could not be opened again for the rest
      * of the item. Pressing Skip Intro effectively disabled the player's UI.
      *
-     * showControlsOverlay puts focus somewhere Leanback owns and understands.
-     * It does mean the transport bar appears for a moment after a skip; that is
-     * the deliberate trade, and the bar auto-hides on its usual timer.
+     * Focus goes into leanback's controls dock, which descends into the rows'
+     * VerticalGridView — the view leanback's own key interceptor is attached to.
+     * (getVerticalGridView() is package-private in leanback 1.0.0, so the dock
+     * id is the reachable handle.)
+     *
+     * @param showBar surface the transport bar as well. Only on a user action:
+     *   see hideSkipMarker.
+     *
+     * tickle(), NOT showControlsOverlay(). showControlsOverlay shows the bar but
+     * never arms the auto-hide timer — startFadeTimer is only reached from
+     * setFadingEnabled, onResume and tickle() — so the bar it raised sat there
+     * permanently over the picture. tickle() is stopFadeTimer + showControlsOverlay
+     * + startFadeTimer, and is what leanback itself calls on user input.
      */
-    private fun restoreFocusFromOverlay() {
+    private fun restoreFocusFromOverlay(showBar: Boolean) {
         if (!isAdded) return
-        showControlsOverlay(true)
+        val dock = view?.findViewById<View>(androidx.leanback.R.id.playback_controls_dock)
+        val took = dock?.requestFocus() == true
+        // Fall back to tickle() when the dock refused focus, so the D-pad can
+        // never end up stranded on a hidden overlay.
+        if (showBar || !took) tickle()
     }
 
     /** Show/hide a centered indeterminate spinner while the player buffers — the
@@ -648,7 +669,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // bar that slides up from the bottom edge.
             setBottomPaddingFraction(SUBTITLE_BOTTOM_PADDING_FRACTION)
         }
-        rootContainer.addView(sv)
+        // Insert BENEATH leanback's transport chrome, not on top of it.
+        // A plain addView appends as the last child, which put the caption
+        // layer above playback_controls_dock — so raising the transport bar
+        // drew the bar under the cues instead of over them, and the
+        // bottom-padding "clearance" below could never help.
+        val dock = rootContainer.findViewById<View>(androidx.leanback.R.id.playback_controls_dock)
+        val dockIndex = if (dock != null) rootContainer.indexOfChild(dock) else -1
+        if (dockIndex >= 0) rootContainer.addView(sv, dockIndex) else rootContainer.addView(sv)
         subtitleView = sv
         return sv
     }
@@ -1566,7 +1594,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             upNextJob = null
         }
         // Same stranding as the skip button — the card owns focus while visible.
-        if (hadFocus) restoreFocusFromOverlay()
+        if (hadFocus) restoreFocusFromOverlay(showBar = true)
     }
 
     private fun goToNextEpisode(ep: ChildItem) {

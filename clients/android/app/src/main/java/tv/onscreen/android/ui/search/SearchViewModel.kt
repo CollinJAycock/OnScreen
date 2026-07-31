@@ -178,13 +178,14 @@ class SearchViewModel @Inject constructor(
             }
             val libResult = libraryDeferred.await()
             val discoverResult = discoverDeferred.await()
-            // On failure keep whatever was on screen. Every keystroke re-fires
-            // the search, so blanking on a transient blip replaced a good result
-            // list with a false "No results found" that stuck until the user
-            // edited the query again.
-            if (libResult.error == null) {
-                _results.value = libResult.items
-            }
+            // On failure CLEAR the results. Keeping them was meant to survive a
+            // transient blip mid-typing, but it left the previous query's hits
+            // sitting under the "In your library" header while the error row
+            // said the search had failed — so the screen asserted that stale
+            // list matched the new query. The error row is the honest state; an
+            // empty list beneath it is not a regression because the row itself
+            // explains why, and "No results found" is separately suppressed.
+            _results.value = libResult.items
             _searchError.value = libResult.error
             _discover.value = discoverResult.items.filter { !it.in_library }
             _discoverError.value = discoverResult.errorReason
