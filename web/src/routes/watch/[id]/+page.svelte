@@ -800,9 +800,18 @@
   // pause at 40:00 and press play, and 40:00 became the "PTS offset" —
   // permanently desyncing every subtitle by the pause position.
   let hlsPtsCapturePending = false;
-  // Fatal MEDIA_ERROR recovery budget per attach; reset on `playing`.
+  // Fatal MEDIA_ERROR recovery budget per attach.
   let mediaErrorRecoveries = 0;
   const maxMediaErrorRecoveries = 2;
+  // When the last fatal media error happened. The budget is refilled only
+  // after a QUIET stretch of real playback — see onPlaying. Refilling on any
+  // `playing` made the bound useless: hls.js's recoverMediaError flushes and
+  // re-appends, which decodes just enough to fire `playing` before failing
+  // again, so an undecodable stream reset the counter every cycle and looped
+  // "recovery (1/2)" forever — the exact unbounded churn the budget exists to
+  // stop, with the escalation never reached.
+  let lastMediaErrorAt = 0;
+  const mediaErrorQuietMs = 30_000;
   // One codec escalation per item. Survives the re-attach that escalation
   // itself performs (unlike codecEscalationArmed, which re-arms per attach),
   // so a codec the browser truly cannot decode can't loop us through session
@@ -2057,13 +2066,15 @@
         console.warn('[HLS] error', data.type, data.details, data.fatal, data);
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          lastMediaErrorAt = Date.now();
           // Media decode error — attempt HLS.js recovery, BOUNDED. On a
           // genuinely undecodable stream every recovery attempt fails with
           // another fatal MEDIA_ERROR, and the unbounded retry spun
           // recover → fail → recover forever: black screen, pegged CPU, a
-          // live server session, and no error ever surfaced. Recoveries
-          // reset on a successful `playing` (see onPlaying), so an
-          // occasional mid-stream hiccup still gets its second chance later.
+          // live server session, and no error ever surfaced. The budget is
+          // refilled only after a quiet stretch of real playback (see
+          // onPlaying), so an occasional mid-stream hiccup still gets a
+          // second chance later while a storm marches to the escalation.
           if (mediaErrorRecoveries < maxMediaErrorRecoveries) {
             mediaErrorRecoveries++;
             console.warn(`[HLS] attempting media error recovery (${mediaErrorRecoveries}/${maxMediaErrorRecoveries})`);
@@ -2212,9 +2223,14 @@
   function onWaiting()  { buffering = true; }
   function onPlaying()  {
     buffering = false;
-    // A successful `playing` proves the pipeline decodes — refill the fatal
-    // media-error recovery budget so a later mid-stream hiccup gets retried.
-    mediaErrorRecoveries = 0;
+    // Refill the media-error budget only after a QUIET stretch of playback.
+    // A `playing` during an error storm proves nothing — recoverMediaError
+    // decodes a frame or two before the next failed append — so refilling on
+    // every one of them let a broken stream churn forever without ever
+    // reaching the escalation. Sustained playback is the real signal.
+    if (mediaErrorRecoveries > 0 && Date.now() - lastMediaErrorAt > mediaErrorQuietMs) {
+      mediaErrorRecoveries = 0;
+    }
     // Capture PTS offset on the FIRST play of an HLS session only. If
     // videoEl.currentTime is well above 0 but hlsOffsetSec is 0 (started from
     // the beginning), the source has shifted MPEG-TS timestamps; subtract it
