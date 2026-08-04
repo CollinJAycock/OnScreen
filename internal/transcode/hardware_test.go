@@ -29,6 +29,39 @@ func TestBestEncoder_AMF(t *testing.T) {
 	}
 }
 
+// TestBestH264Encoder pins the worker's family-honesty fallback: a job with
+// neither PreferHEVC nor PreferAV1 means the client CANNOT decode those
+// codecs (possibly proven at runtime — the demotion retry), so the default
+// pick must land on an H.264-family encoder even when an operator override
+// pins hevc_*/av1_* first — or alone, where software is the answer.
+func TestBestH264Encoder(t *testing.T) {
+	// HEVC pinned first (operator override) — skip to the H.264 entry.
+	got := BestH264Encoder([]Encoder{EncoderHEVCNVENC, EncoderNVENC, EncoderSoftware})
+	if got != EncoderNVENC {
+		t.Errorf("hevc-first list: want EncoderNVENC, got %s", got)
+	}
+	// HEVC/AV1-only list — fall back to software (always H.264-capable).
+	got = BestH264Encoder([]Encoder{EncoderHEVCNVENC, EncoderAV1NVENC})
+	if got != EncoderSoftware {
+		t.Errorf("hevc/av1-only list: want EncoderSoftware fallback, got %s", got)
+	}
+	// Empty list — software.
+	if got = BestH264Encoder(nil); got != EncoderSoftware {
+		t.Errorf("nil list: want EncoderSoftware, got %s", got)
+	}
+	// Normal H.264-first list — unchanged from BestEncoder.
+	got = BestH264Encoder([]Encoder{EncoderNVENC, EncoderHEVCNVENC, EncoderSoftware})
+	if got != EncoderNVENC {
+		t.Errorf("h264-first list: want EncoderNVENC, got %s", got)
+	}
+	// libx265 (software HEVC) is HEVC-family, not "software" — must be
+	// skipped, not mistaken for the H.264 fallback.
+	got = BestH264Encoder([]Encoder{EncoderHEVCSoftware, EncoderSoftware})
+	if got != EncoderSoftware {
+		t.Errorf("libx265-first list: want EncoderSoftware, got %s", got)
+	}
+}
+
 func TestBestAV1Encoder(t *testing.T) {
 	// Empty list / no AV1 encoder → empty string. Worker callers
 	// distinguish "no AV1 available" from "use this AV1 encoder" via

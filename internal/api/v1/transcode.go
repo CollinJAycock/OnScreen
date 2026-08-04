@@ -261,8 +261,14 @@ type transcodeStartRequest struct {
 	PositionMS       int64   `json:"position_ms"`        // start offset in ms
 	VideoCopy        bool    `json:"video_copy"`         // true = copy video stream, only transcode audio
 	AudioStreamIndex *int    `json:"audio_stream_index"` // nil = default (first) audio stream
-	SupportsHEVC     bool    `json:"supports_hevc"`      // client can decode HEVC (H.265) output
-	SupportsAV1      bool    `json:"supports_av1"`       // client can decode AV1 output — used to auto-prefer AV1 re-encode for AV1 source files
+	// SupportsHEVC/SupportsAV1 are TRI-STATE: absent (nil) defers to the
+	// X-Client-Capabilities header; an explicit value overrides the header in
+	// BOTH directions. Explicit false matters — it's how a client reports a
+	// codec its own capability probe claimed but a real decode disproved
+	// (Windows Chrome answers isTypeSupported=true for HEVC without the HEVC
+	// Video Extensions installed, then rejects the append). See clientCaps.
+	SupportsHEVC *bool `json:"supports_hevc"` // client can decode HEVC (H.265) output
+	SupportsAV1  *bool `json:"supports_av1"`  // client can decode AV1 output — used to auto-prefer AV1 re-encode for AV1 source files
 	// MaxAudioChannels caps the transcoded AAC channel count. nil/0 preserves
 	// the source layout (5.1/7.1 stays multichannel); a stereo-only client can
 	// send 2 to force a downmix.
@@ -272,16 +278,29 @@ type transcodeStartRequest struct {
 // clientCaps resolves the effective client playback capabilities for a transcode
 // request. The source of truth is the X-Client-Capabilities header (parsed into a
 // transcode.ClientCapabilities — codecs, channels, resolution, bit-depth); the
-// legacy per-request booleans (supports_hevc/av1, max_audio_channels) are folded
-// in for back-compat with clients that haven't migrated to the header yet. When
-// no header is present the result mirrors today's boolean-driven behavior, so
-// existing clients are unaffected. See docs/capability-profiles.md.
+// per-request booleans (supports_hevc/av1, max_audio_channels) are tri-state
+// refinements: absent defers to the header (so header-only clients and clients
+// that haven't migrated off the booleans both keep today's behavior), present
+// wins in both directions. See docs/capability-profiles.md.
 func clientCaps(r *http.Request, body transcodeStartRequest) (caps transcode.ClientCapabilities, hasProfile bool) {
 	raw := r.Header.Get("X-Client-Capabilities")
 	caps = transcode.ParseCapabilities(raw)
-	// Legacy booleans OR-in (never downgrade a header-declared capability).
-	caps.SupportsHEVC = caps.SupportsHEVC || body.SupportsHEVC
-	caps.SupportsAV1 = caps.SupportsAV1 || body.SupportsAV1
+	// An explicit body boolean overrides the header — INCLUDING downgrades.
+	// The header is memoized from the client's capability probe, and probes
+	// lie: Windows Chrome enumerates a platform HEVC decoder and reports
+	// isTypeSupported=true with the HEVC Video Extensions missing, then MSE
+	// rejects the actual append. When the player proves a codec undecodable it
+	// re-requests with supports_hevc=false — under the old OR-in ("never
+	// downgrade a header claim") that demotion was discarded, preferHEVC stayed
+	// on, and the fallback transcode came back as the very codec that had just
+	// failed. Absent (nil) still means "header stands", so no-opinion clients
+	// lose nothing.
+	if body.SupportsHEVC != nil {
+		caps.SupportsHEVC = *body.SupportsHEVC
+	}
+	if body.SupportsAV1 != nil {
+		caps.SupportsAV1 = *body.SupportsAV1
+	}
 	// An explicit per-request channel cap (legacy clients, test injection) wins.
 	if body.MaxAudioChannels != nil && *body.MaxAudioChannels > 0 {
 		caps.MaxAudioChannels = *body.MaxAudioChannels

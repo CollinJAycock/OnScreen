@@ -114,7 +114,7 @@ func TestStart_TranscodeSessionUsesClientPreference(t *testing.T) {
 	// An HEVC source re-encoded for a client that cannot decode HEVC comes out
 	// as H.264 in MPEG-TS, despite the source being HEVC.
 	h, store := newTestHandlerWithCodec(t, "hevc")
-	sess := startSession(t, h, store, transcodeStartRequest{Height: 720, SupportsHEVC: false})
+	sess := startSession(t, h, store, transcodeStartRequest{Height: 720})
 	if got := sess.VideoOutput().SegExt(); got != ".ts" {
 		t.Errorf("H.264 re-encode of an HEVC source advertises %q, want \".ts\" — "+
 			"the source codec must not leak into a re-encode's container", got)
@@ -122,8 +122,9 @@ func TestStart_TranscodeSessionUsesClientPreference(t *testing.T) {
 
 	// Same source, same height, but a client that speaks HEVC: source
 	// preservation kicks in and the output really is HEVC → fMP4.
+	hevcYes := true
 	h2, store2 := newTestHandlerWithCodec(t, "hevc")
-	sess2 := startSession(t, h2, store2, transcodeStartRequest{Height: 720, SupportsHEVC: true})
+	sess2 := startSession(t, h2, store2, transcodeStartRequest{Height: 720, SupportsHEVC: &hevcYes})
 	if got := sess2.VideoOutput().SegExt(); got != ".m4s" {
 		t.Errorf("HEVC re-encode advertises %q, want \".m4s\"", got)
 	}

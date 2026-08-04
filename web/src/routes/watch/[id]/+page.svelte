@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { progressUpdates } from '$lib/stores/notifications';
-  import { detectClientCaps, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
+  import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
   import { capabilities } from '$lib/stores/capabilities';
   import { isTauri, nativeDownload } from '$lib/native';
   import {
@@ -701,18 +701,34 @@
   let clientSupportsAV1 = clientCaps.av1;
   const clientSupportsHDR = clientCaps.hdr;
 
-  /** demoteCodecClaim marks a codec undecodable after a real decode failure,
-   *  for both the local play-decision helpers and the server-facing flags. */
+  /** demoteCodecClaim marks a codec undecodable after a real decode failure —
+   *  in EVERY place the claim lives, because a partial demotion is no demotion:
+   *  - page-local caps + booleans (the local play-decision heuristics and the
+   *    supports_hevc/av1 body flags on transcode-start);
+   *  - the module-level demotion registry (demoteCodec), which invalidates the
+   *    memoized X-Client-Capabilities header — the one the server's preferHEVC
+   *    actually trusts. Demoting only page state left that header claiming
+   *    h265 on the escalation request itself, so the "fallback" transcode came
+   *    back as HEVC again and failed identically;
+   *  - the cached server verdict, which was computed from the undemoted claim
+   *    (clearing decisionFetchedFor lets the reactive fetch re-run against the
+   *    rebuilt header). */
   function demoteCodecClaim(codec: string | undefined) {
     const c = (codec ?? '').toLowerCase();
     if (c === 'hevc' || c === 'h265') {
       clientCaps.hevc = false;
       clientCaps.hevc10bit = false;
       clientSupportsHEVC = false;
+      demoteCodec('hevc');
     } else if (c === 'av1') {
       clientCaps.av1 = false;
       clientSupportsAV1 = false;
+      demoteCodec('av1');
+    } else {
+      return; // not a demotable claim — keep the cached verdict
     }
+    serverDecision = null;
+    decisionFetchedFor = ''; // re-fetch the verdict with the demoted header
   }
   // Play-decision wrappers. The server's capability-profile decision
   // (POST /items/{id}/playback-decision, from the X-Client-Capabilities header)
@@ -725,6 +741,12 @@
   let decisionFetchedFor = '';
 
   function serverDecisionFor(file: ItemFile | undefined): string | null {
+    // A verdict for a file whose codec has since been runtime-demoted is
+    // stale by construction — it was computed from the capability claim the
+    // decode failure just disproved. Ignoring it (rather than trusting a
+    // fetch that resolved after the demotion) drops us to the local
+    // heuristics, which are demotion-aware.
+    if (file && isCodecDemoted(file.video_codec)) return null;
     return file && serverDecision && serverDecision.fileId === file.id ? serverDecision.decision : null;
   }
   function canDirectPlay(file: ItemFile | undefined): boolean {
@@ -823,6 +845,13 @@
    *  stream isn't already a plain H.264 transcode (which would mean the
    *  failure is something a re-encode can't fix). */
   function canEscalateAfterMediaError(): boolean {
+    // A pipeline switch is mid-flight: this fatal came from the dying
+    // instance. Don't burn the once-per-item escalation on it — the call
+    // would no-op against switchToTranscode's re-entrancy guard, latching
+    // mediaErrorEscalated without any escalation actually happening, and the
+    // NEW pipeline (which gets its own decode attempt) would then be denied
+    // its one legitimate escalation.
+    if (switchingTranscode) return false;
     if (mediaErrorEscalated) return false;
     const file = item?.files?.[0];
     if (!file) return false;
@@ -1910,8 +1939,12 @@
     // video element stays frozen/black with no loading indicator, and
     // users think the page is broken.
     buffering = true;
-    await stopTranscodeSession();
+    // Destroy the old hls.js instance BEFORE the async stop: it mirrors
+    // switchToDirectPlay's order and closes the window where the dying
+    // instance keeps firing fatal events into the error handler while the
+    // stop request is on the wire.
     destroyHls();
+    await stopTranscodeSession();
 
     // Warn admin when HDR content on an SDR screen requires tonemapping transcode.
     const file = item.files?.[0];
@@ -2210,10 +2243,19 @@
         ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
         : (item.view_offset_ms > 0 ? item.view_offset_ms : 0);
       if (!hlsActive && canRemuxVideo(file)) {
-        // Direct play failed — try remux first.
+        // Direct play failed — try remux first. No demotion yet: a failed
+        // progressive <src> play is at least as likely a CONTAINER problem
+        // (browser can't demux Matroska) as a codec one, and the remux
+        // resolves exactly that.
         switchToTranscode(0, posMs, true);
       } else {
         // Remux also failed (hlsIsRemux) or no remux option — full transcode.
+        // When the failed stream came through HLS, MSE accepted the bytes and
+        // the decoder produced zero frames: that's the codec claim disproven,
+        // same as a rejected append. Demote it, or the server's
+        // source-preservation re-encodes an HEVC source straight back to the
+        // codec that just produced no pictures.
+        if (hlsActive) demoteCodecClaim(file.video_codec);
         const h = file.resolution_h ?? 1080;
         switchToTranscode(h, posMs);
       }

@@ -115,6 +115,20 @@ func BestEncoder(encoders []Encoder) Encoder {
 	return encoders[0]
 }
 
+// BestH264Encoder returns the highest-priority encoder that emits H.264 — the
+// first list entry that is neither HEVC- nor AV1-family — falling back to the
+// software encoder (libx264, always available) when the list has none, e.g. an
+// operator override pinning hevc_nvenc alone. Used to keep the worker's
+// default pick honest when the job requested plain H.264 output.
+func BestH264Encoder(encoders []Encoder) Encoder {
+	for _, e := range encoders {
+		if !IsHEVCEncoder(e) && !IsAV1Encoder(e) {
+			return e
+		}
+	}
+	return EncoderSoftware
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil

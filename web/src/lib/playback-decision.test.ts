@@ -1,5 +1,15 @@
-import { describe, it, expect } from 'vitest';
-import { canDirectPlay, canRemuxVideo, videoBitDepthOK, type ClientCaps } from './playback-decision';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  canDirectPlay,
+  canRemuxVideo,
+  videoBitDepthOK,
+  detectClientCaps,
+  clientCapabilitiesHeader,
+  demoteCodec,
+  isCodecDemoted,
+  resetDemotedCodecs,
+  type ClientCaps,
+} from './playback-decision';
 import type { ItemFile } from './api';
 
 const FULL: ClientCaps = { hevc: true, hevc10bit: true, av1: true, hdr: true };
@@ -97,5 +107,82 @@ describe('canDirectPlay audio channel ceiling', () => {
     expect(canDirectPlay(audio(6), BASIC)).toBe(true);
     expect(canDirectPlay(audio(2), BASIC)).toBe(true);
     expect(canDirectPlay(f({ container: 'mp4', video_codec: 'h264', audio_codec: 'aac', faststart: true }), BASIC)).toBe(true);
+  });
+});
+
+// ── Runtime codec demotion ───────────────────────────────────────────────────
+//
+// The QA failure these pin: Windows Chrome's isTypeSupported answers true for
+// every HEVC probe with the HEVC Video Extensions missing, then MSE rejects
+// the actual append. The demotion must reach BOTH consumers of the claim —
+// detectClientCaps (local heuristics) and the memoized X-Client-Capabilities
+// header (what the server's preferHEVC trusts). Demoting only page-local state
+// left the header claiming h265, so the "fallback" transcode came back as the
+// very codec that had just failed.
+describe('runtime codec demotion', () => {
+  beforeEach(() => {
+    resetDemotedCodecs();
+    // A browser whose probe claims everything — the liar in the QA repro.
+    vi.stubGlobal('MediaSource', { isTypeSupported: () => true });
+  });
+  afterEach(() => {
+    resetDemotedCodecs();
+    vi.unstubAllGlobals();
+  });
+
+  it('demoteCodec("hevc") rebuilds the MEMOIZED header without h265 and drops maxbitdepth to 8', () => {
+    const before = clientCapabilitiesHeader(); // memoize from the lying probe
+    expect(before).toContain('h265');
+    expect(before).toContain('maxbitdepth=10');
+
+    demoteCodec('hevc');
+
+    const after = clientCapabilitiesHeader();
+    expect(after).not.toContain('h265');
+    expect(after).toContain('maxbitdepth=8'); // hevc10bit falls with hevc
+    expect(after).toContain('h264'); // everything else intact
+    expect(after).toContain('av1');
+  });
+
+  it('demoteCodec("av1") drops only av1', () => {
+    clientCapabilitiesHeader();
+    demoteCodec('av1');
+    const after = clientCapabilitiesHeader();
+    expect(after).not.toContain('av1');
+    expect(after).toContain('h265');
+    expect(after).toContain('maxbitdepth=10');
+  });
+
+  it('detectClientCaps overrides the probe for demoted codecs', () => {
+    expect(detectClientCaps()).toMatchObject({ hevc: true, hevc10bit: true, av1: true });
+    demoteCodec('hevc');
+    expect(detectClientCaps()).toMatchObject({ hevc: false, hevc10bit: false, av1: true });
+    demoteCodec('av1');
+    expect(detectClientCaps()).toMatchObject({ hevc: false, hevc10bit: false, av1: false });
+  });
+
+  it('isCodecDemoted maps file codec strings onto the registry', () => {
+    expect(isCodecDemoted('hevc')).toBe(false);
+    demoteCodec('hevc');
+    expect(isCodecDemoted('hevc')).toBe(true);
+    expect(isCodecDemoted('h265')).toBe(true);
+    expect(isCodecDemoted('HEVC')).toBe(true);
+    expect(isCodecDemoted('av1')).toBe(false);
+    expect(isCodecDemoted('h264')).toBe(false);
+    expect(isCodecDemoted(undefined)).toBe(false);
+  });
+
+  it('persists demotions to sessionStorage so the next page load starts demoted', () => {
+    demoteCodec('hevc');
+    expect(JSON.parse(sessionStorage.getItem('onscreen:demoted-codecs') ?? '[]')).toContain('hevc');
+    // resetDemotedCodecs (tests / troubleshooting) clears the persisted state too.
+    resetDemotedCodecs();
+    expect(sessionStorage.getItem('onscreen:demoted-codecs')).toBeNull();
+  });
+
+  it('is idempotent', () => {
+    demoteCodec('hevc');
+    demoteCodec('hevc');
+    expect(JSON.parse(sessionStorage.getItem('onscreen:demoted-codecs') ?? '[]')).toEqual(['hevc']);
   });
 });

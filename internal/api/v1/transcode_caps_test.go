@@ -8,10 +8,13 @@ import (
 
 // TestClientCaps covers how the transcode handler resolves effective client
 // capabilities: the X-Client-Capabilities header is the source of truth, the
-// legacy supports_*/max_audio_channels booleans fold in for back-compat, and an
-// explicit per-request channel cap overrides. See clientCaps in transcode.go.
+// supports_*/max_audio_channels body fields are tri-state refinements (absent
+// defers to the header; present overrides IN BOTH DIRECTIONS — explicit false
+// is the runtime codec demotion after a proven decode failure). See clientCaps
+// in transcode.go.
 func TestClientCaps(t *testing.T) {
 	chanPtr := func(n int) *int { return &n }
+	boolPtr := func(b bool) *bool { return &b }
 
 	tests := []struct {
 		name        string
@@ -29,7 +32,7 @@ func TestClientCaps(t *testing.T) {
 		},
 		{
 			name:        "no header, legacy booleans honored",
-			body:        transcodeStartRequest{SupportsHEVC: true, MaxAudioChannels: chanPtr(2)},
+			body:        transcodeStartRequest{SupportsHEVC: boolPtr(true), MaxAudioChannels: chanPtr(2)},
 			wantHEVC:    true,
 			wantChans:   2,
 			wantProfile: false,
@@ -56,10 +59,42 @@ func TestClientCaps(t *testing.T) {
 			wantProfile: true,
 		},
 		{
-			name:        "legacy boolean never downgrades a header capability",
+			// The runtime demotion path: the header is memoized from a
+			// capability probe that LIED (Windows Chrome, isTypeSupported=true
+			// with the HEVC extensions missing), and the player re-requests
+			// with an explicit false after the decode failure. That false must
+			// win or the fallback transcode is re-encoded straight back to the
+			// codec that just failed.
+			name:        "explicit body false downgrades a header capability",
 			header:      "videoDecoder=h264:h265", // hevc in header
-			body:        transcodeStartRequest{SupportsHEVC: false},
+			body:        transcodeStartRequest{SupportsHEVC: boolPtr(false)},
+			wantHEVC:    false,
+			wantChans:   6,
+			wantProfile: true,
+		},
+		{
+			name:        "explicit body false downgrades a header AV1 claim",
+			header:      "videoDecoder=h264:av1",
+			body:        transcodeStartRequest{SupportsAV1: boolPtr(false)},
+			wantAV1:     false,
+			wantChans:   6,
+			wantProfile: true,
+		},
+		{
+			name:        "explicit body true upgrades a header without the codec",
+			header:      "videoDecoder=h264",
+			body:        transcodeStartRequest{SupportsHEVC: boolPtr(true)},
 			wantHEVC:    true,
+			wantChans:   6,
+			wantProfile: true,
+		},
+		{
+			// Absent (nil) booleans defer to the header — a header-only client
+			// (the decide endpoint posts just {file_id}) keeps its claims.
+			name:        "absent booleans leave header claims standing",
+			header:      "videoDecoder=h264:h265:av1",
+			wantHEVC:    true,
+			wantAV1:     true,
 			wantChans:   6,
 			wantProfile: true,
 		},

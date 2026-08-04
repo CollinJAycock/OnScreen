@@ -577,6 +577,17 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		enc = Encoder(job.Encoder)
 		if enc == "" {
 			enc = BestEncoder(w.encoders)
+			// The default pick must not exceed the codec families the API
+			// asked for. BestEncoder is simply encoders[0], and an operator
+			// override (TRANSCODE_ENCODERS / DB transcode_encoders) can pin an
+			// hevc_*/av1_* encoder first — the Prefer* blocks below only ever
+			// upgrade TOWARD those families, never away. Without this,
+			// PreferHEVC=false still emitted HEVC, which turned the client's
+			// codec demotion ("browser proved it can't decode HEVC, retry")
+			// into the same undecodable stream again.
+			if (IsHEVCEncoder(enc) && !job.PreferHEVC) || (IsAV1Encoder(enc) && !job.PreferAV1) {
+				enc = BestH264Encoder(w.encoders)
+			}
 		}
 		// AV1 takes priority over HEVC when requested — the natural
 		// trigger is "source is AV1, client supports AV1, we have an

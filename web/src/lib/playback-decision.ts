@@ -117,10 +117,81 @@ export function canRemuxVideo(file: ItemFile | undefined, caps: ClientCaps): boo
   return remuxableVideoCodecs(caps).has(videoCodec);
 }
 
+// ── Runtime codec demotion ───────────────────────────────────────────────────
+//
+// MediaSource.isTypeSupported is a CLAIM, not a promise. Windows Chrome
+// enumerates a platform HEVC decoder and answers true for every HEVC probe,
+// then rejects the actual SourceBuffer append when the Microsoft HEVC Video
+// Extensions aren't installed. When playback proves a claim wrong (the watch
+// page's decode-failure escalation), the codec is demoted HERE — the single
+// registry both consumers read — so the local play-decision heuristics
+// (detectClientCaps) and the server-facing X-Client-Capabilities header
+// (clientCapabilitiesHeader) agree the codec is gone. Demoting only page-local
+// state was the original sin: the memoized header kept claiming h265, the
+// server's preferHEVC trusted it, and the "fallback" transcode came back as
+// the very codec that had just failed.
+//
+// Persisted in sessionStorage so a page reload or the user's next title
+// doesn't restart the probe→fail→demote cycle from scratch. Session-scoped on
+// purpose: installing the HEVC extensions mid-browser-session is rare, and a
+// wrong demotion costs one conservative transcode, not a broken stream.
+
+const DEMOTED_KEY = 'onscreen:demoted-codecs';
+const demotedCodecs = new Set<DemotableCodec>(readPersistedDemotions());
+
+export type DemotableCodec = 'hevc' | 'av1';
+
+function readPersistedDemotions(): DemotableCodec[] {
+  try {
+    if (typeof sessionStorage === 'undefined') return []; // SSR
+    const v = JSON.parse(sessionStorage.getItem(DEMOTED_KEY) ?? '[]');
+    return Array.isArray(v) ? v.filter((c): c is DemotableCodec => c === 'hevc' || c === 'av1') : [];
+  } catch {
+    return []; // corrupted entry / storage blocked — start clean
+  }
+}
+
+/** demoteCodec records that the browser PROVED it cannot decode a codec it
+ *  claimed, drops it from future detectClientCaps() results, and invalidates
+ *  the memoized X-Client-Capabilities header so the very next API call tells
+ *  the server the truth. Idempotent. */
+export function demoteCodec(codec: DemotableCodec): void {
+  if (demotedCodecs.has(codec)) return;
+  demotedCodecs.add(codec);
+  capsHeaderCache = null; // rebuild without the demoted codec on next use
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(DEMOTED_KEY, JSON.stringify([...demotedCodecs]));
+    }
+  } catch {
+    // Storage blocked (private mode, quota) — the in-memory demotion still
+    // covers this page's lifetime, which is what correctness needs.
+  }
+}
+
+/** isCodecDemoted reports whether a media codec string (as stored on the file
+ *  row — 'hevc', 'h265', 'av1', …) has been runtime-demoted. */
+export function isCodecDemoted(codec: string | undefined): boolean {
+  const c = (codec ?? '').toLowerCase();
+  if (c === 'hevc' || c === 'h265') return demotedCodecs.has('hevc');
+  if (c === 'av1') return demotedCodecs.has('av1');
+  return false;
+}
+
+/** resetDemotedCodecs clears the demotion registry (tests only). */
+export function resetDemotedCodecs(): void {
+  demotedCodecs.clear();
+  capsHeaderCache = null;
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(DEMOTED_KEY);
+  } catch { /* ignore */ }
+}
+
 /** Probe the running browser's decode capabilities via MediaSource Extensions
  *  + a media query. HLS.js transmuxes MPEG-TS → fMP4 before feeding MSE, so we
  *  check mp4 codec strings. Safe in non-browser / SSR contexts (returns all
- *  false). */
+ *  false). Runtime demotions override the probe: a codec the browser has
+ *  PROVEN it can't decode stays false no matter what isTypeSupported says. */
 export function detectClientCaps(): ClientCaps {
   const isTypeSupported = (s: string): boolean => {
     try {
@@ -129,10 +200,11 @@ export function detectClientCaps(): ClientCaps {
       return false; // MSE unavailable
     }
   };
+  const hevcOK = !demotedCodecs.has('hevc');
   return {
-    hevc: isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"'),
-    hevc10bit: isTypeSupported('video/mp4; codecs="hvc1.2.4.L150.B0"'),
-    av1: isTypeSupported('video/mp4; codecs="av01.0.05M.08"'),
+    hevc: hevcOK && isTypeSupported('video/mp4; codecs="hvc1.1.6.L150.B0"'),
+    hevc10bit: hevcOK && isTypeSupported('video/mp4; codecs="hvc1.2.4.L150.B0"'),
+    av1: !demotedCodecs.has('av1') && isTypeSupported('video/mp4; codecs="av01.0.05M.08"'),
     hdr: typeof window !== 'undefined' && window.matchMedia('(dynamic-range: high)').matches,
   };
 }
@@ -145,7 +217,10 @@ let capsHeaderCache: string | null = null;
  *  is the declarative profile the server uses to pick transcode targets +
  *  (eventually) the play decision — see docs/capability-profiles.md.
  *
- *  Memoized — capabilities don't change within a session. Returns '' in
+ *  Memoized — the probe result is stable within a session, EXCEPT when a
+ *  decode failure demotes a codec (demoteCodec clears the cache so the next
+ *  call rebuilds without the demoted codec, and with maxbitdepth dropped to 8
+ *  when HEVC falls, since hevc10bit falls with it). Returns '' in
  *  non-browser/SSR contexts (no MSE), where the caller should omit the header
  *  and let the server fall back to its safe defaults. */
 export function clientCapabilitiesHeader(): string {
