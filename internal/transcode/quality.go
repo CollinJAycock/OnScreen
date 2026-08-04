@@ -94,6 +94,15 @@ func SelectQuality(
 		}
 	}
 
+	// Encoders (libx264/x265, every hardware encoder with yuv420p/nv12 output)
+	// require EVEN dimensions. The source cap above copies the source's exact
+	// size, so an odd-dimension source — rotated phone video, a 1279×719 rip —
+	// flowed odd numbers straight into scale/pad targets and the encoder
+	// failed at init on every Auto-quality transcode of that file. Round DOWN:
+	// one pixel under the cap is always valid, one over may exceed the source.
+	effectiveW -= effectiveW % 2
+	effectiveH -= effectiveH % 2
+
 	return QualityProfile{
 		Name:      "custom",
 		Bitrate:   effectiveBitrate,

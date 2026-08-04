@@ -102,6 +102,13 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 		file = &files[0] // sorted best-quality first
 	}
 
+	// Fill metadata a scan left NULL before deciding — the same lazy re-probe
+	// Start runs. Without it a video row with a lost VideoCodec read as
+	// "audio-only", skipped the video capability check entirely, and this
+	// endpoint handed out directPlay for video the client can't decode; the
+	// client then trusted the verdict over its own heuristics.
+	h.lazyReprobe(ctx, file)
+
 	caps, hasProfile := clientCaps(r, body)
 	serverCaps := transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}
 	decision := transcode.Decide(*file, caps, serverCaps)

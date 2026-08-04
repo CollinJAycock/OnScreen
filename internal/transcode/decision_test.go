@@ -366,8 +366,8 @@ func TestCanonicalCodecs(t *testing.T) {
 		{"unknown_audio", "unknown_audio"},
 	}
 	for _, tc := range audioTests {
-		if got := canonicalAudioCodec(tc.in); got != tc.want {
-			t.Errorf("canonicalAudioCodec(%q): want %q, got %q", tc.in, tc.want, got)
+		if got := CanonicalAudioCodec(tc.in); got != tc.want {
+			t.Errorf("CanonicalAudioCodec(%q): want %q, got %q", tc.in, tc.want, got)
 		}
 	}
 

@@ -102,6 +102,10 @@ type NativeTranscodeHandler struct {
 	// session/dispatch path without a real on-disk file.
 	verifySource func(ctx context.Context, path string) (scanner.SourceStatus, error)
 
+	// probe overrides scanner.ProbeFile for lazyReprobe. Tests inject canned
+	// results; nil uses the real ffprobe.
+	probe func(ctx context.Context, path string) (*scanner.ProbeResult, error)
+
 	// staticEnabled + staticRoot serve pre-encoded ("static") ABR ladders from
 	// the media store when one exists, instead of starting a live session
 	// (HA roadmap §5). staticRoot is the key prefix (STATIC_ABR_ROOT) and must
@@ -490,39 +494,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// pixels. Re-probe synchronously on the transcode-start path; cheap
 	// for healthy files (probe completes in <500 ms) and only fires when
 	// the row is actually missing data.
-	if file.VideoCodec == nil || file.ResolutionW == nil || file.ResolutionH == nil {
-		if probed, perr := scanner.ProbeFile(ctx, file.FilePath); perr == nil && probed != nil {
-			if probed.VideoCodec != nil && file.VideoCodec == nil {
-				file.VideoCodec = probed.VideoCodec
-			}
-			if probed.ResolutionW != nil && file.ResolutionW == nil {
-				file.ResolutionW = probed.ResolutionW
-			}
-			if probed.ResolutionH != nil && file.ResolutionH == nil {
-				file.ResolutionH = probed.ResolutionH
-			}
-			if probed.HDRType != nil && file.HDRType == nil {
-				file.HDRType = probed.HDRType
-			}
-			if probed.Bitrate != nil && file.Bitrate == nil {
-				file.Bitrate = probed.Bitrate
-			}
-			vc, hdr := "", ""
-			if file.VideoCodec != nil {
-				vc = *file.VideoCodec
-			}
-			if file.HDRType != nil {
-				hdr = *file.HDRType
-			}
-			h.logger.InfoContext(ctx, "transcode: lazy re-probe filled missing source metadata",
-				"file_id", file.ID,
-				"video_codec", vc,
-				"hdr", hdr)
-		} else if perr != nil {
-			h.logger.WarnContext(ctx, "transcode: lazy re-probe failed",
-				"file_id", file.ID, "path", file.FilePath, "err", perr)
-		}
-	}
+	h.lazyReprobe(ctx, file)
 
 	// Dolby Vision gate: refuse rather than serve a broken stream. The only
 	// correct DV tonemapper (libplacebo) can't init on the deployment host and
@@ -584,6 +556,25 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		body.VideoCopy = false
 	}
 
+	// Resolve the client's playback capabilities BEFORE quality selection: the
+	// header's maxWidth/maxHeight must constrain the OUTPUT. They used to be
+	// parsed after the resolution was already chosen, so a client declaring
+	// maxheight=1080 forced the transcode verdict (Decide checks the caps) and
+	// then received the same 4K output it declared it couldn't display.
+	caps, hasProfile := clientCaps(r, body)
+	h.logger.DebugContext(ctx, "resolved client capabilities",
+		"profile_header", hasProfile,
+		"supports_hevc", caps.SupportsHEVC, "supports_av1", caps.SupportsAV1,
+		"max_audio_channels", caps.MaxAudioChannels,
+		"max_w", caps.MaxWidth, "max_h", caps.MaxHeight, "max_bit_depth", caps.MaxVideoBitDepth)
+	// Echo the resolved profile back so it's debuggable without log access
+	// (curl -i / devtools): confirms exactly what the server thinks the client
+	// can play. Set before any body write.
+	w.Header().Set("X-OnScreen-Client-Caps", fmt.Sprintf(
+		"profile=%t;hevc=%t;av1=%t;maxAudioChannels=%d;maxW=%d;maxH=%d;maxBitDepth=%d",
+		hasProfile, caps.SupportsHEVC, caps.SupportsAV1, caps.MaxAudioChannels,
+		caps.MaxWidth, caps.MaxHeight, caps.MaxVideoBitDepth))
+
 	if body.VideoCopy {
 		encoder = "copy"
 		// No resolution or bitrate needed — video passes through unchanged.
@@ -597,7 +588,14 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			MaxWidth:       h.cfg.TranscodeMaxWidth,
 			MaxHeight:      h.cfg.TranscodeMaxHeight,
 		}
-		quality := transcode.SelectQuality(0, 0, body.Height, sourceW, sourceH, serverCaps)
+		// The client's requested height (explicit quality pick) and its
+		// declared display ceiling both bound the output; SelectQuality mins
+		// them against the server caps and the source.
+		reqHeight := body.Height
+		if caps.MaxHeight > 0 && (reqHeight == 0 || reqHeight > caps.MaxHeight) {
+			reqHeight = caps.MaxHeight
+		}
+		quality := transcode.SelectQuality(0, caps.MaxWidth, reqHeight, sourceW, sourceH, serverCaps)
 
 		// SelectQuality leaves MaxWidth at the server cap when the client only
 		// specified height. Recalculate it from the source aspect ratio so FFmpeg
@@ -651,23 +649,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		audioStreamIdx = *body.AudioStreamIndex
 	}
 
-	// Resolve the client's playback capabilities (X-Client-Capabilities header,
-	// with the legacy supports_* booleans folded in). Drives the audio-channel
-	// and output-codec targets below. Inert for clients that send no header —
-	// the result then mirrors the prior boolean behavior. See clientCaps.
-	caps, hasProfile := clientCaps(r, body)
-	h.logger.DebugContext(ctx, "resolved client capabilities",
-		"profile_header", hasProfile,
-		"supports_hevc", caps.SupportsHEVC, "supports_av1", caps.SupportsAV1,
-		"max_audio_channels", caps.MaxAudioChannels,
-		"max_w", caps.MaxWidth, "max_h", caps.MaxHeight, "max_bit_depth", caps.MaxVideoBitDepth)
-	// Echo the resolved profile back so it's debuggable without log access
-	// (curl -i / devtools): confirms exactly what the server thinks the client
-	// can play. Set before any body write.
-	w.Header().Set("X-OnScreen-Client-Caps", fmt.Sprintf(
-		"profile=%t;hevc=%t;av1=%t;maxAudioChannels=%d;maxW=%d;maxH=%d;maxBitDepth=%d",
-		hasProfile, caps.SupportsHEVC, caps.SupportsAV1, caps.MaxAudioChannels,
-		caps.MaxWidth, caps.MaxHeight, caps.MaxVideoBitDepth))
+	// (Client capabilities were resolved above, before quality selection.)
 
 	// AAC output channel count: preserve the source layout (5.1/7.1) instead of
 	// always downmixing to stereo, capped by the client's declared maximum (5.1
@@ -696,6 +678,37 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// the AV1 source," and re-encoding AV1 → HEVC throws away the format
 	// efficiency the source already paid for.
 	preferAV1 := caps.SupportsAV1 && isSourceAV1 && !body.VideoCopy
+
+	// Stream-shape facts the arg builder needs. A hard -map of a missing
+	// stream kills ffmpeg instantly, so both absences must be declared:
+	// audio-only sources (music in undeclared containers, .dsf/.ape rips,
+	// audiobooks — the decision engine deliberately routes them here) and
+	// audio-less videos (screen recordings, timelapses) were both structurally
+	// unplayable through this pipeline.
+	sourceAudioOnly := file.VideoCodec == nil && file.AudioCodec != nil
+	sourceNoAudio := file.AudioCodec == nil && file.VideoCodec != nil
+
+	// Bit-depth ceiling: when the client declared a sub-10-bit decoder, the
+	// OUTPUT must be 8-bit. Decide already forces the transcode verdict for
+	// deep sources on these clients — but the job then picked an HEVC encoder
+	// (source preservation) and emitted Main 10: the exact property that
+	// forced the transcode, handed back to the client that can't decode it.
+	force8Bit := caps.MaxVideoBitDepth > 0 && caps.MaxVideoBitDepth < 10 && !body.VideoCopy
+
+	// Audio passthrough on remux: when DirectStream was chosen for the
+	// CONTAINER (the client decodes the source audio, within its channel cap,
+	// and the codec is HLS-carriable), copy the audio instead of degrading it
+	// through a forced AAC re-encode.
+	audioCopy := false
+	if body.VideoCopy && file.AudioCodec != nil {
+		alias := transcode.CanonicalAudioCodec(*file.AudioCodec)
+		srcCh := transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx)
+		chFit := caps.MaxAudioChannels <= 0 || srcCh <= 0 || srcCh <= caps.MaxAudioChannels
+		switch alias {
+		case "aac", "ac3", "eac3", "mp3": // valid in both MPEG-TS and fMP4
+			audioCopy = caps.SupportsAudioCodec(alias) && chFit
+		}
+	}
 
 	// The session's HEVCOutput/AV1Output record the OUTPUT codec, which is what
 	// the playlist handler derives the segment container from. On a remux that
@@ -746,11 +759,20 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// fleet with no HEVC/AV1 encoder silently falls back to H.264 — so
 		// advertising it made every segment 503. Confirm a node can deliver
 		// before promising it.
+		// A sub-10-bit client must not get an HEVC/AV1 ladder off a 10-bit
+		// source: the rung children preserve source depth and would emit
+		// Main 10 — the property that forced the transcode. H.264 rungs are
+		// always 8-bit-stripped, so they're safe for any depth.
+		sourceDepth := 0
+		if file.VideoBitDepth != nil {
+			sourceDepth = *file.VideoBitDepth
+		}
+		depthOK := !force8Bit || sourceDepth < 10
 		abrCodec := transcode.LadderH264
 		switch {
-		case caps.SupportsAV1 && isSourceAV1 && h.sessions.FleetCanEncode(ctx, "av1"):
+		case caps.SupportsAV1 && isSourceAV1 && depthOK && h.sessions.FleetCanEncode(ctx, "av1"):
 			abrCodec = transcode.LadderAV1
-		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160) &&
+		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160) && depthOK &&
 			h.sessions.FleetCanEncode(ctx, "hevc"):
 			abrCodec = transcode.LadderHEVC
 		}
@@ -760,6 +782,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// rung switch restarts ffmpeg + re-probes the source over HTTP on a
 		// fleet worker); the hard TranscodeABRMaxHeight cap applies on top.
 		ladderCap := abrLadderCap(body.Height, h.cfg.TranscodeABRAutoMaxHeight, h.cfg.TranscodeABRMaxHeight)
+		// The client's declared display ceiling bounds the ladder the same way
+		// it bounds the single-rendition output — a maxheight=1080 client must
+		// not be offered (and auto-switched onto) a 4K rung.
+		if caps.MaxHeight > 0 && (ladderCap == 0 || caps.MaxHeight < ladderCap) {
+			ladderCap = caps.MaxHeight
+		}
 		// Same ceiling the single-rendition path applies below: the per-user
 		// stream cap wins over the server-wide default when it is lower. The
 		// ladder used to ignore both and take its bitrates straight from the
@@ -836,6 +864,14 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		startOffsetSec = transcode.FindPreviousKeyframe(ctx, file.FilePath, requestedStartSec)
 	}
 
+	// Audio passthrough when the remux was container-driven (see audioCopy
+	// above): "copy" reaches BuildHLS as `-c:a copy` with the AAC extras
+	// naturally skipped.
+	jobAudioCodec := "aac"
+	if audioCopy {
+		jobAudioCodec = "copy"
+	}
+
 	job := transcode.TranscodeJob{
 		SessionID:        sessionID,
 		FilePath:         file.FilePath,
@@ -847,12 +883,15 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		Width:            width,
 		Height:           height,
 		BitrateKbps:      jobBitrate,
-		AudioCodec:       "aac",
+		AudioCodec:       jobAudioCodec,
 		AudioChannels:    audioChannels,
 		AudioStreamIndex: audioStreamIdx,
 		IsHEVC:           isSourceHEVC,
 		IsAV1:            isSourceAV1,
 		IsH264:           isSourceH264,
+		AudioOnly:        sourceAudioOnly,
+		NoAudio:          sourceNoAudio,
+		Force8Bit:        force8Bit,
 		NeedsToneMap:     isSourceHDR && !body.VideoCopy,
 		PreferHEVC:       preferHEVC,
 		PreferAV1:        preferAV1,
@@ -926,6 +965,65 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		StartOffsetSec:  startOffsetSec,
 		Seg0AudioGapSec: seg0AudioGap,
 	})
+}
+
+// lazyReprobe fills in source metadata a scan left NULL (codec, resolution,
+// HDR type, bitrate) by re-probing the file synchronously. Cheap for healthy
+// files (<500 ms) and only fires when the row is actually missing data.
+//
+// Shared by transcode Start AND the playback-decision endpoint. Decide used
+// to skip it: a video row that lost its VideoCodec during scanning read as
+// "audio-only", which skips the video capability check entirely, so the
+// endpoint handed out directPlay/directStream verdicts for video the client
+// may not decode at all — and the client then trusted the verdict over its
+// own local heuristics.
+func (h *NativeTranscodeHandler) lazyReprobe(ctx context.Context, file *media.File) {
+	if file.VideoCodec != nil && file.ResolutionW != nil && file.ResolutionH != nil {
+		return
+	}
+	probed, perr := h.probeFile(ctx, file.FilePath)
+	if perr != nil {
+		h.logger.WarnContext(ctx, "transcode: lazy re-probe failed",
+			"file_id", file.ID, "path", file.FilePath, "err", perr)
+		return
+	}
+	if probed == nil {
+		return
+	}
+	if probed.VideoCodec != nil && file.VideoCodec == nil {
+		file.VideoCodec = probed.VideoCodec
+	}
+	if probed.ResolutionW != nil && file.ResolutionW == nil {
+		file.ResolutionW = probed.ResolutionW
+	}
+	if probed.ResolutionH != nil && file.ResolutionH == nil {
+		file.ResolutionH = probed.ResolutionH
+	}
+	if probed.HDRType != nil && file.HDRType == nil {
+		file.HDRType = probed.HDRType
+	}
+	if probed.Bitrate != nil && file.Bitrate == nil {
+		file.Bitrate = probed.Bitrate
+	}
+	vc, hdr := "", ""
+	if file.VideoCodec != nil {
+		vc = *file.VideoCodec
+	}
+	if file.HDRType != nil {
+		hdr = *file.HDRType
+	}
+	h.logger.InfoContext(ctx, "transcode: lazy re-probe filled missing source metadata",
+		"file_id", file.ID,
+		"video_codec", vc,
+		"hdr", hdr)
+}
+
+// probeFile indirects scanner.ProbeFile so tests can stub the ffprobe exec.
+func (h *NativeTranscodeHandler) probeFile(ctx context.Context, path string) (*scanner.ProbeResult, error) {
+	if h.probe != nil {
+		return h.probe(ctx, path)
+	}
+	return scanner.ProbeFile(ctx, path)
 }
 
 // Stop handles DELETE /api/v1/transcode/sessions/{sid}.

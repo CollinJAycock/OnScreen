@@ -88,6 +88,25 @@ type BuildArgs struct {
 	// emits segment N with segment 0's timestamps and the player lurches to
 	// 0:00 or stalls on the splice. See Job.OutputTSOffsetSec.
 	OutputTSOffsetSec float64
+	// AudioOnly builds an audio-only HLS session: no video map, no encoder, no
+	// filters, MPEG-TS segments. The pipeline used to hard-map `0:v:0`, which
+	// killed ffmpeg instantly ("Stream map '0:v:0' matches no streams") for
+	// every source with no video stream — the exact files (undeclared-container
+	// music, .dsf/.ape rips, audiobooks) the decision engine deliberately
+	// routes here.
+	AudioOnly bool
+	// NoAudio drops the audio map + audio args for sources with no audio
+	// stream. The mirror image of AudioOnly: the unconditional `-map 0:a:0`
+	// made every audio-less video (screen recordings, silent home video,
+	// timelapses) die on the stream map the same way.
+	NoAudio bool
+	// Force8Bit pins the OUTPUT to 8-bit regardless of encoder family. The
+	// H.264 encoders always strip to 8-bit (they reject 10-bit input), but the
+	// HEVC/AV1 variants happily emit Main 10 — which is exactly wrong when the
+	// bit-depth REDUCTION is why the client was sent to transcode at all: an
+	// 8-bit-only HEVC client got a 10-bit HEVC "fix" it couldn't decode, audio
+	// over a black screen. Set from the client's declared MaxVideoBitDepth.
+	Force8Bit bool
 	// HasLibfdkAAC selects the libfdk_aac encoder over the native aac encoder for
 	// AAC output. libfdk is higher quality and — critically — far faster to start
 	// on multichannel audio: a 7.1 TrueHD source's first HLS segment took ~15s
@@ -343,7 +362,7 @@ func BuildHLS(a BuildArgs) []string {
 	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap &&
 		(a.IsAV1 || ((a.IsHEVC || a.IsH264) && a.CudaVRAM))
 
-	if !videoCopy {
+	if !videoCopy && !a.AudioOnly {
 		// VAAPI init filter (must come before input for hardware decode).
 		if a.IsVAAPI {
 			args = append(args, "-vaapi_device", "/dev/dri/renderD128")
@@ -495,7 +514,10 @@ func BuildHLS(a BuildArgs) []string {
 	args = append(args, "-i", a.InputPath)
 
 	// ── Video ────────────────────────────────────────────────────────────────
-	if videoCopy {
+	if a.AudioOnly {
+		// No video output at all — no codec, no filters, no tags. The maps
+		// below select only the audio stream.
+	} else if videoCopy {
 		// Stream copy — no re-encode, no filters, no bitrate control.
 		args = append(args, "-c:v", "copy")
 	} else {
@@ -625,23 +647,39 @@ func BuildHLS(a BuildArgs) []string {
 				"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", SegmentDuration),
 				"-sc_threshold", "0",
 			)
-			// HEVC software: constrain to Main profile only. `-level-idc` is
-			// an hevc_nvenc-specific option name; libx265 takes its level
-			// hint via `-x265-params level=5.0` and accepts the muxer's
-			// auto-derived level when unset, so we just leave it alone.
-			if a.Encoder == EncoderHEVCSoftware {
+			// HEVC software: pin Main profile ONLY when the input is being
+			// stripped to 8-bit (Force8Bit adds format=yuv420p upstream, so
+			// the pin is consistent). The unconditional pin was a landmine:
+			// libx265 REFUSES 10-bit input under `-profile:v main` and dies
+			// at encoder init — and 10-bit is the most common HEVC content —
+			// so the software-encoder last resort of every HEVC fallback
+			// chain was guaranteed dead exactly when a fleet needed it.
+			// Unpinned, libx265 infers main/main10 from the input pixel
+			// format, and a client that reaches a 10-bit encode here has
+			// declared a ≥10-bit decoder (the decision layer transcodes
+			// depth-capped clients, which sets Force8Bit).
+			if a.Encoder == EncoderHEVCSoftware && a.Force8Bit {
 				args = append(args, "-profile:v", "main")
 			}
 		}
 	}
 
 	// ── Stream mapping ───────────────────────────────────────────────────────
-	// Map video stream explicitly so we can independently select an audio stream.
-	args = append(args, "-map", "0:v:0")
-	if a.AudioStreamIndex >= 0 {
-		args = append(args, "-map", fmt.Sprintf("0:a:%d", a.AudioStreamIndex))
-	} else {
-		args = append(args, "-map", "0:a:0")
+	// Map video stream explicitly so we can independently select an audio
+	// stream. Each map is conditional on the stream class actually existing:
+	// a hard `-map` of a missing stream kills ffmpeg instantly ("Stream map
+	// matches no streams"), which made audio-only sources and audio-less
+	// videos equally unplayable — an endless spinner while the playlist
+	// endpoint waited for segments that would never come.
+	if !a.AudioOnly {
+		args = append(args, "-map", "0:v:0")
+	}
+	if !a.NoAudio {
+		if a.AudioStreamIndex >= 0 {
+			args = append(args, "-map", fmt.Sprintf("0:a:%d", a.AudioStreamIndex))
+		} else {
+			args = append(args, "-map", "0:a:0")
+		}
 	}
 
 	// ── Audio ────────────────────────────────────────────────────────────────
@@ -650,12 +688,21 @@ func BuildHLS(a BuildArgs) []string {
 	// audio (7.1 TrueHD source: ~15s vs ~5s), which dominated HDR-transcode start
 	// latency. The "aac" config block below keys on the logical codec, so it still
 	// applies. Falls back to native aac when libfdk isn't available.
-	audioCodec := a.AudioCodec
-	if a.AudioCodec == "aac" && a.HasLibfdkAAC {
-		audioCodec = "libfdk_aac"
+	//
+	// AudioCodec "copy" passes the source audio through untouched — used on a
+	// remux whose source audio the client already decodes (AAC/AC3/EAC3/MP3
+	// within its channel cap). Re-encoding those to AAC anyway, as the remux
+	// path always did, burned CPU to strictly degrade audio the client could
+	// have played bit-exact. The aac-only extras (-ac/-b:a/-af) are naturally
+	// skipped by the codec keying below.
+	if !a.NoAudio {
+		audioCodec := a.AudioCodec
+		if a.AudioCodec == "aac" && a.HasLibfdkAAC {
+			audioCodec = "libfdk_aac"
+		}
+		args = append(args, "-c:a", audioCodec)
 	}
-	args = append(args, "-c:a", audioCodec)
-	if a.AudioCodec == "aac" {
+	if !a.NoAudio && a.AudioCodec == "aac" {
 		channels := a.AudioChannels
 		if channels <= 0 {
 			channels = 2 // default stereo
@@ -708,6 +755,10 @@ func BuildHLS(a BuildArgs) []string {
 	// per call site. ForceFMP4 is folded in there too, so the worker — which
 	// hunts for these same files by extension — cannot disagree with us.
 	vout := ResolveVideoOutput(a.Encoder, a.IsHEVC, a.IsAV1, a.ForceFMP4)
+	if a.AudioOnly {
+		// No video stream: AAC-in-MPEG-TS, no codec tag, no init segment.
+		vout = VideoOutput{}
+	}
 	needsFMP4 := vout.NeedsFMP4()
 	segExt := vout.SegExt()
 	segType := vout.SegType()
@@ -795,7 +846,9 @@ func BuildHLS(a BuildArgs) []string {
 	// so by the time HLS.js loads the playlist it sees many segments and would
 	// otherwise skip ahead (liveSyncDurationCount=3 × targetDuration behind
 	// the last segment), causing a stall waiting for segments past the live edge.
-	if videoCopy {
+	// Audio-only encodes run at a similar multiple of real-time, so they get
+	// the same treatment.
+	if videoCopy || a.AudioOnly {
 		args = append(args, "-hls_playlist_type", "event")
 	}
 	args = append(args, playlistPath)
@@ -1037,7 +1090,18 @@ func buildVideoFilter(a BuildArgs) string {
 		}
 	}
 
-	if !needsSoftwareTonemap && !lpTonemap && !useCUDADecode && !useQSVVRAM && !useVAAPIVRAM && !cudaTonemap && !cudaHDRTonemap && (a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware) {
+	h264Family := a.Encoder == EncoderAMF || a.Encoder == EncoderQSV || a.Encoder == EncoderNVENC || a.Encoder == EncoderSoftware
+	// Force8Bit widens the strip to the HEVC/AV1 encoders on the
+	// software-frame paths. Those encoders accept 10-bit (Main 10) — which is
+	// exactly the problem when the client declared an 8-bit decoder and the
+	// bit-depth REDUCTION is why this transcode exists: without the strip the
+	// output carried the same 10-bit property that forced the transcode, and
+	// libx265 with its Main profile pin refused the 10-bit input outright.
+	// The VRAM chains are excluded for the same reason as ever (their filters
+	// already emit 8-bit nv12 on-GPU; a CPU format filter would force a
+	// round-trip), and they land at 8-bit anyway.
+	force8 := a.Force8Bit && (IsHEVCEncoder(a.Encoder) || IsAV1Encoder(a.Encoder))
+	if !needsSoftwareTonemap && !lpTonemap && !useCUDADecode && !useQSVVRAM && !useVAAPIVRAM && !cudaTonemap && !cudaHDRTonemap && (h264Family || force8) {
 		// h264_amf / h264_qsv / h264_nvenc all reject 10-bit input
 		// ("10-bit input video is not supported"). libx264 *accepts*
 		// 10-bit input but emits 10-bit High 10 profile H.264 — valid
@@ -1046,10 +1110,10 @@ func buildVideoFilter(a BuildArgs) string {
 		// format=yuv420p and covers HDR sources; this branch handles
 		// the rare 10-bit SDR source (some anime, AV1 10-bit archival
 		// masters) and is a no-op on 8-bit input. HEVC variants of
-		// these encoders accept 10-bit (Main10), so we don't strip
-		// for them. Skipped on the CUDA-decode path: scale_cuda
-		// already emits nv12 (8-bit) in VRAM, and inserting a CPU
-		// format filter would force a hwdownload that defeats the
+		// these encoders accept 10-bit (Main10), so we only strip for
+		// them under Force8Bit (above). Skipped on the CUDA-decode path:
+		// scale_cuda already emits nv12 (8-bit) in VRAM, and inserting a
+		// CPU format filter would force a hwdownload that defeats the
 		// purpose of keeping the pipeline in GPU memory.
 		filters = append(filters, "format=yuv420p")
 	}

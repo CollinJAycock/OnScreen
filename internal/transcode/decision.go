@@ -66,7 +66,7 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 
 	// Resolve canonical codec names to what clients advertise.
 	videoAlias := canonicalVideoCodec(videoCodec)
-	audioAlias := canonicalAudioCodec(audioCodec)
+	audioAlias := CanonicalAudioCodec(audioCodec)
 	containerAlias := canonicalContainer(container)
 
 	// Audio-only files (no video stream but a known audio codec) skip the
@@ -146,12 +146,14 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	// Video is decodable but the container and/or audio need adapting. Prefer a
 	// stream-copy of the video (DirectStream) over a full re-encode — but only
 	// when the video can be carried by the HLS remux container. Audio-only files
-	// always remux (just the container). H.264 (MPEG-TS) and HEVC (fMP4, when the
-	// client decodes it — guaranteed here, else we'd have transcoded above) are
-	// remux-carriable; AV1/VP9 are NOT (TS can't carry AV1, VP9 is WebM-only), so
-	// a decodable-but-not-carriable codec in a wrong container needs a full
-	// transcode. Mirrors the web client's remuxableVideoCodecs.
-	if audioOnly || videoAlias == "h264" || videoAlias == "h265" {
+	// always remux (just the container). H.264 (MPEG-TS), HEVC and AV1 (fMP4 —
+	// ResolveVideoOutput routes both to .m4s; the client decodes them, else
+	// we'd have transcoded above) are remux-carriable. AV1 used to be refused
+	// on the stale "TS can't carry AV1" rationale from before the fMP4 remux
+	// path existed, which re-encoded pristine AV1 for clients that decode it
+	// natively. VP9 stays out (WebM-only; no HLS carriage). Mirrors the web
+	// client's remuxableVideoCodecs.
+	if audioOnly || videoAlias == "h264" || videoAlias == "h265" || videoAlias == "av1" {
 		return DecisionDirectStream
 	}
 	return DecisionTranscode
@@ -182,7 +184,10 @@ func canonicalVideoCodec(codec string) string {
 	}
 }
 
-func canonicalAudioCodec(codec string) string {
+// CanonicalAudioCodec normalises audio codec names from ffprobe to the
+// identifiers clients advertise. Exported for the API layer's audio-copy
+// eligibility check, which must speak the same aliases Decide does.
+func CanonicalAudioCodec(codec string) string {
 	switch strings.ToLower(codec) {
 	case "aac":
 		return "aac"
@@ -215,7 +220,11 @@ func canonicalContainer(container string) string {
 		return "mp4"
 	case "avi":
 		return "avi"
-	case "ts", "mpeg-ts":
+	// "mpegts" is what ffprobe actually reports for a .ts file (its demuxer
+	// name); the scanner stores it verbatim. Without it here, a client
+	// declaring ts support never matched and every .ts file remuxed into...
+	// MPEG-TS.
+	case "ts", "mpeg-ts", "mpegts":
 		return "ts"
 	default:
 		return strings.ToLower(container)

@@ -1013,6 +1013,16 @@ type TranscodeJob struct {
 	// disagreeing timelines together and the player stalled or jumped. Zero
 	// leaves ffmpeg's default behaviour untouched (all non-ABR paths).
 	OutputTSOffsetSec float64 `json:"output_ts_offset_sec,omitempty"`
+	// AudioOnly / NoAudio mirror BuildArgs: the source has no video stream /
+	// no audio stream, so the corresponding map + codec args must be omitted
+	// (a hard -map of a missing stream kills ffmpeg instantly). Zero values
+	// mean "both streams present" — the historical assumption.
+	AudioOnly bool `json:"audio_only,omitempty"`
+	NoAudio   bool `json:"no_audio,omitempty"`
+	// Force8Bit pins the output to 8-bit — set when the client's declared
+	// MaxVideoBitDepth is below 10, so a bit-depth-forced transcode cannot
+	// hand back the very property that forced it. See BuildArgs.Force8Bit.
+	Force8Bit bool `json:"force_8bit,omitempty"`
 	// CostCenti is the job's weighted cost (see JobCostCenti), stamped by
 	// DispatchJob so the worker can decrement the right amount on Ack.
 	CostCenti  int       `json:"cost_centi,omitempty"`
