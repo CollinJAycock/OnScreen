@@ -12,6 +12,7 @@ import {
   loadSubtitleStyle,
   saveSubtitleStyle,
   subtitleCueStyle,
+  escapeCueText,
   DEFAULT_SUBTITLE_STYLE,
   type SubtitleStyle,
 } from './subtitle-style';
@@ -197,5 +198,29 @@ describe('subtitleCueStyle', () => {
     expect(got).toContain('color:');
     expect(got).toContain('background:');
     expect(got).toContain('text-shadow:');
+  });
+});
+
+describe('escapeCueText', () => {
+  it('strips WebVTT markup instead of rendering it as literal text', () => {
+    // Cues legitimately carry <i>/<b>/<c.x>/<v Speaker>/karaoke timestamps;
+    // escaping them un-stripped painted "&lt;i&gt;...&lt;/i&gt;" noise into
+    // the overlay on every styled subtitle.
+    expect(escapeCueText('<i>Previously on…</i>')).toBe('Previously on…');
+    expect(escapeCueText('<c.yellow>Hey!</c>')).toBe('Hey!');
+    expect(escapeCueText('<v Narrator>It began</v>')).toBe('It began');
+    expect(escapeCueText('Kara<00:00:04.000>oke')).toBe('Karaoke');
+  });
+
+  it('still escapes non-markup specials (XSS posture intact)', () => {
+    expect(escapeCueText('Tom & Jerry')).toBe('Tom &amp; Jerry');
+    expect(escapeCueText('a "quote" & \'tick\'')).toBe('a &quot;quote&quot; &amp; &#39;tick&#39;');
+    // A pathological unclosed angle bracket survives AS TEXT, escaped —
+    // never as markup.
+    expect(escapeCueText('5 < 6')).toContain('&lt;');
+  });
+
+  it('keeps line breaks as <br> (tags never span newlines)', () => {
+    expect(escapeCueText('<i>line one</i>\nline two')).toBe('line one<br>line two');
   });
 });

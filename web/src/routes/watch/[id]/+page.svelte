@@ -27,6 +27,7 @@
     loadSubtitleStyle,
     saveSubtitleStyle,
     subtitleCueStyle,
+    escapeCueText,
     type SubtitleStyle,
     type SubtitleSize,
     type SubtitleColor,
@@ -493,25 +494,8 @@
     }
   }
 
-  // escapeCueText renders a raw WebVTT cue for the overlay: strip the WebVTT
-  // markup, escape what remains, convert newlines to <br>.
-  //
-  // The strip comes FIRST and exists because cues legitimately carry WebVTT
-  // tags — <i>, <b>, <c.classname>, <v Speaker>, inline <00:01:02.000>
-  // karaoke timestamps — and the overlay used to escape them into literal
-  // visible text: subtitles rendered as "&lt;i&gt;Previously on...&lt;/i&gt;"
-  // noise. Stripping (not honoring) the tags keeps the escape-before-{@html}
-  // XSS posture intact: nothing from the file survives as markup.
-  function escapeCueText(raw: string): string {
-    const stripped = raw.replace(/<[^>\n]*>/g, '');
-    const escaped = stripped
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-    return escaped.replace(/\n/g, '<br>');
-  }
+  // escapeCueText lives in subtitle-style.ts (pure module, unit-tested):
+  // strips WebVTT markup, escapes the remainder, newlines → <br>.
 
   function parseWebVTT(vtt: string): SubCue[] {
     const cues: SubCue[] = [];

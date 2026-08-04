@@ -733,6 +733,45 @@ func TestPhotosImage_NoImageServerIs503(t *testing.T) {
 	}
 }
 
+// The image endpoint serves the item's actual bytes, so it must enforce the
+// caller's content-rating ceiling alongside the library ACL — a restricted
+// profile used to pull any over-ceiling photo/audiobook cover by direct URL.
+// 404, not 403, matching the handler's existing don't-reveal-existence shape.
+func TestPhotosImage_ContentRatingCeiling(t *testing.T) {
+	id := uuid.New()
+	dir := t.TempDir()
+	srcPath := makeTestJPEG(t, dir, 40, 40)
+	srv := photoimage.New(filepath.Join(dir, "cache"))
+	rating := "R"
+	h := NewPhotosHandler(&mockPhotoMedia{
+		item:  &media.Item{ID: id, Type: "photo", ContentRating: &rating},
+		files: []media.File{{ID: uuid.New(), FilePath: srcPath}},
+	}, srv, slog.Default())
+
+	req := httptest.NewRequest("GET", "/api/v1/items/"+id.String()+"/image", nil)
+	req = withChiParam(req, "id", id.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{
+		UserID: uuid.New(), Username: "kid", MaxContentRating: "PG",
+	}))
+	rec := httptest.NewRecorder()
+	h.Image(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("R-rated image for a PG-capped profile: got %d, want 404", rec.Code)
+	}
+
+	// An unrestricted caller still gets the bytes.
+	req2 := httptest.NewRequest("GET", "/api/v1/items/"+id.String()+"/image", nil)
+	req2 = withChiParam(req2, "id", id.String())
+	req2 = req2.WithContext(middleware.WithClaims(req2.Context(), &auth.Claims{
+		UserID: uuid.New(), Username: "adult",
+	}))
+	rec2 := httptest.NewRecorder()
+	h.Image(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("unrestricted profile blocked: got %d, want 200", rec2.Code)
+	}
+}
+
 func TestPhotosImage_NonPhotoItemIs404(t *testing.T) {
 	id := uuid.New()
 	dir := t.TempDir()
