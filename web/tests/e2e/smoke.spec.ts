@@ -4,9 +4,7 @@
 // Requires a running OnScreen server reachable at BASE_URL.
 
 import { test, expect } from '@playwright/test';
-
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? '';
+import { USERNAME, PASSWORD, adminToken, collectConsoleErrors, resetTokenCache } from './_auth';
 
 test.describe('Tier 1 — boot', () => {
   test('health/live returns ok', async ({ request }) => {
@@ -22,20 +20,17 @@ test.describe('Tier 1 — boot', () => {
   });
 
   test('web UI loads with no console errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
-    page.on('pageerror', (err) => errors.push(err.message));
+    // Third-party noise (the edge-injected Cloudflare beacon) is filtered by
+    // the message's ORIGIN URL — see collectConsoleErrors. Anything else is a
+    // regression.
+    const consoleErrors = collectConsoleErrors(page);
 
     await page.goto('/');
     await expect(page).toHaveTitle(/OnScreen/i);
     // SvelteKit hydration finished — give a beat for late console errors.
     await page.waitForLoadState('networkidle');
 
-    // Filter known-noisy entries that aren't real problems (Cloudflare beacon
-    // can warn about analytics consent in dev). Anything else is a regression.
-    const real = errors.filter((e) => !/cloudflareinsights/i.test(e));
+    const real = consoleErrors();
     expect(real, `console errors:\n${real.join('\n')}`).toEqual([]);
   });
 });
@@ -62,6 +57,12 @@ test.describe('Tier 1 — auth', () => {
     // Direct API logout is the durable path — UI surface can change.
     const r = await page.request.post('/api/v1/auth/logout');
     expect([200, 204]).toContain(r.status());
+
+    // Logout revokes this user's sessions SERVER-side, which invalidates the
+    // access token every later spec shares (see _auth.ts). Drop the cache so
+    // the next caller logs in fresh — otherwise this test silently turns the
+    // rest of the run into a 401 cascade.
+    resetTokenCache();
   });
 });
 
@@ -69,12 +70,7 @@ test.describe('Tier 1 — library + admin smoke', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run library specs');
 
   test('libraries endpoint returns at least one library', async ({ request }) => {
-    const login = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(login.status()).toBe(200);
-    const { data } = await login.json();
-    const token = data.access_token as string;
+    const token = await adminToken(request);
 
     const libs = await request.get('/api/v1/libraries', {
       headers: { Authorization: `Bearer ${token}` },
@@ -105,12 +101,7 @@ test.describe('Tier 1 — library + admin smoke', () => {
     // been DB-pool starvation under heavy scan load (see TrueNAS QA
     // "high CPU/memory" incident, fixed in scanner mtime+size short-
     // circuit).
-    const login = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(login.status()).toBe(200);
-    const { data } = await login.json();
-    const token = data.access_token as string;
+    const token = await adminToken(request);
 
     const libs = await request.get('/api/v1/libraries', {
       headers: { Authorization: `Bearer ${token}` },

@@ -10,9 +10,8 @@
 //                       required only for the AV1 fMP4 block
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
+import { PASSWORD, adminToken } from './_auth';
 
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? '';
 
 // pickFirstMovieItem authenticates and returns {token, itemId} for the first
 // item in the first MOVIE-typed library. Transcode tests need a video item;
@@ -33,12 +32,8 @@ async function pickFirstMovieItem(
 ): Promise<{ token: string; itemIds: string[] }> {
   if (_cached && _cached.itemIds.length >= count) return _cached;
 
-  const loginR = await request.post('/api/v1/auth/login', {
-    data: { username: USERNAME, password: PASSWORD },
-  });
-  if (!loginR.ok()) return { token: '', itemIds: [] };
-  const { data: loginData } = await loginR.json();
-  const token: string = loginData.access_token;
+  const token = await adminToken(request);
+  if (!token) return { token: '', itemIds: [] };
 
   const libsR = await request.get('/api/v1/libraries', {
     headers: { Authorization: `Bearer ${token}` },
@@ -221,12 +216,7 @@ test.describe('Transcode — AV1 fMP4', () => {
     // silently fails for AV1 content.
     const movieId = process.env.E2E_AV1_MOVIE_ID!;
 
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
+    const token = await adminToken(request);
 
     // Request video-copy / remux mode — for AV1 sources this is the path
     // that produces fMP4 segments with #EXT-X-MAP. Without video_copy=true

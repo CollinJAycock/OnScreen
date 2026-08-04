@@ -689,9 +689,31 @@
   // unchanged. clientSupportsHEVC / clientSupportsAV1 are still reported to the
   // server when starting a transcode (output-codec selection).
   const clientCaps = detectClientCaps();
-  const clientSupportsHEVC = clientCaps.hevc;
-  const clientSupportsAV1 = clientCaps.av1;
+  // MUTABLE, not const: MediaSource.isTypeSupported is a claim, not a promise.
+  // Windows Chrome reports HEVC support from platform decoder enumeration and
+  // still fails the actual decode when the Microsoft HEVC Video Extensions
+  // aren't installed — the append is rejected outright. When a decode failure
+  // proves the claim wrong we demote it for the rest of the page, so the
+  // fallback transcode isn't re-encoded to the very codec that just failed
+  // (the server picks HEVC output for an HEVC source whenever the client says
+  // it can decode it).
+  let clientSupportsHEVC = clientCaps.hevc;
+  let clientSupportsAV1 = clientCaps.av1;
   const clientSupportsHDR = clientCaps.hdr;
+
+  /** demoteCodecClaim marks a codec undecodable after a real decode failure,
+   *  for both the local play-decision helpers and the server-facing flags. */
+  function demoteCodecClaim(codec: string | undefined) {
+    const c = (codec ?? '').toLowerCase();
+    if (c === 'hevc' || c === 'h265') {
+      clientCaps.hevc = false;
+      clientCaps.hevc10bit = false;
+      clientSupportsHEVC = false;
+    } else if (c === 'av1') {
+      clientCaps.av1 = false;
+      clientSupportsAV1 = false;
+    }
+  }
   // Play-decision wrappers. The server's capability-profile decision
   // (POST /items/{id}/playback-decision, from the X-Client-Capabilities header)
   // is authoritative for codec / container / audio / HDR / bit-depth. We refine
@@ -781,6 +803,27 @@
   // Fatal MEDIA_ERROR recovery budget per attach; reset on `playing`.
   let mediaErrorRecoveries = 0;
   const maxMediaErrorRecoveries = 2;
+  // One codec escalation per item. Survives the re-attach that escalation
+  // itself performs (unlike codecEscalationArmed, which re-arms per attach),
+  // so a codec the browser truly cannot decode can't loop us through session
+  // after session. Reset when the watched item changes.
+  let mediaErrorEscalated = false;
+
+  /** canEscalateAfterMediaError reports whether a full re-encode is still an
+   *  option: we haven't already escalated for this item, and the current
+   *  stream isn't already a plain H.264 transcode (which would mean the
+   *  failure is something a re-encode can't fix). */
+  function canEscalateAfterMediaError(): boolean {
+    if (mediaErrorEscalated) return false;
+    const file = item?.files?.[0];
+    if (!file) return false;
+    // A remux hands the browser the SOURCE codec — always worth re-encoding.
+    if (hlsIsRemux) return true;
+    // Otherwise only if the source codec is one the server might have
+    // preserved on the way out (HEVC/AV1 source + a client claiming support).
+    const c = (file.video_codec ?? '').toLowerCase();
+    return c === 'hevc' || c === 'h265' || c === 'av1';
+  }
   // True when the current HLS session is a remux (video copy). Used to detect
   // when the browser can't decode the remuxed video and escalate to full transcode.
   let hlsIsRemux = false;
@@ -1106,6 +1149,9 @@
     transcodeSessionId = null;
     transcodeToken = null;
     autoplayCancelled = false;
+    // New item — a codec that failed on the last one says nothing about this
+    // one, so the single-shot escalation is re-armed.
+    mediaErrorEscalated = false;
     pageEnteredAt = Date.now();
     cancelAutoplay();
     load();
@@ -2022,6 +2068,26 @@
             mediaErrorRecoveries++;
             console.warn(`[HLS] attempting media error recovery (${mediaErrorRecoveries}/${maxMediaErrorRecoveries})`);
             hlsInstance?.recoverMediaError();
+          } else if (canEscalateAfterMediaError()) {
+            // Recovery is exhausted and the stream still won't decode: the
+            // browser cannot play this codec, whatever isTypeSupported said.
+            //
+            // Escalate to a full re-encode rather than giving up. The player
+            // already had this fallback (onVideoLoaded → videoWidth === 0),
+            // but it only fires on a metadata event — and a rejected
+            // SourceBuffer append means metadata never arrives, so the
+            // designed escalation could never run for exactly the case it
+            // exists for (a stream-copied HEVC source on a browser that
+            // can't decode HEVC). Demote the codec claim first, or the
+            // server re-encodes an HEVC source straight back to HEVC.
+            const file = item?.files?.[0];
+            mediaErrorEscalated = true;
+            demoteCodecClaim(file?.video_codec);
+            const posMs = hlsActive
+              ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
+              : (item?.view_offset_ms ?? 0);
+            console.warn('[HLS] media error unrecoverable — escalating to full transcode');
+            switchToTranscode(file?.resolution_h ?? 1080, posMs);
           } else {
             console.warn('[HLS] media error unrecoverable — tearing down');
             error = `Playback error: ${data.details ?? 'media error'}`;

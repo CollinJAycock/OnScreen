@@ -16,18 +16,11 @@
 //   E2E_PASSWORD   OnScreen password — required; block skips otherwise
 
 import { test, expect } from '@playwright/test';
+import { PASSWORD, adminToken } from './_auth';
 
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? '';
-
-async function login(request: import('@playwright/test').APIRequestContext): Promise<string> {
-  const r = await request.post('/api/v1/auth/login', {
-    data: { username: USERNAME, password: PASSWORD },
-  });
-  expect(r.status()).toBe(200);
-  const { data } = await r.json();
-  return data.access_token;
-}
+// Shared, cached admin token — /auth/login is rate-limited to 10/min per IP
+// and the suite has many spec files. See _auth.ts.
+const login = adminToken;
 
 test.describe('Admin — backup endpoint', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run admin backup specs');

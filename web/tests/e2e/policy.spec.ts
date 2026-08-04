@@ -20,25 +20,18 @@
 //                     (default: first library returned by /api/v1/libraries)
 
 import { test, expect } from '@playwright/test';
+import { USERNAME, PASSWORD, adminToken as sharedAdminToken, loginAs, registerUser } from './_auth';
 
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? '';
 
 // Module-scope cache for the admin token so the whole policy spec file
 // (multiple tests × N browsers, each previously doing its own admin login)
 // only triggers ONE auth roundtrip per worker. The dev server's
 // /api/v1/auth/* rate limiter trips when the suite cumulatively exceeds
 // its threshold; caching keeps us under it.
-let _adminToken = '';
 async function adminToken(request: import('@playwright/test').APIRequestContext): Promise<string> {
-  if (_adminToken) return _adminToken;
-  const r = await request.post('/api/v1/auth/login', {
-    data: { username: USERNAME, password: PASSWORD },
-  });
-  if (!r.ok()) return '';
-  const { data } = await r.json();
-  _adminToken = data.access_token;
-  return _adminToken;
+  // Delegates to the run-wide cached login (see _auth.ts). Returns '' rather
+  // than throwing, which is what this file's callers branch on.
+  return sharedAdminToken(request).catch(() => '');
 }
 
 // ── is_private library access control ─────────────────────────────────────
@@ -84,25 +77,17 @@ test.describe('Policy — is_private library', () => {
     let testUserId = '';
 
     try {
-      const regR = await request.post('/api/v1/auth/register', {
-        data: { username: testUser, password: testPass, email: `${testUser}@example.invalid` },
-      });
-      if (regR.status() === 403 || regR.status() === 404) {
+      const regR = await registerUser(request, { username: testUser, password: testPass, email: `${testUser}@example.invalid` });
+      if (regR.status === 403 || regR.status === 404) {
         test.skip(true, 'self-registration disabled — cannot create non-admin test user');
         return;
       }
       // Some servers return 200, others 201 Created — both are success.
-      expect([200, 201], `register: ${await regR.text()}`).toContain(regR.status());
-      const { data: regData } = await regR.json();
-      testUserId = regData.id ?? '';
+      expect([200, 201], `register: ${regR.raw}`).toContain(regR.status);
+      testUserId = regR.data?.id ?? '';
 
       // Step 5 — log in as the new non-admin user.
-      const userLogin = await request.post('/api/v1/auth/login', {
-        data: { username: testUser, password: testPass },
-      });
-      expect(userLogin.status()).toBe(200);
-      const { data: userData } = await userLogin.json();
-      const userToken: string = userData.access_token;
+      const userToken = await loginAs(request, testUser, testPass);
 
       // Step 6 — the private library must NOT appear in the user's library list.
       const userLibsR = await request.get('/api/v1/libraries', {
@@ -227,19 +212,16 @@ test.describe('Policy — auto-grant template', () => {
     try {
       // Register the new user — auto-grant must fire as part of the
       // user-creation path, granting the just-flipped library.
-      const regR = await request.post('/api/v1/auth/register', {
-        headers: { Authorization: `Bearer ${adminTok}` },
-        data: { username: tempUser, password: tempPass, email: `${tempUser}@example.invalid` },
-      });
-      expect([200, 201], `register: ${await regR.text()}`).toContain(regR.status());
-      tempUserId = (await regR.json()).data.id;
+      const regR = await registerUser(
+        request,
+        { username: tempUser, password: tempPass, email: `${tempUser}@example.invalid` },
+        { headers: { Authorization: `Bearer ${adminTok}` } },
+      );
+      expect([200, 201], `register: ${regR.raw}`).toContain(regR.status);
+      tempUserId = regR.data.id;
 
       // Log in as that user, fetch their visible libraries.
-      const userLogin = await request.post('/api/v1/auth/login', {
-        data: { username: tempUser, password: tempPass },
-      });
-      expect(userLogin.status()).toBe(200);
-      const userTok = (await userLogin.json()).data.access_token;
+      const userTok = await loginAs(request, tempUser, tempPass);
 
       const userLibsR = await request.get('/api/v1/libraries', {
         headers: { Authorization: `Bearer ${userTok}` },
@@ -290,12 +272,13 @@ test.describe('Policy — view-as', () => {
     const ts = Date.now();
     const tempUser = `e2e_viewas_${ts}`;
     const tempPass = `ViewAs${ts}!`;
-    const regR = await request.post('/api/v1/auth/register', {
-      headers: { Authorization: `Bearer ${adminTok}` },
-      data: { username: tempUser, password: tempPass, email: `${tempUser}@example.invalid` },
-    });
-    expect([200, 201], `register: ${await regR.text()}`).toContain(regR.status());
-    const tempUserId = (await regR.json()).data.id;
+    const regR = await registerUser(
+      request,
+      { username: tempUser, password: tempPass, email: `${tempUser}@example.invalid` },
+      { headers: { Authorization: `Bearer ${adminTok}` } },
+    );
+    expect([200, 201], `register: ${regR.raw}`).toContain(regR.status);
+    const tempUserId = regR.data.id;
 
     try {
       // (1) admin GET with view_as → 200 (impersonation accepted).
@@ -308,11 +291,7 @@ test.describe('Policy — view-as', () => {
       ).toBe(200);
 
       // (2) non-admin GET with view_as → 403 (only admins can impersonate).
-      const userLogin = await request.post('/api/v1/auth/login', {
-        data: { username: tempUser, password: tempPass },
-      });
-      expect(userLogin.status()).toBe(200);
-      const userTok = (await userLogin.json()).data.access_token;
+      const userTok = await loginAs(request, tempUser, tempPass);
       const userViewAsR = await request.get(`/api/v1/hub?view_as=${tempUserId}`, {
         headers: { Authorization: `Bearer ${userTok}` },
       });
@@ -413,12 +392,13 @@ test.describe('Policy — content-rating ceiling', () => {
     let tempUserId = '';
 
     try {
-      const regR = await request.post('/api/v1/auth/register', {
-        headers: { Authorization: `Bearer ${adminTok}` },
-        data: { username: tempUser, password: tempPass, email: `${tempUser}@example.invalid` },
-      });
-      expect([200, 201], `register: ${await regR.text()}`).toContain(regR.status());
-      tempUserId = (await regR.json()).data.id;
+      const regR = await registerUser(
+        request,
+        { username: tempUser, password: tempPass, email: `${tempUser}@example.invalid` },
+        { headers: { Authorization: `Bearer ${adminTok}` } },
+      );
+      expect([200, 201], `register: ${regR.raw}`).toContain(regR.status);
+      tempUserId = regR.data.id;
 
       // Set content-rating ceiling to PG-13 via admin endpoint. Field
       // name is `max_content_rating` (per the SetContentRating handler);
@@ -433,11 +413,7 @@ test.describe('Policy — content-rating ceiling', () => {
       ).toBeLessThan(300);
 
       // Log in as the restricted user, fetch the movie library items.
-      const userLogin = await request.post('/api/v1/auth/login', {
-        data: { username: tempUser, password: tempPass },
-      });
-      expect(userLogin.status()).toBe(200);
-      const userTok = (await userLogin.json()).data.access_token;
+      const userTok = await loginAs(request, tempUser, tempPass);
 
       // Search is the canonical user-facing surface for finding items
       // by name; if a kid profile can't find an R-rated item via title

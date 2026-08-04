@@ -13,7 +13,7 @@
 // config so it doesn't leave the dev server reconfigured.
 
 import { test, expect } from '@playwright/test';
-import { adminToken, auth, loginUI, CAN_API, CAN_UI } from './_auth';
+import { adminToken, auth, loginUI, collectConsoleErrors, CAN_API, CAN_UI } from './_auth';
 
 const SYSTEM_FIELDS = [
   'server_name',
@@ -94,9 +94,7 @@ test.describe('Settings ▸ System — UI', () => {
   test.skip(!CAN_UI, 'set E2E_PASSWORD to run System settings UI specs');
 
   test('page loads with the scanner + discovery sections, no console errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-    page.on('pageerror', (e) => errors.push(e.message));
+    const consoleErrors = collectConsoleErrors(page);
 
     await loginUI(page);
 
@@ -111,16 +109,14 @@ test.describe('Settings ▸ System — UI', () => {
     await page.goto('/settings/security');
     await expect(page.getByRole('heading', { name: /HTTPS \/ TLS/i })).toBeVisible();
 
-    // Filter known harmless noise:
-    // - cloudflareinsights — the analytics beacon, blocked by some dev setups
-    // - notifications/stream — Firefox surfaces transient SSE-disconnect mid-
-    //   navigation as a JS console error ("Firefox can't establish a connection
-    //   to the server at …/notifications/stream"); Chromium and WebKit swallow
-    //   the same reconnect silently. The SSE client retries automatically, so
-    //   this is a Firefox-browser quirk, not a server problem.
-    const real = errors.filter(
-      (e) => !/cloudflareinsights/i.test(e) && !/notifications\/stream/i.test(e),
-    );
+    // Third-party noise (the edge-injected Cloudflare beacon) is filtered by
+    // origin URL inside collectConsoleErrors. One spec-local exception remains:
+    // notifications/stream — Firefox surfaces a transient SSE-disconnect mid-
+    // navigation as a JS console error ("Firefox can't establish a connection
+    // to the server at …/notifications/stream"); Chromium and WebKit swallow
+    // the same reconnect silently. The SSE client retries automatically, so
+    // this is a Firefox-browser quirk, not a server problem.
+    const real = consoleErrors().filter((e) => !/notifications\/stream/i.test(e));
     expect(real, `console errors:\n${real.join('\n')}`).toEqual([]);
   });
 });

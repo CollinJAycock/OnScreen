@@ -106,7 +106,13 @@ test.describe('4K playback sweep @chromium-only', () => {
       const errors: string[] = [];
       const onErr = (msg: any) => {
         const txt = msg.text();
-        if (msg.type() === 'error') errors.push(txt);
+        // Filter third-party noise by the message's ORIGIN URL: a failed
+        // subresource reports as a bare "Failed to load resource: net::ERR_…"
+        // with no URL in the text, so filtering on text alone never matches
+        // (the edge-injected Cloudflare beacon is the usual culprit).
+        const url = msg.location?.()?.url ?? '';
+        const noisy = /cloudflareinsights|cloudflare\.com|gstatic\.com/i.test(url + ' ' + txt);
+        if (msg.type() === 'error' && !noisy) errors.push(url ? `${txt}  [${url}]` : txt);
         if (txt.includes('[capability-shadow]')) shadow.push(txt);
       };
       const onPageErr = (e: any) => errors.push(e.message);
@@ -145,7 +151,7 @@ test.describe('4K playback sweep @chromium-only', () => {
         res.note = `exception: ${String(e?.message ?? e).slice(0, 240)}`;
         res.session_id = sid;
       }
-      res.errors = errors.filter((x) => !/cloudflareinsights/i.test(x)).slice(0, 6);
+      res.errors = errors.slice(0, 6); // already noise-filtered by origin in onErr
       res.pass = res.video_started && res.audio_started;
       if (sid) { try { await page.request.delete(`/api/v1/transcode/sessions/${sid}`); } catch { /* idle-reaps */ } }
       page.off('console', onErr);

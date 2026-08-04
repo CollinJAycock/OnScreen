@@ -14,9 +14,8 @@
 // dev server has fewer than two playable files across all libraries.
 
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test';
+import { PASSWORD, adminToken } from './_auth';
 
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? '';
 
 interface FileWithToken {
   itemId: string;
@@ -71,12 +70,7 @@ test.describe('Token scoping — per-file stream token', () => {
   test("file A's stream token cannot fetch file B (file_id claim enforced)", async ({ request, baseURL }) => {
     // Setup uses the authenticated `request` context (cookie + Bearer
     // auth carry across calls — fine for fetching item metadata).
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
+    const token = await adminToken(request);
 
     const pair = await findTwoFiles(request, token);
     if (!pair) {
@@ -128,12 +122,7 @@ test.describe('Token scoping — per-file stream token', () => {
     // but the general Bearer middleware on `/api/v1/*` must reject it.
     // Without this, a leaked stream URL would grant full API access for
     // 24 h instead of just file-scoped read.
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const accessToken: string = loginData.access_token;
+    const accessToken = await adminToken(request);
 
     const pair = await findTwoFiles(request, accessToken);
     if (!pair) {
@@ -174,12 +163,7 @@ test.describe('Token scoping — per-file stream token', () => {
     // the gate that lets clients refresh on demand without a server
     // restart. If a cache silently shipped, every call would return
     // the same string and we'd never catch the staleness.
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
+    const token = await adminToken(request);
 
     const pair = await findTwoFiles(request, token);
     if (!pair) {

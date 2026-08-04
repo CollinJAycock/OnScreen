@@ -9,20 +9,13 @@
 //   E2E_PASSWORD   OnScreen password — required; block skips otherwise
 
 import { test, expect } from '@playwright/test';
-
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? '';
+import { PASSWORD, adminToken } from './_auth';
 
 test.describe('Home hub — section contract', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run hub specs');
 
   test('GET /api/v1/hub returns the v2.1 section set', async ({ request }) => {
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
+    const token = await adminToken(request);
 
     const hubR = await request.get('/api/v1/hub', {
       headers: { Authorization: `Bearer ${token}` },
@@ -58,12 +51,7 @@ test.describe('Home hub — section contract', () => {
   });
 
   test('trending section is an array (empty is OK on a fresh dev box)', async ({ request }) => {
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const token: string = loginData.access_token;
+    const token = await adminToken(request);
 
     const hubR = await request.get('/api/v1/hub', {
       headers: { Authorization: `Bearer ${token}` },

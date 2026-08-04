@@ -9,9 +9,10 @@
 // credentials; they skip when E2E_PASSWORD is not set.
 
 import { test, expect, request as pwRequest } from '@playwright/test';
+import {
+  USERNAME, PASSWORD, adminToken, loginAs, registerUser, retryOn429, drainAuthRateLimit,
+} from './_auth';
 
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? '';
 
 test.describe('Security re-probe', () => {
   test('path traversal on /artwork rejected', async ({ request }) => {
@@ -69,12 +70,19 @@ test.describe('Security re-probe', () => {
     // Two probes: known-shape and totally-fake email. Both should return
     // the same shape (200 with neutral body) — different responses leak
     // whether the email is registered.
-    const a = await request.post('/api/v1/auth/forgot-password', {
-      data: { email: 'definitely-not-a-real-account@example.invalid' },
-    });
-    const b = await request.post('/api/v1/auth/forgot-password', {
-      data: { email: 'admin@example.com' },
-    });
+    // Rate-limit-tolerant: forgot-password shares the auth limiter, and a
+    // comparison where one probe is 429 and the other 200 tests nothing about
+    // enumeration. (It also passed for the wrong reason whenever BOTH were
+    // rate-limited.)
+    const a = await retryOn429(() =>
+      request.post('/api/v1/auth/forgot-password', {
+        data: { email: 'definitely-not-a-real-account@example.invalid' },
+      }),
+    );
+    const b = await retryOn429(() =>
+      request.post('/api/v1/auth/forgot-password', { data: { email: 'admin@example.com' } }),
+    );
+    test.skip(a.status() === 429 || b.status() === 429, 'forgot-password rate-limited — enumeration check inconclusive');
     // Both 200 (or both 202) — same status either way.
     expect.soft(a.status(), 'fake-email status').toBe(b.status());
   });
@@ -173,9 +181,11 @@ test.describe('Security — CSP nonce', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run the asset-token contract');
 
   test('login mints an asset token; general token is rejected in ?token=', async ({ request }) => {
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: USERNAME, password: PASSWORD },
-    });
+    // Raw login on purpose: this test asserts on the login RESPONSE BODY
+    // (asset_token), which the cached-token helper doesn't expose.
+    const loginR = await retryOn429(() =>
+      request.post('/api/v1/auth/login', { data: { username: USERNAME, password: PASSWORD } }),
+    );
     expect(loginR.status()).toBe(200);
     const { data } = await loginR.json();
     // Asset token is present and is a PASETO v4.local — distinct from the
@@ -255,6 +265,13 @@ test.describe('Security — rate limiting', () => {
       statuses,
       `Never received 429 after ${statuses.length} bad logins; got: ${[...new Set(statuses)].join(', ')}`,
     ).toContain(429);
+
+    // Hand the shared per-IP window back before finishing. This test knowingly
+    // exhausts a resource every later spec needs; without the drain the whole
+    // remainder of the run inherits a locked-out IP and fails as an
+    // unauthenticated cascade rather than on its own merits.
+    const drained = await drainAuthRateLimit(request);
+    expect(drained, 'auth rate-limit window did not drain within budget').toBe(true);
   });
 });
 
@@ -344,22 +361,17 @@ test.describe('Security — admin endpoint authorization', () => {
     const testUser = `e2e-nonadmin-${ts}`;
     const testPass = `E2ePass${ts}!`;
 
-    const reg = await request.post('/api/v1/auth/register', {
-      data: { username: testUser, password: testPass, email: `${testUser}@example.invalid` },
+    const reg = await registerUser(request, {
+      username: testUser, password: testPass, email: `${testUser}@example.invalid`,
     });
     // If registration is admin-only or disabled, skip gracefully.
-    if (reg.status() === 403 || reg.status() === 404) {
+    if (reg.status === 403 || reg.status === 404) {
       test.skip(true, 'self-registration is disabled on this instance');
       return;
     }
-    expect(reg.status(), `register status: ${await reg.text()}`).toBe(200);
+    expect(reg.status, `register status: ${reg.raw}`).toBe(200);
 
-    const loginR = await request.post('/api/v1/auth/login', {
-      data: { username: testUser, password: testPass },
-    });
-    expect(loginR.status()).toBe(200);
-    const { data: loginData } = await loginR.json();
-    const userToken: string = loginData.access_token;
+    const userToken = await loginAs(request, testUser, testPass);
 
     try {
       // Admin-only list-users must be 403 for a regular user.
@@ -369,21 +381,18 @@ test.describe('Security — admin endpoint authorization', () => {
       expect.soft([403], `non-admin /api/v1/users must be 403, got ${usersR.status()}`).toContain(usersR.status());
     } finally {
       // Clean up: log in as admin and delete the test account.
-      const adminLogin = await request.post('/api/v1/auth/login', {
-        data: { username: USERNAME, password: PASSWORD },
-      });
-      if (adminLogin.ok()) {
-        const { data: ad } = await adminLogin.json();
+      const adminTok = await adminToken(request).catch(() => '');
+      if (adminTok) {
         // Look up the user's ID from the admin users list.
         const list = await request.get('/api/v1/users', {
-          headers: { Authorization: `Bearer ${ad.access_token}` },
+          headers: { Authorization: `Bearer ${adminTok}` },
         });
         if (list.ok()) {
           const { data: users } = await list.json();
           const found = (users as any[]).find((u: any) => u.username === testUser);
           if (found) {
             await request.delete(`/api/v1/users/${found.id}`, {
-              headers: { Authorization: `Bearer ${ad.access_token}` },
+              headers: { Authorization: `Bearer ${adminTok}` },
             });
           }
         }

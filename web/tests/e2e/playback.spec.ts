@@ -17,6 +17,7 @@
 // support that are better tested in a dedicated lab run.
 
 import { test, expect } from '@playwright/test';
+import { collectConsoleErrors } from './_auth';
 
 // The chromium project in playwright.config.ts already sets
 // --autoplay-policy=no-user-gesture-required; redefining it via test.use
@@ -42,11 +43,7 @@ test.describe('Browser playback @chromium-only', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run browser playback specs');
 
   test('video plays, currentTime advances, seek lands within 10 s of 60 s target', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
-    page.on('pageerror', (err) => errors.push(err.message));
+    const consoleErrors = collectConsoleErrors(page);
 
     await loginViaUI(page);
 
@@ -146,16 +143,12 @@ test.describe('Browser playback @chromium-only', () => {
       .toBeGreaterThan(seekTarget - 5);
 
     // No console errors during the whole session (filter Cloudflare noise).
-    const realErrors = errors.filter((e) => !/cloudflareinsights/i.test(e));
+    const realErrors = consoleErrors();
     expect(realErrors, `Console errors during playback:\n${realErrors.join('\n')}`).toEqual([]);
   });
 
   test('player page loads with correct <title> and no JS errors before play', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
-    page.on('pageerror', (err) => errors.push(err.message));
+    const consoleErrors = collectConsoleErrors(page);
 
     await loginViaUI(page);
 
@@ -184,7 +177,7 @@ test.describe('Browser playback @chromium-only', () => {
       .poll(() => page.title(), { timeout: 5_000 })
       .toMatch(/\S/);
 
-    const realErrors = errors.filter((e) => !/cloudflareinsights/i.test(e));
+    const realErrors = consoleErrors();
     expect(realErrors, `JS errors on /watch page:\n${realErrors.join('\n')}`).toEqual([]);
   });
 });

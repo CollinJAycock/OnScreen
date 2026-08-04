@@ -12,7 +12,7 @@
 // endpoint, so a stable id keeps re-runs from accumulating rows).
 
 import { test, expect } from '@playwright/test';
-import { adminToken, auth, loginUI, CAN_API, CAN_UI } from './_auth';
+import { adminToken, auth, loginUI, collectConsoleErrors, CAN_API, CAN_UI } from './_auth';
 
 const THROWAWAY_NODE = 'e2e-playwright-node';
 
@@ -111,9 +111,7 @@ test.describe('Settings ▸ Nodes — UI', () => {
   test.skip(!CAN_UI, 'set E2E_PASSWORD to run Nodes UI specs');
 
   test('page loads with the node picker and no crash (null-map regression)', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-    page.on('pageerror', (e) => errors.push(e.message));
+    const consoleErrors = collectConsoleErrors(page);
 
     await loginUI(page);
 
@@ -125,7 +123,7 @@ test.describe('Settings ▸ Nodes — UI', () => {
     await expect(picker).toBeVisible();
     await expect(picker.locator('option', { hasText: /this node/i })).toHaveCount(1);
 
-    const real = errors.filter((e) => !/cloudflareinsights/i.test(e));
+    const real = consoleErrors();
     expect(real, `console errors:\n${real.join('\n')}`).toEqual([]);
   });
 });
