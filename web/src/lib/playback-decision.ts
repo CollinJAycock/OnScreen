@@ -22,6 +22,19 @@ export interface ClientCaps {
 // Audio codecs browsers decode natively in MP4/WebM. AC-3, E-AC-3, DTS,
 // TrueHD, ALAC, MP2, raw PCM are not reliably supported anywhere — transcode.
 const browserAudioCodecs = new Set(['aac', 'mp3', 'opus', 'flac', 'vorbis']);
+// The channel-count ceiling this client declares to the server
+// (maxaudiochannels=6 in the capability header): browsers reject >5.1 AAC
+// outright, and the layout is fixed in the bitstream, so a 7.1 source needs a
+// server downmix. The local decision must apply the SAME ceiling — it used to
+// skip it, so the direct-play fallback handed the <video> element 7.1 audio
+// the header had just told the server we can't decode (silent audio or an
+// instant decode error, depending on browser).
+const maxBrowserAudioChannels = 6;
+
+/** Channel count of the default (first) audio stream; 0 = unknown. */
+function defaultAudioChannels(file: ItemFile): number {
+  return file.audio_streams?.[0]?.channels ?? 0;
+}
 // Containers browsers handle reliably for direct play (faststart MP4/MOV/WebM).
 const browserContainers = new Set(['mp4', 'webm', 'mov']);
 
@@ -82,6 +95,9 @@ export function canDirectPlay(file: ItemFile | undefined, caps: ClientCaps): boo
   if (!browserContainers.has(container)) return false;
   if (videoCodec && !browserVideoCodecs(caps).has(videoCodec)) return false;
   if (audioCodec && !browserAudioCodecs.has(audioCodec)) return false;
+  // Channel layouts above the ceiling we declare to the server can't be
+  // decoded locally either — the downmix has to happen server-side.
+  if (defaultAudioChannels(file) > maxBrowserAudioChannels) return false;
   // Non-faststart MP4/MOV files have moov at the end — the browser must fetch
   // the tail before playback can begin. Route these through the remux path.
   if (!file.faststart) return false;

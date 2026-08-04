@@ -326,10 +326,13 @@
       mediaInfo.customData = info.customData;
 
       const req = new w.chrome.cast.media.LoadRequest(mediaInfo);
-      // Hand off the local playhead so the receiver picks up where
-      // the user was watching, not from zero.
+      // Hand off the local playhead so the receiver picks up where the user
+      // was watching, not from zero. CONTENT time, not stream time: during an
+      // offset HLS session videoEl.currentTime is stream-relative, and the
+      // receiver plays the source from its own start — handing it the raw
+      // element time rewound the cast by the session's start offset.
       if (videoEl && Number.isFinite(videoEl.currentTime)) {
-        req.currentTime = videoEl.currentTime;
+        req.currentTime = videoEl.currentTime + hlsOffsetSec;
       }
       await session.loadMedia(req);
       if (videoEl) videoEl.pause();
@@ -490,12 +493,18 @@
     }
   }
 
-  // escapeCueText escapes HTML special characters in a raw WebVTT cue and then
-  // converts newlines to <br>. Cue text originates from third-party subtitle
-  // files — it is not trusted, so we escape before any {@html} rendering to
-  // prevent subtitle-driven XSS.
+  // escapeCueText renders a raw WebVTT cue for the overlay: strip the WebVTT
+  // markup, escape what remains, convert newlines to <br>.
+  //
+  // The strip comes FIRST and exists because cues legitimately carry WebVTT
+  // tags — <i>, <b>, <c.classname>, <v Speaker>, inline <00:01:02.000>
+  // karaoke timestamps — and the overlay used to escape them into literal
+  // visible text: subtitles rendered as "&lt;i&gt;Previously on...&lt;/i&gt;"
+  // noise. Stripping (not honoring) the tags keeps the escape-before-{@html}
+  // XSS posture intact: nothing from the file survives as markup.
   function escapeCueText(raw: string): string {
-    const escaped = raw
+    const stripped = raw.replace(/<[^>\n]*>/g, '');
+    const escaped = stripped
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -780,6 +789,14 @@
   // tracks). videoEl.currentTime includes this offset, but subtitle timestamps
   // from the source file don't. Captured on first play to correct subtitle sync.
   let hlsPtsOffset = 0;
+  // Armed by attachHls, consumed by the FIRST `playing` event. The capture
+  // used to re-fire on every resume/rebuffer while hlsPtsOffset was still 0:
+  // pause at 40:00 and press play, and 40:00 became the "PTS offset" —
+  // permanently desyncing every subtitle by the pause position.
+  let hlsPtsCapturePending = false;
+  // Fatal MEDIA_ERROR recovery budget per attach; reset on `playing`.
+  let mediaErrorRecoveries = 0;
+  const maxMediaErrorRecoveries = 2;
   // True when the current HLS session is a remux (video copy). Used to detect
   // when the browser can't decode the remuxed video and escalate to full transcode.
   let hlsIsRemux = false;
@@ -1075,7 +1092,12 @@
     item.view_offset_ms = evt.positionMs;
     item = item; // trigger Svelte reactivity for the Resume button
     if (videoEl && Number.isFinite(videoEl.duration)) {
-      videoEl.currentTime = evt.positionMs / 1000;
+      // positionMs is ABSOLUTE content time; the media element's timeline is
+      // STREAM time. On an offset HLS session (mid-stream remux) the two
+      // differ by hlsOffsetSec — writing the absolute value seeked the paused
+      // player to (position + offset), a point past where the other device
+      // was, doubled up on short streams and clamped to the end on long ones.
+      videoEl.currentTime = Math.max(0, evt.positionMs / 1000 - hlsOffsetSec);
     }
   });
 
@@ -1818,6 +1840,12 @@
 
   async function switchToTranscode(height: number, posMs: number, videoCopy: boolean = false) {
     if (!item) return;
+    // Re-entrancy guard. Two overlapping calls (codec escalation firing while
+    // a quality change is in flight, double-click on a quality entry) each
+    // started a server session, and the loser's session was orphaned — never
+    // stopped, holding a stream slot — while its hls.js instance leaked
+    // attached to a detached media element.
+    if (switchingTranscode) return;
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
     switchingTranscode = true; // gate codec-escalation during the destroy→attach gap
@@ -1851,9 +1879,18 @@
       // stream to begin playback so we skip silent video while the
       // AAC encoder warms up on a mid-stream -ss.
       const playlistUrl = sess.playlist_url;
-      const seg0Gap = sess.seg0_audio_gap_sec;
-      const offsetSec = sess.start_offset_sec;
-      attachHls(playlistUrl, offsetSec, wasPlaying, videoCopy, seg0Gap);
+      const seg0Gap = sess.seg0_audio_gap_sec ?? 0;
+      const offsetSec = sess.start_offset_sec ?? 0;
+      // Where in the STREAM the requested content position lives. For a
+      // mid-stream remux the server baked the offset into the stream
+      // (offsetSec ≈ posMs/1000 → desired ≈ 0: start at the head). For a
+      // full-timeline stream — the ABR ladder and the pre-encoded static
+      // ladder both report start_offset_sec 0 — the stream begins at 0:00 and
+      // resuming means SEEKING: without this, "resume at 45:00" played from
+      // the beginning while the scrubber claimed otherwise and then saved the
+      // phantom position over the user's real progress.
+      const desiredStartSec = Math.max(0, posMs / 1000 - offsetSec);
+      attachHls(playlistUrl, offsetSec, wasPlaying, videoCopy, seg0Gap, desiredStartSec);
     } catch (e) {
       if (e instanceof ApiRequestError && e.code === 'PARENTAL_LIMIT') {
         handleParentalBlock(e.message);
@@ -1893,12 +1930,16 @@
     }
   }
 
-  function attachHls(playlistUrl: string, startSec: number, autoPlay: boolean, isRemux: boolean = false, seg0AudioGapSec: number = 0) {
+  function attachHls(playlistUrl: string, startSec: number, autoPlay: boolean, isRemux: boolean = false, seg0AudioGapSec: number = 0, desiredStartSec: number = 0) {
     // The HLS stream begins at t=0 representing content position startSec.
-    // We track the offset ourselves; do NOT seek inside the stream.
+    // We track the offset ourselves; seeking happens only via startPosition
+    // for full-timeline streams (see desiredStartSec at the call site).
     hlsOffsetSec = startSec;
     hlsActive = true;
     hlsIsRemux = isRemux;
+    // PTS-offset capture is armed exactly once per attach — see onPlaying.
+    hlsPtsCapturePending = true;
+    mediaErrorRecoveries = 0;
 
     // Use file-level duration (from ffprobe) first, then fall back to item-level.
     const file = item?.files?.[0];
@@ -1961,11 +2002,15 @@
         // When the server measured an audio warmup gap for seg 0, seek
         // forward into the stream by that amount on open so the player
         // skips the silent-video head and starts at the first audible
-        // frame. Otherwise let HLS.js auto-detect (-1) — forcing 0
-        // previously caused recoverMediaError to re-snap the player
-        // back to an empty buffer on every media hiccup (the "scrubber
-        // rewinds 5 seconds every 5 seconds" symptom).
-        startPosition: seg0AudioGapSec > 0 ? seg0AudioGapSec : -1,
+        // frame. A full-timeline stream resuming mid-content (ABR/static
+        // ladders — desiredStartSec > 0) seeks to the resume point instead.
+        // Otherwise let HLS.js auto-detect (-1) — forcing 0 previously
+        // caused recoverMediaError to re-snap the player back to an empty
+        // buffer on every media hiccup (the "scrubber rewinds 5 seconds
+        // every 5 seconds" symptom).
+        startPosition: seg0AudioGapSec > 0 ? seg0AudioGapSec
+          : desiredStartSec > 0.5 ? desiredStartSec
+          : -1,
         // Disable live-edge sync until ENDLIST appears. Without this, HLS.js
         // seeks the player forward toward the live edge and stalls.
         liveSyncDurationCount: 999,
@@ -1982,9 +2027,24 @@
         console.warn('[HLS] error', data.type, data.details, data.fatal, data);
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          // Media decode error — attempt HLS.js recovery once.
-          console.warn('[HLS] attempting media error recovery');
-          hlsInstance?.recoverMediaError();
+          // Media decode error — attempt HLS.js recovery, BOUNDED. On a
+          // genuinely undecodable stream every recovery attempt fails with
+          // another fatal MEDIA_ERROR, and the unbounded retry spun
+          // recover → fail → recover forever: black screen, pegged CPU, a
+          // live server session, and no error ever surfaced. Recoveries
+          // reset on a successful `playing` (see onPlaying), so an
+          // occasional mid-stream hiccup still gets its second chance later.
+          if (mediaErrorRecoveries < maxMediaErrorRecoveries) {
+            mediaErrorRecoveries++;
+            console.warn(`[HLS] attempting media error recovery (${mediaErrorRecoveries}/${maxMediaErrorRecoveries})`);
+            hlsInstance?.recoverMediaError();
+          } else {
+            console.warn('[HLS] media error unrecoverable — tearing down');
+            error = `Playback error: ${data.details ?? 'media error'}`;
+            buffering = false;
+            destroyHls();
+            stopTranscodeSession();
+          }
         } else {
           // Network or other fatal error — surface to user.
           error = `Playback error: ${data.details ?? 'unknown'}`;
@@ -1995,6 +2055,8 @@
       videoEl.src = playlistUrl;
       videoEl.load();
       const onMeta = () => {
+        // Same full-timeline resume as the hls.js startPosition above.
+        if (desiredStartSec > 0.5) videoEl.currentTime = desiredStartSec;
         if (autoPlay) videoEl.play().catch(() => {});
         videoEl.removeEventListener('loadedmetadata', onMeta);
       };
@@ -2100,11 +2162,21 @@
   function onWaiting()  { buffering = true; }
   function onPlaying()  {
     buffering = false;
-    // Capture PTS offset on first play of an HLS session. If videoEl.currentTime
-    // is well above 0 but hlsOffsetSec is 0 (started from beginning), the source
-    // file has shifted MPEG-TS timestamps. Subtract this from subtitle matching.
-    if (hlsActive && hlsPtsOffset === 0 && hlsOffsetSec === 0 && videoEl.currentTime > 0.5) {
-      hlsPtsOffset = videoEl.currentTime;
+    // A successful `playing` proves the pipeline decodes — refill the fatal
+    // media-error recovery budget so a later mid-stream hiccup gets retried.
+    mediaErrorRecoveries = 0;
+    // Capture PTS offset on the FIRST play of an HLS session only. If
+    // videoEl.currentTime is well above 0 but hlsOffsetSec is 0 (started from
+    // the beginning), the source has shifted MPEG-TS timestamps; subtract it
+    // from subtitle matching. The pending latch matters: this used to re-fire
+    // on any resume while hlsPtsOffset was still 0, so pausing at 40:00 and
+    // resuming turned 40:00 into the "container shift" and desynced every
+    // subtitle from then on.
+    if (hlsPtsCapturePending) {
+      hlsPtsCapturePending = false;
+      if (hlsActive && hlsOffsetSec === 0 && videoEl.currentTime > 0.5) {
+        hlsPtsOffset = videoEl.currentTime;
+      }
     }
   }
 

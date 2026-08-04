@@ -80,3 +80,22 @@ describe('canRemuxVideo', () => {
     expect(canRemuxVideo(f({ video_codec: 'h264', hdr_type: 'hdr10' }), { ...BASIC, hdr: false })).toBe(false);
   });
 });
+
+describe('canDirectPlay audio channel ceiling', () => {
+  const audio = (channels: number) =>
+    f({
+      container: 'mp4', video_codec: 'h264', audio_codec: 'aac', faststart: true,
+      audio_streams: [{ index: 0, codec: 'aac', channels, language: 'en', title: '' }] as ItemFile['audio_streams'],
+    });
+
+  it('7.1 AAC → false: the layout is fixed in the bitstream and the header we send declares maxaudiochannels=6', () => {
+    // Before the check, the local fallback handed the <video> element 7.1
+    // audio the server had just been told this client cannot decode.
+    expect(canDirectPlay(audio(8), BASIC)).toBe(false);
+  });
+  it('5.1 and stereo pass; unknown channel count passes (no false transcodes)', () => {
+    expect(canDirectPlay(audio(6), BASIC)).toBe(true);
+    expect(canDirectPlay(audio(2), BASIC)).toBe(true);
+    expect(canDirectPlay(f({ container: 'mp4', video_codec: 'h264', audio_codec: 'aac', faststart: true }), BASIC)).toBe(true);
+  });
+});
