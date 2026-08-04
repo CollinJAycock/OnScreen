@@ -3812,7 +3812,10 @@
       </button>
     {/if}
 
-    {#if item.files?.length}
+    <!-- Same web_downloads gate as the player-bar download button above: this
+         second link used to be unconditional and pointed at /media/stream,
+         which quietly defeated the admin "Allow web downloads" kill switch. -->
+    {#if $capabilities?.features?.web_downloads && item.files?.length}
       <a
         class="download-btn"
         href="{assetUrl('/media/stream/' + item.files[0].id)}"

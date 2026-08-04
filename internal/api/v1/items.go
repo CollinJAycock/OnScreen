@@ -178,7 +178,8 @@ type ItemHandler struct {
 	ratings    ItemRatingService // optional; per-user + community ratings (WithRatings)
 	markers    ItemMarkerService
 	access     LibraryAccessChecker
-	watchLimit ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
+	watchLimit  ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
+	usageAccrue *usageAccruer  // byte-serving accrual companion to watchLimit (see WithWatchLimit)
 	subs       ExternalSubLister
 	tracker    *streaming.Tracker
 	sync       *notification.Broker
@@ -278,6 +279,13 @@ func (h *ItemHandler) WithSubtitleCache(dir string) *ItemHandler {
 // round trip.
 func (h *ItemHandler) WithWatchLimit(wl ItemWatchLimit) *ItemHandler {
 	h.watchLimit = newWatchLimitMemo(wl)
+	// Byte-serving accrual for direct play. The progress beacon also accrues,
+	// but it is client-driven — a client that withholds it streamed direct-play
+	// bytes with zero usage recorded, making the daily budget decorative for
+	// exactly the clients configured to dodge it. The serving path is the one
+	// signal the server always sees. Delta-based AddTick makes the two sources
+	// safely additive.
+	h.usageAccrue = newUsageAccruer(h.watchLimit)
 	return h
 }
 
@@ -2296,6 +2304,11 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
 			return
 		}
+		// Accrue usage from the serving path itself (throttled; restricted
+		// users only). Direct play used to enforce the allowed-hours window
+		// here but count NOTHING toward the daily budget unless the client
+		// volunteered progress beacons.
+		h.usageAccrue.Tick(r.Context(), h.logger, claims.UserID)
 	}
 
 	if h.tracker != nil && (r.Method == http.MethodGet || r.Method == http.MethodHead) {

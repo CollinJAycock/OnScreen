@@ -956,7 +956,11 @@ func run() error {
 		Dir:          cfg.CacheSubdir("livetv"),
 		VideoEncoder: liveTVEncoder,
 	}, liveTVSvc, logger)
-	liveTVHandler = v1.NewLiveTVHandler(liveTVSvc, logger).WithStreamProxy(liveTVProxy)
+	liveTVHandler = v1.NewLiveTVHandler(liveTVSvc, logger).
+		WithStreamProxy(liveTVProxy).
+		// Parental watch limits apply to live viewing too — the live tab was
+		// the one playback surface entirely outside the policy.
+		WithWatchLimit(watchLimitStore)
 	if rtmpServer != nil {
 		// Enables the broadcast ("go live") admin endpoints: ingest URL +
 		// live status for RTMP devices.

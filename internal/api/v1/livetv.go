@@ -51,6 +51,13 @@ type LiveTVHandler struct {
 	proxy  LiveTVStreamProxy
 	dvr    LiveTVDVRService
 	logger *slog.Logger
+	// watchLimit gates + accounts live viewing under the parental policy.
+	// Live TV used to be entirely outside the watch-limit system: a capped
+	// or outside-hours profile just switched to the Live TV tab, and hours
+	// of live viewing accrued nothing against the daily budget. nil = no
+	// limits (matches the items handler).
+	watchLimit ItemWatchLimit
+	accrue     *usageAccruer
 
 	// RTMP broadcast ("go live") support. rtmp is nil when the embedded RTMP
 	// ingest server isn't enabled; the broadcast endpoints then 503.
@@ -64,6 +71,15 @@ type LiveTVHandler struct {
 // without a configured live-TV subsystem.
 func NewLiveTVHandler(svc LiveTVService, logger *slog.Logger) *LiveTVHandler {
 	return &LiveTVHandler{svc: svc, logger: logger}
+}
+
+// WithWatchLimit attaches the parental watch-limit store. Memo-wrapped like
+// the items/transcode handlers: the gate runs on every segment fetch, and the
+// accruer re-reads the policy on every tick.
+func (h *LiveTVHandler) WithWatchLimit(wl ItemWatchLimit) *LiveTVHandler {
+	h.watchLimit = newWatchLimitMemo(wl)
+	h.accrue = newUsageAccruer(h.watchLimit)
+	return h
 }
 
 // ── Response shapes ──────────────────────────────────────────────────────────

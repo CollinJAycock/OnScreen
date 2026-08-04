@@ -237,6 +237,18 @@ func NewRouter(h *Handlers) http.Handler {
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
+				// This route serves IMAGES. The path used to be constrained
+				// only to "somewhere under a library scan path" — and media
+				// files live under library scan paths, so
+				// /artwork/Movies/Film/Film.mkv streamed the full movie bytes
+				// through the artwork route: no watch limits, no rating gate
+				// (the rating map only knows artwork paths, and its miss
+				// fails open), full Range support. An extension allowlist
+				// closes the class.
+				if !artworkExtAllowed(clean) {
+					http.NotFound(w, req)
+					return
+				}
 
 				wParam, hParam := artworkResizeDims(req)
 
@@ -254,15 +266,22 @@ func NewRouter(h *Handlers) http.Handler {
 						if _, err := artStore.Stat(req.Context(), abs); err != nil {
 							continue
 						}
-						// File exists; check whether the caller can see
-						// the owning library. Fail-closed: 404 (not 403)
-						// so the absence of access is indistinguishable
-						// from a missing file.
+						// File exists; check whether the caller can see the
+						// owning library. Fail-closed per ROOT but keep
+						// scanning: scan paths can nest or collide (two
+						// libraries sharing a parent directory), and the same
+						// relative path may resolve under several roots. A
+						// denial under the first matching root must not veto a
+						// legitimate grant under another — returning early here
+						// both leaked nested-library art through whichever root
+						// iterated first AND 404'd art the caller was entitled
+						// to when an inaccessible root shadowed it. 404 (never
+						// 403) only after every candidate denies, so absence of
+						// access stays indistinguishable from a missing file.
 						if h.LibraryAccess != nil && claims != nil {
 							ok, err := h.LibraryAccess.CanAccessLibrary(req.Context(), claims.UserID, root.LibraryID, claims.IsAdmin)
 							if err != nil || !ok {
-								http.NotFound(w, req)
-								return
+								continue
 							}
 						}
 						// Content-rating ceiling. Library ACL gets the caller into
@@ -270,20 +289,28 @@ func NewRouter(h *Handlers) http.Handler {
 						// the poster of an over-ceiling item by direct URL. Keyed by
 						// the library-relative slash path (the form stored at scan
 						// time). Fails open when the art maps to no rated item.
+						rated := false
 						if h.ArtworkContentRating != nil && claims != nil && claims.MaxContentRating != "" {
-							if rating, found := h.ArtworkContentRating(req.Context(), root.LibraryID, filepath.ToSlash(clean)); found && !contentrating.IsAllowed(rating, claims.MaxContentRating) {
-								http.NotFound(w, req)
-								return
+							rating, found := h.ArtworkContentRating(req.Context(), root.LibraryID, filepath.ToSlash(clean))
+							rated = found
+							if found && !contentrating.IsAllowed(rating, claims.MaxContentRating) {
+								continue
 							}
 						}
 						// Serve resized variant if dimensions requested.
 						if (wParam > 0 || hParam > 0) && h.Artwork != nil {
 							w.Header().Set("Content-Type", "image/jpeg")
 							// Resized variants are immutable and identical for every
-							// user, so a CDN/shared cache can hold them when enabled.
+							// user, so a CDN/shared cache can hold them when enabled —
+							// EXCEPT art that carries a content rating: whether a
+							// given caller may see that poster is a per-user
+							// decision, and a shared cache would happily replay an
+							// allowed user's copy to a restricted profile. Rated art
+							// stays private regardless of the toggle.
 							resizedCC := "private, max-age=604800, immutable"
-							if h.PublicAssetCache != nil && h.PublicAssetCache() {
+							if !rated && h.PublicAssetCache != nil && h.PublicAssetCache() {
 								resizedCC = "public, max-age=604800, immutable"
+								w.Header().Add("Vary", "Authorization")
 							}
 							w.Header().Set("Cache-Control", resizedCC)
 							if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
@@ -302,8 +329,9 @@ func NewRouter(h *Handlers) http.Handler {
 							return
 						}
 						fullCC := "private, max-age=86400, must-revalidate"
-						if h.PublicAssetCache != nil && h.PublicAssetCache() {
+						if !rated && h.PublicAssetCache != nil && h.PublicAssetCache() {
 							fullCC = "public, max-age=86400, must-revalidate"
+							w.Header().Add("Vary", "Authorization")
 						}
 						w.Header().Set("Cache-Control", fullCC)
 						// Clear WriteTimeout — the 60 s server default
@@ -1113,6 +1141,22 @@ func NewRouter(h *Handlers) http.Handler {
 	})
 
 	return r
+}
+
+// artworkImageExts is every extension the /artwork/* route will serve. The
+// route walks LIBRARY SCAN PATHS — the same directories the media itself
+// lives in — so without this allowlist any file in a library was fetchable as
+// "artwork": the full movie bytes, subtitles, NFO files, all with Range
+// support and none of the playback gates. Artwork agents only ever write
+// image formats, so the list is closed.
+var artworkImageExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
+	".gif": true, ".bmp": true, ".avif": true, ".tbn": true,
+}
+
+// artworkExtAllowed reports whether the cleaned artwork path names an image.
+func artworkExtAllowed(clean string) bool {
+	return artworkImageExts[strings.ToLower(filepath.Ext(clean))]
 }
 
 // artworkResizeDims reads the optional ?w= / ?h= resize params and snaps each

@@ -14,6 +14,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/photoimage"
 )
@@ -512,6 +513,20 @@ func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
+	}
+	// Content-rating ceiling, matching every other item byte surface. The
+	// library ACL alone let a restricted profile pull the image bytes of an
+	// over-ceiling item by direct URL. 404 (not 403) to match this handler's
+	// existing shape — access denial stays indistinguishable from absence.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.NotFound(w, r)
+			return
+		}
 	}
 	// The image endpoint serves photos directly from their source file
 	// and audiobook covers via ffmpeg-extracted embedded artwork.
