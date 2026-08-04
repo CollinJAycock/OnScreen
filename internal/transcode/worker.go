@@ -742,6 +742,17 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	actualHEVC, actualAV1 := vout.HEVC, vout.AV1
 	segExt := vout.SegExt()
 
+	// Dead-chroma ("green output") detection. The hardware pipelines have a
+	// failure mode the no-segments fallback below cannot see: ffmpeg runs
+	// happily, segments appear on schedule, and every frame is solid green
+	// because the surfaces reaching the encoder lost their chroma (observed on
+	// the cuvid→scale_cuda chain on a Turing RTX 5000 whose startup probe
+	// passed). runFFmpeg validates the first finished segment while ffmpeg is
+	// running; on dead chroma it kills the run and sets garbageOutput so the
+	// retry below re-encodes with software decode.
+	garbageOutput := false
+	garbageRetried := false
+
 	// runFFmpeg execs ffmpeg with the given args and monitors it until exit or
 	// kill. Returns the exit error and whether ffmpeg exited on its own
 	// (selfExited) vs. we killed it for session-stop / idle / ctx-cancel.
@@ -786,6 +797,19 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		t := time.NewTicker(heartbeatInterval)
 		defer t.Stop()
 
+		// One-shot per run: validate the first finished segment's chroma when
+		// any hardware decode/scale stage is in the pipeline (the only place
+		// the green-output corruption can originate; the software chain
+		// negotiates formats in system memory and cannot silently drop
+		// planes). Reading the flags here is safe — they're only mutated
+		// between runFFmpeg invocations, and after the garbage retry they're
+		// all false, which also makes the retried run exempt by construction.
+		segChecked := false
+		hwPipelineActive := func() bool {
+			return qsvDecodeUsable || qsvVRAMUsable || vaapiVRAMUsable || vaapiTonemapUsable ||
+				cudaHevcUsable || cudaVRAMUsable || cudaHDRUsable || cudaTonemapUsable
+		}
+
 		for {
 			select {
 			case err := <-done:
@@ -815,6 +839,28 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 					_ = cmd.Process.Kill()
 					return nil, false
 				}
+				if !segChecked && !garbageRetried && !job.AudioOnly && hwPipelineActive() {
+					if idx := HighestSegmentIndex(sessionDir, segExt); idx >= 0 {
+						segChecked = true
+						segPath := filepath.Join(sessionDir, fmt.Sprintf("seg%05d%s", idx, segExt))
+						initPath := ""
+						if segExt == ".m4s" {
+							initPath = filepath.Join(sessionDir, "init.mp4")
+						}
+						if dead, cerr := SegmentChromaDead(bg, segPath, initPath); cerr != nil {
+							// Fail open: a diagnostic hiccup says nothing
+							// about the stream — never kill playback on it.
+							w.logger.Debug("segment chroma check skipped",
+								"session_id", job.SessionID, "err", cerr)
+						} else if dead {
+							garbageOutput = true
+							w.logger.Warn("hardware pipeline emitted dead-chroma (green) segments — killing for software-decode retry",
+								"session_id", job.SessionID, "segment", segPath)
+							_ = cmd.Process.Kill()
+							return nil, false
+						}
+					}
+				}
 				if err := w.store.SetHeartbeat(bg, job.SessionID); err != nil {
 					w.logger.Warn("heartbeat write failed",
 						"session_id", job.SessionID, "err", err)
@@ -832,6 +878,41 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// case QSV can't decode this source and the continuation must stay on
 	// software too (the continuation path has no retry of its own).
 	continuationUseQSV := qsvDecodeUsable
+	// Dead-chroma retry: runFFmpeg killed the run because the hardware
+	// pipeline was producing green (chroma-less) segments. Re-encode with
+	// software decode — same recovery as the no-segments fallback below, but
+	// for corruption the exit code can't see. The CUDA capability flags are
+	// also cleared WORKER-WIDE: the startup probe demonstrably passed while
+	// real output is garbage, so leaving them on would make every later
+	// session pay a green-seg0 + kill + retry cycle. (A restart re-probes,
+	// and the probe now validates pixels too.)
+	if garbageOutput {
+		garbageOutput = false
+		garbageRetried = true
+		w.logger.Warn("hardware pipeline produced dead-chroma output; retrying with software decode",
+			"session_id", job.SessionID, "qsv", qsvDecodeUsable, "qsv_vram", qsvVRAMUsable,
+			"vaapi_vram", vaapiVRAMUsable, "vaapi_tonemap", vaapiTonemapUsable,
+			"nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable,
+			"tonemap_cuda", cudaTonemapUsable)
+		if cudaVRAMUsable || cudaHDRUsable {
+			w.cudaScale.Store(false)
+		}
+		if cudaTonemapUsable {
+			w.cudaTonemap.Store(false)
+		}
+		// Clear any green partial output so segment numbering restarts at 0.
+		_ = os.RemoveAll(sessionDir)
+		_ = os.MkdirAll(sessionDir, 0755)
+		continuationUseQSV = false
+		cudaHevcUsable = false
+		cudaVRAMUsable = false
+		cudaHDRUsable = false
+		cudaTonemapUsable = false
+		qsvVRAMUsable = false
+		vaapiVRAMUsable = false
+		vaapiTonemapUsable = false
+		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
+	}
 	// Hardware-decode fallback: if a hardware-decode run (QSV or NVDEC) died on
 	// its own before producing any segment (the historical HW-decode failure
 	// mode — ffmpeg aborts at decode init), retry once with software decode so a

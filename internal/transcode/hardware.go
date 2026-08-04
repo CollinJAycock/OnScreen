@@ -673,8 +673,15 @@ func ProbeCudaHevcDecode(ctx context.Context) bool {
 // ffmpeg/driver combos, and reference-heavy sources can exhaust the decoder
 // surface pool. So the worker enables CudaVRAM only when this real probe
 // passes, mirroring exactly what BuildHLS emits (explicit hevc_cuvid,
-// extra_hw_frames, scale_cuda). A 10-bit (Main10) clip is used because 10-bit
-// is the worst case for the cuda-frame chain.
+// extra_hw_frames, scale_cuda).
+//
+// Both bit depths are exercised — 8-bit (the everyday nv12→nv12 case) and
+// Main10 (the fragile P010→nv12 conversion) — and the probe VALIDATES THE
+// PIXELS, not just the exit code: the chain can "succeed" while handing the
+// encoder surfaces with zeroed chroma, encoding every frame solid green
+// (observed on a Turing RTX 5000 whose exit-code-only probe passed). The
+// output is written to a real file and decoded back through signalstats; dead
+// chroma fails the probe.
 func ProbeCudaHevcScale(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
@@ -688,27 +695,50 @@ func ProbeCudaHevcScale(ctx context.Context) bool {
 	// (persistent volume) means it's a one-time cost — warm runs return in ~2s.
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	tmp, err := os.CreateTemp("", "nvscale-probe-*.hevc")
-	if err != nil {
-		return false
+
+	// runVRAMChain encodes a tiny HEVC clip at the given bit depth, pushes it
+	// through the exact chain BuildHLS emits, and checks the surviving pixels.
+	runVRAMChain := func(main10 bool) bool {
+		src, err := os.CreateTemp("", "nvscale-probe-src-*.hevc")
+		if err != nil {
+			return false
+		}
+		src.Close()
+		defer os.Remove(src.Name())
+		out, err := os.CreateTemp("", "nvscale-probe-out-*.hevc")
+		if err != nil {
+			return false
+		}
+		out.Close()
+		defer os.Remove(out.Name())
+
+		encArgs := []string{"-hide_banner", "-loglevel", "error", "-y",
+			"-f", "lavfi", "-i", "testsrc2=s=640x480:r=10:d=1"}
+		if main10 {
+			encArgs = append(encArgs, "-vf", "format=p010le", "-c:v", "hevc_nvenc", "-profile:v", "main10")
+		} else {
+			encArgs = append(encArgs, "-c:v", "hevc_nvenc")
+		}
+		encArgs = append(encArgs, "-frames:v", "10", src.Name())
+		if exec.CommandContext(ctx, "ffmpeg", encArgs...).Run() != nil {
+			return false
+		}
+		// Full VRAM chain: cuvid decode -> scale_cuda -> NVENC, as BuildHLS
+		// emits — written to a real file so the result can be inspected.
+		dec := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+			"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-extra_hw_frames", "8",
+			"-c:v", "hevc_cuvid", "-i", src.Name(),
+			"-vf", "scale_cuda=w=320:h=240:format=nv12",
+			"-c:v", "hevc_nvenc", "-frames:v", "5", "-f", "hevc", out.Name())
+		if dec.Run() != nil {
+			return false
+		}
+		// testsrc2 is saturated with color; dead chroma here means the chain
+		// corrupts surfaces and must stay disabled.
+		return outputChromaAlive(ctx, out.Name())
 	}
-	tmp.Close()
-	defer os.Remove(tmp.Name())
-	// 1) tiny 10-bit HEVC clip (Main10) — the fragile case for the VRAM chain.
-	enc := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-		"-f", "lavfi", "-i", "testsrc2=s=640x480:r=10:d=1",
-		"-vf", "format=p010le", "-c:v", "hevc_nvenc", "-profile:v", "main10",
-		"-frames:v", "10", tmp.Name())
-	if enc.Run() != nil {
-		return false
-	}
-	// 2) full VRAM chain: cuvid decode -> scale_cuda -> NVENC, as BuildHLS emits.
-	dec := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
-		"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-extra_hw_frames", "8",
-		"-c:v", "hevc_cuvid", "-i", tmp.Name(),
-		"-vf", "scale_cuda=w=320:h=240:format=nv12",
-		"-c:v", "hevc_nvenc", "-frames:v", "5", "-f", "null", "-")
-	return dec.Run() == nil
+
+	return runVRAMChain(false) && runVRAMChain(true)
 }
 
 // ProbeTonemapCuda reports whether the all-VRAM CUDA HDR→SDR pipeline works
