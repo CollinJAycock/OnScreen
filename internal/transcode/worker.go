@@ -3,6 +3,7 @@ package transcode
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/onscreen/onscreen/internal/observability"
+	"github.com/onscreen/onscreen/internal/valkey"
 )
 
 var tracer = otel.Tracer("onscreen/transcode")
@@ -472,11 +474,16 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// job.SessionDir is computed on the dispatching server; on a remote worker
 	// whose temp path differs (different OS user, OS, or TMPDIR) it points at a
 	// directory that doesn't belong to this machine. The worker's own segment
-	// server serves from SessionDir(id), so ffmpeg must write there too — using
+	// server serves from this same path, so ffmpeg must write there too — using
 	// job.SessionDir would scatter segments where the segment server can't find
 	// them (and mismatch ffmpeg's working dir). On the embedded/single-box path
 	// the two are identical, so this is a no-op there.
-	sessionDir := SessionDir(job.SessionID)
+	//
+	// Scoped to the job's INCARNATION so a restart that reuses its session ID
+	// (every ABR rung seek does) gets a private directory instead of writing
+	// seg00000 on top of the run it replaced. Incarnation 0 is the bare session
+	// ID, so every other session keeps the historical path.
+	sessionDir := SessionDirFor(job.SessionID, job.Incarnation)
 
 	// Ensure session directory exists.
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
@@ -625,6 +632,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				StartOffset:          startOffset,
 				StartNumber:          startNumber,
 				PlaylistName:         playlistName,
+				OutputTSOffsetSec:    job.OutputTSOffsetSec,
 				Encoder:              enc,
 				IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI || enc == EncoderAV1VAAPI,
 				IsHEVC:               job.IsHEVC,
@@ -747,9 +755,14 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			w.logger.Warn("set worker info on session", "session_id", job.SessionID, "err", err)
 		}
 
-		// Track PID for kill on session stop.
+		// Track PID for kill on session stop. Keyed by incarnation-scoped dir
+		// name, not bare session ID: during a rung restart the old and new runs
+		// briefly coexist under one session ID, and a shared key would let the
+		// dying run's map cleanup erase the live successor's PID — leaving
+		// KillSession with nothing to kill. KillSession matches all
+		// incarnations of a session ID.
 		w.mu.Lock()
-		w.activeJobs[job.SessionID] = cmd.Process
+		w.activeJobs[SessionDirName(job.SessionID, job.Incarnation)] = cmd.Process
 		w.mu.Unlock()
 
 		// Heartbeat loop while FFmpeg runs.
@@ -771,35 +784,20 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				return err, true
 			case <-t.C:
 				bg := context.Background()
-				// If the session no longer exists in Valkey (client stopped it), kill FFmpeg.
 				sess, err := w.store.Get(bg, job.SessionID)
-				if err != nil {
-					w.logger.Info("session deleted — killing ffmpeg", "session_id", job.SessionID)
-					_ = cmd.Process.Kill()
-					return nil, false
-				}
-				// Idle-kill: a client that closes its tab without firing
-				// DELETE leaves ffmpeg encoding for the full 4 h session
-				// TTL with `-readrate 1.0`. The Segment endpoint stamps
-				// LastActivityAt on every segment fetch (~every 4 s of
-				// playback), so a 60 s gap means the client crashed,
-				// network dropped, or the user navigated away. Kill the
-				// process to free the GPU and stop disk-fill.
-				//
-				// Grace period for the start-of-session window: until the
-				// player has fetched its first segment, LastActivityAt is
-				// zero. Use CreatedAt as the anchor so we don't kill a
-				// session that's still buffering seg 0.
-				const idleKillThreshold = 60 * time.Second
-				anchor := sess.LastActivityAt
-				if anchor.IsZero() {
-					anchor = sess.CreatedAt
-				}
-				if !anchor.IsZero() && time.Since(anchor) > idleKillThreshold {
-					w.logger.Info("client idle — killing ffmpeg",
+				verdict := watchdogVerdict(sess, err, job.Incarnation, time.Now())
+				switch verdict {
+				case watchdogKeep:
+					// fall through to the heartbeat write below
+				case watchdogStoreError:
+					w.logger.Warn("session read failed — keeping ffmpeg alive",
+						"session_id", job.SessionID, "err", err)
+					continue
+				default:
+					w.logger.Info("watchdog killing ffmpeg",
 						"session_id", job.SessionID,
-						"last_activity_at", sess.LastActivityAt,
-						"idle_for", time.Since(anchor).Round(time.Second))
+						"reason", verdict,
+						"job_incarnation", job.Incarnation)
 					_ = cmd.Process.Kill()
 					return nil, false
 				}
@@ -901,7 +899,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	}
 
 	w.mu.Lock()
-	delete(w.activeJobs, job.SessionID)
+	delete(w.activeJobs, SessionDirName(job.SessionID, job.Incarnation))
 	w.mu.Unlock()
 
 	// Clean up the session directory now that ffmpeg has exited.
@@ -934,24 +932,144 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	if selfExited && exitErr == nil {
 		wipeDelay = 120 * time.Second
 	}
-	sessID := job.SessionID
-	go func() {
-		time.Sleep(wipeDelay)
-		if err := os.RemoveAll(SessionDir(sessID)); err != nil {
-			w.logger.Warn("session dir cleanup",
-				"session_id", sessID, "err", err)
-		}
-	}()
+	go w.wipeSessionDir(job.SessionID, job.Incarnation, wipeDelay)
 
 	return nil
 }
 
-// KillSession terminates an in-progress FFmpeg process for a session.
+// watchdogDecision is the per-heartbeat verdict on a running ffmpeg.
+type watchdogDecision string
+
+const (
+	watchdogKeep       watchdogDecision = "keep"
+	watchdogStoreError watchdogDecision = "store-error" // keep alive, log — store unreachable proves nothing
+	watchdogGone       watchdogDecision = "session-gone"
+	watchdogSuperseded watchdogDecision = "superseded"
+	watchdogIdle       watchdogDecision = "client-idle"
+)
+
+// idleKillThreshold is how long a session may go without segment fetches (or,
+// pre-first-segment, since creation) before its encoder is reaped. The Segment
+// endpoint stamps LastActivityAt on every fetch — ~every 4 s of real playback.
+const idleKillThreshold = 60 * time.Second
+
+// watchdogVerdict decides what the heartbeat loop should do with its ffmpeg,
+// given the current stored session (or the read error). Pure so every branch is
+// testable without a process:
+//
+//   - Store errors other than not-found KEEP the encoder. Killing on any error
+//     made Valkey a fleet-wide single point of failure: one restart or Sentinel
+//     failover errored every concurrent Get and every worker shot every stream
+//     on the deployment simultaneously. An unreachable store proves nothing
+//     about whether the client is still watching.
+//   - A definitive not-found kills: the client stopped the session.
+//   - An incarnation ahead of the job's kills: the session ID was restarted (an
+//     ABR rung seek) and THIS process is the superseded run. The key still
+//     exists, so the not-found branch can never catch this.
+//   - An idle session (no segment fetch for idleKillThreshold; CreatedAt
+//     anchors the pre-first-segment window) kills: tab closed without DELETE.
+func watchdogVerdict(sess *Session, getErr error, jobIncarnation int, now time.Time) watchdogDecision {
+	if getErr != nil {
+		if errors.Is(getErr, valkey.ErrNotFound) {
+			return watchdogGone
+		}
+		return watchdogStoreError
+	}
+	if sess.Incarnation != jobIncarnation {
+		return watchdogSuperseded
+	}
+	anchor := sess.LastActivityAt
+	if anchor.IsZero() {
+		anchor = sess.CreatedAt
+	}
+	if !anchor.IsZero() && now.Sub(anchor) > idleKillThreshold {
+		return watchdogIdle
+	}
+	return watchdogKeep
+}
+
+// sessionDirWipeMaxWait bounds how long wipeSessionDir will keep deferring to a
+// session that is still alive. Long enough that a viewer can pause near the end
+// of a film and come back to a working stream; short enough that an abandoned
+// directory doesn't outlive the day. Past it we reclaim the disk regardless —
+// the session's own idle-kill fires at 60 s of no segment fetches, so anything
+// still standing here has been checked in on repeatedly.
+var sessionDirWipeMaxWait = 30 * time.Minute
+
+// sessionDirWipePoll is how often wipeSessionDir re-checks a still-live session.
+var sessionDirWipePoll = 60 * time.Second
+
+// wipeSessionDir deletes one incarnation's segment directory once nothing needs
+// it any more.
+//
+// It deliberately does NOT delete on a timer alone. ffmpeg exiting is not the
+// same as playback ending: with the read-rate burst the encoder finishes well
+// ahead of the viewer, so a flat post-completion delay deleted the tail of the
+// film out from under anyone who paused for a few minutes — the stream came
+// back 404ing on its last segments. And on an ABR rung the exiting run may have
+// already been replaced by a newer incarnation, whose directory this must never
+// touch.
+//
+// So: only wipe when the session is genuinely finished with — gone from the
+// store, or moved on to another incarnation — and otherwise keep checking back
+// until sessionDirWipeMaxWait.
+func (w *Worker) wipeSessionDir(sessionID string, incarnation int, delay time.Duration) {
+	dir := SessionDirFor(sessionID, incarnation)
+	remove := func(reason string) {
+		if err := os.RemoveAll(dir); err != nil {
+			w.logger.Warn("session dir cleanup", "session_id", sessionID, "dir", dir, "err", err)
+			return
+		}
+		w.logger.Debug("session dir wiped", "session_id", sessionID, "dir", dir, "reason", reason)
+	}
+
+	time.Sleep(delay)
+	deadline := time.Now().Add(sessionDirWipeMaxWait)
+	for {
+		sess, err := w.store.Get(context.Background(), sessionID)
+		switch {
+		case errors.Is(err, valkey.ErrNotFound):
+			// Client stopped, superseded and deleted, or reaped. Nobody can ask
+			// for these segments again.
+			remove("session gone")
+			return
+		case err != nil:
+			// Store unreachable. Deleting on a read failure would turn a Valkey
+			// blip into deleted segments for live streams, so wait it out.
+			if time.Now().After(deadline) {
+				w.logger.Warn("session dir cleanup deferred past deadline; leaving for restart sweep",
+					"session_id", sessionID, "dir", dir, "err", err)
+				return
+			}
+		case sess.Incarnation != incarnation:
+			// A newer run owns the session ID now. Our directory is ours alone
+			// (SessionDirName is incarnation-scoped), so removing it cannot
+			// touch the successor's files.
+			remove("superseded")
+			return
+		case time.Now().After(deadline):
+			remove("max wait elapsed")
+			return
+		}
+		time.Sleep(sessionDirWipePoll)
+	}
+}
+
+// KillSession terminates every in-progress FFmpeg process for a session — the
+// current incarnation and, during a restart window, the one it superseded.
+// activeJobs is keyed by SessionDirName, so incarnation 0 is the bare ID and
+// later ones carry the "-iN" suffix.
 func (w *Worker) KillSession(sessionID string) {
+	prefix := sessionID + "-i"
 	w.mu.Lock()
-	p, ok := w.activeJobs[sessionID]
+	var procs []*os.Process
+	for key, p := range w.activeJobs {
+		if key == sessionID || strings.HasPrefix(key, prefix) {
+			procs = append(procs, p)
+		}
+	}
 	w.mu.Unlock()
-	if ok {
+	for _, p := range procs {
 		_ = p.Kill()
 	}
 }
@@ -1081,6 +1199,38 @@ func (w *Worker) sweepOrphanedSessions() {
 // SessionDir returns the local filesystem path for a session's HLS segments.
 func SessionDir(sessionID string) string {
 	return filepath.Join(segmentBaseDir, sessionID)
+}
+
+// SessionDirName is the directory name — and the segment-server URL path
+// element, which must match it — that one INCARNATION of a session writes to.
+//
+// Incarnation 0 is the bare session ID, so every non-ABR session and every
+// first start keeps the historical layout byte-for-byte. Only an ABR rung
+// restart (which reuses its session ID by design) gets a suffix, which is what
+// stops a superseded ffmpeg and its deferred cleanup from colliding with the
+// successor that took its ID. See Session.Incarnation.
+func SessionDirName(sessionID string, incarnation int) string {
+	if incarnation <= 0 {
+		return sessionID
+	}
+	return sessionID + "-i" + strconv.Itoa(incarnation)
+}
+
+// SessionDirFor is SessionDir for a specific incarnation.
+func SessionDirFor(sessionID string, incarnation int) string {
+	return filepath.Join(segmentBaseDir, SessionDirName(sessionID, incarnation))
+}
+
+// DirName is the segment directory name for this session's current
+// incarnation. The API uses it to build both local paths and worker
+// segment-server URLs, so both sides agree on where a rung's files live.
+func (s *Session) DirName() string {
+	return SessionDirName(s.ID, s.Incarnation)
+}
+
+// Dir is the local filesystem path for this session's current incarnation.
+func (s *Session) Dir() string {
+	return SessionDirFor(s.ID, s.Incarnation)
 }
 
 // HighestSegmentIndex returns the largest segNNNNN<ext> index present in dir

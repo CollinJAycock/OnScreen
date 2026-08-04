@@ -26,6 +26,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/streaming"
+	"github.com/onscreen/onscreen/internal/transcode"
 )
 
 // ── mock media service ───────────────────────────────────────────────────────
@@ -106,7 +107,9 @@ type mockSessionCleaner struct{}
 func (m *mockSessionCleaner) UpdatePositionByMedia(_ context.Context, _, _ uuid.UUID, _ int64) error {
 	return nil
 }
-func (m *mockSessionCleaner) DeleteByMedia(_ context.Context, _, _ uuid.UUID) error { return nil }
+func (m *mockSessionCleaner) DeleteByMedia(_ context.Context, _, _ uuid.UUID) ([]transcode.Session, error) {
+	return nil, nil
+}
 
 // ── mock enricher ────────────────────────────────────────────────────────────
 

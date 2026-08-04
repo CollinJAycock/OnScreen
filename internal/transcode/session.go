@@ -93,6 +93,23 @@ type Session struct {
 	// children; the /sessions listing filters these out so an ABR stream shows
 	// as one card (the parent) rather than one per rung.
 	ParentID string `json:"parent_id,omitempty"`
+	// Incarnation counts how many times this session ID has been (re)started.
+	//
+	// An ABR rung child is restarted IN PLACE — same session ID, new ffmpeg at
+	// a new offset — on every backward seek and forward-seek recovery. Reusing
+	// the ID meant every incarnation shared one output directory and one Valkey
+	// key, which broke two ways at once: the superseded job's deferred cleanup
+	// deleted the SUCCESSOR's live segments 30 s later, and a remote worker's
+	// watchdog (which only checks "does the session still exist?") saw the
+	// recreated key and happily kept the old ffmpeg running, so two encoders
+	// wrote conflicting seg00000 files into one directory.
+	//
+	// Bumping this on every restart gives each incarnation its own directory
+	// (see SessionDirName) and lets the watchdog recognise that it has been
+	// superseded. Zero — every non-ABR session and every first start — keeps
+	// the historical bare-session-ID directory, so this is inert everywhere
+	// except a rung restart.
+	Incarnation int `json:"incarnation,omitempty"`
 	// SelectedRendition is the rung label ("720p") the client most recently
 	// pulled a segment for, recorded on the PARENT. Surfaced as
 	// selected_rendition on /api/v1/sessions so operators see which bitrate
@@ -455,10 +472,14 @@ func (s *SessionStore) CountByUser(ctx context.Context, userID uuid.UUID) (int, 
 // superseded" — the invariant was enforced one route over and skipped here.
 // Called by the progress endpoint on "stopped" to clean up even if the client
 // never explicitly hits the Stop endpoint (e.g. tab closed after playback ends).
-func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uuid.UUID) error {
+// It returns the sessions it deleted so the caller can release any API-side
+// state keyed to them — the progress-beacon stop is the one deletion path that
+// does not go through the transcode handler's tearDown, and before this it
+// leaked the per-rung child locks of every ABR parent it removed.
+func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uuid.UUID) ([]Session, error) {
 	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
 	if err != nil || len(ids) == 0 {
-		return err
+		return nil, err
 	}
 	keys := make([]string, len(ids))
 	for i, id := range ids {
@@ -470,8 +491,9 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uu
 		cmds[i] = pipe.Get(ctx, k)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		return err
+		return nil, err
 	}
+	var deleted []Session
 	for i, cmd := range cmds {
 		raw, err := cmd.Result()
 		if err != nil {
@@ -485,9 +507,10 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uu
 		if sess.MediaItemID == mediaItemID && sess.UserID == userID {
 			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
 			_ = s.v.Del(ctx, keys[i])
+			deleted = append(deleted, sess)
 		}
 	}
-	return nil
+	return deleted, nil
 }
 
 // UpdatePositionByMedia finds the active session for the given media item and
@@ -954,6 +977,22 @@ type TranscodeJob struct {
 	ForceFMP4       bool  `json:"force_fmp4,omitempty"`
 	PreferAV1       bool  `json:"prefer_av1"` // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
 	SubtitleStreams []int `json:"subtitle_streams,omitempty"`
+	// Incarnation is the restart counter of the session this job belongs to
+	// (see Session.Incarnation). The worker writes into the directory for THIS
+	// incarnation and kills itself when the stored session moves past it, so a
+	// rung restart that reuses its session ID can't have its output eaten — or
+	// kept alive — by the run it replaced.
+	Incarnation int `json:"incarnation,omitempty"`
+	// OutputTSOffsetSec shifts the output timeline so this job's media
+	// timestamps start at its true CONTENT time rather than at zero.
+	//
+	// ABR rung children are seeked with `-ss`, which rebases timestamps to 0.
+	// Every rung child therefore emitted segment N with the same PTS as every
+	// other rung's segment 0, while the predicted playlist advertised them at
+	// their global time — so a rung switch or a post-seek restart spliced two
+	// disagreeing timelines together and the player stalled or jumped. Zero
+	// leaves ffmpeg's default behaviour untouched (all non-ABR paths).
+	OutputTSOffsetSec float64 `json:"output_ts_offset_sec,omitempty"`
 	// CostCenti is the job's weighted cost (see JobCostCenti), stamped by
 	// DispatchJob so the worker can decrement the right amount on Ack.
 	CostCenti  int       `json:"cost_centi,omitempty"`

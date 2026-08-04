@@ -286,7 +286,9 @@ type stubSessionCleaner struct{}
 func (s *stubSessionCleaner) UpdatePositionByMedia(_ context.Context, _, _ uuid.UUID, _ int64) error {
 	return nil
 }
-func (s *stubSessionCleaner) DeleteByMedia(_ context.Context, _, _ uuid.UUID) error { return nil }
+func (s *stubSessionCleaner) DeleteByMedia(_ context.Context, _, _ uuid.UUID) ([]transcode.Session, error) {
+	return nil, nil
+}
 
 // stubItemEnricher implements v1.ItemEnricher.
 type stubItemEnricher struct{}

@@ -80,6 +80,14 @@ type BuildArgs struct {
 	// encoder was actually selected — see Job.ForceFMP4. Set when the
 	// client is already holding a playlist that promised .m4s.
 	ForceFMP4 bool
+	// OutputTSOffsetSec shifts output media timestamps so they start at this
+	// content time instead of zero. `-ss` rebases the timeline, which is right
+	// for a solo mid-stream start (the client maps via StartOffsetSec) but
+	// wrong for an ABR rung child, whose segments are spliced into a predicted
+	// full-timeline playlist: without the shift, a child restarted at segment N
+	// emits segment N with segment 0's timestamps and the player lurches to
+	// 0:00 or stalls on the splice. See Job.OutputTSOffsetSec.
+	OutputTSOffsetSec float64
 	// HasLibfdkAAC selects the libfdk_aac encoder over the native aac encoder for
 	// AAC output. libfdk is higher quality and — critically — far faster to start
 	// on multichannel audio: a 7.1 TrueHD source's first HLS segment took ~15s
@@ -734,6 +742,12 @@ func BuildHLS(a BuildArgs) []string {
 	deleteThreshold := 30
 	if videoCopy {
 		deleteThreshold = 150
+	}
+	// Rebase output timestamps to the true content time for jobs spliced into
+	// a shared timeline (ABR rung children). Must precede the muxer options —
+	// it is an output option and applies to the HLS output that follows.
+	if a.OutputTSOffsetSec > 0 {
+		args = append(args, "-output_ts_offset", fmt.Sprintf("%.6f", a.OutputTSOffsetSec))
 	}
 	args = append(args,
 		"-max_muxing_queue_size", "2048",

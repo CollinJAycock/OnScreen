@@ -51,8 +51,18 @@ func TestIntegration_SessionStore_DeleteByMedia(t *testing.T) {
 		t.Fatalf("Create other-user session: %v", err)
 	}
 
-	if err := store.DeleteByMedia(ctx, owner, mediaID); err != nil {
+	deleted, err := store.DeleteByMedia(ctx, owner, mediaID)
+	if err != nil {
 		t.Fatalf("DeleteByMedia: %v", err)
+	}
+	if len(deleted) != 2 {
+		t.Fatalf("want the 2 owner sessions reported deleted, got %d", len(deleted))
+	}
+	for _, d := range deleted {
+		if d.UserID != owner || d.MediaItemID != mediaID {
+			t.Errorf("reported deletion of a session outside the owner+item scope: user=%s item=%s",
+				d.UserID, d.MediaItemID)
+		}
 	}
 
 	sessions, err := store.List(ctx)
@@ -141,8 +151,10 @@ func TestIntegration_SessionStore_DeleteByMedia_NoMatch(t *testing.T) {
 	}
 
 	// Delete for a non-existent (user, media) pair — should be a no-op.
-	if err := store.DeleteByMedia(ctx, uuid.New(), uuid.New()); err != nil {
+	if deleted, err := store.DeleteByMedia(ctx, uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("DeleteByMedia: %v", err)
+	} else if len(deleted) != 0 {
+		t.Errorf("no-op delete reported %d deleted sessions", len(deleted))
 	}
 
 	sessions, err := store.List(ctx)

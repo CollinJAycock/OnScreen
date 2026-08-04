@@ -40,6 +40,7 @@ import (
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
+	"github.com/onscreen/onscreen/internal/transcode"
 )
 
 // ItemMediaService defines the media domain operations the items handler needs.
@@ -121,7 +122,9 @@ type ItemWatchService interface {
 // ItemSessionCleaner manages transcode sessions on behalf of the items handler.
 type ItemSessionCleaner interface {
 	UpdatePositionByMedia(ctx context.Context, userID, mediaItemID uuid.UUID, positionMS int64) error
-	DeleteByMedia(ctx context.Context, userID, mediaItemID uuid.UUID) error
+	// DeleteByMedia returns the sessions it removed so the beacon-stop path can
+	// release ABR per-rung locks — the one cleanup tearDown doesn't cover.
+	DeleteByMedia(ctx context.Context, userID, mediaItemID uuid.UUID) ([]transcode.Session, error)
 }
 
 // ItemFavoriteChecker reports whether a media item is favorited by a given user.
@@ -1661,8 +1664,18 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	if h.sessions != nil {
 		if body.State == "stopped" {
 			// Remove session immediately so it leaves "Now Playing" right away.
-			if err := h.sessions.DeleteByMedia(r.Context(), claims.UserID, id); err != nil {
+			// The worker's watchdog kills the ffmpeg and its session-aware wipe
+			// reclaims the dirs, but the ABR per-rung locks are API-process
+			// state only we can release — tearDown does it on the Stop route,
+			// and this is the only other deletion path.
+			deleted, err := h.sessions.DeleteByMedia(r.Context(), claims.UserID, id)
+			if err != nil {
 				h.logger.WarnContext(r.Context(), "delete sessions on stop", "id", id, "err", err)
+			}
+			for i := range deleted {
+				if deleted[i].ABR {
+					releaseABRChildLocks(&deleted[i])
+				}
 			}
 		} else {
 			// Keep position and last-activity timestamp fresh in Valkey.

@@ -133,11 +133,20 @@ func (h *NativeTranscodeHandler) startABR(
 		"session_id", sessionID, "rungs", len(ladder),
 		"duration_ms", sess.DurationMS, "top_rung", ladder[0].Label)
 
+	// StartOffsetSec is 0, NOT the resume position: it means "the stream's
+	// content begins at this offset", and an ABR playlist covers the full
+	// timeline from 0 — every rung's predicted playlist starts at the first
+	// segment. Reporting positionMS here told the client the whole stream was
+	// shifted by the resume point, so the player showed the resume time on the
+	// scrubber while actually playing from 0:00, and then saved that phantom
+	// position back over the user's real progress. The client resumes on an
+	// ABR stream by SEEKING to its requested position, which the full-timeline
+	// playlist supports directly.
 	respond.Success(w, r, transcodeStartResponse{
 		SessionID:      sessionID,
 		PlaylistURL:    fmt.Sprintf("/api/v1/transcode/sessions/%s/playlist.m3u8?token=%s", sessionID, segTok),
 		Token:          segTok,
-		StartOffsetSec: float64(positionMS) / 1000.0,
+		StartOffsetSec: 0,
 	})
 }
 
@@ -304,11 +313,12 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	ext := abrSegExt(abrIsFMP4(parent))
 
 	// fMP4 init segment is codec config only — position-independent. Ensure a
-	// child is running (from the start if none) and serve its init.mp4; any
-	// child of this rung has a compatible init.
+	// child is running (any offset — a mid-stream child's init is identical)
+	// and serve its init.mp4. Passing a real segment index here used to
+	// restart a mid-film child from zero on every hls.js quality switch.
 	if name == "init.mp4" {
-		h.ensureRungChild(ctx, parent, *rung, childID, 0, false)
-		if !h.waitRungSegment(ctx, childID, "init.mp4") {
+		h.ensureRungChild(ctx, parent, *rung, childID, abrAnySeg, false)
+		if !h.waitRungSegment(ctx, childID, "init.mp4", abrColdStartWait) {
 			http.Error(w, "init not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -348,7 +358,7 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	// a ~1 s restart at the target instead of a 30 s wait for a segment that
 	// won't land for many seconds. (Backward to before StartSeg was already
 	// handled by ensureRungChild above.)
-	head := segHead(ctx, child.WorkerAddr, childID, ext)
+	head := segHead(ctx, child.WorkerAddr, child.DirName(), ext)
 	if !abrReachableSoon(head, localSeg) {
 		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, true) // restart at globalSeg
 		if child, err = h.sessions.Get(ctx, childID); err != nil {
@@ -359,16 +369,32 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	}
 	localName := fmt.Sprintf("seg%05d%s", localSeg, ext)
 
-	// Wait for the child to produce the local segment. A miss here means the
-	// child died or stalled spinning up; restart once and wait a final time.
-	if !h.waitRungSegment(ctx, childID, localName) {
+	// Wait for the child to produce the local segment, with a budget matched
+	// to what we're waiting FOR. A segment at/behind the encode head should be
+	// on disk already (children keep every segment), so a long wait there just
+	// delays the recovery restart when the child is actually dead — the case
+	// that used to freeze a resume for the full 30 s: an idle-killed child
+	// whose session was still in Valkey looked "about to produce" and the
+	// handler waited out the whole deadline before restarting. A short-window
+	// segment gets a couple of segment-durations; only a cold start earns the
+	// full spin-up budget.
+	wait := abrColdStartWait
+	if head >= 0 {
+		wait = abrImminentWait
+		if localSeg <= head {
+			wait = abrProducedWait
+		}
+	}
+	// A miss means the child died or stalled spinning up; restart once and
+	// wait a final time with the full cold-start budget.
+	if !h.waitRungSegment(ctx, childID, localName, wait) {
 		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, true)
 		if child, err = h.sessions.Get(ctx, childID); err != nil {
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		localName = "seg00000" + ext
-		if !h.waitRungSegment(ctx, childID, localName) {
+		if !h.waitRungSegment(ctx, childID, localName, abrColdStartWait) {
 			http.Error(w, "segment not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -385,9 +411,11 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 
 // serveChildFile proxies a rung-child file to the owning worker, or serves it
 // from local disk (embedded worker), tagging the content type by extension.
+// Both paths address the child's CURRENT incarnation directory — the segment
+// server's URL path element and the on-disk name are the same string.
 func (h *NativeTranscodeHandler) serveChildFile(w http.ResponseWriter, r *http.Request, child *transcode.Session, childID, name string) {
 	if child.WorkerAddr != "" {
-		proxyWorkerFile(w, r, child.WorkerAddr, childID, name)
+		proxyWorkerFile(w, r, child.WorkerAddr, child.DirName(), name)
 		return
 	}
 	switch {
@@ -396,7 +424,7 @@ func (h *NativeTranscodeHandler) serveChildFile(w http.ResponseWriter, r *http.R
 	case strings.HasSuffix(name, ".m4s"), strings.HasSuffix(name, ".mp4"):
 		w.Header().Set("Content-Type", "video/mp4")
 	}
-	http.ServeFile(w, r, filepath.Join(transcode.SessionDir(childID), name))
+	http.ServeFile(w, r, filepath.Join(child.Dir(), name))
 }
 
 // abrSeekLookahead is how many not-yet-written segments past the encode head
@@ -427,9 +455,10 @@ func abrReachableSoon(head, localSeg int) bool {
 // index for ext, -1 if none). Queries the owning worker's /seghead endpoint,
 // or scans local disk for a co-located embedded worker (workerAddr empty) —
 // worker-aware so the ABR seek/restart decision is correct across a fleet.
-func segHead(ctx context.Context, workerAddr, childID, ext string) int {
+// dirName is the child's incarnation-scoped directory name (Session.DirName).
+func segHead(ctx context.Context, workerAddr, dirName, ext string) int {
 	if workerAddr != "" {
-		url := fmt.Sprintf("http://%s/seghead/%s?ext=%s", workerAddr, childID, ext)
+		url := fmt.Sprintf("http://%s/seghead/%s?ext=%s", workerAddr, dirName, ext)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return -1
@@ -450,7 +479,7 @@ func segHead(ctx context.Context, workerAddr, childID, ext string) int {
 		}
 		return n
 	}
-	return transcode.HighestSegmentIndex(transcode.SessionDir(childID), ext)
+	return transcode.HighestSegmentIndex(transcode.SessionDir(dirName), ext)
 }
 
 // highestLocalSegOnDisk scans the local session dir for the encode head. Thin
@@ -459,25 +488,45 @@ func highestLocalSegOnDisk(dir, ext string) int {
 	return transcode.HighestSegmentIndex(dir, ext)
 }
 
-// waitRungSegment polls (up to ~30s) for the child to produce localName,
-// stamping activity so the worker's reaper keeps the child alive while a
-// client is blocked here.
-func (h *NativeTranscodeHandler) waitRungSegment(ctx context.Context, childID, localName string) bool {
-	deadline := time.Now().Add(30 * time.Second)
-	local := filepath.Join(transcode.SessionDir(childID), localName)
+// Wait budgets for waitRungSegment, matched to what the caller is waiting for
+// (vars so tests can shorten them):
+var (
+	// abrColdStartWait covers dispatch → worker claim → ffmpeg start → first
+	// segment. 4K HDR on a cold encoder legitimately takes double-digit
+	// seconds to seg 0.
+	abrColdStartWait = 30 * time.Second
+	// abrImminentWait covers a segment within the encoder's lookahead window —
+	// roughly two segment-durations of real-time encode.
+	abrImminentWait = 10 * time.Second
+	// abrProducedWait covers a segment at/behind the encode head, which should
+	// already be on disk — anything longer only postpones the dead-child
+	// restart.
+	abrProducedWait = 4 * time.Second
+)
+
+// waitRungSegment polls (up to the given budget) for the child to produce
+// localName, stamping activity so the worker's reaper keeps the child alive
+// while a client is blocked here.
+func (h *NativeTranscodeHandler) waitRungSegment(ctx context.Context, childID, localName string, budget time.Duration) bool {
+	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		// Re-read the child's WorkerAddr every poll. A freshly-dispatched rung
-		// child hasn't stamped its address yet (~1 s until the worker claims the
-		// job and calls SetWorkerInfo), and polling with an empty addr falls
-		// back to the PRIMARY's local disk — where a REMOTE worker never writes
-		// — so we'd spin the whole 30 s deadline, 503, and only recover on the
-		// player's retry. Re-reading means that as soon as WorkerAddr lands we
-		// poll that worker's segment server and find the file in ~1 s.
+		// Re-read the child every poll, for two fields. WorkerAddr: a
+		// freshly-dispatched rung child hasn't stamped its address yet (~1 s
+		// until the worker claims the job and calls SetWorkerInfo), and polling
+		// with an empty addr falls back to the PRIMARY's local disk — where a
+		// REMOTE worker never writes — so we'd spin the whole deadline, 503,
+		// and only recover on the player's retry. Incarnation: a concurrent
+		// restart moves the child to a new directory mid-wait, and polling the
+		// old incarnation's path would miss files the new run is writing.
 		workerAddr := ""
+		dirName := childID
+		local := filepath.Join(transcode.SessionDir(childID), localName)
 		if child, err := h.sessions.Get(ctx, childID); err == nil {
 			workerAddr = child.WorkerAddr
+			dirName = child.DirName()
+			local = filepath.Join(child.Dir(), localName)
 		}
-		if workerReady(ctx, workerAddr, childID, localName, local) {
+		if workerReady(ctx, workerAddr, dirName, localName, local) {
 			return true
 		}
 		h.sessions.TouchActivity(ctx, childID)
@@ -490,30 +539,60 @@ func (h *NativeTranscodeHandler) waitRungSegment(ctx context.Context, childID, l
 	return false
 }
 
+// abrAnySeg is the ensureRungChild sentinel for "any running child will do" —
+// used by the init.mp4 path. The init segment is codec configuration with no
+// position, and EVERY incarnation writes one at startup, so a mid-stream child
+// serves it as well as a fresh one. Before this sentinel existed the init path
+// passed globalSeg=0, which read as "restart unless the child already starts at
+// 0" — so an hls.js quality switch mid-film (which refetches the new rung's
+// init) KILLED the rung child that was busily encoding at the current position
+// and restarted it at the beginning.
+const abrAnySeg = -1
+
 // ensureRungChild guarantees a child rung session whose StartSeg lets it
 // reach globalSeg by encoding forward. It (re)starts the child when none
 // exists, when globalSeg is before the child's StartSeg, or when
-// forceRestart is set (forward-seek recovery). Serialized per child.
+// forceRestart is set (forward-seek recovery). globalSeg abrAnySeg accepts
+// any existing child (see above). Serialized per child.
 func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *transcode.Session, rung transcode.Rendition, childID string, globalSeg int, forceRestart bool) {
 	mu := abrChildLock(childID)
 	mu.Lock()
 	defer mu.Unlock()
 
 	child, _ := h.sessions.Get(ctx, childID)
+	if child != nil && globalSeg == abrAnySeg {
+		return // caller needs an init segment; any live incarnation has one
+	}
 	if child != nil && !forceRestart && globalSeg >= child.StartSeg {
 		return // existing child covers this point (forward-sequential)
 	}
+	startSeg := globalSeg
+	if startSeg == abrAnySeg {
+		startSeg = 0
+	}
 
-	// Tear down any existing child ffmpeg + stale segments before
-	// restarting at the new offset (its local seg numbering resets to 0).
+	// Tear down any existing child before restarting at the new offset. The
+	// successor takes the SAME session ID under a NEW incarnation: the old
+	// run's ffmpeg, its deferred directory wipe, and a remote worker's
+	// watchdog all key off the incarnation, so nothing the dying run does can
+	// touch the replacement's files — reusing the bare ID here is what used to
+	// let the superseded job's delayed cleanup delete the live successor's
+	// segments, and let a remote worker keep the old encoder running against
+	// the recreated session forever.
+	incarnation := 0
 	if child != nil {
+		incarnation = child.Incarnation + 1
 		if h.killer != nil {
 			h.killer.KillSession(childID)
 		}
 		_ = h.sessions.Delete(ctx, childID)
-		_ = os.RemoveAll(transcode.SessionDir(childID))
+		// Best-effort immediate reclaim of the old incarnation's dir on the
+		// embedded box; the worker's session-aware deferred wipe is the
+		// backstop (and the only cleanup on a remote worker).
+		_ = os.RemoveAll(transcode.SessionDirFor(childID, child.Incarnation))
 	}
 
+	startOffset := abrSegmentBoundarySec(startSeg, parent.FrameRate)
 	childSess := transcode.Session{
 		ID:          childID,
 		UserID:      parent.UserID,
@@ -523,20 +602,44 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		FilePath:    parent.FilePath,
 		CreatedAt:   time.Now(),
 		SegToken:    parent.SegToken,
-		StartSeg:    globalSeg,
+		StartSeg:    startSeg,
+		Incarnation: incarnation,
 		ParentID:    parent.ID, // marks this as a rung child; hidden from /sessions
 	}
 	if err := h.sessions.Create(ctx, childSess); err != nil {
 		h.logger.ErrorContext(ctx, "create rung child session", "child", childID, "err", err)
 		return
 	}
+	// Resurrection guard: if the parent was torn down while we held the child
+	// lock (Stop, supersede, or the progress-beacon stop), the cleanup pass may
+	// have already run and missed the child we are about to start — leaving an
+	// orphan encoder burning a GPU with no parent to stop it. Re-checking AFTER
+	// creating the child closes the order: either cleanup saw our child and
+	// killed it, or we see the parent gone and undo ourselves. The remaining
+	// sliver (parent dies between this check and DispatchJob) self-heals — the
+	// dispatched job finds its session deleted on the first watchdog tick and
+	// exits within seconds.
+	if _, err := h.sessions.Get(ctx, parent.ID); err != nil {
+		h.logger.InfoContext(ctx, "parent gone during rung child start; aborting",
+			"child", childID, "parent", parent.ID)
+		_ = h.sessions.Delete(ctx, childID)
+		return
+	}
 	job := transcode.TranscodeJob{
 		SessionID:      childID,
+		Incarnation:    incarnation,
 		FilePath:       parent.FilePath,
 		SourceURL:      parent.SourceURL, // shared across all rungs; minted once in startABR
-		SessionDir:     transcode.SessionDir(childID),
-		StartOffsetSec: abrSegmentBoundarySec(globalSeg, parent.FrameRate),
-		Decision:       "transcode",
+		SessionDir:     transcode.SessionDirFor(childID, incarnation),
+		StartOffsetSec: startOffset,
+		// Rebase this run's media timestamps to its true content time. The
+		// predicted variant playlist advertises every segment at its global
+		// position, but `-ss` alone restarts ffmpeg's timeline at zero — so a
+		// child restarted at segment 300 wrote segment 300 carrying segment
+		// 0's timestamps, and the player lurched to 0:00 (or stalled) on
+		// every rung switch and every post-seek splice.
+		OutputTSOffsetSec: startOffset,
+		Decision:          "transcode",
 		// Encoder unset → the worker picks the best encoder of the requested
 		// family: AV1 (PreferAV1) or HEVC (PreferHEVC) → fMP4 .m4s, else the
 		// best H.264 → .ts. One codec for the whole ladder, set in startABR.
@@ -570,8 +673,8 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		return
 	}
 	h.logger.InfoContext(ctx, "ABR rung (re)started",
-		"child", childID, "rung", rung.Label, "start_seg", globalSeg,
-		"offset_sec", abrSegmentBoundarySec(globalSeg, parent.FrameRate))
+		"child", childID, "rung", rung.Label, "start_seg", startSeg,
+		"incarnation", incarnation, "offset_sec", startOffset)
 }
 
 // cleanupRungChildren tears down every rung child of an ABR parent.
@@ -579,6 +682,12 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 func (h *NativeTranscodeHandler) cleanupRungChildren(ctx context.Context, parent *transcode.Session) {
 	for _, rd := range parent.ABRRenditions {
 		childID := abrChildID(parent.ID, rd.Label)
+		// Read the child BEFORE deleting it: its incarnation names the
+		// directory the current run is writing to.
+		dir := transcode.SessionDir(childID)
+		if child, err := h.sessions.Get(ctx, childID); err == nil {
+			dir = child.Dir()
+		}
 		if h.killer != nil {
 			h.killer.KillSession(childID)
 		}
@@ -590,8 +699,20 @@ func (h *NativeTranscodeHandler) cleanupRungChildren(ctx context.Context, parent
 		// served. This is the natural reap point: the child session is being
 		// torn down, so nothing can be waiting on its lock.
 		abrChildLocks.Delete(childID)
-		dir := transcode.SessionDir(childID)
-		go func() { time.Sleep(30 * time.Second); _ = os.RemoveAll(dir) }()
+		go func(d string) { time.Sleep(30 * time.Second); _ = os.RemoveAll(d) }(dir)
+	}
+}
+
+// releaseABRChildLocks drops the per-rung mutexes for a parent whose sessions
+// were deleted OUTSIDE cleanupRungChildren — today that's the progress-beacon
+// stop, which removes parent and children straight from the store
+// (DeleteByMedia matches them by user+item). The processes die via the
+// worker's watchdog and the dirs via its session-aware wipe, but the lock map
+// is API-process state that only this side can reap; before this, every
+// beacon-stopped ABR playback leaked one mutex per rung forever.
+func releaseABRChildLocks(parent *transcode.Session) {
+	for _, rd := range parent.ABRRenditions {
+		abrChildLocks.Delete(abrChildID(parent.ID, rd.Label))
 	}
 }
 
