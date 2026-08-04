@@ -58,6 +58,14 @@ func (m *SegmentTokenManager) Issue(ctx context.Context, sessionID string, userI
 }
 
 // Validate looks up a segment token and returns the associated session and user.
+//
+// A successful validation refreshes the token's TTL: like the session key, the
+// TTL is an IDLE timeout, not an absolute lifetime. With a fixed expiry, a
+// stream that outlived segTokenTTL — a film marathon, or a long pause — had
+// every subsequent segment fetch 401 at the four-hour mark even though the
+// session itself was alive and encoding. A revoked token stays revoked (the
+// key is deleted, not expired), and an ABANDONED token still ages out
+// segTokenTTL after its last use.
 func (m *SegmentTokenManager) Validate(ctx context.Context, token string) (sessionID string, userID uuid.UUID, err error) {
 	raw, err := m.v.Get(ctx, segTokenKey(token))
 	if err == valkey.ErrNotFound {
@@ -70,6 +78,7 @@ func (m *SegmentTokenManager) Validate(ctx context.Context, token string) (sessi
 	if err := json.Unmarshal([]byte(raw), &data); err != nil {
 		return "", uuid.UUID{}, fmt.Errorf("decode seg token: %w", err)
 	}
+	_ = m.v.Expire(ctx, segTokenKey(token), segTokenTTL)
 	return data.SessionID, data.UserID, nil
 }
 

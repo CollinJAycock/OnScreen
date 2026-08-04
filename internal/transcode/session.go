@@ -371,12 +371,18 @@ func (s *SessionStore) mutateSession(ctx context.Context, sessionID string, fn f
 		if err != nil {
 			return fmt.Errorf("marshal session: %w", err)
 		}
-		ttl := tx.TTL(ctx, key).Val()
-		if ttl <= 0 {
-			ttl = sessionTTL
-		}
+		// Every successful mutation refreshes the TTL to the full window,
+		// making sessionTTL an IDLE timeout rather than an absolute lifetime.
+		// It used to preserve the remaining TTL, which hard-killed active
+		// playback at 4 h wall-clock: the key expired mid-stream, the worker's
+		// watchdog read not-found and shot the ffmpeg, and anything longer
+		// than the TTL — a film marathon, a long pause partway — died at the
+		// stroke of the clock. Activity stamps (TouchActivity on every segment
+		// fetch, SetSelectedRendition on ABR) flow through here, so a watched
+		// session never expires and an abandoned one still ages out sessionTTL
+		// after its last write — the same lingering the old behavior had.
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			pipe.Set(ctx, key, string(b), ttl)
+			pipe.Set(ctx, key, string(b), sessionTTL)
 			return nil
 		})
 		return err
@@ -448,6 +454,16 @@ func (s *SessionStore) CountByUser(ctx context.Context, userID uuid.UUID) (int, 
 		if sess.UserID != userID {
 			continue
 		}
+		// ABR rung children are INTERNAL sessions: one playback = one parent
+		// + one child per rung the player has touched, all under the same
+		// user. Counting them made a single ABR stream consume two or more of
+		// the user's concurrency slots — with the default cap of 5, two ABR
+		// playbacks plus their active rungs could brick the account with
+		// "you already have 5 active streams". One playback counts once: the
+		// parent.
+		if sess.ParentID != "" {
+			continue
+		}
 		activeAt := sess.LastActivityAt
 		if activeAt.IsZero() {
 			activeAt = sess.CreatedAt
@@ -517,7 +533,12 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uu
 // updates its PositionMS. Silently no-ops if no matching session exists.
 //
 // NOTE: concurrent position updates for the same session may race (lost update).
-// A Valkey WATCH/MULTI/EXEC or Lua script would provide atomicity.
+// The write goes through mutateSession (WATCH/MULTI/EXEC): this used to be
+// the one remaining raw read-modify-write of the whole session blob, and a
+// beacon racing the worker's SetWorkerInfo could resurrect the pre-stamp
+// session — wiping WorkerAddr/HEVCOutput exactly the way the A8 race did
+// before the other mutators were converted. Only the match SCAN is
+// non-transactional; the mutation itself re-reads under WATCH.
 func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, userID, mediaItemID uuid.UUID, positionMS int64) error {
 	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
 	if err != nil || len(ids) == 0 {
@@ -551,17 +572,16 @@ func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, userID, mediaI
 		if sess.MediaItemID != mediaItemID || sess.UserID != userID {
 			continue
 		}
-		sess.PositionMS = positionMS
-		sess.LastActivityAt = time.Now()
-		b, err := json.Marshal(sess)
-		if err != nil {
-			continue
-		}
-		ttl := s.v.Raw().TTL(ctx, keys[i]).Val()
-		if ttl <= 0 {
-			ttl = sessionTTL
-		}
-		_ = s.v.Set(ctx, keys[i], string(b), ttl)
+		_ = s.mutateSession(ctx, ids[i], func(fresh *Session) error {
+			// Re-verify under WATCH — the session may have been superseded or
+			// reassigned between the scan and this transaction.
+			if fresh.MediaItemID != mediaItemID || fresh.UserID != userID {
+				return errSkipSessionMutation
+			}
+			fresh.PositionMS = positionMS
+			fresh.LastActivityAt = time.Now()
+			return nil
+		})
 		break
 	}
 	return nil

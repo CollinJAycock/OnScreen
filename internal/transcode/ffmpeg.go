@@ -734,7 +734,14 @@ func BuildHLS(a BuildArgs) []string {
 		args = append(args, "-tag:v", tag)
 	}
 
-	hlsFlags := "independent_segments+delete_segments"
+	// temp_file: write each segment as name.tmp and RENAME on completion.
+	// Every serving path — the worker's segment server, the API's local
+	// fallback, HighestSegmentIndex, WaitForSeg0Audio — treats "file exists"
+	// as "segment complete". Without the rename, a request racing ffmpeg's
+	// write got the truncated prefix of an in-progress segment with a 200,
+	// and the player decoded garbage or stalled mid-buffer. The .tmp suffix
+	// keeps a partial file invisible to every one of those existence checks.
+	hlsFlags := "independent_segments+delete_segments+temp_file"
 	// For video-copy (remux), FFmpeg runs 10-100× real-time producing segments
 	// almost instantly. Use a generous delete threshold (150 segments ≈ 10 min at
 	// 4 s/segment) so backward seeks rarely hit a deleted file, while still
@@ -841,7 +848,8 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 		"-hls_time", fmt.Sprint(SegmentDuration),
 		"-hls_list_size", "0",
 		"-hls_segment_type", "mpegts",
-		"-hls_flags", "independent_segments+delete_segments",
+		// temp_file: same complete-on-rename contract as BuildHLS — see there.
+		"-hls_flags", "independent_segments+delete_segments+temp_file",
 		"-hls_delete_threshold", "5", // keep last 5 segments on disk
 		"-hls_segment_filename", filepath.Join(sessionDir, "seg%05d.ts"),
 		filepath.Join(sessionDir, "index.m3u8"),

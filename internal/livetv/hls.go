@@ -366,7 +366,10 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		"-f", "hls",
 		"-hls_time", fmt.Sprintf("%d", hlsSegmentDuration),
 		"-hls_list_size", fmt.Sprintf("%d", hlsListSize),
-		"-hls_flags", "delete_segments+omit_endlist+independent_segments",
+		// temp_file: segments become visible by RENAME only when complete, so
+		// the segment handler's "file exists" check can't serve a truncated
+		// in-progress segment with a 200.
+		"-hls_flags", "delete_segments+omit_endlist+independent_segments+temp_file",
 		"-hls_segment_filename", filepath.Join(dir, "seg-%05d.ts"),
 		// Prefix segment URLs in the playlist so the player's relative-URL
 		// resolution from `/tv/channels/{id}/stream.m3u8` lands at our
