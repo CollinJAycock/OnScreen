@@ -267,7 +267,7 @@ func BuildHLS(a BuildArgs) []string {
 		opts.MaxrateRatio = 1.5
 	}
 
-	videoCopy := a.Encoder == "copy"
+	videoCopy := IsVideoCopy(a.Encoder)
 
 	args := []string{
 		"-hide_banner",
@@ -685,8 +685,8 @@ func BuildHLS(a BuildArgs) []string {
 	// segments crashes the muxer ("Could not find tag for codec av1");
 	// AV1 source remux must therefore also route through fMP4.
 	//
-	// HEVC REMUX NEEDS THE SAME ROUTING, and used to miss it because
-	// isHEVCOutput carries `&& !videoCopy` — so copying an HEVC source produced
+	// HEVC REMUX NEEDS THE SAME ROUTING, and used to miss it because the old
+	// predicate carried `&& !videoCopy` — so copying an HEVC source produced
 	// mpegts. Unlike AV1 this does NOT crash: MPEG-TS has a stream type for
 	// HEVC (0x24), so ffmpeg writes the segments happily and the failure lands
 	// entirely on the client. HLS.js cannot transmux HEVC, and no browser
@@ -694,22 +694,15 @@ func BuildHLS(a BuildArgs) []string {
 	// while the AAC audio does — which on screen is a player that alternates
 	// black and picture instead of erroring. Failing silently is exactly why
 	// this outlasted the AV1 case that failed loudly.
-	isHEVCOutput := IsHEVCEncoder(a.Encoder) && !videoCopy
-	isAV1Output := IsAV1Encoder(a.Encoder) && !videoCopy
-	isAV1Remux := videoCopy && a.IsAV1
-	isHEVCRemux := videoCopy && a.IsHEVC
-	// ForceFMP4 wins: the client is already holding a playlist that names .m4s
-	// URIs and an EXT-X-MAP init segment, written before we knew which encoder
-	// this node would land on. Deriving the container from the encoder alone
-	// breaks that contract on every fallback path.
-	needsFMP4 := isHEVCOutput || isAV1Output || isAV1Remux || isHEVCRemux ||
-		(a.ForceFMP4 && !videoCopy)
-	segExt := ".ts"
-	segType := "mpegts"
-	if needsFMP4 {
-		segExt = ".m4s"
-		segType = "fmp4"
-	}
+	//
+	// ResolveVideoOutput is the ONE place that answers "what comes out and in
+	// what container"; see videooutput.go for why this must not be re-derived
+	// per call site. ForceFMP4 is folded in there too, so the worker — which
+	// hunts for these same files by extension — cannot disagree with us.
+	vout := ResolveVideoOutput(a.Encoder, a.IsHEVC, a.IsAV1, a.ForceFMP4)
+	needsFMP4 := vout.NeedsFMP4()
+	segExt := vout.SegExt()
+	segType := vout.SegType()
 
 	segPattern := filepath.Join(a.SessionDir, a.SegmentPrefix+"%05d"+segExt)
 	playlistName := a.PlaylistName
@@ -729,11 +722,8 @@ func BuildHLS(a BuildArgs) []string {
 	// Codec tag: HEVC → hvc1, AV1 → av01. Browser MSE requires the
 	// modern fourCC tag rather than the codec's native one to
 	// recognize the stream.
-	switch {
-	case isHEVCOutput, isHEVCRemux:
-		args = append(args, "-tag:v", "hvc1")
-	case isAV1Output, isAV1Remux:
-		args = append(args, "-tag:v", "av01")
+	if tag := vout.TagV(); tag != "" {
+		args = append(args, "-tag:v", tag)
 	}
 
 	hlsFlags := "independent_segments+delete_segments"

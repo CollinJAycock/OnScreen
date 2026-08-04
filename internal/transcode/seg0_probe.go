@@ -29,16 +29,31 @@ import (
 // The wait key is the existence of the next segment: HLS muxer only
 // writes seg N+1 after seg N is closed, so its appearance is the
 // cleanest signal that seg N is finalized and safe to probe.
+//
+// vout must describe the session's real output — the segments are located by
+// the extension it implies, and looking for the wrong one costs the caller the
+// full timeout on every start.
 const audioScanSegments = 4
 
-func WaitForSeg0Audio(ctx context.Context, sessionDir string, timeout time.Duration) (float64, bool) {
+func WaitForSeg0Audio(ctx context.Context, sessionDir string, vout VideoOutput, timeout time.Duration) (float64, bool) {
+	// fMP4 segments are unprobeable in isolation: a .m4s fragment is moof+mdat
+	// with no moov, so ffprobe cannot parse one without its init.mp4 and would
+	// fail on every segment we scanned. Decline immediately rather than burn
+	// the caller's whole timeout discovering that — the fallback (start at the
+	// bare keyframe offset, silent head and all) is the documented no-op, but
+	// only if we reach it fast. A blocking wait here would put the timeout
+	// straight onto the start latency of every seeked HEVC/AV1 remux.
+	if vout.NeedsFMP4() {
+		return 0, false
+	}
+
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	seg0 := filepath.Join(sessionDir, "seg00000.ts")
+	seg0 := filepath.Join(sessionDir, segmentName(0))
 	// We need seg 0's first video PTS to use as the stream's time zero.
 	// Wait for seg 1 (which signals seg 0 is finalized) before probing.
-	if !waitForFile(waitCtx, filepath.Join(sessionDir, "seg00001.ts")) {
+	if !waitForFile(waitCtx, filepath.Join(sessionDir, segmentName(1))) {
 		return 0, false
 	}
 	seg0Video, ok := probeFirstPacketPTS(waitCtx, seg0, "v:0")
@@ -64,6 +79,8 @@ func WaitForSeg0Audio(ctx context.Context, sessionDir string, timeout time.Durat
 	return 0, false
 }
 
+// segmentName is the MPEG-TS segment filename for an index. Only the mpegts
+// path reaches it — WaitForSeg0Audio returns early for fMP4.
 func segmentName(index int) string {
 	return "seg" + leftPad5(index) + ".ts"
 }

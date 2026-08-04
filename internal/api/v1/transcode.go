@@ -697,6 +697,21 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// efficiency the source already paid for.
 	preferAV1 := caps.SupportsAV1 && isSourceAV1 && !body.VideoCopy
 
+	// The session's HEVCOutput/AV1Output record the OUTPUT codec, which is what
+	// the playlist handler derives the segment container from. On a remux that
+	// is the SOURCE codec — and preferHEVC/preferAV1 above BOTH carry
+	// `!body.VideoCopy`, because they gate re-encode decisions. Reading them
+	// here would claim H.264 output for an HEVC remux and send the playlist
+	// handler looking for .ts files ffmpeg is writing as .m4s.
+	//
+	// The worker overwrites these via SetWorkerInfo once it knows the encoder
+	// it actually got, but the client can ask for the playlist before that
+	// lands, so the initial guess has to be right on its own.
+	sessVout := transcode.VideoOutput{HEVC: preferHEVC, AV1: preferAV1}
+	if body.VideoCopy {
+		sessVout = transcode.ResolveVideoOutput(transcode.EncoderCopy, isSourceHEVC, isSourceAV1, false)
+	}
+
 	// For remux, use the source file bitrate (video is copied unchanged).
 	// For full transcode, use the target bitrate from quality selection.
 	sessionBitrate := bitrateKbps
@@ -774,8 +789,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		ClientName:  "OnScreenWeb",
 		SegToken:    segTok,
 		BitrateKbps: sessionBitrate,
-		HEVCOutput:  preferHEVC,
-		AV1Output:   preferAV1,
+		HEVCOutput:  sessVout.HEVC,
+		AV1Output:   sessVout.AV1,
 	}
 	if h.audit != nil {
 		actor := claims.UserID
@@ -886,9 +901,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// creation; on timeout we fall back to the bare keyframe offset
 	// and the user sees the old silent-head behavior — the same as
 	// before this probe landed, so it's a no-op not a regression.
+	//
+	// The probe reads segment files off disk, so it needs to know which
+	// container they are in — an HEVC/AV1 remux writes fMP4, which it cannot
+	// probe and declines immediately rather than blocking for the full cap.
 	var seg0AudioGap float64
 	if body.VideoCopy && startOffsetSec > 0 {
-		if gap, ok := transcode.WaitForSeg0Audio(ctx, transcode.SessionDir(sessionID), 5*time.Second); ok {
+		if gap, ok := transcode.WaitForSeg0Audio(ctx, transcode.SessionDir(sessionID), sessVout, 5*time.Second); ok {
 			seg0AudioGap = gap
 			h.logger.InfoContext(ctx, "seg 0 audio gap measured",
 				"session_id", sessionID,
@@ -1063,12 +1082,17 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	// output use fMP4 (.m4s); MPEG-TS sessions use .ts. Both layouts
 	// are single-rendition muxed (audio + video in one segment file),
 	// so the only difference is the file extension.
-	seg0Name := "seg00000.ts"
-	seg1Name := "seg00001.ts"
-	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && (sess.HEVCOutput || sess.AV1Output) {
-		seg0Name = "seg00000.m4s"
-		seg1Name = "seg00001.m4s"
+	//
+	// The extension comes from transcode.VideoOutput, the same type the worker
+	// derives the real filenames from. Waiting on the wrong extension here
+	// doesn't 404 — it hangs until the readiness timeout and the client never
+	// gets a playlist.
+	segExt := ".ts"
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
+		segExt = sess.VideoOutput().SegExt()
 	}
+	seg0Name := "seg00000" + segExt
+	seg1Name := "seg00001" + segExt
 
 	// Wait for seg0 to land — that's the minimum a client needs to start
 	// playback. Once it's ready, briefly wait for seg1 so HLS.js has 2

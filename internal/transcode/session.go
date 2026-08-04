@@ -100,6 +100,20 @@ type Session struct {
 	SelectedRendition string `json:"selected_rendition,omitempty"`
 }
 
+// VideoOutput reads the two *Output flags back as the container question they
+// actually encode. Use this rather than testing the flags by hand: the API
+// predicts segment names from it while the worker WRITES those segments from
+// ResolveVideoOutput, and the two only stay in step because both sides go
+// through one type. Hand-rolled `HEVCOutput || AV1Output` tests are how they
+// drifted apart before. See videooutput.go.
+//
+// Authoritative only AFTER the worker has stamped the session
+// (SetWorkerInfo). Before that these flags hold the API's client-preference
+// guess, which is what the ForceFMP4 contract exists to reconcile.
+func (s *Session) VideoOutput() VideoOutput {
+	return VideoOutput{HEVC: s.HEVCOutput, AV1: s.AV1Output}
+}
+
 // WorkerRegistration is the record a transcode worker writes to Valkey.
 type WorkerRegistration struct {
 	ID             string            `json:"id"`

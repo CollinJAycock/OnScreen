@@ -195,8 +195,11 @@ func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *ht
 
 // abrIsFMP4 reports whether the ladder uses fMP4 (.m4s + init.mp4) segments.
 // Both HEVC and AV1 rungs do; H.264 uses MPEG-TS .ts.
+//
+// Delegates so this prediction cannot diverge from what the worker actually
+// muxed — see transcode.VideoOutput.
 func abrIsFMP4(sess *transcode.Session) bool {
-	return sess.HEVCOutput || sess.AV1Output
+	return sess.VideoOutput().NeedsFMP4()
 }
 
 // abrSegExt is the segment file extension for the ladder's codec: fMP4

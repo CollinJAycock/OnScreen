@@ -710,19 +710,15 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// different family if the requested encoder wasn't active.
 	// Correct here so the playlist handler waits for the right segment
 	// extension (.ts vs .m4s) — both fMP4 codec families use .m4s.
-	actualHEVC := IsHEVCEncoder(actualEncoder)
-	actualAV1 := IsAV1Encoder(actualEncoder)
-	// AV1 source remux (`-c:v copy` of an AV1 stream) also lands in
-	// fMP4 segments — mpegts has no AV1 stream type, so BuildHLS
-	// switches the container regardless of the encoder string. Mark
-	// the session so the playlist handler waits for seg00001.m4s.
-	if string(actualEncoder) == "copy" && job.IsAV1 {
-		actualAV1 = true
-	}
-	segExt := ".ts"
-	if actualHEVC || actualAV1 {
-		segExt = ".m4s"
-	}
+	//
+	// This MUST use the same resolver BuildHLS uses. These flags are what the
+	// API's playlist-readiness probe and the ABR segment proxy predict the
+	// container from, so any disagreement with what ffmpeg actually wrote is a
+	// playlist that never becomes ready. Remux is the case that breaks a naive
+	// IsHEVCEncoder(encoder) — see videooutput.go.
+	vout := ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4)
+	actualHEVC, actualAV1 := vout.HEVC, vout.AV1
+	segExt := vout.SegExt()
 
 	// runFFmpeg execs ffmpeg with the given args and monitors it until exit or
 	// kill. Returns the exit error and whether ffmpeg exited on its own
@@ -888,12 +884,9 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// (and the session's HEVC/AV1 flags, via runFFmpeg → SetWorkerInfo)
 		// defensively so the playlist handler waits on the right segment extension.
 		actualEncoder = enc
-		actualHEVC = IsHEVCEncoder(actualEncoder)
-		actualAV1 = IsAV1Encoder(actualEncoder)
-		segExt = ".ts"
-		if actualHEVC || actualAV1 {
-			segExt = ".m4s"
-		}
+		vout = ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4)
+		actualHEVC, actualAV1 = vout.HEVC, vout.AV1
+		segExt = vout.SegExt()
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
 	}
 
