@@ -1868,13 +1868,29 @@
     // (switchingTranscode=false) lifts here too — by loadedmetadata
     // the new src is bound and any decode failure from this point on
     // is real, not a destroy→attach race.
+    // The gate MUST come down even if loadedmetadata never fires — an
+    // undecodable source never reaches metadata, and switchingTranscode also
+    // guards switchToTranscode against re-entry, so a stuck flag silently
+    // swallowed every later switch: the codec escalation AND the user's own
+    // quality picks, with no error anywhere. Clear it on metadata, on error,
+    // or on a timeout, whichever comes first.
+    let gateCleared = false;
+    const clearGate = () => {
+      if (gateCleared) return;
+      gateCleared = true;
+      switchingTranscode = false;
+      videoEl.removeEventListener('loadedmetadata', restorePos);
+      videoEl.removeEventListener('error', clearGate);
+      clearTimeout(gateTimer);
+    };
     const restorePos = () => {
       videoEl.currentTime = posMs / 1000;
       if (wasPlaying) videoEl.play().catch(() => {});
-      switchingTranscode = false;
-      videoEl.removeEventListener('loadedmetadata', restorePos);
+      clearGate();
     };
+    const gateTimer = setTimeout(clearGate, 15000);
     videoEl.addEventListener('loadedmetadata', restorePos);
+    videoEl.addEventListener('error', clearGate);
   }
 
   async function switchToTranscode(height: number, posMs: number, videoCopy: boolean = false) {
@@ -2067,6 +2083,30 @@
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           lastMediaErrorAt = Date.now();
+          // bufferAppendError is MSE REFUSING THE BYTES — a codec/format
+          // rejection, not a buffer hiccup. recoverMediaError is built for
+          // stalls and gaps and cannot fix a codec the decoder won't take, so
+          // retrying it is pure churn. Escalate on the first one, before the
+          // recovery dance, whenever a re-encode is still an option.
+          //
+          // Measured on QA with this title: every path — direct play, remux,
+          // and even an explicit 480p transcode — came back as HEVC, because
+          // the server's source-preservation (preferHEVC) trusts the client's
+          // own HEVC claim. MediaSource.isTypeSupported returns true for every
+          // HEVC probe on that browser and the append still fails, so nothing
+          // plays until the claim is demoted. That demotion is what makes the
+          // escalation land on H.264 instead of another HEVC stream.
+          if (data.details === 'bufferAppendError' && canEscalateAfterMediaError()) {
+            const file = item?.files?.[0];
+            mediaErrorEscalated = true;
+            demoteCodecClaim(file?.video_codec);
+            const posMs = hlsActive
+              ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
+              : (item?.view_offset_ms ?? 0);
+            console.warn('[HLS] bufferAppendError — codec rejected by MSE; escalating to full transcode');
+            switchToTranscode(file?.resolution_h ?? 1080, posMs);
+            return;
+          }
           // Media decode error — attempt HLS.js recovery, BOUNDED. On a
           // genuinely undecodable stream every recovery attempt fails with
           // another fatal MEDIA_ERROR, and the unbounded retry spun
