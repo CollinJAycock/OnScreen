@@ -680,6 +680,13 @@
   let stallProgressed = false;  // playback advanced at least once this session
   let stallSinceMs = 0;         // wall-clock when progress stopped (0 = progressing)
   let stallLastRestartMs = 0;   // cooldown anchor against restart loops
+  // Total stall-triggered restarts for the CURRENT item (reset on item
+  // change). One restart fixes the healthy case (idle-reaped session); a
+  // stream that keeps stalling is unplayable at the source — e.g. a damaged
+  // file no decoder can read — and unbounded restarts churned server
+  // sessions forever behind a spinner.
+  let stallRestarts = 0;
+  const maxStallRestarts = 3;
   const STALL_RESTART_MS = 8000;    // no progress this long while playing → restart
   const STALL_COOLDOWN_MS = 15000;  // min gap between stall-triggered restarts
 
@@ -1188,8 +1195,10 @@
     transcodeToken = null;
     autoplayCancelled = false;
     // New item — a codec that failed on the last one says nothing about this
-    // one, so the single-shot escalation is re-armed.
+    // one, so the single-shot escalation is re-armed. Same for the stall-
+    // restart budget: one damaged title must not exhaust it for the next.
     mediaErrorEscalated = false;
+    stallRestarts = 0;
     pageEnteredAt = Date.now();
     cancelAutoplay();
     load();
@@ -2394,8 +2403,24 @@
     if (stallSinceMs === 0) { stallSinceMs = now; return; }    // start the clock
     if (now - stallSinceMs < STALL_RESTART_MS) return;         // not stalled long enough
     if (now - stallLastRestartMs < STALL_COOLDOWN_MS) return;  // recently restarted; back off
+    // BOUNDED. A healthy stall (idle-reaped session) is fixed by one restart;
+    // a stream that stalls again and again is unplayable at the source — the
+    // observed case is a damaged file whose bitstream no decoder can read
+    // past the first seconds, where every restarted session drains and stalls
+    // identically. Without a bound this loop churned server sessions forever
+    // with the user staring at a spinner; surface a real error instead.
+    if (stallRestarts >= maxStallRestarts) {
+      console.warn('[HLS] repeated stalls — giving up after', stallRestarts, 'restarts');
+      error = 'Playback keeps stalling — the file may be damaged or the server overloaded.';
+      buffering = false;
+      destroyHls();
+      stopTranscodeSession();
+      stopStallWatchdog();
+      return;
+    }
     // Genuine stall: the transcode session died (idle-reaped, etc.) and the
     // buffer drained. Restart the transcode at the current content position.
+    stallRestarts++;
     stallLastRestartMs = now;
     stallSinceMs = 0;
     const posMs = Math.round((ct + hlsOffsetSec) * 1000);

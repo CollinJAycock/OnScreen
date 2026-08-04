@@ -881,11 +881,14 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// Dead-chroma retry: runFFmpeg killed the run because the hardware
 	// pipeline was producing green (chroma-less) segments. Re-encode with
 	// software decode — same recovery as the no-segments fallback below, but
-	// for corruption the exit code can't see. The CUDA capability flags are
-	// also cleared WORKER-WIDE: the startup probe demonstrably passed while
-	// real output is garbage, so leaving them on would make every later
-	// session pay a green-seg0 + kill + retry cycle. (A restart re-probes,
-	// and the probe now validates pixels too.)
+	// for corruption the exit code can't see. Deliberately NOT disabling the
+	// hardware paths worker-wide: a damaged source bitstream produces the
+	// same signature (hardware decoders emit green garbage where the software
+	// decoder refuses the NALUs — the "Masters of the Universe" fake-release
+	// case), and one bad FILE must not degrade every other title's sessions.
+	// A genuine chain-level corruption is the hardened startup probe's job to
+	// catch; here the software retry either recovers (hardware quirk on this
+	// source) or fails visibly (damaged file) — both beat a green movie.
 	if garbageOutput {
 		garbageOutput = false
 		garbageRetried = true
@@ -894,12 +897,6 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"vaapi_vram", vaapiVRAMUsable, "vaapi_tonemap", vaapiTonemapUsable,
 			"nvdec", cudaHevcUsable, "cuda_scale", cudaVRAMUsable, "cuda_hdr", cudaHDRUsable,
 			"tonemap_cuda", cudaTonemapUsable)
-		if cudaVRAMUsable || cudaHDRUsable {
-			w.cudaScale.Store(false)
-		}
-		if cudaTonemapUsable {
-			w.cudaTonemap.Store(false)
-		}
 		// Clear any green partial output so segment numbering restarts at 0.
 		_ = os.RemoveAll(sessionDir)
 		_ = os.MkdirAll(sessionDir, 0755)
