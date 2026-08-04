@@ -792,6 +792,15 @@ func BuildHLS(a BuildArgs) []string {
 	// write got the truncated prefix of an in-progress segment with a 200,
 	// and the player decoded garbage or stalled mid-buffer. The .tmp suffix
 	// keeps a partial file invisible to every one of those existence checks.
+	// NOTE on delete_segments: it is INERT here. With `-hls_list_size 0` no
+	// entry ever leaves the playlist, and delete_segments only removes
+	// segments that have rotated out — so single-rendition sessions keep every
+	// segment on disk for their whole lifetime (which the ABR seek path relies
+	// on: abrReachableSoon serves any already-produced segment from disk). The
+	// real disk bound is the session lifecycle: idle-kill reaps abandoned
+	// encodes at 60 s and the session-aware wipe reclaims the dir afterwards.
+	// The flag is kept for the day a rolling window returns; the
+	// hls_delete_threshold below is equally inert until then.
 	hlsFlags := "independent_segments+delete_segments+temp_file"
 	// For video-copy (remux), FFmpeg runs 10-100× real-time producing segments
 	// almost instantly. Use a generous delete threshold (150 segments ≈ 10 min at

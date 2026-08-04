@@ -205,6 +205,10 @@ func probeSourceDurationSec(ctx context.Context, input string) float64 {
 	return f
 }
 
+// probeSourceDuration indirects probeSourceDurationSec so the ENDLIST
+// lifecycle of continueShortSession is testable without shelling to ffprobe.
+var probeSourceDuration = probeSourceDurationSec
+
 // continueShortSession transparently extends an HLS session whose ffmpeg
 // exited cleanly but short of the source duration. It seeks past the bad spot,
 // transcodes the remainder into a side playlist, and stitches the new segments
@@ -225,9 +229,37 @@ func (w *Worker) continueShortSession(
 	runFFmpeg func(ffArgs []string) (exitErr error, selfExited bool),
 ) {
 	indexPath := filepath.Join(sessionDir, "index.m3u8")
-	sourceDur := probeSourceDurationSec(ctx, input)
+
+	// Strip ENDLIST BEFORE anything slow. The duration probe below shells out
+	// to ffprobe — seconds, over HTTP source on a fleet worker — and hls.js
+	// stops refreshing a playlist the instant it sees ENDLIST. A player that
+	// polled during the probe window latched "VOD ended" and never saw the
+	// continuation at all; stripping first keeps it polling while we decide.
+	pl0, err := os.ReadFile(indexPath)
+	if err != nil {
+		return
+	}
+	if bytes.Contains(pl0, []byte("#EXT-X-ENDLIST")) {
+		if err := writeFileAtomic(indexPath, stitchPlaylist(pl0, nil, false)); err != nil {
+			return
+		}
+	}
+	// EVERY exit re-terminates the playlist. The success path used to `return`
+	// with a comment claiming "ffmpeg's ENDLIST stands" — but after the first
+	// fold-in the merged playlist was written WITHOUT one, so every
+	// successfully auto-continued session left index.m3u8 permanently
+	// unterminated: the player polled a finished VOD forever and never showed
+	// "ended". The strip above makes this mandatory on the probe-failure path
+	// too.
+	defer func() {
+		if pl := readFileOrNil(indexPath); pl != nil && !bytes.Contains(pl, []byte("#EXT-X-ENDLIST")) {
+			_ = writeFileAtomic(indexPath, append(bytes.TrimRight(pl, "\n"), []byte("\n#EXT-X-ENDLIST\n")...))
+		}
+	}()
+
+	sourceDur := probeSourceDuration(ctx, input)
 	if sourceDur <= 0 {
-		return // can't verify completeness — leave ffmpeg's natural ENDLIST in place
+		return // can't verify completeness — the deferred close restores ENDLIST
 	}
 
 	extraSkip := 0.0
@@ -238,15 +270,13 @@ func (w *Worker) continueShortSession(
 		}
 		producedEnd := job.StartOffsetSec + playlistDurationSec(pl)
 		if !shortOfSource(producedEnd, sourceDur) {
-			return // reached the real end; ffmpeg's ENDLIST stands
+			return // reached the real end; the deferred close terminates the playlist
 		}
 		// Only keep extending while the client still wants the session.
 		if _, err := w.store.Get(ctx, job.SessionID); err != nil {
 			return
 		}
 
-		// Strip ENDLIST *first* so the polling client keeps reloading the
-		// playlist — hls.js stops refreshing the instant it sees ENDLIST.
 		prefix := stitchPlaylist(pl, nil, false)
 		if err := writeFileAtomic(indexPath, prefix); err != nil {
 			return
@@ -323,8 +353,5 @@ func (w *Worker) continueShortSession(
 		}
 	}
 
-	// Close the (now-extended) playlist so the client knows it's complete.
-	if pl := readFileOrNil(indexPath); pl != nil && !bytes.Contains(pl, []byte("#EXT-X-ENDLIST")) {
-		_ = writeFileAtomic(indexPath, append(bytes.TrimRight(pl, "\n"), []byte("\n#EXT-X-ENDLIST\n")...))
-	}
+	// The deferred close above terminates the playlist on this path too.
 }

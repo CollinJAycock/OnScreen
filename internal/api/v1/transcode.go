@@ -528,7 +528,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		h.logger.InfoContext(ctx, "transcode: serving static ABR ladder", "file_id", file.ID)
-		respond.JSON(w, r, http.StatusOK, transcodeStartResponse{
+		// respond.Success, NOT respond.JSON: every client parses Start's reply
+		// through the standard {"data": ...} envelope, and this path skipped
+		// it — so whenever a pre-encoded ladder existed, the client read
+		// `undefined` for playlist_url and playback failed on exactly the
+		// files that had been optimized ahead of time.
+		respond.Success(w, r, transcodeStartResponse{
 			PlaylistURL: fmt.Sprintf("/api/v1/transcode/static/%s/master.m3u8%s", file.ID, tokenQuery(token)),
 			Token:       token,
 		})
@@ -944,8 +949,15 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// The probe reads segment files off disk, so it needs to know which
 	// container they are in — an HEVC/AV1 remux writes fMP4, which it cannot
 	// probe and declines immediately rather than blocking for the full cap.
+	//
+	// LOCAL disk only: on a fleet deployment the job just dispatched to a
+	// REMOTE worker (workerAddr non-empty) and its segments never appear in
+	// this host's session dir — the probe used to poll the empty local path
+	// for the full 5 s cap, adding a flat five seconds to every mid-stream
+	// remux start and never measuring anything. The gap feature is simply
+	// unavailable off-box; skip it honestly.
 	var seg0AudioGap float64
-	if body.VideoCopy && startOffsetSec > 0 {
+	if body.VideoCopy && startOffsetSec > 0 && workerAddr == "" {
 		if gap, ok := transcode.WaitForSeg0Audio(ctx, transcode.SessionDir(sessionID), sessVout, 5*time.Second); ok {
 			seg0AudioGap = gap
 			h.logger.InfoContext(ctx, "seg 0 audio gap measured",
@@ -1372,6 +1384,16 @@ func fetchFromWorker(ctx context.Context, workerAddr, sessID, name, localPath st
 			return nil, err
 		}
 		defer resp.Body.Close()
+		// A non-200 body is an ERROR PAGE, not the file. This used to return
+		// it as content, so a worker's "503 segment not ready" (or a 401 from
+		// a token mismatch) was rewritten by the playlist pipeline and served
+		// to the player as a 200 m3u8 whose body was an error string — the
+		// player then failed parsing with no hint of the real cause.
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+			return nil, fmt.Errorf("worker %s returned %d for %s/%s: %s",
+				workerAddr, resp.StatusCode, sessID, name, strings.TrimSpace(string(body)))
+		}
 		return io.ReadAll(io.LimitReader(resp.Body, maxPlaylistBytes))
 	}
 	return os.ReadFile(localPath)
