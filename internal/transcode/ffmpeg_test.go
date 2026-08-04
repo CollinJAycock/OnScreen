@@ -2162,3 +2162,67 @@ func TestBuildHLS_HEVCStillFMP4WithoutTheFlag(t *testing.T) {
 		t.Error("HEVC output should still pick fmp4 on its own")
 	}
 }
+
+// Remuxing an HEVC source (-c:v copy) MUST produce fMP4, exactly as the AV1
+// remux beside it does. It used to produce mpegts, because isHEVCOutput carries
+// `&& !videoCopy`.
+//
+// Unlike AV1 this fails SILENTLY: MPEG-TS has a stream type for HEVC (0x24), so
+// ffmpeg writes the segments without complaint and the breakage lands entirely
+// on the client — HLS.js cannot transmux HEVC and no browser decodes HEVC-in-TS
+// through MSE. The AAC audio decodes, the video never does, and the player
+// alternates black and picture rather than erroring. Reproduced on QA against a
+// 1920x800 HEVC WEBDL: decision=remux, encoder=copy, -hls_segment_type mpegts.
+func TestBuildHLS_HEVCSource_Remux_FMP4(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       "copy",
+		IsHEVC:        true,
+		AudioCodec:    "aac",
+		AudioChannels: 6,
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "-c:v copy") {
+		t.Errorf("expected -c:v copy: %s", argStr)
+	}
+	if strings.Contains(argStr, "-hls_segment_type mpegts") {
+		t.Fatalf("HEVC remux emitted mpegts — no browser can decode HEVC-in-TS "+
+			"via MSE, so the video track silently never renders: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hls_segment_type fmp4") {
+		t.Errorf("HEVC source remux must use fMP4: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-tag:v hvc1") {
+		t.Errorf("HEVC remux must carry the hvc1 tag or Safari/MSE won't "+
+			"recognise the track: %s", argStr)
+	}
+	if !strings.Contains(argStr, ".m4s") {
+		t.Errorf("HEVC remux must use .m4s segments: %s", argStr)
+	}
+	if !strings.Contains(argStr, "-hls_fmp4_init_filename init.mp4") {
+		t.Errorf("HEVC remux must emit an fMP4 init segment: %s", argStr)
+	}
+}
+
+// The H.264 remux path must be untouched — it is the common case and mpegts is
+// correct there.
+func TestBuildHLS_H264Remux_UnaffectedByHEVCRemuxFix(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       "copy",
+		IsH264:        true,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-hls_segment_type mpegts") {
+		t.Errorf("H.264 remux must stay mpegts: %s", argStr)
+	}
+	if strings.Contains(argStr, "-tag:v hvc1") {
+		t.Errorf("H.264 remux must not carry an hvc1 tag: %s", argStr)
+	}
+}

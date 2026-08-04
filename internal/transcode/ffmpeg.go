@@ -684,14 +684,26 @@ func BuildHLS(a BuildArgs) []string {
 	// stream type at all, so `-c:v copy` of an AV1 source into mpegts
 	// segments crashes the muxer ("Could not find tag for codec av1");
 	// AV1 source remux must therefore also route through fMP4.
+	//
+	// HEVC REMUX NEEDS THE SAME ROUTING, and used to miss it because
+	// isHEVCOutput carries `&& !videoCopy` — so copying an HEVC source produced
+	// mpegts. Unlike AV1 this does NOT crash: MPEG-TS has a stream type for
+	// HEVC (0x24), so ffmpeg writes the segments happily and the failure lands
+	// entirely on the client. HLS.js cannot transmux HEVC, and no browser
+	// decodes HEVC-in-TS via MSE, so the video track silently never decodes
+	// while the AAC audio does — which on screen is a player that alternates
+	// black and picture instead of erroring. Failing silently is exactly why
+	// this outlasted the AV1 case that failed loudly.
 	isHEVCOutput := IsHEVCEncoder(a.Encoder) && !videoCopy
 	isAV1Output := IsAV1Encoder(a.Encoder) && !videoCopy
 	isAV1Remux := videoCopy && a.IsAV1
+	isHEVCRemux := videoCopy && a.IsHEVC
 	// ForceFMP4 wins: the client is already holding a playlist that names .m4s
 	// URIs and an EXT-X-MAP init segment, written before we knew which encoder
 	// this node would land on. Deriving the container from the encoder alone
 	// breaks that contract on every fallback path.
-	needsFMP4 := isHEVCOutput || isAV1Output || isAV1Remux || (a.ForceFMP4 && !videoCopy)
+	needsFMP4 := isHEVCOutput || isAV1Output || isAV1Remux || isHEVCRemux ||
+		(a.ForceFMP4 && !videoCopy)
 	segExt := ".ts"
 	segType := "mpegts"
 	if needsFMP4 {
@@ -718,7 +730,7 @@ func BuildHLS(a BuildArgs) []string {
 	// modern fourCC tag rather than the codec's native one to
 	// recognize the stream.
 	switch {
-	case isHEVCOutput:
+	case isHEVCOutput, isHEVCRemux:
 		args = append(args, "-tag:v", "hvc1")
 	case isAV1Output, isAV1Remux:
 		args = append(args, "-tag:v", "av01")
