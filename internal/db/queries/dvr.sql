@@ -127,12 +127,19 @@ UPDATE recordings
 SET status = $2, updated_at = NOW()
 WHERE id = $1;
 
--- name: SetRecordingStartedFile :exec
+-- name: SetRecordingStartedFile :execrows
 -- Called when the worker starts capturing — records the on-disk path
 -- and flips status to 'recording' in one shot.
+--
+-- Guarded on status: only a 'scheduled' recording may transition to
+-- 'recording'. Without the guard, a user cancelling in the window between
+-- the worker picking the row up and this write had their cancellation
+-- silently overwritten — the row flipped back to 'recording' and the
+-- capture ran to completion. Zero rows affected tells the worker it lost
+-- that race and must stand its capture down.
 UPDATE recordings
 SET status = 'recording', file_path = $2, updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND status = 'scheduled';
 
 -- name: SetRecordingCompleted :exec
 -- Worker finalize path: link media_items row, transition to completed.

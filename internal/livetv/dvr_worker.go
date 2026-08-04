@@ -55,7 +55,7 @@ type DVRMediaItemParams struct {
 type DVRWorker struct {
 	cfg    DVRWorkerConfig
 	q      DVRQuerier
-	live   *Service
+	live   dvrStreamSource
 	lib    DVRLibraryResolver
 	media  DVRMediaCreator
 	logger structuredLogger
@@ -68,19 +68,63 @@ type captureSession struct {
 	recID    uuid.UUID
 	cancel   context.CancelFunc
 	cmd      *exec.Cmd
-	upstream Stream
+	upstream *onceCloser
 	filePath string
+	// endTimer fires at the recording's end and closes upstream so ffmpeg
+	// sees EOF and FINALIZES the MP4 — see beginCapture for why this must
+	// never be a process kill.
+	endTimer *time.Timer
 	// done is closed by the per-capture reaper goroutine once cmd.Wait()
 	// returns. The reaper MUST call Wait — only then is cmd.ProcessState
 	// populated (exec.CommandContext kills on ctx but never reaps), and
 	// without it the exited ffmpeg zombies and finalize() never runs.
 	done chan struct{}
+	// itemID is stamped once CreateDVRMediaItem succeeds so a finalize retry
+	// after a failed status write can't create a duplicate library item.
+	itemID uuid.UUID
+	// finalizeFirstErr marks when finalize first hit a transient error; the
+	// session is retried each tick until dvrFinalizeRetryWindow elapses.
+	finalizeFirstErr time.Time
+}
+
+// onceCloser makes a Stream safe to close from any of the paths that race to
+// do it — the end-of-recording timer, cancellation, finalize, and shutdown.
+type onceCloser struct {
+	Stream
+	once sync.Once
+}
+
+func (c *onceCloser) Close() error {
+	c.once.Do(func() { _ = c.Stream.Close() })
+	return nil
+}
+
+// dvrEndGrace is how far past ends_at the capture keeps reading before the
+// upstream is closed — absorbs clock skew and lets the last GOP land.
+const dvrEndGrace = 30 * time.Second
+
+// dvrFinalizeKillGrace is how long after the upstream closes ffmpeg gets to
+// finish writing the MP4 before the context backstop hard-kills it. The
+// faststart pass rewrites the whole file at the end, and a multi-hour HD
+// recording is gigabytes — give it real time.
+const dvrFinalizeKillGrace = 10 * time.Minute
+
+// dvrFinalizeRetryWindow is how long finalize retries transient DB failures
+// before giving up and marking the recording failed. Single-shot finalize
+// stranded recordings in 'recording' on any blip, and the startup reconcile
+// then mislabelled a perfectly good capture as failed.
+const dvrFinalizeRetryWindow = 10 * time.Minute
+
+// dvrStreamSource is the one Service capability the capture path needs.
+// An interface so worker tests can stub the tuner layer; *Service satisfies it.
+type dvrStreamSource interface {
+	OpenChannelStream(ctx context.Context, channelID uuid.UUID) (Stream, error)
 }
 
 // NewDVRWorker wires the worker. lib and media can be nil during tests
 // that exercise only the scheduling path — the capture loop skips rows
 // it can't finalize and emits a warning.
-func NewDVRWorker(cfg DVRWorkerConfig, q DVRQuerier, live *Service, lib DVRLibraryResolver, media DVRMediaCreator, logger structuredLogger) *DVRWorker {
+func NewDVRWorker(cfg DVRWorkerConfig, q DVRQuerier, live dvrStreamSource, lib DVRLibraryResolver, media DVRMediaCreator, logger structuredLogger) *DVRWorker {
 	if cfg.FFmpegBin == "" {
 		cfg.FFmpegBin = "ffmpeg"
 	}
@@ -146,6 +190,17 @@ func (w *DVRWorker) startDueRecordings(ctx context.Context) {
 			continue
 		}
 		if err := w.beginCapture(ctx, r); err != nil {
+			// A start failure is only PERMANENT once the show is over. Tuner
+			// busy, broadcaster not yet live, a tuner mid-reboot — all clear up
+			// in seconds to minutes, and the row is still 'scheduled', so the
+			// next tick retries and captures the remainder of the program.
+			// Failing on the first attempt threw away entire recordings for a
+			// hiccup at exactly starts_at.
+			if time.Now().Before(r.EndsAt) {
+				w.logger.WarnContext(ctx, "begin capture failed; will retry while the program airs",
+					"recording_id", r.ID, "ends_at", r.EndsAt, "err", err)
+				continue
+			}
 			w.logger.ErrorContext(ctx, "begin capture",
 				"recording_id", r.ID, "err", err)
 			_ = w.q.SetRecordingFailed(ctx, r.ID, err.Error())
@@ -168,12 +223,22 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 	path := filepath.Join(w.cfg.RecordDir,
 		fmt.Sprintf("%s - %s.mp4", safeTitle, r.StartsAt.UTC().Format("2006-01-02 1504")))
 
-	captureCtx, cancel := context.WithDeadline(context.Background(), r.EndsAt.Add(30*time.Second))
-	upstream, err := w.live.OpenChannelStream(captureCtx, r.ChannelID)
+	// The deadline is a KILL BACKSTOP, not the end of the recording. The
+	// recording ends by CLOSING THE UPSTREAM (see the endTimer below): ffmpeg
+	// reads EOF, writes the moov atom, runs the +faststart rewrite, and exits
+	// 0 with a playable file. exec.CommandContext's kill is a hard kill —
+	// ending the recording that way truncated the MP4 before its moov was
+	// written, so EVERY recording that ran to its scheduled end was an
+	// unplayable file marked failed. The deadline only fires if ffmpeg wedges
+	// after EOF.
+	captureCtx, cancel := context.WithDeadline(context.Background(),
+		r.EndsAt.Add(dvrEndGrace+dvrFinalizeKillGrace))
+	rawUpstream, err := w.live.OpenChannelStream(captureCtx, r.ChannelID)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("open channel stream: %w", err)
 	}
+	upstream := &onceCloser{Stream: rawUpstream}
 
 	// Remux source → MP4. Stream-copy keeps CPU near zero: HDHomeRun/IPTV
 	// tunes yield standard broadcast codecs and RTMP broadcasts are already
@@ -183,7 +248,9 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 	// Optional input-format hint: TS tuners autodetect; the RTMP broadcast
 	// reader returns "flv" so ffmpeg doesn't have to probe a live pipe.
 	ffArgs := []string{"-fflags", "+genpts+discardcorrupt"}
-	if hinter, ok := upstream.(inputFormatHinter); ok {
+	// Probe the RAW upstream for the hint — the once-closer wrapper is a
+	// concrete type and would hide the interface.
+	if hinter, ok := rawUpstream.(inputFormatHinter); ok {
 		if f := hinter.FFmpegInputFormat(); f != "" {
 			ffArgs = append(ffArgs, "-f", f)
 		}
@@ -213,8 +280,8 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 		upstream: upstream, filePath: path,
 		done: make(chan struct{}),
 	}
-	// Reap the child as soon as it exits (end-of-recording deadline, failure,
-	// or cancel). This is what populates cmd.ProcessState so reapFinishedCaptures
+	// Reap the child as soon as it exits (end-of-recording EOF, failure, or
+	// cancel). This is what populates cmd.ProcessState so reapFinishedCaptures
 	// can finalize; without it the process zombies and the recording is stuck
 	// forever. Spawned right after Start so it reaps even if the steps below fail.
 	go func() {
@@ -222,10 +289,35 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 		close(session.done)
 	}()
 
-	if err := w.q.SetRecordingStartedFile(captureCtx, r.ID, path); err != nil {
+	// End the recording GRACEFULLY at its scheduled end: closing the upstream
+	// gives ffmpeg EOF, so it flushes, writes the moov atom, does the
+	// faststart rewrite, and exits 0 with a playable file. This timer — not
+	// the context deadline — is what actually ends a normal recording.
+	session.endTimer = time.AfterFunc(time.Until(r.EndsAt.Add(dvrEndGrace)), func() {
+		w.logger.InfoContext(context.Background(), "dvr capture reached scheduled end; closing upstream for finalize",
+			"recording_id", r.ID)
+		_ = upstream.Close()
+	})
+
+	started, err := w.q.SetRecordingStartedFile(captureCtx, r.ID, path)
+	if err != nil {
+		session.endTimer.Stop()
 		cancel() // ffmpeg dies on ctx cancel; the reaper goroutine above Wait()s it
 		upstream.Close()
 		return fmt.Errorf("mark recording started: %w", err)
+	}
+	if !started {
+		// The row left 'scheduled' while we were tuning — the user cancelled
+		// (or another process claimed it). Stand down without touching the
+		// row: overwriting that transition is exactly the race the guarded
+		// UPDATE exists to close.
+		w.logger.InfoContext(captureCtx, "recording no longer scheduled; standing capture down",
+			"recording_id", r.ID)
+		session.endTimer.Stop()
+		cancel()
+		upstream.Close()
+		_ = os.Remove(path)
+		return nil
 	}
 
 	w.mu.Lock()
@@ -259,45 +351,64 @@ func (w *DVRWorker) reapFinishedCaptures(ctx context.Context) {
 	}
 }
 
+// finalize runs once per tick for an exited capture until it reaches a
+// TERMINAL outcome. Transient DB failures leave the session in the active map
+// so the next tick retries — finalize used to be single-shot, so one blip
+// stranded the recording in 'recording' until a restart, whose reconcile pass
+// then mislabelled the (perfectly good) capture as failed. Retrying is bounded
+// by dvrFinalizeRetryWindow.
 func (w *DVRWorker) finalize(ctx context.Context, s *captureSession) {
+	s.endTimer.Stop()
 	s.cancel()
 	s.upstream.Close()
 
-	// Drop from active map regardless of outcome.
-	defer func() {
-		w.mu.Lock()
-		delete(w.active, s.recID)
-		w.mu.Unlock()
-	}()
+	done := w.tryFinalize(ctx, s)
+	if !done {
+		if s.finalizeFirstErr.IsZero() {
+			s.finalizeFirstErr = time.Now()
+		}
+		if time.Since(s.finalizeFirstErr) < dvrFinalizeRetryWindow {
+			return // stay in active; next tick retries
+		}
+		w.logger.ErrorContext(ctx, "finalize retries exhausted; marking failed",
+			"recording_id", s.recID)
+		_ = w.q.SetRecordingFailed(ctx, s.recID, "finalize retries exhausted")
+	}
+	w.mu.Lock()
+	delete(w.active, s.recID)
+	w.mu.Unlock()
+}
 
+// tryFinalize reports whether the session reached a terminal outcome
+// (completed / failed / cancelled). false = transient failure, retry.
+func (w *DVRWorker) tryFinalize(ctx context.Context, s *captureSession) bool {
 	// Don't resurrect a recording the user moved out of 'recording' (cancel).
-	// honorCancellations kills the ffmpeg of a cancelled row, and the reaper
-	// still runs finalize for it — but a cancelled recording must stay
-	// cancelled: no flip to completed/failed, no library item for the partial
-	// capture. Exit 255 is identical for a deadline completion and a cancel, so
-	// we key the decision on the DB status, not the exit code.
+	// A cancelled recording must stay cancelled: no flip to completed/failed,
+	// no library item for the partial capture. Keyed on DB status, not exit
+	// code.
 	rec, err := w.q.GetRecording(ctx, s.recID)
 	if err != nil {
-		w.logger.ErrorContext(ctx, "get recording for finalize",
+		w.logger.WarnContext(ctx, "get recording for finalize (will retry)",
 			"recording_id", s.recID, "err", err)
-		return
+		return false
 	}
 	if rec.Status != RecordingStatusRecording {
 		w.logger.InfoContext(ctx, "dvr capture not finalized (no longer recording)",
 			"recording_id", s.recID, "status", rec.Status)
-		return
+		return true
 	}
 
-	exitErr := s.cmd.ProcessState.ExitCode()
-	if exitErr != 0 && exitErr != 255 {
-		// 255 happens when ffmpeg is killed via context cancel at
-		// end-of-recording — not actually a failure. Any other non-zero
-		// exit code we treat as a failure.
+	// A recording that ended at its scheduled time now exits 0: the end timer
+	// closes the upstream, ffmpeg sees EOF and finalizes the MP4 cleanly. Any
+	// non-zero exit means the kill backstop fired or ffmpeg genuinely died —
+	// either way the file has no moov atom and is not worth a library item.
+	// (The old code blessed exit 255 because the DEADLINE KILL was the normal
+	// end of every recording; that path no longer exists.)
+	if code := s.cmd.ProcessState.ExitCode(); code != 0 {
 		w.logger.WarnContext(ctx, "ffmpeg exited non-zero",
-			"recording_id", s.recID, "exit_code", exitErr)
-		_ = w.q.SetRecordingFailed(ctx, s.recID,
-			fmt.Sprintf("ffmpeg exit %d", exitErr))
-		return
+			"recording_id", s.recID, "exit_code", code)
+		_ = w.q.SetRecordingFailed(ctx, s.recID, fmt.Sprintf("ffmpeg exit %d", code))
+		return true
 	}
 
 	// Sanity: did the file actually get written?
@@ -306,45 +417,70 @@ func (w *DVRWorker) finalize(ctx context.Context, s *captureSession) {
 		w.logger.WarnContext(ctx, "dvr capture produced empty file",
 			"recording_id", s.recID, "path", s.filePath)
 		_ = w.q.SetRecordingFailed(ctx, s.recID, "capture produced empty file")
-		return
+		return true
 	}
 
 	if w.lib == nil || w.media == nil {
 		// No library/media wiring — worker is running in a test or the
 		// library isn't configured yet. File is on disk; mark completed
 		// without an item_id.
-		_ = w.q.SetRecordingStatus(ctx, s.recID, RecordingStatusCompleted)
-		return
+		return w.markCompleted(ctx, s.recID, uuid.Nil)
 	}
 	libID, err := w.lib(ctx)
-	if err != nil || libID == uuid.Nil {
-		w.logger.WarnContext(ctx, "no DVR library configured",
+	if err != nil {
+		w.logger.WarnContext(ctx, "resolve DVR library (will retry)",
 			"recording_id", s.recID, "err", err)
-		_ = w.q.SetRecordingStatus(ctx, s.recID, RecordingStatusCompleted)
-		return
+		return false
+	}
+	if libID == uuid.Nil {
+		w.logger.WarnContext(ctx, "no DVR library configured",
+			"recording_id", s.recID)
+		return w.markCompleted(ctx, s.recID, uuid.Nil)
 	}
 
-	itemID, err := w.media.CreateDVRMediaItem(ctx, DVRMediaItemParams{
-		LibraryID:  libID,
-		Title:      rec.Title,
-		Subtitle:   rec.Subtitle,
-		SeasonNum:  rec.SeasonNum,
-		EpisodeNum: rec.EpisodeNum,
-		FilePath:   s.filePath,
-		AiredAt:    &rec.StartsAt,
-	})
-	if err != nil {
-		w.logger.ErrorContext(ctx, "create dvr media item",
-			"recording_id", s.recID, "err", err)
-		_ = w.q.SetRecordingFailed(ctx, s.recID, fmt.Sprintf("media item: %v", err))
-		return
+	// Idempotent across retries: create the item once, remember it on the
+	// session, and retry only the status write after that — re-running the
+	// create would file a duplicate library item for the same recording.
+	if s.itemID == uuid.Nil {
+		itemID, err := w.media.CreateDVRMediaItem(ctx, DVRMediaItemParams{
+			LibraryID:  libID,
+			Title:      rec.Title,
+			Subtitle:   rec.Subtitle,
+			SeasonNum:  rec.SeasonNum,
+			EpisodeNum: rec.EpisodeNum,
+			FilePath:   s.filePath,
+			AiredAt:    &rec.StartsAt,
+		})
+		if err != nil {
+			w.logger.WarnContext(ctx, "create dvr media item (will retry)",
+				"recording_id", s.recID, "err", err)
+			return false
+		}
+		s.itemID = itemID
 	}
-	if err := w.q.SetRecordingCompleted(ctx, s.recID, itemID); err != nil {
-		w.logger.ErrorContext(ctx, "mark recording completed",
-			"recording_id", s.recID, "err", err)
+	if !w.markCompleted(ctx, s.recID, s.itemID) {
+		return false
 	}
 	w.logger.InfoContext(ctx, "dvr capture finalized",
-		"recording_id", s.recID, "item_id", itemID, "path", s.filePath)
+		"recording_id", s.recID, "item_id", s.itemID, "path", s.filePath)
+	return true
+}
+
+// markCompleted writes the completed status (with or without an item link).
+// Returns false on error so the caller retries next tick.
+func (w *DVRWorker) markCompleted(ctx context.Context, recID, itemID uuid.UUID) bool {
+	var err error
+	if itemID == uuid.Nil {
+		err = w.q.SetRecordingStatus(ctx, recID, RecordingStatusCompleted)
+	} else {
+		err = w.q.SetRecordingCompleted(ctx, recID, itemID)
+	}
+	if err != nil {
+		w.logger.WarnContext(ctx, "mark recording completed (will retry)",
+			"recording_id", recID, "err", err)
+		return false
+	}
+	return true
 }
 
 // reconcileInterrupted marks any recording still in 'recording' status at
@@ -384,9 +520,15 @@ func (w *DVRWorker) honorCancellations(ctx context.Context) {
 			s, ok := w.active[id]
 			w.mu.Unlock()
 			if ok {
-				w.logger.InfoContext(ctx, "killing capture (cancelled)",
+				w.logger.InfoContext(ctx, "stopping capture (cancelled)",
 					"recording_id", id)
-				s.cancel()
+				// Close the upstream rather than killing ffmpeg: EOF lets it
+				// finalize the moov atom, so the partial file left on disk is
+				// at least playable. finalize's status gate keeps a cancelled
+				// row cancelled — no item is created for it. The context
+				// deadline still backstops a wedged ffmpeg.
+				s.endTimer.Stop()
+				_ = s.upstream.Close()
 			}
 		}
 	}
@@ -400,6 +542,7 @@ func (w *DVRWorker) shutdownActive() {
 	}
 	w.mu.Unlock()
 	for _, s := range sessions {
+		s.endTimer.Stop()
 		s.cancel()
 		s.upstream.Close()
 	}

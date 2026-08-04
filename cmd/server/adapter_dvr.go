@@ -192,8 +192,9 @@ func (a *dvrAdapter) SetRecordingStatus(ctx context.Context, id uuid.UUID, statu
 	return a.q.SetRecordingStatus(ctx, gen.SetRecordingStatusParams{ID: id, Status: string(status)})
 }
 
-func (a *dvrAdapter) SetRecordingStartedFile(ctx context.Context, id uuid.UUID, filePath string) error {
-	return a.q.SetRecordingStartedFile(ctx, gen.SetRecordingStartedFileParams{ID: id, FilePath: &filePath})
+func (a *dvrAdapter) SetRecordingStartedFile(ctx context.Context, id uuid.UUID, filePath string) (bool, error) {
+	n, err := a.q.SetRecordingStartedFile(ctx, gen.SetRecordingStartedFileParams{ID: id, FilePath: &filePath})
+	return n > 0, err
 }
 
 func (a *dvrAdapter) SetRecordingCompleted(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error {

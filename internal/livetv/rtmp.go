@@ -440,13 +440,13 @@ type mediaTag struct {
 	kind      tagKind
 }
 
-// rtmpPublish receives FLV tags from one broadcaster and forwards them to the
-// current viewer, caching the tags a late-joining viewer needs to begin
+// rtmpPublish receives FLV tags from one broadcaster and fans them out to
+// every attached consumer, caching the tags a late joiner needs to begin
 // decoding (script metadata, video/audio sequence headers, last keyframe).
 //
-// Only one viewer attaches at a time: the HLS proxy creates exactly one ffmpeg
-// transcode per channel and shares its HLS output across all browser viewers,
-// so a single subscriber here feeds an arbitrary number of watchers.
+// Browser viewers still share ONE consumer here (the HLS proxy's single ffmpeg
+// per channel); additional consumers are other subsystems — today a DVR
+// capture — which must be able to run concurrently with live viewing.
 type rtmpPublish struct {
 	key string
 
@@ -456,7 +456,13 @@ type rtmpPublish struct {
 	videoSeqHead *mediaTag
 	audioSeqHead *mediaTag
 	lastKeyFrame *mediaTag
-	sub          *rtmpSub
+	// subs holds every attached consumer. There are exactly two kinds today —
+	// the HLS proxy's ffmpeg (live viewing, shared by all browsers) and a DVR
+	// capture's ffmpeg — and they must be able to coexist. This used to be a
+	// single slot where each subscribe() EVICTED the current subscriber, so
+	// starting a recording killed everyone's live stream and tuning in live
+	// killed the in-progress recording, whichever came second.
+	subs map[*rtmpSub]struct{}
 }
 
 func newRTMPPublish(key string) *rtmpPublish {
@@ -483,40 +489,37 @@ func (p *rtmpPublish) publish(tag *mediaTag) {
 		p.lastKeyFrame = tag
 	}
 
-	if p.sub == nil {
-		return
-	}
-	if !p.sub.initialized {
-		// A viewer can't decode anything until it has the video sequence
-		// header; hold off until it has been seen.
-		if p.videoSeqHead == nil {
-			return
+	for sub := range p.subs {
+		if !sub.initialized {
+			// A viewer can't decode anything until it has the video sequence
+			// header; hold off until it has been seen.
+			if p.videoSeqHead == nil {
+				continue
+			}
+			sub.enqueue(p.scriptData)
+			sub.enqueue(p.audioSeqHead)
+			sub.enqueue(p.videoSeqHead)
+			sub.enqueue(p.lastKeyFrame)
+			sub.initialized = true
+			// Don't double-send a tag that was just delivered as part of init.
+			if tag == p.lastKeyFrame || tag == p.videoSeqHead ||
+				tag == p.audioSeqHead || tag == p.scriptData {
+				continue
+			}
 		}
-		p.sub.enqueue(p.scriptData)
-		p.sub.enqueue(p.audioSeqHead)
-		p.sub.enqueue(p.videoSeqHead)
-		p.sub.enqueue(p.lastKeyFrame)
-		p.sub.initialized = true
-		// Don't double-send a tag that was just delivered as part of init.
-		if tag == p.lastKeyFrame || tag == p.videoSeqHead ||
-			tag == p.audioSeqHead || tag == p.scriptData {
-			return
-		}
+		sub.enqueue(tag)
 	}
-	p.sub.enqueue(tag)
 }
 
-// subscribe attaches a fresh viewer pipe, replacing any existing subscriber
-// (e.g. when the HLS proxy re-acquires the channel after its grace period).
+// subscribe attaches a fresh viewer pipe ALONGSIDE any existing subscribers.
+// Live viewing and a DVR capture of the same broadcast are independent
+// consumers; each gets its own init sequence (per-sub `initialized`) and its
+// own drop-on-full queue, so a slow one degrades alone.
 func (p *rtmpPublish) subscribe() (io.ReadCloser, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return nil, ErrChannelNotFound
-	}
-	if p.sub != nil {
-		p.sub.shutdown()
-		p.sub = nil
 	}
 	pr, pw := io.Pipe()
 	s := &rtmpSub{
@@ -525,7 +528,10 @@ func (p *rtmpPublish) subscribe() (io.ReadCloser, error) {
 		ch:   make(chan *mediaTag, rtmpSubQueueDepth),
 		done: make(chan struct{}),
 	}
-	p.sub = s
+	if p.subs == nil {
+		p.subs = make(map[*rtmpSub]struct{})
+	}
+	p.subs[s] = struct{}{}
 	// The FLV header write blocks until ffmpeg starts reading, so it must run
 	// on the drain goroutine, never here under p.mu (that would deadlock).
 	go s.run()
@@ -534,9 +540,7 @@ func (p *rtmpPublish) subscribe() (io.ReadCloser, error) {
 
 func (p *rtmpPublish) detach(s *rtmpSub) {
 	p.mu.Lock()
-	if p.sub == s {
-		p.sub = nil
-	}
+	delete(p.subs, s)
 	p.mu.Unlock()
 	s.shutdown()
 }
@@ -544,10 +548,10 @@ func (p *rtmpPublish) detach(s *rtmpSub) {
 func (p *rtmpPublish) close() {
 	p.mu.Lock()
 	p.closed = true
-	s := p.sub
-	p.sub = nil
+	subs := p.subs
+	p.subs = nil
 	p.mu.Unlock()
-	if s != nil {
+	for s := range subs {
 		s.shutdown()
 	}
 }

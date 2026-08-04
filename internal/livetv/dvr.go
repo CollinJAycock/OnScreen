@@ -141,7 +141,11 @@ type DVRQuerier interface {
 	ListDueRecordings(ctx context.Context, upTo time.Time) ([]Recording, error)
 	ListActiveRecordings(ctx context.Context) ([]Recording, error)
 	SetRecordingStatus(ctx context.Context, id uuid.UUID, status RecordingStatus) error
-	SetRecordingStartedFile(ctx context.Context, id uuid.UUID, filePath string) error
+	// SetRecordingStartedFile transitions scheduled → recording and stamps the
+	// output path. Returns false when the row was NOT in 'scheduled' — i.e. the
+	// user cancelled in the pickup window — in which case the caller must stand
+	// its capture down rather than overwrite the cancellation.
+	SetRecordingStartedFile(ctx context.Context, id uuid.UUID, filePath string) (bool, error)
 	SetRecordingCompleted(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	SetRecordingFailed(ctx context.Context, id uuid.UUID, errMsg string) error
 	DeleteRecording(ctx context.Context, id uuid.UUID) error

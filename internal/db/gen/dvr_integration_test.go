@@ -242,10 +242,14 @@ func TestDVR_Integration_RecordingStatusTransitions(t *testing.T) {
 	}
 
 	filePath := "/dvr/show.ts"
-	if err := q.SetRecordingStartedFile(ctx, gen.SetRecordingStartedFileParams{
+	n, err := q.SetRecordingStartedFile(ctx, gen.SetRecordingStartedFileParams{
 		ID: r.ID, FilePath: &filePath,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("SetRecordingStartedFile: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("SetRecordingStartedFile affected %d rows, want 1", n)
 	}
 	r2, _ := q.GetRecording(ctx, r.ID)
 	if r2.Status != "recording" {
@@ -253,6 +257,31 @@ func TestDVR_Integration_RecordingStatusTransitions(t *testing.T) {
 	}
 	if r2.FilePath == nil || *r2.FilePath != filePath {
 		t.Errorf("file_path not set: %v", r2.FilePath)
+	}
+
+	// The scheduled→recording transition is guarded: a row the user already
+	// cancelled must NOT be flipped back to 'recording' by the worker's
+	// pickup — that silent overwrite ran the whole capture for a recording
+	// the user had just cancelled. Zero rows tells the worker to stand down.
+	if err := q.SetRecordingStatus(ctx, gen.SetRecordingStatusParams{ID: r.ID, Status: "cancelled"}); err != nil {
+		t.Fatalf("SetRecordingStatus: %v", err)
+	}
+	n, err = q.SetRecordingStartedFile(ctx, gen.SetRecordingStartedFileParams{
+		ID: r.ID, FilePath: &filePath,
+	})
+	if err != nil {
+		t.Fatalf("SetRecordingStartedFile (cancelled row): %v", err)
+	}
+	if n != 0 {
+		t.Errorf("SetRecordingStartedFile affected %d rows on a cancelled recording, want 0", n)
+	}
+	rc, _ := q.GetRecording(ctx, r.ID)
+	if rc.Status != "cancelled" {
+		t.Errorf("cancelled recording overwritten to %q by the started-file write", rc.Status)
+	}
+	// Restore the recording state so the rest of the transition walk holds.
+	if err := q.SetRecordingStatus(ctx, gen.SetRecordingStatusParams{ID: r.ID, Status: "recording"}); err != nil {
+		t.Fatalf("restore status: %v", err)
 	}
 
 	// ListActiveRecordings must include this row now.

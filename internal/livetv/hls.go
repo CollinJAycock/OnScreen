@@ -233,6 +233,25 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	upstream, err := p.svc.OpenChannelStream(streamCtx, channelID)
 	if err != nil {
 		cancel()
+		// Two first-viewers can race here: both saw no session, both tried to
+		// tune, and on a single-tuner device the loser gets ALL_TUNERS_BUSY —
+		// for a channel the winner is actively streaming. Before surfacing the
+		// error, wait briefly for the winner's session to appear and join it.
+		// (The winner registers within ~100 ms of its tune; the poll only runs
+		// on the error path, so a genuinely busy tuner still errors in ≤2 s.)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if s, ok := p.Lookup(channelID); ok {
+				p.logger.Info("joined concurrent viewer's session after tune failure",
+					"channel_id", channelID)
+				return s, nil
+			}
+			select {
+			case <-ctx.Done():
+				return nil, err
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 		return nil, err
 	}
 
