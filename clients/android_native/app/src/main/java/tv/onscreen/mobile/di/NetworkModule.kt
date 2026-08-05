@@ -106,12 +106,19 @@ object NetworkModule {
         return retrofit.create(OnScreenApi::class.java)
     }
 
+    /** The bearer-attaching interceptor, shared so identity transitions can
+     *  drop its token cache (see AuthInterceptor.invalidateCache). */
+    @Provides
+    @Singleton
+    fun provideAuthInterceptor(prefs: ServerPrefs): AuthInterceptor = AuthInterceptor(prefs)
+
     /** Main client with auth interceptor and token refresh authenticator. */
     @Provides
     @Singleton
     fun provideOkHttpClient(
         prefs: ServerPrefs,
         baseUrlInterceptor: BaseUrlInterceptor,
+        authInterceptor: AuthInterceptor,
         @AuthClient authApi: OnScreenApi,
     ): OkHttpClient {
         val tls = buildTls()
@@ -131,7 +138,7 @@ object NetworkModule {
             .writeTimeout(30, TimeUnit.SECONDS)
             .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
-            .addInterceptor(AuthInterceptor(prefs))
+            .addInterceptor(authInterceptor)
             .addInterceptor(loggingInterceptor())
             .authenticator(TokenAuthenticator(prefs) { authApi })
             .sslSocketFactory(tls.socketFactory, tls.trustManager)

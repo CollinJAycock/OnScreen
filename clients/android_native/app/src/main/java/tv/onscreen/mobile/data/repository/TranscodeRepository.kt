@@ -1,5 +1,9 @@
 package tv.onscreen.mobile.data.repository
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.PlaybackDecisionRequest
 import tv.onscreen.mobile.data.model.TranscodeRequest
@@ -53,4 +57,18 @@ class TranscodeRepository @Inject constructor(
             // Best-effort cleanup.
         }
     }
+
+    /** Fire-and-forget session stop on the app-lifetime [detachedScope].
+     *
+     *  The player's only exit hook is ViewModel.onCleared(), and androidx
+     *  closes viewModelScope BEFORE calling it — a viewModelScope.launch
+     *  there never runs, so the DELETE was dead code and every backed-out
+     *  playback left an ffmpeg session pinned on the server until its idle
+     *  reaper fired (one per episode on auto-advance). Same trap, and same
+     *  remedy, as ItemRepository.reportProgressDetached. */
+    fun stopDetached(sessionId: String, token: String) {
+        detachedScope.launch { stop(sessionId, token) }
+    }
+
+    private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }

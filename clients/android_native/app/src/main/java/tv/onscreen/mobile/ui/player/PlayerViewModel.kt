@@ -876,7 +876,9 @@ class PlayerViewModel @Inject constructor(
         val tok = transcodeToken ?: return
         transcodeSessionId = null
         transcodeToken = null
-        viewModelScope.launch { transcodeRepo.stop(sid, tok) }
+        // Detached: the common caller is onCleared(), where viewModelScope is
+        // already closed — see TranscodeRepository.stopDetached.
+        transcodeRepo.stopDetached(sid, tok)
     }
 
     /** Direct-play URL with a `?token=` carrier. ExoPlayer's

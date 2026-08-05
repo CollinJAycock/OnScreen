@@ -456,7 +456,7 @@ class PlayerViewModelTest {
         vm.stopActiveTranscode()
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { transcodeRepo.stop(any(), any()) }
+        io.mockk.verify(exactly = 0) { transcodeRepo.stopDetached(any(), any()) }
     }
 
     @Test
@@ -479,13 +479,16 @@ class PlayerViewModelTest {
         vm.stopActiveTranscode()
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
+        // stopDetached, not stop: the dominant caller is onCleared(), where
+        // viewModelScope is already closed — a launch there never runs, so
+        // the DELETE has to ride the repository's app-lifetime scope.
+        io.mockk.verify(exactly = 1) { transcodeRepo.stopDetached("sess-9", "tok-9") }
 
         // Calling again should not re-issue the stop — IDs are cleared on
-        // first call so the launched coroutine has nothing to send.
+        // the first call.
         vm.stopActiveTranscode()
         advanceUntilIdle()
-        coVerify(exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
+        io.mockk.verify(exactly = 1) { transcodeRepo.stopDetached("sess-9", "tok-9") }
     }
 
     @Test

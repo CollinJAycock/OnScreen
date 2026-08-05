@@ -6,6 +6,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.Route
+import retrofit2.HttpException
 import tv.onscreen.android.data.model.RefreshRequest
 import tv.onscreen.android.data.prefs.ServerPrefs
 
@@ -98,7 +99,15 @@ class TokenAuthenticator(
                     .header("Authorization", "Bearer ${pair.access_token}")
                     .build()
             } catch (e: Exception) {
-                runBlocking { prefs.clearAuth() }
+                // Only a DEFINITIVE rejection invalidates the session. A
+                // timeout, a dropped Wi-Fi frame, or a 502 while the server
+                // restarts is transient — wiping tokens there ejected the
+                // viewer mid-show and forced a re-pair on the remote, from a
+                // blip the next request would have survived. 401/403 from the
+                // refresh endpoint means the refresh token really is dead
+                // (expired, revoked, or reuse-detected); only then clear.
+                val definitive = (e as? HttpException)?.code() in setOf(401, 403)
+                if (definitive) runBlocking { prefs.clearAuth() }
                 null
             }
         }

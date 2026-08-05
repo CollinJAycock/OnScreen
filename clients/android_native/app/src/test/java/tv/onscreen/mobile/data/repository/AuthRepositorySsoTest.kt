@@ -31,7 +31,7 @@ class AuthRepositorySsoTest {
         coEvery { api.getLdapEnabled() } returns ApiResponse(status(true, "Corp AD"))
         coEvery { api.getOidcEnabled() } returns ApiResponse(status(true, "Workspace"))
         coEvery { api.getSamlEnabled() } returns ApiResponse(status(false))
-        val repo = AuthRepository(api, mockk(relaxed = true))
+        val repo = AuthRepository(api, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
 
         val got = repo.getAuthProviders()
         assertThat(got.ldap?.enabled).isTrue()
@@ -50,7 +50,7 @@ class AuthRepositorySsoTest {
         coEvery { api.getLdapEnabled() } returns ApiResponse(status(true))
         coEvery { api.getOidcEnabled() } returns ApiResponse(status(false))
         coEvery { api.getSamlEnabled() } throws RuntimeException("404")
-        val repo = AuthRepository(api, mockk(relaxed = true))
+        val repo = AuthRepository(api, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
 
         val got = repo.getAuthProviders()
         assertThat(got.ldap?.enabled).isTrue()
@@ -69,7 +69,7 @@ class AuthRepositorySsoTest {
         coEvery { api.getLdapEnabled() } throws RuntimeException("network")
         coEvery { api.getOidcEnabled() } throws RuntimeException("network")
         coEvery { api.getSamlEnabled() } throws RuntimeException("network")
-        val repo = AuthRepository(api, mockk(relaxed = true))
+        val repo = AuthRepository(api, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
 
         val got = repo.getAuthProviders()
         assertThat(got.ldap).isNull()
@@ -86,7 +86,10 @@ class AuthRepositorySsoTest {
         val token = pair()
         coEvery { api.loginLdap(LoginRequest("alice", "pw")) } returns ApiResponse(token)
 
-        val repo = AuthRepository(api, prefs)
+        // loginLdap now probes the health endpoint first (the TLS-origin
+        // upgrade guard); a null stored URL short-circuits it, so the relaxed
+        // prefs mock keeps this test focused on the login side-effects.
+        val repo = AuthRepository(api, prefs, mockk(relaxed = true), mockk(relaxed = true))
         val got = repo.loginLdap("alice", "pw")
         assertThat(got).isEqualTo(token)
         // Side-effect: persist tokens identically to local login so

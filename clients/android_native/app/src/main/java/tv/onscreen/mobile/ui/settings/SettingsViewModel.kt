@@ -7,12 +7,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.data.repository.AuthRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val prefs: PlaybackPrefs,
     private val server: ServerPrefs,
+    private val auth: AuthRepository,
 ) : ViewModel() {
 
     val downloadOnWifiOnly: Flow<Boolean> = prefs.downloadOnWifiOnly
@@ -35,9 +37,16 @@ class SettingsViewModel @Inject constructor(
 
     /** Sign out without forgetting the server URL — next launch
      *  starts at the pair screen with the server already filled in.
-     *  AppNav reroutes to /pair the moment isLoggedIn flips false. */
+     *  AppNav reroutes to /pair the moment isLoggedIn flips false.
+     *
+     *  Goes through AuthRepository.logout so the refresh token is REVOKED
+     *  server-side and the per-identity caches are dropped. Clearing local
+     *  prefs alone (what this used to do) left the session valid on the
+     *  server — a stolen refresh token kept working after the user signed
+     *  out — and left the next user on this phone inheriting the previous
+     *  one's cached preferences. */
     fun signOut() {
-        viewModelScope.launch { server.clearAuth() }
+        auth.logoutDetached()
     }
 
     /** Forget the server entirely (URL + tokens + user). Used when
@@ -45,6 +54,8 @@ class SettingsViewModel @Inject constructor(
      *  Same nav effect as signOut — the absence of a server URL
      *  routes back to /pair, which then asks for the URL again. */
     fun disconnectServer() {
-        viewModelScope.launch { server.clearAll() }
+        // Revoke + drop caches while the server URL still resolves, THEN
+        // forget the URL — order matters, the logout call needs it.
+        auth.logoutDetached(andThen = { server.clearAll() })
     }
 }

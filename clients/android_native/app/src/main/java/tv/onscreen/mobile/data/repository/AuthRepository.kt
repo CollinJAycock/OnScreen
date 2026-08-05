@@ -1,7 +1,14 @@
 package tv.onscreen.mobile.data.repository
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import tv.onscreen.mobile.data.api.AuthInterceptor
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.AuthProviders
 import tv.onscreen.mobile.data.model.AuthProviderStatus
@@ -22,8 +29,31 @@ import javax.inject.Singleton
 open class AuthRepository @Inject constructor(
     private val api: OnScreenApi,
     private val prefs: ServerPrefs,
+    // Process-lifetime @Singleton cache keyed to nothing. Every identity
+    // transition below has to clear it or the next user on this phone
+    // inherits the previous one's hub layout, language preferences and
+    // content-rating ceiling. Mirrors the TV client's
+    // invalidateIdentityCaches(). PreferencesRepository doesn't depend on
+    // AuthRepository, so there's no Hilt cycle.
+    private val preferences: PreferencesRepository,
+    // The bearer cache has a 5 s TTL for throughput; an identity change must
+    // drop it immediately or the requests right after sign-in carry the
+    // PREVIOUS user's token (and right after sign-out, a revoked one).
+    private val authInterceptor: AuthInterceptor,
 ) {
+    /** App-lifetime scope for teardown writes that must outlive the caller —
+     *  see [logoutDetached]. Never cancelled. */
+    private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Clear per-identity caches. Called from every sign-in, sign-out and
+     *  pairing completion — the points where "who is signed in" changes. */
+    private fun invalidateIdentityCaches() {
+        preferences.invalidate()
+        authInterceptor.invalidateCache()
+    }
+
     open suspend fun login(username: String, password: String): TokenPair {
+        ensureTlsUpgradedOrigin()
         val pair = api.login(LoginRequest(username, password)).data
         persistIfComplete(pair)
         return pair
@@ -34,6 +64,7 @@ open class AuthRepository @Inject constructor(
      *  and returns the same TokenPair. Persistence side-effect mirrors
      *  [login] so the UI is unchanged downstream. */
     open suspend fun loginLdap(username: String, password: String): TokenPair {
+        ensureTlsUpgradedOrigin()
         val pair = api.loginLdap(LoginRequest(username, password)).data
         persistIfComplete(pair)
         return pair
@@ -51,6 +82,7 @@ open class AuthRepository @Inject constructor(
      *  persist empties; the caller drives the second factor. */
     private suspend fun persistIfComplete(pair: TokenPair) {
         if (pair.totp_required) return
+        invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }
@@ -96,7 +128,22 @@ open class AuthRepository @Inject constructor(
         } catch (_: Exception) {
             // Best-effort — server may be unreachable.
         }
+        invalidateIdentityCaches()
         prefs.clearAuth()
+    }
+
+    /** Fire-and-forget [logout] on the app-lifetime scope, with an optional
+     *  follow-up that runs only after the revocation attempt completes.
+     *
+     *  Sign-out flips `isLoggedIn`, which makes AppNav rebuild the graph and
+     *  clear the settings ViewModel — a viewModelScope.launch would be
+     *  cancelled before the revoke POST lands (the same trap ItemRepository
+     *  documents for the terminal progress event). */
+    fun logoutDetached(andThen: (suspend () -> Unit)? = null) {
+        detachedScope.launch {
+            logout()
+            andThen?.invoke()
+        }
     }
 
     /** Result of [checkServer]. Carries the actual failure reason so
@@ -111,15 +158,62 @@ open class AuthRepository @Inject constructor(
         data class Failed(val message: String) : CheckResult()
     }
 
-    /** Check server reachability by hitting the health endpoint. */
+    /** Check server reachability by hitting the health endpoint.
+     *
+     *  Adopts the origin the server actually ANSWERED on. The setup screen
+     *  defaults private hosts (and any address typed with an explicit
+     *  `http://`) to cleartext, and this probe is a safe GET that OkHttp
+     *  happily follows across a 301 to TLS — so the check "succeeds" while
+     *  the PERSISTED origin stays http. Every later POST then dies: a 301
+     *  makes OkHttp rewrite POST→GET per RFC, the API 405s, and login /
+     *  pairing / token refresh fail with no useful error. Adopting the
+     *  answered origin here is what makes the stored value truthful.
+     *
+     *  Upgrade-only and same-host: a hostile redirect from https down to
+     *  http, or off to another host, is ignored. */
     suspend fun checkServer(url: String): CheckResult {
         prefs.setServerUrl(url)
         return try {
             val resp = api.healthCheck()
-            if (resp.isSuccessful) CheckResult.Ok
-            else CheckResult.HttpError(resp.code())
+            if (resp.isSuccessful) {
+                adoptRedirectedOrigin(url, resp.raw().request.url)
+                CheckResult.Ok
+            } else CheckResult.HttpError(resp.code())
         } catch (e: Exception) {
             CheckResult.Failed(e.javaClass.simpleName + ": " + (e.message ?: "unknown"))
+        }
+    }
+
+    /** Persist [finalUrl]'s origin when a request was upgraded to TLS. */
+    private suspend fun adoptRedirectedOrigin(requested: String?, finalUrl: HttpUrl) {
+        val asked = requested?.toHttpUrlOrNull() ?: return
+        if (asked.isHttps || !finalUrl.isHttps) return
+        if (!asked.host.equals(finalUrl.host, ignoreCase = true)) return
+        prefs.setServerUrl("https://" + finalUrl.host + portSuffix(finalUrl))
+    }
+
+    private fun portSuffix(u: HttpUrl): String =
+        if (u.port == HttpUrl.defaultPort(u.scheme)) "" else ":" + u.port
+
+    /** Upgrade a stale cleartext origin to TLS before an unauthenticated
+     *  POST. [checkServer] adopts the answered origin during setup, but an
+     *  install that persisted http BEFORE that fix landed — or whose server
+     *  moved behind TLS later (reverse proxy, Tailscale cert) — never
+     *  re-runs setup, so the stored origin stays cleartext for life and
+     *  every login/pairing POST 405s. The probe is a safe GET and reuses
+     *  the same upgrade-only, same-host adoption; a plain-http LAN server
+     *  answers without a redirect and nothing changes. Failures are
+     *  swallowed — the caller's own request reports reachability. */
+    private suspend fun ensureTlsUpgradedOrigin() {
+        val stored = prefs.getServerUrl()?.toHttpUrlOrNull() ?: return
+        if (stored.isHttps) return
+        try {
+            val resp = api.healthCheck()
+            if (resp.isSuccessful) {
+                adoptRedirectedOrigin(prefs.getServerUrl(), resp.raw().request.url)
+            }
+        } catch (_: Exception) {
+            // Unreachable — let the caller's request surface it.
         }
     }
 
@@ -127,8 +221,10 @@ open class AuthRepository @Inject constructor(
 
     /** Start a device-pairing session. The PIN is shown on the TV
      *  while the user signs in via /pair on a phone / laptop. */
-    suspend fun startPairing(): PairCodeResponse =
-        api.createPairCode().data
+    suspend fun startPairing(): PairCodeResponse {
+        ensureTlsUpgradedOrigin()
+        return api.createPairCode().data
+    }
 
     /** One poll tick. Returns:
      *   - [PollResult.Pending] while the server says 202 (user hasn't
@@ -162,6 +258,7 @@ open class AuthRepository @Inject constructor(
      *  side effect so the pairing UI lands the user in the same
      *  signed-in state a password login would. */
     suspend fun completePairing(pair: TokenPair) {
+        invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }

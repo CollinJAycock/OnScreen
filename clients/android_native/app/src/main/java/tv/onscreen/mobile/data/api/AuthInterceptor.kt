@@ -107,6 +107,25 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         }
     }
 
+    /**
+     * Drop the cache so the very next request re-reads the store.
+     *
+     * The TTL exists for throughput, but it must never outlive an identity
+     * change: without this, the sign-in POST itself refreshes the window
+     * with the PREVIOUS user's token, and the hub/artwork fetches that
+     * immediately follow carry user A's bearer while serving user B —
+     * A's data rendered under B's session. Sign-out has the mirror problem
+     * (a revoked token kept for up to the TTL). ServerPrefs calls this from
+     * setTokens/clearAuth, the two points where identity changes.
+     */
+    fun invalidateCache() {
+        synchronized(this) {
+            cachedToken = null
+            cachedServerHost = null
+            cacheLoadedAtMs = 0L
+        }
+    }
+
     companion object {
         // 5 s is short enough that token rotation lands on the next
         // request after refresh, long enough that bursts of image

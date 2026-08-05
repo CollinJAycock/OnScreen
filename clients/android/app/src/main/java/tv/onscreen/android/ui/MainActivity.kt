@@ -77,6 +77,13 @@ class MainActivity : FragmentActivity() {
      *  next entry starts fresh from Home. */
     private var pendingHomeReset = false
 
+    /** A Watch Next deep link that arrived while fragment state was saved
+     *  (itemId to positionMs). onNewIntent runs before onStart for a stopped
+     *  activity, so the warm path — a tile clicked while the app is
+     *  backgrounded, i.e. the normal one — can't commit a transaction yet.
+     *  Consumed by onStart. */
+    private var pendingDeepLink: Pair<String, Long>? = null
+
     /** Fire TV sticks don't reliably deliver onPause/onStop on an HDMI
      *  display-off — the activity can sit "resumed" on a dark panel with the
      *  old screen still live (a playback surface whose player is dead or
@@ -194,6 +201,21 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // A deep link that arrived while state was saved (onNewIntent fires
+        // before onStart on the warm path) wins over the home reset — the
+        // tile IS the user's chosen destination.
+        pendingDeepLink?.let { (itemId, position) ->
+            pendingDeepLink = null
+            pendingHomeReset = false
+            supportFragmentManager.popBackStack(
+                null,
+                androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
+            )
+            supportFragmentManager.beginTransaction()
+                .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, position))
+                .commitAllowingStateLoss()
+            return
+        }
         if (pendingHomeReset) {
             pendingHomeReset = false
             resetToHome()
@@ -410,7 +432,17 @@ class MainActivity : FragmentActivity() {
         // pre-empting both the restore branch and the auth routing below it.
         incoming.data = null
         setIntent(incoming)
-        if (supportFragmentManager.isStateSaved) return false
+        if (supportFragmentManager.isStateSaved) {
+            // onNewIntent is delivered BEFORE onStart for a stopped activity,
+            // so state is still saved here on the warm path — the exact path a
+            // Watch Next tile takes while the app sits in the background. We
+            // already consumed the URI above (it must fire once), so dropping
+            // the request now loses the user's chosen title AND leaves
+            // pendingHomeReset set, landing them on Home instead. Stash it and
+            // let onStart deliver it.
+            pendingDeepLink = itemId to position
+            return true
+        }
         // A deep-link launch IS the user's chosen destination — don't let
         // a pending home reset (set when the app left the foreground)
         // clobber the playback screen we're about to show.

@@ -167,13 +167,11 @@ class PlaybackService : MediaSessionService() {
         if (dur <= 0 || dur == C.TIME_UNSET) return
         val pos = player.currentPosition.coerceAtLeast(0)
         reportedStoppedFor = id
-        scope.launch {
-            try {
-                itemRepo.updateProgress(id, pos, dur, "stopped")
-            } catch (_: Exception) {
-                // Best-effort.
-            }
-        }
+        // Detached, NOT scope.launch: the caller that matters is onDestroy,
+        // which cancels `scope` on the very next line — the PUT would die at
+        // its first suspension point and the terminal position + scrobble
+        // would be lost on every swipe-away / service kill.
+        itemRepo.reportProgressDetached(id, pos, dur, "stopped")
     }
 
     /** On end-of-track for a track/audiobook, resolve the next sibling
