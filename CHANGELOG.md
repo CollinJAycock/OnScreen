@@ -9,6 +9,38 @@ The server API is frozen as of **v2.2.0** — see [docs/server-lock.md](docs/ser
 for the lock posture and what's expected to land in v2.3+ minor
 releases without breaking v2.2 clients.
 
+## [v2.5.0] — unreleased
+
+Planning: [docs/v2.5-roadmap.md](docs/v2.5-roadmap.md) — the distribution
+wave (stores for the existing fleet), the non-Apple platform track
+(Chromecast receiver, Android Auto, CLI, Flathub), client-parity honesty,
+and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
+
+### Added
+
+- **`onscreen-cli`** — a terminal client that plays through mpv: login (with
+  TOTP), browse/search, server-authoritative playback decision under an mpv
+  capability profile, direct play via Authorization header, transcode
+  fallback with session teardown, and resume-parity progress via mpv IPC
+  (non-Windows). `play --print-url` doubles as a playback-matrix QA probe.
+- **Admin stream termination** — an admin can stop any user's session
+  (audit-logged with both parties); the analytics Now Playing cards grew a
+  Stop button. Owner-only remains the rule for non-admins.
+- **Runtime codec demotion on the TV fleet** — webOS ports the web player's
+  full auto-escalation (bufferAppendError → demote → restart lands on
+  H.264); Tizen, whose AVPlay claims are static, records a persistent
+  demotion on NOT_SUPPORTED-class errors so overclaimed panels self-correct
+  on the next attempt.
+
+### Changed
+
+- **webOS requests up to 2160** on transcode start (was hardcoded 1080 —
+  which also forced the server to downscale-transcode every 4K source
+  instead of direct-playing it).
+- **`podcast` library creation is parked** (the manga pattern) until the RSS
+  subscription model ships — the scanner behind it is a local-files stub.
+  Existing podcast libraries keep working.
+
 ## [v2.4.0] — 2026-08-05
 
 The server lock was lifted after v2.3.0 (see [docs/server-lock.md](docs/server-lock.md)).
