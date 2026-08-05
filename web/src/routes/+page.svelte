@@ -256,15 +256,17 @@
   // surface (var(--bg-elevated)), so tiles read correctly in both light and
   // dark — they used to be hardcoded dark gradients that became dark-on-dark
   // mush in light mode.
-  // The Anime tile uses a real Goku headshot (bundled static asset) instead of an
-  // emoji. Other types fall back to their emoji glyph.
+  // Every type renders its emoji glyph. `image` stays supported for future
+  // ORIGINAL artwork only — the bundled character headshots (Goku, Superman)
+  // were removed at the v2.4.0 cut: copyrighted art must not ship in release
+  // artifacts or store builds.
   const types: Record<string, { label: string; icon: string; image?: string }> = {
     movie:      { label: 'Movies',      icon: '🎬' },
     show:       { label: 'TV Shows',    icon: '📺' },
     music:      { label: 'Music',       icon: '🎵' },
     photo:      { label: 'Photos',      icon: '🖼️' },
-    anime:      { label: 'Anime',       icon: '🌸', image: '/goku.png' },
-    cartoons:   { label: 'Cartoons',    icon: '🦸', image: '/cage-superman.png' },
+    anime:      { label: 'Anime',       icon: '🌸' },
+    cartoons:   { label: 'Cartoons',    icon: '🦸' },
     audiobook:  { label: 'Audiobooks',  icon: '🎧' },
     podcast:    { label: 'Podcasts',    icon: '🎙️' },
     book:       { label: 'Books',       icon: '📚' },

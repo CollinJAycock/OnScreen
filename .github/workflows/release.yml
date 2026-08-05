@@ -20,7 +20,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          # Keep in lockstep with ci.yml — shipping binaries must be built by
+          # the same toolchain CI tests (this was 1.25 vs CI's 1.26 until the
+          # v2.4.0 cut).
+          go-version: "1.26"
           cache: true
 
       - uses: actions/setup-node@v6
@@ -42,6 +45,13 @@ jobs:
         run: |
           rm -rf internal/webui/dist
           cp -r web/dist internal/webui/dist
+
+      # A release must never ship untested: run the unit suite with the real
+      # embedded frontend in place (the webui embed requires dist to exist).
+      # Integration suites need Postgres/Valkey and stay in ci.yml — this is
+      # the last-line gate against tagging a broken tree.
+      - name: Run tests
+        run: go test ./...
 
       # Build Go binaries for multiple platforms
       - name: Set build metadata

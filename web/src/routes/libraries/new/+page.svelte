@@ -81,7 +81,7 @@
         <input id="name" bind:value={name} placeholder="Movies" autocomplete="off" />
       </div>
       <div class="type-picker">
-        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime','/goku.png'],['cartoons','🦸','Cartoons','/cage-superman.png'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
+        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime'],['cartoons','🦸','Cartoons'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
             {#if img}

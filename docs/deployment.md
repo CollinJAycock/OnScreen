@@ -541,35 +541,28 @@ make migrate-status DATABASE_URL="$DATABASE_URL"
 goose -dir internal/db/migrations postgres "$DATABASE_URL" status
 ```
 
-Current migrations:
+Current migrations (the pre-v2.2 set was squashed into `00001_init.sql`
+at the v2.2.0 cut — the table below matches `internal/db/migrations/`):
 
 | File | Purpose |
 |------|---------|
-| `00001_init.sql` | Initial schema |
-| `00002_watch_event_partitions.sql` | Watch history partitioning |
-| `00003_server_settings.sql` | Server settings table |
-| `00004_dedup_orphaned_items.sql` | Deduplicate orphaned items |
-| `00005_cleanup_stale_file_paths.sql` | Clean up stale file paths |
-| `00006_drop_plex_columns.sql` | Remove legacy Plex columns |
-| `00007_fk_cascades.sql` | Add foreign key cascades |
-| `00008_dedup_hierarchy_items.sql` | Deduplicate hierarchy items |
-| `00009_google_oauth.sql` | Google OAuth support |
-| `00010_github_discord_oauth.sql` | GitHub and Discord OAuth support |
-| `00011_password_reset_tokens.sql` | Password reset token table |
-| `00012_invite_tokens.sql` | Invite code system |
-| `00013_audit_log.sql` | Admin audit logging |
-| `00014_add_missing_indexes.sql` | Performance indexes |
-| `00015_dedup_top_level_items.sql` | Deduplicate top-level items |
-| `00016_clear_artwork_for_relocation.sql` | Clear artwork for path relocation |
-| `00017_file_duration.sql` | Per-file duration from ffprobe |
-| `00018_library_filter_indexes.sql` | Library filtering indexes |
-| `00019_collections.sql` | Collections (playlists) |
-| `00020_managed_profiles.sql` | Managed user profiles |
-| `00021_photo_type.sql` | Photo library support |
-| `00022_user_language_preferences.sql` | Preferred audio/subtitle language |
-| `00023_content_rating_filter.sql` | Parental content rating filter |
-| `00024_notifications.sql` | In-app notification system |
-| `00025_fix_content_rating_null.sql` | Fix NULL content rating handling |
+| `00001_init.sql` | Initial schema (squashed v2.2.0 baseline) |
+| `00002_fk_cascade_indexes.sql` | Index the FK cascade columns the squash missed |
+| `00003_totp_2fa.sql` | TOTP two-factor authentication (secrets, recovery codes) |
+| `00004_watch_plays_matview.sql` | `watch_plays` materialized view (popularity for static ABR) |
+| `00005_node_settings.sql` | Per-node configuration table (Settings ▸ Nodes) |
+| `00006_create_first_admin_atomic.sql` | Atomic first-admin creation (setup race fix) |
+| `00007_user_scrobble.sql` | Per-user scrobbling credentials (ListenBrainz) |
+| `00008_parental_watch_limits.sql` | Daily-minutes + allowed-hours watch limits |
+| `00009_video_bit_depth.sql` | Per-file video bit depth from ffprobe |
+| `00010_library_type_cartoons.sql` | `cartoons` library type |
+| `00011_user_ratings.sql` | Per-user star ratings + community average |
+| `00012_user_stream_caps.sql` | Admin per-user streaming caps (bitrate/height/streams) |
+| `00013_tuner_type_rtmp.sql` | RTMP live-ingest tuner type |
+| `00014_watch_events_decision.sql` | Playback decision recorded on watch events |
+| `00015_user_hub_layout.sql` | Per-user hub row visibility + ordering |
+| `00016_content_rating_rank_anime.sql` | Anime content-rating rank mapping |
+| `00017_collections_type_photo_album.sql` | `photo_album` collections type |
 
 ---
 

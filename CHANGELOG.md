@@ -108,6 +108,57 @@ the asset-token migration.
   the play crosses the listen threshold (≥50% of the track, or ≥4 minutes) and
   never blocks playback — routed through the SSRF-guarded outbound client.
   Last.fm is the planned follow-up.
+- **Capability profiles + server-authoritative playback decision** — clients
+  declare what they can decode in a declarative `X-Client-Capabilities` header
+  (codecs, containers, resolution, audio channels, bit depth, HDR), and
+  `POST /items/{id}/playback-decision` returns the server's verdict
+  (directPlay / directStream / transcode / unsupported). Every first-party
+  client sends the header; web, desktop, Android (TV + phone), Tizen and webOS
+  consume the verdict with a local-heuristic fallback. The per-request
+  `supports_hevc`/`supports_av1` booleans became **tri-state**: absent defers
+  to the header, an explicit value overrides it in both directions — which is
+  what lets a client demote a codec its own probe lied about (Windows Chrome
+  claims HEVC without the platform extensions installed, then rejects the
+  append; the web player now proves the failure, demotes the claim, and the
+  retry really does come back H.264). See
+  [docs/capability-profiles.md](docs/capability-profiles.md).
+- **Dolby Vision is refused, not broken** — DV sources return a clear
+  `unsupported` verdict + a 415 on transcode-start, and every client shows
+  "Dolby Vision is not supported" instead of a green/purple tonemap. Decision
+  record: [docs/dolby-vision.md](docs/dolby-vision.md).
+- **RTMP live ingest ("go live")** — OBS / ffmpeg push to
+  `rtmp://host:1935/live/<key>` surfaces as a Live TV channel through the
+  existing HLS proxy + DVR: per-key authentication, codec-agnostic FLV
+  pass-through (H.264 + enhanced-RTMP HEVC/AV1), multiple concurrent
+  broadcasters with multi-viewer fan-out.
+- **Encoder fail-over + full-VRAM by default** — a hardware encoder that can't
+  acquire the GPU (e.g. GeForce NVENC session cap) spills the job to the next
+  provider on the box (NVENC → QSV → software; AMF likewise) instead of
+  failing the stream. The full-VRAM Intel paths (`TRANSCODE_QSV_VRAM`,
+  `TRANSCODE_VAAPI_VRAM`) default on, probe-gated with per-job software
+  fallback; NVIDIA gained an all-VRAM HDR→SDR path via a curated
+  `tonemap_cuda` on an own-built ffmpeg 8.1.1.
+- **Per-user star ratings + community average**, an **admin analytics
+  overhaul** (timezone-correct buckets, 7/30/90 ranges, user leaderboard,
+  client/hour breakdowns, completion rate, direct-vs-transcode split backed by
+  a persisted playback-decision column on `watch_events`), **admin per-user
+  streaming caps** (concurrent streams / bitrate / height), an in-player
+  **multi-version picker** for items with several files, and **per-user hub
+  customization** (row visibility + ordering, Libraries grid pinnable).
+- **Subtitle-subsystem hardening** — embedded text-subtitle extraction is
+  cached, single-flighted and detached (4K-remux subs load instantly instead
+  of timing out), OCR batches a whole stream into one Tesseract invocation,
+  SDH/forced dispositions are captured and surfaced fleet-wide with
+  preferred-language/forced-only auto-select, OpenSubtitles downloads gate on
+  the daily quota, and bundled application keys ship for TMDB + OpenSubtitles.
+- **Scanner/metadata wave** — date-based (daily/talk-show) episode filenames
+  build a proper show→season-by-year→episode hierarchy; shows resolve by
+  on-disk folder after a Fix Match rename; Fix Match gained a release-year
+  filter; the TMDB client gained a disk response cache +
+  `append_to_response` batching; a `cartoons` library type joined the picker.
+- **Split segment serving** (`PUBLIC_SEGMENT_BASE_URL`) — optional distinct
+  base URL for HLS segment fetches, so a CDN or separate ingress can carry the
+  segment bandwidth.
 
 ### Changed — server
 
@@ -120,6 +171,16 @@ the asset-token migration.
 - **Scale before tonemap on the software HDR path** — the zscale HDR→SDR chain
   now runs at output resolution instead of source resolution, dramatically
   cutting CPU on 4K→1080p HDR transcodes.
+- **DirectStream redefined** — video-copy + audio-transcode (matching what
+  clients actually do), instead of "copy both streams". Without this, the
+  server verdict would have full-transcoded most h264-in-mkv libraries.
+- **Transcoded AAC capped at 5.1** — browsers can't decode 7.1 AAC via MSE;
+  the capability header declares `maxAudioChannels=6` and the transcode path
+  never emits 8-channel AAC.
+- **Per-user session cap counts only live sessions**, and ABR rung children
+  are excluded from the cap and from `/api/v1/sessions`.
+- **Go 1.26** — toolchain bumped for patched stdlib (three govulncheck CVEs);
+  the release workflow now builds with the same version CI tests.
 
 ### Fixed — server
 
@@ -162,6 +223,45 @@ the asset-token migration.
   pgx can't scan a float64 into a `Numeric`, so these were silently nulled;
   scan the decimal string form instead.
 - **Index the FK cascade columns** the schema squash missed.
+- **The July–August playback-hardening campaign** — a multi-week audit swept
+  the entire playback path end-to-end; the headline fixes:
+  - *Codec demotion actually reaches the server* — the web player's
+    `X-Client-Capabilities` header is rebuilt (and persisted for the session)
+    when a decode failure disproves the browser's own probe, the cached
+    playback verdict is invalidated, and the tri-state body override stops the
+    server from re-encoding the fallback straight back to the codec that just
+    failed. A fatal `bufferAppendError` escalates to a full transcode on the
+    first occurrence instead of looping hls.js recovery forever.
+  - *Dead-chroma ("green frame") detection* — the worker signalstats-checks
+    the first segment whenever a hardware decode/scale stage is active; zeroed
+    chroma kills the run and retries with software decode, and the full-VRAM
+    startup probe now validates output **pixels** at both bit depths instead
+    of trusting the exit code. Damaged/fake source files (the failure that
+    motivated this) now fail visibly instead of playing green — and the
+    player's stall-restart loop is bounded (3 per title) with a "file may be
+    damaged" error instead of endless session churn.
+  - *ABR restart machinery* — rung restarts are incarnation-scoped so a dying
+    run can't reap its successor's ffmpeg or wipe its segments; session
+    lifetime is idle-based; segments become visible only when complete.
+  - *DVR/Live TV lifecycle* — recordings end by encoder EOF instead of a
+    SIGKILL at the scheduled boundary (no more truncated tails), failed
+    recordings retry, RTMP fan-out survives subscriber churn, and double-tune
+    joins the existing session.
+  - *Access-gate closure* — artwork, live TV, usage accrual and image serving
+    all enforce the same per-library ACL + content-rating + watch-limit gates
+    as the primary playback paths.
+  - *Decision/arg-builder correctness* — codec-aware bit-depth caps, audio-only
+    and audio-less stream shapes, even-dimension scaling, 10-bit profile
+    handling, lazy re-probe of NULL metadata rows, and one shared resolver for
+    the segment container (`videooutput.go`) so the API, worker and playlist
+    handler can never disagree about `.ts` vs `.m4s` again.
+  - *Web player recovery bounds* — media-error recovery is budgeted and only
+    refills after quiet playback; PTS offset is latched once; resume math and
+    subtitle timing survive quality switches.
+- **Two full-server audit sweeps** (June and July) closed ~50 batches of
+  findings across session lifecycle, SSO admin sync, invite/PIN races,
+  scanner atomicity, repository correctness and client UX — each fix landing
+  with a regression test.
 
 ### Security — server
 
@@ -196,6 +296,18 @@ A defensive audit pass hardened the auth, SSRF, and content-handling surfaces:
 - **Per-library access wiring asserted at startup** — the server fails fast if a
   content handler is constructed without its library-ACL checker, since a nil
   checker would otherwise fail open (serve every library).
+- **June security wave** — content-rating-ceiling bypasses closed on five
+  side-paths (external subtitles, artwork, static ABR among them), an
+  authenticated path traversal in OCR subtitle-language handling fixed,
+  subtitle-extraction concurrency bounded + OCR start rate-limited (DoS),
+  bundled API keys injected via BuildKit secret mounts instead of build ARGs,
+  and the full 12-finding security/code-smell audit remediated.
+- **July audit tiers** — static-ABR stream-token parameter mismatch; watch
+  limits enforced on direct play, download AND static ABR; five handlers
+  brought under `ValidateLibraryAccess`; blanket RFC1918 proxy trust replaced
+  with explicit configuration; ABR sessions brought under the per-user cap;
+  UI-managed TLS no longer falls back silently; settings ciphertexts bound to
+  their key via AES-GCM associated data; audit-log IPs no longer forgeable.
 
 ### Security — clients
 
@@ -207,6 +319,28 @@ A defensive audit pass hardened the auth, SSRF, and content-handling surfaces:
 - **Phone client: EPUB reader WebView sandboxed** — the in-app EPUB WebView now
   blocks off-origin `http(s)` requests, so a malicious book can't beacon out,
   exfiltrate, or navigate the reader off-origin. Bundled resources still render.
+- **Pairing survives a stale cleartext origin** — a TV whose stored server URL
+  was `http://` against a TLS-only server had its pairing POST silently
+  rewritten to GET by the redirect follower (OkHttp and fetch both do this on
+  a 301), so the PIN never appeared. Android now upgrades the origin before
+  the unauthenticated POSTs; Tizen/webOS persist the origin the setup probe
+  actually answered on and self-heal stale installs by replaying the request
+  once against the adopted TLS origin.
+
+### Clients
+
+- **Fire TV is in production** — live on the Amazon Appstore since 2026-06-18
+  (the first OnScreen client in a production store); Android TV is on the Play
+  closed-testing track and the Android phone build is in Play review, all
+  under one listing with separate versionCode lanes.
+- **Client sweeps** — three Android TV UX/audit waves (focus/scroll
+  preservation, pagination, playback re-emit restarts, Up Next double-load,
+  hub-layout parity), a phone-client security + UI pass, TV-fleet lifecycle/
+  error-recovery fixes across Android TV/webOS/Tizen/Roku, episode-card art
+  fallbacks, and background-audio handoff device-verified on Fire TV and
+  Google TV hardware.
+- **Settings UI unification** — one token/component pass across all 24
+  settings pages; per-row actions collapsed into overflow menus.
 
 ### Added — Windows installer
 

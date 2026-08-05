@@ -4,7 +4,7 @@ A modern, open-source media server. PostgreSQL-native. Single binary. Native cli
 
 ![OnScreen hub page](screenshots/hero.png)
 
-> **Status:** v2.4 in active development (v2.3.0 was the last tagged release; the [server-lock posture](docs/server-lock.md) was lifted after v2.3.0, so v2.4 can land coordinated breaking changes across the client fleet). A private beta is running. Headline v2.4 work: a **multi-node transcode fleet** with cost-weighted, capability-aware dispatch (storage-less workers pull the source over HTTP); an **on-demand adaptive-bitrate HLS ladder** (H.264 / HEVC / AV1 rungs); **GPU HDR→SDR tonemap via libplacebo/Vulkan**; **TOTP two-factor auth** and purpose-scoped asset tokens. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md). Breaking changes are called out in [CHANGELOG.md](CHANGELOG.md).
+> **Status:** v2.4.0 release candidate — the release is prepped and awaiting the tag (v2.3.0 is the last tagged release; the [server-lock posture](docs/server-lock.md) was lifted after v2.3.0, so v2.4 lands coordinated breaking changes across the client fleet — one: the asset-token migration, called out in [CHANGELOG.md](CHANGELOG.md)). A private beta is running. Headline v2.4: a **multi-node transcode fleet** with cost-weighted, capability-aware dispatch (storage-less workers pull the source over HTTP); an **on-demand adaptive-bitrate HLS ladder** (H.264 / HEVC / AV1 rungs); **TOTP two-factor auth**; **capability-profile playback decisions** with runtime codec demotion; GPU HDR→SDR tonemap on every vendor family. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md); what's next in [docs/v2.5-roadmap.md](docs/v2.5-roadmap.md).
 
 ## Why another media server?
 
