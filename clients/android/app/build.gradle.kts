@@ -20,11 +20,13 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "tv.onscreen.android"
-    // compileSdk + targetSdk pinned to 35 per Play Console's Aug 2025
-    // requirement for app updates. Android TV / Leanback compatibility
-    // with API 35 is documented (no breaking changes for the
-    // BrowseSupportFragment / DetailsSupportFragment stacks we use).
-    compileSdk = 35
+    // compileSdk + targetSdk track Play Console's target-API floor
+    // (API 36 / Android 16 as of Aug 2026 — updates are blocked below
+    // it from Aug 30, 2026). TV surface check for 36: no predictive-back
+    // gesture on TV (hardware KEYCODE_BACK still flows through
+    // dispatchKeyEvent), Leanback fragment stacks unchanged, and the
+    // mediaPlayback foreground-service type was already declared.
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "tv.onscreen.android"
@@ -37,8 +39,11 @@ android {
         // what the code already requires and silences the 31 NewApi lint errors
         // those calls trigger.
         minSdk = 23
-        targetSdk = 35
-        versionCode = 13
+        targetSdk = 36
+        // 14: versionCode 13 was uploaded against the API-35 target and
+        // blocked by the Play floor — codes are burned on upload, not
+        // release, so the re-target gets a fresh one.
+        versionCode = 14
         versionName = "1.1.0"
     }
 
