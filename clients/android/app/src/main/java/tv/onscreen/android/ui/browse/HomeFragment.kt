@@ -20,6 +20,7 @@ import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.focusableOnTv
 import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.NavCard
 import tv.onscreen.android.ui.common.NavCardPresenter
@@ -100,11 +101,27 @@ class HomeFragment : BrowseSupportFragment() {
                         // the server and return to the setup screen, instead
                         // of being trapped retrying a dead endpoint.
                         onChangeServer = {
-                            viewLifecycleOwner.lifecycleScope.launch {
-                                prefs.clearAll()
-                                (activity as? MainActivity)
-                                    ?.navigateTo(NavigationDestination.SERVER_SETUP)
-                            }
+                            // Confirm first: this wipes the server URL AND all
+                            // tokens, costing a full re-setup + re-login on a
+                            // D-pad — and the button sits one DOWN press from
+                            // the focused Retry on a screen the user reached by
+                            // a transient network error. SettingsFragment's
+                            // equivalent action has always been confirmed.
+                            AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+                                .setTitle(R.string.change_server)
+                                .setMessage(R.string.confirm_change_server)
+                                .setPositiveButton(R.string.change_server) { d, _ ->
+                                    d.dismiss()
+                                    viewLifecycleOwner.lifecycleScope.launch {
+                                        prefs.clearAll()
+                                        (activity as? MainActivity)
+                                            ?.navigateTo(NavigationDestination.SERVER_SETUP)
+                                    }
+                                }
+                                .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
+                                .create()
+                                .focusableOnTv()
+                                .show()
                         },
                     )
                 } else {

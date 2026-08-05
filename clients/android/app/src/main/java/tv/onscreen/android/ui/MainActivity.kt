@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.device.ClientName
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.data.repository.AuthRepository
 import tv.onscreen.android.data.repository.CapabilitiesRepository
 import tv.onscreen.android.data.repository.NotificationsRepository
 import tv.onscreen.android.ui.playback.PlaybackFragment
@@ -60,6 +61,9 @@ class MainActivity : FragmentActivity() {
 
     @Inject
     lateinit var capabilities: CapabilitiesRepository
+
+    @Inject
+    lateinit var authRepo: AuthRepository
 
     /** Registered at field-init time — [registerForActivityResult] must be
      *  called before the activity reaches STARTED or it throws. */
@@ -138,6 +142,15 @@ class MainActivity : FragmentActivity() {
                 // device" came up until the user happened to background and
                 // foreground the app.
                 prefs.isLoggedIn.first { it }
+                // Self-heal a stale cleartext origin for an ALREADY-signed-in
+                // install. checkServer adopts the answered origin at setup and
+                // login/pairing probe before their POSTs, but a session that
+                // predates those fixes — or a server that moved behind TLS
+                // after setup — never re-runs either path, so every mutating
+                // call (progress PUTs above all) silently 405s on the 301's
+                // POST→GET rewrite, and the bearer transits the first hop in
+                // the clear. Cheap: a no-op once the origin is https.
+                authRepo.healStaleOrigin()
                 // Capabilities prefetch — single-flight via the repo,
                 // so a duplicate call from HomeFragment is a no-op.
                 capabilities.getCachedOrFetch()

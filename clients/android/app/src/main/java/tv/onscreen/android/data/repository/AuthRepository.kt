@@ -152,6 +152,16 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    /** Public entry point for the same upgrade, for an ALREADY-signed-in
+     *  session (MainActivity runs it once per launch).
+     *
+     *  The login/pairing probes only cover the sign-in paths. A session that
+     *  predates them — or a server that moved behind TLS after setup — keeps
+     *  a cleartext origin for life, and every mutating call then dies on the
+     *  301's POST→GET rewrite: progress PUTs fail silently, so resume
+     *  positions simply stop persisting with no visible error. */
+    suspend fun healStaleOrigin() = ensureTlsUpgradedOrigin()
+
     // ── Device pairing ────────────────────────────────────────────────────────
 
     /** Start a device-pairing session. The PIN is shown on the TV

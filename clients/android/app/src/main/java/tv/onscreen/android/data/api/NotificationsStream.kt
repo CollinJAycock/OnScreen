@@ -3,8 +3,11 @@ package tv.onscreen.android.data.api
 import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -67,14 +70,31 @@ class NotificationsStream @Inject constructor(
             .header("Accept", "text/event-stream")
             .build()
 
+        // Last time ANY byte arrived (open counts). With readTimeout(0) a
+        // half-open socket — a NAT/router idle-drop that never sends an RST,
+        // the common case on a TV left on for days — parks the read forever:
+        // no exception is ever thrown, so neither the repository's `.retry`
+        // nor the callers' reconnect loops can fire, and every SSE-driven
+        // feature (cross-device progress, "play on this TV") stays dead until
+        // the process restarts. The watchdog below turns that silence into
+        // the failure the reconnect machinery is already built to handle.
+        // Atomic, not @Volatile: written on OkHttp's callback thread, read on
+        // the watchdog coroutine.
+        val lastActivityMs = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+
         val source: EventSource = EventSources.createFactory(sseClient)
             .newEventSource(request, object : EventSourceListener() {
+                override fun onOpen(eventSource: EventSource, response: Response) {
+                    lastActivityMs.set(System.currentTimeMillis())
+                }
+
                 override fun onEvent(
                     eventSource: EventSource,
                     id: String?,
                     type: String?,
                     data: String,
                 ) {
+                    lastActivityMs.set(System.currentTimeMillis())
                     try {
                         val item = adapter.fromJson(data)
                         if (item != null) trySend(item)
@@ -104,6 +124,31 @@ class NotificationsStream @Inject constructor(
                 }
             })
 
-        awaitClose { source.cancel() }
+        // Liveness watchdog. The server's own heartbeat cadence is the
+        // reference: silence well past it means the socket is gone even
+        // though the read never returned. Closing the flow exceptionally
+        // routes into the SAME reconnect path a real network error takes.
+        val watchdog = launch {
+            while (isActive) {
+                delay(WATCHDOG_TICK_MS)
+                if (System.currentTimeMillis() - lastActivityMs.get() > STALE_AFTER_MS) {
+                    close(IOException("SSE stream stalled — no data for ${STALE_AFTER_MS / 1000}s"))
+                    return@launch
+                }
+            }
+        }
+
+        awaitClose {
+            watchdog.cancel()
+            source.cancel()
+        }
+    }
+
+    companion object {
+        private const val WATCHDOG_TICK_MS = 30_000L
+        // The server emits a keepalive comment on its own cadence; this is
+        // several multiples of it, so a healthy-but-quiet stream is never
+        // torn down while a genuinely dead one is caught within a minute.
+        private const val STALE_AFTER_MS = 150_000L
     }
 }

@@ -43,26 +43,46 @@ object PlaybackHelper {
         return PlaybackMode.Transcode(defaultHeight)
     }
 
-    // Phones from the last several years all carry HEVC HW decode;
-    // the server uses this hint to pick HEVC output during transcode
-    // for half the bandwidth at equivalent quality. If we ever land on
-    // a device where the hint is wrong, ExoPlayer falls back to a
-    // software decoder rather than failing loud.
-    fun supportsHevc(): Boolean = true
+    /** Decoder support probed once from MediaCodecList — the platform's own
+     *  answer, rather than the "phones from the last several years all have
+     *  HEVC" assumption this used to hardcode. Cheap (one enumeration) and
+     *  cached, since it can't change while the process lives. */
+    private val decoders: Set<String> by lazy {
+        try {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                .codecInfos
+                .filter { !it.isEncoder }
+                .flatMap { it.supportedTypes.asIterable() }
+                .map { it.lowercase() }
+                .toSet()
+        } catch (_: Exception) {
+            // Enumeration failed — claim only the universal baseline.
+            setOf("video/avc")
+        }
+    }
+
+    fun supportsHevc(): Boolean = decoders.contains("video/hevc")
+
+    fun supportsAv1(): Boolean = decoders.contains("video/av01")
+
+    private fun supportsVp9(): Boolean = decoders.contains("video/x-vnd.on2.vp9")
 
     /**
      * Builds the X-Client-Capabilities header from this device's decode support
      * — the declarative profile the server uses for transcode target selection
      * and (once adopted) the POST /items/{id}/playback-decision endpoint. Built
-     * from the same supportsHevc() + codec sets that decide() uses, so it stays
-     * consistent with what this client claims. AV1 isn't declared (no
-     * supportsAv1() hint here). The bit-depth/HDR/channel fields are a starting
-     * point — verify against real devices (MediaCodecList) before adopting the
-     * decision endpoint. See docs/capability-profiles.md.
+     * from the same MediaCodecList probes that back supportsHevc()/supportsAv1(),
+     * so the header can't contradict decide().
+     *
+     * AV1 in particular used to be omitted while decide() happily direct-played
+     * it — so the server, reading the header, transcoded AV1 files this device
+     * can decode natively. See docs/capability-profiles.md.
      */
     fun clientCapabilitiesHeader(): String {
-        val video = mutableListOf("h264", "vp9")
+        val video = mutableListOf("h264")
+        if (supportsVp9()) video.add("vp9")
         if (supportsHevc()) video.add("h265")
+        if (supportsAv1()) video.add("av1")
         return listOf(
             "videoDecoder=" + video.joinToString(":"),
             "audioDecoder=aac:mp3:opus:flac:vorbis:ac3:eac3:dts",

@@ -242,7 +242,12 @@ class PlayerViewModelTest {
                 fileId = "f2",
                 videoCopy = false,
                 audioStreamIndex = null,
-                supportsHevc = true,
+                // Device-dependent since the hint moved to a real
+                // MediaCodecList probe — there is no codec list in a JVM
+                // unit test, so pinning a value here would assert the
+                // absence of a decoder rather than this test's subject
+                // (that an unsupported codec produces an Hls source).
+                supportsHevc = any(),
             )
         } returns TranscodeSession(
             session_id = "sess-1",

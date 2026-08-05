@@ -34,6 +34,10 @@ class CollectionViewModel @Inject constructor(
     private val pageSize = 50
 
     fun load(collectionId: String) {
+        // Same-collection re-entry keeps the accumulated pages — see the
+        // comment on LibraryViewModel.load: discarding them here is what
+        // broke scroll restore past the first page.
+        if (this.collectionId == collectionId && _items.value.isNotEmpty()) return
         this.collectionId = collectionId
         offset = 0
         total = Int.MAX_VALUE

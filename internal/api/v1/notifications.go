@@ -180,10 +180,26 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, ": keepalive\n\n")
 	flusher.Flush()
 
+	// Then keep sending them. An event stream is idle by design, and a
+	// silent socket is indistinguishable from a dead one: a NAT or router
+	// that drops an idle mapping without sending an RST leaves the client's
+	// read parked forever — no error, so no reconnect — and every
+	// SSE-driven feature (cross-device progress, "play on…") stays dead
+	// until the app restarts. A periodic comment gives clients a liveness
+	// signal to time out against, and makes the write itself fail here when
+	// the peer is gone, ending this handler.
+	keepalive := time.NewTicker(sseKeepaliveInterval)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-keepalive.C:
+			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case ev, ok := <-ch:
 			if !ok {
 				return
@@ -194,3 +210,9 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// sseKeepaliveInterval is the cadence of the `: keepalive` comment on the
+// notifications stream. Comfortably under the idle timeout of typical
+// consumer NAT/proxy paths, and the reference clients time out against a
+// multiple of it (see the Android NotificationsStream watchdog).
+const sseKeepaliveInterval = 30 * time.Second

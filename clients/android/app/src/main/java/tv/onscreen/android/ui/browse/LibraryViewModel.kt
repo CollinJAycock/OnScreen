@@ -63,6 +63,15 @@ class LibraryViewModel @Inject constructor(
     private val pageSize = 50
 
     fun load(libraryId: String, libraryType: String = "") {
+        // Re-entering this screen (detail → back) recreates the VIEW but not
+        // this ViewModel, and the fragment calls load() from onViewCreated.
+        // Blowing the accumulated pages away there defeated scroll restore
+        // for anything past the first page: the grid came back with 50 items
+        // while the saved position was ≥ 50, so restoreIfPending disarmed
+        // without applying and the user was dumped at the top. The StateFlow
+        // already holds the full list — a fresh collector gets it immediately,
+        // so the correct move is to keep it.
+        if (this.libraryId == libraryId && _items.value.isNotEmpty()) return
         this.libraryId = libraryId
         // Pick a per-type sort default the FIRST time this ViewModel
         // sees a library — re-loads keep whatever the user has

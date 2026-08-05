@@ -450,11 +450,20 @@ private fun PlayerHost(
             // going away while music keeps playing in the background.
             onDispose { }
         } else {
+            // Capture the offset THIS player was started with. Reading
+            // vm.hlsOffsetMs at dispose time was wrong on an audio-track
+            // switch: startTranscode has already set the field for the NEW
+            // session to (old position + old offset), so the terminal report
+            // for the OLD player came out at roughly double the true
+            // position — far enough to cross the server's watched threshold
+            // and corrupt the resume marker. The effect is keyed on `source`,
+            // so each player generation captures its own correct offset.
+            val offsetAtStart = vm.hlsOffsetMs
             val job = scope.launch {
                 while (isActive) {
                     delay(10_000)
                     if (player.playWhenReady && player.duration > 0) {
-                        val pos = player.currentPosition + vm.hlsOffsetMs
+                        val pos = player.currentPosition + offsetAtStart
                         vm.reportProgress(itemId, pos, player.duration, "playing")
                     }
                 }
@@ -462,7 +471,7 @@ private fun PlayerHost(
             onDispose {
                 job.cancel()
                 if (player.duration > 0) {
-                    val pos = player.currentPosition + vm.hlsOffsetMs
+                    val pos = player.currentPosition + offsetAtStart
                     vm.reportProgressFinal(itemId, pos, player.duration)
                 }
             }

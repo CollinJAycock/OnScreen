@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
+import tv.onscreen.android.ui.playback.PlaybackHelper
 import javax.inject.Inject
 
 /**
@@ -78,6 +79,12 @@ class OnScreenMediaSessionService : MediaSessionService() {
      *  Without it, progress reports for HLS streams send player time
      *  (offset from the segment start) instead of content time. */
     private var activeHlsOffsetMs: Long = 0L
+
+    /** The active item's authoritative duration, from the handoff metadata.
+     *  Needed because a resumed HLS session's player.duration is only the
+     *  REMAINING time — pairing it with an offset-corrected position marked
+     *  items watched hours early. See PlaybackHelper.contentDurationMs. */
+    private var activeItemDurationMs: Long? = null
     /** Coroutine ticking PUT /items/{id}/progress every 10 s while
      *  the service-owned player is playing. */
     private var progressJob: Job? = null
@@ -166,6 +173,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
             activeParentId = meta.parentId
             activeIndex = meta.index
             activeHlsOffsetMs = meta.hlsOffsetMs
+            activeItemDurationMs = meta.itemDurationMs
         }
 
         startProgressReporter(player)
@@ -225,8 +233,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 delay(10_000)
                 val itemId = activeItemId ?: continue
                 if (!player.playWhenReady) continue
-                val dur = player.duration
-                if (dur <= 0 || dur == Long.MAX_VALUE) continue
+                // Absolutise BOTH sides of the pair. Position is already
+                // offset-corrected; duration must be too, or a resumed HLS
+                // session reports content-time position against remaining-time
+                // duration and trips the server's watched threshold early.
+                val dur = PlaybackHelper.contentDurationMs(
+                    activeItemDurationMs, player.duration, activeHlsOffsetMs,
+                )
+                if (dur <= 0) continue
                 val pos = player.currentPosition + activeHlsOffsetMs
                 try {
                     itemRepo.updateProgress(itemId, pos, dur, "playing")
@@ -260,8 +274,10 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 // fails. The fragment-side ProgressTracker only reports on
                 // its own onStop, which never fires for this service-owned
                 // auto-advance.
-                val dur = player.duration
-                if (dur > 0 && dur != Long.MAX_VALUE) {
+                val dur = PlaybackHelper.contentDurationMs(
+                    activeItemDurationMs, player.duration, activeHlsOffsetMs,
+                )
+                if (dur > 0) {
                     scope.launch {
                         try {
                             itemRepo.updateProgress(itemId, dur, dur, "stopped")
@@ -308,6 +324,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         activeParentId = item.parent_id
         activeIndex = item.index
         activeHlsOffsetMs = 0L
+        activeItemDurationMs = item.duration_ms
 
         // Keep the handoff slot's metadata current so a fragment that
         // reclaims this player after the background advance binds to the
@@ -320,6 +337,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 parentId = item.parent_id,
                 index = item.index,
                 hlsOffsetMs = 0L,
+                itemDurationMs = item.duration_ms,
             ),
         )
 

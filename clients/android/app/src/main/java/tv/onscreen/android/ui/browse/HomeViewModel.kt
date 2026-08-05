@@ -28,7 +28,18 @@ data class HomeUiState(
     // User's saved hub row order + visibility (from web). Empty = default layout.
     val hubLayout: List<HubRowPref> = emptyList(),
     val error: String? = null,
-)
+) {
+    /** Any row populated — i.e. there is something on screen worth keeping
+     *  when a later refresh fails. Mirrors the fragment's own check. */
+    val hasContent: Boolean
+        get() = continueWatchingTV.isNotEmpty() ||
+            continueWatchingMovies.isNotEmpty() ||
+            continueWatchingOther.isNotEmpty() ||
+            recentlyAdded.isNotEmpty() ||
+            trending.isNotEmpty() ||
+            libraryPreviews.isNotEmpty() ||
+            collections.isNotEmpty()
+}
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -48,7 +59,11 @@ class HomeViewModel @Inject constructor(
 
     fun load() {
         viewModelScope.launch {
-            _uiState.value = HomeUiState(isLoading = true)
+            // Mark loading WITHOUT discarding the current rows: onResume
+            // refreshes on every return to Home, and blanking here made the
+            // populated hub flash empty on each visit (and left nothing to
+            // fall back to if the refresh then failed).
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 // supervisorScope so a child failure throws into the
                 // try/catch below instead of cancelling its siblings
@@ -113,7 +128,18 @@ class HomeViewModel @Inject constructor(
                     hubLayout = layout,
                 )
             } catch (e: Exception) {
-                _uiState.value = HomeUiState(isLoading = false, error = e.message)
+                // Keep whatever is already on screen. onResume re-loads on
+                // every return to Home, so a single blip used to replace a
+                // fully-populated hub with a full-screen error overlay —
+                // whose "Change server" button (one D-pad press from the
+                // focused Retry, and unconfirmed until now) wipes the install.
+                // Surface the error only when there's nothing to fall back to.
+                val prev = _uiState.value
+                _uiState.value = if (prev.hasContent) {
+                    prev.copy(isLoading = false, error = null)
+                } else {
+                    HomeUiState(isLoading = false, error = e.message)
+                }
             }
         }
     }

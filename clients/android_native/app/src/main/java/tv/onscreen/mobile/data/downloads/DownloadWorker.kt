@@ -130,9 +130,23 @@ class DownloadWorker @AssistedInject constructor(
             .build()
         return runCatching {
             httpClient.newCall(req).execute().use { resp ->
+                // 416 on a resume means the server considers the range past
+                // the end — i.e. we already have the whole file. Treating it
+                // as a terminal 4xx marked a COMPLETE download "failed".
+                if (resp.code == 416 && resumeFrom > 0) {
+                    finalizeCompleted(fileId, outFile, resumeFrom)
+                    return@use
+                }
                 if (!resp.isSuccessful && resp.code != 206) {
                     throw DownloadHttpException(resp.code)
                 }
+                // A resume request the server ignored: it answered 200 with
+                // the FULL body starting at byte 0, not 206 with the tail.
+                // Appending that to the partial file produced a corrupt
+                // (partial + full) blob that was then marked complete — the
+                // user's "downloaded" episode was unplayable. Restart clean.
+                val ignoredRange = resumeFrom > 0 && resp.code == 200
+                val startAt = if (ignoredRange) 0L else resumeFrom
                 // Log the path WITHOUT the query string — the URL carries the
                 // stream/asset token in `?token=`, which must never reach
                 // logcat (any READ_LOGS process could lift a live token).
@@ -142,7 +156,7 @@ class DownloadWorker @AssistedInject constructor(
                 )
                 val body = resp.body ?: error("empty body")
                 val contentLength = body.contentLength()
-                val totalSize = if (contentLength > 0) resumeFrom + contentLength else 0L
+                val totalSize = if (contentLength > 0) startAt + contentLength else 0L
 
                 outFile.parentFile?.mkdirs()
                 // Open the sink in append mode when resuming so the previously
@@ -153,14 +167,12 @@ class DownloadWorker @AssistedInject constructor(
                 // position 0 — the resulting file was missing its head bytes
                 // and the cached size_bytes lied. Open the append/truncate
                 // sink directly, exactly once.
-                val sink = if (resumeFrom > 0) {
-                    java.io.FileOutputStream(outFile, /*append*/ true)
-                } else {
-                    java.io.FileOutputStream(outFile, false)
-                }
+                // Append ONLY for a genuine 206 resume; a 200 (server
+                // ignored the Range) truncates and restarts — see startAt.
+                val sink = java.io.FileOutputStream(outFile, /*append*/ startAt > 0)
                 sink.use { fos ->
                     val buf = ByteArray(64 * 1024)
-                    var written = resumeFrom
+                    var written = startAt
                     var lastManifestWriteMs = 0L
                     body.byteStream().use { input ->
                         while (true) {
@@ -190,8 +202,13 @@ class DownloadWorker @AssistedInject constructor(
                                 lastManifestWriteMs = now
                                 val bytes = written
                                 val size = totalSize.takeIf { it > 0 } ?: written
+                                // `it` is null when the user deleted this
+                                // download mid-flight: returning `entry` there
+                                // RESURRECTED the row (pointing at a file the
+                                // delete already removed). Returning null keeps
+                                // it deleted; the isStopped check ends the loop.
                                 store.update(fileId) {
-                                    (it ?: entry).copy(
+                                    it?.copy(
                                         size_bytes = size,
                                         downloaded_bytes = bytes,
                                         status = "downloading",
@@ -202,8 +219,11 @@ class DownloadWorker @AssistedInject constructor(
                     }
                     val finalSize = if (totalSize > 0) totalSize else written
                     val finalWritten = written
+                    // Same delete-race guard as the periodic tick above: a
+                    // download removed mid-flight must not come back as
+                    // "completed" with no file behind it.
                     store.update(fileId) {
-                        (it ?: entry).copy(
+                        it?.copy(
                             size_bytes = finalSize,
                             downloaded_bytes = finalWritten,
                             status = "completed",
@@ -227,6 +247,20 @@ class DownloadWorker @AssistedInject constructor(
 
     private suspend fun markFailed(fileId: String, message: String) {
         store.update(fileId) { it?.copy(status = "failed", error = message) }
+    }
+
+    /** Mark an already-complete file done — the 416 path, where the server
+     *  says our Range starts past the end because we have every byte. */
+    private suspend fun finalizeCompleted(fileId: String, outFile: java.io.File, size: Long) {
+        android.util.Log.i("DownloadWorker", "416 on resume — file already complete (${'$'}size bytes)")
+        store.update(fileId) {
+            it?.copy(
+                size_bytes = size,
+                downloaded_bytes = size,
+                status = "completed",
+                error = null,
+            )
+        }
     }
 
     /** Carries the HTTP status so the retry policy can tell a permanent 4xx

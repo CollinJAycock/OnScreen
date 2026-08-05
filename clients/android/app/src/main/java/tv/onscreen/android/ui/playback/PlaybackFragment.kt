@@ -1937,6 +1937,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 parentId = item?.parent_id,
                 index = item?.index,
                 hlsOffsetMs = viewModel.hlsOffsetMs,
+                // The service reporter needs this to absolutise duration the
+                // same way we do — a resumed HLS player only knows its
+                // REMAINING time. See AudioHandoff.Metadata.itemDurationMs.
+                itemDurationMs = item?.duration_ms,
             )
             // Detach the fragment-owned listener BEFORE parking. Once the
             // service owns the player, our `onPlaybackStateChanged` /

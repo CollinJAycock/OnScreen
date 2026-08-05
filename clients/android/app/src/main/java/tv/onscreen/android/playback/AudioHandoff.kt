@@ -30,6 +30,13 @@ object AudioHandoff {
         val parentId: String?,
         val index: Int?,
         val hlsOffsetMs: Long,
+        /** The item's authoritative duration, carried so the service's
+         *  progress reporter can absolutise like the fragment does.
+         *  A resumed HLS session's player.duration is only the REMAINING
+         *  time, so pairing it with an offset-corrected position reported
+         *  e.g. 3 h against a 5 h-remaining duration — crossing the
+         *  server's watched threshold hours early. Null when unknown. */
+        val itemDurationMs: Long? = null,
     )
 
     private var parked: ExoPlayer? = null
