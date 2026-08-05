@@ -505,7 +505,14 @@
     try {
       const fresh = await endpoints.transcode.start({
         itemId: itemID,
-        height: 1080,
+        // 2160, matching the Tizen client and this client's own
+        // X-Client-Capabilities maxHeight. Asking for 1080 didn't just
+        // cap 4K panels at 1080p — it forced the server to downscale-
+        // TRANSCODE every 4K source instead of direct-playing it (the
+        // decision tree reads the requested height as the client's
+        // ceiling). webOS 4K panels decode 2160 natively; the rare
+        // 1080-panel models downscale in the media pipeline.
+        height: 2160,
         positionMs,
         fileId: file.id,
         supportsHEVC: supportsHEVC(),
@@ -894,7 +901,7 @@
       // the hls instance with the same error hardening.
       const fresh = await endpoints.transcode.start({
         itemId: itemID,
-        height: 1080,
+        height: 2160, // see the comment on the primary start site
         positionMs,
         fileId: file.id,
         supportsHEVC: supportsHEVC(),
@@ -1037,7 +1044,7 @@
           const videoCopy = verdict ? verdict !== 'transcode' : false;
           session = await endpoints.transcode.start({
             itemId: itemID,
-            height: 1080,
+            height: 2160, // see the comment on the primary start site
             positionMs: startMs,
             fileId: file.id,
             supportsHEVC: supportsHEVC(),

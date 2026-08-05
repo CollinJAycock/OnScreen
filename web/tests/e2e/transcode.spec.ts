@@ -10,7 +10,26 @@
 //                       required only for the AV1 fMP4 block
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { PASSWORD, adminToken } from './_auth';
+import { PASSWORD, adminToken, retryOn429 } from './_auth';
+
+// Transcode-start shares a rate limiter. The suite runs three browser
+// projects back-to-back, each firing a pipeline smoke plus concurrent
+// session starts on one account — chromium passed, firefox got partially
+// limited, webkit (last) got RATE_LIMITED on every start in a full-matrix
+// QA run. Every start POST rides retryOn429, the same pacing contract the
+// auth endpoints use in _auth.ts.
+const startTranscode = (
+  request: APIRequestContext,
+  itemId: string,
+  token: string,
+  data: Record<string, unknown> = {},
+) =>
+  retryOn429(() =>
+    request.post(`/api/v1/items/${itemId}/transcode`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data,
+    }),
+  );
 
 
 // pickFirstMovieItem authenticates and returns {token, itemId} for the first
@@ -87,10 +106,7 @@ test.describe('Transcode — DASH removal', () => {
     if (!token) test.skip(true, 'Could not authenticate');
     if (itemIds.length === 0) test.skip(true, 'No movie items found — seed a movie library first');
 
-    const txR = await request.post(`/api/v1/items/${itemIds[0]}/transcode`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: {},
-    });
+    const txR = await startTranscode(request, itemIds[0], token!);
     expect(
       [200, 202],
       `POST transcode expected 200/202, got ${txR.status()}: ${await txR.text()}`,
@@ -120,10 +136,7 @@ test.describe('Transcode — pipeline smoke', () => {
     if (itemIds.length === 0) test.skip(true, 'No movie items found — seed a movie library first');
 
     // Start transcode session.
-    const txR = await request.post(`/api/v1/items/${itemIds[0]}/transcode`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: {},
-    });
+    const txR = await startTranscode(request, itemIds[0], token!);
     expect([200, 202], `transcode start: ${await txR.text()}`).toContain(txR.status());
     const txBody = await txR.json();
     const txData = txBody.data ?? txBody;
@@ -178,14 +191,12 @@ test.describe('Transcode — concurrent sessions', () => {
     // the transcode service should handle two sessions on the same item.
     const ids = [itemIds[0], itemIds[1] ?? itemIds[0], itemIds[2] ?? itemIds[0]];
 
-    // Fire all three in parallel.
+    // Fire all three in parallel. Each ride retryOn429 individually — the
+    // point of the test is that three LIVE sessions coexist, not that the
+    // rate limiter admits three instantaneous starts from a suite that has
+    // already been hammering the endpoint across browser projects.
     const sessions = await Promise.all(
-      ids.map((id) =>
-        request.post(`/api/v1/items/${id}/transcode`, {
-          headers: { Authorization: `Bearer ${token}` },
-          data: {},
-        }),
-      ),
+      ids.map((id) => startTranscode(request, id, token!)),
     );
 
     for (let i = 0; i < sessions.length; i++) {
@@ -223,10 +234,7 @@ test.describe('Transcode — AV1 fMP4', () => {
     // the server transcodes to H.264 (NVENC) and emits MPEG-TS segments,
     // which is correct behavior for browsers without AV1 decode but isn't
     // what this test is validating.
-    const txR = await request.post(`/api/v1/items/${movieId}/transcode`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { video_copy: true },
-    });
+    const txR = await startTranscode(request, movieId, token, { video_copy: true });
     expect([200, 202], `transcode AV1: ${await txR.text()}`).toContain(txR.status());
     const txBody = await txR.json();
     const txData = txBody.data ?? txBody;

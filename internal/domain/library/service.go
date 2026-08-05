@@ -483,14 +483,23 @@ func validateCreateParams(p CreateLibraryParams) error {
 	// production reader UX both need more work than v2.2 had budget
 	// for. Re-enabling is a one-line addition here once that work
 	// lands.
+	//
+	// `podcast` is parked the same way as of v2.5: the scanner is
+	// local-files-only (folder=show, file=episode) with no RSS
+	// subscription, episode metadata, or auto-download — a stub behind a
+	// user-visible type, the exact trust mistake the manga parking
+	// avoided. EXISTING podcast libraries keep working (scan, browse,
+	// play — this gate is on creation only); the type returns to the
+	// picker when the RSS model ships (docs/v2.5-roadmap.md, v2.6
+	// track).
 	validTypes := map[string]bool{
 		"movie": true, "show": true, "music": true, "anime": true,
 		"cartoons": true,
-		"photo":    true, "dvr": true, "audiobook": true, "podcast": true,
+		"photo":    true, "dvr": true, "audiobook": true,
 		"home_video": true, "book": true,
 	}
 	if !validTypes[p.Type] {
-		return &ValidationError{Field: "type", Message: "must be movie, show, anime, cartoons, music, audiobook, podcast, photo, home_video, book, or dvr"}
+		return &ValidationError{Field: "type", Message: "must be movie, show, anime, cartoons, music, audiobook, photo, home_video, book, or dvr"}
 	}
 	if len(p.Paths) == 0 {
 		return &ValidationError{Field: "scan_paths", Message: "at least one path required"}

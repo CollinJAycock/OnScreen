@@ -2162,7 +2162,12 @@ export interface ActiveSession {
 }
 
 export const sessionsApi = {
-  list: () => api.get<ActiveSession[]>('/sessions')
+  list: () => api.get<ActiveSession[]>('/sessions'),
+  /** Stop a session from the dashboard. No seg token needed — the Bearer
+   *  identifies the caller; owners may stop their own sessions and ADMINS
+   *  may stop anyone's (audit-logged server-side). The server revokes the
+   *  seg token from the session record. */
+  stop: (sessionId: string) => api.del(`/transcode/sessions/${sessionId}`)
 };
 
 // ── Hub (home page) ──────────────────────────────────────────────────────────

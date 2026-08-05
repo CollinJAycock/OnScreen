@@ -1079,9 +1079,26 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := h.sessions.Get(ctx, sessionID)
 	if err == nil && sess != nil {
+		// Owner-only for regular users. An ADMIN may stop any user's
+		// session (the Plex/Emby/Jellyfin "stop this stream" moderation
+		// affordance) — audit-logged with both parties so a moderation
+		// action is always attributable.
 		if sess.UserID != claims.UserID {
-			respond.Forbidden(w, r)
-			return
+			if !claims.IsAdmin {
+				respond.Forbidden(w, r)
+				return
+			}
+			h.logger.InfoContext(ctx, "transcode: admin stopped another user's session",
+				"session_id", sess.ID, "admin_id", claims.UserID,
+				"owner_id", sess.UserID, "client_name", sess.ClientName)
+			if h.audit != nil {
+				actor := claims.UserID
+				h.audit.Log(ctx, &actor, audit.ActionTranscodeStop, sess.ID,
+					map[string]any{
+						"owner_id": sess.UserID.String(),
+						"reason":   "admin_terminated",
+					}, "")
+			}
 		}
 		h.tearDown(ctx, sess, token)
 	}

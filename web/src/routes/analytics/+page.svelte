@@ -49,6 +49,22 @@
     } catch (e) { if (alive) console.warn(e); }
   }
 
+  // Admin stream termination (server enforces owner-or-admin + audit-logs
+  // the cross-user case). Optimistically drop the card; the next poll is
+  // the source of truth if the stop failed.
+  let stoppingId: string | null = null;
+  async function stopSession(id: string) {
+    stoppingId = id;
+    try {
+      await sessionsApi.stop(id);
+      sessions = sessions.filter((s) => s.id !== id);
+    } catch (e) {
+      console.warn('stop session failed', e);
+    } finally {
+      stoppingId = null;
+    }
+  }
+
   function onVisibility() {
     // Catch up immediately when the tab returns to the foreground; the
     // interval ticks themselves no-op while hidden.
@@ -302,6 +318,14 @@
                   {fmtClock(s.position_ms)}{#if s.duration_ms} / {fmtClock(s.duration_ms)}{/if}
                 </div>
               </div>
+              <!-- Owners can stop their own stream; admins can stop anyone's
+                   (the server enforces + audit-logs; non-admins only ever see
+                   their own sessions in this list anyway). -->
+              <button class="stream-stop" title="Stop this stream"
+                      disabled={stoppingId === s.id}
+                      on:click={() => stopSession(s.id)}>
+                {stoppingId === s.id ? 'Stopping…' : 'Stop'}
+              </button>
             </div>
           {/each}
         </div>
@@ -824,6 +848,15 @@
   }
   .stream-poster.placeholder { background: var(--bg-secondary); }
   .stream-info { flex: 1; min-width: 0; }
+  .stream-stop {
+    flex-shrink: 0; padding: 0.3rem 0.7rem;
+    background: transparent; color: var(--text-muted);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 0.75rem; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .stream-stop:hover:not(:disabled) { color: #f87171; border-color: #f87171; }
+  .stream-stop:disabled { opacity: 0.6; cursor: default; }
   .stream-title {
     font-size: 0.85rem; font-weight: 600; color: var(--text-primary);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

@@ -358,6 +358,31 @@ func TestCreate_ValidatesTypeInvalid(t *testing.T) {
 	}
 }
 
+// Parked library types are refused at creation while their backing
+// features are unbudgeted — the type stays out of the picker AND the API
+// so a stub can't erode trust. Existing libraries of these types keep
+// working; only creation is gated. Manga parked at v2.2 (volume/chapter
+// hierarchy), podcast parked at v2.5 (no RSS model — local-files stub).
+func TestCreate_RefusesParkedTypes(t *testing.T) {
+	for _, typ := range []string{"manga", "podcast"} {
+		t.Run(typ, func(t *testing.T) {
+			svc, _, _ := newService(t)
+			_, err := svc.Create(context.Background(), CreateLibraryParams{
+				Name:  "Test",
+				Type:  typ,
+				Paths: []string{"/media"},
+			})
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("expected ValidationError for parked type %q, got %v", typ, err)
+			}
+			if ve.Field != "type" {
+				t.Errorf("want field=type, got %s", ve.Field)
+			}
+		})
+	}
+}
+
 func TestCreate_ValidatesPathsRequired(t *testing.T) {
 	svc, _, _ := newService(t)
 	_, err := svc.Create(context.Background(), CreateLibraryParams{

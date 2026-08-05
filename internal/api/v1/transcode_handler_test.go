@@ -322,6 +322,51 @@ func TestStop_ForbiddenForOtherUser(t *testing.T) {
 	}
 }
 
+// An ADMIN may stop any user's session — the moderation affordance every
+// competitor ships in core or paid. The owner-only 403 above stays the
+// contract for regular users; this pins the admin bypass actually tearing
+// the session down (gone from the store), not just returning 204.
+func TestStop_AdminTerminatesOtherUsersSession(t *testing.T) {
+	h, store := newTestHandler(t)
+
+	sess := transcode.Session{
+		ID:          transcode.NewSessionID(),
+		UserID:      uuid.New(), // owned by a different user
+		MediaItemID: uuid.New(),
+		FileID:      uuid.New(),
+		CreatedAt:   time.Now().UTC(),
+	}
+	if err := store.Create(context.Background(), sess); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+
+	claims := &auth.Claims{
+		UserID:    uuid.New(),
+		Username:  "admin",
+		IsAdmin:   true,
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/transcode/sessions/"+sess.ID, nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sid", sess.ID)
+	req = req.WithContext(context.WithValue(
+		middleware.WithClaims(req.Context(), claims),
+		chi.RouteCtxKey, rctx,
+	))
+
+	rec := httptest.NewRecorder()
+	h.Stop(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if got, err := store.Get(context.Background(), sess.ID); err == nil && got != nil {
+		t.Error("session still exists after admin stop — tearDown did not run")
+	}
+}
+
 // ── Start: last-writer-wins supersede ────────────────────────────────────────
 
 func TestStart_SupersedesPriorSessionForSameUserAndItem(t *testing.T) {

@@ -18,7 +18,10 @@
   // until the volume/chapter hierarchy + reader polish ship. Server-side
   // validateCreateParams refuses it too. Re-add 'manga' here when the
   // feature reopens.
-  let type: 'movie' | 'show' | 'anime' | 'cartoons' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book' = 'movie';
+  // `podcast` is parked the same way as of v2.5 — the scanner is a
+  // local-files stub with no RSS subscription; existing podcast
+  // libraries keep working, but new ones wait for the real model.
+  let type: 'movie' | 'show' | 'anime' | 'cartoons' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'home_video' | 'book' = 'movie';
   let paths: string[] = [''];
   let agent = 'tmdb';
   let language = 'en';
@@ -81,7 +84,7 @@
         <input id="name" bind:value={name} placeholder="Movies" autocomplete="off" />
       </div>
       <div class="type-picker">
-        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime'],['cartoons','🦸','Cartoons'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
+        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime'],['cartoons','🦸','Cartoons'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
             {#if img}
