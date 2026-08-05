@@ -491,7 +491,6 @@ func (a *mediaAdapter) HardDeleteMediaFile(ctx context.Context, id uuid.UUID) (i
 	return a.q.HardDeleteMediaFile(ctx, id)
 }
 
-
 func (a *mediaAdapter) UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error {
 	return a.q.UpdateMediaFileHash(ctx, gen.UpdateMediaFileHashParams{ID: id, FileHash: &hash})
 }

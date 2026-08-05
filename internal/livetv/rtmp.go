@@ -150,7 +150,8 @@ func (s *RTMPServer) authorized(key string) bool {
 // failure is returned so the caller can decide whether it's fatal (it isn't —
 // live TV without broadcast ingest is still useful).
 func (s *RTMPServer) Start() error {
-	ln, err := net.Listen("tcp", s.addr)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("rtmp listen %s: %w", s.addr, err)
 	}
@@ -487,6 +488,10 @@ func (p *rtmpPublish) publish(tag *mediaTag) {
 		p.audioSeqHead = tag
 	case tagVideoKeyframe:
 		p.lastKeyFrame = tag
+	case tagVideoData, tagAudioData:
+		// Ordinary media payloads aren't cached — only the headers/keyframe
+		// a late-joining subscriber needs to start decoding; the fan-out
+		// below delivers the payload itself.
 	}
 
 	for sub := range p.subs {

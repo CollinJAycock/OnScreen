@@ -839,10 +839,10 @@ const (
 	loadScoreUnit = 100_000
 )
 
-// hasEncoderPrefix reports whether the worker advertises an encoder of the given
-// codec family ("av1" → av1_nvenc/av1_qsv/av1_amf/av1_vaapi, "hevc" → hevc_*).
 // FleetCanEncode reports whether any registered worker advertises an encoder
-// for the given codec family ("hevc", "av1").
+// for the given codec family ("hevc", "av1") — hasEncoderPrefix does the
+// per-worker check ("av1" → av1_nvenc/av1_qsv/av1_amf/av1_vaapi, "hevc" →
+// hevc_*).
 //
 // The ABR ladder picks its codec from CLIENT capability alone, then the master
 // playlist advertises CODECS and the variant playlist names .m4s segments. If

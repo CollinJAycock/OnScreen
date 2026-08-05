@@ -33,6 +33,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -205,7 +206,7 @@ func (c *client) do(method, path string, body, out any, auth bool) error {
 		}
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, c.cfg.Server+path, rd)
+	req, err := http.NewRequestWithContext(context.Background(), method, c.cfg.Server+path, rd)
 	if err != nil {
 		return err
 	}
@@ -658,7 +659,7 @@ func cmdPlay(args []string) error {
 		mpvArgs = append([]string{"--input-ipc-server=" + ipcSock}, mpvArgs...)
 	}
 
-	cmd := exec.Command(mpvPath, mpvArgs...)
+	cmd := exec.CommandContext(context.Background(), mpvPath, mpvArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -705,9 +706,10 @@ func cmdPlay(args []string) error {
 func reportProgress(c *client, itemID, sock string, durationMs int64, stop <-chan struct{}) {
 	// mpv needs a beat to create the socket.
 	var conn net.Conn
+	dialer := &net.Dialer{}
 	for i := 0; i < 20; i++ {
 		var err error
-		conn, err = net.Dial("unix", sock)
+		conn, err = dialer.DialContext(context.Background(), "unix", sock)
 		if err == nil {
 			break
 		}

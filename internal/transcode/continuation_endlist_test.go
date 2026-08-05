@@ -60,7 +60,10 @@ func TestContinueShortSession_CompleteSessionKeepsENDLIST(t *testing.T) {
 	}
 
 	w.continueShortSession(context.Background(), job, dir, ".ts", "/media/x.mkv", false,
-		func(bool, float64, int, string) []string { t.Fatal("complete session must not re-run ffmpeg"); return nil },
+		func(bool, float64, int, string) []string {
+			t.Fatal("complete session must not re-run ffmpeg")
+			return nil
+		},
 		func([]string) (error, bool) { t.Fatal("complete session must not re-run ffmpeg"); return nil, false },
 	)
 

@@ -168,29 +168,29 @@ type ItemRatingService interface {
 
 // ItemHandler handles /api/v1/items.
 type ItemHandler struct {
-	media      ItemMediaService
-	watch      ItemWatchService
-	sessions   ItemSessionCleaner
-	enricher   ItemEnricher
-	matcher    ItemMatchSearcher
-	webhooks   ItemWebhookDispatcher
-	favorites  ItemFavoriteChecker
-	ratings    ItemRatingService // optional; per-user + community ratings (WithRatings)
-	markers    ItemMarkerService
-	access     LibraryAccessChecker
+	media       ItemMediaService
+	watch       ItemWatchService
+	sessions    ItemSessionCleaner
+	enricher    ItemEnricher
+	matcher     ItemMatchSearcher
+	webhooks    ItemWebhookDispatcher
+	favorites   ItemFavoriteChecker
+	ratings     ItemRatingService // optional; per-user + community ratings (WithRatings)
+	markers     ItemMarkerService
+	access      LibraryAccessChecker
 	watchLimit  ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
 	usageAccrue *usageAccruer  // byte-serving accrual companion to watchLimit (see WithWatchLimit)
-	subs       ExternalSubLister
-	tracker    *streaming.Tracker
-	sync       *notification.Broker
-	audit      *audit.Logger
-	tokens     *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file
-	epDB       EpisodePosterDB      // optional; when set, episode rows get the show's poster substituted (per user pref)
-	posters    ItemPosterPicker     // optional; when set, /posters and /poster routes are admin-served
-	deleter    ItemSubtreeDeleter   // optional; when set, DELETE /items/{id} is admin-served
-	credits    ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
-	dlGate     DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
-	store      mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
+	subs        ExternalSubLister
+	tracker     *streaming.Tracker
+	sync        *notification.Broker
+	audit       *audit.Logger
+	tokens      *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file
+	epDB        EpisodePosterDB      // optional; when set, episode rows get the show's poster substituted (per user pref)
+	posters     ItemPosterPicker     // optional; when set, /posters and /poster routes are admin-served
+	deleter     ItemSubtreeDeleter   // optional; when set, DELETE /items/{id} is admin-served
+	credits     ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
+	dlGate      DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
+	store       mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
 	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
 	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
 	// disables caching (extract on every request — the old behaviour).

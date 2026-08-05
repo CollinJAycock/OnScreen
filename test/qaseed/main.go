@@ -96,20 +96,20 @@ var manifest = []Lib{
 // ---- flags -------------------------------------------------------------------
 
 var (
-	server    = flag.String("server", "http://localhost:7070", "OnScreen server base URL")
-	adminUser = flag.String("admin-user", "admin", "admin username (used to log in and create libraries)")
-	adminPass = flag.String("admin-pass", "", "admin password")
-	token     = flag.String("token", "", "admin access token (skips login if set)")
-	bootstrap = flag.Bool("bootstrap", false, "register -admin-user as the first admin if the server has no users yet")
-	mediaRoot = flag.String("media-root", "qa-media", "directory to download content into (must be readable by the server)")
-	scanRoot  = flag.String("scan-root", "", "path the SERVER sees for the content, used for library scan_paths; defaults to -media-root. Set this when -media-root is a share/mount the server reads at a different path (e.g. you download to an SMB mount but the OnScreen container sees it at /media/demo).")
-	qaUser    = flag.String("qa-user", "", "if set, create this non-admin QA/reviewer account")
-	qaPass    = flag.String("qa-pass", "", "password for -qa-user")
-	restrict  = flag.Bool("restrict", true, "restrict -qa-user to ONLY the seeded demo libraries (replaces their entire library-access set)")
+	server     = flag.String("server", "http://localhost:7070", "OnScreen server base URL")
+	adminUser  = flag.String("admin-user", "admin", "admin username (used to log in and create libraries)")
+	adminPass  = flag.String("admin-pass", "", "admin password")
+	token      = flag.String("token", "", "admin access token (skips login if set)")
+	bootstrap  = flag.Bool("bootstrap", false, "register -admin-user as the first admin if the server has no users yet")
+	mediaRoot  = flag.String("media-root", "qa-media", "directory to download content into (must be readable by the server)")
+	scanRoot   = flag.String("scan-root", "", "path the SERVER sees for the content, used for library scan_paths; defaults to -media-root. Set this when -media-root is a share/mount the server reads at a different path (e.g. you download to an SMB mount but the OnScreen container sees it at /media/demo).")
+	qaUser     = flag.String("qa-user", "", "if set, create this non-admin QA/reviewer account")
+	qaPass     = flag.String("qa-pass", "", "password for -qa-user")
+	restrict   = flag.Bool("restrict", true, "restrict -qa-user to ONLY the seeded demo libraries (replaces their entire library-access set)")
 	doDownload = flag.Bool("download", true, "download manifest content")
-	doLibs    = flag.Bool("libs", true, "create libraries via the API")
-	doScan    = flag.Bool("scan", true, "trigger a scan of each library")
-	dryRun    = flag.Bool("dry-run", false, "print the plan; touch neither network nor server")
+	doLibs     = flag.Bool("libs", true, "create libraries via the API")
+	doScan     = flag.Bool("scan", true, "trigger a scan of each library")
+	dryRun     = flag.Bool("dry-run", false, "print the plan; touch neither network nor server")
 )
 
 func main() {

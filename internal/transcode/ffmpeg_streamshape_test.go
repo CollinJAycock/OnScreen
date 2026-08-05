@@ -49,10 +49,10 @@ func TestBuildHLS_AudioOnly(t *testing.T) {
 // not map an audio stream it doesn't have.
 func TestBuildHLS_NoAudio(t *testing.T) {
 	args := BuildHLS(BuildArgs{
-		InputPath:     "/media/timelapse.mp4",
-		Encoder:       EncoderSoftware,
-		NoAudio:       true,
-		Width:         1280, Height: 720, BitrateKbps: 4000,
+		InputPath: "/media/timelapse.mp4",
+		Encoder:   EncoderSoftware,
+		NoAudio:   true,
+		Width:     1280, Height: 720, BitrateKbps: 4000,
 		SessionDir: "/tmp/s", SegmentPrefix: "seg",
 	})
 	joined := strings.Join(args, " ")
