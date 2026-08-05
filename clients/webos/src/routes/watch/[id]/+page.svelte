@@ -8,6 +8,7 @@
     ApiError,
     Unauthorized,
     supportsHEVC,
+    demoteCodec,
     type ChildItem,
     type ItemDetail,
     type Chapter,
@@ -242,6 +243,14 @@
     mediaRecovered: boolean;
     reinitAttempted: boolean;
   }
+  // One codec-demotion escalation per item. A fatal bufferAppendError is MSE
+  // REFUSING THE BYTES — a codec rejection, not a buffer hiccup — and neither
+  // recoverMediaError nor a full re-init of the SAME source can fix a codec
+  // the decoder won't take. Ported from the web player: demote the claim
+  // (persisted — a panel's hardware decode support never changes) and restart
+  // the session so the server re-decides and hands back H.264.
+  let codecEscalated = false;
+
   function attachHlsErrorHandling(
     inst: InstanceType<typeof HlsType>,
     Hls: typeof HlsType,
@@ -250,6 +259,19 @@
     inst.on(Hls.Events.ERROR, (_event, data) => {
       console.warn('[HLS] error', data.type, data.details, data.fatal);
       if (!data.fatal) return;
+      if (
+        data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+        data.details === 'bufferAppendError' &&
+        !codecEscalated &&
+        supportsHEVC() // only when the claim could have produced the stream
+      ) {
+        codecEscalated = true;
+        const codec = (item?.files?.[0]?.video_codec ?? '').toLowerCase();
+        demoteCodec(codec === 'av1' ? 'av1' : 'hevc');
+        console.warn('[HLS] bufferAppendError — codec rejected; demoting claim + restarting session');
+        void restartAfterDemotion();
+        return;
+      }
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
         inst.startLoad();
       } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !recovery.mediaRecovered) {
@@ -268,6 +290,56 @@
         loading = false;
       }
     });
+  }
+
+  // Stop the doomed session and re-issue with the demoted claim: the
+  // supportsHEVC() flag + capability header now both say no-HEVC, so the
+  // server's decision lands on an H.264 transcode. Mirrors the resume
+  // re-acquire path's session/hls rebuild.
+  async function restartAfterDemotion() {
+    if (!video || !item) return;
+    const file = item.files[0];
+    if (!file) return;
+    const positionMs = position;
+    loading = true;
+    if (session && api.getToken()) {
+      void endpoints.transcode.stop(session.session_id, session.token).catch(() => {});
+      session = null;
+    }
+    destroyHls();
+    try {
+      const fresh = await endpoints.transcode.start({
+        itemId: itemID,
+        height: 2160, // see the comment on the primary start site
+        positionMs,
+        fileId: file.id,
+        supportsHEVC: supportsHEVC(), // false post-demotion — explicit body override
+        audioStreamIndex: activeAudioIndex > 0 ? audioStreams[activeAudioIndex]?.index : undefined,
+      });
+      session = fresh;
+      const Hls = await loadHls();
+      const fullURL = fresh.playlist_url.startsWith('http')
+        ? fresh.playlist_url
+        : api.mediaUrl(fresh.playlist_url);
+      currentPlaylistUrl = fullURL;
+      if (Hls.isSupported()) {
+        const inst = new Hls({ lowLatencyMode: false });
+        attachHlsErrorHandling(inst, Hls);
+        inst.loadSource(fullURL);
+        inst.attachMedia(video);
+        hls = inst;
+      } else {
+        video.src = fullURL;
+      }
+      video.addEventListener('loadedmetadata', () => {
+        if (video) video.currentTime = positionMs / 1000;
+        void video?.play();
+      }, { once: true });
+    } catch (e) {
+      console.warn('demotion restart failed', e);
+      error = 'Playback error: this panel could not decode the stream.';
+      loading = false;
+    }
   }
 
   async function stopAndLeave() {

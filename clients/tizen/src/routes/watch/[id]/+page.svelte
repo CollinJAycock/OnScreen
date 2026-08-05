@@ -7,6 +7,8 @@
     endpoints,
     ApiError,
     Unauthorized,
+    supportsHEVC,
+    demoteCodec,
     type ChildItem,
     type ItemDetail,
     type Chapter,
@@ -564,7 +566,7 @@
       height: 2160,
       positionMs,
       fileId: file.id,
-      supportsHEVC: true,
+      supportsHEVC: supportsHEVC(), // static claim corrected by runtime demotion
       audioStreamIndex,
     });
     session = fresh;
@@ -1200,7 +1202,7 @@
           height: 2160,
           positionMs: startMs,
           fileId: file.id,
-          supportsHEVC: true,
+          supportsHEVC: supportsHEVC(), // static claim corrected by runtime demotion
           videoCopy,
         });
         dbg(`transcode session: ${session.session_id.slice(0, 8)}…`);
@@ -1311,7 +1313,25 @@
               onError: (msg) => {
                 clearWatchdog();
                 dbg(`onError: ${msg || '(empty)'}`);
-                error = msg || 'AVPlay failed (no error message from firmware).';
+                // A NOT_SUPPORTED-class AVPlay failure on an HEVC-claimed
+                // stream means the blanket capability profile overclaims for
+                // THIS panel (SDR-only / pre-2016 models exist). Record the
+                // demotion (persisted — hardware support never changes) so
+                // every later attempt, including the user's natural retry,
+                // requests H.264. Deliberately no auto-restart: AVPlay error
+                // strings are firmware-dependent, and an untested restart
+                // loop on TV firmware is worse than one clean retry.
+                const failedCodec = (file.video_codec ?? '').toLowerCase();
+                if (
+                  supportsHEVC() &&
+                  (failedCodec === 'hevc' || failedCodec === 'h265') &&
+                  /NOT_SUPPORT|CODEC/i.test(msg ?? '')
+                ) {
+                  demoteCodec('hevc');
+                  error = 'This TV could not decode the stream. Press Back and play again — a compatible format will be used.';
+                } else {
+                  error = msg || 'AVPlay failed (no error message from firmware).';
+                }
                 loading = false;
               }
             }
