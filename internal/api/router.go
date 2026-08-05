@@ -435,13 +435,6 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/invites/accept", h.Invite.Accept)
 			}
 
-			// Native client device pairing — no user auth (the device_token
-			// itself serves as a one-shot credential for poll, and the PIN
-			// is rate-limited at the IP layer to deter brute force).
-			if h.Pair != nil {
-				r.Post("/auth/pair/code", h.Pair.CreateCode)
-				r.Get("/auth/pair/poll", h.Pair.Poll)
-			}
 
 			// OIDC SSO flow (settings-driven).
 			if h.OIDCAuth != nil {
@@ -467,6 +460,24 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/auth/totp/verify", h.TOTP.Verify)
 			}
 		})
+
+		// Native client device pairing — no user auth (the device_token
+		// itself serves as a one-shot credential for poll). In its OWN
+		// rate bucket, NOT AuthLimit's: the TV polls every 5 s (12/min)
+		// for as long as the PIN is on screen, which alone exceeded
+		// AuthLimit's 10/min — the household IP's login budget sat at
+		// zero while any TV showed a pairing code, 429ing the very
+		// phone that was trying to claim it. Polling isn't a
+		// brute-force surface (the PIN claim runs on the authenticated
+		// web session), so the wider bucket gives up nothing.
+		if h.Pair != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RateLimit(h.RateLimiter, middleware.PairLimit,
+					middleware.IPKey("ratelimit:pair")))
+				r.Post("/auth/pair/code", h.Pair.CreateCode)
+				r.Get("/auth/pair/poll", h.Pair.Poll)
+			})
+		}
 
 		// SSE notification stream — sibling to the authenticated API
 		// group below so it gets RequiredAllowQueryToken instead of

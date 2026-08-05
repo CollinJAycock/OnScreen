@@ -1269,6 +1269,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             builder.setLoadControl(loadControl)
         }
         return builder.build().apply {
+            // Debug builds: Media3's stock event log (track groups, selection
+            // changes, load errors) — the only practical way to diagnose
+            // silent side-load failures on a physical device over adb.
+            if (tv.onscreen.android.BuildConfig.DEBUG) {
+                addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+            }
             // Declare the usage and let Media3 manage audio focus. Without
             // this the fragment player never REQUESTED focus, so other
             // apps' audio kept playing underneath, and nothing paused us
@@ -1598,27 +1604,39 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  undoing whatever the user had picked minutes earlier. */
     private var userSubtitleChoice: String? = null
 
+    /** Our stamped side-load id, extracted from a Format id — or null for a
+     *  container track. NOT plain equality: MergingMediaSource prefixes each
+     *  child's ids with its index ("sub:emb:3" surfaces as "1:sub:emb:3"),
+     *  which made an == match fail silently — the track was never selected,
+     *  so the VTT never even loaded and the picker's choice did nothing.
+     *  Verified against a live Fire TV EventLogger track dump. */
+    private fun sideLoadIdOf(g: androidx.media3.common.Tracks.Group): String? {
+        val id = g.mediaTrackGroup.getFormat(0).id ?: return null
+        val at = id.indexOf("sub:")
+        return if (at >= 0) id.substring(at) else null
+    }
+
     /** Text track groups that came from the source itself, in order —
-     *  excludes our side-loads (identified by the stamped id prefix). */
+     *  excludes our side-loads (identified by the stamped id marker). */
     private fun containerTextGroups(): List<androidx.media3.common.Tracks.Group> =
         player?.currentTracks?.groups
             ?.filter { it.type == C.TRACK_TYPE_TEXT }
-            ?.filterNot { it.mediaTrackGroup.getFormat(0).id?.startsWith("sub:") == true }
+            ?.filterNot { sideLoadIdOf(it) != null }
             ?: emptyList()
 
     private fun sideLoadedTextGroup(trackId: String): androidx.media3.common.Tracks.Group? =
         player?.currentTracks?.groups
             ?.filter { it.type == C.TRACK_TYPE_TEXT }
-            ?.firstOrNull { it.mediaTrackGroup.getFormat(0).id == trackId }
+            ?.firstOrNull { sideLoadIdOf(it) == trackId }
 
     /** Index into [rows] of the currently-rendering track, or -1 for off. */
     private fun selectedSubtitleRow(rows: List<SubtitleRow>): Int {
         val groups = player?.currentTracks?.groups
             ?.filter { it.type == C.TRACK_TYPE_TEXT } ?: return -1
         val active = groups.firstOrNull { it.isSelected } ?: return -1
-        val id = active.mediaTrackGroup.getFormat(0).id
-        if (id?.startsWith("sub:") == true) {
-            return rows.indexOfFirst { it.trackId == id }
+        val sideId = sideLoadIdOf(active)
+        if (sideId != null) {
+            return rows.indexOfFirst { it.trackId == sideId }
         }
         val ordinal = containerTextGroups().indexOfFirst { it.mediaTrackGroup == active.mediaTrackGroup }
         return rows.indexOfFirst { it.containerOrdinal == ordinal }

@@ -48,6 +48,17 @@ var (
 	}
 	// SessionLimit applies to all authenticated endpoints — 1000 req/min per token.
 	SessionLimit = RateLimitConfig{Limit: 1000, Window: time.Minute}
+	// PairLimit applies to the device-pairing endpoints (create-code +
+	// poll), which MUST NOT share AuthLimit's bucket: the TV polls
+	// /auth/pair/poll every 5 s (12/min) while the PIN is on screen, which
+	// alone exceeds AuthLimit's 10/min — so the household's entire login
+	// budget was zero while any TV sat on the pairing screen, and the
+	// phone that was supposed to CLAIM the PIN got 429s. The flow
+	// deadlocked itself. Polling is not brute-forceable (the device_token
+	// is the credential; the PIN claim happens on the authenticated web
+	// session under SessionLimit), so a bucket sized above the poll
+	// cadence gives up nothing.
+	PairLimit = RateLimitConfig{Limit: 60, Window: time.Minute}
 	// TranscodeStartLimit caps how often a session can spin up new ffmpeg
 	// transcode jobs. Each Start kicks off a hardware encoder and writes a
 	// segment directory; a runaway client (or a bug in the player) shouldn't
